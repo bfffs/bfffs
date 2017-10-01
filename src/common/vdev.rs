@@ -1,7 +1,6 @@
 /// vim: tw=80
 
 use std::io;
-use std::rc::Rc;
 use tokio_file::{AioFut};
 
 use common::*;
@@ -18,7 +17,7 @@ pub trait Vdev {
     fn lba2zone(&self, lba: LbaT) -> ZoneT;
 
     /// Asynchronously read a contiguous portion of the vdev
-    fn read_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) -> io::Result<AioFut<isize>>;
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>>;
 
     /// Return the usable space of the Vdev.
     ///
@@ -30,8 +29,7 @@ pub trait Vdev {
     fn start_of_zone(&self, zone: ZoneT) -> LbaT;
 
     /// Asynchronously write a contiguous portion of the vdev
-    fn write_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) ->
-        io::Result<AioFut<isize>>;
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>>;
 }
 
 /// Scatter-Gather Vdev
@@ -42,11 +40,11 @@ pub trait SGVdev : Vdev {
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn readv_at(&self, bufs: &[Rc<Box<[u8]>>], lba: LbaT) -> io::Result<AioFut<isize>>;
+    fn readv_at(&self, bufs: SGList, lba: LbaT) -> io::Result<AioFut<isize>>;
 
     /// The asynchronous scatter/gather write function.
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn writev_at(&self, bufs: &[Rc<Box<[u8]>>], lba: LbaT) -> io::Result<AioFut<isize>>;
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> io::Result<AioFut<isize>>;
 }

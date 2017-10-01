@@ -2,7 +2,6 @@
 
 use std::io;
 use std::path::Path;
-use std::rc::Rc;
 use tokio_core::reactor::Handle;
 use tokio_file::{AioFut, File};
 
@@ -24,18 +23,18 @@ impl Vdev for VdevFile {
         lba / self.LBAS_PER_ZONE;
     }
 
-    fn read_at(&self, buf: Rc<Box<[u8]>>,
+    fn read_at(&self, buf: IoVec,
                lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.read_at(buf, lba * dva::BYTES_PER_LBA);
+        self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64));
     }
 
     fn start_of_zone(&self, zone: ZoneT) -> LbaT {
         zone * self.LBAS_PER_ZONE;
     }
 
-    fn write_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) ->
+    fn write_at(&self, buf: IoVec, lba: LbaT) ->
         io::Result<AioFut<isize>> {
-        self.file.write_at(buf, lba * dva::BYTES_PER_LBA);
+        self.file.write_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64));
     }
 
     fn size(&self) -> LbaT {

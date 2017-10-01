@@ -1,7 +1,6 @@
 /// vim: tw=80
 
 use std::io;
-use std::rc::Rc;
 use std::path::Path;
 use tokio_core::reactor::Handle;
 use tokio_file::{AioFut};
@@ -34,7 +33,14 @@ pub struct VdevBlock<T> {
 
 impl<T: VdevLeaf> VdevBlock<T> {
     /// Helper function for read and write methods
-    fn check_io_bounds(&self, lba: LbaT, bufs: &[Rc<Box<[u8]>>]) {
+    fn check_iovec_bounds(&self, lba: LbaT, buf: &IoVec) {
+        let buflen = buf.len() as u64;
+        let last_lba : LbaT = lba + buflen / (dva::BYTES_PER_LBA as u64);
+        assert!(last_lba < self.size as u64)
+    }
+
+    /// Helper function for read and write methods
+    fn check_sglist_bounds(&self, lba: LbaT, bufs: &SGList) {
         let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
             accumulator + buf.len() as u64
         });
@@ -56,7 +62,7 @@ impl<T: VdevLeaf> VdevBlock<T> {
         if bufs.len() == 1 {
             self.leaf.read_at(bufs.first().unwrap().clone(), block_op.lba)
         } else {
-            self.leaf.readv_at(&bufs, block_op.lba)
+            self.leaf.readv_at(bufs, block_op.lba)
         }
     }
 
@@ -66,15 +72,14 @@ impl<T: VdevLeaf> VdevBlock<T> {
         if bufs.len() == 1 {
             self.leaf.write_at(bufs.first().unwrap().clone(), block_op.lba)
         } else {
-            self.leaf.writev_at(&bufs, block_op.lba)
+            self.leaf.writev_at(bufs, block_op.lba)
         }
     }
 }
 
 impl<T: VdevLeaf> SGVdev for VdevBlock<T> {
-    fn readv_at(&self, bufs: &[Rc<Box<[u8]>>],
-                lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.check_io_bounds(lba, bufs);
+    fn readv_at(&self, bufs: SGList, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.check_sglist_bounds(lba, &bufs);
         let (fut, iter) = self.zone_scheduler.readv_at(bufs, lba);
         for block_op in iter {
             self.read_blockop(block_op);
@@ -82,9 +87,8 @@ impl<T: VdevLeaf> SGVdev for VdevBlock<T> {
         Ok(fut)
     }
 
-    fn writev_at(&self, bufs: &[Rc<Box<[u8]>>], lba: LbaT) ->
-        io::Result<AioFut<isize>> {
-        self.check_io_bounds(lba, bufs);
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.check_sglist_bounds(lba, &bufs);
         let (fut, iter) = self.zone_scheduler.writev_at(bufs, lba);
         for block_op in iter {
             self.write_blockop(block_op);
@@ -98,9 +102,8 @@ impl<T: VdevLeaf> Vdev for VdevBlock<T> {
         self.leaf.lba2zone(lba)
     }
 
-    fn read_at(&self, buf: Rc<Box<[u8]>>,
-                lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.check_io_bounds(lba, &[buf]);
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.check_iovec_bounds(lba, &buf);
         let (fut, iter) = self.zone_scheduler.read_at(buf, lba);
         for block_op in iter {
             self.read_blockop(block_op);
@@ -116,9 +119,8 @@ impl<T: VdevLeaf> Vdev for VdevBlock<T> {
         self.leaf.start_of_zone(zone)
     }
 
-    fn write_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) ->
-        io::Result<AioFut<isize>> {
-        self.check_io_bounds(lba, &[buf]);
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.check_iovec_bounds(lba, &buf);
         let (fut, iter) = self.zone_scheduler.write_at(buf, lba);
         for block_op in iter {
             self.write_blockop(block_op);

@@ -4,14 +4,13 @@ use common::*;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
-use std::rc::Rc;
 use tokio_file::{AioFut};
 
 /// A single read or write command that is queued at the VdevBlock layer
 #[derive(Eq)]
 pub struct BlockOp {
     pub lba: LbaT,
-    pub bufs: Box<[Rc<Box<[u8]>>]>
+    pub bufs: SGList
 }
 
 impl Ord for BlockOp {
@@ -72,25 +71,25 @@ impl ZoneScheduler {
                        read_queue: BTreeMap::new() }
     }
 
-    pub fn read_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) -> (
+    pub fn read_at(&self, buf: IoVec, lba: LbaT) -> (
         AioFut<isize>, ZoneSchedIter) {
         //TODO
         ZoneSchedIter{}
     }
 
-    pub fn readv_at(&self, bufs: &[Rc<Box<[u8]>>], lba: LbaT) -> (
+    pub fn readv_at(&self, bufs: SGList, lba: LbaT) -> (
         AioFut<isize>, ZoneSchedIter) {
         //TODO
         ZoneSchedIter{}
     }
 
-    pub fn write_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) -> (
+    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> (
         AioFut<isize>, ZoneSchedIter) {
         //TODO
         ZoneSchedIter{}
     }
 
-    pub fn writev_at(&self, bufs: &[Rc<Box<[u8]>>], lba: LbaT) -> (
+    pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> (
         AioFut<isize>, ZoneSchedIter) {
         //TODO
         ZoneSchedIter{}
