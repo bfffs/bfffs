@@ -20,21 +20,19 @@ pub struct VdevFile {
 
 impl Vdev for VdevFile {
     fn lba2zone(&self, lba: LbaT) -> ZoneT {
-        lba / self.LBAS_PER_ZONE;
+        (lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT
     }
 
-    fn read_at(&self, buf: IoVec,
-               lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64));
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
     }
 
     fn start_of_zone(&self, zone: ZoneT) -> LbaT {
-        zone * self.LBAS_PER_ZONE;
+        zone as u64 * VdevFile::LBAS_PER_ZONE
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) ->
-        io::Result<AioFut<isize>> {
-        self.file.write_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64));
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.file.write_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
     }
 
     fn size(&self) -> LbaT {
@@ -52,8 +50,8 @@ impl VdevFile {
     /// * `h`       Handle to the Tokio reactor that will be used to service
     ///             this vdev.  
     fn open<P: AsRef<Path>>(path: P, h: Handle) -> Self {
-        let f = File::open(path, h);
-        let size = f.metadata().unwrap().len() / dva::BYTES_PER_LBA;
+        let f = File::open(path, h).unwrap();
+        let size = f.metadata().unwrap().len() / dva::BYTES_PER_LBA as u64;
         VdevFile{file: f, size: size}
     }
 }
