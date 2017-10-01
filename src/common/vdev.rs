@@ -2,7 +2,7 @@
 
 use std::io;
 use std::rc::Rc;
-use tokio_file::{AioFut, WriteAtable};
+use tokio_file::{AioFut};
 
 use common::*;
 
@@ -30,7 +30,7 @@ pub trait Vdev {
     fn start_of_zone(&self, zone: ZoneT) -> LbaT;
 
     /// Asynchronously write a contiguous portion of the vdev
-    fn write_at<T: WriteAtable>(&self, buf: T, lba: LbaT) ->
+    fn write_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) ->
         io::Result<AioFut<isize>>;
 }
 
@@ -48,5 +48,5 @@ pub trait SGVdev : Vdev {
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn writev_at<T: WriteAtable>(&self, bufs: &[T], lba: LbaT) -> io::Result<AioFut<isize>>;
+    fn writev_at(&self, bufs: &[Rc<Box<[u8]>>], lba: LbaT) -> io::Result<AioFut<isize>>;
 }

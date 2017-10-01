@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 use std::rc::Rc;
 use tokio_core::reactor::Handle;
-use tokio_file::{AioFut, File, WriteAtable};
+use tokio_file::{AioFut, File};
 
 use common::*;
 use common::vdev::*;
@@ -33,7 +33,7 @@ impl Vdev for VdevFile {
         zone * self.LBAS_PER_ZONE;
     }
 
-    fn write_at<T: WriteAtable>(&self, buf: T, lba: LbaT) ->
+    fn write_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) ->
         io::Result<AioFut<isize>> {
         self.file.write_at(buf, lba * dva::BYTES_PER_LBA);
     }

@@ -4,7 +4,7 @@ use std::io;
 use std::rc::Rc;
 use std::path::Path;
 use tokio_core::reactor::Handle;
-use tokio_file::{AioFut, WriteAtable};
+use tokio_file::{AioFut};
 
 use common::*;
 use common::vdev::*;
@@ -34,9 +34,9 @@ pub struct VdevBlock<T> {
 
 impl<T: VdevLeaf> VdevBlock<T> {
     /// Helper function for read and write methods
-    fn check_io_bounds<U: WriteAtable>(&self, lba: LbaT, bufs: &[U]) {
+    fn check_io_bounds(&self, lba: LbaT, bufs: &[Rc<Box<[u8]>>]) {
         let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
-            accumulator + buf.length() as u64
+            accumulator + buf.len() as u64
         });
         assert!(lba + len / (dva::BYTES_PER_LBA as u64) < self.size as u64)
     }
@@ -52,34 +52,21 @@ impl<T: VdevLeaf> VdevBlock<T> {
 
     /// Helper function that reads a `BlockOp` popped off the scheduler
     fn read_blockop(&self, block_op: BlockOp) -> io::Result<AioFut<isize>>{
-        if let BlockOpBufT::RcArray(bufs) = block_op.bufs {
-            if bufs.len() == 1 {
-                self.leaf.read_at(bufs.first().unwrap().clone(), block_op.lba)
-            } else {
-                self.leaf.readv_at(&bufs, block_op.lba)
-            }
+        let bufs = block_op.bufs;
+        if bufs.len() == 1 {
+            self.leaf.read_at(bufs.first().unwrap().clone(), block_op.lba)
         } else {
-            unreachable!("static arrays are not allowed for reads!")
+            self.leaf.readv_at(&bufs, block_op.lba)
         }
     }
 
     /// Helper function that writes a `BlockOp` popped off the scheduler
     fn write_blockop(&self, block_op: BlockOp) -> io::Result<AioFut<isize>>{
-        match block_op.bufs {
-            BlockOpBufT::RcArray(bufs) => {
-                if bufs.len() == 1 {
-                    self.leaf.write_at(bufs.first().unwrap().clone(), block_op.lba)
-                } else {
-                    self.leaf.writev_at(&bufs, block_op.lba)
-                }
-            },
-            BlockOpBufT::StaticArray(bufs) => {
-                if bufs.len() == 1 {
-                    self.leaf.write_at(bufs.first().unwrap().clone(), block_op.lba)
-                } else {
-                    self.leaf.writev_at(&bufs, block_op.lba)
-                }
-            }
+        let bufs = block_op.bufs;
+        if bufs.len() == 1 {
+            self.leaf.write_at(bufs.first().unwrap().clone(), block_op.lba)
+        } else {
+            self.leaf.writev_at(&bufs, block_op.lba)
         }
     }
 }
@@ -95,7 +82,7 @@ impl<T: VdevLeaf> SGVdev for VdevBlock<T> {
         Ok(fut)
     }
 
-    fn writev_at<U: WriteAtable>(&self, bufs: &[U], lba: LbaT) ->
+    fn writev_at(&self, bufs: &[Rc<Box<[u8]>>], lba: LbaT) ->
         io::Result<AioFut<isize>> {
         self.check_io_bounds(lba, bufs);
         let (fut, iter) = self.zone_scheduler.writev_at(bufs, lba);
@@ -129,7 +116,7 @@ impl<T: VdevLeaf> Vdev for VdevBlock<T> {
         self.leaf.start_of_zone(zone)
     }
 
-    fn write_at<U: WriteAtable>(&self, buf: U, lba: LbaT) ->
+    fn write_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) ->
         io::Result<AioFut<isize>> {
         self.check_io_bounds(lba, &[buf]);
         let (fut, iter) = self.zone_scheduler.write_at(buf, lba);

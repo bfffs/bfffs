@@ -5,20 +5,13 @@ use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
 use std::rc::Rc;
-use tokio_file::{AioFut, WriteAtable};
-
-/// An enum that can hold any kind of array that implements WriteAtable
-#[derive(Eq, PartialEq)]
-pub enum BlockOpBufT {
-    RcArray(Box<[Rc<Box<[u8]>>]>),
-    StaticArray(Box<[&'static [u8]]>)
-}
+use tokio_file::{AioFut};
 
 /// A single read or write command that is queued at the VdevBlock layer
 #[derive(Eq)]
 pub struct BlockOp {
     pub lba: LbaT,
-    pub bufs: BlockOpBufT
+    pub bufs: Box<[Rc<Box<[u8]>>]>
 }
 
 impl Ord for BlockOp {
@@ -91,13 +84,13 @@ impl ZoneScheduler {
         ZoneSchedIter{}
     }
 
-    pub fn write_at<T: WriteAtable>(&self, buf: T, lba: LbaT) -> (
+    pub fn write_at(&self, buf: Rc<Box<[u8]>>, lba: LbaT) -> (
         AioFut<isize>, ZoneSchedIter) {
         //TODO
         ZoneSchedIter{}
     }
 
-    pub fn writev_at<T: WriteAtable>(&self, bufs: &[T], lba: LbaT) -> (
+    pub fn writev_at(&self, bufs: &[Rc<Box<[u8]>>], lba: LbaT) -> (
         AioFut<isize>, ZoneSchedIter) {
         //TODO
         ZoneSchedIter{}
