@@ -1,0 +1,9 @@
+[package]
+name = "arkfs"
+version = "0.1.0"
+authors = ["Alan Somers <asomers@gmail.com>"]
+
+[dependencies]
+nix = { path = "/home/somers/src/rust/nix" }
+tokio-file = { path = "/home/somers/src/rust/tokio-file" }
+tokio-core = { path = "/home/somers/src/rust/tokio-core" }
