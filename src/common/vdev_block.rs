@@ -52,10 +52,10 @@ impl<T: VdevLeaf> VdevBlock<T> {
     /// Open a VdevBlock
     ///
     /// * `leaf`    An already-open underlying VdevLeaf 
-    pub fn open(leaf: T) -> Self {
+    pub fn open(leaf: T, handle: Handle) -> Self {
         let size = leaf.size();
         VdevBlock{ leaf: leaf,
-                   zone_scheduler: Rc::new(ZoneScheduler::new()),
+                   zone_scheduler: Rc::new(ZoneScheduler::new(handle)),
                    size: size}
     }
 
@@ -84,13 +84,13 @@ impl<T: VdevLeaf> SGVdev for VdevBlock<T> {
     fn readv_at(&self, bufs: SGList, lba: LbaT) -> BlockFut {
         self.check_sglist_bounds(lba, &bufs);
         let block_op = BlockOp::writev_at(bufs, lba);
-        BlockFut::new(self.zone_scheduler.clone(), block_op)
+        BlockFut::new(self.zone_scheduler.clone(), block_op, false)
     }
 
     fn writev_at(&self, bufs: SGList, lba: LbaT) -> BlockFut {
         self.check_sglist_bounds(lba, &bufs);
         let block_op = BlockOp::writev_at(bufs, lba);
-        BlockFut::new(self.zone_scheduler.clone(), block_op)
+        BlockFut::new(self.zone_scheduler.clone(), block_op, true)
     }
 }
 
@@ -98,13 +98,13 @@ impl<T: VdevLeaf> Vdev for VdevBlock<T> {
     fn read_at(&self, buf: IoVec, lba: LbaT) -> BlockFut {
         self.check_iovec_bounds(lba, &buf);
         let block_op = BlockOp::read_at(buf, lba);
-        BlockFut::new(self.zone_scheduler.clone(), block_op)
+        BlockFut::new(self.zone_scheduler.clone(), block_op, false)
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> BlockFut {
         self.check_iovec_bounds(lba, &buf);
         let block_op = BlockOp::write_at(buf, lba);
-        BlockFut::new(self.zone_scheduler.clone(), block_op)
+        BlockFut::new(self.zone_scheduler.clone(), block_op, true)
     }
 }
 

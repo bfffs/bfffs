@@ -4,6 +4,7 @@ use common::*;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
+use tokio_core::reactor::{Handle};
 use tokio_file::{AioFut};
 
 #[derive(Eq, PartialEq)]
@@ -78,6 +79,9 @@ struct ZoneQueue {
 /// This object schedules I/O to a block device.  Its main purpose is to provide
 /// the strictly sequential write operations that zoned devices require.
 pub struct ZoneScheduler {
+    /// Handle to a Tokio reactor
+    pub handle: Handle,
+
     /// A collection of ZoneQueues, one for each open Zone.  Newly received
     /// writes must land here.  They will be issued to the OS in LBA-order, per
     /// zone.  If a Zone is not present in the map, then it must be either full
@@ -90,8 +94,9 @@ pub struct ZoneScheduler {
 }
 
 impl ZoneScheduler {
-    pub fn new() -> ZoneScheduler {
-        ZoneScheduler{ write_queues: BTreeMap::new(),
+    pub fn new(handle: Handle) -> ZoneScheduler {
+        ZoneScheduler{ handle: handle,
+                       write_queues: BTreeMap::new(),
                        read_queue: BTreeMap::new() }
     }
 
