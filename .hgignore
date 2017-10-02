@@ -1,1 +1,4 @@
+syntax: glob
 target
+Cargo.lock
+*.swp
