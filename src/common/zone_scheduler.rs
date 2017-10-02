@@ -6,11 +6,17 @@ use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
 use tokio_file::{AioFut};
 
+#[derive(Eq, PartialEq)]
+enum BlockOpBufT {
+    IoVec(IoVec),
+    SGList(SGList)
+}
+
 /// A single read or write command that is queued at the VdevBlock layer
 #[derive(Eq)]
 pub struct BlockOp {
-    pub lba: LbaT,
-    pub bufs: SGList
+    lba: LbaT,
+    bufs: BlockOpBufT
 }
 
 impl Ord for BlockOp {
@@ -31,6 +37,24 @@ impl PartialEq for BlockOp {
 impl PartialOrd for BlockOp {
     fn partial_cmp(&self, other: &BlockOp) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl BlockOp {
+    pub fn read_at(buf: IoVec, lba: LbaT) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf)}
+    }
+
+    pub fn readv_at(bufs: SGList, lba: LbaT) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs)}
+    }
+
+    pub fn write_at(buf: IoVec, lba: LbaT) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf)}
+    }
+
+    pub fn writev_at(bufs: SGList, lba: LbaT) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs)}
     }
 }
 
@@ -71,29 +95,29 @@ impl ZoneScheduler {
                        read_queue: BTreeMap::new() }
     }
 
-    pub fn read_at(&self, buf: IoVec, lba: LbaT) -> (
-        AioFut<isize>, ZoneSchedIter) {
-        //TODO
-        ZoneSchedIter{}
-    }
+    //pub fn read_at(&self, buf: IoVec, lba: LbaT) -> (
+        //AioFut<isize>, ZoneSchedIter) {
+        ////TODO
+        //ZoneSchedIter{}
+    //}
 
-    pub fn readv_at(&self, bufs: SGList, lba: LbaT) -> (
-        AioFut<isize>, ZoneSchedIter) {
-        //TODO
-        ZoneSchedIter{}
-    }
+    //pub fn readv_at(&self, bufs: SGList, lba: LbaT) -> (
+        //AioFut<isize>, ZoneSchedIter) {
+        ////TODO
+        //ZoneSchedIter{}
+    //}
 
-    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> (
-        AioFut<isize>, ZoneSchedIter) {
-        //TODO
-        ZoneSchedIter{}
-    }
+    //pub fn write_at(&self, buf: IoVec, lba: LbaT) -> (
+        //AioFut<isize>, ZoneSchedIter) {
+        ////TODO
+        //ZoneSchedIter{}
+    //}
 
-    pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> (
-        AioFut<isize>, ZoneSchedIter) {
-        //TODO
-        ZoneSchedIter{}
-    }
+    //pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> (
+        //AioFut<isize>, ZoneSchedIter) {
+        ////TODO
+        //ZoneSchedIter{}
+    //}
 }
 
 /// An iterator that yields successive `BlockOp`s of a `ZoneScheduler` that are

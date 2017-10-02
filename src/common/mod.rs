@@ -2,10 +2,12 @@
 
 use std::rc::Rc;
 
+pub mod block_fut;
 pub mod dva;
 pub mod vdev;
 pub mod vdev_block;
 pub mod zone_scheduler;
+pub mod zoned_device;
 pub type LbaT = u64;
 pub type ZoneT = u32;
 /// Our IoVec.  Unlike the standard library's, ours is reference-counted so it

@@ -1,9 +1,8 @@
 /// vim: tw=80
 
-use std::io;
-use tokio_file::{AioFut};
-
 use common::*;
+use common::zoned_device::*;
+use common::block_fut::*;
 
 /// Vdev: Virtual Device
 ///
@@ -12,24 +11,12 @@ use common::*;
 /// ZFS, vdevs may not be stacked arbitrarily.  Not all Vdevs have the same data
 /// plane API.  These methods here are the methods that are common to all Vdev
 /// types.
-pub trait Vdev {
-    /// Return the zone number at which the given LBA resides
-    fn lba2zone(&self, lba: LbaT) -> ZoneT;
-
+pub trait Vdev : ZonedDevice {
     /// Asynchronously read a contiguous portion of the vdev
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>>;
-
-    /// Return the usable space of the Vdev.
-    ///
-    /// Does not include wasted space, space reserved for labels, space used by
-    /// partity, etc.  May not change within the lifetime of a Vdev.
-    fn size(&self) -> LbaT;
-
-    /// Return the first LBA of the given zone
-    fn start_of_zone(&self, zone: ZoneT) -> LbaT;
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> BlockFut;
 
     /// Asynchronously write a contiguous portion of the vdev
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>>;
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> BlockFut;
 }
 
 /// Scatter-Gather Vdev
@@ -40,11 +27,11 @@ pub trait SGVdev : Vdev {
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn readv_at(&self, bufs: SGList, lba: LbaT) -> io::Result<AioFut<isize>>;
+    fn readv_at(&self, bufs: SGList, lba: LbaT) -> BlockFut;
 
     /// The asynchronous scatter/gather write function.
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> io::Result<AioFut<isize>>;
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> BlockFut;
 }

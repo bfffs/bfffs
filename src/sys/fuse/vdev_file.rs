@@ -6,7 +6,7 @@ use tokio_core::reactor::Handle;
 use tokio_file::{AioFut, File};
 
 use common::*;
-use common::vdev::*;
+use common::zoned_device::*;
 
 /// VdevFile: File-backed implementation of VdevBlock
 ///
@@ -18,21 +18,13 @@ pub struct VdevFile {
     size:   LbaT
 }
 
-impl Vdev for VdevFile {
+impl ZonedDevice for VdevFile {
     fn lba2zone(&self, lba: LbaT) -> ZoneT {
         (lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT
     }
 
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
-    }
-
     fn start_of_zone(&self, zone: ZoneT) -> LbaT {
         zone as u64 * VdevFile::LBAS_PER_ZONE
-    }
-
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.write_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
     }
 
     fn size(&self) -> LbaT {
@@ -49,10 +41,18 @@ impl VdevFile {
     /// * `path`    Pathname for the file.  It may be a device node.
     /// * `h`       Handle to the Tokio reactor that will be used to service
     ///             this vdev.  
-    fn open<P: AsRef<Path>>(path: P, h: Handle) -> Self {
+    pub fn open<P: AsRef<Path>>(path: P, h: Handle) -> Self {
         let f = File::open(path, h).unwrap();
         let size = f.metadata().unwrap().len() / dva::BYTES_PER_LBA as u64;
         VdevFile{file: f, size: size}
+    }
+
+    pub fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
+    }
+
+    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.file.write_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
     }
 }
 
