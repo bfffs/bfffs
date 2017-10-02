@@ -1,4 +1,4 @@
-/// vim: tw=80
+// vim: tw=80
 
 use std::io;
 use std::path::Path;

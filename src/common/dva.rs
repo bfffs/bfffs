@@ -1,4 +1,4 @@
-/// vim: tw=80
+// vim: tw=80
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 /// Always use 4K LBAs, even if the underlying device supports smaller
