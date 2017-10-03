@@ -6,24 +6,15 @@ use tokio_core::reactor::Handle;
 use common::*;
 use common::block_fut::*;
 use common::vdev::*;
+use common::vdev_leaf::*;
 use common::zone_scheduler::*;
 use common::zoned_device::*;
-
-/// The public interface for all leaf Vdevs.  This is a low level thing.  Leaf
-/// vdevs are typically files or disks, and this trait is their minimum common
-/// interface.  I/O operations on `VdevLeaf` happen immediately; they are not
-/// scheduled.
-pub trait VdevLeaf : SGVdev {
-}
 
 /// VdevBlock: Virtual Device for basic block device
 ///
 /// This struct contains the functionality that is common between all types of
 /// leaf vdev.
-pub struct VdevBlock<T> {
-    /// Underlying device
-    leaf: T,
-
+pub struct VdevBlock {
     /// Stores pending I/O operations and schedules them.  Reference counting it
     /// ensures that there are no in-flight operations for this Vdev when we
     /// tear it down.
@@ -33,7 +24,7 @@ pub struct VdevBlock<T> {
     size:   LbaT
 }
 
-impl<T: VdevLeaf> VdevBlock<T> {
+impl VdevBlock {
     /// Helper function for read and write methods
     fn check_iovec_bounds(&self, lba: LbaT, buf: &IoVec) {
         let buflen = buf.len() as u64;
@@ -52,10 +43,9 @@ impl<T: VdevLeaf> VdevBlock<T> {
     /// Open a VdevBlock
     ///
     /// * `leaf`    An already-open underlying VdevLeaf 
-    pub fn open(leaf: T, handle: Handle) -> Self {
+    pub fn open<T: VdevLeaf>(leaf: Box<T>, handle: Handle) -> Self {
         let size = leaf.size();
-        VdevBlock{ leaf: leaf,
-                   zone_scheduler: Rc::new(ZoneScheduler::new(handle)),
+        VdevBlock{ zone_scheduler: Rc::new(ZoneScheduler::new(leaf, handle)),
                    size: size}
     }
 
@@ -80,7 +70,7 @@ impl<T: VdevLeaf> VdevBlock<T> {
     //}
 }
 
-impl<T: VdevLeaf> SGVdev for VdevBlock<T> {
+impl SGVdev for VdevBlock {
     fn readv_at(&self, bufs: SGList, lba: LbaT) -> BlockFut {
         self.check_sglist_bounds(lba, &bufs);
         let block_op = BlockOp::writev_at(bufs, lba);
@@ -94,7 +84,7 @@ impl<T: VdevLeaf> SGVdev for VdevBlock<T> {
     }
 }
 
-impl<T: VdevLeaf> Vdev for VdevBlock<T> {
+impl Vdev for VdevBlock {
     fn read_at(&self, buf: IoVec, lba: LbaT) -> BlockFut {
         self.check_iovec_bounds(lba, &buf);
         let block_op = BlockOp::read_at(buf, lba);
@@ -108,9 +98,9 @@ impl<T: VdevLeaf> Vdev for VdevBlock<T> {
     }
 }
 
-impl<T: VdevLeaf> ZonedDevice for VdevBlock<T> {
+impl ZonedDevice for VdevBlock {
     fn lba2zone(&self, lba: LbaT) -> ZoneT {
-        self.leaf.lba2zone(lba)
+        self.zone_scheduler.leaf.lba2zone(lba)
     }
 
     fn size(&self) -> LbaT {
@@ -118,7 +108,6 @@ impl<T: VdevLeaf> ZonedDevice for VdevBlock<T> {
     }
 
     fn start_of_zone(&self, zone: ZoneT) -> LbaT {
-        self.leaf.start_of_zone(zone)
+        self.zone_scheduler.leaf.start_of_zone(zone)
     }
-
 }

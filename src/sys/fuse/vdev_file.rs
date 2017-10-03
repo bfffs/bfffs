@@ -7,6 +7,7 @@ use tokio_file::{AioFut, File};
 
 use common::*;
 use common::zoned_device::*;
+use common::vdev_leaf::*;
 
 /// VdevFile: File-backed implementation of VdevBlock
 ///
@@ -32,6 +33,15 @@ impl ZonedDevice for VdevFile {
     }
 }
 
+impl VdevLeaf for VdevFile {
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
+    }
+
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.file.write_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
+    }}
+
 impl VdevFile {
     /// Size of a simulated zone
     const LBAS_PER_ZONE: LbaT = 1 << 19;  // 256 MB
@@ -45,14 +55,6 @@ impl VdevFile {
         let f = File::open(path, h).unwrap();
         let size = f.metadata().unwrap().len() / dva::BYTES_PER_LBA as u64;
         VdevFile{file: f, size: size}
-    }
-
-    pub fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
-    }
-
-    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.write_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
     }
 }
 

@@ -79,7 +79,20 @@ impl futures::Future for BlockFut {
 
     fn poll(&mut self) -> futures::Poll<isize, nix::Error> {
         if ! self.scheduled {
-            // TODO: schedule it
+            match self.block_op.bufs {
+                BlockOp::IoVec(iovec) => {
+                    if self.write {
+                    } else {
+                        self.zone_scheduler.read_at(self.block_op.lba, iovec)
+                    }
+                },
+                BlockOp::SGList(sglist) => {
+                    if self.write {
+                    } else {
+                        self.zone_scheduler.readv_at(self.block_op.lba, sglist)
+                    }
+                }
+            }
             self.scheduled = true;
         }
         /// Arbitrary use Readable readiness for this type.  It doesn't matter

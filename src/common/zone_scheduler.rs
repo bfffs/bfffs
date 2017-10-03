@@ -79,6 +79,9 @@ struct ZoneQueue {
 /// This object schedules I/O to a block device.  Its main purpose is to provide
 /// the strictly sequential write operations that zoned devices require.
 pub struct ZoneScheduler {
+    /// Underlying device
+    pub leaf: Box<VdevLeaf>,
+
     /// Handle to a Tokio reactor
     pub handle: Handle,
 
@@ -94,17 +97,22 @@ pub struct ZoneScheduler {
 }
 
 impl ZoneScheduler {
-    pub fn new(handle: Handle) -> ZoneScheduler {
-        ZoneScheduler{ handle: handle,
+    pub fn new(leaf: Box<VdevLeaf>, handle: Handle) -> ZoneScheduler {
+        ZoneScheduler{ leaf: leaf,
+                       handle: handle,
                        write_queues: BTreeMap::new(),
                        read_queue: BTreeMap::new() }
     }
 
-    //pub fn read_at(&self, buf: IoVec, lba: LbaT) -> (
-        //AioFut<isize>, ZoneSchedIter) {
-        ////TODO
-        //ZoneSchedIter{}
-    //}
+    // Schedule the BlockOp, then issue any reads that are ready.
+    pub fn sched_read(&self, block_op: BlockOp) {
+        //TODO eventually these should be scheduled by LBA order and to reduce
+        //the disks' queue depth, but for now push them straight through
+        match self.block_op.bufs {
+            IoVec(iovec) => self.leaf.read_at(iovec, self.block_op.lba),
+            SGList(sglist) => self.leaf.readv_at(sglist, self.block_op.lba)
+        }.and_then(||
+    }
 
     //pub fn readv_at(&self, bufs: SGList, lba: LbaT) -> (
         //AioFut<isize>, ZoneSchedIter) {
@@ -127,14 +135,14 @@ impl ZoneScheduler {
 
 /// An iterator that yields successive `BlockOp`s of a `ZoneScheduler` that are
 /// ready to issue
-pub struct ZoneSchedIter {
-}
+//pub struct ZoneSchedIter {
+//}
 
-impl Iterator for ZoneSchedIter {
-    type Item = BlockOp;
+//impl Iterator for ZoneSchedIter {
+    //type Item = BlockOp;
 
-    fn next(&mut self) -> Option<BlockOp> {
-        //TODO
-        None
-    }
-}
+    //fn next(&mut self) -> Option<BlockOp> {
+        ////TODO
+        //None
+    //}
+//}
