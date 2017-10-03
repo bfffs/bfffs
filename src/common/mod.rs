@@ -2,7 +2,6 @@
 
 use std::rc::Rc;
 
-pub mod block_fut;
 pub mod dva;
 pub mod vdev;
 pub mod vdev_block;

@@ -111,7 +111,8 @@ impl ZoneScheduler {
         match self.block_op.bufs {
             IoVec(iovec) => self.leaf.read_at(iovec, self.block_op.lba),
             SGList(sglist) => self.leaf.readv_at(sglist, self.block_op.lba)
-        }.and_then(||
+        }.and_then(|| {//TODO
+        })
     }
 
     //pub fn readv_at(&self, bufs: SGList, lba: LbaT) -> (
@@ -133,8 +134,8 @@ impl ZoneScheduler {
     //}
 }
 
-/// An iterator that yields successive `BlockOp`s of a `ZoneScheduler` that are
-/// ready to issue
+///// An iterator that yields successive `BlockOp`s of a `ZoneScheduler` that are
+///// ready to issue
 //pub struct ZoneSchedIter {
 //}
 

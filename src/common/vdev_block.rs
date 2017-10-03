@@ -1,10 +1,9 @@
 // vim: tw=80
 
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use tokio_core::reactor::Handle;
 
 use common::*;
-use common::block_fut::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 use common::zone_scheduler::*;
@@ -21,7 +20,10 @@ pub struct VdevBlock {
     zone_scheduler: Rc<ZoneScheduler>,
 
     /// Usable size of the vdev, in LBAs
-    size:   LbaT
+    size:   LbaT,
+
+    // Needed so we can hand out Rc<Vdev> to `VdevFut`s
+    selfref: Weak<VdevBlock>
 }
 
 impl VdevBlock {
@@ -71,30 +73,34 @@ impl VdevBlock {
 }
 
 impl SGVdev for VdevBlock {
-    fn readv_at(&self, bufs: SGList, lba: LbaT) -> BlockFut {
+    fn readv_at(&self, bufs: SGList, lba: LbaT) -> VdevFut {
         self.check_sglist_bounds(lba, &bufs);
         let block_op = BlockOp::writev_at(bufs, lba);
-        BlockFut::new(self.zone_scheduler.clone(), block_op, false)
+        selfref = self.selfref.upgrade().unwrap().clone();
+        VdevFut::new(selfref, block_op, false)
     }
 
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> BlockFut {
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevFut {
         self.check_sglist_bounds(lba, &bufs);
         let block_op = BlockOp::writev_at(bufs, lba);
-        BlockFut::new(self.zone_scheduler.clone(), block_op, true)
+        selfref = self.selfref.upgrade().unwrap().clone();
+        VdevFut::new(selfref, block_op, true)
     }
 }
 
 impl Vdev for VdevBlock {
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> BlockFut {
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> VdevFut {
         self.check_iovec_bounds(lba, &buf);
         let block_op = BlockOp::read_at(buf, lba);
-        BlockFut::new(self.zone_scheduler.clone(), block_op, false)
+        selfref = self.selfref.upgrade().unwrap().clone();
+        VdevFut::new(selfref, block_op, false)
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> BlockFut {
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevFut {
         self.check_iovec_bounds(lba, &buf);
         let block_op = BlockOp::write_at(buf, lba);
-        BlockFut::new(self.zone_scheduler.clone(), block_op, true)
+        selfref = self.selfref.upgrade().unwrap().clone();
+        VdevFut::new(selfref, block_op, true)
     }
 }
 

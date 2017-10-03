@@ -11,6 +11,7 @@
 # created in PWD.
 
 EXTERNAL_CRATES='(std|futures|mio|nix|tokio_core|tokio_file)'
+BORING_FILES='^\<(common)\>$'
 
 EXTERNAL_PAT="^use.${EXTERNAL_CRATES}"
 SRC=`dirname $0`/../src
@@ -57,7 +58,11 @@ for f in `find $SRC -name '*.rs'`; do
 			echo "File ${u} not found" >&2
 			continue
 		fi
-		echo "\"$mod\" -> \"$usefile\""
+		if echo $usefile | egrep -q $BORING_FILES; then
+			# Skip this boring file
+		else
+			echo "\"$mod\" -> \"$usefile\""
+		fi
 	done
 done
 echo "}" ; } > $TEMPFILE
