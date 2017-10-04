@@ -6,7 +6,6 @@ pub mod dva;
 pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_leaf;
-pub mod zone_scheduler;
 pub mod zoned_device;
 pub type LbaT = u64;
 pub type ZoneT = u32;
