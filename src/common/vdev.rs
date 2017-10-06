@@ -97,9 +97,9 @@ impl mio::Evented for VdevFutEvented {
 /// Future representing an operation on a vdev.  The return type is the amount
 /// of data that was actually read/written, or an errno on error
 #[must_use = "futures do nothing unless polled"]
-pub struct VdevFut {
+pub struct VdevFut<T: Vdev + ?Sized> {
     /// Link to the target `Vdev` that will complete this future
-    vdev: Rc<Vdev>,
+    vdev: Rc<T>,
 
     /// The associated `BlockOp`.  Whether it's a read or write will be clear
     /// from which `ZoneQueue` it's stored in.
@@ -115,23 +115,23 @@ pub struct VdevFut {
     io: PollEvented<VdevFutEvented>
 }
 
-impl VdevFut {
-    pub fn new(vdev: Rc<Vdev>,
+impl<T: Vdev + ?Sized> VdevFut<T> {
+    pub fn new(vdev: Rc<T>,
                block_op: BlockOp,
-               write:bool) -> VdevFut {
+               write:bool) -> VdevFut<T> {
         let (registration, promise) = mio::Registration::new2();
         let io = VdevFutEvented {registration: registration,
                                  promise: promise};
         let handle = vdev.handle().clone();
-        VdevFut {vdev: vdev,
-                 block_op: block_op,
-                 scheduled: false,
-                 write: write,
-                 io: PollEvented::new(io, &handle).unwrap()}
+        VdevFut::<T> {vdev: vdev,
+                      block_op: block_op,
+                      scheduled: false,
+                      write: write,
+                      io: PollEvented::new(io, &handle).unwrap()}
     }
 }
 
-impl futures::Future for VdevFut {
+impl<T: Vdev + ?Sized> futures::Future for VdevFut<T> {
     type Item = isize;
     type Error = nix::Error;    // TODO: define our own error type?
 
@@ -174,10 +174,10 @@ pub trait Vdev : ZonedDevice {
     fn handle(&self) -> Handle;
 
     /// Asynchronously read a contiguous portion of the vdev
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> VdevFut;
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> VdevFut<Vdev>;
 
     /// Asynchronously write a contiguous portion of the vdev
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevFut;
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevFut<Vdev>;
 }
 
 /// Scatter-Gather Vdev
@@ -188,11 +188,11 @@ pub trait SGVdev : Vdev {
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn readv_at(&self, bufs: SGList, lba: LbaT) -> VdevFut;
+    fn readv_at(&self, bufs: SGList, lba: LbaT) -> VdevFut<SGVdev>;
 
     /// The asynchronous scatter/gather write function.
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevFut;
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevFut<SGVdev>;
 }

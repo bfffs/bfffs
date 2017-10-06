@@ -167,14 +167,14 @@ impl VdevBlock {
 }
 
 impl SGVdev for VdevBlock {
-    fn readv_at(&self, bufs: SGList, lba: LbaT) -> VdevFut {
+    fn readv_at(&self, bufs: SGList, lba: LbaT) -> VdevFut<SGVdev> {
         self.check_sglist_bounds(lba, &bufs);
         let block_op = BlockOp::writev_at(bufs, lba);
         let selfref = self.selfref.upgrade().unwrap().clone();
         VdevFut::new(selfref, block_op, false)
     }
 
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevFut {
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevFut<SGVdev> {
         self.check_sglist_bounds(lba, &bufs);
         let block_op = BlockOp::writev_at(bufs, lba);
         let selfref = self.selfref.upgrade().unwrap().clone();
@@ -187,14 +187,14 @@ impl Vdev for VdevBlock {
         self.handle.clone()
     }
 
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> VdevFut {
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> VdevFut<Vdev> {
         self.check_iovec_bounds(lba, &buf);
         let block_op = BlockOp::read_at(buf, lba);
         let selfref = self.selfref.upgrade().unwrap().clone();
         VdevFut::new(selfref, block_op, false)
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevFut {
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevFut<Vdev> {
         self.check_iovec_bounds(lba, &buf);
         let block_op = BlockOp::write_at(buf, lba);
         let selfref = self.selfref.upgrade().unwrap().clone();
