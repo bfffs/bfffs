@@ -3,12 +3,11 @@
 use common::*;
 use common::zoned_device::*;
 use futures;
-use mio;
 use nix;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::io;
 use std::rc::Rc;
-use tokio_core::reactor::{Handle, PollEvented};
+use tokio_core::reactor::Handle;
 
 #[derive(Eq, PartialEq)]
 pub enum BlockOpBufT {
@@ -62,106 +61,10 @@ impl BlockOp {
     }
 }
 
-/// mio implementation detail
-#[doc(hidden)]
-struct VdevFutEvented {
-    /// Used by `mio::Evented`
-    registration: mio::Registration,
-
-    /// Used by the `VdevLeaf` to complete this future
-    promise: mio::SetReadiness
-}
-
-impl mio::Evented for VdevFutEvented {
-    fn register(&self,
-                poll: &mio::Poll,
-                token: mio::Token,
-                interest: mio::Ready,
-                opts: mio::PollOpt) -> io::Result<()> {
-        self.registration.register(poll, token, interest, opts)
-    }
-
-    fn reregister(&self,
-                poll: &mio::Poll,
-                token: mio::Token,
-                interest: mio::Ready,
-                opts: mio::PollOpt) -> io::Result<()> {
-        self.registration.reregister(poll, token, interest, opts)
-    }
-
-    fn deregister(&self, poll: &mio::Poll) -> io::Result<()> {
-        self.registration.deregister(poll)
-    }
-}
-
 /// Future representing an operation on a vdev.  The return type is the amount
 /// of data that was actually read/written, or an errno on error
-#[must_use = "futures do nothing unless polled"]
-pub struct VdevFut<T: Vdev + ?Sized> {
-    /// Link to the target `Vdev` that will complete this future
-    vdev: Rc<T>,
+pub type VdevFut = futures::Future<Item = isize, Error = io::Error>;
 
-    /// The associated `BlockOp`.  Whether it's a read or write will be clear
-    /// from which `ZoneQueue` it's stored in.
-    block_op: BlockOp,
-
-    /// Has this I/O already been scheduled?
-    scheduled: bool,
-
-    /// Is this a read or a write operation?
-    write: bool,
-
-    // Used by the mio stuff
-    io: PollEvented<VdevFutEvented>
-}
-
-impl<T: Vdev + ?Sized> VdevFut<T> {
-    pub fn new(vdev: Rc<T>,
-               block_op: BlockOp,
-               write:bool) -> VdevFut<T> {
-        let (registration, promise) = mio::Registration::new2();
-        let io = VdevFutEvented {registration: registration,
-                                 promise: promise};
-        let handle = vdev.handle().clone();
-        VdevFut::<T> {vdev: vdev,
-                      block_op: block_op,
-                      scheduled: false,
-                      write: write,
-                      io: PollEvented::new(io, &handle).unwrap()}
-    }
-}
-
-impl<T: Vdev + ?Sized> futures::Future for VdevFut<T> {
-    type Item = isize;
-    type Error = nix::Error;    // TODO: define our own error type?
-
-    fn poll(&mut self) -> futures::Poll<isize, nix::Error> {
-        if ! self.scheduled {
-            match self.block_op.bufs {
-                BlockOpBufT::IoVec(ref iovec) => {
-                    if self.write {
-                    } else {
-                        self.vdev.read_at(iovec.clone(), self.block_op.lba);
-                    }
-                },
-                BlockOpBufT::SGList(ref sglist) => {
-                    if self.write {
-                    } else {
-                        //self.vdev.readv_at(sglist ,self.block_op.lba);
-                    }
-                }
-            }
-            self.scheduled = true;
-        }
-        /// Arbitrary use Readable readiness for this type.  It doesn't matter
-        /// what kind of readiness we use, so long as we're consistent.
-        let poll_result = self.io.poll_read();
-        if poll_result == futures::Async::NotReady {
-            return Ok(futures::Async::NotReady);
-        }
-        Ok(futures::Async::Ready(42))  //TODO: get the real result somehow.
-    }
-}
 /// Vdev: Virtual Device
 ///
 /// This is directly analogous to ZFS Vdevs.  A vdev is a virtual block device
@@ -174,10 +77,10 @@ pub trait Vdev : ZonedDevice {
     fn handle(&self) -> Handle;
 
     /// Asynchronously read a contiguous portion of the vdev
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> VdevFut<Vdev>;
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
 
     /// Asynchronously write a contiguous portion of the vdev
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevFut<Vdev>;
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
 }
 
 /// Scatter-Gather Vdev
@@ -188,11 +91,11 @@ pub trait SGVdev : Vdev {
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn readv_at(&self, bufs: SGList, lba: LbaT) -> VdevFut<SGVdev>;
+    fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
 
     /// The asynchronous scatter/gather write function.
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevFut<SGVdev>;
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
 }

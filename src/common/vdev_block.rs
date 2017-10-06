@@ -1,14 +1,116 @@
 // vim: tw=80
 
+use futures;
+use mio;
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
+use std::io;
 use std::rc::{Rc, Weak};
-use tokio_core::reactor::Handle;
+use tokio_core::reactor::{Handle, PollEvented};
 
 use common::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 use common::zoned_device::*;
+
+/// mio implementation detail
+#[doc(hidden)]
+struct VdevBlockFutEvented {
+    /// Used by `mio::Evented`
+    registration: mio::Registration,
+
+    /// Used by the `VdevLeaf` to complete this future
+    promise: mio::SetReadiness
+}
+
+impl mio::Evented for VdevBlockFutEvented {
+    fn register(&self,
+                poll: &mio::Poll,
+                token: mio::Token,
+                interest: mio::Ready,
+                opts: mio::PollOpt) -> io::Result<()> {
+        self.registration.register(poll, token, interest, opts)
+    }
+
+    fn reregister(&self,
+                poll: &mio::Poll,
+                token: mio::Token,
+                interest: mio::Ready,
+                opts: mio::PollOpt) -> io::Result<()> {
+        self.registration.reregister(poll, token, interest, opts)
+    }
+
+    fn deregister(&self, poll: &mio::Poll) -> io::Result<()> {
+        self.registration.deregister(poll)
+    }
+}
+
+#[must_use = "futures do nothing unless polled"]
+pub struct VdevBlockFut<T: Vdev + ?Sized> {
+    /// Link to the target `Vdev` that will complete this future
+    vdev: Rc<T>,
+
+    /// The associated `BlockOp`.  Whether it's a read or write will be clear
+    /// from which `ZoneQueue` it's stored in.
+    block_op: BlockOp,
+
+    /// Has this I/O already been scheduled?
+    scheduled: bool,
+
+    /// Is this a read or a write operation?
+    write: bool,
+
+    // Used by the mio stuff
+    io: PollEvented<VdevBlockFutEvented>
+}
+
+impl<T: Vdev + ?Sized> VdevBlockFut<T> {
+    pub fn new(vdev: Rc<T>,
+               block_op: BlockOp,
+               write:bool) -> VdevBlockFut<T> {
+        let (registration, promise) = mio::Registration::new2();
+        let io = VdevBlockFutEvented {registration: registration,
+                                 promise: promise};
+        let handle = vdev.handle().clone();
+        VdevBlockFut::<T> {vdev: vdev,
+                           block_op: block_op,
+                           scheduled: false,
+                           write: write,
+                           io: PollEvented::new(io, &handle).unwrap()}
+    }
+}
+
+impl<T: Vdev + ?Sized> futures::Future for VdevBlockFut<T> {
+    type Item = isize;
+    type Error = io::Error;
+
+    fn poll(&mut self) -> futures::Poll<isize, io::Error> {
+        if ! self.scheduled {
+            //match self.block_op.bufs {
+                //BlockOpBufT::IoVec(ref iovec) => {
+                    //if self.write {
+                    //} else {
+                        //self.vdev.read_at(iovec.clone(), self.block_op.lba);
+                    //}
+                //},
+                //BlockOpBufT::SGList(ref sglist) => {
+                    //if self.write {
+                    //} else {
+                        ////self.vdev.readv_at(sglist ,self.block_op.lba);
+                    //}
+                //}
+            //}
+            self.scheduled = true;
+        }
+        /// Arbitrary use Readable readiness for this type.  It doesn't matter
+        /// what kind of readiness we use, so long as we're consistent.
+        let poll_result = self.io.poll_read();
+        if poll_result == futures::Async::NotReady {
+            return Ok(futures::Async::NotReady);
+        }
+        Ok(futures::Async::Ready(42))  //TODO: get the real result somehow.
+    }
+}
 
 /// Used for scheduling writes within a single Zone
 struct ZoneQueue {
@@ -98,7 +200,7 @@ pub struct VdevBlock {
     /// Usable size of the vdev, in LBAs
     size:   LbaT,
 
-    // Needed so we can hand out Rc<Vdev> to `VdevFut`s
+    // Needed so we can hand out Rc<Vdev> to `VdevBlockFut`s
     selfref: Weak<VdevBlock>,
 
     /// A collection of BlockOps.  Newly received reads must land here.  They
@@ -167,18 +269,18 @@ impl VdevBlock {
 }
 
 impl SGVdev for VdevBlock {
-    fn readv_at(&self, bufs: SGList, lba: LbaT) -> VdevFut<SGVdev> {
+    fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
         let block_op = BlockOp::writev_at(bufs, lba);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        VdevFut::new(selfref, block_op, false)
+        Box::new(VdevBlockFut::new(selfref, block_op, false))
     }
 
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevFut<SGVdev> {
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
         let block_op = BlockOp::writev_at(bufs, lba);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        VdevFut::new(selfref, block_op, true)
+        Box::new(VdevBlockFut::new(selfref, block_op, true))
     }
 }
 
@@ -187,18 +289,18 @@ impl Vdev for VdevBlock {
         self.handle.clone()
     }
 
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> VdevFut<Vdev> {
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
         let block_op = BlockOp::read_at(buf, lba);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        VdevFut::new(selfref, block_op, false)
+        Box::new(VdevBlockFut::new(selfref, block_op, false))
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevFut<Vdev> {
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
         let block_op = BlockOp::write_at(buf, lba);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        VdevFut::new(selfref, block_op, true)
+        Box::new(VdevBlockFut::new(selfref, block_op, true))
     }
 }
 
