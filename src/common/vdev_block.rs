@@ -46,9 +46,9 @@ impl mio::Evented for VdevBlockFutEvented {
 }
 
 #[must_use = "futures do nothing unless polled"]
-pub struct VdevBlockFut<T: Vdev + ?Sized> {
+pub struct VdevBlockFut {
     /// Link to the target `Vdev` that will complete this future
-    vdev: Rc<T>,
+    vdev: Rc<VdevLeaf>,
 
     /// The associated `BlockOp`.  Whether it's a read or write will be clear
     /// from which `ZoneQueue` it's stored in.
@@ -64,42 +64,33 @@ pub struct VdevBlockFut<T: Vdev + ?Sized> {
     io: PollEvented<VdevBlockFutEvented>
 }
 
-impl<T: Vdev + ?Sized> VdevBlockFut<T> {
-    pub fn new(vdev: Rc<T>,
+impl VdevBlockFut {
+    pub fn new(vdev: Rc<VdevLeaf>,
                block_op: BlockOp,
-               write:bool) -> VdevBlockFut<T> {
+               write:bool) -> VdevBlockFut {
         let (registration, promise) = mio::Registration::new2();
         let io = VdevBlockFutEvented {registration: registration,
                                  promise: promise};
         let handle = vdev.handle().clone();
-        VdevBlockFut::<T> {vdev: vdev,
-                           block_op: block_op,
-                           scheduled: false,
-                           write: write,
-                           io: PollEvented::new(io, &handle).unwrap()}
+        VdevBlockFut{vdev: vdev,
+                     block_op: block_op,
+                     scheduled: false,
+                     write: write,
+                     io: PollEvented::new(io, &handle).unwrap()}
     }
 }
 
-impl<T: Vdev + ?Sized> futures::Future for VdevBlockFut<T> {
+impl futures::Future for VdevBlockFut {
     type Item = isize;
     type Error = io::Error;
 
     fn poll(&mut self) -> futures::Poll<isize, io::Error> {
         if ! self.scheduled {
-            //match self.block_op.bufs {
-                //BlockOpBufT::IoVec(ref iovec) => {
-                    //if self.write {
-                    //} else {
-                        //self.vdev.read_at(iovec.clone(), self.block_op.lba);
-                    //}
-                //},
-                //BlockOpBufT::SGList(ref sglist) => {
-                    //if self.write {
-                    //} else {
-                        ////self.vdev.readv_at(sglist ,self.block_op.lba);
-                    //}
-                //}
-            //}
+            if self.write {
+                self.sched_write(self.block_op);
+            } else {
+                self.sched_read(self.block_op);
+            }
             self.scheduled = true;
         }
         /// Arbitrary use Readable readiness for this type.  It doesn't matter
@@ -247,15 +238,36 @@ impl VdevBlock {
                    }
     }
 
-    ///// Helper function that reads a `BlockOp` popped off the scheduler
-    //fn read_blockop(&self, block_op: BlockOp) -> io::Result<AioFut<isize>>{
-        //let bufs = block_op.bufs;
-        //if bufs.len() == 1 {
-            //self.leaf.read_at(bufs.first().unwrap().clone(), block_op.lba)
-        //} else {
-            //self.leaf.readv_at(bufs, block_op.lba)
-        //}
-    //}
+    fn sched_read(&self, block_op: BlockOp) {
+        //TODO eventually these should be scheduled by LBA order and to reduce
+        //the disks' queue depth, but for now push them straight through
+        let fut = match self.block_op.bufs {
+            BlockOpBufT::IoVec(iovec) =>
+                self.leaf.read_at(iovec, self.block_op.lba),
+            BlockOpBufT::SGList(sglist) =>
+                self.leaf.readv_at(sglist, self.block_op.lba)
+        }.and_then(|| {
+            self.io.promise.set_readiness();
+        });
+        // In the context where this is called, we can't return a future.  So we
+        // have to spawn it into the event loop manually
+        self.handle.spawn(fut);
+    }
+
+    fn sched_write(&self, block_op: BlockOp) {
+        //TODO actually schedule them instead of issueing immediately
+        let fut = match self.block_op.bufs {
+            BlockOpBufT::IoVec(iovec) =>
+                self.leaf.write_at(iovec, self.block_op.lba),
+            BlockOpBufT::SGList(sglist) =>
+                self.leaf.writev_at(sglist, self.block_op.lba)
+        }.and_then(|| {
+            self.io.promise.set_readiness();
+        });
+        // In the context where this is called, we can't return a future.  So we
+        // have to spawn it into the event loop manually
+        self.handle.spawn(fut);
+    }
 
     ///// Helper function that writes a `BlockOp` popped off the scheduler
     //fn write_blockop(&self, block_op: BlockOp) -> io::Result<AioFut<isize>>{

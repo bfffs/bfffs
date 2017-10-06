@@ -16,6 +16,7 @@ use common::vdev_leaf::*;
 ///
 pub struct VdevFile {
     file:   File,
+    handle: Handle,
     size:   LbaT
 }
 
@@ -34,6 +35,10 @@ impl ZonedDevice for VdevFile {
 }
 
 impl VdevLeaf for VdevFile {
+    fn handle(&self) -> Handle {
+        self.handle
+    }
+
     fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
         self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
     }
@@ -52,9 +57,9 @@ impl VdevFile {
     /// * `h`       Handle to the Tokio reactor that will be used to service
     ///             this vdev.  
     pub fn open<P: AsRef<Path>>(path: P, h: Handle) -> Self {
-        let f = File::open(path, h).unwrap();
+        let f = File::open(path, h.clone()).unwrap();
         let size = f.metadata().unwrap().len() / dva::BYTES_PER_LBA as u64;
-        VdevFile{file: f, size: size}
+        VdevFile{file: f, handle: h, size: size}
     }
 }
 
