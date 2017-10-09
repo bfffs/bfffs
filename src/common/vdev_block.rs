@@ -1,7 +1,8 @@
 // vim: tw=80
 
-use futures;
+use futures::{Async, Future, Poll};
 use mio;
+use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
 use std::io;
@@ -13,14 +14,67 @@ use common::vdev::*;
 use common::vdev_leaf::*;
 use common::zoned_device::*;
 
+#[derive(Eq, PartialEq)]
+pub enum BlockOpBufT {
+    IoVec(IoVec),
+    //None,
+    SGList(SGList)
+}
+
+/// A single read or write command that is queued at the VdevBlock layer
+#[derive(Eq)]
+struct BlockOp {
+    pub lba: LbaT,
+    pub bufs: BlockOpBufT,
+
+    /// Used by the `VdevLeaf` to complete this future
+    pub promise: mio::SetReadiness
+}
+
+impl Ord for BlockOp {
+    /// Compare `BlockOp`s by LBA in *reverse* order.  We must use reverse order
+    /// because Rust's standard library includes a max heap but not a min heap,
+    /// and we want to pop `BlockOp`s lowest-LBA first.
+    fn cmp(&self, other: &BlockOp) -> Ordering {
+        self.lba.cmp(&other.lba).reverse()
+    }
+}
+
+impl PartialEq for BlockOp {
+    fn eq(&self, other: &BlockOp) -> bool {
+        self.lba == other.lba
+    }
+}
+
+impl PartialOrd for BlockOp {
+    fn partial_cmp(&self, other: &BlockOp) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl BlockOp {
+    pub fn read_at(buf: IoVec, lba: LbaT, promise: mio::SetReadiness) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), promise: promise}
+    }
+
+    pub fn readv_at(bufs: SGList, lba: LbaT, promise: mio::SetReadiness) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs), promise: promise}
+    }
+
+    pub fn write_at(buf: IoVec, lba: LbaT, promise: mio::SetReadiness) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), promise: promise}
+    }
+
+    pub fn writev_at(bufs: SGList, lba: LbaT, promise: mio::SetReadiness) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs), promise: promise}
+    }
+}
+
 /// mio implementation detail
 #[doc(hidden)]
 struct VdevBlockFutEvented {
     /// Used by `mio::Evented`
     registration: mio::Registration,
-
-    /// Used by the `VdevLeaf` to complete this future
-    promise: mio::SetReadiness
 }
 
 impl mio::Evented for VdevBlockFutEvented {
@@ -46,9 +100,9 @@ impl mio::Evented for VdevBlockFutEvented {
 }
 
 #[must_use = "futures do nothing unless polled"]
-pub struct VdevBlockFut {
+struct VdevBlockFut {
     /// Link to the target `Vdev` that will complete this future
-    vdev: Rc<VdevLeaf>,
+    vdev: Rc<VdevBlock>,
 
     /// The associated `BlockOp`.  Whether it's a read or write will be clear
     /// from which `ZoneQueue` it's stored in.
@@ -65,12 +119,11 @@ pub struct VdevBlockFut {
 }
 
 impl VdevBlockFut {
-    pub fn new(vdev: Rc<VdevLeaf>,
+    pub fn new(vdev: Rc<VdevBlock>,
                block_op: BlockOp,
-               write:bool) -> VdevBlockFut {
-        let (registration, promise) = mio::Registration::new2();
-        let io = VdevBlockFutEvented {registration: registration,
-                                 promise: promise};
+               write:bool,
+               registration: mio::Registration) -> VdevBlockFut {
+        let io = VdevBlockFutEvented {registration: registration};
         let handle = vdev.handle().clone();
         VdevBlockFut{vdev: vdev,
                      block_op: block_op,
@@ -80,26 +133,26 @@ impl VdevBlockFut {
     }
 }
 
-impl futures::Future for VdevBlockFut {
+impl Future for VdevBlockFut {
     type Item = isize;
     type Error = io::Error;
 
-    fn poll(&mut self) -> futures::Poll<isize, io::Error> {
+    fn poll(&mut self) -> Poll<isize, io::Error> {
         if ! self.scheduled {
             if self.write {
-                self.sched_write(self.block_op);
+                self.vdev.sched_write(self.block_op);
             } else {
-                self.sched_read(self.block_op);
+                self.vdev.sched_read(self.block_op);
             }
             self.scheduled = true;
         }
-        /// Arbitrary use Readable readiness for this type.  It doesn't matter
+        /// Arbitrarily use Readable readiness for this type.  It doesn't matter
         /// what kind of readiness we use, so long as we're consistent.
         let poll_result = self.io.poll_read();
-        if poll_result == futures::Async::NotReady {
-            return Ok(futures::Async::NotReady);
+        if poll_result == Async::NotReady {
+            return Ok(Async::NotReady);
         }
-        Ok(futures::Async::Ready(42))  //TODO: get the real result somehow.
+        Ok(Async::Ready(42))  //TODO: get the real result somehow.
     }
 }
 
@@ -241,32 +294,60 @@ impl VdevBlock {
     fn sched_read(&self, block_op: BlockOp) {
         //TODO eventually these should be scheduled by LBA order and to reduce
         //the disks' queue depth, but for now push them straight through
-        let fut = match self.block_op.bufs {
-            BlockOpBufT::IoVec(iovec) =>
-                self.leaf.read_at(iovec, self.block_op.lba),
-            BlockOpBufT::SGList(sglist) =>
-                self.leaf.readv_at(sglist, self.block_op.lba)
-        }.and_then(|| {
-            self.io.promise.set_readiness();
-        });
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
-        self.handle.spawn(fut);
+        let promise = block_op.promise;
+        let fut = match block_op.bufs {
+            BlockOpBufT::IoVec(iovec) =>
+                self.handle.spawn(
+                    self.leaf.read_at(iovec, block_op.lba)
+                    .unwrap()
+                    .and_then(move |_| {
+                        promise.set_readiness(mio::Ready::readable());
+                        Ok(())})
+                    .map_err(|_| {
+                        ()
+                    })),
+            BlockOpBufT::SGList(sglist) =>
+                self.handle.spawn(
+                    self.leaf.readv_at(sglist, block_op.lba)
+                    .unwrap()
+                    .and_then(move |_| {
+                        promise.set_readiness(mio::Ready::readable());
+                        Ok(())})
+                    .map_err(|_| {
+                        ()
+                    }))
+        };
     }
 
     fn sched_write(&self, block_op: BlockOp) {
         //TODO actually schedule them instead of issueing immediately
-        let fut = match self.block_op.bufs {
-            BlockOpBufT::IoVec(iovec) =>
-                self.leaf.write_at(iovec, self.block_op.lba),
-            BlockOpBufT::SGList(sglist) =>
-                self.leaf.writev_at(sglist, self.block_op.lba)
-        }.and_then(|| {
-            self.io.promise.set_readiness();
-        });
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
-        self.handle.spawn(fut);
+        let promise = block_op.promise;
+        let fut = match block_op.bufs {
+            BlockOpBufT::IoVec(iovec) =>
+                self.handle.spawn(
+                    self.leaf.write_at(iovec, block_op.lba)
+                    .unwrap()
+                    .and_then(move |_| {
+                        promise.set_readiness(mio::Ready::readable());
+                        Ok(())})
+                    .map_err(|_| {
+                        ()
+                    })),
+            BlockOpBufT::SGList(sglist) =>
+                self.handle.spawn(
+                    self.leaf.writev_at(sglist, block_op.lba)
+                    .unwrap()
+                    .and_then(move |_| {
+                        promise.set_readiness(mio::Ready::readable());
+                        Ok(())})
+                    .map_err(|_| {
+                        ()
+                    }))
+        };
     }
 
     ///// Helper function that writes a `BlockOp` popped off the scheduler
@@ -283,16 +364,18 @@ impl VdevBlock {
 impl SGVdev for VdevBlock {
     fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
-        let block_op = BlockOp::writev_at(bufs, lba);
+        let (registration, promise) = mio::Registration::new2();
+        let block_op = BlockOp::writev_at(bufs, lba, promise);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, false))
+        Box::new(VdevBlockFut::new(selfref, block_op, false, registration))
     }
 
     fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
-        let block_op = BlockOp::writev_at(bufs, lba);
+        let (registration, promise) = mio::Registration::new2();
+        let block_op = BlockOp::writev_at(bufs, lba, promise);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, true))
+        Box::new(VdevBlockFut::new(selfref, block_op, true, registration))
     }
 }
 
@@ -303,16 +386,18 @@ impl Vdev for VdevBlock {
 
     fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
-        let block_op = BlockOp::read_at(buf, lba);
+        let (registration, promise) = mio::Registration::new2();
+        let block_op = BlockOp::read_at(buf, lba, promise);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, false))
+        Box::new(VdevBlockFut::new(selfref, block_op, false, registration))
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
-        let block_op = BlockOp::write_at(buf, lba);
+        let (registration, promise) = mio::Registration::new2();
+        let block_op = BlockOp::write_at(buf, lba, promise);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, true))
+        Box::new(VdevBlockFut::new(selfref, block_op, true, registration))
     }
 }
 

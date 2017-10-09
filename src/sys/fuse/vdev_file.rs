@@ -36,16 +36,25 @@ impl ZonedDevice for VdevFile {
 
 impl VdevLeaf for VdevFile {
     fn handle(&self) -> Handle {
-        self.handle
+        self.handle.clone()
     }
 
     fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
         self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
     }
 
+    fn readv_at(&self, buf: SGList, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.file.readv_at(&buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
+    }
+
     fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
         self.file.write_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
-    }}
+    }
+
+    fn writev_at(&self, buf: SGList, lba: LbaT) -> io::Result<AioFut<isize>> {
+        self.file.writev_at(&buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
+    }
+}
 
 impl VdevFile {
     /// Size of a simulated zone

@@ -12,5 +12,7 @@ use tokio_file::AioFut;
 pub trait VdevLeaf : ZonedDevice {
     fn handle(&self) -> Handle;
     fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>>;
+    fn readv_at(&self, buf: SGList, lba: LbaT) -> io::Result<AioFut<isize>>;
     fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>>;
+    fn writev_at(&self, buf: SGList, lba: LbaT) -> io::Result<AioFut<isize>>;
 }
