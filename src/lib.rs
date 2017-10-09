@@ -6,7 +6,3 @@ extern crate tokio_file;
 
 mod common;
 pub mod sys;
-
-fn main() {
-    println!("Hello, world!");
-}
