@@ -3,7 +3,6 @@
 use common::*;
 use common::zoned_device::*;
 use futures;
-use nix;
 use std::io;
 use std::rc::Rc;
 use tokio_core::reactor::Handle;

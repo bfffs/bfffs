@@ -1,13 +1,15 @@
 // vim: tw=80
 
+use futures::Future;
+use nix;
 use std::io;
 use std::path::Path;
 use tokio_core::reactor::Handle;
-use tokio_file::{AioFut, File};
+use tokio_file::File;
 
 use common::*;
 use common::zoned_device::*;
-use common::vdev_leaf::*;
+use common::vdev::*;
 
 /// VdevFile: File-backed implementation of VdevBlock
 ///
@@ -34,25 +36,53 @@ impl ZonedDevice for VdevFile {
     }
 }
 
-impl VdevLeaf for VdevFile {
+impl SGVdev for VdevFile {
+    fn readv_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
+        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        Box::new(self.file.readv_at(&buf, off).unwrap().map_err(|e| {
+            match e {
+                nix::Error::Sys(x) => io::Error::from(x),
+                _ => panic!("Unhandled error type")
+            }})
+        )
+
+    }
+
+    fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
+        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        Box::new(self.file.writev_at(&buf, off).unwrap().map_err(|e| {
+            match e {
+                nix::Error::Sys(x) => io::Error::from(x),
+                _ => panic!("Unhandled error type")
+            }})
+        )
+    }
+}
+
+impl Vdev for VdevFile {
     fn handle(&self) -> Handle {
         self.handle.clone()
     }
 
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.read_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
+    fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        Box::new(self.file.read_at(buf, off).unwrap().map_err(|e| {
+            match e {
+                nix::Error::Sys(x) => io::Error::from(x),
+                _ => panic!("Unhandled error type")
+            }})
+        )
     }
 
-    fn readv_at(&self, buf: SGList, lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.readv_at(&buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
-    }
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        Box::new(self.file.write_at(buf, off).unwrap().map_err(|e| {
+            match e {
+                nix::Error::Sys(x) => io::Error::from(x),
+                _ => panic!("Unhandled error type")
+            }})
+        )
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.write_at(buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
-    }
-
-    fn writev_at(&self, buf: SGList, lba: LbaT) -> io::Result<AioFut<isize>> {
-        self.file.writev_at(&buf, lba as i64 * (dva::BYTES_PER_LBA as i64))
     }
 }
 
@@ -71,4 +101,3 @@ impl VdevFile {
         VdevFile{file: f, handle: h, size: size}
     }
 }
-

@@ -302,7 +302,6 @@ impl VdevBlock {
             BlockOpBufT::IoVec(iovec) =>
                 self.handle.spawn(
                     self.leaf.read_at(iovec, block_op.lba)
-                    .unwrap()
                     .and_then(move |_| {
                         promise.set_readiness(mio::Ready::readable());
                         Ok(())})
@@ -312,7 +311,6 @@ impl VdevBlock {
             BlockOpBufT::SGList(sglist) =>
                 self.handle.spawn(
                     self.leaf.readv_at(sglist, block_op.lba)
-                    .unwrap()
                     .and_then(move |_| {
                         promise.set_readiness(mio::Ready::readable());
                         Ok(())})
@@ -331,7 +329,6 @@ impl VdevBlock {
             BlockOpBufT::IoVec(iovec) =>
                 self.handle.spawn(
                     self.leaf.write_at(iovec, block_op.lba)
-                    .unwrap()
                     .and_then(move |_| {
                         promise.set_readiness(mio::Ready::readable());
                         Ok(())})
@@ -341,7 +338,6 @@ impl VdevBlock {
             BlockOpBufT::SGList(sglist) =>
                 self.handle.spawn(
                     self.leaf.writev_at(sglist, block_op.lba)
-                    .unwrap()
                     .and_then(move |_| {
                         promise.set_readiness(mio::Ready::readable());
                         Ok(())})
