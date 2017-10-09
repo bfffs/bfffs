@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use common::*;
-use common::zoned_device::*;
 use futures;
 use std::io;
 use std::rc::Rc;
@@ -18,12 +17,24 @@ pub type VdevFut = futures::Future<Item = isize, Error = io::Error>;
 /// ZFS, vdevs may not be stacked arbitrarily.  Not all Vdevs have the same data
 /// plane API.  These methods here are the methods that are common to all Vdev
 /// types.
-pub trait Vdev : ZonedDevice {
+pub trait Vdev {
     /// Return the Tokio reactor handle used for this vdev
     fn handle(&self) -> Handle;
 
+    /// Return the zone number at which the given LBA resides
+    fn lba2zone(&self, lba: LbaT) -> ZoneT;
+
     /// Asynchronously read a contiguous portion of the vdev
     fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+
+    /// Return the usable space of the Vdev.
+    ///
+    /// Does not include wasted space, space reserved for labels, space used by
+    /// partity, etc.  May not change within the lifetime of a Vdev.
+    fn size(&self) -> LbaT;
+
+    /// Return the first LBA of the given zone
+    fn start_of_zone(&self, zone: ZoneT) -> LbaT;
 
     /// Asynchronously write a contiguous portion of the vdev
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;

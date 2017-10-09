@@ -8,7 +8,6 @@ use tokio_core::reactor::Handle;
 use tokio_file::File;
 
 use common::*;
-use common::zoned_device::*;
 use common::vdev::*;
 
 /// VdevFile: File-backed implementation of VdevBlock
@@ -20,20 +19,6 @@ pub struct VdevFile {
     file:   File,
     handle: Handle,
     size:   LbaT
-}
-
-impl ZonedDevice for VdevFile {
-    fn lba2zone(&self, lba: LbaT) -> ZoneT {
-        (lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT
-    }
-
-    fn start_of_zone(&self, zone: ZoneT) -> LbaT {
-        zone as u64 * VdevFile::LBAS_PER_ZONE
-    }
-
-    fn size(&self) -> LbaT {
-        self.size
-    }
 }
 
 impl SGVdev for VdevFile {
@@ -64,6 +49,10 @@ impl Vdev for VdevFile {
         self.handle.clone()
     }
 
+    fn lba2zone(&self, lba: LbaT) -> ZoneT {
+        (lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT
+    }
+
     fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.read_at(buf, off).unwrap().map_err(|e| {
@@ -72,6 +61,14 @@ impl Vdev for VdevFile {
                 _ => panic!("Unhandled error type")
             }})
         )
+    }
+
+    fn size(&self) -> LbaT {
+        self.size
+    }
+
+    fn start_of_zone(&self, zone: ZoneT) -> LbaT {
+        zone as u64 * VdevFile::LBAS_PER_ZONE
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {

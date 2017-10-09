@@ -13,7 +13,6 @@ use tokio_core::reactor::{Handle, PollEvented};
 use common::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
-use common::zoned_device::*;
 
 #[derive(Eq, PartialEq)]
 pub enum BlockOpBufT {
@@ -381,6 +380,10 @@ impl Vdev for VdevBlock {
         self.handle.clone()
     }
 
+    fn lba2zone(&self, lba: LbaT) -> ZoneT {
+        self.leaf.lba2zone(lba)
+    }
+
     fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
         let (registration, promise) = mio::Registration::new2();
@@ -389,25 +392,19 @@ impl Vdev for VdevBlock {
         Box::new(VdevBlockFut::new(selfref, block_op, false, registration))
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
-        self.check_iovec_bounds(lba, &buf);
-        let (registration, promise) = mio::Registration::new2();
-        let block_op = BlockOp::write_at(buf, lba, promise);
-        let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, true, registration))
-    }
-}
-
-impl ZonedDevice for VdevBlock {
-    fn lba2zone(&self, lba: LbaT) -> ZoneT {
-        self.leaf.lba2zone(lba)
-    }
-
     fn size(&self) -> LbaT {
         self.size
     }
 
     fn start_of_zone(&self, zone: ZoneT) -> LbaT {
         self.leaf.start_of_zone(zone)
+    }
+
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+        self.check_iovec_bounds(lba, &buf);
+        let (registration, promise) = mio::Registration::new2();
+        let block_op = BlockOp::write_at(buf, lba, promise);
+        let selfref = self.selfref.upgrade().unwrap().clone();
+        Box::new(VdevBlockFut::new(selfref, block_op, true, registration))
     }
 }
