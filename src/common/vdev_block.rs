@@ -6,6 +6,7 @@ use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
 use std::io;
+use std::mem;
 use std::rc::{Rc, Weak};
 use tokio_core::reactor::{Handle, PollEvented};
 
@@ -104,12 +105,12 @@ struct VdevBlockFut {
     /// Link to the target `Vdev` that will complete this future
     vdev: Rc<VdevBlock>,
 
-    /// The associated `BlockOp`.  Whether it's a read or write will be clear
-    /// from which `ZoneQueue` it's stored in.
-    block_op: BlockOp,
-
-    /// Has this I/O already been scheduled?
-    scheduled: bool,
+    /// The associated `BlockOp`.
+    ///
+    /// Whether it's a read or write will be clear from which `ZoneQueue` it's
+    /// stored in.  If `None`, that means that the `BlockOp` has already been
+    /// scheduled.
+    block_op: Option<BlockOp>,
 
     /// Is this a read or a write operation?
     write: bool,
@@ -126,8 +127,7 @@ impl VdevBlockFut {
         let io = VdevBlockFutEvented {registration: registration};
         let handle = vdev.handle().clone();
         VdevBlockFut{vdev: vdev,
-                     block_op: block_op,
-                     scheduled: false,
+                     block_op: Some(block_op),
                      write: write,
                      io: PollEvented::new(io, &handle).unwrap()}
     }
@@ -138,13 +138,14 @@ impl Future for VdevBlockFut {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<isize, io::Error> {
-        if ! self.scheduled {
+        if self.block_op.is_some() {
             if self.write {
-                self.vdev.sched_write(self.block_op);
+                let x = mem::replace(&mut self.block_op, None);
+                self.vdev.sched_write(x.unwrap());
             } else {
-                self.vdev.sched_read(self.block_op);
+                let x = mem::replace(&mut self.block_op, None);
+                self.vdev.sched_read(x.unwrap());
             }
-            self.scheduled = true;
         }
         /// Arbitrarily use Readable readiness for this type.  It doesn't matter
         /// what kind of readiness we use, so long as we're consistent.
