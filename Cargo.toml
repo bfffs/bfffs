@@ -9,3 +9,6 @@ mio = { path = "/home/somers/src/rust/mio" }
 nix = { path = "/home/somers/src/rust/nix" }
 tokio-file = { path = "/home/somers/src/rust/tokio-file" }
 tokio-core = { path = "/home/somers/src/rust/tokio-core" }
+
+[dev-dependencies]
+tempdir = "0.3"

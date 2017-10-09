@@ -9,6 +9,7 @@ use tokio_file::File;
 
 use common::*;
 use common::vdev::*;
+use common::vdev_leaf::*;
 
 /// VdevFile: File-backed implementation of VdevBlock
 ///
@@ -81,6 +82,9 @@ impl Vdev for VdevFile {
         )
 
     }
+}
+
+impl VdevLeaf for VdevFile {
 }
 
 impl VdevFile {
