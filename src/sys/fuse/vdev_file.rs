@@ -16,6 +16,7 @@ use common::vdev_leaf::*;
 /// This is used by the FUSE implementation of ArkFS.  It works with both
 /// regular files and device files
 ///
+#[derive(Debug)]
 pub struct VdevFile {
     file:   File,
     handle: Handle,
