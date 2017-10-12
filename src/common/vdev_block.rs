@@ -297,7 +297,7 @@ impl VdevBlock {
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
         let promise = block_op.promise;
-        let fut = match block_op.bufs {
+        match block_op.bufs {
             BlockOpBufT::IoVec(iovec) =>
                 self.handle.spawn(
                     self.leaf.read_at(iovec, block_op.lba)
@@ -324,7 +324,7 @@ impl VdevBlock {
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
         let promise = block_op.promise;
-        let fut = match block_op.bufs {
+        match block_op.bufs {
             BlockOpBufT::IoVec(iovec) =>
                 self.handle.spawn(
                     self.leaf.write_at(iovec, block_op.lba)
