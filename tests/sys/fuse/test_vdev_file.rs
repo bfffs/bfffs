@@ -23,7 +23,7 @@ test_suite! {
         setup(&mut self) {
             let len = 1 << 26;  // 64MB
             let core = Core::new().unwrap();
-            let tempdir = t!(TempDir::new("test_open"));
+            let tempdir = t!(TempDir::new("test_vdev_file"));
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));

@@ -1,11 +1,3 @@
-use arkfs::common::vdev::Vdev;
-use arkfs::common::vdev_block::*;
-use arkfs::sys::vdev_file::*;
-use std::fs;
-use tempdir::TempDir;
-use tokio_file::File;
-use tokio_core::reactor::Core;
-
 macro_rules! t {
     ($e:expr) => (match $e {
         Ok(e) => e,
@@ -13,29 +5,31 @@ macro_rules! t {
     })
 }
 
-#[test]
-fn test_open() {
-    let len = 1 << 26;  // 64MB
-    let mut l = t!(Core::new());
-    let tempdir = t!(TempDir::new("test_open"));
-    let filename = tempdir.path().join("vdev");
-    let file = t!(fs::File::create(&filename));
-    t!(file.set_len(len));
-    let leaf = Box::new(VdevFile::open(filename, l.handle()));
-    VdevBlock::open(leaf, l.handle());
+test_suite! {
+    name vdev_block_tests;
+
+    use arkfs::common::vdev::Vdev;
+    use arkfs::common::vdev_block::*;
+    use arkfs::sys::vdev_file::*;
+    use std::fs;
+    use tempdir::TempDir;
+    use tokio_core::reactor::Core;
+
+    fixture!( vdev() -> (Core, VdevBlock, TempDir) {
+        setup(&mut self) {
+            let len = 1 << 26;  // 64MB
+            let core = Core::new().unwrap();
+            let tempdir = t!(TempDir::new("test_vdev_block"));
+            let filename = tempdir.path().join("vdev");
+            let file = t!(fs::File::create(&filename));
+            t!(file.set_len(len));
+            let leaf = Box::new(VdevFile::open(filename, core.handle()));
+            let vdev = VdevBlock::open(leaf, core.handle());
+            (core, vdev, tempdir)
+        }
+    });
+
+    test size(vdev) {
+        assert_eq!(vdev.val.1.size(), 16384);
+    }
 }
-
-#[test]
-fn test_size() {
-    let len = 1 << 26;  // 64MB
-    let mut l = t!(Core::new());
-    let tempdir = t!(TempDir::new("test_size"));
-    let filename = tempdir.path().join("vdev");
-    let file = t!(fs::File::create(&filename));
-    t!(file.set_len(len));
-    let leaf = Box::new(VdevFile::open(filename, l.handle()));
-    let vdev = VdevBlock::open(leaf, l.handle());
-    assert_eq!(vdev.size(), 16384);
-}
-
-
