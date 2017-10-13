@@ -3,7 +3,6 @@
 use common::*;
 use futures;
 use std::io;
-use std::rc::Rc;
 use tokio_core::reactor::Handle;
 
 /// Future representing an operation on a vdev.  The return type is the amount
