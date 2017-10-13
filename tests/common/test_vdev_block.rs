@@ -6,6 +6,7 @@ macro_rules! t {
 }
 
 test_suite! {
+    // These tests use a real VdevLeaf object
     name vdev_block_tests;
 
     use arkfs::common::vdev::{SGVdev, Vdev};
@@ -72,5 +73,104 @@ test_suite! {
         let wbuf1 = Rc::new(vec![42u8; 7168].into_boxed_slice());
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()].into_boxed_slice();
         vdev.val.1.writev_at(wbufs, vdev.val.1.size() - 2);
+    }
+}
+
+test_suite! {
+    // These tests use a mock VdevLeaf object
+    name mock_vdev_block_tests;
+
+    use arkfs::common::*;
+    use arkfs::common::vdev::{SGVdev, Vdev, VdevFut};
+    use arkfs::common::vdev_block::*;
+    use arkfs::common::vdev_leaf::*;
+    use futures::future;
+    use std::cell::RefCell;
+    use std::io::Error;
+    use std::rc::Rc;
+    use std::fs;
+    use std::collections::VecDeque;
+    use tempdir::TempDir;
+    use tokio_core::reactor::{Core, Handle};
+
+    // Roll our own Mock object.  We can't use:
+    // mockers: https://github.com/kriomant/mockers/issues/20
+    // mock_derive: https://github.com/DavidDeSimone/mock_derive/issues/3
+    // mockme because it can only be used by a single test
+    // galvanic_mock because it doesn't support specifying a fixed order of
+    // expectations
+    pub struct MockVdevLeaf {
+        handle: Handle,
+        record: RefCell<VecDeque<(String, LbaT)>>
+    }
+
+    impl MockVdevLeaf {
+        fn new(handle: Handle) -> Self {
+            MockVdevLeaf {
+                handle: handle.clone(),
+                record: RefCell::new(VecDeque::<(String, LbaT)>::new())
+            }
+        }
+
+        pub fn expect(&self, s: &str, lba: LbaT) -> &Self {
+            let block_op = self.record.borrow_mut().pop_front().unwrap();
+            assert_eq!(s, block_op.0);
+            assert_eq!(lba, block_op.1);
+            &self
+        }
+
+        fn push(&self, s: &str, lba: LbaT) {
+            self.record.borrow_mut().push_back((String::from(s), lba));
+        }
+    }
+
+    impl Vdev for MockVdevLeaf {
+        fn handle(&self) -> Handle {
+            self.handle.clone()
+        }
+        fn lba2zone(&self, lba: LbaT) -> ZoneT {
+            0
+        }
+        fn size(&self) -> LbaT {
+            16384
+        }
+        fn start_of_zone(&self, zone: ZoneT) -> LbaT {
+            0
+        }
+        fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+            self.push("read_at", lba);
+            Box::new(future::ok::<isize, Error>((0)))
+        }
+        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+            self.push("write_at", lba);
+            Box::new(future::ok::<isize, Error>((0)))
+        }
+    }
+
+    impl SGVdev for MockVdevLeaf {
+        fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
+            self.push("readv_at", lba);
+            Box::new(future::ok::<isize, Error>((0)))
+        }
+        fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
+            self.push("writev_at", lba);
+            Box::new(future::ok::<isize, Error>((0)))
+        }
+    }
+
+    impl VdevLeaf for MockVdevLeaf {
+    }
+
+    // Reads should be passed straight through, even if they're out-of-order
+    test read_at() {
+        let rbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let mut core = Core::new().unwrap();
+        let vdev = MockVdevLeaf::new(core.handle());
+        let fut1 = vdev.read_at(rbuf.clone(), 1);
+        let fut0 = vdev.read_at(rbuf.clone(), 0);
+        let futs = future::Future::join(fut0, fut1);
+        core.run(futs).unwrap();
+        vdev.expect("read_at", 1)
+            .expect("read_at", 0);
     }
 }
