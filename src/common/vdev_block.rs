@@ -329,7 +329,7 @@ impl SGVdev for VdevBlock {
     fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<isize>();
-        let block_op = BlockOp::writev_at(bufs, lba, sender);
+        let block_op = BlockOp::readv_at(bufs, lba, sender);
         let selfref = self.selfref.upgrade().unwrap().clone();
         Box::new(VdevBlockFut::new(selfref, block_op, false, receiver))
     }
