@@ -1,14 +1,14 @@
 // vim: tw=80
 
-use futures::{Async, Future, Poll};
-use mio;
+use futures::{Future, Poll};
+use futures::sync::oneshot;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
 use std::io;
 use std::mem;
 use std::rc::{Rc, Weak};
-use tokio_core::reactor::{Handle, PollEvented};
+use tokio_core::reactor::Handle;
 
 use common::*;
 use common::vdev::*;
@@ -22,13 +22,15 @@ pub enum BlockOpBufT {
 }
 
 /// A single read or write command that is queued at the VdevBlock layer
-#[derive(Eq)]
 struct BlockOp {
     pub lba: LbaT,
     pub bufs: BlockOpBufT,
 
     /// Used by the `VdevLeaf` to complete this future
-    pub promise: mio::SetReadiness
+    pub sender: oneshot::Sender<isize>
+}
+
+impl Eq for BlockOp {
 }
 
 impl Ord for BlockOp {
@@ -53,49 +55,20 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
-    pub fn read_at(buf: IoVec, lba: LbaT, promise: mio::SetReadiness) -> BlockOp {
-        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), promise: promise}
+    pub fn read_at(buf: IoVec, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), sender: sender}
     }
 
-    pub fn readv_at(bufs: SGList, lba: LbaT, promise: mio::SetReadiness) -> BlockOp {
-        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs), promise: promise}
+    pub fn readv_at(bufs: SGList, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs), sender: sender}
     }
 
-    pub fn write_at(buf: IoVec, lba: LbaT, promise: mio::SetReadiness) -> BlockOp {
-        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), promise: promise}
+    pub fn write_at(buf: IoVec, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), sender: sender}
     }
 
-    pub fn writev_at(bufs: SGList, lba: LbaT, promise: mio::SetReadiness) -> BlockOp {
-        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs), promise: promise}
-    }
-}
-
-/// mio implementation detail
-#[doc(hidden)]
-struct VdevBlockFutEvented {
-    /// Used by `mio::Evented`
-    registration: mio::Registration,
-}
-
-impl mio::Evented for VdevBlockFutEvented {
-    fn register(&self,
-                poll: &mio::Poll,
-                token: mio::Token,
-                interest: mio::Ready,
-                opts: mio::PollOpt) -> io::Result<()> {
-        self.registration.register(poll, token, interest, opts)
-    }
-
-    fn reregister(&self,
-                poll: &mio::Poll,
-                token: mio::Token,
-                interest: mio::Ready,
-                opts: mio::PollOpt) -> io::Result<()> {
-        self.registration.reregister(poll, token, interest, opts)
-    }
-
-    fn deregister(&self, poll: &mio::Poll) -> io::Result<()> {
-        self.registration.deregister(poll)
+    pub fn writev_at(bufs: SGList, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs), sender: sender}
     }
 }
 
@@ -115,20 +88,18 @@ struct VdevBlockFut {
     write: bool,
 
     // Used by the mio stuff
-    io: PollEvented<VdevBlockFutEvented>
+    receiver: oneshot::Receiver<isize>
 }
 
 impl VdevBlockFut {
     pub fn new(vdev: Rc<VdevBlock>,
                block_op: BlockOp,
                write:bool,
-               registration: mio::Registration) -> VdevBlockFut {
-        let io = VdevBlockFutEvented {registration: registration};
-        let handle = vdev.handle().clone();
+               receiver: oneshot::Receiver<isize>) -> VdevBlockFut {
         VdevBlockFut{vdev: vdev,
                      block_op: Some(block_op),
                      write: write,
-                     io: PollEvented::new(io, &handle).unwrap()}
+                     receiver: receiver}
     }
 }
 
@@ -146,13 +117,10 @@ impl Future for VdevBlockFut {
                 self.vdev.sched_read(x.unwrap());
             }
         }
-        /// Arbitrarily use Readable readiness for this type.  It doesn't matter
-        /// what kind of readiness we use, so long as we're consistent.
-        let poll_result = self.io.poll_read();
-        if poll_result == Async::NotReady {
-            return Ok(Async::NotReady);
-        }
-        Ok(Async::Ready(42))  //TODO: get the real result somehow.
+        self.receiver.poll()
+        .map_err(|_| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "")
+        })
     }
 }
 
@@ -296,13 +264,13 @@ impl VdevBlock {
         //the disks' queue depth, but for now push them straight through
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
-        let promise = block_op.promise;
+        let sender = block_op.sender;
         match block_op.bufs {
             BlockOpBufT::IoVec(iovec) =>
                 self.handle.spawn(
                     self.leaf.read_at(iovec, block_op.lba)
-                    .and_then(move |_| {
-                        promise.set_readiness(mio::Ready::readable());
+                    .and_then(move |r| {
+                        sender.send(r).unwrap();
                         Ok(())})
                     .map_err(|_| {
                         ()
@@ -310,8 +278,8 @@ impl VdevBlock {
             BlockOpBufT::SGList(sglist) =>
                 self.handle.spawn(
                     self.leaf.readv_at(sglist, block_op.lba)
-                    .and_then(move |_| {
-                        promise.set_readiness(mio::Ready::readable());
+                    .and_then(move |r| {
+                        sender.send(r).unwrap();
                         Ok(())})
                     .map_err(|_| {
                         ()
@@ -323,13 +291,13 @@ impl VdevBlock {
         //TODO actually schedule them instead of issueing immediately
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
-        let promise = block_op.promise;
+        let sender = block_op.sender;
         match block_op.bufs {
             BlockOpBufT::IoVec(iovec) =>
                 self.handle.spawn(
                     self.leaf.write_at(iovec, block_op.lba)
-                    .and_then(move |_| {
-                        promise.set_readiness(mio::Ready::readable());
+                    .and_then(move |r| {
+                        sender.send(r).unwrap();
                         Ok(())})
                     .map_err(|_| {
                         ()
@@ -337,8 +305,8 @@ impl VdevBlock {
             BlockOpBufT::SGList(sglist) =>
                 self.handle.spawn(
                     self.leaf.writev_at(sglist, block_op.lba)
-                    .and_then(move |_| {
-                        promise.set_readiness(mio::Ready::readable());
+                    .and_then(move |r| {
+                        sender.send(r).unwrap();
                         Ok(())})
                     .map_err(|_| {
                         ()
@@ -360,18 +328,18 @@ impl VdevBlock {
 impl SGVdev for VdevBlock {
     fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
-        let (registration, promise) = mio::Registration::new2();
-        let block_op = BlockOp::writev_at(bufs, lba, promise);
+        let (sender, receiver) = oneshot::channel::<isize>();
+        let block_op = BlockOp::writev_at(bufs, lba, sender);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, false, registration))
+        Box::new(VdevBlockFut::new(selfref, block_op, false, receiver))
     }
 
     fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
-        let (registration, promise) = mio::Registration::new2();
-        let block_op = BlockOp::writev_at(bufs, lba, promise);
+        let (sender, receiver) = oneshot::channel::<isize>();
+        let block_op = BlockOp::writev_at(bufs, lba, sender);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, true, registration))
+        Box::new(VdevBlockFut::new(selfref, block_op, true, receiver))
     }
 }
 
@@ -386,10 +354,10 @@ impl Vdev for VdevBlock {
 
     fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
-        let (registration, promise) = mio::Registration::new2();
-        let block_op = BlockOp::read_at(buf, lba, promise);
+        let (sender, receiver) = oneshot::channel::<isize>();
+        let block_op = BlockOp::read_at(buf, lba, sender);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, false, registration))
+        Box::new(VdevBlockFut::new(selfref, block_op, false, receiver))
     }
 
     fn size(&self) -> LbaT {
@@ -402,9 +370,9 @@ impl Vdev for VdevBlock {
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
-        let (registration, promise) = mio::Registration::new2();
-        let block_op = BlockOp::write_at(buf, lba, promise);
+        let (sender, receiver) = oneshot::channel::<isize>();
+        let block_op = BlockOp::write_at(buf, lba, sender);
         let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, true, registration))
+        Box::new(VdevBlockFut::new(selfref, block_op, true, receiver))
     }
 }
