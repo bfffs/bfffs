@@ -185,7 +185,7 @@ test_suite! {
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         let first = vdev.write_at(wbuf.clone(), 1);
         let second = vdev.write_at(wbuf.clone(), 0);
-        let futs = future::Future::join(second, first);
+        let futs = future::Future::join(first, second);
         core.run(futs).unwrap();
         let final_leaf : &Box<MockVdevLeaf> = unsafe {
             mem::transmute(&vdev.leaf)

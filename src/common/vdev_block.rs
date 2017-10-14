@@ -10,6 +10,7 @@ use std::io;
 use tokio_core::reactor::Handle;
 
 use common::*;
+use common::dva::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 
@@ -27,6 +28,17 @@ struct BlockOp {
 
     /// Used by the `VdevLeaf` to complete this future
     pub sender: oneshot::Sender<isize>
+}
+
+impl BlockOp {
+    pub fn len(&self) -> usize {
+        match self.bufs {
+            BlockOpBufT::IoVec(ref iovec) => iovec.len(),
+            BlockOpBufT::SGList(ref sglist) => {
+                sglist.iter().fold(0, |acc, ref iovec| acc + iovec.len())
+            }
+        }
+    }
 }
 
 impl Eq for BlockOp {
@@ -201,37 +213,44 @@ impl VdevBlock {
         let mut zq = wq.get_mut(&zone)
             .expect("Tried to issue from a closed zone");
         assert!(! zq.q.is_empty(), "Tried to issue from an empty zone");
-        if zq.q.peek().unwrap().lba != zq.wp {
-            //Lowest queued write is higher than the block pointer; can't issue
-            //yet.
-            return;
+        loop {
+            if zq.q.is_empty() {
+                // TODO: close the zone is it's full
+                break;
+            }
+            if zq.q.peek().unwrap().lba != zq.wp {
+                //Lowest queued write is higher than the block pointer; can't
+                //issue yet.
+                break;
+            }
+            // TODO: combine adjacent writes, and don't issue a write that is
+            // less than a full LBA
+            let block_op = zq.q.pop().unwrap();
+            zq.wp += (block_op.len() / BYTES_PER_LBA as usize) as LbaT;
+            // In the context where this is called, we can't return a future.
+            // So we have to spawn it into the event loop manually
+            let sender = block_op.sender;
+            match block_op.bufs {
+                BlockOpBufT::IoVec(iovec) =>
+                    self.handle.spawn(
+                        self.leaf.write_at(iovec, block_op.lba)
+                        .and_then(move |r| {
+                            sender.send(r).unwrap();
+                            Ok(())})
+                        .map_err(|_| {
+                            ()
+                        })),
+                BlockOpBufT::SGList(sglist) =>
+                    self.handle.spawn(
+                        self.leaf.writev_at(sglist, block_op.lba)
+                        .and_then(move |r| {
+                            sender.send(r).unwrap();
+                            Ok(())})
+                        .map_err(|_| {
+                            ()
+                        }))
+            };
         }
-        // TODO: combine adjacent writes
-        // TODO: loop until no more writes are possible
-        let block_op = zq.q.pop().unwrap();
-        // In the context where this is called, we can't return a future.  So we
-        // have to spawn it into the event loop manually
-        let sender = block_op.sender;
-        match block_op.bufs {
-            BlockOpBufT::IoVec(iovec) =>
-                self.handle.spawn(
-                    self.leaf.write_at(iovec, block_op.lba)
-                    .and_then(move |r| {
-                        sender.send(r).unwrap();
-                        Ok(())})
-                    .map_err(|_| {
-                        ()
-                    })),
-            BlockOpBufT::SGList(sglist) =>
-                self.handle.spawn(
-                    self.leaf.writev_at(sglist, block_op.lba)
-                    .and_then(move |r| {
-                        sender.send(r).unwrap();
-                        Ok(())})
-                    .map_err(|_| {
-                        ()
-                    }))
-        };
     }
 
     fn sched_read(&self, block_op: BlockOp) {
