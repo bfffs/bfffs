@@ -203,8 +203,38 @@ test_suite! {
             .expect("read_at", 0);
     }
 
+    // Basic writing at the WP works
+    test write_at_0() {
+        let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let mut core = Core::new().unwrap();
+        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
+        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let fut = vdev.write_at(wbuf.clone(), 0);
+        core.run(fut).unwrap();
+        let final_leaf : &Box<MockVdevLeaf> = unsafe {
+            mem::transmute(&vdev.leaf)
+        };
+        final_leaf.expect("write_at", 0);
+    }
+
+    // Basic vectored writing at the WP works
+    test writev_at_0() {
+        let wbuf0 = Rc::new(vec![0u8; 1024].into_boxed_slice());
+        let wbuf1 = Rc::new(vec![0u8; 3072].into_boxed_slice());
+        let wbufs = vec![wbuf0, wbuf1].into_boxed_slice();
+        let mut core = Core::new().unwrap();
+        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
+        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let fut = vdev.writev_at(wbufs, 0);
+        core.run(fut).unwrap();
+        let final_leaf : &Box<MockVdevLeaf> = unsafe {
+            mem::transmute(&vdev.leaf)
+        };
+        final_leaf.expect("writev_at", 0);
+    }
+
     // Writes should be reordered and combined if out-of-order
-    test write_at() {
+    test write_at_combining() {
         let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
         let mut core = Core::new().unwrap();
         let leaf = Box::new(MockVdevLeaf::new(core.handle()));
@@ -217,5 +247,23 @@ test_suite! {
             mem::transmute(&vdev.leaf)
         };
         final_leaf.expect("writev_at", 0);
+    }
+
+    // Writes should be issued ASAP, even if they could be combined later
+    test write_at_issue_asap() {
+        let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let mut core = Core::new().unwrap();
+        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
+        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let first = vdev.write_at(wbuf.clone(), 1);
+        let second = vdev.write_at(wbuf.clone(), 0);
+        let third = vdev.write_at(wbuf.clone(), 2);
+        let futs = future::Future::join3(first, second, third);
+        core.run(futs).unwrap();
+        let final_leaf : &Box<MockVdevLeaf> = unsafe {
+            mem::transmute(&vdev.leaf)
+        };
+        final_leaf.expect("writev_at", 0);
+        final_leaf.expect("write_at", 2);
     }
 }
