@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
+use std::vec::Vec;
 use std::io;
 use tokio_core::reactor::Handle;
 
@@ -34,6 +35,7 @@ impl BlockOp {
     pub fn len(&self) -> usize {
         match self.bufs {
             BlockOpBufT::IoVec(ref iovec) => iovec.len(),
+            //BlockOpBufT::None => 0,
             BlockOpBufT::SGList(ref sglist) => {
                 sglist.iter().fold(0, |acc, ref iovec| acc + iovec.len())
             }
@@ -66,6 +68,10 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
+    //pub fn nodata(lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
+        //BlockOp { lba: lba, bufs: None, sender: sender}
+    //}
+
     pub fn read_at(buf: IoVec, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
         BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), sender: sender}
     }
@@ -213,9 +219,14 @@ impl VdevBlock {
         let mut zq = wq.get_mut(&zone)
             .expect("Tried to issue from a closed zone");
         assert!(! zq.q.is_empty(), "Tried to issue from an empty zone");
+        // Optimistically allocate enough for every BlockOp in the zone queue.
+        let l = zq.q.len();
+        let mut to_notify = Vec::<oneshot::Sender<isize>>::with_capacity(l);
+        let mut combined_bufs = Vec::<Rc<Box<[u8]>>>::with_capacity(l);
+        let start_lba = zq.wp;
         loop {
             if zq.q.is_empty() {
-                // TODO: close the zone is it's full
+                // TODO: close the zone if it's full
                 break;
             }
             if zq.q.peek().unwrap().lba != zq.wp {
@@ -223,35 +234,37 @@ impl VdevBlock {
                 //issue yet.
                 break;
             }
-            // TODO: combine adjacent writes, and don't issue a write that is
-            // less than a full LBA
             let block_op = zq.q.pop().unwrap();
             let lbas = (block_op.len() / BYTES_PER_LBA as usize) as LbaT;
             zq.wp += lbas;
-            // In the context where this is called, we can't return a future.
-            // So we have to spawn it into the event loop manually
-            let sender = block_op.sender;
             match block_op.bufs {
-                BlockOpBufT::IoVec(iovec) =>
-                    self.handle.spawn(
-                        self.leaf.write_at(iovec, block_op.lba)
-                        .and_then(move |r| {
-                            sender.send(r).unwrap();
-                            Ok(())})
-                        .map_err(|_| {
-                            ()
-                        })),
-                BlockOpBufT::SGList(sglist) =>
-                    self.handle.spawn(
-                        self.leaf.writev_at(sglist, block_op.lba)
-                        .and_then(move |r| {
-                            sender.send(r).unwrap();
-                            Ok(())})
-                        .map_err(|_| {
-                            ()
-                        }))
+                BlockOpBufT::IoVec(iovec) => combined_bufs.push(iovec),
+                BlockOpBufT::SGList(sglist) => {
+                    combined_bufs.extend_from_slice(&sglist)
+                }
             };
+            to_notify.push(block_op.sender);
         }
+        if combined_bufs.is_empty() {
+            // Nothing to do
+            return;
+        }
+        let fut = match combined_bufs.len() {
+            0 => unreachable!(),
+            1 => self.leaf.write_at(combined_bufs.pop().unwrap(), start_lba),
+            _ => self.leaf.writev_at(combined_bufs.into_boxed_slice(), start_lba)
+        }.and_then(move |_| {
+            for sender in to_notify.drain(..) {
+                // XXX We don't actually know how much data this
+                // sender's receiver was expecting.  Maybe we should just change
+                // VdevFut to return () instead of isize
+                sender.send(0).unwrap();
+            }
+            Ok(())
+        }).map_err(|_| {
+            ()
+        });
+        self.handle.spawn(fut);
     }
 
     fn sched_read(&self, block_op: BlockOp) {

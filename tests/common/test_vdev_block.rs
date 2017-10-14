@@ -203,7 +203,7 @@ test_suite! {
             .expect("read_at", 0);
     }
 
-    // Writes should be reordered if out-of-order
+    // Writes should be reordered and combined if out-of-order
     test write_at() {
         let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
         let mut core = Core::new().unwrap();
@@ -216,7 +216,6 @@ test_suite! {
         let final_leaf : &Box<MockVdevLeaf> = unsafe {
             mem::transmute(&vdev.leaf)
         };
-        final_leaf.expect("write_at", 0)
-            .expect("write_at", 1);
+        final_leaf.expect("writev_at", 0);
     }
 }
