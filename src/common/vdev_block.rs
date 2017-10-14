@@ -297,7 +297,7 @@ impl SGVdev for VdevBlock {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
-        self.vdev.sched_read(block_op);
+        self.sched_read(block_op);
         Box::new(VdevBlockFut::new(receiver))
     }
 
@@ -305,7 +305,7 @@ impl SGVdev for VdevBlock {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
-        self.vdev.sched_write(block_op);
+        self.sched_write(block_op);
         Box::new(VdevBlockFut::new(receiver))
     }
 }
@@ -323,7 +323,7 @@ impl Vdev for VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::read_at(buf, lba, sender);
-        self.vdev.sched_read(block_op);
+        self.sched_read(block_op);
         Box::new(VdevBlockFut::new(receiver))
     }
 
@@ -339,7 +339,7 @@ impl Vdev for VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::write_at(buf, lba, sender);
-        self.vdev.sched_write(block_op);
+        self.sched_write(block_op);
         Box::new(VdevBlockFut::new(receiver))
     }
 }
