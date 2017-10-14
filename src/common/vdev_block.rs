@@ -35,7 +35,6 @@ impl BlockOp {
     pub fn len(&self) -> usize {
         match self.bufs {
             BlockOpBufT::IoVec(ref iovec) => iovec.len(),
-            //BlockOpBufT::None => 0,
             BlockOpBufT::SGList(ref sglist) => {
                 sglist.iter().fold(0, |acc, ref iovec| acc + iovec.len())
             }
@@ -68,10 +67,6 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
-    //pub fn nodata(lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
-        //BlockOp { lba: lba, bufs: None, sender: sender}
-    //}
-
     pub fn read_at(buf: IoVec, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
         BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), sender: sender}
     }
