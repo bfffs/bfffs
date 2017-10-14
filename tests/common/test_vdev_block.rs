@@ -89,9 +89,7 @@ test_suite! {
     use std::io::Error;
     use std::mem;
     use std::rc::Rc;
-    use std::fs;
     use std::collections::VecDeque;
-    use tempdir::TempDir;
     use tokio_core::reactor::{Core, Handle};
 
     // Roll our own Mock object.  We can't use:
@@ -129,31 +127,31 @@ test_suite! {
         fn handle(&self) -> Handle {
             self.handle.clone()
         }
-        fn lba2zone(&self, lba: LbaT) -> ZoneT {
+        fn lba2zone(&self, _: LbaT) -> ZoneT {
             0
         }
         fn size(&self) -> LbaT {
             16384
         }
-        fn start_of_zone(&self, zone: ZoneT) -> LbaT {
+        fn start_of_zone(&self, _: ZoneT) -> LbaT {
             0
         }
-        fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+        fn read_at(&self, _: IoVec, lba: LbaT) -> Box<VdevFut> {
             self.push("read_at", lba);
             Box::new(future::ok::<isize, Error>((0)))
         }
-        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+        fn write_at(&self, _: IoVec, lba: LbaT) -> Box<VdevFut> {
             self.push("write_at", lba);
             Box::new(future::ok::<isize, Error>((0)))
         }
     }
 
     impl SGVdev for MockVdevLeaf {
-        fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
+        fn readv_at(&self, _: SGList, lba: LbaT) -> Box<VdevFut> {
             self.push("readv_at", lba);
             Box::new(future::ok::<isize, Error>((0)))
         }
-        fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
+        fn writev_at(&self, _: SGList, lba: LbaT) -> Box<VdevFut> {
             self.push("writev_at", lba);
             Box::new(future::ok::<isize, Error>((0)))
         }
@@ -167,7 +165,7 @@ test_suite! {
         let rbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
         let mut core = Core::new().unwrap();
         let leaf = Box::new(MockVdevLeaf::new(core.handle()));
-        let mut vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         let first = vdev.read_at(rbuf.clone(), 1);
         let second = vdev.read_at(rbuf.clone(), 0);
         let futs = future::Future::join(first, second);
@@ -177,5 +175,22 @@ test_suite! {
         };
         final_leaf.expect("read_at", 1)
             .expect("read_at", 0);
+    }
+
+    // Writes should be reordered if out-of-order
+    test write_at() {
+        let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let mut core = Core::new().unwrap();
+        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
+        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let first = vdev.write_at(wbuf.clone(), 1);
+        let second = vdev.write_at(wbuf.clone(), 0);
+        let futs = future::Future::join(second, first);
+        core.run(futs).unwrap();
+        let final_leaf : &Box<MockVdevLeaf> = unsafe {
+            mem::transmute(&vdev.leaf)
+        };
+        final_leaf.expect("write_at", 0)
+            .expect("write_at", 1);
     }
 }

@@ -2,12 +2,11 @@
 
 use futures::{Future, Poll};
 use futures::sync::oneshot;
+use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
 use std::io;
-use std::mem;
-use std::rc::{Rc, Weak};
 use tokio_core::reactor::Handle;
 
 use common::*;
@@ -100,7 +99,7 @@ impl Future for VdevBlockFut {
 struct ZoneQueue {
     /// The zone's write pointer, as an LBA.  Absolute, not relative to
     /// start-of-zone.
-    wp: LbaT,
+    pub wp: LbaT,
 
     /// Priority queue of pending `BlockOp`s for a single zone.  It stores
     /// operations that aren't ready to be issued to the underlying storage,
@@ -108,52 +107,16 @@ struct ZoneQueue {
     /// However, sine it is illegal for the client to write to the same location
     /// twice without explicitly erasing the zone, there are guaranteed to be no
     /// overlapping ops.
-    q: BinaryHeap<BlockOp>
+    pub q: BinaryHeap<BlockOp>
 }
 
-/// ZoneScheduler: I/O scheduler for a single zoned block device
-///
-/// This object schedules I/O to a block device.  Its main purpose is to provide
-/// the strictly sequential write operations that zoned devices require.
-struct ZoneScheduler {
-}
-
-impl ZoneScheduler {
-    //pub fn new(leaf: Box<VdevLeaf>, handle: Handle) -> ZoneScheduler {
-        //ZoneScheduler{ leaf: leaf,
-                       //handle: handle,
-                       //write_queues: BTreeMap::new(),
-                       //read_queue: BTreeMap::new() }
-    //}
-
-    // Schedule the BlockOp, then issue any reads that are ready.
-    //pub fn sched_read(&self, block_op: BlockOp) {
-        ////TODO eventually these should be scheduled by LBA order and to reduce
-        ////the disks' queue depth, but for now push them straight through
-        //match self.block_op.bufs {
-            //BlockOpBufT::IoVec(iovec) => self.leaf.read_at(iovec, self.block_op.lba),
-            //BlockOpBufT::SGList(sglist) => self.leaf.readv_at(sglist, self.block_op.lba)
-        //}.and_then(|| {//TODO
-        //})
-    //}
-
-    //pub fn readv_at(&self, bufs: SGList, lba: LbaT) -> (
-        //AioFut<isize>, ZoneSchedIter) {
-        ////TODO
-        //ZoneSchedIter{}
-    //}
-
-    //pub fn write_at(&self, buf: IoVec, lba: LbaT) -> (
-        //AioFut<isize>, ZoneSchedIter) {
-        ////TODO
-        //ZoneSchedIter{}
-    //}
-
-    //pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> (
-        //AioFut<isize>, ZoneSchedIter) {
-        ////TODO
-        //ZoneSchedIter{}
-    //}
+impl ZoneQueue {
+    fn new(start_of_zone: LbaT) -> Self {
+        ZoneQueue {
+            wp: start_of_zone,
+            q: BinaryHeap::<BlockOp>::new()
+        }
+    }
 }
 
 ///// An iterator that yields successive `BlockOp`s of a `ZoneScheduler` that are
@@ -186,13 +149,19 @@ pub struct VdevBlock {
 
     /// A collection of BlockOps.  Newly received reads must land here.  They
     /// will be issued to the OS as the scheduler sees fit.
-    read_queue: BTreeMap<LbaT, BlockOp>,
+    // Use a RefCell so that the VdevBlock can be manipulated by multiple
+    // continuations which may have shared references, but all run in the same
+    // reactor.
+    read_queue: RefCell<BTreeMap<LbaT, BlockOp>>,
 
     /// A collection of ZoneQueues, one for each open Zone.  Newly received
     /// writes must land here.  They will be issued to the OS in LBA-order, per
     /// zone.  If a Zone is not present in the map, then it must be either full
     /// or empty.
-    write_queues: BTreeMap<ZoneT, ZoneQueue>,
+    // Use a RefCell so that the VdevBlock can be manipulated by multiple
+    // continuations which may have shared references, but all run in the same
+    // reactor.
+    write_queues: RefCell<BTreeMap<ZoneT, ZoneQueue>>,
 }
 
 impl VdevBlock {
@@ -221,9 +190,48 @@ impl VdevBlock {
         VdevBlock { handle: handle,
                     leaf: leaf,
                     size: size,
-                    write_queues: BTreeMap::new(),
-                    read_queue: BTreeMap::new()
+                    write_queues: RefCell::new(BTreeMap::new()),
+                    read_queue: RefCell::new(BTreeMap::new())
                    }
+    }
+
+    /// If possible, issue any writes from the given zone.
+    fn issue_writes(&self, zone: ZoneT) {
+        let mut wq = self.write_queues.borrow_mut();
+        let mut zq = wq.get_mut(&zone)
+            .expect("Tried to issue from a closed zone");
+        assert!(! zq.q.is_empty(), "Tried to issue from an empty zone");
+        if zq.q.peek().unwrap().lba != zq.wp {
+            //Lowest queued write is higher than the block pointer; can't issue
+            //yet.
+            return;
+        }
+        // TODO: combine adjacent writes
+        // TODO: loop until no more writes are possible
+        let block_op = zq.q.pop().unwrap();
+        // In the context where this is called, we can't return a future.  So we
+        // have to spawn it into the event loop manually
+        let sender = block_op.sender;
+        match block_op.bufs {
+            BlockOpBufT::IoVec(iovec) =>
+                self.handle.spawn(
+                    self.leaf.write_at(iovec, block_op.lba)
+                    .and_then(move |r| {
+                        sender.send(r).unwrap();
+                        Ok(())})
+                    .map_err(|_| {
+                        ()
+                    })),
+            BlockOpBufT::SGList(sglist) =>
+                self.handle.spawn(
+                    self.leaf.writev_at(sglist, block_op.lba)
+                    .and_then(move |r| {
+                        sender.send(r).unwrap();
+                        Ok(())})
+                    .map_err(|_| {
+                        ()
+                    }))
+        };
     }
 
     fn sched_read(&self, block_op: BlockOp) {
@@ -255,30 +263,28 @@ impl VdevBlock {
     }
 
     fn sched_write(&self, block_op: BlockOp) {
-        //TODO actually schedule them instead of issueing immediately
-        // In the context where this is called, we can't return a future.  So we
-        // have to spawn it into the event loop manually
-        let sender = block_op.sender;
-        match block_op.bufs {
-            BlockOpBufT::IoVec(iovec) =>
-                self.handle.spawn(
-                    self.leaf.write_at(iovec, block_op.lba)
-                    .and_then(move |r| {
-                        sender.send(r).unwrap();
-                        Ok(())})
-                    .map_err(|_| {
-                        ()
-                    })),
-            BlockOpBufT::SGList(sglist) =>
-                self.handle.spawn(
-                    self.leaf.writev_at(sglist, block_op.lba)
-                    .and_then(move |r| {
-                        sender.send(r).unwrap();
-                        Ok(())})
-                    .map_err(|_| {
-                        ()
-                    }))
-        };
+        let zone = self.leaf.lba2zone(block_op.lba);
+        {
+            let mut wq = &mut self.write_queues.borrow_mut();
+            let newzone : Option<ZoneQueue> = {
+                let zq = wq.get_mut(&zone);
+                if zq.is_some() {
+                    zq.unwrap().q.push(block_op);
+                    None
+                } else {
+                    let mut zq = ZoneQueue::new(self.leaf.start_of_zone(zone));
+                    zq.q.push(block_op);
+                    Some(zq)
+                }
+            };
+            if newzone.is_some() {
+                // Placate the borrow checker.  We can't do this if the previous
+                // reference to wq is still alive.
+                wq.insert(zone, newzone.unwrap());
+            }
+        }
+
+        self.issue_writes(zone);
     }
 
     ///// Helper function that writes a `BlockOp` popped off the scheduler
