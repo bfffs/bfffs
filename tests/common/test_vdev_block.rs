@@ -87,6 +87,7 @@ test_suite! {
     use futures::future;
     use std::cell::RefCell;
     use std::io::Error;
+    use std::mem;
     use std::rc::Rc;
     use std::fs;
     use std::collections::VecDeque;
@@ -165,12 +166,16 @@ test_suite! {
     test read_at() {
         let rbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
         let mut core = Core::new().unwrap();
-        let vdev = MockVdevLeaf::new(core.handle());
-        let fut1 = vdev.read_at(rbuf.clone(), 1);
-        let fut0 = vdev.read_at(rbuf.clone(), 0);
-        let futs = future::Future::join(fut0, fut1);
+        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
+        let mut vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let first = vdev.read_at(rbuf.clone(), 1);
+        let second = vdev.read_at(rbuf.clone(), 0);
+        let futs = future::Future::join(first, second);
         core.run(futs).unwrap();
-        vdev.expect("read_at", 1)
+        let final_leaf : &Box<MockVdevLeaf> = unsafe {
+            mem::transmute(&vdev.leaf)
+        };
+        final_leaf.expect("read_at", 1)
             .expect("read_at", 0);
     }
 }
