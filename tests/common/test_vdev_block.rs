@@ -66,6 +66,14 @@ test_suite! {
     }
 
     #[should_panic]
+    test check_block_granularity_writev(vdev) {
+        let wbuf0 = Rc::new(vec![21u8; 1024].into_boxed_slice());
+        let wbuf1 = Rc::new(vec![42u8; 3073].into_boxed_slice());
+        let wbufs = vec![wbuf0, wbuf1].into_boxed_slice();
+        vdev.val.1.writev_at(wbufs, 0);
+    }
+
+    #[should_panic]
     test check_iovec_bounds_over(vdev) {
         let wbuf = Rc::new(vec![42u8; 4096].into_boxed_slice());
         vdev.val.1.write_at(wbuf, vdev.val.1.size());

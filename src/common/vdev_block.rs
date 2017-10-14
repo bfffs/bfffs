@@ -227,8 +227,6 @@ impl VdevBlock {
             // less than a full LBA
             let block_op = zq.q.pop().unwrap();
             let lbas = (block_op.len() / BYTES_PER_LBA as usize) as LbaT;
-            assert_eq!(block_op.len() % BYTES_PER_LBA as usize, 0,
-                "VdevBlock does not yet support fragmentary writes");
             zq.wp += lbas;
             // In the context where this is called, we can't return a future.
             // So we have to spawn it into the event loop manually
@@ -333,6 +331,8 @@ impl SGVdev for VdevBlock {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
+        assert_eq!(block_op.len() % BYTES_PER_LBA as usize, 0,
+            "VdevBlock does not yet support fragmentary writes");
         self.sched_write(block_op);
         Box::new(VdevBlockFut::new(receiver))
     }
@@ -367,6 +367,8 @@ impl Vdev for VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::write_at(buf, lba, sender);
+        assert_eq!(block_op.len() % BYTES_PER_LBA as usize, 0,
+            "VdevBlock does not yet support fragmentary writes");
         self.sched_write(block_op);
         Box::new(VdevBlockFut::new(receiver))
     }
