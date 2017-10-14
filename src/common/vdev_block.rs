@@ -74,32 +74,13 @@ impl BlockOp {
 
 #[must_use = "futures do nothing unless polled"]
 struct VdevBlockFut {
-    /// Link to the target `Vdev` that will complete this future
-    vdev: Rc<VdevBlock>,
-
-    /// The associated `BlockOp`.
-    ///
-    /// Whether it's a read or write will be clear from which `ZoneQueue` it's
-    /// stored in.  If `None`, that means that the `BlockOp` has already been
-    /// scheduled.
-    block_op: Option<BlockOp>,
-
-    /// Is this a read or a write operation?
-    write: bool,
-
     // Used by the mio stuff
     receiver: oneshot::Receiver<isize>
 }
 
 impl VdevBlockFut {
-    pub fn new(vdev: Rc<VdevBlock>,
-               block_op: BlockOp,
-               write:bool,
-               receiver: oneshot::Receiver<isize>) -> VdevBlockFut {
-        VdevBlockFut{vdev: vdev,
-                     block_op: Some(block_op),
-                     write: write,
-                     receiver: receiver}
+    pub fn new( receiver: oneshot::Receiver<isize>) -> VdevBlockFut {
+        VdevBlockFut{receiver: receiver}
     }
 }
 
@@ -108,15 +89,6 @@ impl Future for VdevBlockFut {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<isize, io::Error> {
-        if self.block_op.is_some() {
-            if self.write {
-                let x = mem::replace(&mut self.block_op, None);
-                self.vdev.sched_write(x.unwrap());
-            } else {
-                let x = mem::replace(&mut self.block_op, None);
-                self.vdev.sched_read(x.unwrap());
-            }
-        }
         self.receiver.poll()
         .map_err(|_| {
             io::Error::new(io::ErrorKind::BrokenPipe, "")
@@ -212,9 +184,6 @@ pub struct VdevBlock {
     /// Usable size of the vdev, in LBAs
     size:   LbaT,
 
-    // Needed so we can hand out Rc<Vdev> to `VdevBlockFut`s
-    selfref: Weak<VdevBlock>,
-
     /// A collection of BlockOps.  Newly received reads must land here.  They
     /// will be issued to the OS as the scheduler sees fit.
     read_queue: BTreeMap<LbaT, BlockOp>,
@@ -252,8 +221,6 @@ impl VdevBlock {
         VdevBlock { handle: handle,
                     leaf: leaf,
                     size: size,
-                    // TODO: how to correctly create selfref?
-                    selfref: Weak::new(),
                     write_queues: BTreeMap::new(),
                     read_queue: BTreeMap::new()
                    }
@@ -330,16 +297,16 @@ impl SGVdev for VdevBlock {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
-        let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, false, receiver))
+        self.vdev.sched_read(block_op);
+        Box::new(VdevBlockFut::new(receiver))
     }
 
     fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
-        let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, true, receiver))
+        self.vdev.sched_write(block_op);
+        Box::new(VdevBlockFut::new(receiver))
     }
 }
 
@@ -356,8 +323,8 @@ impl Vdev for VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::read_at(buf, lba, sender);
-        let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, false, receiver))
+        self.vdev.sched_read(block_op);
+        Box::new(VdevBlockFut::new(receiver))
     }
 
     fn size(&self) -> LbaT {
@@ -372,7 +339,7 @@ impl Vdev for VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::write_at(buf, lba, sender);
-        let selfref = self.selfref.upgrade().unwrap().clone();
-        Box::new(VdevBlockFut::new(selfref, block_op, true, receiver))
+        self.vdev.sched_write(block_op);
+        Box::new(VdevBlockFut::new(receiver))
     }
 }
