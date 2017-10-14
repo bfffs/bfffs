@@ -48,6 +48,24 @@ test_suite! {
     }
 
     #[should_panic]
+    test check_block_granularity_under(vdev) {
+        let wbuf = Rc::new(vec![42u8; 4095].into_boxed_slice());
+        vdev.val.1.write_at(wbuf, 0);
+    }
+
+    #[should_panic]
+    test check_block_granularity_over(vdev) {
+        let wbuf = Rc::new(vec![42u8; 4097].into_boxed_slice());
+        vdev.val.1.write_at(wbuf, 0);
+    }
+
+    #[should_panic]
+    test check_block_granularity_over_multiple_sectors(vdev) {
+        let wbuf = Rc::new(vec![42u8; 16385].into_boxed_slice());
+        vdev.val.1.write_at(wbuf, 0);
+    }
+
+    #[should_panic]
     test check_iovec_bounds_over(vdev) {
         let wbuf = Rc::new(vec![42u8; 4096].into_boxed_slice());
         vdev.val.1.write_at(wbuf, vdev.val.1.size());

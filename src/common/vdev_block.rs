@@ -226,7 +226,10 @@ impl VdevBlock {
             // TODO: combine adjacent writes, and don't issue a write that is
             // less than a full LBA
             let block_op = zq.q.pop().unwrap();
-            zq.wp += (block_op.len() / BYTES_PER_LBA as usize) as LbaT;
+            let lbas = (block_op.len() / BYTES_PER_LBA as usize) as LbaT;
+            assert_eq!(block_op.len() % BYTES_PER_LBA as usize, 0,
+                "VdevBlock does not yet support fragmentary writes");
+            zq.wp += lbas;
             // In the context where this is called, we can't return a future.
             // So we have to spawn it into the event loop manually
             let sender = block_op.sender;
