@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 pub mod dva;
+pub mod raid;
 pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_leaf;
