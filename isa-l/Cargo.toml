@@ -1,0 +1,6 @@
+[package]
+name = "isa-l"
+version = "0.1.0"
+authors = ["Alan Somers <asomers@gmail.com>"]
+
+[dependencies]

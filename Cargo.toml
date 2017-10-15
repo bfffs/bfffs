@@ -5,6 +5,7 @@ authors = ["Alan Somers <asomers@gmail.com>"]
 
 [dependencies]
 futures = "0.1.14"
+isa-l = { path = "isa-l" }
 nix = { path = "/home/somers/src/rust/nix" }
 tokio-file = { path = "/home/somers/src/rust/tokio-file" }
 tokio-core = { path = "/home/somers/src/rust/tokio-core" }
@@ -12,3 +13,6 @@ tokio-core = { path = "/home/somers/src/rust/tokio-core" }
 [dev-dependencies]
 tempdir = "0.3"
 galvanic-test = "0.1"
+
+[workspace]
+members = ["isa-l"]
