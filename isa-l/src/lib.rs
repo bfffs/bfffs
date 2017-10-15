@@ -113,8 +113,7 @@ pub fn ec_encode_data_update(len: usize,
 ///             or decode data.  Must be of size `
 /// - `gftbls`: Pointer to start of space for concatenated output tables
 ///             generated from input coefficients.  Must be of size `32×k×f`.
-pub fn ec_init_tables(k: u32, f: u32, a: &mut [u8],
-                      gftbls: &mut [u8]) {
+pub fn ec_init_tables(k: u32, f: u32, a: &[u8], gftbls: &mut [u8]) {
     assert_eq!(a.len(), (f * k) as usize);
     assert_eq!(gftbls.len(), (32 * f * k) as usize);
     unsafe {
