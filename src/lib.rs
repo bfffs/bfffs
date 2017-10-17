@@ -1,3 +1,4 @@
+extern crate fixedbitset;
 extern crate futures;
 extern crate isa_l;
 extern crate nix;
