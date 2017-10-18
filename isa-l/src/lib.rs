@@ -64,8 +64,8 @@ pub fn ec_encode_data(len: usize, k: u32, f: u32, gftbls: &[u8],
 ///             coefficients in ec_init_tables(). Must be of size `32×k×f`
 /// - `data`:   Array of single input column used to update parity.  Must be of
 ///             size `len`.
-/// - `parity`: Two-dimensional array of pointers to coded output buffers.  Must
-///             be of size `f×len`.
+/// - `parity`: Array of output vectors for parity columns.  Must be `f` vectors
+///             each of size `len`.
 ///
 pub fn ec_encode_data_update(len: usize,
                              k: u32,

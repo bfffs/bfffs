@@ -88,6 +88,25 @@ impl Codec {
         isa_l::ec_encode_data(len, k, self.f, &self.enc_tables, data, parity);
     }
 
+    /// Update parity columns from a single data column.
+    ///
+    /// This method can be used to progressively update a set of parity columns
+    /// by feeding in one data column at a time.
+    ///
+    /// # Parameters
+    /// - `len`:        Size of each column, in bytes
+    /// - `data`:       Input array: a single column of `len` bytes
+    /// - `parity`:     Storage for parity columns.  `f` columns of `len` bytes
+    ///                 each: will be updated upon return.
+    /// - `data_idx`:   Column index of the supplied data column.  Must lie in
+    ///                 the range `[0, k)`.
+    pub fn encode_update(&self, len: usize, data: &[u8], parity: &[*mut u8],
+                         data_idx: u32) {
+        let k = self.m - self.f;
+        isa_l::ec_encode_data_update(len, k, self.f, data_idx, &self.enc_tables,
+                                     data, parity);
+    }
+
     // Generate tables for RAID decoding
     // Loosely based on erasure_code_perf.c from ISA-L's internal test suite
     // NB: For reasonably small values of m and f, it should be possible to cache
