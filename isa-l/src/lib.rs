@@ -30,16 +30,10 @@ pub fn version() -> u32 {
 /// - `parity`: Array of output vectors for parity columns.  Must be `f` vectors
 ///             each of size `len`.
 pub fn ec_encode_data(len: usize, k: u32, f: u32, gftbls: &[u8],
-                      data: &[&[u8]], parity: &mut [&mut [u8]]) {
+                      data: &[*const u8], parity: &[*mut u8]) {
     assert_eq!(gftbls.len(), (32 * f * k) as usize);
     assert_eq!(data.len(), k as usize);
-    for datacol in data.iter() {
-        assert_eq!(datacol.len(), len);
-    }
     assert_eq!(parity.len(), f as usize);
-    for pcol in parity.iter() {
-        assert_eq!(pcol.len(), len);
-    }
 
     unsafe {
         // Note: isa-l defines gftbls and data as non-const, even though the
@@ -47,7 +41,7 @@ pub fn ec_encode_data(len: usize, k: u32, f: u32, gftbls: &[u8],
         ffi::ec_encode_data(len as c_int, k as c_int, f as c_int,
                             gftbls.as_ptr() as *mut c_uchar,
                             data.as_ptr() as *mut *mut c_uchar,
-                            parity.as_mut_ptr() as *mut *mut c_uchar);
+                            parity.as_ptr() as *mut *mut c_uchar);
     }
 }
 
@@ -79,13 +73,10 @@ pub fn ec_encode_data_update(len: usize,
                              vec_i: u32,
                              gftbls: &[u8],
                              data: &[u8],
-                             parity: &mut [&mut [u8]]) {
+                             parity: &[*mut u8]) {
     assert_eq!(gftbls.len(), (32 * f * k) as usize);
     assert_eq!(data.len(), len);
     assert_eq!(parity.len(), f as usize);
-    for pcol in parity.iter() {
-        assert_eq!(pcol.len(), len);
-    }
     assert!(vec_i < k);
 
     unsafe {
@@ -95,7 +86,7 @@ pub fn ec_encode_data_update(len: usize,
                                    vec_i as c_int,
                                    gftbls.as_ptr() as *mut c_uchar,
                                    data.as_ptr() as *mut c_uchar,
-                                   parity.as_mut_ptr() as *mut *mut c_uchar);
+                                   parity.as_ptr() as *mut *mut c_uchar);
     }
 }
 

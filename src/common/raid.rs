@@ -67,8 +67,8 @@ impl Codec {
     ///                     Upon return, they will be populated with the
     ///                     original data of the missing columns.
     /// - `erasures`:       Bitmap of the column indices of the missing columns.
-    pub fn decode(&self, len: usize, surviving: &[&[u8]],
-                       missing: &mut [&mut [u8]], erasures: FixedBitSet) {
+    pub fn decode(&self, len: usize, surviving: &[*const u8],
+                       missing: &[*mut u8], erasures: FixedBitSet) {
         let k = self.m - self.f;
         let errs = erasures.count_ones(..) as u32;
         assert!(errs > 0, "Only a fool would reconstruct an undamaged array!");
@@ -83,7 +83,7 @@ impl Codec {
     /// - `data`:   Input array: `k` columns of `len` bytes each
     /// - `parity`: Storage for parity columns.  `f` columns of `len` bytes
     ///             each: will be populated upon return.
-    pub fn encode(&self, len: usize, data: &[&[u8]], parity: &mut [&mut [u8]]) {
+    pub fn encode(&self, len: usize, data: &[*const u8], parity: &[*mut u8]) {
         let k = self.m - self.f;
         isa_l::ec_encode_data(len, k, self.f, &self.enc_tables, data, parity);
     }
@@ -105,9 +105,10 @@ impl Codec {
             while erasures.contains(i + skips) {
                 skips += 1;
             }
-            for j in 0..i {
+            let row = i + skips;
+            for j in 0..k {
                 dec_matrix_inv[k * i + j] =
-                    self.enc_matrix[k * (i + skips) + j];
+                    self.enc_matrix[k * row + j];
             }
         }
         // Then invert the result

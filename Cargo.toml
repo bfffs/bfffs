@@ -12,8 +12,9 @@ tokio-file = { path = "/home/somers/src/rust/tokio-file" }
 tokio-core = { path = "/home/somers/src/rust/tokio-core" }
 
 [dev-dependencies]
-tempdir = "0.3"
 galvanic-test = "0.1"
+rand = "0.3"
+tempdir = "0.3"
 
 [workspace]
 members = ["isa-l"]
