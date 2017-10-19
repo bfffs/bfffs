@@ -1,2 +1,2 @@
-mod test_raid;
-mod test_vdev_block;
+mod raid;
+mod vdev_block;

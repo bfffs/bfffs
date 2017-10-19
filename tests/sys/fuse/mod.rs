@@ -1,2 +1,2 @@
-mod test_vdev_file;
+mod vdev_file;
 

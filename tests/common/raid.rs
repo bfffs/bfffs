@@ -12,7 +12,7 @@ macro_rules! t {
 
 // Test basic RAID functionality using a small chunksize
 #[test]
-pub fn test_2plus1() {
+pub fn encode_decode() {
     let len = 8;
     let codec = Codec::new(3, 1);
     let mut rng = rand::thread_rng();
@@ -39,7 +39,7 @@ pub fn test_2plus1() {
 
 // Test basic RAID update functionality using a small chunksize
 #[test]
-pub fn test_2plus1_update() {
+pub fn encode_update_decode() {
     let len = 8;
     let codec = Codec::new(3, 1);
     let mut rng = rand::thread_rng();

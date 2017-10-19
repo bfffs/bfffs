@@ -6,7 +6,7 @@ macro_rules! t {
 }
 
 test_suite! {
-    name vdev_file_tests;
+    name vdev_file;
 
     use arkfs::common::vdev::{SGVdev, Vdev};
     use arkfs::sys::vdev_file::*;

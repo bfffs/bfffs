@@ -74,29 +74,34 @@ impl SubAssign<i64> for Dva {
 }
 
 
-#[test]
-fn test_no_overflow() {
-    let x = Dva { cluster: 0, lfa: u64::max_value() - 10 };
-    let max = x + 10 * BYTES_PER_FRAGMENT;
-    assert_eq!(max.lfa, u64::max_value());
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[test]
-#[should_panic]
-fn test_overflow() {
-    let x = Dva { cluster: 0, lfa: u64::max_value() - 10 };
-    let _ = x + 11 * BYTES_PER_FRAGMENT;
-}
+    #[test]
+    fn no_overflow() {
+        let x = Dva { cluster: 0, lfa: u64::max_value() - 10 };
+        let max = x + 10 * BYTES_PER_FRAGMENT;
+        assert_eq!(max.lfa, u64::max_value());
+    }
 
-#[test]
-fn test_no_underflow() {
-    let x = Dva { cluster: 0, lfa: 10 };
-    let min = x - 10 * BYTES_PER_FRAGMENT;
-    assert_eq!(min.lfa, u64::min_value());
-}
-#[test]
-#[should_panic]
-fn test_underflow() {
-    let x = Dva { cluster: 0, lfa: 10 };
-    let _ = x - 11 * BYTES_PER_FRAGMENT;
+    #[test]
+    #[should_panic]
+    fn overflow() {
+        let x = Dva { cluster: 0, lfa: u64::max_value() - 10 };
+        let _ = x + 11 * BYTES_PER_FRAGMENT;
+    }
+
+    #[test]
+    fn no_underflow() {
+        let x = Dva { cluster: 0, lfa: 10 };
+        let min = x - 10 * BYTES_PER_FRAGMENT;
+        assert_eq!(min.lfa, u64::min_value());
+    }
+    #[test]
+    #[should_panic]
+    fn underflow() {
+        let x = Dva { cluster: 0, lfa: 10 };
+        let _ = x - 11 * BYTES_PER_FRAGMENT;
+    }
 }

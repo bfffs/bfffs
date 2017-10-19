@@ -7,7 +7,7 @@ macro_rules! t {
 
 test_suite! {
     // These tests use a real VdevLeaf object
-    name vdev_block_tests;
+    name vdev_block;
 
     use arkfs::common::vdev::{SGVdev, Vdev};
     use arkfs::common::vdev_block::*;
@@ -104,7 +104,7 @@ test_suite! {
 
 test_suite! {
     // These tests use a mock VdevLeaf object
-    name mock_vdev_block_tests;
+    name mock_vdev_block;
 
     use arkfs::common::*;
     use arkfs::common::vdev::{SGVdev, Vdev, VdevFut};
