@@ -38,7 +38,18 @@ impl Codec {
         let k = m - f;
         let mut enc_matrix = vec![0u8; (m * k) as usize].into_boxed_slice();
         let mut enc_tables = vec![0u8; (32 * k * f) as usize].into_boxed_slice();
-        isa_l::gf_gen_cauchy1_matrix(&mut enc_matrix, m, k);
+        // Use Cauchy matrices instead of RS matrices because they guarantee
+        // that all square submatrices are invertible.  That means that they can
+        // provide any degree of redundancy, unlike RS matrices.   However, for
+        // single-parity arrays an RS matrix produces parity information that is
+        // compatible with a simple XOR-based codec.  An XOR codec is much
+        // faster than ISA-L's erasure coding functions.  So use RS matrices for
+        // single parity arrays for compatibility with a faster future codec.
+        if f == 1 {
+            isa_l::gf_gen_rs_matrix(&mut enc_matrix, m, k);
+        } else {
+            isa_l::gf_gen_cauchy1_matrix(&mut enc_matrix, m, k);
+        }
         // The encoding tables only use the encoding matrix's parity rows (e.g.
         // rows k and higher)
         isa_l::ec_init_tables(k, f, &enc_matrix[(k*k) as usize ..],
@@ -146,5 +157,62 @@ impl Codec {
         // Finally generate the fast encoding tables
         isa_l::ec_init_tables(k as u32, errs as u32, &dec_rows, &mut dec_tables);
         dec_tables
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ops::Deref;
+
+    // If the encoding matrix ever changes, it will change the on-disk format.
+    // Generate several different encoding matrices and compare them against
+    // golden masters
+    #[test]
+    fn format_stability() {
+        let testpairs = [
+            (3, 1, vec![1,   0,
+                        0,   1,
+                        1,   1]),
+            (5, 1, vec![1,   0,   0,   0,
+                        0,   1,   0,   0,
+                        0,   0,   1,   0,
+                        0,   0,   0,   1,
+                        1,   1,   1,   1]),
+            (5, 2, vec![1,   0,   0,
+                        0,   1,   0,
+                        0,   0,   1,
+                      244, 142,   1,
+                       71, 167,  122]),
+            (7, 3, vec![1,   0,   0,   0,
+                        0,   1,   0,   0,
+                        0,   0,   1,   0,
+                        0,   0,   0,   1,
+                       71, 167, 122, 186,
+                      167,  71, 186, 122,
+                      122, 186,  71, 167]),
+            (15, 5, vec![1,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+                         0,   1,   0,   0,   0,   0,   0,   0,   0,   0,
+                         0,   0,   1,   0,   0,   0,   0,   0,   0,   0,
+                         0,   0,   0,   1,   0,   0,   0,   0,   0,   0,
+                         0,   0,   0,   0,   1,   0,   0,   0,   0,   0,
+                         0,   0,   0,   0,   0,   1,   0,   0,   0,   0,
+                         0,   0,   0,   0,   0,   0,   1,   0,   0,   0,
+                         0,   0,   0,   0,   0,   0,   0,   1,   0,   0,
+                         0,   0,   0,   0,   0,   0,   0,   0,   1,   0,
+                         0,   0,   0,   0,   0,   0,   0,   0,   0,   1,
+                       221, 152, 173, 157,  93, 150,  61, 170, 142, 244,
+                       152, 221, 157, 173, 150,  93, 170,  61, 244, 142,
+                        61, 170,  93, 150, 173, 157, 221, 152,  71, 167,
+                       170,  61, 150,  93, 157, 173, 152, 221, 167,  71,
+                        93, 150,  61, 170, 221, 152, 173, 157, 122, 186]),
+        ];
+        for ref triple in testpairs.iter() {
+            let m = triple.0;
+            let f = triple.1;
+            let encmat = &triple.2;
+            let codec = Codec::new(m, f);
+            assert_eq!(&encmat.deref(), &codec.enc_matrix.deref());
+        }
     }
 }
