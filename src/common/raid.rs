@@ -38,7 +38,7 @@ impl Codec {
         let k = m - f;
         let mut enc_matrix = vec![0u8; (m * k) as usize].into_boxed_slice();
         let mut enc_tables = vec![0u8; (32 * k * f) as usize].into_boxed_slice();
-        isa_l::gf_gen_rs_matrix(&mut enc_matrix, m, k);
+        isa_l::gf_gen_cauchy1_matrix(&mut enc_matrix, m, k);
         // The encoding tables only use the encoding matrix's parity rows (e.g.
         // rows k and higher)
         isa_l::ec_init_tables(k, f, &enc_matrix[(k*k) as usize ..],
