@@ -13,6 +13,7 @@ tokio-core = { path = "/home/somers/src/rust/tokio-core" }
 
 [dev-dependencies]
 galvanic-test = "0.1"
+itertools = "0.7.1"
 rand = "0.3"
 tempdir = "0.3"
 

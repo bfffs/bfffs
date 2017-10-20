@@ -57,7 +57,7 @@ impl Codec {
         Codec {m: m, f: f, enc_matrix: enc_matrix, enc_tables: enc_tables}
     }
 
-    /// Reconstruct missing data and parity from partial surviving columns
+    /// Reconstruct missing data from partial surviving columns
     ///
     /// Given a `Codec` with `m` total columns composed of `k` data columns and
     /// `f` parity columns, where one or more columns is missing, reconstruct
@@ -67,21 +67,26 @@ impl Codec {
     /// the columns 0 and 3 are missing, Provide columns 1, 2, 4, 5, and 6 (data
     /// columns 1, 2, and 4 and parity columns 0 and 1).
     ///
+    /// This method cannot reconstruct missing parity columns.  In order to
+    /// reconstruct missing parity columns, you must first use this method to
+    /// regenerate all data columns, *and then* use `encode` to recreate the
+    /// parity.
+    ///
     /// # Parameters
     ///
     /// - `len`:            Size of each column, in bytes
     /// - `surviving`:      Exactly `k` columns of surviving data and parity,
     ///                     sorted in order of the original column index, with
     ///                     data columns preceding parity columns.
-    /// - `missing`:        Reconstructed data and parity columns.  The number
-    ///                     should be equal to the ones count of `erasures`.
-    ///                     Upon return, they will be populated with the
-    ///                     original data of the missing columns.
+    /// - `missing`:        Reconstructed data (not parity!) columns.  The
+    ///                     number should be no more than the ones count of
+    ///                     `erasures`.  Upon return, they will be populated
+    ///                     with the original data of the missing columns.
     /// - `erasures`:       Bitmap of the column indices of the missing columns.
     pub fn decode(&self, len: usize, surviving: &[*const u8],
                        missing: &[*mut u8], erasures: FixedBitSet) {
         let k = self.m - self.f;
-        let errs = erasures.count_ones(..) as u32;
+        let errs = erasures.count_ones(..k as usize) as u32;
         assert!(errs > 0, "Only a fool would reconstruct an undamaged array!");
         let dec_tables = self.mk_decode_tables(erasures);
         isa_l::ec_encode_data(len, k, errs, &dec_tables, surviving, missing);
@@ -124,7 +129,8 @@ impl Codec {
     // all possible decode tables.
     fn mk_decode_tables(&self, erasures: FixedBitSet) -> Box<[u8]> {
         let k : usize = (self.m - self.f) as usize;
-        let errs : usize = erasures.count_ones(..);
+        // Exclude missing parity columns from the list
+        let errs : usize = erasures.count_ones(..k);
         let mut dec_tables = vec![0u8; 32 * k * errs].into_boxed_slice();
 
         // To generate the decoding matrix, first select k healthy rows from the
@@ -148,6 +154,9 @@ impl Codec {
         // Finally, select the rows corresponding to missing data
         let mut dec_rows = vec![0u8; k * errs].into_boxed_slice();
         for (i, r) in erasures.ones().enumerate() {
+            if r >= k {
+                break;  // Exclude missing parity columns
+            }
             for j in 0..k {
                 dec_rows[k * i + j] =
                     dec_matrix[k * r + j];
