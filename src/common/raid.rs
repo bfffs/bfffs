@@ -84,7 +84,7 @@ impl Codec {
     ///                     with the original data of the missing columns.
     /// - `erasures`:       Bitmap of the column indices of the missing columns.
     pub fn decode(&self, len: usize, surviving: &[*const u8],
-                       missing: &[*mut u8], erasures: FixedBitSet) {
+                       missing: &[*mut u8], erasures: &FixedBitSet) {
         let k = self.m - self.f;
         let errs = erasures.count_ones(..k as usize) as u32;
         assert!(errs > 0, "Only a fool would reconstruct an undamaged array!");
@@ -127,7 +127,7 @@ impl Codec {
     // Loosely based on erasure_code_perf.c from ISA-L's internal test suite
     // NB: For reasonably small values of m and f, it should be possible to cache
     // all possible decode tables.
-    fn mk_decode_tables(&self, erasures: FixedBitSet) -> Box<[u8]> {
+    fn mk_decode_tables(&self, erasures: &FixedBitSet) -> Box<[u8]> {
         let k : usize = (self.m - self.f) as usize;
         // Exclude missing parity columns from the list
         let errs : usize = erasures.count_ones(..k);

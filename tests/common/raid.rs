@@ -32,7 +32,7 @@ pub fn encode_decode() {
     let mut r0 = vec![0u8;len];
     let mut erasures = FixedBitSet::with_capacity(3);
     erasures.insert(0);
-    codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()], erasures);
+    codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()], &erasures);
 
     // Verify that column was reconstructed correctly
     assert_eq!(d0, r0);
@@ -60,7 +60,7 @@ pub fn encode_update_decode() {
     let mut r0 = vec![0u8;len];
     let mut erasures = FixedBitSet::with_capacity(3);
     erasures.insert(0);
-    codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()], erasures);
+    codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()], &erasures);
 
     // Verify that column was reconstructed correctly
     assert_eq!(d0, r0);
@@ -146,7 +146,7 @@ pub fn comprehensive() {
             for i in 0..(data_errs as usize) {
                 decoded.push(reconstructed[i].as_mut_ptr());
             }
-            codec.decode(len, &surviving, &decoded, erasures);
+            codec.decode(len, &surviving, &decoded, &erasures);
 
             // Finally, compare
             for i in 0..(data_errs as usize) {
