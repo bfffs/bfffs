@@ -57,6 +57,28 @@ impl Codec {
         Codec {m: m, f: f, enc_matrix: enc_matrix, enc_tables: enc_tables}
     }
 
+    /// Verify parity and identify corrupt columns
+    ///
+    /// # Parameters
+    /// - `len`:    Size of each column, in bytes
+    /// - `data`:   Data array: `k` columns of `len` bytes each
+    /// - `parity`: Parity array: `f` columns of `len` bytes each
+    ///
+    /// # Returns
+    ///
+    /// A bitset identify which columns are corrupt.  A 1 indicates a corrupt
+    /// column and a 0 indicates a healthy column.  If the parity does not
+    /// verify successfully but it cannot be determined which column(s) are
+    /// corrupt, then all bits will be set.  All bits set indicates that the row
+    /// is irrecoverable without additional information.  Note that when the
+    /// number of corrupt columns equals `f` the row will be considered
+    /// irrecoverable even though the original data can still be recovered via
+    /// combinatorial reconstruction.
+    pub fn check(&self, len: usize, data: &[*const u8],
+                 parity: &[*const u8]) -> FixedBitSet {
+        panic!("Unimplemented");
+    }
+
     /// Reconstruct missing data from partial surviving columns
     ///
     /// Given a `Codec` with `m` total columns composed of `k` data columns and
