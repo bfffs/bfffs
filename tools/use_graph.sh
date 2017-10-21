@@ -10,7 +10,7 @@
 # excluded from the graph.  Then run the script.  "use_graph.svg" will be
 # created in PWD.
 
-EXTERNAL_CRATES='(std|futures|mio|nix|tokio_core|tokio_file)'
+EXTERNAL_CRATES='(std|fixedbitset|futures|isa_l|mio|nix|tokio_core|tokio_file)'
 BORING_FILES='^\<(common)\>$'
 
 EXTERNAL_PAT="^use.${EXTERNAL_CRATES}"
