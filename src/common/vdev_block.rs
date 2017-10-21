@@ -165,7 +165,7 @@ pub struct VdevBlock {
     // Use a RefCell so that the VdevBlock can be manipulated by multiple
     // continuations which may have shared references, but all run in the same
     // reactor.
-    read_queue: RefCell<BTreeMap<LbaT, BlockOp>>,
+    _read_queue: RefCell<BTreeMap<LbaT, BlockOp>>,
 
     /// A collection of ZoneQueues, one for each open Zone.  Newly received
     /// writes must land here.  They will be issued to the OS in LBA-order, per
@@ -204,15 +204,14 @@ impl VdevBlock {
                     leaf: leaf,
                     size: size,
                     write_queues: RefCell::new(BTreeMap::new()),
-                    read_queue: RefCell::new(BTreeMap::new())
+                    _read_queue: RefCell::new(BTreeMap::new())
                    }
     }
 
     /// If possible, issue any writes from the given zone.
     fn issue_writes(&self, zone: ZoneT) {
         let mut wq = self.write_queues.borrow_mut();
-        let mut zq = wq.get_mut(&zone)
-            .expect("Tried to issue from a closed zone");
+        let zq = wq.get_mut(&zone).expect("Tried to issue from a closed zone");
         assert!(! zq.q.is_empty(), "Tried to issue from an empty zone");
         // Optimistically allocate enough for every BlockOp in the zone queue.
         let l = zq.q.len();
@@ -293,7 +292,7 @@ impl VdevBlock {
     fn sched_write(&self, block_op: BlockOp) {
         let zone = self.leaf.lba2zone(block_op.lba);
         {
-            let mut wq = &mut self.write_queues.borrow_mut();
+            let wq = &mut self.write_queues.borrow_mut();
             let newzone : Option<ZoneQueue> = {
                 let zq = wq.get_mut(&zone);
                 if zq.is_some() {

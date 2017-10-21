@@ -74,8 +74,8 @@ impl Codec {
     /// number of corrupt columns equals `f` the row will be considered
     /// irrecoverable even though the original data can still be recovered via
     /// combinatorial reconstruction.
-    pub fn check(&self, len: usize, data: &[*const u8],
-                 parity: &[*const u8]) -> FixedBitSet {
+    pub fn check(&self, _len: usize, _data: &[*const u8],
+                 _parity: &[*const u8]) -> FixedBitSet {
         panic!("Unimplemented");
     }
 
