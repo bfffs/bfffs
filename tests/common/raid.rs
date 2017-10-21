@@ -4,13 +4,6 @@ use itertools::Itertools;
 use rand;
 use rand::Rng;
 
-macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
-    })
-}
-
 // Test basic RAID functionality using a small chunksize
 #[test]
 pub fn encode_decode() {
@@ -84,18 +77,18 @@ pub fn comprehensive() {
     let mut data = Vec::<Vec<u8>>::new();
     let mut parity = Vec::<Vec<u8>>::new();
     let mut reconstructed = Vec::<Vec<u8>>::new();
-    for i in 0..maxdata {
+    for _ in 0..maxdata {
         let mut column = Vec::<u8>::with_capacity(len);
-        for j in 0..len {
+        for _ in 0..len {
             column.push(rng.gen());
         }
         data.push(column);
     }
-    for i in 0..maxparity {
+    for _ in 0..maxparity {
         let column = vec![0u8; len];
         parity.push(column);
     }
-    for i in 0..(maxparity as usize) {
+    for _ in 0..(maxparity as usize) {
         reconstructed.push(vec![0u8; len]);
     }
 
@@ -129,17 +122,17 @@ pub fn comprehensive() {
             for b in &erasures_vec {
                 erasures.insert(*b as usize);
             }
-            let mut r = 0;
+            let mut skips = 0;
             for i in 0..(k as usize) {
-                while erasures.contains(r) {
-                    r += 1;
+                while erasures.contains(i + skips) {
+                    skips += 1;
                 }
+                let r = i + skips;
                 if r < k as usize {
                     surviving.push(data[r].as_ptr());
                 } else {
                     surviving.push(parity[r - k as usize].as_ptr());
                 }
-                r += 1;
             }
             let data_errs = erasures.count_ones(..k as usize);
             let mut decoded = Vec::<*mut u8>::with_capacity(data_errs as usize);
