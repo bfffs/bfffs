@@ -2,7 +2,9 @@
 
 use std::rc::Rc;
 
+pub mod declust;
 pub mod dva;
+pub mod prime_s;
 pub mod raid;
 pub mod vdev;
 pub mod vdev_block;
