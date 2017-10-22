@@ -3,6 +3,7 @@
 /// ID of a chunk.  A chunk is the fundamental unit of declustering.  One chunk
 /// (typically several KB) is the largest amount of data that can be written to
 /// a single disk before the Locator switches to a new disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkId {
     /// a Data chunk is identified by its id.  It's a 0-index of all the chunks
     /// in the vdev cluster
@@ -11,28 +12,36 @@ pub enum ChunkId {
     /// A Parity chunk is identified by the id of the first data chunk in its
     /// stripe, and by the parity id, which is 0-indexed starting with the first
     /// parity chunk in the stripe.
-    Parity((u64, u8))
+    Parity(u64, i16)
 }
 
 /// Describes the location of a Chunk within the declustering layout
+#[derive(Debug, PartialEq, Eq)]
 pub struct Chunkloc {
     /// Which repetition (0-indexed) of the layout this chunk lies in.
     ///
     /// 32-bits is enough for a 17TB disk using 512B chunks and a 1-row layout.
     /// Larger disks will require increasing the size of this type, which
     /// resides in-memory only, not on disk.
-    repetition: u32,
+    pub repetition: u32,
 
     /// Which disk (0-indexed) this chunk is mapped to
-    disk: u16,
+    pub disk: i16,
 
     /// Which iteration (0-indexed) of the layout this chunk lies in.
     ///
     /// Not all declustering algorithms have iterations.
-    iteration: u16,
+    pub iteration: i16,
 
     /// The chunk's chunk offset within its iteration, in units of chunks.
-    offset: u16
+    pub offset: i16
+}
+
+impl Chunkloc {
+    pub fn new(repetition: u32, iteration: i16, disk: i16, offset: i16) -> Self {
+        Chunkloc {repetition: repetition, iteration: iteration,
+                  disk: disk, offset: offset}
+    }
 }
 
 /// Declustering locator
@@ -56,7 +65,13 @@ pub struct Chunkloc {
 /// Alvarez, Guillermo A., et al. "Declustered disk array architectures with
 /// optimal and near-optimal parallelism." ACM SIGARCH Computer Architecture
 /// News. Vol. 26. No. 3. IEEE Computer Society, 1998.
-trait Locator {
+pub trait Locator {
+    /// Return the number of data chunks in a single repetition of the layout
+    fn datachunks(&self) -> u64;
+
+    /// Number of rows in a single repetition of the layout
+    fn depth(&self) -> i16;
+
     /// Inverse of `id2loc`.  Returns the chunk id of the chunk at this location.
     ///
     /// # Parameters
@@ -70,4 +85,7 @@ trait Locator {
     ///
 	/// - `a`:	ID of the data chunk
     fn id2loc(&self, id: ChunkId) -> Chunkloc;
+
+    /// Return the number of stripes in a single repetition of the layout
+    fn stripes(&self) -> u32;
 }

@@ -7,6 +7,10 @@ authors = ["Alan Somers <asomers@gmail.com>"]
 fixedbitset = "0.1.8"
 futures = "0.1.14"
 isa-l = { path = "isa-l" }
+# modulo is an RFC for addition to libstd
+# https://github.com/rust-lang/rfcs/pull/2169
+# If it gets merged, we can remove this crate
+modulo = "0.1.2"
 nix = { path = "/home/somers/src/rust/nix" }
 tokio-file = { path = "/home/somers/src/rust/tokio-file" }
 tokio-core = { path = "/home/somers/src/rust/tokio-core" }

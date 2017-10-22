@@ -1,6 +1,7 @@
 // vim: tw=80
 
 use common::declust::*;
+use modulo::Mod;
 
 ///
 /// Return the multiplicative inverse of a, mod n.  n must be prime.
@@ -85,21 +86,25 @@ fn is_prime(n: i16) -> bool {
 /// optimal and near-optimal parallelism." ACM SIGARCH Computer Architecture
 /// News. Vol. 26. No. 3. IEEE Computer Society, 1998.
 /// 
-struct PrimeS {
+pub struct PrimeS {
     /// Total number of disks
     n:  i16,
 
     /// Number of disks per stripe (data & parity)
-    k:  u8,
+    ///
+    /// Valid range for GF(2^8) encoding is [0, 256)
+    k:  i16,
 
     /// Number of data disks per stripe
-    m:  u8,
+    ///
+    /// Valid range for GF(2^8) encoding is [0, 256)
+    m:  i16,
 
     /// Multiplicative inverse of m, mod n
     m_inv: i16,
 
     /// Protection level
-    f:  u8
+    f:  i16
 }
 
 impl PrimeS {
@@ -111,21 +116,78 @@ impl PrimeS {
     /// `disks_per_strip`:  Number of disks in each parity group  
     /// `redundancy`:       Redundancy level of the RAID array.  This many disks
     ///                     may fail before the data becomes irrecoverable.
-    pub fn new(num_disks: i16, disks_per_stripe: u8, redundancy: u8) -> Self {
+    pub fn new(num_disks: i16, disks_per_stripe: i16, redundancy: i16) -> Self {
         assert!(is_prime(num_disks));
         let m = disks_per_stripe - redundancy;
         let m_inv = invmod(m as i16, num_disks);
         PrimeS {n: num_disks, k: disks_per_stripe, m: m, m_inv: m_inv,
                 f: redundancy}
     }
+
+    /// Return the iteration number where a given Chunk is stored
+    fn id2iteration(&self, chunkid: &ChunkId) -> i16 {
+        let id = match chunkid {
+            &ChunkId::Data(id) => id,
+            &ChunkId::Parity(id, _) => id
+        };
+        let res = id / (self.m as u64 * self.n as u64);
+        assert!(res < i16::max_value() as u64);
+        res as i16
+    }
 }
 
 impl Locator for PrimeS {
-    fn id2loc(&self, id: ChunkId) -> Chunkloc {
-
+    fn datachunks(&self) -> u64 {
+        self.stripes() as u64 * self.m as u64
     }
 
-    fn loc2id(&self, loc: Chunkloc) -> ChunkId {
+    fn depth(&self) -> i16 {
+        self.k * (self.n - 1)
+    }
+
+    fn id2loc(&self, id: ChunkId) -> Chunkloc {
+        // The iteration
+        let z = self.id2iteration(&id);
+        // The stride
+        let y = (z.modulo(self.n - 1)) + 1;
+        let a = match id {
+            ChunkId::Data(id) => id as i16,
+            ChunkId::Parity(id, _) => id as i16
+        };
+        let eff_a = match id {
+            ChunkId::Data(_) => a as i16,
+            ChunkId::Parity(_, i) => (a as i16 / self.m + 1) * self.m + i
+        };
+        let disk = (eff_a * y).modulo(self.n);
+
+        // We must loop to calculate the offset.  That's PRIME-S's disadvantage
+        // vis-a-vis PRIME
+        let y_inv = invmod(y, self.n);
+        let o0 = (eff_a - self.m * self.n * z) / self.n;
+        let o1 = (0 .. self.f).fold(0, |acc, j| {
+                let cb_stripe = ((disk * y_inv - j) * self.m_inv - 1)
+                    .modulo(self.n);
+                let x = if (a / self.m).modulo(self.n) > cb_stripe {
+                    1
+                } else {
+                    0
+                };
+                x + acc
+            });
+        let o2 = self.k * z;
+        let offset = o0 + o1 + o2;
+        Chunkloc { repetition: 0,   ///TODO!
+                    disk: disk,
+                    iteration: z,
+                    offset: offset}
+    }
+
+    fn loc2id(&self, _: Chunkloc) -> ChunkId {
+        panic!("unimplemented!");
+    }
+
+    fn stripes(&self) -> u32 {
+        self.n as u32 * (self.n as u32 - 1)
     }
 }
 
