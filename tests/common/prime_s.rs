@@ -31,7 +31,7 @@ pub fn composite_disks_panic() {
 #[test]
 pub fn exhaustive_5_4_2() {
     let n = 5;
-    let k = 2;
+    let k = 4;
     let f = 2;
 
     let locator = PrimeS::new(n, k, f);
