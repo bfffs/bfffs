@@ -137,3 +137,28 @@ fn exhaustive_5_4_2() {
         //}
     //}
 }
+
+// Test repetition calculations for a simple layout
+#[test]
+fn repetition() {
+    let n = 7;
+    let k = 5;
+    let f = 2;
+
+    let locator = PrimeS::new(n, k, f);
+    // Repetition 0
+    assert_eq!(locator.id2loc(ChunkId::Data(0)).offset, 0);
+    assert_eq!(locator.id2loc(ChunkId::Parity(0, 0)).offset, 0);
+    assert_eq!(locator.id2loc(ChunkId::Parity(0, 1)).offset, 0);
+    // Repetition 1
+    assert_eq!(locator.id2loc(ChunkId::Data(126)).offset, 30);
+    assert_eq!(locator.id2loc(ChunkId::Parity(126, 0)).offset, 30);
+    assert_eq!(locator.id2loc(ChunkId::Parity(126, 1)).offset, 30);
+    // Repetition u32::max_value()
+    assert_eq!(locator.id2loc(ChunkId::Data(541165879170)).offset,
+        128849018850);
+    assert_eq!(locator.id2loc(ChunkId::Parity(541165879170, 0)).offset,
+        128849018850);
+    assert_eq!(locator.id2loc(ChunkId::Parity(541165879170, 1)).offset,
+        128849018850);
+}

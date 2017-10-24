@@ -106,9 +106,10 @@ pub struct PrimeS {
     /// Protection level
     f:  i16,
 
+    // Cache the results of some common calculations
     datachunks: u64,
-
-    stripes: u32
+    stripes: u32,
+    depth: i16
 }
 
 impl PrimeS {
@@ -126,19 +127,26 @@ impl PrimeS {
         let m_inv = invmod(m as i16, num_disks);
         let stripes = num_disks as u32 * (num_disks as u32 - 1);
         let datachunks = stripes as u64 * m as u64;
+        let depth = disks_per_stripe * (num_disks - 1);
         PrimeS {n: num_disks, k: disks_per_stripe, m: m, m_inv: m_inv,
-                f: redundancy, stripes: stripes, datachunks: datachunks}
+                f: redundancy, stripes: stripes, datachunks: datachunks,
+                depth: depth}
     }
 
-    /// Return the iteration number where a given Chunk is stored
-    fn id2iteration(&self, chunkid: &ChunkId) -> i16 {
+    /// Return the repetition and iteration numbers where a given Chunk is stored
+    fn id2rep_and_iter(&self, chunkid: &ChunkId) -> (u32, i16) {
         let id = match chunkid {
             &ChunkId::Data(id) => id,
             &ChunkId::Parity(id, _) => id
         };
-        let res = id / (self.m as u64 * self.n as u64);
-        assert!(res < i16::max_value() as u64);
-        res as i16
+        // Good candidate for a combined division-modulo operation, if one ever
+        // gets added
+        // https://github.com/rust-lang/rfcs/pull/2169
+        let rep = id / self.datachunks;
+        let iter = id.modulo(self.datachunks) / (self.m as u64 * self.n as u64);
+        assert!(rep <= u32::max_value() as u64);
+        assert!(iter <= i16::max_value() as u64);
+        (rep as u32, iter as i16)
     }
 }
 
@@ -148,21 +156,22 @@ impl Locator for PrimeS {
     }
 
     fn depth(&self) -> i16 {
-        self.k * (self.n - 1)
+        self.depth
     }
 
-    fn id2loc(&self, id: ChunkId) -> Chunkloc {
-        // The iteration
-        let z = self.id2iteration(&id);
+    fn id2loc(&self, chunkid: ChunkId) -> Chunkloc {
+        // The repetition and iteration
+        let (r, z) = self.id2rep_and_iter(&chunkid);
         // The stride
         let y = (z.modulo(self.n - 1)) + 1;
-        let a = match id {
-            ChunkId::Data(id) => id as i16,
-            ChunkId::Parity(id, _) => id as i16
+        let id = match chunkid {
+            ChunkId::Data(id) => id,
+            ChunkId::Parity(id, _) => id
         };
-        let eff_a = match id {
-            ChunkId::Data(_) => a as i16,
-            ChunkId::Parity(_, i) => (a as i16 / self.m + 1) * self.m + i
+        let a = id.modulo(self.datachunks) as i16;
+        let eff_a = match chunkid {
+            ChunkId::Data(_) => a,
+            ChunkId::Parity(_, i) => (a / self.m + 1) * self.m + i
         };
         let disk = (eff_a * y).modulo(self.n);
 
@@ -181,7 +190,8 @@ impl Locator for PrimeS {
                 x + acc
             });
         let o2 = self.k * z;
-        let offset = (o0 + o1 + o2) as u64;
+        let o3 = r as u64 * self.depth as u64;
+        let offset = (o0 + o1 + o2) as u64 + o3;
         Chunkloc { disk: disk,
                     offset: offset}
     }
