@@ -18,29 +18,16 @@ pub enum ChunkId {
 /// Describes the location of a Chunk within the declustering layout
 #[derive(Debug, PartialEq, Eq)]
 pub struct Chunkloc {
-    /// Which repetition (0-indexed) of the layout this chunk lies in.
-    ///
-    /// 32-bits is enough for a 17TB disk using 512B chunks and a 1-row layout.
-    /// Larger disks will require increasing the size of this type, which
-    /// resides in-memory only, not on disk.
-    pub repetition: u32,
-
     /// Which disk (0-indexed) this chunk is mapped to
     pub disk: i16,
 
-    /// Which iteration (0-indexed) of the layout this chunk lies in.
-    ///
-    /// Not all declustering algorithms have iterations.
-    pub iteration: i16,
-
-    /// The chunk's chunk offset within its iteration, in units of chunks.
-    pub offset: i16
+    /// The chunk's chunk offset from the start of its disk, in units of chunks
+    pub offset: u64
 }
 
 impl Chunkloc {
-    pub fn new(repetition: u32, iteration: i16, disk: i16, offset: i16) -> Self {
-        Chunkloc {repetition: repetition, iteration: iteration,
-                  disk: disk, offset: offset}
+    pub fn new(disk: i16, offset: u64) -> Self {
+        Chunkloc {disk: disk, offset: offset}
     }
 }
 

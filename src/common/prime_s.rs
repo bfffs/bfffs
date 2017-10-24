@@ -104,7 +104,11 @@ pub struct PrimeS {
     m_inv: i16,
 
     /// Protection level
-    f:  i16
+    f:  i16,
+
+    datachunks: u64,
+
+    stripes: u32
 }
 
 impl PrimeS {
@@ -120,8 +124,10 @@ impl PrimeS {
         assert!(is_prime(num_disks));
         let m = disks_per_stripe - redundancy;
         let m_inv = invmod(m as i16, num_disks);
+        let stripes = num_disks as u32 * (num_disks as u32 - 1);
+        let datachunks = stripes as u64 * m as u64;
         PrimeS {n: num_disks, k: disks_per_stripe, m: m, m_inv: m_inv,
-                f: redundancy}
+                f: redundancy, stripes: stripes, datachunks: datachunks}
     }
 
     /// Return the iteration number where a given Chunk is stored
@@ -138,7 +144,7 @@ impl PrimeS {
 
 impl Locator for PrimeS {
     fn datachunks(&self) -> u64 {
-        self.stripes() as u64 * self.m as u64
+        self.datachunks
     }
 
     fn depth(&self) -> i16 {
@@ -175,10 +181,8 @@ impl Locator for PrimeS {
                 x + acc
             });
         let o2 = self.k * z;
-        let offset = o0 + o1 + o2;
-        Chunkloc { repetition: 0,   ///TODO!
-                    disk: disk,
-                    iteration: z,
+        let offset = (o0 + o1 + o2) as u64;
+        Chunkloc { disk: disk,
                     offset: offset}
     }
 
@@ -187,7 +191,7 @@ impl Locator for PrimeS {
     }
 
     fn stripes(&self) -> u32 {
-        self.n as u32 * (self.n as u32 - 1)
+        self.stripes
     }
 }
 
