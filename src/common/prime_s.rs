@@ -169,31 +169,36 @@ impl Locator for PrimeS {
             ChunkId::Parity(id, _) => id
         };
         let a = id.modulo(self.datachunks) as i16;
-        let eff_a = match chunkid {
-            ChunkId::Data(_) => a,
-            ChunkId::Parity(_, i) => (a / self.m + 1) * self.m + i
+        // The stripe
+        let s = a / self.m;
+        // Unit's positition within its stripe
+        let b = match chunkid {
+            ChunkId::Data(_) => a - s * self.m,
+            ChunkId::Parity(_, i) => self.m + i
         };
-        let disk = (eff_a * y).modulo(self.n);
+        let disk = ((s * self.m + b) * y).modulo(self.n);
 
         // We must loop to calculate the offset.  That's PRIME-S's disadvantage
         // vis-a-vis PRIME
         let y_inv = invmod(y, self.n);
-        let o0 = (eff_a - self.m * self.n * z) / self.n;
-        let o1 = (0 .. self.f).fold(0, |acc, j| {
-                let cb_stripe = ((disk * y_inv - j) * self.m_inv - 1)
-                    .modulo(self.n);
-                let x = if (a / self.m).modulo(self.n) > cb_stripe {
+        // Contribution to offset from data chunks in this iteration
+        let o0 = (s * self.m + b) / self.n;
+        // Contributions to offset from parity chunks in previous iterations
+        let o1 = self.f * z;
+        // Contributions to offset from parity chunks in this iteration
+        let o2 = (0 .. self.f).fold(0, |acc, j| {
+                let cb_stripe = ((disk * y_inv - j) * self.m_inv - 1).modulo(self.n);
+                let x = if s.modulo(self.n) > cb_stripe {
                     1
                 } else {
                     0
                 };
                 x + acc
             });
-        let o2 = self.k * z;
         let o3 = r as u64 * self.depth as u64;
+
         let offset = (o0 + o1 + o2) as u64 + o3;
-        Chunkloc { disk: disk,
-                    offset: offset}
+        Chunkloc { disk: disk, offset: offset}
     }
 
     fn loc2id(&self, _: Chunkloc) -> ChunkId {
