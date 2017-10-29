@@ -186,10 +186,12 @@ doesn't involve some type of sort function.  However, most file system
 operations don't actually need to invert the transform of a single stripe unit
 very often or at all.  Rather, what they need is to determine all the stripes
 that map to a range of LBAs on a given disk.  That can be done fairly
-efficiently.  The stripes that are mapped to a given disk are determined by:
+efficiently.  The stripes that are mapped to a given disk in a given iteration
+are determined by:
 
 \begin{align}
-	\text{stripes} = \{ i y^{-1} m^{-1} \bmod n\text{, } i \in [n - k, n) \}
+	\text{stripes} = \{ n z + (\text{disk } y^{-1} - i) m^{-1} \bmod n
+	\mid i \in [0, k) \}
 \end{align}
 
 \begin{thebibliography}{99}

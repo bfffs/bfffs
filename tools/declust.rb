@@ -374,44 +374,21 @@ class PrimeS < Layout
     y = z % (n - 1) + 1
 
     # Algorithm:
-    # Calculate the minimum and maximum possible addresses, assuming this is a
-    # data chunk.  Also calculate the addresses of the check chunks that are
-    # mapped to this iteration of this disk.  Virtually merge the two lists and
-    # walk through them until the correct chunk is found.  Time complexity is
-    # O(f) plus the time to sort a list of f elements.
-    
-    amin = [n * (offset - f * (z + 1)), @m * n * z].max
-    # Round up to next multiple of n, mod disk * y^-1
-    amin += (disk * invmod(y, n) - amin) % n
-    amax = n * (offset + 1 - f * z)
-    raise StandardError.new("Assertion Error") if disk(amin) != disk
-
-    a = amin
-    # possible_check_chunks is an array of [address, checkidx] corresponding to
-    # the check chunks on this disk at this iteration
-    possible_check_chunks = (0 .. f - 1).map do |j|
-      eff_stripe = ((disk * invmod(y, n) - j) * invmod(@m, n) - 1) % n
-      [@m * eff_stripe + @m * n * z, j]
-    end.sort
-
-    check_chunk_idx = 0
-    loop do
-      raise StandardError.new("Assertion error") if a >= amax
-      cc = possible_check_chunks[check_chunk_idx]
-      if cc.nil? || a < cc[0]
-        if ((a - @m * n * z) / n).floor + check_chunk_idx + k * z == offset
-          return [a, false, 0]
-        else
-          a += n
-        end
-      else
-        raise StandardError.new("Assertion error") if cc.nil? || a == cc[0]
-        if ((a - @m * n * z) / n).floor + check_chunk_idx + k * z == offset
-          return [cc[0], true, cc[1]]
-        else
-          check_chunk_idx += 1
-        end
-      end
+    # Generate the set of stripes that are stored on this iteration of this
+    # disk.  The offsetth one will be the stripe we want.  Then use the disk
+    # formula to find b, which will determine the address, whether it's a check
+    # unit, and the check index.
+    stripes_in_iter = Bitset.new(n)
+    (0 .. k-1).each do |i|
+      stripes_in_iter.set((disk * invmod(y, n) - i) * invmod(@m, n) % n)
+    end
+    offset_in_iter = offset - k * z
+    s = stripes_in_iter.to_a[offset_in_iter] + n * z
+    b = (disk * invmod(y, n) - s * @m) % n
+    if b >= @m
+      return [s * @m, true, b - @m]
+    else
+      return [s * @m + b, false, 0]
     end
   end
 
@@ -426,10 +403,10 @@ class PrimeS < Layout
     n = @clustsize
     z = (a.to_f / (@m * @clustsize)).floor  # the iteration number
     y = (z % (@clustsize - 1)) + 1  # the stride
-    ((a - @m * n * z).to_f / n).floor + (0..@protection-1).map do |j|
+    (a / n).floor + (0..@protection-1).map do |j|
       cb_stripe = ((disk(a) * invmod(y, n) - j) * invmod(@m, n) - 1) % n
       (a / @m).floor % n > cb_stripe ? 1 : 0
-    end.reduce(:+) + @stripesize * z
+    end.reduce(:+) + @protection * z
   end
 
   def checkdisk(a, i)
@@ -443,10 +420,10 @@ class PrimeS < Layout
     z = (a.to_f / (@m * @clustsize)).floor  # the iteration number
     y = (z % (@clustsize - 1)) + 1  # the stride
     eff_a = (((a / @m).floor + 1) * @m + i)
-    ((eff_a - @m * n * z).to_f / n).floor + (0..@protection-1).map do |j|
+    (eff_a / n).floor + (0..@protection-1).map do |j|
       cb_stripe = ((checkdisk(a, i) * invmod(y, n) - j) * invmod(@m, n) - 1) % n
       (a / @m).floor % n > cb_stripe ? 1 : 0
-    end.reduce(:+) + @stripesize * z
+    end.reduce(:+) + @protection * z
   end
 end
 
