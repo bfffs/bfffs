@@ -171,7 +171,8 @@ offset formula thus becomes:
 	\end{cases} \\
 	\text{offset} &= \floor*{\frac{s m + b}{n}} + f z +
 	\displaystyle\sum_{i=0}^{f} \begin{cases}
-		1 & \text{if } s > \big((\text{disk } y^{-1} - i) - 1\big) \bmod n \\
+		1 & \text{if } s \bmod n >
+			\big((\text{disk } y^{-1} - i) m^{-1} - 1\big) \bmod n \\
 		0 & \text{otherwise}
 	\end{cases}
 \end{align}
