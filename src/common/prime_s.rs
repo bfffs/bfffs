@@ -1,5 +1,6 @@
 // vim: tw=80
 
+use fixedbitset::FixedBitSet;
 use common::declust::*;
 use modulo::Mod;
 
@@ -201,8 +202,42 @@ impl Locator for PrimeS {
         Chunkloc { disk: disk, offset: offset}
     }
 
-    fn loc2id(&self, _: Chunkloc) -> ChunkId {
-        panic!("unimplemented!");
+    fn loc2id(&self, chunkloc: Chunkloc) -> ChunkId {
+        // Algorithm:
+        // Generate the set of stripes that are stored on this iteration of this
+        // disk.  The offsetth one will be the stripe we want.  Then use the
+        // disk formula to find b, which will determine the address, whether
+        // it's a check unit, and the check index.
+
+        // repetition
+        let r = (chunkloc.offset / self.depth as u64) as u32;
+        // Offset relative to start of repetition
+        let offset = chunkloc.offset.modulo(self.depth as u64) as i16;
+        // iteration
+        let z = offset / self.k;
+        // stride
+        let y = z.modulo(self.n - 1) + 1;
+        // inverse of the stride, mod n
+        let y_inv = invmod(y, self.n);
+        let disk = chunkloc.disk;
+
+        // Stripes using this disk, within this iteration
+        let mut stripes = FixedBitSet::with_capacity(self.n as usize);
+        for i in 0..self.k {
+            stripes.insert(((disk * y_inv - i) * self.m_inv).modulo(self.n) as usize);
+        }
+        let offset_in_iter = offset - self.k * z;
+        // stripe
+        let s = stripes.ones().nth(offset_in_iter as usize).unwrap() as i16+ self.n * z;
+        // position of stripe unit within stripe
+        let b = (disk * y_inv - s * self.m).modulo(self.n);
+        // number of data chunks preceding this repetition
+        let o = r as u64 * self.datachunks() as u64;
+        if b >= self.m {
+            ChunkId::Parity(o + (s * self.m) as u64, b - self.m)
+        } else {
+            ChunkId::Data(o + (s * self.m + b) as u64)
+        }
     }
 
     fn stripes(&self) -> u32 {

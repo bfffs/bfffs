@@ -121,21 +121,20 @@ fn exhaustive_5_4_2() {
     assert_eq!(locator.id2loc(ChunkId::Parity(38, 0)), Chunkloc::new(0, 15));
     assert_eq!(locator.id2loc(ChunkId::Parity(38, 1)), Chunkloc::new(4, 15));
     
-    // TODO! Implement reverse mappings
     // Now check reverse mappings
-    //for stripe in 0 .. locator.stripes() {
-        //// First check data chunks
-        //for u in 0 .. k {
-            //let chunkid = ChunkId::Data(stripe as u64 * k as u64 + u as u64);
-            //assert_eq!(locator.loc2id(locator.id2loc(chunkid)), chunkid);
-        //}
+    for stripe in 0 .. locator.stripes() {
+        // First check data chunks
+        for u in 0 .. k {
+            let chunkid = ChunkId::Data(stripe as u64 * k as u64 + u as u64);
+            assert_eq!(locator.loc2id(locator.id2loc(chunkid)), chunkid);
+        }
 
-        //// Now check parity chunks
-        //for u in 0 .. f {
-            //let chunkid = ChunkId::Parity(stripe as u64 * k as u64, u);
-            //assert_eq!(locator.loc2id(locator.id2loc(chunkid)), chunkid);
-        //}
-    //}
+        // Now check parity chunks
+        for u in 0 .. f {
+            let chunkid = ChunkId::Parity(stripe as u64 * k as u64, u);
+            assert_eq!(locator.loc2id(locator.id2loc(chunkid)), chunkid);
+        }
+    }
 }
 
 // Test repetition calculations for a simple layout
@@ -150,10 +149,12 @@ fn repetition() {
     assert_eq!(locator.id2loc(ChunkId::Data(0)).offset, 0);
     assert_eq!(locator.id2loc(ChunkId::Parity(0, 0)).offset, 0);
     assert_eq!(locator.id2loc(ChunkId::Parity(0, 1)).offset, 0);
+    assert_eq!(locator.loc2id(Chunkloc::new(0, 0)), ChunkId::Data(0));
     // Repetition 1
     assert_eq!(locator.id2loc(ChunkId::Data(126)).offset, 30);
     assert_eq!(locator.id2loc(ChunkId::Parity(126, 0)).offset, 30);
     assert_eq!(locator.id2loc(ChunkId::Parity(126, 1)).offset, 30);
+    assert_eq!(locator.loc2id(Chunkloc::new(0, 30)), ChunkId::Data(126));
     // Repetition u32::max_value()
     assert_eq!(locator.id2loc(ChunkId::Data(541165879170)).offset,
         128849018850);
@@ -161,4 +162,6 @@ fn repetition() {
         128849018850);
     assert_eq!(locator.id2loc(ChunkId::Parity(541165879170, 1)).offset,
         128849018850);
+    assert_eq!(locator.loc2id(Chunkloc::new(0, 128849018850)),
+        ChunkId::Data(541165879170));
 }
