@@ -1,0 +1,237 @@
+\documentclass[onecolumn,draft]{IEEEtran}
+\usepackage{mathtools}
+\usepackage{anysize}
+\usepackage{listings}
+\usepackage{wrapfig}
+\usepackage[table]{xcolor}
+
+\DeclarePairedDelimiter\floor{\lfloor}{\rfloor}
+
+\title{SMR-compatible Declustered Disk Arrays}
+\author{Alan Somers}
+
+\begin{document}
+\maketitle
+
+\section{Background}
+
+In 1990 Muntz and Lui~\cite{declust1} proposed declustered RAID.  It differs
+from traditional RAID in that the encoding stripe size is less than the number
+of disks in a cluster.  It offers several advantages, chiefly better
+performance while rebuilding after a failure.  In 1992 Holland and
+Gibson~\cite{sixrules} identify six conditions that any declustering algorithm
+should ideally satisfy.  However, they did not develop an algorithm that
+satisfied all six.  In 1998 Alvarez \emph{et al}~\cite{relpr} proved that all
+six rules are impossible to satisfy simultaneously, except in a few special
+cases.  They also presented two layout algorithms: PRIME and RELPR.  PRIME
+satisfied five of the conditions and nearly satisfied the sixth: maximal read
+parallelism.  RELPR satisfied four.  In addition to narrowly missing maximal
+read parallelism, RELPR failed to satisfy fully distributed reconstruction.
+But for most layouts, it comes close.  RELPR also achieved another goal: it
+could work with any size cluster, any size of parity stripe, and any degree of
+redundancy.
+
+Spinning hard drives' performance has always been sensitive to sequential
+access.  Each seek operation can take several milliseconds.  So it has always
+gone without saying that any good declustering layout should minimize seeks by
+placing logically sequential LBAs on the disks.  That is, user LBAs that are
+near to each other should be mapped to physical LBAs that are also near to each
+other.  However, most disks can handle very small seeks with no noticeable
+impact on performance.  In addition, modern hard disks can use command queueing
+to reorder adjacent but out-of-order operations, which can completely eliminate
+the performance penalty for out-of-order access.  Even before hard drives
+supported command queueing, operating systems could reorder accesses in
+software.  So there was never any strong in incentive for declustering
+algorithms to guarantee fully sequential access.
+
+\section{Shingled Magnetic Recording}
+
+Shingled Magnetic Recording (SMR) upends that assumption.  Host-managed SMR hard
+drives~\cite{zbc}~\cite{zba} require that writes must be both adjacent and
+sequential.  Out-or-order writes will be rejected as errors.  Thus, any
+declustering layout algorithm intended for SMR hard drives must guarantee
+complete adjacent and monotonic LBA mapping.  We can add a seventh condition to
+the six from ~\cite{relpr}
+
+\begin{enumerate}
+  \item[7.] Monotonic mapping: The physical LBAs of each disk must monotonically
+  map to logical stripes.
+\end{enumerate}
+
+Since no stripe can have more than one stripe unit on a single disk (condition
+1), the reverse is guaranteed: logical stripes must map monotonically to
+physical LBAs.
+
+PRIME and RELPR come close to meeting condition 7.  All data units do map
+monotonically.  However, check units do not.  A large write to a PRIME or RELPR
+array will therefore contain small out-of-order sequences.
+
+\section{PRIME-S}
+
+PRIME is nearly monotonic.  In fact, it can be made completely monotonic simply
+by sorting the stripe units within each iteration of the layout, since none of
+the original six conditions places specific requirements on stripe units'
+offsets. For example, \cite{relpr} gives this layout:
+
+\begin{center}
+\begin{tabular}{ |c|c|c|c|c| }
+  \hline
+  D0.0 & D0.1 & D1.0 & D1.1 & D2.0 \\
+  \hline
+  D2.1 & D3.0 & D3.1 & D4.0 & D4.1 \\
+  \hline
+  \rowcolor{lightgray} C4.0 & C2.0 & C0.0 & C3.0 & C1.0 \\
+  \hline
+  \rowcolor{lightgray}C1.1 & C4.1 & C2.1 & C0.1 & C3.1 \\
+  \hline
+  D5.0 & D6.1 & D5.1 & D7.0 & D6.0 \\
+  \hline
+  D7.1 & D9.0 & D8.0 & D9.1 & D8.1 \\
+  \hline
+  \rowcolor{lightgray}C9.0 & C8.0 & C7.0 & C6.0 & C5.0 \\
+  \hline
+  \rowcolor{lightgray}C6.1 & C5.1 & C9.1 & C8.1 & C7.1 \\
+  \hline
+  D10.0 & D11.0 & D12.0 & D10.1 & D11.1 \\
+  \hline
+  D12.1 & D13.1 & D14.1 & D13.0 & D14.0 \\
+  \hline
+  \rowcolor{lightgray}C14.0 & C10.0 & C11.0 & C12.0 & C13.0 \\
+  \hline
+  \rowcolor{lightgray}C11.1 & C12.1 & C13.1 & C14.1 & C10.1 \\
+  \hline
+  D15.0 & D17.0 & D16.1 & D16.0 & D15.1 \\
+  \hline
+  D17.1 & D19.1 & D19.0 & D18.1 & D18.0 \\
+  \hline
+  \rowcolor{lightgray}C19.0 & C16.0 & C18.0 & C15.0 & C17.0 \\
+  \hline
+  \rowcolor{lightgray}C16.1 & C18.1 & C15.1 & C17.1 & C19.1 \\
+  \hline
+\end{tabular}
+\end{center}
+
+Sorting each disk's stripe units by stripe, within each iteration, yields the
+following monotonic layout:
+
+\begin{center}
+\begin{tabular}{ |c|c|c|c|c| }
+  \hline
+  D0.0 & D0.1 & \cellcolor{lightgray}C0.0 & \cellcolor{lightgray}C0.1 & \cellcolor{lightgray}C1.0 \\
+  \hline
+  \cellcolor{lightgray}C1.1 & \cellcolor{lightgray}C2.0 & D1.1 & D1.1 & D2.0 \\
+  \hline
+  D2.1 & D3.0 & \cellcolor{lightgray}C2.1 & \cellcolor{lightgray}C3.0 & \cellcolor{lightgray}C3.1 \\
+  \hline
+  \cellcolor{lightgray}C4.0 & \cellcolor{lightgray}C4.1 & D3.1 & D4.0 & D4.1 \\
+  \hline
+  D5.0 & \cellcolor{lightgray}C5.1 & D5.1 & \cellcolor{lightgray}C6.0 & \cellcolor{lightgray}C5.0 \\
+  \hline
+  \cellcolor{lightgray}C6.1 & D6.1 & \cellcolor{lightgray}C7.0 & D7.0 & D6.0 \\
+  \hline
+  D7.1 & \cellcolor{lightgray}C8.0 & D8.0 & \cellcolor{lightgray}C8.1 & \cellcolor{lightgray}C7.1 \\
+  \hline
+  \cellcolor{lightgray}C9.0 & D9.0 & \cellcolor{lightgray}C9.1 & D9.1 & D8.1 \\
+  \hline
+  D10.0 & \cellcolor{lightgray}C10.0 & \cellcolor{lightgray}C11.0 & D10.1 & \cellcolor{lightgray}C10.1 \\
+  \hline
+  \cellcolor{lightgray}C11.1 & D11.0 & D12.0 & \cellcolor{lightgray}C12.0 & D11.1 \\
+  \hline
+  D12.1 & \cellcolor{lightgray}C12.1 & \cellcolor{lightgray}C13.1 & D13.0 & \cellcolor{lightgray}C13.0 \\
+  \hline
+  \cellcolor{lightgray}C14.0 & D13.1 & D14.1 & \cellcolor{lightgray}C14.1 & D14.0 \\
+  \hline
+  D15.0 & \cellcolor{lightgray}C16.0 & \cellcolor{lightgray}C15.1 & \cellcolor{lightgray}C15.0 & D15.1 \\
+  \hline
+  \cellcolor{lightgray}C16.1 & D17.0 & D16.1 & D16.0 & \cellcolor{lightgray}C17.0 \\
+  \hline
+  D17.1 & \cellcolor{lightgray}C18.1 & \cellcolor{lightgray}C18.0 & \cellcolor{lightgray}C17.1 & D18.0 \\
+  \hline
+  \cellcolor{lightgray}C19.0 & D19.1 & D19.0 & D18.1 & \cellcolor{lightgray}C19.1 \\
+  \hline
+\end{tabular}
+\end{center}
+
+The offset function is more complicated for PRIME-S than for PRIME.  To
+calculate it, we observe that PRIME-S's data units are placed in the same
+posititon as PRIME's, but incremented by the number of earlier stripes' check
+units that map to the same disk within that iteration.  And PRIME-S's check
+units are placed in the same position as PRIME's data units from suceeding
+stripes, but also incremented by the number of earlier stripes' check units
+that map to the same disk within that iteration.  Exactly $f$ check units are
+placed on each iteration of each disk, and we need to check all $f$.  If $s$ is
+the stripe number and $b$ is the unit's position within its stripe, then the
+offset formula thus becomes:
+
+\begin{align}
+	s &= \floor*{\frac{a}{m}} \\
+	b &= \begin{cases}
+		a - s m & \text{for data units} \\
+		m + i & \text{for check units}
+	\end{cases} \\
+	\text{offset} &= \floor*{\frac{s m + b}{n}} + f z +
+	\displaystyle\sum_{i=0}^{f} \begin{cases}
+		1 & \text{if } s > \big((\text{disk } y^{-1} - i) - 1\big) \bmod n \\
+		0 & \text{otherwise}
+	\end{cases}
+\end{align}
+
+The disk formula is the same as for PRIME.  But we can unify PRIME's \emph{disk} and \emph{check-disk} functions like this:
+\begin{align}
+	disk = (s m + b) y \bmod n
+\end{align}
+
+Inverting PRIME-S is harder than inverting PRIME.  I don't know of a way that
+doesn't involve some type of sort function.  However, most file system
+operations don't actually need to invert the transform of a single stripe unit
+very often or at all.  Rather, what they need is to determine all the stripes
+that map to a range of LBAs on a given disk.  That can be done fairly
+efficiently.  The stripes that are mapped to a given disk are determined by:
+
+\begin{align}
+	\text{stripes} = \{ i y^{-1} m^{-1} \bmod n\text{, } i \in [n - k, n) \}
+\end{align}
+
+\begin{thebibliography}{99}
+
+\bibitem{declust1} Muntz, Richard R., and John CS Lui. ``Performance analysis
+of disk arrays under failure.'' \emph{Proceedings of the 16th VLDB Conference},
+pp 162-73, 1990.
+
+\bibitem{schwabe1} Schwabe, E. and Sutherland, I.  ``Improved
+parity-declustered layouts for disk arrays.'' \emph{Proceedings of the
+Symposium on Parallel Algorithms and Architectures}, pp 76-84, 1994.
+
+\bibitem{sixrules} Holland, Mark and Gibsom, Garth A. ``Parity declustering for
+continuous operation in redundant disk arrays.'' \emph{Vol. 27, No. 9, ACM},
+1992.
+
+\bibitem{relpr} Alvarez, Guillermo A., et al. ``Declustered disk array
+architectures with optimal and near-optimal parallelism.'' \emph{ACM SIGARCH
+Computer Architecture News.} Vol. 26. No. 3. IEEE Computer Society, 1998.
+
+\bibitem{zbc} TODO
+\bibitem{zba} TODO
+
+\end{thebibliography}
+
+\section{Appendix}
+
+\subsection{Inverting PRIME}
+
+Alvarez et al~\cite{relpr} give the forward transforms for PRIME and RELPR, but
+not the reverse transforms.  That is, they don't give an algorithm for
+determining which stripe unit is placed at a given location on disk.  For
+practical usage, that transform is needed for operations like defragmentation,
+garbage collection, and failure handling.  The algorithm is:
+
+\begin{align}
+	z &= \floor*{\frac{\text{offset}}{kn}} \\
+	y &= \big(z \bmod \left(n - 1\right) \big) + 1 \\
+	a &= (\text{disk } y^{-1}) \bmod n + n ( \text{offset} - f z )\text{, for data units} \\
+	i &= \text{offset} - (z + 1) k + f \\
+	a &= m \Big(n z + \big((\text{disk } y^{-1} - i) m^{-1} - 1\big) \bmod n\Big),\text{ for check units}
+\end{align}
+
+
+\end{document}
