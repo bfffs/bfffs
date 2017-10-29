@@ -1,4 +1,8 @@
 syntax: glob
-target
-Cargo.lock
+*.diff
+*.orig
 *.swp
+.byebug_history
+.nfs.*
+Cargo.lock
+target
