@@ -29,7 +29,7 @@ pub trait Vdev {
     /// Return the usable space of the Vdev.
     ///
     /// Does not include wasted space, space reserved for labels, space used by
-    /// partity, etc.  May not change within the lifetime of a Vdev.
+    /// parity, etc.  May not change within the lifetime of a Vdev.
     fn size(&self) -> LbaT;
 
     /// Return the first LBA of the given zone
