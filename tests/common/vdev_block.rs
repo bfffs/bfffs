@@ -139,12 +139,27 @@ test_suite! {
         }
     }
 
+    fixture!( mocks() -> (Scenario, Box<MockVdevLeaf2>) {
+            setup(&mut self) {
+            let scenario = Scenario::new();
+            let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
+            scenario.expect(leaf.size_call()
+                                .and_return(16384));
+            scenario.expect(leaf.lba2zone_call(ANY)
+                                .and_return_clone(0)
+                                .times(..));
+            scenario.expect(leaf.start_of_zone_call(0)
+                                .and_return_clone(0)
+                                .times(..));
+            (scenario, leaf)
+        }
+    });
+
     // Reads should be passed straight through, even if they're out-of-order
-    test read_at() {
-        let scenario = Scenario::new();
+    test read_at(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
-        scenario.expect(leaf.size_call().and_return(16384));
         seq.expect(leaf.read_at_call(ANY, 1)
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
         seq.expect(leaf.read_at_call(ANY, 0)
@@ -161,12 +176,9 @@ test_suite! {
     }
 
     // Basic writing at the WP works
-    test write_at_0() {
-        let scenario = Scenario::new();
-        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
-        scenario.expect(leaf.size_call().and_return(16384));
-        scenario.expect(leaf.lba2zone_call(0).and_return(0));
-        scenario.expect(leaf.start_of_zone_call(0).and_return(0));
+    test write_at_0(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
         scenario.expect(leaf.write_at_call(ANY, 0)
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
 
@@ -178,12 +190,9 @@ test_suite! {
     }
 
     // Basic vectored writing at the WP works
-    test writev_at_0() {
-        let scenario = Scenario::new();
-        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
-        scenario.expect(leaf.size_call().and_return(16384));
-        scenario.expect(leaf.lba2zone_call(0).and_return(0));
-        scenario.expect(leaf.start_of_zone_call(0).and_return(0));
+    test writev_at_0(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
         scenario.expect(leaf.writev_at_call(ANY, 0)
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
 
@@ -197,13 +206,9 @@ test_suite! {
     }
 
     // Writes should be reordered and combined if out-of-order
-    test write_at_combining() {
-        let scenario = Scenario::new();
-        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
-        scenario.expect(leaf.size_call().and_return(16384));
-        scenario.expect(leaf.lba2zone_call(0).and_return(0));
-        scenario.expect(leaf.lba2zone_call(1).and_return(0));
-        scenario.expect(leaf.start_of_zone_call(0).and_return(0));
+    test write_at_combining(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
         scenario.expect(leaf.writev_at_call(ANY, 0)
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
 
@@ -218,15 +223,11 @@ test_suite! {
     }
 
     // Writes should be issued ASAP, even if they could be combined later
-    test write_at_issue_asap() {
-        let scenario = Scenario::new();
+    test write_at_issue_asap(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
-        scenario.expect(leaf.size_call().and_return(16384));
-        scenario.expect(leaf.lba2zone_call(0).and_return(0));
-        scenario.expect(leaf.lba2zone_call(1).and_return(0));
         scenario.expect(leaf.lba2zone_call(2).and_return(0));
-        scenario.expect(leaf.start_of_zone_call(0).and_return(0));
         seq.expect(leaf.writev_at_call(ANY, 0)
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
         seq.expect(leaf.write_at_call(ANY, 2)
