@@ -102,168 +102,144 @@ test_suite! {
     }
 }
 
+#[cfg(feature = "mocks")]
 test_suite! {
     // These tests use a mock VdevLeaf object
     name mock_vdev_block;
 
     use arkfs::common::*;
+    use arkfs::common::vdev;
     use arkfs::common::vdev::{SGVdev, Vdev, VdevFut};
     use arkfs::common::vdev_block::*;
-    use arkfs::common::vdev_leaf::*;
     use futures::future;
-    use std::cell::RefCell;
+    use mockers::{Scenario, Sequence};
+    use mockers::matchers::ANY;
     use std::io::Error;
-    use std::mem;
     use std::rc::Rc;
-    use std::collections::VecDeque;
     use tokio_core::reactor::{Core, Handle};
 
-    // Roll our own Mock object.  We can't use:
-    // mockers: https://github.com/kriomant/mockers/issues/20
-    // mock_derive: https://github.com/DavidDeSimone/mock_derive/issues/3
-    // mockme because it can only be used by a single test
-    // galvanic_mock because it doesn't support specifying a fixed order of
-    // expectations
-    pub struct MockVdevLeaf {
-        handle: Handle,
-        record: RefCell<VecDeque<(String, LbaT)>>
-    }
-
-    impl MockVdevLeaf {
-        fn new(handle: Handle) -> Self {
-            MockVdevLeaf {
-                handle: handle.clone(),
-                record: RefCell::new(VecDeque::<(String, LbaT)>::new())
-            }
+    mock!{
+        MockVdevLeaf2,
+        vdev,
+        trait Vdev {
+            fn handle(&self) -> Handle;
+            fn lba2zone(&self, lba: LbaT) -> ZoneT;
+            fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+            fn size(&self) -> LbaT;
+            fn start_of_zone(&self, zone: ZoneT) -> LbaT;
+            fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+        },
+        vdev,
+        trait SGVdev  {
+            fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+            fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+        },
+        vdev_leaf,
+        trait VdevLeaf  {
         }
-
-        pub fn expect(&self, s: &str, lba: LbaT) -> &Self {
-            let block_op = self.record.borrow_mut().pop_front().unwrap();
-            assert_eq!(s, block_op.0);
-            assert_eq!(lba, block_op.1);
-            &self
-        }
-
-        fn push(&self, s: &str, lba: LbaT) {
-            self.record.borrow_mut().push_back((String::from(s), lba));
-        }
-    }
-
-    impl Vdev for MockVdevLeaf {
-        fn handle(&self) -> Handle {
-            self.handle.clone()
-        }
-        fn lba2zone(&self, _: LbaT) -> ZoneT {
-            0
-        }
-        fn size(&self) -> LbaT {
-            16384
-        }
-        fn start_of_zone(&self, _: ZoneT) -> LbaT {
-            0
-        }
-        fn read_at(&self, _: IoVec, lba: LbaT) -> Box<VdevFut> {
-            self.push("read_at", lba);
-            Box::new(future::ok::<isize, Error>((0)))
-        }
-        fn write_at(&self, _: IoVec, lba: LbaT) -> Box<VdevFut> {
-            self.push("write_at", lba);
-            Box::new(future::ok::<isize, Error>((0)))
-        }
-    }
-
-    impl SGVdev for MockVdevLeaf {
-        fn readv_at(&self, _: SGList, lba: LbaT) -> Box<VdevFut> {
-            self.push("readv_at", lba);
-            Box::new(future::ok::<isize, Error>((0)))
-        }
-        fn writev_at(&self, _: SGList, lba: LbaT) -> Box<VdevFut> {
-            self.push("writev_at", lba);
-            Box::new(future::ok::<isize, Error>((0)))
-        }
-    }
-
-    impl VdevLeaf for MockVdevLeaf {
     }
 
     // Reads should be passed straight through, even if they're out-of-order
     test read_at() {
+        let scenario = Scenario::new();
+        let mut seq = Sequence::new();
+        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
+        scenario.expect(leaf.size_call().and_return(16384));
+        seq.expect(leaf.read_at_call(ANY, 1)
+                        .and_return(Box::new(future::ok::<isize, Error>((0)))));
+        seq.expect(leaf.read_at_call(ANY, 0)
+                        .and_return(Box::new(future::ok::<isize, Error>((0)))));
+        scenario.expect(seq);
+
         let rbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
         let mut core = Core::new().unwrap();
-        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         let first = vdev.read_at(rbuf.clone(), 1);
         let second = vdev.read_at(rbuf.clone(), 0);
         let futs = future::Future::join(first, second);
         core.run(futs).unwrap();
-        let final_leaf : &Box<MockVdevLeaf> = unsafe {
-            mem::transmute(&vdev.leaf)
-        };
-        final_leaf.expect("read_at", 1)
-            .expect("read_at", 0);
     }
 
     // Basic writing at the WP works
     test write_at_0() {
+        let scenario = Scenario::new();
+        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
+        scenario.expect(leaf.size_call().and_return(16384));
+        scenario.expect(leaf.lba2zone_call(0).and_return(0));
+        scenario.expect(leaf.start_of_zone_call(0).and_return(0));
+        scenario.expect(leaf.write_at_call(ANY, 0)
+                        .and_return(Box::new(future::ok::<isize, Error>((0)))));
+
         let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
         let mut core = Core::new().unwrap();
-        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         let fut = vdev.write_at(wbuf.clone(), 0);
         core.run(fut).unwrap();
-        let final_leaf : &Box<MockVdevLeaf> = unsafe {
-            mem::transmute(&vdev.leaf)
-        };
-        final_leaf.expect("write_at", 0);
     }
 
     // Basic vectored writing at the WP works
     test writev_at_0() {
+        let scenario = Scenario::new();
+        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
+        scenario.expect(leaf.size_call().and_return(16384));
+        scenario.expect(leaf.lba2zone_call(0).and_return(0));
+        scenario.expect(leaf.start_of_zone_call(0).and_return(0));
+        scenario.expect(leaf.writev_at_call(ANY, 0)
+                        .and_return(Box::new(future::ok::<isize, Error>((0)))));
+
         let wbuf0 = Rc::new(vec![0u8; 1024].into_boxed_slice());
         let wbuf1 = Rc::new(vec![0u8; 3072].into_boxed_slice());
         let wbufs = vec![wbuf0, wbuf1].into_boxed_slice();
         let mut core = Core::new().unwrap();
-        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         let fut = vdev.writev_at(wbufs, 0);
         core.run(fut).unwrap();
-        let final_leaf : &Box<MockVdevLeaf> = unsafe {
-            mem::transmute(&vdev.leaf)
-        };
-        final_leaf.expect("writev_at", 0);
     }
 
     // Writes should be reordered and combined if out-of-order
     test write_at_combining() {
+        let scenario = Scenario::new();
+        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
+        scenario.expect(leaf.size_call().and_return(16384));
+        scenario.expect(leaf.lba2zone_call(0).and_return(0));
+        scenario.expect(leaf.lba2zone_call(1).and_return(0));
+        scenario.expect(leaf.start_of_zone_call(0).and_return(0));
+        scenario.expect(leaf.writev_at_call(ANY, 0)
+                        .and_return(Box::new(future::ok::<isize, Error>((0)))));
+
         let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
         let mut core = Core::new().unwrap();
-        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        // Issue writes out-of-order
         let first = vdev.write_at(wbuf.clone(), 1);
         let second = vdev.write_at(wbuf.clone(), 0);
         let futs = future::Future::join(first, second);
         core.run(futs).unwrap();
-        let final_leaf : &Box<MockVdevLeaf> = unsafe {
-            mem::transmute(&vdev.leaf)
-        };
-        final_leaf.expect("writev_at", 0);
     }
 
     // Writes should be issued ASAP, even if they could be combined later
     test write_at_issue_asap() {
+        let scenario = Scenario::new();
+        let mut seq = Sequence::new();
+        let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
+        scenario.expect(leaf.size_call().and_return(16384));
+        scenario.expect(leaf.lba2zone_call(0).and_return(0));
+        scenario.expect(leaf.lba2zone_call(1).and_return(0));
+        scenario.expect(leaf.lba2zone_call(2).and_return(0));
+        scenario.expect(leaf.start_of_zone_call(0).and_return(0));
+        seq.expect(leaf.writev_at_call(ANY, 0)
+                        .and_return(Box::new(future::ok::<isize, Error>((0)))));
+        seq.expect(leaf.write_at_call(ANY, 2)
+                        .and_return(Box::new(future::ok::<isize, Error>((0)))));
+        scenario.expect(seq);
+
         let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
         let mut core = Core::new().unwrap();
-        let leaf = Box::new(MockVdevLeaf::new(core.handle()));
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         let first = vdev.write_at(wbuf.clone(), 1);
         let second = vdev.write_at(wbuf.clone(), 0);
         let third = vdev.write_at(wbuf.clone(), 2);
         let futs = future::Future::join3(first, second, third);
         core.run(futs).unwrap();
-        let final_leaf : &Box<MockVdevLeaf> = unsafe {
-            mem::transmute(&vdev.leaf)
-        };
-        final_leaf.expect("writev_at", 0);
-        final_leaf.expect("write_at", 2);
     }
 }

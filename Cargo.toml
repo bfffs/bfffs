@@ -3,10 +3,18 @@ name = "arkfs"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
 
+[features]
+# Make mockers optional so we can still compile on stable
+mocks = ["mockers", "mockers_macros"]
+
 [dependencies]
 fixedbitset = "0.1.8"
 futures = "0.1.14"
 isa-l = { path = "isa-l" }
+# mockers should be a dev dependency, but can't because of issue 1596
+# https://github.com/rust-lang/cargo/issues/1596
+mockers_macros = { version = "0.9", optional = true }
+mockers = { version = "0.9", optional = true }
 # modulo is an RFC for addition to libstd
 # https://github.com/rust-lang/rfcs/pull/2169
 # If it gets merged, we can remove this crate
