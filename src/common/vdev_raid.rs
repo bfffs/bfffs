@@ -46,6 +46,12 @@ pub struct VdevRaid {
 impl VdevRaid {
     pub fn new(chunksize: LbaT, codec: Codec, locator: Box<Locator>,
                blockdevs: Box<[VdevBlockLike]>) -> Self {
+        assert_eq!(blockdevs.len(), locator.clustsize() as usize,
+            "mismatched cluster size");
+        assert_eq!(codec.stripesize(), locator.stripesize(),
+            "mismatched stripe size");
+        assert_eq!(codec.protection(), locator.protection(),
+            "mismatched protection level");
         for i in 1..blockdevs.len() {
             // All blockdevs must be the same size
             assert_eq!(blockdevs[0].size(), blockdevs[i].size());
@@ -113,6 +119,8 @@ impl Vdev for VdevRaid {
 mod t {
 
 use super::*;
+use super::super::prime_s::PrimeS;
+use mockers::Scenario;
 
 mock!{
     MockVdevBlock,
@@ -133,6 +141,55 @@ mock!{
     self,
     trait VdevBlockTrait{
     }
+}
+
+#[test]
+#[should_panic(expected="mismatched cluster size")]
+fn mismatched_clustsize() {
+        let n = 7;
+        let k = 4;
+        let f = 1;
+
+        let blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+        let codec = Codec::new(k, f);
+        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+        VdevRaid::new(16, codec, locator, blockdevs.into_boxed_slice());
+}
+
+#[test]
+#[should_panic(expected="mismatched stripe size")]
+fn mismatched_stripesize() {
+        let n = 7;
+        let k = 4;
+        let f = 1;
+
+        let s = Scenario::new();
+        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+        for _ in 0..n {
+            let mock = Box::new(s.create_mock::<MockVdevBlock>());
+            blockdevs.push(mock);
+        }
+        let codec = Codec::new(5, f);
+        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+        VdevRaid::new(16, codec, locator, blockdevs.into_boxed_slice());
+}
+
+#[test]
+#[should_panic(expected="mismatched protection level")]
+fn mismatched_protection() {
+        let n = 7;
+        let k = 4;
+        let f = 1;
+
+        let s = Scenario::new();
+        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+        for _ in 0..n {
+            let mock = Box::new(s.create_mock::<MockVdevBlock>());
+            blockdevs.push(mock);
+        }
+        let codec = Codec::new(k, f);
+        let locator = Box::new(PrimeS::new(n, k as i16, 2));
+        VdevRaid::new(16, codec, locator, blockdevs.into_boxed_slice());
 }
 
 test_suite! {

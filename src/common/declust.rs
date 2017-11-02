@@ -53,6 +53,9 @@ impl Chunkloc {
 /// optimal and near-optimal parallelism." ACM SIGARCH Computer Architecture
 /// News. Vol. 26. No. 3. IEEE Computer Society, 1998.
 pub trait Locator {
+    /// Return the total number of disks in the layout
+    fn clustsize(&self) -> i16;
+
     /// Return the number of data chunks in a single repetition of the layout
     fn datachunks(&self) -> u64;
 
@@ -73,6 +76,12 @@ pub trait Locator {
 	/// - `a`:	ID of the data chunk
     fn id2loc(&self, id: ChunkId) -> Chunkloc;
 
+    /// Return the degree of redundancy
+    fn protection(&self) -> i16;
+
     /// Return the number of stripes in a single repetition of the layout
     fn stripes(&self) -> u32;
+
+    /// Return the total number of disks in each RAID stripe
+    fn stripesize(&self) -> i16;
 }

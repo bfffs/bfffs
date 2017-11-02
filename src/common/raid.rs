@@ -189,6 +189,16 @@ impl Codec {
         isa_l::ec_init_tables(k as u32, errs as u32, &dec_rows, &mut dec_tables);
         dec_tables
     }
+
+    /// Return the degree of redundancy
+    pub fn protection(&self) -> i16 {
+        self.f as i16
+    }
+
+    /// Return the total number of disks in the raid stripe
+    pub fn stripesize(&self) -> i16 {
+        self.m as i16
+    }
 }
 
 #[cfg(test)]

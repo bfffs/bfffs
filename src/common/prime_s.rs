@@ -152,6 +152,10 @@ impl PrimeS {
 }
 
 impl Locator for PrimeS {
+    fn clustsize(&self) -> i16 {
+        self.n
+    }
+
     fn datachunks(&self) -> u64 {
         self.datachunks
     }
@@ -240,8 +244,16 @@ impl Locator for PrimeS {
         }
     }
 
+    fn protection(&self) -> i16 {
+        self.f
+    }
+
     fn stripes(&self) -> u32 {
         self.stripes
+    }
+
+    fn stripesize(&self) -> i16 {
+        self.k
     }
 }
 
