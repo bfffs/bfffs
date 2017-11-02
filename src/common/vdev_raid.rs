@@ -2,6 +2,7 @@
 
 use common::*;
 use common::vdev::*;
+#[cfg(not(test))]
 use common::vdev_block::*;
 use common::raid::*;
 use common::declust::*;
@@ -29,7 +30,7 @@ pub struct VdevRaid {
     chunksize: LbaT,
 
     /// RAID codec
-    codec: Codec,
+    _codec: Codec,
 
     /// Locator, declustering or otherwise
     locator: Box<Locator>,
@@ -56,7 +57,7 @@ impl VdevRaid {
         }
 
         VdevRaid { chunksize: chunksize,
-                   codec: codec,
+                   _codec: codec,
                    locator: locator,
                    blockdevs: blockdevs}
     }
@@ -73,7 +74,7 @@ impl Vdev for VdevRaid {
         self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
     }
 
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+    fn read_at(&self, _buf: IoVec, _lba: LbaT) -> Box<VdevFut> {
         panic!("unimplemented!");
     }
 
@@ -102,7 +103,7 @@ impl Vdev for VdevRaid {
         }).min().unwrap()
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+    fn write_at(&self, _buf: IoVec, _lba: LbaT) -> Box<VdevFut> {
         panic!("unimplemented!");
     }
 }
