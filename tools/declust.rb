@@ -887,6 +887,7 @@ def main(argv)
     puts format("%-#{colw}s %-20s%-19s", "Actual Parallel Read Count, 1 row:",
                 aprc, aprc.to_f / iprc)
   end
+  puts format("%-#{colw}s %d", "Data chunks:", layout.userchunks)
   puts format("%-#{colw}s %d rows", "Depth:", layout.depth)
   0
 end
