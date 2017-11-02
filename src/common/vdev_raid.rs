@@ -109,85 +109,115 @@ impl Vdev for VdevRaid {
 
 #[cfg(feature = "mocks")]
 #[cfg(test)]
-test_suite! {
-    name vdev_raid;
+mod t {
 
-    use super::*;
-    use super::super::prime_s::PrimeS;
+use super::*;
+
+mock!{
+    MockVdevBlock,
+    vdev,
+    trait Vdev {
+        fn handle(&self) -> Handle;
+        fn lba2zone(&self, lba: LbaT) -> ZoneT;
+        fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+        fn size(&self) -> LbaT;
+        fn start_of_zone(&self, zone: ZoneT) -> LbaT;
+        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+    },
+    vdev,
+    trait SGVdev  {
+        fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+        fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+    },
+    self,
+    trait VdevBlockTrait{
+    }
+}
+
+test_suite! {
+    // A small layout that is a multiple of the zone size
+    name small;
+
+    use super::super::*;
+    use super::MockVdevBlock;
+    use super::super::super::prime_s::PrimeS;
     use mockers::Scenario;
 
-    mock!{
-        MockVdevBlock,
-        vdev,
-        trait Vdev {
-            fn handle(&self) -> Handle;
-            fn lba2zone(&self, lba: LbaT) -> ZoneT;
-            fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-            fn size(&self) -> LbaT;
-            fn start_of_zone(&self, zone: ZoneT) -> LbaT;
-            fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-        },
-        vdev,
-        trait SGVdev  {
-            fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
-            fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
-        },
-        self,
-        trait VdevBlockTrait{
+    fixture!( mocks() -> (Scenario, VdevRaid) {
+            setup(&mut self) {
+            let scenario = Scenario::new();
+            let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+            for _ in 0..5 {
+                let mock = Box::new(scenario.create_mock::<MockVdevBlock>());
+                scenario.expect(mock.size_call()
+                                    .and_return_clone(262144)
+                                    .times(..));  // 256k LBAs
+                scenario.expect(mock.start_of_zone_call(1)
+                                    .and_return_clone(65536)   // 64k LBAs/zone
+                                    .times(..));
+
+                blockdevs.push(mock);
+            }
+
+            let n = 5;
+            let k = 4;
+            let f = 1;
+
+            let codec = Codec::new(k, f);
+            let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+            let vdev_raid = VdevRaid::new(16, codec, locator,
+                                          blockdevs.into_boxed_slice());
+            (scenario, vdev_raid)
         }
+    });
+
+    test size0(mocks) {
+        assert_eq!(mocks.val.1.size(), 983040);
     }
+}
 
-    // test VdevRaid::size with a layout that is a multiple of the zone size
-    test size0() {
-        let scenario = Scenario::new();
-        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
-        for _ in 0..5 {
-            let mock = Box::new(scenario.create_mock::<MockVdevBlock>());
-            scenario.expect(mock.size_call()
-                                .and_return_clone(262144)
-                                .times(..));  // 256k LBAs
-            scenario.expect(mock.start_of_zone_call(1)
-                                .and_return_clone(65536)   // 64k LBAs per zone
-                                .times(..));
+test_suite! {
+    // A medium layout that is not a multiple of the zone size
+    name medium;
 
-            blockdevs.push(mock);
+    use super::super::*;
+    use super::MockVdevBlock;
+    use super::super::super::prime_s::PrimeS;
+    use mockers::Scenario;
+
+    fixture!( mocks() -> (Scenario, VdevRaid) {
+            setup(&mut self) {
+            let scenario = Scenario::new();
+            let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+            for _ in 0..7 {
+                let mock = Box::new(scenario.create_mock::<MockVdevBlock>());
+                scenario.expect(mock.size_call()
+                                    .and_return_clone(262144)
+                                    .times(..));  // 256k LBAs
+                scenario.expect(mock.start_of_zone_call(1)
+                                    .and_return_clone(65536)   // 64k LBAs/zone
+                                    .times(..));
+
+                blockdevs.push(mock);
+            }
+
+            let n = 7;
+            let k = 4;
+            let f = 1;
+
+            let codec = Codec::new(k, f);
+            let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+            let vdev_raid = VdevRaid::new(16, codec, locator,
+                                          blockdevs.into_boxed_slice());
+            (scenario, vdev_raid)
         }
+    });
 
-        let n = 5;
-        let k = 4;
-        let f = 1;
-
-        let codec = Codec::new(k, f);
-        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let vdev_raid = VdevRaid::new(16, codec, locator,
-                                      blockdevs.into_boxed_slice());
-        assert_eq!(vdev_raid.size(), 983040);
-    }
 
     // test VdevRaid::size with a layout that's not a multiple of the zone size
-    test size1() {
-        let scenario = Scenario::new();
-        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
-        for _ in 0..7 {
-            let mock = Box::new(scenario.create_mock::<MockVdevBlock>());
-            scenario.expect(mock.size_call()
-                                .and_return_clone(262144)
-                                .times(..));  // 256k LBAs
-            scenario.expect(mock.start_of_zone_call(1)
-                                .and_return_clone(65536)   // 64k LBAs per zone
-                                .times(..));
-
-            blockdevs.push(mock);
-        }
-
-        let n = 7;
-        let k = 4;
-        let f = 1;
-
-        let codec = Codec::new(k, f);
-        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let vdev_raid = VdevRaid::new(16, codec, locator,
-                                      blockdevs.into_boxed_slice());
-        assert_eq!(vdev_raid.size(), 1376256);
+    test size1(mocks) {
+        assert_eq!(mocks.val.1.size(), 1376256);
     }
+}
+
 }
