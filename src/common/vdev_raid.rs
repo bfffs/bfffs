@@ -1,11 +1,14 @@
 // vim: tw=80
 
 use common::*;
+use common::dva::*;
 use common::vdev::*;
 #[cfg(not(test))]
 use common::vdev_block::*;
 use common::raid::*;
 use common::declust::*;
+use modulo::Mod;
+use std::mem;
 use tokio_core::reactor::Handle;
 
 #[cfg(test)]
@@ -30,7 +33,7 @@ pub struct VdevRaid {
     chunksize: LbaT,
 
     /// RAID codec
-    _codec: Codec,
+    codec: Codec,
 
     /// Locator, declustering or otherwise
     locator: Box<Locator>,
@@ -63,7 +66,7 @@ impl VdevRaid {
         }
 
         VdevRaid { chunksize: chunksize,
-                   _codec: codec,
+                   codec: codec,
                    locator: locator,
                    blockdevs: blockdevs}
     }
@@ -109,7 +112,46 @@ impl Vdev for VdevRaid {
         }).min().unwrap()
     }
 
-    fn write_at(&self, _buf: IoVec, _lba: LbaT) -> Box<VdevFut> {
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let f = self.codec.protection() as usize;
+        let m = self.codec.stripesize() as usize - f as usize;
+        assert_eq!(buf.len(),
+                   col_len * m,
+                   "Only single-stripe writes are currently supported");
+        assert_eq!(lba.modulo(self.chunksize as u64 * m as u64), 0,
+            "Unaligned writes are not yet supported");
+
+        let data = Vec::<IoVec>::with_capacity(m);
+        let data_refs = Vec::<*const u8>::with_capacity(m);
+        for i in 0..m {
+            let b = col_len * m;
+            let e = b + col_len;
+            let col : Rc<Box<[u8]>> = Rc::new( unsafe {
+                mem::transmute(buf[b..e].as_ptr())
+            });
+            //let col = Rc::new(buf[b..e]);
+            data.push(col);
+            data_refs.push(col.as_ptr());
+        }
+
+        let parity = Vec::<IoVec>::with_capacity(f);
+        let parity_refs = Vec::<*mut u8>::with_capacity(f);
+        for _ in 0..f {
+            let v = Vec::<u8>::with_capacity(col_len);
+            //codec::encode will actually fill the column
+            unsafe { v.set_len(col_len) };
+            let col = Rc::new(v.into_boxed_slice());
+            parity.push(col);
+            parity_refs.push(col.as_mut_ptr());
+        }
+
+        self.codec.encode(col_len, &data_refs, &(parity_refs.into_boxed_slice()));
+
+        // Split buf into m subuffers
+        // Allocate f additional buffers
+        // encode
+        // issue
         panic!("unimplemented!");
     }
 }
@@ -120,7 +162,10 @@ mod t {
 
 use super::*;
 use super::super::prime_s::PrimeS;
-use mockers::Scenario;
+use super::super::dva::*;
+use futures::future;
+use mockers::{matchers, Scenario};
+use std::io::Error;
 
 mock!{
     MockVdevBlock,
@@ -318,6 +363,65 @@ test_suite! {
         assert_eq!(mocks.val.1.start_of_zone(0), 0);
         assert_eq!(mocks.val.1.start_of_zone(1), 344064);
     }
+}
+
+#[test]
+fn write_at_one_stripe() {
+        let n = 5;
+        let k = 4;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        // TODO: verify offset of buffers
+        let s = Scenario::new();
+        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+        let m0 = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(m0.size_call().and_return_clone(262144).times(..));
+        s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m0.write_at_call(check!(|buf: &IoVec| {
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+        }), matchers::ANY)
+            .and_return(Box::new(future::ok::<isize, Error>((0)))));
+        blockdevs.push(m0);
+        let m1 = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(m1.size_call().and_return_clone(262144).times(..));
+        s.expect(m1.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m1.write_at_call(check!(|buf: &IoVec| {
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+        }), matchers::ANY)
+            .and_return(Box::new(future::ok::<isize, Error>((0)))));
+        blockdevs.push(m1);
+        let m2 = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(m2.size_call().and_return_clone(262144).times(..));
+        s.expect(m2.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m2.write_at_call(check!(|buf: &IoVec| {
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+        }), matchers::ANY)
+            .and_return(Box::new(future::ok::<isize, Error>((0)))));
+        blockdevs.push(m2);
+        let m3 = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(m3.size_call().and_return_clone(262144).times(..));
+        s.expect(m3.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m3.write_at_call(check!(|buf: &IoVec| {
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+        }), matchers::ANY)
+            .and_return(Box::new(future::ok::<isize, Error>((0)))));
+        blockdevs.push(m3);
+        let m4 = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(m4.size_call().and_return_clone(262144).times(..));
+        s.expect(m4.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m4.write_at_call(check!(|buf: &IoVec| {
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+        }), matchers::ANY)
+            .and_return(Box::new(future::ok::<isize, Error>((0)))));
+        blockdevs.push(m4);
+
+        let codec = Codec::new(k, f);
+        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+                                      blockdevs.into_boxed_slice());
+        let wbuf = Rc::new(vec![0u8; 24576].into_boxed_slice());
+        vdev_raid.write_at(wbuf, 0);
 }
 
 }

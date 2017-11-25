@@ -7,6 +7,7 @@ extern crate futures;
 #[macro_use] extern crate galvanic_test;
 extern crate isa_l;
 #[cfg(test)]
+#[macro_use]
 #[cfg(feature = "mocks")] extern crate mockers;
 extern crate modulo;
 extern crate nix;
