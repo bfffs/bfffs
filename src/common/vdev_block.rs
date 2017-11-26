@@ -18,8 +18,9 @@ use common::vdev_leaf::*;
 #[derive(Eq, PartialEq)]
 pub enum BlockOpBufT {
     IoVec(IoVec),
-    //None,
-    SGList(SGList)
+    IoVecMut(IoVecMut),
+    SGList(SGList),
+    SGListMut(SGListMut)
 }
 
 /// A single read or write command that is queued at the VdevBlock layer
@@ -35,7 +36,11 @@ impl BlockOp {
     pub fn len(&self) -> usize {
         match self.bufs {
             BlockOpBufT::IoVec(ref iovec) => iovec.len(),
+            BlockOpBufT::IoVecMut(ref iovec) => iovec.len(),
             BlockOpBufT::SGList(ref sglist) => {
+                sglist.iter().fold(0, |acc, ref iovec| acc + iovec.len())
+            }
+            BlockOpBufT::SGListMut(ref sglist) => {
                 sglist.iter().fold(0, |acc, ref iovec| acc + iovec.len())
             }
         }
@@ -67,19 +72,23 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
-    pub fn read_at(buf: IoVec, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
+    pub fn read_at(buf: IoVecMut, lba: LbaT,
+                   sender: oneshot::Sender<isize>) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::IoVecMut(buf), sender: sender}
+    }
+
+    pub fn readv_at(bufs: SGListMut, lba: LbaT,
+                    sender: oneshot::Sender<isize>) -> BlockOp {
+        BlockOp { lba: lba, bufs: BlockOpBufT::SGListMut(bufs), sender: sender}
+    }
+
+    pub fn write_at(buf: IoVec, lba: LbaT, sender:
+                    oneshot::Sender<isize>) -> BlockOp {
         BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), sender: sender}
     }
 
-    pub fn readv_at(bufs: SGList, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
-        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs), sender: sender}
-    }
-
-    pub fn write_at(buf: IoVec, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
-        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(buf), sender: sender}
-    }
-
-    pub fn writev_at(bufs: SGList, lba: LbaT, sender: oneshot::Sender<isize>) -> BlockOp {
+    pub fn writev_at(bufs: SGList, lba: LbaT,
+                     sender: oneshot::Sender<isize>) -> BlockOp {
         BlockOp { lba: lba, bufs: BlockOpBufT::SGList(bufs), sender: sender}
     }
 }
@@ -179,7 +188,7 @@ pub struct VdevBlock {
 
 impl VdevBlock {
     /// Helper function for read and write methods
-    fn check_iovec_bounds(&self, lba: LbaT, buf: &IoVec) {
+    fn check_iovec_bounds(&self, lba: LbaT, buf: &[u8]) {
         let buflen = buf.len() as u64;
         let last_lba : LbaT = lba + buflen / (dva::BYTES_PER_LBA as u64);
         assert!(last_lba < self.size as u64)
@@ -187,6 +196,17 @@ impl VdevBlock {
 
     /// Helper function for read and write methods
     fn check_sglist_bounds(&self, lba: LbaT, bufs: &SGList) {
+        let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
+            accumulator + buf.len() as u64
+        });
+        assert!(lba + len / (dva::BYTES_PER_LBA as u64) < self.size as u64)
+    }
+
+    /// Helper function for readv and writev methods
+    ///
+    /// TODO: combine this method with `check_sglist_bounds` by implementing an
+    /// sglist type that implements bytes::Buf
+    fn check_sglistmut_bounds(&self, lba: LbaT, bufs: &SGListMut) {
         let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
             accumulator + buf.len() as u64
         });
@@ -216,7 +236,7 @@ impl VdevBlock {
         // Optimistically allocate enough for every BlockOp in the zone queue.
         let l = zq.q.len();
         let mut to_notify = Vec::<oneshot::Sender<isize>>::with_capacity(l);
-        let mut combined_bufs = Vec::<Rc<Box<[u8]>>>::with_capacity(l);
+        let mut combined_bufs = Vec::<IoVec>::with_capacity(l);
         let start_lba = zq.wp;
         loop {
             if zq.q.is_empty() {
@@ -235,7 +255,8 @@ impl VdevBlock {
                 BlockOpBufT::IoVec(iovec) => combined_bufs.push(iovec),
                 BlockOpBufT::SGList(sglist) => {
                     combined_bufs.extend_from_slice(&sglist)
-                }
+                },
+                _ => unreachable!("buffer type that's not used for writing!")
             };
             to_notify.push(block_op.sender);
         }
@@ -246,7 +267,7 @@ impl VdevBlock {
         let fut = match combined_bufs.len() {
             0 => unreachable!(),
             1 => self.leaf.write_at(combined_bufs.pop().unwrap(), start_lba),
-            _ => self.leaf.writev_at(combined_bufs.into_boxed_slice(), start_lba)
+            _ => self.leaf.writev_at(combined_bufs, start_lba)
         }.and_then(move |_| {
             for sender in to_notify.drain(..) {
                 // XXX We don't actually know how much data this
@@ -262,30 +283,31 @@ impl VdevBlock {
     }
 
     fn sched_read(&self, block_op: BlockOp) {
-        //TODO eventually these should be scheduled by LBA order and to reduce
-        //the disks' queue depth, but for now push them straight through
+        //TODO eventually these should be scheduled by LBA order to reduce
+        //the disks' queue depth, but for now push them straight through.
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
         let sender = block_op.sender;
         match block_op.bufs {
-            BlockOpBufT::IoVec(iovec) =>
+            BlockOpBufT::IoVecMut(iovec_mut) =>
                 self.handle.spawn(
-                    self.leaf.read_at(iovec, block_op.lba)
+                    self.leaf.read_at(iovec_mut, block_op.lba)
                     .and_then(move |r| {
                         sender.send(r).unwrap();
                         Ok(())})
                     .map_err(|_| {
                         ()
                     })),
-            BlockOpBufT::SGList(sglist) =>
+            BlockOpBufT::SGListMut(sglist_mut) =>
                 self.handle.spawn(
-                    self.leaf.readv_at(sglist, block_op.lba)
+                    self.leaf.readv_at(sglist_mut, block_op.lba)
                     .and_then(move |r| {
                         sender.send(r).unwrap();
                         Ok(())})
                     .map_err(|_| {
                         ()
-                    }))
+                    })),
+            _ => unreachable!("buffer type that's not used for reading!")
         };
     }
 
@@ -326,8 +348,8 @@ impl VdevBlock {
 }
 
 impl SGVdev for VdevBlock {
-    fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
-        self.check_sglist_bounds(lba, &bufs);
+    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut> {
+        self.check_sglistmut_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
         self.sched_read(block_op);
@@ -354,7 +376,7 @@ impl Vdev for VdevBlock {
         self.leaf.lba2zone(lba)
     }
 
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<isize>();
         let block_op = BlockOp::read_at(buf, lba, sender);
@@ -391,7 +413,7 @@ test_suite! {
     use mockers::{Scenario, Sequence};
     use mockers::matchers::ANY;
     use std::io::Error;
-    use std::rc::Rc;
+    use bytes::Bytes;
     use tokio_core::reactor::{Core, Handle};
 
     mock!{
@@ -442,7 +464,7 @@ test_suite! {
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
         scenario.expect(seq);
 
-        let rbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let rbuf = BytesMut::from(vec![0u8; 4096]);
         let mut core = Core::new().unwrap();
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         let first = vdev.read_at(rbuf.clone(), 1);
@@ -458,7 +480,7 @@ test_suite! {
         scenario.expect(leaf.write_at_call(ANY, 0)
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
 
-        let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let wbuf = Bytes::from(vec![0u8; 4096]);
         let mut core = Core::new().unwrap();
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         let fut = vdev.write_at(wbuf.clone(), 0);
@@ -472,8 +494,8 @@ test_suite! {
         scenario.expect(leaf.writev_at_call(ANY, 0)
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
 
-        let wbuf0 = Rc::new(vec![0u8; 1024].into_boxed_slice());
-        let wbuf1 = Rc::new(vec![0u8; 3072].into_boxed_slice());
+        let wbuf0 = Bytes::from(vec![0u8; 1024]);
+        let wbuf1 = Bytes::from(vec![0u8; 3072]);
         let wbufs = vec![wbuf0, wbuf1].into_boxed_slice();
         let mut core = Core::new().unwrap();
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
@@ -488,7 +510,7 @@ test_suite! {
         scenario.expect(leaf.writev_at_call(ANY, 0)
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
 
-        let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let wbuf = Bytes::from(vec![0u8; 4096]);
         let mut core = Core::new().unwrap();
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         // Issue writes out-of-order
@@ -510,7 +532,7 @@ test_suite! {
                         .and_return(Box::new(future::ok::<isize, Error>((0)))));
         scenario.expect(seq);
 
-        let wbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let wbuf = Bytes::from(vec![0u8; 4096]);
         let mut core = Core::new().unwrap();
         let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
         let first = vdev.write_at(wbuf.clone(), 1);

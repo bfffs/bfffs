@@ -24,7 +24,7 @@ pub trait Vdev {
     fn lba2zone(&self, lba: LbaT) -> ZoneT;
 
     /// Asynchronously read a contiguous portion of the vdev
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
 
     /// Return the usable space of the Vdev.
     ///
@@ -47,7 +47,7 @@ pub trait SGVdev : Vdev {
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
 
     /// The asynchronous scatter/gather write function.
     /// 

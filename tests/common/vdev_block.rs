@@ -12,7 +12,7 @@ test_suite! {
     use arkfs::common::vdev::{SGVdev, Vdev};
     use arkfs::common::vdev_block::*;
     use arkfs::sys::vdev_file::*;
-    use std::rc::Rc;
+    use bytes::{Bytes, BytesMut};
     use std::fs;
     use tempdir::TempDir;
     use tokio_core::reactor::Core;
@@ -49,54 +49,54 @@ test_suite! {
 
     #[should_panic]
     test check_block_granularity_under(vdev) {
-        let wbuf = Rc::new(vec![42u8; 4095].into_boxed_slice());
+        let wbuf = Bytes::from(vec![42u8; 4095]);
         vdev.val.1.write_at(wbuf, 0);
     }
 
     #[should_panic]
     test check_block_granularity_over(vdev) {
-        let wbuf = Rc::new(vec![42u8; 4097].into_boxed_slice());
+        let wbuf = Bytes::from(vec![42u8; 4097]);
         vdev.val.1.write_at(wbuf, 0);
     }
 
     #[should_panic]
     test check_block_granularity_over_multiple_sectors(vdev) {
-        let wbuf = Rc::new(vec![42u8; 16385].into_boxed_slice());
+        let wbuf = Bytes::from(vec![42u8; 16385]);
         vdev.val.1.write_at(wbuf, 0);
     }
 
     #[should_panic]
     test check_block_granularity_writev(vdev) {
-        let wbuf0 = Rc::new(vec![21u8; 1024].into_boxed_slice());
-        let wbuf1 = Rc::new(vec![42u8; 3073].into_boxed_slice());
+        let wbuf0 = Bytes::from(vec![21u8; 1024]);
+        let wbuf1 = Bytes::from(vec![42u8; 3073]);
         let wbufs = vec![wbuf0, wbuf1].into_boxed_slice();
         vdev.val.1.writev_at(wbufs, 0);
     }
 
     #[should_panic]
     test check_iovec_bounds_over(vdev) {
-        let wbuf = Rc::new(vec![42u8; 4096].into_boxed_slice());
+        let wbuf = Bytes::from(vec![42u8; 4096]);
         vdev.val.1.write_at(wbuf, vdev.val.1.size());
     }
 
     #[should_panic]
     test check_iovec_bounds_spans(vdev) {
-        let wbuf = Rc::new(vec![42u8; 8192].into_boxed_slice());
+        let wbuf = Bytes::from(vec![42u8; 8192]);
         vdev.val.1.write_at(wbuf, vdev.val.1.size() - 1);
     }
 
     #[should_panic]
     test check_sglist_bounds_over(vdev) {
-        let wbuf0 = Rc::new(vec![21u8; 1024].into_boxed_slice());
-        let wbuf1 = Rc::new(vec![42u8; 3072].into_boxed_slice());
+        let wbuf0 = Bytes::from(vec![21u8; 1024]);
+        let wbuf1 = Bytes::from(vec![42u8; 3072]);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()].into_boxed_slice();
         vdev.val.1.writev_at(wbufs, vdev.val.1.size());
     }
 
     #[should_panic]
     test check_sglist_bounds_spans(vdev) {
-        let wbuf0 = Rc::new(vec![21u8; 5120].into_boxed_slice());
-        let wbuf1 = Rc::new(vec![42u8; 7168].into_boxed_slice());
+        let wbuf0 = Bytes::from(vec![21u8; 5120]);
+        let wbuf1 = Bytes::from(vec![42u8; 7168]);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()].into_boxed_slice();
         vdev.val.1.writev_at(wbufs, vdev.val.1.size() - 2);
     }

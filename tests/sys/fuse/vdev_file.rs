@@ -15,7 +15,7 @@ test_suite! {
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::ops::Deref;
     use std::path::PathBuf;
-    use std::rc::Rc;
+    use bytes::{Bytes, BytesMut};
     use tempdir::TempDir;
     use tokio_core::reactor::Core;
 
@@ -61,7 +61,7 @@ test_suite! {
         }
 
         // Run the test
-        let rbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let rbuf = BytesMut::from(vec![0u8; 4096]);
         let mut core = Core::new().unwrap();
         let vdev = VdevFile::open(path, core.handle());
         let fut = vdev.read_at(rbuf.clone(), 0);
@@ -81,8 +81,8 @@ test_suite! {
         }
 
         // Run the test
-        let rbuf0 = Rc::new(vec![0u8; 1024].into_boxed_slice());
-        let rbuf1 = Rc::new(vec![0u8; 3072].into_boxed_slice());
+        let rbuf0 = BytesMut::from(vec![0u8; 1024]);
+        let rbuf1 = BytesMut::from(vec![0u8; 3072]);
         let rbufs = vec![rbuf0.clone(), rbuf1.clone()].into_boxed_slice();
         let mut core = Core::new().unwrap();
         let vdev = VdevFile::open(path, core.handle());
@@ -93,7 +93,7 @@ test_suite! {
     }
 
     test write_at(vdev) {
-        let wbuf = Rc::new(vec![42u8; 4096].into_boxed_slice());
+        let wbuf = Bytes::from(vec![42u8; 4096]);
         let mut rbuf = vec![0u8; 4096];
         let fut = vdev.val.1.write_at(wbuf.clone(), 0);
         assert_eq!(4096, vdev.val.0.run(fut).unwrap());
@@ -103,7 +103,7 @@ test_suite! {
     }
 
     test write_at_lba(vdev) {
-        let wbuf = Rc::new(vec![42u8; 4096].into_boxed_slice());
+        let wbuf = Bytes::from(vec![42u8; 4096]);
         let mut rbuf = vec![0u8; 4096];
         let fut = vdev.val.1.write_at(wbuf.clone(), 1);
         assert_eq!(4096, vdev.val.0.run(fut).unwrap());
@@ -114,8 +114,8 @@ test_suite! {
     }
 
     test writev_at(vdev) {
-        let wbuf0 = Rc::new(vec![21u8; 1024].into_boxed_slice());
-        let wbuf1 = Rc::new(vec![42u8; 3072].into_boxed_slice());
+        let wbuf0 = Bytes::from(vec![21u8; 1024]);
+        let wbuf1 = Bytes::from(vec![42u8; 3072]);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()].into_boxed_slice();
         let mut rbuf = vec![0u8; 4096];
         let fut = vdev.val.1.writev_at(wbufs, 0);
@@ -128,8 +128,8 @@ test_suite! {
 
     test read_after_write(vdev) {
         let vd = vdev.val.1;
-        let wbuf = Rc::new(vec![42u8; 4096].into_boxed_slice());
-        let rbuf = Rc::new(vec![0u8; 4096].into_boxed_slice());
+        let wbuf = BytesMut::from(vec![42u8; 4096]);
+        let rbuf = BytesMut::from(vec![0u8; 4096]);
         let fut = vd.write_at(wbuf.clone(), 0)
             .and_then(|_| {
                 vd.read_at(rbuf.clone(), 0)

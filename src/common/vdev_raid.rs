@@ -80,7 +80,7 @@ impl Vdev for VdevRaid {
         self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
     }
 
-    fn read_at(&self, _buf: IoVec, _lba: LbaT) -> Box<VdevFut> {
+    fn read_at(&self, _buf: IoVecMut, _lba: LbaT) -> Box<VdevFut> {
         panic!("unimplemented!");
     }
 
@@ -128,14 +128,14 @@ mock!{
     trait Vdev {
         fn handle(&self) -> Handle;
         fn lba2zone(&self, lba: LbaT) -> ZoneT;
-        fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
         fn size(&self) -> LbaT;
         fn start_of_zone(&self, zone: ZoneT) -> LbaT;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
     },
     vdev,
     trait SGVdev  {
-        fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
         fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
     },
     self,

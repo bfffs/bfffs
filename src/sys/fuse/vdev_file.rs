@@ -24,9 +24,9 @@ pub struct VdevFile {
 }
 
 impl SGVdev for VdevFile {
-    fn readv_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
+    fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.readv_at(&buf, off).unwrap().map_err(|e| {
+        Box::new(self.file.readv_at(buf, off).unwrap().map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),
                 _ => panic!("Unhandled error type")
@@ -37,7 +37,7 @@ impl SGVdev for VdevFile {
 
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.writev_at(&buf, off).unwrap().map_err(|e| {
+        Box::new(self.file.writev_at(buf, off).unwrap().map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),
                 _ => panic!("Unhandled error type")
@@ -55,7 +55,7 @@ impl Vdev for VdevFile {
         (lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT
     }
 
-    fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.read_at(buf, off).unwrap().map_err(|e| {
             match e {
