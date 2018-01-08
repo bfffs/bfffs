@@ -5,9 +5,45 @@ use futures;
 use std::io;
 use tokio_core::reactor::Handle;
 
-/// Future representing an operation on a vdev.  The return type is the amount
-/// of data that was actually read/written, or an errno on error
-pub type VdevFut = futures::Future<Item = isize, Error = io::Error>;
+/// Type returned by `IoVec`-oriented `Vdev` operations on success.
+#[derive(Debug)]
+pub struct IoVecResult {
+    /// The buffer used by the operation.  It will always be immutable, even if
+    /// the original operation had a mutable buffer.  But it will also be
+    /// uniquely owned as long as the original operation's buffer was mutable,
+    /// meaning that it can be upgraded back to a mutable buffer.
+    pub buf: IoVec,
+    /// The result that the operation would've had had it been synchronous.
+    /// Usually the number of bytes read or written
+    pub value: isize
+}
+
+/// Type returned by `SGList`-oriented `Vdev` operations on success.
+#[derive(Debug)]
+pub struct SGListResult {
+    /// The buffer used by the operation.  It will always be immutable, even if
+    /// the original operation had a mutable buffer.  But it will also be
+    /// uniquely owned as long as the original operation's buffer was mutable,
+    /// meaning that it can be upgraded back to a mutable buffer.
+    pub buf: SGList,
+    /// The result that the operation would've had had it been synchronous.
+    /// Usually the number of bytes read or written
+    pub value: isize
+}
+
+/// Future representing an `IoVec`-oriented operation on a vdev.  The returned
+/// value is the amount of data that was actually read/written, or an errno on
+/// error.
+///
+/// TODO: return the buffer on error, too
+pub type IoVecFut = futures::Future<Item = IoVecResult, Error = io::Error>;
+
+/// Future representing an `SGList`-oriented operation on a vdev.  The returned
+/// value is the amount of data that was actually read/written, or an errno on
+/// error.
+///
+/// TODO: return the buffer on error, too
+pub type SGListFut = futures::Future<Item = SGListResult, Error = io::Error>;
 
 /// Vdev: Virtual Device
 ///
@@ -24,7 +60,7 @@ pub trait Vdev {
     fn lba2zone(&self, lba: LbaT) -> ZoneT;
 
     /// Asynchronously read a contiguous portion of the vdev
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
 
     /// Return the usable space of the Vdev.
     ///
@@ -36,7 +72,7 @@ pub trait Vdev {
     fn start_of_zone(&self, zone: ZoneT) -> LbaT;
 
     /// Asynchronously write a contiguous portion of the vdev
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
 }
 
 /// Scatter-Gather Vdev
@@ -47,11 +83,11 @@ pub trait SGVdev : Vdev {
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
+    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
 
     /// The asynchronous scatter/gather write function.
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
 }

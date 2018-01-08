@@ -11,6 +11,7 @@ use common::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 
+
 /// VdevFile: File-backed implementation of VdevBlock
 ///
 /// This is used by the FUSE implementation of ArkFS.  It works with both
@@ -24,9 +25,17 @@ pub struct VdevFile {
 }
 
 impl SGVdev for VdevFile {
-    fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
+    fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<SGListFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.readv_at(buf, off).unwrap().map_err(|e| {
+        Box::new(self.file.readv_at(buf, off).unwrap().map(|r| {
+            let mut v = 0;
+            let mut sglist = SGList::new();
+            for ar in r {
+                v += ar.value.unwrap();
+                sglist.push(ar.buf.into_bytes_mut().unwrap().freeze());
+            }
+            SGListResult{buf: sglist, value: v}
+        }).map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),
                 _ => panic!("Unhandled error type")
@@ -35,9 +44,17 @@ impl SGVdev for VdevFile {
 
     }
 
-    fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
+    fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.writev_at(buf, off).unwrap().map_err(|e| {
+        Box::new(self.file.writev_at(&buf[..], off).unwrap().map(|r| {
+            let mut v = 0;
+            let mut sglist = SGList::new();
+            for ar in r {
+                v += ar.value.unwrap();
+                sglist.push(ar.buf.into_bytes().unwrap());
+            }
+            SGListResult{buf: sglist, value: v}
+        }).map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),
                 _ => panic!("Unhandled error type")
@@ -55,14 +72,21 @@ impl Vdev for VdevFile {
         (lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT
     }
 
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.read_at(buf, off).unwrap().map_err(|e| {
+        Box::new(self.file.read_at(buf, off).unwrap().map(|aio_result| {
+            let value = aio_result.value.unwrap();
+            let buf_ref = aio_result.into_buf_ref();
+            IoVecResult {
+                buf: buf_ref.into_bytes_mut().unwrap().freeze(),
+                value: value
+            }
+        }).map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),
                 _ => panic!("Unhandled error type")
-            }})
-        )
+            }
+        }))
     }
 
     fn size(&self) -> LbaT {
@@ -73,15 +97,21 @@ impl Vdev for VdevFile {
         zone as u64 * VdevFile::LBAS_PER_ZONE
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.write_at(buf, off).unwrap().map_err(|e| {
+        Box::new(self.file.write_at(buf, off).unwrap().map(|aio_result| {
+            let value = aio_result.value.unwrap();
+            let buf_ref = aio_result.into_buf_ref();
+            IoVecResult {
+                buf: buf_ref.into_bytes().unwrap(),
+                value: value
+            }
+        }).map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),
                 _ => panic!("Unhandled error type")
             }})
         )
-
     }
 }
 

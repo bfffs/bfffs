@@ -12,7 +12,7 @@ test_suite! {
     use arkfs::common::vdev::{SGVdev, Vdev};
     use arkfs::common::vdev_block::*;
     use arkfs::sys::vdev_file::*;
-    use bytes::{Bytes, BytesMut};
+    use bytes::Bytes;
     use std::fs;
     use tempdir::TempDir;
     use tokio_core::reactor::Core;
@@ -69,7 +69,7 @@ test_suite! {
     test check_block_granularity_writev(vdev) {
         let wbuf0 = Bytes::from(vec![21u8; 1024]);
         let wbuf1 = Bytes::from(vec![42u8; 3073]);
-        let wbufs = vec![wbuf0, wbuf1].into_boxed_slice();
+        let wbufs = vec![wbuf0, wbuf1];
         vdev.val.1.writev_at(wbufs, 0);
     }
 
@@ -89,7 +89,7 @@ test_suite! {
     test check_sglist_bounds_over(vdev) {
         let wbuf0 = Bytes::from(vec![21u8; 1024]);
         let wbuf1 = Bytes::from(vec![42u8; 3072]);
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone()].into_boxed_slice();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         vdev.val.1.writev_at(wbufs, vdev.val.1.size());
     }
 
@@ -97,7 +97,7 @@ test_suite! {
     test check_sglist_bounds_spans(vdev) {
         let wbuf0 = Bytes::from(vec![21u8; 5120]);
         let wbuf1 = Bytes::from(vec![42u8; 7168]);
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone()].into_boxed_slice();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         vdev.val.1.writev_at(wbufs, vdev.val.1.size() - 2);
     }
 }

@@ -80,7 +80,7 @@ impl Vdev for VdevRaid {
         self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
     }
 
-    fn read_at(&self, _buf: IoVecMut, _lba: LbaT) -> Box<VdevFut> {
+    fn read_at(&self, _buf: IoVecMut, _lba: LbaT) -> Box<IoVecFut> {
         panic!("unimplemented!");
     }
 
@@ -109,7 +109,7 @@ impl Vdev for VdevRaid {
         }).min().unwrap()
     }
 
-    fn write_at(&self, _buf: IoVec, _lba: LbaT) -> Box<VdevFut> {
+    fn write_at(&self, _buf: IoVec, _lba: LbaT) -> Box<IoVecFut> {
         panic!("unimplemented!");
     }
 }
