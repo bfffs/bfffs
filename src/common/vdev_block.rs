@@ -28,7 +28,7 @@ enum BlockOpBufT {
     SGListMut(BlockOpBufG<SGListMut, SGListResult>)
 }
 
-/// A single read or write command that is queued at the VdevBlock layer
+/// A single read or write command that is queued at the `VdevBlock` layer
 struct BlockOp {
     pub lba: LbaT,
     pub bufs: BlockOpBufT,
@@ -40,10 +40,10 @@ impl BlockOp {
             BlockOpBufT::IoVec(ref iovec) => iovec.buf.len(),
             BlockOpBufT::IoVecMut(ref iovec) => iovec.buf.len(),
             BlockOpBufT::SGList(ref sglist) => {
-                sglist.buf.iter().fold(0, |acc, ref iovec| acc + iovec.len())
+                sglist.buf.iter().fold(0, |acc, iovec| acc + iovec.len())
             }
             BlockOpBufT::SGListMut(ref sglist) => {
-                sglist.buf.iter().fold(0, |acc, ref iovec| acc + iovec.len())
+                sglist.buf.iter().fold(0, |acc, iovec| acc + iovec.len())
             }
         }
     }
@@ -162,7 +162,7 @@ impl ZoneQueue {
     //}
 //}
 
-/// VdevBlock: Virtual Device for basic block device
+/// `VdevBlock`: Virtual Device for basic block device
 ///
 /// This struct contains the functionality that is common between all types of
 /// leaf vdev.

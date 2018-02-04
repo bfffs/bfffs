@@ -29,7 +29,7 @@ fn invmod(a: i16, n: i16) -> i16 {
 	assert_eq!(r, 1);
 
 	if t < 0 {
-		t = t + n;
+		t += n;
     }
 
 	t
@@ -49,9 +49,9 @@ fn is_prime(n: i16) -> bool {
 		if n % i == 0 || n % (i + 2) == 0 {
 			return false;
         }
-        i = i + 6;
+        i += 6;
 	}
-	return true;
+	true
 }
 
 /// PRIME-S: PRIME-Sequential declustering
@@ -136,9 +136,9 @@ impl PrimeS {
 
     /// Return the repetition and iteration numbers where a given Chunk is stored
     fn id2rep_and_iter(&self, chunkid: &ChunkId) -> (u32, i16) {
-        let id = match chunkid {
-            &ChunkId::Data(id) => id,
-            &ChunkId::Parity(id, _) => id
+        let id = match *chunkid {
+            ChunkId::Data(id) => id,
+            ChunkId::Parity(id, _) => id
         };
         // Good candidate for a combined division-modulo operation, if one ever
         // gets added

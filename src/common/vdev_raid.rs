@@ -17,7 +17,7 @@ pub type VdevBlockLike = Box<VdevBlockTrait>;
 #[cfg(not(test))]
 pub type VdevBlockLike = VdevBlock;
 
-/// VdevRaid: Virtual Device for the RAID transform
+/// `VdevRaid`: Virtual Device for the RAID transform
 ///
 /// This Vdev implements the RAID I/O path, for all types of RAID encodings and
 /// layout algorithms.

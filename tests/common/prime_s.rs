@@ -156,12 +156,12 @@ fn repetition() {
     assert_eq!(locator.id2loc(ChunkId::Parity(126, 1)).offset, 30);
     assert_eq!(locator.loc2id(Chunkloc::new(0, 30)), ChunkId::Data(126));
     // Repetition u32::max_value()
-    assert_eq!(locator.id2loc(ChunkId::Data(541165879170)).offset,
-        128849018850);
-    assert_eq!(locator.id2loc(ChunkId::Parity(541165879170, 0)).offset,
-        128849018850);
-    assert_eq!(locator.id2loc(ChunkId::Parity(541165879170, 1)).offset,
-        128849018850);
-    assert_eq!(locator.loc2id(Chunkloc::new(0, 128849018850)),
-        ChunkId::Data(541165879170));
+    assert_eq!(locator.id2loc(ChunkId::Data(541_165_879_170)).offset,
+        128_849_018_850);
+    assert_eq!(locator.id2loc(ChunkId::Parity(541_165_879_170, 0)).offset,
+        128_849_018_850);
+    assert_eq!(locator.id2loc(ChunkId::Parity(541_165_879_170, 1)).offset,
+        128_849_018_850);
+    assert_eq!(locator.loc2id(Chunkloc::new(0, 128_849_018_850)),
+        ChunkId::Data(541_165_879_170));
 }

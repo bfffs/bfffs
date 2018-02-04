@@ -41,7 +41,7 @@ test_suite! {
     }
 
     test size(vdev) {
-        assert_eq!(vdev.val.1.size(), 16384);
+        assert_eq!(vdev.val.1.size(), 16_384);
     }
 
     test start_of_zone(vdev) {

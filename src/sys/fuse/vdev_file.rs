@@ -12,7 +12,7 @@ use common::vdev::*;
 use common::vdev_leaf::*;
 
 
-/// VdevFile: File-backed implementation of VdevBlock
+/// `VdevFile`: File-backed implementation of `VdevBlock`
 ///
 /// This is used by the FUSE implementation of ArkFS.  It works with both
 /// regular files and device files

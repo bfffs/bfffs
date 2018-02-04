@@ -12,7 +12,7 @@ pub mod vdev_leaf;
 pub mod vdev_raid;
 pub type LbaT = u64;
 pub type ZoneT = u32;
-/// Our IoVec.  Unlike the standard library's, ours is reference-counted so it
+/// Our `IoVec`.  Unlike the standard library's, ours is reference-counted so it
 /// can have more than one owner.
 pub type IoVec = Bytes;
 /// Mutable version of `IoVec`.  Uniquely owned.

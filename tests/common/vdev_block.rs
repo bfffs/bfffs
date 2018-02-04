@@ -39,7 +39,7 @@ test_suite! {
     }
 
     test size(vdev) {
-        assert_eq!(vdev.val.1.size(), 16384);
+        assert_eq!(vdev.val.1.size(), 16_384);
     }
 
     test start_of_zone(vdev) {
@@ -61,7 +61,7 @@ test_suite! {
 
     #[should_panic]
     test check_block_granularity_over_multiple_sectors(vdev) {
-        let wbuf = Bytes::from(vec![42u8; 16385]);
+        let wbuf = Bytes::from(vec![42u8; 16_385]);
         vdev.val.1.write_at(wbuf, 0);
     }
 

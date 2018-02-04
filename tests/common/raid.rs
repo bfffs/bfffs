@@ -92,7 +92,7 @@ pub fn comprehensive() {
         reconstructed.push(vec![0u8; len]);
     }
 
-    for cfg in cfgs.iter() {
+    for cfg in &cfgs {
         let m = cfg.0;
         let f = cfg.1;
         let k = m - f;
@@ -100,12 +100,12 @@ pub fn comprehensive() {
 
         // First encode
         let mut input = Vec::<*const u8>::with_capacity(m as usize);
-        for i in 0..(k as usize) {
-            input.push(data[i].as_ptr());
+        for x in data.iter().take(k as usize) {
+            input.push(x.as_ptr());
         }
         let mut output = Vec::<*mut u8>::with_capacity(f as usize);
-        for i in 0..(f as usize) {
-            output.push(parity[i].as_mut_ptr());
+        for x in parity.iter_mut().take(f as usize) {
+            output.push(x.as_mut_ptr());
         }
         codec.encode(len, &input, &output);
 
@@ -136,8 +136,8 @@ pub fn comprehensive() {
             }
             let data_errs = erasures.count_ones(..k as usize);
             let mut decoded = Vec::<*mut u8>::with_capacity(data_errs as usize);
-            for i in 0..(data_errs as usize) {
-                decoded.push(reconstructed[i].as_mut_ptr());
+            for x in reconstructed.iter_mut().take(data_errs as usize) {
+                decoded.push(x.as_mut_ptr());
             }
             codec.decode(len, &surviving, &decoded, &erasures);
 
