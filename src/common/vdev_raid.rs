@@ -8,7 +8,6 @@ use common::vdev_block::*;
 use common::raid::*;
 use common::declust::*;
 use modulo::Mod;
-use std::mem;
 use tokio_core::reactor::Handle;
 
 #[cfg(test)]
@@ -20,7 +19,7 @@ pub type VdevBlockLike = Box<VdevBlockTrait>;
 #[cfg(not(test))]
 pub type VdevBlockLike = VdevBlock;
 
-/// VdevRaid: Virtual Device for the RAID transform
+/// `VdevRaid`: Virtual Device for the RAID transform
 ///
 /// This Vdev implements the RAID I/O path, for all types of RAID encodings and
 /// layout algorithms.
@@ -83,7 +82,7 @@ impl Vdev for VdevRaid {
         self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
     }
 
-    fn read_at(&self, _buf: IoVec, _lba: LbaT) -> Box<VdevFut> {
+    fn read_at(&self, _buf: IoVecMut, _lba: LbaT) -> Box<IoVecFut> {
         panic!("unimplemented!");
     }
 
@@ -112,7 +111,7 @@ impl Vdev for VdevRaid {
         }).min().unwrap()
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -122,31 +121,28 @@ impl Vdev for VdevRaid {
         assert_eq!(lba.modulo(self.chunksize as u64 * m as u64), 0,
             "Unaligned writes are not yet supported");
 
-        let data = Vec::<IoVec>::with_capacity(m);
-        let data_refs = Vec::<*const u8>::with_capacity(m);
+        let mut data = Vec::<IoVec>::with_capacity(m);
+        let mut data_refs = Vec::<*const u8>::with_capacity(m);
         for i in 0..m {
-            let b = col_len * m;
+            let b = col_len * i;
             let e = b + col_len;
-            let col : Rc<Box<[u8]>> = Rc::new( unsafe {
-                mem::transmute(buf[b..e].as_ptr())
-            });
-            //let col = Rc::new(buf[b..e]);
-            data.push(col);
+            let col = buf.slice(b, e);
             data_refs.push(col.as_ptr());
+            data.push(col);
         }
 
-        let parity = Vec::<IoVec>::with_capacity(f);
-        let parity_refs = Vec::<*mut u8>::with_capacity(f);
+        let mut parity = Vec::<IoVecMut>::with_capacity(f);
+        let mut parity_refs = Vec::<*mut u8>::with_capacity(f);
         for _ in 0..f {
-            let v = Vec::<u8>::with_capacity(col_len);
+            let mut v = Vec::<u8>::with_capacity(col_len);
             //codec::encode will actually fill the column
             unsafe { v.set_len(col_len) };
-            let col = Rc::new(v.into_boxed_slice());
-            parity.push(col);
+            let mut col = BytesMut::from(v);
             parity_refs.push(col.as_mut_ptr());
+            parity.push(col);
         }
 
-        self.codec.encode(col_len, &data_refs, &(parity_refs.into_boxed_slice()));
+        self.codec.encode(col_len, &data_refs, &(parity_refs));
 
         // Split buf into m subuffers
         // Allocate f additional buffers
@@ -173,14 +169,14 @@ mock!{
     trait Vdev {
         fn handle(&self) -> Handle;
         fn lba2zone(&self, lba: LbaT) -> ZoneT;
-        fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
         fn size(&self) -> LbaT;
         fn start_of_zone(&self, zone: ZoneT) -> LbaT;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
     },
     vdev,
     trait SGVdev  {
-        fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
         fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
     },
     self,
