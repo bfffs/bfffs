@@ -20,7 +20,7 @@ mockers = { version = "0.9", optional = true }
 # https://github.com/rust-lang/rfcs/pull/2169
 # If it gets merged, we can remove this crate
 modulo = "0.1.2"
-nix = { path = "/home/somers/src/rust/nix" }
+nix = "0.10.0"
 tokio-file = { path = "/home/somers/src/rust/tokio-file" }
 tokio-core = { path = "/home/somers/src/rust/tokio-core" }
 
