@@ -7,6 +7,7 @@ use common::vdev::*;
 use common::vdev_block::*;
 use common::raid::*;
 use common::declust::*;
+use futures::{Future, future};
 use modulo::Mod;
 use tokio_core::reactor::Handle;
 
@@ -144,11 +145,38 @@ impl Vdev for VdevRaid {
 
         self.codec.encode(col_len, &data_refs, &(parity_refs));
 
-        // Split buf into m subuffers
-        // Allocate f additional buffers
-        // encode
-        // issue
-        panic!("unimplemented!");
+        let data_futs : Vec<Box<IoVecFut>> = data
+            .into_iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let chunk_id = ChunkId::Data(lba / self.chunksize + i as LbaT);
+                let loc = self.locator.id2loc(chunk_id);
+                let disk_lba = loc.offset * self.chunksize;
+                self.blockdevs[loc.disk as usize].write_at(d, disk_lba)
+            })
+            .collect();
+        let data_fut = future::join_all(data_futs);
+        let parity_futs : Vec<Box<IoVecFut>> =
+            parity
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let chunk_id = ChunkId::Parity(lba / self.chunksize, i as i16);
+                let loc = self.locator.id2loc(chunk_id);
+                let disk_lba = loc.offset * self.chunksize;
+                self.blockdevs[loc.disk as usize].write_at(p.freeze(), disk_lba)
+            })
+            .collect();
+        let parity_fut = future::join_all(parity_futs);
+        // TODO: on error, some futures get cancelled.  Figure out how to clean
+        // them up.
+        // TODO: on error, record error statistics, and possibly fault a drive.
+        Box::new(data_fut.join(parity_fut).map(|_| {
+            IoVecResult {
+                value: buf.len() as isize,
+                buf: buf,
+            }
+        }))
     }
 }
 
