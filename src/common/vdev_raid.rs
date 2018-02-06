@@ -186,7 +186,6 @@ mod t {
 
 use super::*;
 use super::super::prime_s::PrimeS;
-use super::super::dva::*;
 use futures::future;
 use mockers::{matchers, Scenario};
 use std::io::Error;
@@ -197,15 +196,15 @@ mock!{
     trait Vdev {
         fn handle(&self) -> Handle;
         fn lba2zone(&self, lba: LbaT) -> ZoneT;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
         fn size(&self) -> LbaT;
         fn start_of_zone(&self, zone: ZoneT) -> LbaT;
-        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
     },
     vdev,
     trait SGVdev  {
-        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
-        fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
+        fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
     },
     self,
     trait VdevBlockTrait{
@@ -402,10 +401,20 @@ fn write_at_one_stripe() {
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
+        let r = IoVecResult {
+            // XXX fake buf value
+            buf: Bytes::new(),
+            value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
+        };
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
         }), matchers::ANY)
-            .and_return(Box::new(future::ok::<isize, Error>((0)))));
+            .and_return(
+                Box::new(
+                    future::ok::<IoVecResult, Error>((r.clone()))
+                )
+            )
+        );
         blockdevs.push(m0);
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m1.size_call().and_return_clone(262144).times(..));
@@ -413,7 +422,7 @@ fn write_at_one_stripe() {
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
         }), matchers::ANY)
-            .and_return(Box::new(future::ok::<isize, Error>((0)))));
+            .and_return(Box::new(future::ok::<IoVecResult, Error>((r.clone())))));
         blockdevs.push(m1);
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m2.size_call().and_return_clone(262144).times(..));
@@ -421,7 +430,7 @@ fn write_at_one_stripe() {
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
         }), matchers::ANY)
-            .and_return(Box::new(future::ok::<isize, Error>((0)))));
+            .and_return(Box::new(future::ok::<IoVecResult, Error>((r.clone())))));
         blockdevs.push(m2);
         let m3 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m3.size_call().and_return_clone(262144).times(..));
@@ -429,22 +438,18 @@ fn write_at_one_stripe() {
         s.expect(m3.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
         }), matchers::ANY)
-            .and_return(Box::new(future::ok::<isize, Error>((0)))));
+            .and_return(Box::new(future::ok::<IoVecResult, Error>((r.clone())))));
         blockdevs.push(m3);
         let m4 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m4.size_call().and_return_clone(262144).times(..));
         s.expect(m4.start_of_zone_call(1).and_return_clone(65536).times(..));
-        s.expect(m4.write_at_call(check!(|buf: &IoVec| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
-        }), matchers::ANY)
-            .and_return(Box::new(future::ok::<isize, Error>((0)))));
         blockdevs.push(m4);
 
         let codec = Codec::new(k, f);
         let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
         let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
                                       blockdevs.into_boxed_slice());
-        let wbuf = Rc::new(vec![0u8; 24576].into_boxed_slice());
+        let wbuf = Bytes::from(vec![0u8; 24576]);
         vdev_raid.write_at(wbuf, 0);
 }
 

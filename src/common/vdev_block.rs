@@ -455,15 +455,15 @@ test_suite! {
         trait Vdev {
             fn handle(&self) -> Handle;
             fn lba2zone(&self, lba: LbaT) -> ZoneT;
-            fn read_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
+            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
             fn size(&self) -> LbaT;
             fn start_of_zone(&self, zone: ZoneT) -> LbaT;
             fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
         },
         vdev,
         trait SGVdev  {
-            fn readv_at(&self, bufs: SGList, lba: LbaT) -> Box<IoVecFut>;
-            fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<IoVecFut>;
+            fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
+            fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
         },
         vdev_leaf,
         trait VdevLeaf  {
@@ -491,17 +491,27 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
+        let r0 = IoVecResult {
+            // XXX fake buf value
+            buf: Bytes::new(),
+            value: 4096
+        };
+        let r1 = IoVecResult {
+            // XXX fake buf value
+            buf: Bytes::new(),
+            value: 4096
+        };
         seq.expect(leaf.read_at_call(ANY, 1)
                        .and_return(Box::new(future::ok::<IoVecResult,
-                                                         Error>((0)))));
+                                                         Error>((r0)))));
         seq.expect(leaf.read_at_call(ANY, 0)
                        .and_return(Box::new(future::ok::<IoVecResult,
-                                                         Error>((0)))));
+                                                         Error>((r1)))));
         scenario.expect(seq);
 
         let rbuf = BytesMut::from(vec![0u8; 4096]);
         let mut core = Core::new().unwrap();
-        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let vdev = VdevBlock::open(leaf, core.handle());
         let first = vdev.read_at(rbuf.clone(), 1);
         let second = vdev.read_at(rbuf.clone(), 0);
         let futs = future::Future::join(first, second);
@@ -512,13 +522,18 @@ test_suite! {
     test write_at_0(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
+        let r = IoVecResult {
+            // XXX fake buf value
+            buf: Bytes::new(),
+            value: 4096
+        };
         scenario.expect(leaf.write_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<IoVecResult,
-                                                              Error>((0)))));
+                                                              Error>((r)))));
 
         let wbuf = Bytes::from(vec![0u8; 4096]);
         let mut core = Core::new().unwrap();
-        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let vdev = VdevBlock::open(leaf, core.handle());
         let fut = vdev.write_at(wbuf.clone(), 0);
         core.run(fut).unwrap();
     }
@@ -527,15 +542,20 @@ test_suite! {
     test writev_at_0(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
+        let r = SGListResult {
+            // XXX fake buf value
+            buf: vec![Bytes::new()],
+            value: 4096
+        };
         scenario.expect(leaf.writev_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<SGListResult,
-                                                              Error>((0)))));
+                                                              Error>((r)))));
 
         let wbuf0 = Bytes::from(vec![0u8; 1024]);
         let wbuf1 = Bytes::from(vec![0u8; 3072]);
-        let wbufs = vec![wbuf0, wbuf1].into_boxed_slice();
+        let wbufs = vec![wbuf0, wbuf1];
         let mut core = Core::new().unwrap();
-        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let vdev = VdevBlock::open(leaf, core.handle());
         let fut = vdev.writev_at(wbufs, 0);
         core.run(fut).unwrap();
     }
@@ -544,13 +564,18 @@ test_suite! {
     test write_at_combining(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
+        let r = SGListResult {
+            // XXX fake buf value
+            buf: vec![Bytes::new()],
+            value: 8192
+        };
         scenario.expect(leaf.writev_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<SGListResult,
-                                                              Error>((0)))));
+                                                              Error>((r)))));
 
         let wbuf = Bytes::from(vec![0u8; 4096]);
         let mut core = Core::new().unwrap();
-        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let vdev = VdevBlock::open(leaf, core.handle());
         // Issue writes out-of-order
         let first = vdev.write_at(wbuf.clone(), 1);
         let second = vdev.write_at(wbuf.clone(), 0);
@@ -564,17 +589,27 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
         scenario.expect(leaf.lba2zone_call(2).and_return(0));
+        let r0 = SGListResult {
+            // XXX fake buf value
+            buf: vec![Bytes::new()],
+            value: 8192
+        };
+        let r1 = IoVecResult {
+            // XXX fake buf value
+            buf: Bytes::new(),
+            value: 4096
+        };
         seq.expect(leaf.writev_at_call(ANY, 0)
                        .and_return(Box::new(future::ok::<SGListResult,
-                                                         Error>((0)))));
+                                                         Error>((r0)))));
         seq.expect(leaf.write_at_call(ANY, 2)
-                       .and_return(Box::new(future::ok::<SGListResult,
-                                                         Error>((0)))));
+                       .and_return(Box::new(future::ok::<IoVecResult,
+                                                         Error>((r1)))));
         scenario.expect(seq);
 
         let wbuf = Bytes::from(vec![0u8; 4096]);
         let mut core = Core::new().unwrap();
-        let vdev = Rc::new(VdevBlock::open(leaf, core.handle()));
+        let vdev = VdevBlock::open(leaf, core.handle());
         let first = vdev.write_at(wbuf.clone(), 1);
         let second = vdev.write_at(wbuf.clone(), 0);
         let third = vdev.write_at(wbuf.clone(), 2);
