@@ -6,7 +6,7 @@ use std::io;
 use tokio_core::reactor::Handle;
 
 /// Type returned by `IoVec`-oriented `Vdev` operations on success.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct IoVecResult {
     /// The buffer used by the operation.  It will always be immutable, even if
     /// the original operation had a mutable buffer.  But it will also be
@@ -19,7 +19,7 @@ pub struct IoVecResult {
 }
 
 /// Type returned by `SGList`-oriented `Vdev` operations on success.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SGListResult {
     /// The buffer used by the operation.  It will always be immutable, even if
     /// the original operation had a mutable buffer.  But it will also be
