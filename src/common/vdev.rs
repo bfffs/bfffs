@@ -34,15 +34,11 @@ pub struct SGListResult {
 /// Future representing an `IoVec`-oriented operation on a vdev.  The returned
 /// value is the amount of data that was actually read/written, or an errno on
 /// error.
-///
-/// TODO: return the buffer on error, too
 pub type IoVecFut = futures::Future<Item = IoVecResult, Error = io::Error>;
 
 /// Future representing an `SGList`-oriented operation on a vdev.  The returned
 /// value is the amount of data that was actually read/written, or an errno on
 /// error.
-///
-/// TODO: return the buffer on error, too
 pub type SGListFut = futures::Future<Item = SGListResult, Error = io::Error>;
 
 /// Vdev: Virtual Device

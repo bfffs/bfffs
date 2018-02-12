@@ -66,7 +66,7 @@ impl Codec {
     ///
     /// # Returns
     ///
-    /// A bitset identify which columns are corrupt.  A 1 indicates a corrupt
+    /// A bitset identifies which columns are corrupt.  A 1 indicates a corrupt
     /// column and a 0 indicates a healthy column.  If the parity does not
     /// verify successfully but it cannot be determined which column(s) are
     /// corrupt, then all bits will be set.  All bits set indicates that the row
@@ -147,8 +147,8 @@ impl Codec {
 
     // Generate tables for RAID decoding
     // Loosely based on erasure_code_perf.c from ISA-L's internal test suite
-    // NB: For reasonably small values of m and f, it should be possible to cache
-    // all possible decode tables.
+    // NB: For reasonably small values of m and f, it should be possible to
+    // cache all possible decode tables.
     fn mk_decode_tables(&self, erasures: &FixedBitSet) -> Box<[u8]> {
         let k : usize = (self.m - self.f) as usize;
         // Exclude missing parity columns from the list
