@@ -83,8 +83,56 @@ impl Vdev for VdevRaid {
         self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
     }
 
-    fn read_at(&self, _buf: IoVecMut, _lba: LbaT) -> Box<IoVecFut> {
-        panic!("unimplemented!");
+    fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let f = self.codec.protection() as usize;
+        let m = self.codec.stripesize() as usize - f as usize;
+        assert_eq!(buf.len(),
+                   col_len * m,
+                   "Only single-stripe reads are currently supported");
+        assert_eq!(lba.modulo(self.chunksize as u64 * m as u64), 0,
+            "Unaligned reads are not yet supported");
+
+        let mut data = Vec::<IoVecMut>::with_capacity(m);
+        for _ in 0..m {
+            let col = buf.split_to(col_len);
+            data.push(col);
+        }
+
+        let futs : Vec<Box<IoVecFut>> = data
+            .into_iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let chunk_id = ChunkId::Data(lba / self.chunksize + i as LbaT);
+                let loc = self.locator.id2loc(chunk_id);
+                let disk_lba = loc.offset * self.chunksize;
+                self.blockdevs[loc.disk as usize].read_at(d, disk_lba)
+            })
+            .collect();
+        let fut = future::join_all(futs);
+        // TODO: on error, some futures get cancelled.  Figure out how to clean
+        // them up.
+        // TODO: on error, record error statistics, possibly fault a drive,
+        // request the faulty drive's zone to be rebuilt, and read parity to
+        // reconstruct the data.
+        Box::new(fut.map(|mut v| {
+            let rest = v.split_off(1);
+            let r0 = v.pop().unwrap();
+            let result = rest.into_iter().fold(r0, |mut acc, r| {
+                // TODO: remove all the try_mut and freeze stuff by implementing
+                // Bytes#unsplit in the Bytes crate.
+                // Simplify it further by optimizing Bytes#unsplit(other) to
+                // return other if self is an empty Bytes with no capacity.
+                let bm = r.buf.try_mut().unwrap();
+                acc.value += r.value;
+                let mut buf_mut = acc.buf.try_mut().unwrap();
+                buf_mut.unsplit(bm);
+                acc.buf = buf_mut.freeze();
+                acc
+            });
+            result
+        }))
+
     }
 
     fn size(&self) -> LbaT {
@@ -386,6 +434,62 @@ test_suite! {
         assert_eq!(mocks.val.1.start_of_zone(0), 0);
         assert_eq!(mocks.val.1.start_of_zone(1), 344064);
     }
+}
+
+#[test]
+fn read_at_one_stripe() {
+        let n = 3;
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        // TODO: verify offset of buffers
+        let s = Scenario::new();
+        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+        let m0 = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(m0.size_call().and_return_clone(262144).times(..));
+        s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
+        let r = IoVecResult {
+            // XXX fake buf value
+            buf: Bytes::new(),
+            value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
+        };
+        s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+        }), matchers::ANY)
+            .and_return(
+                Box::new(
+                    future::ok::<IoVecResult, Error>((r.clone()))
+                )
+            )
+        );
+
+        blockdevs.push(m0);
+        let m1 = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(m1.size_call().and_return_clone(262144).times(..));
+        s.expect(m1.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+        }), matchers::ANY)
+            .and_return(
+                Box::new(
+                    future::ok::<IoVecResult, Error>((r.clone()))
+                )
+            )
+        );
+
+        blockdevs.push(m1);
+        let m2 = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(m2.size_call().and_return_clone(262144).times(..));
+        s.expect(m2.start_of_zone_call(1).and_return_clone(65536).times(..));
+        blockdevs.push(m2);
+
+        let codec = Codec::new(k, f);
+        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+                                      blockdevs.into_boxed_slice());
+        let rbuf = BytesMut::from(vec![0u8; 16384]);
+        vdev_raid.read_at(rbuf, 0);
 }
 
 #[test]
