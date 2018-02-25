@@ -115,10 +115,9 @@ impl Vdev for VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(|mut v| {
-            let rest = v.split_off(1);
-            let r0 = v.pop().expect("No child I/O for VdevRaid::read_at?");
-            let result = rest.into_iter().fold(r0, |mut acc, r| {
+        Box::new(fut.map(|v| {
+            let r0 = IoVecResult::default();
+            let result = v.into_iter().fold(r0, |mut acc, r| {
                 acc.value += r.value;
                 acc.buf.unsplit(r.buf);
                 acc
