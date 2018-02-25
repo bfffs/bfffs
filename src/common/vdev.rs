@@ -3,7 +3,7 @@
 use common::*;
 use futures;
 use std::io;
-use tokio_core::reactor::Handle;
+use tokio::reactor::Handle;
 
 /// Type returned by `IoVec`-oriented `Vdev` operations on success.
 #[derive(Clone, Debug)]

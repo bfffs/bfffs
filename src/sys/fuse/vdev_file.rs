@@ -4,7 +4,7 @@ use futures::Future;
 use nix;
 use std::io;
 use std::path::Path;
-use tokio_core::reactor::Handle;
+use tokio::reactor::Handle;
 use tokio_file::File;
 
 use common::*;

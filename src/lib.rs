@@ -12,7 +12,7 @@ extern crate isa_l;
 #[cfg(feature = "mocks")] extern crate mockers;
 extern crate modulo;
 extern crate nix;
-extern crate tokio_core;
+extern crate tokio;
 extern crate tokio_file;
 
 pub mod common;

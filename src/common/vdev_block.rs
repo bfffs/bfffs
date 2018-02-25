@@ -8,7 +8,8 @@ use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
 use std::vec::Vec;
 use std::io;
-use tokio_core::reactor::Handle;
+use tokio::executor::current_thread;
+use tokio::reactor::Handle;
 
 use common::*;
 use common::dva::*;
@@ -286,7 +287,7 @@ impl VdevBlock {
                 }).map_err(|_| {
                     ()
                 });
-            self.handle.spawn(fut);
+            current_thread::spawn(fut);
         } else {
             let fut = self.leaf.writev_at(combined_bufs, start_lba)
                 .and_then(move|_| {
@@ -308,7 +309,7 @@ impl VdevBlock {
                 }).map_err(|_| {
                     ()
                 });
-            self.handle.spawn(fut);
+            current_thread::spawn(fut);
         }
     }
 
@@ -320,7 +321,7 @@ impl VdevBlock {
         match block_op.bufs {
             BlockOpBufT::IoVecMut(iovec_mut) => {
                 let sender = iovec_mut.sender;
-                self.handle.spawn(
+                current_thread::spawn(
                     self.leaf.read_at(iovec_mut.buf, block_op.lba)
                     .and_then(move |r| {
                         sender.send(r).unwrap();
@@ -331,7 +332,7 @@ impl VdevBlock {
             },
             BlockOpBufT::SGListMut(sglist_mut) => {
                 let sender = sglist_mut.sender;
-                self.handle.spawn(
+                current_thread::spawn(
                     self.leaf.readv_at(sglist_mut.buf, block_op.lba)
                     .and_then(move |r| {
                         sender.send(r).unwrap();
@@ -447,7 +448,8 @@ test_suite! {
     use mockers::matchers::ANY;
     use std::io::Error;
     use bytes::Bytes;
-    use tokio_core::reactor::{Core, Handle};
+    use tokio::executor::current_thread;
+    use tokio::reactor::Handle;
 
     mock!{
         MockVdevLeaf2,
@@ -510,12 +512,12 @@ test_suite! {
         scenario.expect(seq);
 
         let rbuf = BytesMut::from(vec![0u8; 4096]);
-        let mut core = Core::new().unwrap();
-        let vdev = VdevBlock::open(leaf, core.handle());
-        let first = vdev.read_at(rbuf.clone(), 1);
-        let second = vdev.read_at(rbuf.clone(), 0);
-        let futs = future::Future::join(first, second);
-        core.run(futs).unwrap();
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            let first = vdev.read_at(rbuf.clone(), 1);
+            let second = vdev.read_at(rbuf.clone(), 0);
+            future::Future::join(first, second)
+        })).unwrap();
     }
 
     // Basic writing at the WP works
@@ -532,10 +534,10 @@ test_suite! {
                                                               Error>((r)))));
 
         let wbuf = Bytes::from(vec![0u8; 4096]);
-        let mut core = Core::new().unwrap();
-        let vdev = VdevBlock::open(leaf, core.handle());
-        let fut = vdev.write_at(wbuf.clone(), 0);
-        core.run(fut).unwrap();
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.write_at(wbuf.clone(), 0)
+        })).unwrap();
     }
 
     // Basic vectored writing at the WP works
@@ -554,10 +556,10 @@ test_suite! {
         let wbuf0 = Bytes::from(vec![0u8; 1024]);
         let wbuf1 = Bytes::from(vec![0u8; 3072]);
         let wbufs = vec![wbuf0, wbuf1];
-        let mut core = Core::new().unwrap();
-        let vdev = VdevBlock::open(leaf, core.handle());
-        let fut = vdev.writev_at(wbufs, 0);
-        core.run(fut).unwrap();
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.writev_at(wbufs, 0)
+        })).unwrap();
     }
 
     // Writes should be reordered and combined if out-of-order
@@ -574,13 +576,13 @@ test_suite! {
                                                               Error>((r)))));
 
         let wbuf = Bytes::from(vec![0u8; 4096]);
-        let mut core = Core::new().unwrap();
-        let vdev = VdevBlock::open(leaf, core.handle());
-        // Issue writes out-of-order
-        let first = vdev.write_at(wbuf.clone(), 1);
-        let second = vdev.write_at(wbuf.clone(), 0);
-        let futs = future::Future::join(first, second);
-        core.run(futs).unwrap();
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            // Issue writes out-of-order
+            let first = vdev.write_at(wbuf.clone(), 1);
+            let second = vdev.write_at(wbuf.clone(), 0);
+            future::Future::join(first, second)
+        })).unwrap();
     }
 
     // Writes should be issued ASAP, even if they could be combined later
@@ -608,12 +610,12 @@ test_suite! {
         scenario.expect(seq);
 
         let wbuf = Bytes::from(vec![0u8; 4096]);
-        let mut core = Core::new().unwrap();
-        let vdev = VdevBlock::open(leaf, core.handle());
-        let first = vdev.write_at(wbuf.clone(), 1);
-        let second = vdev.write_at(wbuf.clone(), 0);
-        let third = vdev.write_at(wbuf.clone(), 2);
-        let futs = future::Future::join3(first, second, third);
-        core.run(futs).unwrap();
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            let first = vdev.write_at(wbuf.clone(), 1);
+            let second = vdev.write_at(wbuf.clone(), 0);
+            let third = vdev.write_at(wbuf.clone(), 2);
+            future::Future::join3(first, second, third)
+        })).unwrap();
     }
 }

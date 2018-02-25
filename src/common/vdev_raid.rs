@@ -9,7 +9,7 @@ use common::raid::*;
 use common::declust::*;
 use futures::{Future, future};
 use modulo::Mod;
-use tokio_core::reactor::Handle;
+use tokio::reactor::Handle;
 
 #[cfg(test)]
 /// Only exists so mockers can replace VdevBlock
