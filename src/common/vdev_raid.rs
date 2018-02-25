@@ -119,15 +119,8 @@ impl Vdev for VdevRaid {
             let rest = v.split_off(1);
             let r0 = v.pop().unwrap();
             let result = rest.into_iter().fold(r0, |mut acc, r| {
-                // TODO: remove all the try_mut and freeze stuff by implementing
-                // Bytes#unsplit in the Bytes crate.
-                // Simplify it further by optimizing Bytes#unsplit(other) to
-                // return other if self is an empty Bytes with no capacity.
-                let bm = r.buf.try_mut().unwrap();
                 acc.value += r.value;
-                let mut buf_mut = acc.buf.try_mut().unwrap();
-                buf_mut.unsplit(bm);
-                acc.buf = buf_mut.freeze();
+                acc.buf.unsplit(r.buf);
                 acc
             });
             result
