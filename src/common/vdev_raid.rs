@@ -117,7 +117,7 @@ impl Vdev for VdevRaid {
         // reconstruct the data.
         Box::new(fut.map(|mut v| {
             let rest = v.split_off(1);
-            let r0 = v.pop().unwrap();
+            let r0 = v.pop().expect("No child I/O for VdevRaid::read_at?");
             let result = rest.into_iter().fold(r0, |mut acc, r| {
                 acc.value += r.value;
                 acc.buf.unsplit(r.buf);
@@ -429,6 +429,9 @@ test_suite! {
     }
 }
 
+// Use mock VdevBlock objects to test that RAID reads hit the right LBAs from
+// the individual disks.  Ignore the actual data values, since we don't have
+// real VdevBlocks.  Functional testing will verify the data.
 #[test]
 fn read_at_one_stripe() {
         let n = 3;
@@ -436,14 +439,13 @@ fn read_at_one_stripe() {
         let f = 1;
         const CHUNKSIZE : LbaT = 2;
 
-        // TODO: verify offset of buffers
         let s = Scenario::new();
         let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
         let r = IoVecResult {
-            // XXX fake buf value
+            // fake buf value
             buf: Bytes::new(),
             value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
         };
@@ -485,6 +487,9 @@ fn read_at_one_stripe() {
         vdev_raid.read_at(rbuf, 0);
 }
 
+// Use mock VdevBlock objects to test that RAID writes hit the right LBAs from
+// the individual disks.  Ignore the actual data values, since we don't have
+// real VdevBlocks.  Functional testing will verify the data.
 #[test]
 fn write_at_one_stripe() {
         let n = 3;
@@ -492,14 +497,13 @@ fn write_at_one_stripe() {
         let f = 1;
         const CHUNKSIZE : LbaT = 2;
 
-        // TODO: verify offset of buffers
         let s = Scenario::new();
         let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
         let r = IoVecResult {
-            // XXX fake buf value
+            // fake buf value
             buf: Bytes::new(),
             value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
         };
