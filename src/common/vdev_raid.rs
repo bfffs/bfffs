@@ -453,7 +453,7 @@ fn read_at_one_stripe() {
         }), matchers::ANY)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>((r.clone()))
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );
@@ -467,7 +467,7 @@ fn read_at_one_stripe() {
         }), matchers::ANY)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>((r.clone()))
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );
@@ -511,7 +511,7 @@ fn write_at_one_stripe() {
         }), matchers::ANY)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>((r.clone()))
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );
@@ -525,7 +525,7 @@ fn write_at_one_stripe() {
         }), matchers::ANY)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>((r.clone()))
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );
@@ -539,7 +539,7 @@ fn write_at_one_stripe() {
         }), matchers::ANY)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>((r.clone()))
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );

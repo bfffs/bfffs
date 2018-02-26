@@ -505,10 +505,10 @@ test_suite! {
         };
         seq.expect(leaf.read_at_call(ANY, 1)
                        .and_return(Box::new(future::ok::<IoVecResult,
-                                                         Error>((r0)))));
+                                                         Error>(r0))));
         seq.expect(leaf.read_at_call(ANY, 0)
                        .and_return(Box::new(future::ok::<IoVecResult,
-                                                         Error>((r1)))));
+                                                         Error>(r1))));
         scenario.expect(seq);
 
         let rbuf = BytesMut::from(vec![0u8; 4096]);
@@ -531,7 +531,7 @@ test_suite! {
         };
         scenario.expect(leaf.write_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<IoVecResult,
-                                                              Error>((r)))));
+                                                              Error>(r))));
 
         let wbuf = Bytes::from(vec![0u8; 4096]);
         let vdev = VdevBlock::open(leaf, Handle::current());
@@ -551,7 +551,7 @@ test_suite! {
         };
         scenario.expect(leaf.writev_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<SGListResult,
-                                                              Error>((r)))));
+                                                              Error>(r))));
 
         let wbuf0 = Bytes::from(vec![0u8; 1024]);
         let wbuf1 = Bytes::from(vec![0u8; 3072]);
@@ -573,7 +573,7 @@ test_suite! {
         };
         scenario.expect(leaf.writev_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<SGListResult,
-                                                              Error>((r)))));
+                                                              Error>(r))));
 
         let wbuf = Bytes::from(vec![0u8; 4096]);
         let vdev = VdevBlock::open(leaf, Handle::current());
@@ -603,10 +603,10 @@ test_suite! {
         };
         seq.expect(leaf.writev_at_call(ANY, 0)
                        .and_return(Box::new(future::ok::<SGListResult,
-                                                         Error>((r0)))));
+                                                         Error>(r0))));
         seq.expect(leaf.write_at_call(ANY, 2)
                        .and_return(Box::new(future::ok::<IoVecResult,
-                                                         Error>((r1)))));
+                                                         Error>(r1))));
         scenario.expect(seq);
 
         let wbuf = Bytes::from(vec![0u8; 4096]);
