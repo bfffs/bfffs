@@ -22,8 +22,8 @@ mockers = { version = "=0.9.4", optional = true }
 # If it gets merged, we can remove this crate
 modulo = "0.1.2"
 nix = "0.10.0"
-tokio-file = { git = "git://github.com/asomers/tokio-file.git", rev = "214acfe" }
-tokio = { git = "git://github.com/asomers/tokio.git", rev = "bbdd39f" }
+tokio-file = { git = "git://github.com/asomers/tokio-file.git", rev = "a516b95" }
+tokio = { git = "git://github.com/tokio-rs/tokio.git", rev = "1190176" }
 
 [dev-dependencies]
 galvanic-test = "0.1.3"
