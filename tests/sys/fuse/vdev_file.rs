@@ -67,7 +67,7 @@ test_suite! {
             vdev.read_at(rbuf, 0)
         })));
         assert_eq!(4096, result.value);
-        assert_eq!(result.buf.deref().deref(), wbuf.as_slice());
+        assert_eq!(result.buf.unwrap().deref().deref(), wbuf.as_slice());
     }
 
     test readv_at() {
@@ -145,6 +145,6 @@ test_suite! {
                 })
         })));
         assert_eq!(4096, result.value);
-        assert_eq!(result.buf, wbuf);
+        assert_eq!(result.buf.unwrap(), wbuf);
     }
 }

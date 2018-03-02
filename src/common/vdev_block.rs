@@ -77,7 +77,10 @@ impl PartialOrd for BlockOp {
 impl BlockOp {
     pub fn read_at(buf: IoVecMut, lba: LbaT,
                    sender: oneshot::Sender<IoVecResult>) -> BlockOp {
-        let g = BlockOpBufG::<IoVecMut, IoVecResult>{buf: buf, sender: sender};
+        let g = BlockOpBufG::<IoVecMut, IoVecResult>{
+            buf: buf,
+            sender: sender
+        };
         BlockOp { lba: lba, bufs: BlockOpBufT::IoVecMut(g)}
     }
 
@@ -90,7 +93,10 @@ impl BlockOp {
 
     pub fn write_at(buf: IoVec, lba: LbaT, sender:
                     oneshot::Sender<IoVecResult>) -> BlockOp {
-        let g = BlockOpBufG::<IoVec, IoVecResult>{buf: buf, sender: sender};
+        let g = BlockOpBufG::<IoVec, IoVecResult>{
+            buf: buf,
+            sender: sender
+        };
         BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(g)}
     }
 
@@ -292,10 +298,13 @@ impl VdevBlock {
             let fut = self.leaf.writev_at(combined_bufs, start_lba)
                 .and_then(move|_| {
                     for sender in iovec_s.drain(..) {
-                        let r = IoVecResult{buf: IoVec::new(), value: 0};
                         // TODO We don't actually know how much data this
                         // sender's receiver was expecting, or exactly which
                         // IoVec it expects.
+                        let r = IoVecResult{
+                            buf: Some(IoVec::new()),
+                            value: 0
+                        };
                         sender.send(r).unwrap();
                     }
                     for sender in sg_s.drain(..) {
@@ -495,12 +504,12 @@ test_suite! {
         let mut seq = Sequence::new();
         let r0 = IoVecResult {
             // XXX fake buf value
-            buf: Bytes::new(),
+            buf: None,
             value: 4096
         };
         let r1 = IoVecResult {
             // XXX fake buf value
-            buf: Bytes::new(),
+            buf: None,
             value: 4096
         };
         seq.expect(leaf.read_at_call(ANY, 1)
@@ -526,7 +535,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let r = IoVecResult {
             // XXX fake buf value
-            buf: Bytes::new(),
+            buf: None,
             value: 4096
         };
         scenario.expect(leaf.write_at_call(ANY, 0)
@@ -546,7 +555,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let r = SGListResult {
             // XXX fake buf value
-            buf: vec![Bytes::new()],
+            buf: SGList::default(),
             value: 4096
         };
         scenario.expect(leaf.writev_at_call(ANY, 0)
@@ -568,7 +577,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let r = SGListResult {
             // XXX fake buf value
-            buf: vec![Bytes::new()],
+            buf: SGList::default(),
             value: 8192
         };
         scenario.expect(leaf.writev_at_call(ANY, 0)
@@ -593,12 +602,12 @@ test_suite! {
         scenario.expect(leaf.lba2zone_call(2).and_return(0));
         let r0 = SGListResult {
             // XXX fake buf value
-            buf: vec![Bytes::new()],
+            buf: SGList::default(),
             value: 8192
         };
         let r1 = IoVecResult {
             // XXX fake buf value
-            buf: Bytes::new(),
+            buf: None,
             value: 4096
         };
         seq.expect(leaf.writev_at_call(ANY, 0)

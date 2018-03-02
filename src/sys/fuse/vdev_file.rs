@@ -78,7 +78,7 @@ impl Vdev for VdevFile {
             let value = aio_result.value.unwrap();
             let buf_ref = aio_result.into_buf_ref();
             IoVecResult {
-                buf: buf_ref.into_bytes_mut().unwrap().freeze(),
+                buf: Some(buf_ref.into_bytes_mut().unwrap().freeze()),
                 value: value
             }
         }).map_err(|e| {
@@ -103,7 +103,7 @@ impl Vdev for VdevFile {
             let value = aio_result.value.unwrap();
             let buf_ref = aio_result.into_buf_ref();
             IoVecResult {
-                buf: buf_ref.into_bytes().unwrap(),
+                buf: Some(buf_ref.into_bytes().unwrap()),
                 value: value
             }
         }).map_err(|e| {

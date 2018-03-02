@@ -119,7 +119,13 @@ impl Vdev for VdevRaid {
             let r0 = IoVecResult::default();
             let result = v.into_iter().fold(r0, |mut acc, r| {
                 acc.value += r.value;
-                acc.buf.unsplit(r.buf);
+                if let Some(right_buf) = r.buf {
+                    if let Some(ref mut left_buf) = acc.buf {
+                        left_buf.unsplit(right_buf);
+                    } else {
+                        acc.buf = Some(right_buf);
+                    }
+                }
                 acc
             });
             result
@@ -214,7 +220,7 @@ impl Vdev for VdevRaid {
         Box::new(data_fut.join(parity_fut).map(|_| {
             IoVecResult {
                 value: buf.len() as isize,
-                buf: buf,
+                buf: Some(buf),
             }
         }))
     }
@@ -445,7 +451,7 @@ fn read_at_one_stripe() {
         s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
         let r = IoVecResult {
             // fake buf value
-            buf: Bytes::new(),
+            buf: None,
             value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
         };
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
@@ -503,7 +509,7 @@ fn write_at_one_stripe() {
         s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
         let r = IoVecResult {
             // fake buf value
-            buf: Bytes::new(),
+            buf: None,
             value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
         };
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {

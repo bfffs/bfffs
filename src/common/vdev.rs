@@ -11,8 +11,9 @@ pub struct IoVecResult {
     /// The buffer used by the operation.  It will always be immutable, even if
     /// the original operation had a mutable buffer.  But it will also be
     /// uniquely owned as long as the original operation's buffer was mutable,
-    /// meaning that it can be upgraded back to a mutable buffer.
-    pub buf: IoVec,
+    /// meaning that it can be upgraded back to a mutable buffer.  Some
+    /// operations, such as fsync operations, won't have a buffer.
+    pub buf: Option<IoVec>,
     /// The result that the operation would've had had it been synchronous.
     /// Usually the number of bytes read or written
     pub value: isize

@@ -64,6 +64,6 @@ test_suite! {
                     raid.val.0.read_at(rbuf, 0)
                 })
         })).expect("read_at");
-        assert_eq!(wbytes, r.buf);
+        assert_eq!(wbytes, r.buf.unwrap());
     }
 }
