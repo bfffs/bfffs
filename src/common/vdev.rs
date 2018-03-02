@@ -20,7 +20,7 @@ pub struct IoVecResult {
 }
 
 /// Type returned by `SGList`-oriented `Vdev` operations on success.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SGListResult {
     /// The buffer used by the operation.  It will always be immutable, even if
     /// the original operation had a mutable buffer.  But it will also be

@@ -32,7 +32,7 @@ impl SGVdev for VdevFile {
             let mut sglist = SGList::new();
             for ar in r {
                 v += ar.value.unwrap();
-                sglist.push(ar.buf.into_bytes_mut().unwrap().freeze());
+                sglist.push(ar.buf.into_divbuf_mut().unwrap().freeze());
             }
             SGListResult{buf: sglist, value: v}
         }).map_err(|e| {
@@ -51,7 +51,7 @@ impl SGVdev for VdevFile {
             let mut sglist = SGList::new();
             for ar in r {
                 v += ar.value.unwrap();
-                sglist.push(ar.buf.into_bytes().unwrap());
+                sglist.push(ar.buf.into_divbuf().unwrap());
             }
             SGListResult{buf: sglist, value: v}
         }).map_err(|e| {
@@ -78,7 +78,7 @@ impl Vdev for VdevFile {
             let value = aio_result.value.unwrap();
             let buf_ref = aio_result.into_buf_ref();
             IoVecResult {
-                buf: Some(buf_ref.into_bytes_mut().unwrap().freeze()),
+                buf: Some(buf_ref.into_divbuf_mut().unwrap().freeze()),
                 value: value
             }
         }).map_err(|e| {
@@ -103,7 +103,7 @@ impl Vdev for VdevFile {
             let value = aio_result.value.unwrap();
             let buf_ref = aio_result.into_buf_ref();
             IoVecResult {
-                buf: Some(buf_ref.into_bytes().unwrap()),
+                buf: Some(buf_ref.into_divbuf().unwrap()),
                 value: value
             }
         }).map_err(|e| {

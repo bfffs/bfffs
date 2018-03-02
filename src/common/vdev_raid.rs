@@ -7,6 +7,7 @@ use common::vdev::*;
 use common::vdev_block::*;
 use common::raid::*;
 use common::declust::*;
+use divbuf::DivBufShared;
 use futures::{Future, future};
 use modulo::Mod;
 use tokio::reactor::Handle;
@@ -121,7 +122,7 @@ impl Vdev for VdevRaid {
                 acc.value += r.value;
                 if let Some(right_buf) = r.buf {
                     if let Some(ref mut left_buf) = acc.buf {
-                        left_buf.unsplit(right_buf);
+                        left_buf.unsplit(right_buf).expect("DivBufMut::unsplit");
                     } else {
                         acc.buf = Some(right_buf);
                     }
@@ -180,13 +181,16 @@ impl Vdev for VdevRaid {
 
         let mut parity = Vec::<IoVecMut>::with_capacity(f);
         let mut parity_refs = Vec::<*mut u8>::with_capacity(f);
+        let mut parity_dbses = Vec::<DivBufShared>::with_capacity(f);
         for _ in 0..f {
             let mut v = Vec::<u8>::with_capacity(col_len);
             //codec::encode will actually fill the column
             unsafe { v.set_len(col_len) };
-            let mut col = BytesMut::from(v);
-            parity_refs.push(col.as_mut_ptr());
-            parity.push(col);
+            let col = DivBufShared::from(v);
+            let mut dbm = col.try_mut().unwrap();
+            parity_refs.push(dbm.as_mut_ptr());
+            parity.push(dbm);
+            parity_dbses.push(col);
         }
 
         self.codec.encode(col_len, &data_refs, &(parity_refs));
@@ -217,7 +221,8 @@ impl Vdev for VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::new(data_fut.join(parity_fut).map(|_| {
+        Box::new(data_fut.join(parity_fut).map(move |_| {
+            let _ = parity_dbses;   // Needs to live this long
             IoVecResult {
                 value: buf.len() as isize,
                 buf: Some(buf),
@@ -488,7 +493,8 @@ fn read_at_one_stripe() {
         let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
         let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
                                       blockdevs.into_boxed_slice());
-        let rbuf = BytesMut::from(vec![0u8; 16384]);
+        let dbs = DivBufShared::from(vec![0u8; 16384]);
+        let rbuf = dbs.try_mut().unwrap();
         vdev_raid.read_at(rbuf, 0);
 }
 
@@ -555,7 +561,8 @@ fn write_at_one_stripe() {
         let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
         let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
                                       blockdevs.into_boxed_slice());
-        let wbuf = Bytes::from(vec![0u8; 16384]);
+        let dbs = DivBufShared::from(vec![0u8; 16384]);
+        let wbuf = dbs.try().unwrap();
         vdev_raid.write_at(wbuf, 0);
 }
 

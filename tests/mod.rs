@@ -1,5 +1,5 @@
 extern crate arkfs;
-extern crate bytes;
+extern crate divbuf;
 extern crate fixedbitset;
 extern crate futures;
 #[macro_use] extern crate galvanic_test;

@@ -15,7 +15,7 @@ test_suite! {
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::ops::Deref;
     use std::path::PathBuf;
-    use bytes::{Bytes, BytesMut};
+    use divbuf::DivBufShared;
     use tempdir::TempDir;
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
@@ -61,7 +61,8 @@ test_suite! {
         }
 
         // Run the test
-        let rbuf = BytesMut::from(vec![0u8; 4096]);
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevFile::open(path, Handle::current());
         let result = t!(current_thread::block_on_all(future::lazy(|| {
             vdev.read_at(rbuf, 0)
@@ -82,8 +83,9 @@ test_suite! {
         }
 
         // Run the test
-        let rbuf0 = BytesMut::from(vec![0u8; 1024]);
-        let rbuf1 = BytesMut::from(vec![0u8; 3072]);
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let mut rbuf0 = dbs.try_mut().unwrap();
+        let rbuf1 = rbuf0.split_off(1024);
         let rbufs = vec![rbuf0, rbuf1];
         let vdev = VdevFile::open(path, Handle::current());
         let result = t!(current_thread::block_on_all(future::lazy(|| {
@@ -95,7 +97,8 @@ test_suite! {
     }
 
     test write_at(vdev) {
-        let wbuf = Bytes::from(vec![42u8; 4096]);
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
         let result = t!(current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.write_at(wbuf.clone(), 0)
@@ -107,7 +110,8 @@ test_suite! {
     }
 
     test write_at_lba(vdev) {
-        let wbuf = Bytes::from(vec![42u8; 4096]);
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
         let result = t!(current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.write_at(wbuf.clone(), 1)
@@ -120,8 +124,9 @@ test_suite! {
     }
 
     test writev_at(vdev) {
-        let wbuf0 = Bytes::from(vec![21u8; 1024]);
-        let wbuf1 = Bytes::from(vec![42u8; 3072]);
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let mut wbuf0 = dbs.try().unwrap();
+        let wbuf1 = wbuf0.split_off(1024);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let mut rbuf = vec![0u8; 4096];
         let result = t!(current_thread::block_on_all(future::lazy(|| {
@@ -136,8 +141,10 @@ test_suite! {
 
     test read_after_write(vdev) {
         let vd = vdev.val.0;
-        let wbuf = Bytes::from(vec![42u8; 4096]);
-        let rbuf = BytesMut::from(vec![0u8; 4096]);
+        let dbsw = DivBufShared::from(vec![0u8; 4096]);
+        let wbuf = dbsw.try().unwrap();
+        let dbsr = DivBufShared::from(vec![0u8; 4096]);
+        let rbuf = dbsr.try_mut().unwrap();
         let result = t!(current_thread::block_on_all(future::lazy(|| {
             vd.write_at(wbuf.clone(), 0)
                 .and_then(|_| {

@@ -218,8 +218,7 @@ impl VdevBlock {
 
     /// Helper function for readv and writev methods
     ///
-    /// TODO: combine this method with `check_sglist_bounds` by implementing an
-    /// sglist type that implements bytes::Buf
+    /// TODO: combine this method with `check_sglist_bounds`
     fn check_sglistmut_bounds(&self, lba: LbaT, bufs: &SGListMut) {
         let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
             accumulator + buf.len() as u64
@@ -302,7 +301,7 @@ impl VdevBlock {
                         // sender's receiver was expecting, or exactly which
                         // IoVec it expects.
                         let r = IoVecResult{
-                            buf: Some(IoVec::new()),
+                            buf: None,
                             value: 0
                         };
                         sender.send(r).unwrap();
@@ -311,7 +310,7 @@ impl VdevBlock {
                         // TODO We don't actually know how much data this
                         // sender's receiver was expecting, or exactly which
                         // SGList it expects.
-                        let r = SGListResult{buf: SGList::new(), value: 0};
+                        let r = SGListResult::default();
                         sender.send(r).unwrap();
                     }
                     Ok(())
@@ -452,11 +451,11 @@ test_suite! {
     name mock_vdev_block;
 
     use super::*;
+    use divbuf::DivBufShared;
     use futures::future;
     use mockers::{Scenario, Sequence};
     use mockers::matchers::ANY;
     use std::io::Error;
-    use bytes::Bytes;
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
 
@@ -520,11 +519,14 @@ test_suite! {
                                                          Error>(r1))));
         scenario.expect(seq);
 
-        let rbuf = BytesMut::from(vec![0u8; 4096]);
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![0u8; 4096]);
+        let rbuf0 = dbs0.try_mut().unwrap();
+        let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            let first = vdev.read_at(rbuf.clone(), 1);
-            let second = vdev.read_at(rbuf.clone(), 0);
+            let first = vdev.read_at(rbuf0, 1);
+            let second = vdev.read_at(rbuf1, 0);
             future::Future::join(first, second)
         })).unwrap();
     }
@@ -542,10 +544,11 @@ test_suite! {
                             .and_return(Box::new(future::ok::<IoVecResult,
                                                               Error>(r))));
 
-        let wbuf = Bytes::from(vec![0u8; 4096]);
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let wbuf = dbs.try().unwrap();
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            vdev.write_at(wbuf.clone(), 0)
+            vdev.write_at(wbuf, 0)
         })).unwrap();
     }
 
@@ -562,8 +565,10 @@ test_suite! {
                             .and_return(Box::new(future::ok::<SGListResult,
                                                               Error>(r))));
 
-        let wbuf0 = Bytes::from(vec![0u8; 1024]);
-        let wbuf1 = Bytes::from(vec![0u8; 3072]);
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let wbuf = dbs.try().unwrap();
+        let wbuf0 = wbuf.slice_to(1024);
+        let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0, wbuf1];
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
@@ -584,12 +589,15 @@ test_suite! {
                             .and_return(Box::new(future::ok::<SGListResult,
                                                               Error>(r))));
 
-        let wbuf = Bytes::from(vec![0u8; 4096]);
         let vdev = VdevBlock::open(leaf, Handle::current());
+        let dbs = DivBufShared::from(vec![0u8; 8192]);
+        let wbuf = dbs.try().unwrap();
+        let wbuf0 = wbuf.slice_to(4096);
+        let wbuf1 = wbuf.slice_from(4096);
         current_thread::block_on_all(future::lazy(|| {
             // Issue writes out-of-order
-            let first = vdev.write_at(wbuf.clone(), 1);
-            let second = vdev.write_at(wbuf.clone(), 0);
+            let first = vdev.write_at(wbuf0, 1);
+            let second = vdev.write_at(wbuf1, 0);
             future::Future::join(first, second)
         })).unwrap();
     }
@@ -618,12 +626,16 @@ test_suite! {
                                                          Error>(r1))));
         scenario.expect(seq);
 
-        let wbuf = Bytes::from(vec![0u8; 4096]);
+        let dbs = DivBufShared::from(vec![0u8; 12288]);
+        let wbuf = dbs.try().unwrap();
+        let wbuf0 = wbuf.slice_to(4096);
+        let wbuf1 = wbuf.slice(4096, 8192);
+        let wbuf2 = wbuf.slice_from(8192);
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            let first = vdev.write_at(wbuf.clone(), 1);
-            let second = vdev.write_at(wbuf.clone(), 0);
-            let third = vdev.write_at(wbuf.clone(), 2);
+            let first = vdev.write_at(wbuf0, 1);
+            let second = vdev.write_at(wbuf1, 0);
+            let third = vdev.write_at(wbuf2, 2);
             future::Future::join3(first, second, third)
         })).unwrap();
     }

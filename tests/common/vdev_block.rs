@@ -12,7 +12,7 @@ test_suite! {
     use arkfs::common::vdev::{SGVdev, Vdev};
     use arkfs::common::vdev_block::*;
     use arkfs::sys::vdev_file::*;
-    use bytes::Bytes;
+    use divbuf::DivBufShared;
     use futures::future;
     use std::fs;
     use tempdir::TempDir;
@@ -50,7 +50,8 @@ test_suite! {
 
     #[should_panic]
     test check_block_granularity_under(vdev) {
-        let wbuf = Bytes::from(vec![42u8; 4095]);
+        let dbs = DivBufShared::from(vec![42u8; 4095]);
+        let wbuf = dbs.try().unwrap();
         current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.write_at(wbuf, 0)
         })).unwrap();
@@ -58,7 +59,8 @@ test_suite! {
 
     #[should_panic]
     test check_block_granularity_over(vdev) {
-        let wbuf = Bytes::from(vec![42u8; 4097]);
+        let dbs = DivBufShared::from(vec![42u8; 4097]);
+        let wbuf = dbs.try().unwrap();
         current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.write_at(wbuf, 0)
         })).unwrap();
@@ -66,7 +68,8 @@ test_suite! {
 
     #[should_panic]
     test check_block_granularity_over_multiple_sectors(vdev) {
-        let wbuf = Bytes::from(vec![42u8; 16_385]);
+        let dbs = DivBufShared::from(vec![42u8; 16_385]);
+        let wbuf = dbs.try().unwrap();
         current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.write_at(wbuf, 0)
         })).unwrap();
@@ -74,8 +77,10 @@ test_suite! {
 
     #[should_panic]
     test check_block_granularity_writev(vdev) {
-        let wbuf0 = Bytes::from(vec![21u8; 1024]);
-        let wbuf1 = Bytes::from(vec![42u8; 3073]);
+        let dbs = DivBufShared::from(vec![42u8; 4097]);
+        let wbuf = dbs.try().unwrap();
+        let wbuf0 = wbuf.slice_to(1024);
+        let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0, wbuf1];
         current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.writev_at(wbufs, 0)
@@ -84,7 +89,8 @@ test_suite! {
 
     #[should_panic]
     test check_iovec_bounds_over(vdev) {
-        let wbuf = Bytes::from(vec![42u8; 4096]);
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try().unwrap();
         current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.write_at(wbuf, vdev.val.0.size())
         })).unwrap();
@@ -92,7 +98,8 @@ test_suite! {
 
     #[should_panic]
     test check_iovec_bounds_spans(vdev) {
-        let wbuf = Bytes::from(vec![42u8; 8192]);
+        let dbs = DivBufShared::from(vec![42u8; 8192]);
+        let wbuf = dbs.try().unwrap();
         current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.write_at(wbuf, vdev.val.0.size() - 1)
         })).unwrap();
@@ -100,8 +107,10 @@ test_suite! {
 
     #[should_panic]
     test check_sglist_bounds_over(vdev) {
-        let wbuf0 = Bytes::from(vec![21u8; 1024]);
-        let wbuf1 = Bytes::from(vec![42u8; 3072]);
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try().unwrap();
+        let wbuf0 = wbuf.slice_to(1024);
+        let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.writev_at(wbufs, vdev.val.0.size())
@@ -110,8 +119,10 @@ test_suite! {
 
     #[should_panic]
     test check_sglist_bounds_spans(vdev) {
-        let wbuf0 = Bytes::from(vec![21u8; 5120]);
-        let wbuf1 = Bytes::from(vec![42u8; 7168]);
+        let dbs = DivBufShared::from(vec![42u8; 8192]);
+        let wbuf = dbs.try().unwrap();
+        let wbuf0 = wbuf.slice_to(5120);
+        let wbuf1 = wbuf.slice_from(5120);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.writev_at(wbufs, vdev.val.0.size() - 2)

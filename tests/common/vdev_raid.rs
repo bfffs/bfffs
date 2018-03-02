@@ -16,7 +16,7 @@ test_suite! {
     use arkfs::common::vdev_block::*;
     use arkfs::common::vdev_raid::*;
     use arkfs::sys::vdev_file::*;
-    use bytes::{Bytes, BytesMut};
+    use divbuf::DivBufShared;
     use futures::{Future, future};
     use rand::{Rng, thread_rng};
     use std::fs;
@@ -49,21 +49,22 @@ test_suite! {
     });
 
     test write_read_one_stripe(raid) {
-        let mut wbuf = vec![0u8; 24576];
+        let mut wvec = vec![0u8; 24576];
         let mut rng = thread_rng();
-        for x in wbuf.iter_mut() {
+        for x in wvec.iter_mut() {
             *x = rng.gen();
         }
-        let wbytes = Bytes::from(wbuf);
-        let wbytesclone = wbytes.clone();
+        let dbsw = DivBufShared::from(wvec);
+        let wbuf0 = dbsw.try().unwrap();
+        let wbuf1 = dbsw.try().unwrap();
+        let dbsr = DivBufShared::from(vec![0u8; 24576]);
         let r = current_thread::block_on_all(future::lazy(|| {
-            raid.val.0.write_at(wbytesclone, 0)
+            raid.val.0.write_at(wbuf1, 0)
                 .then(|write_result| {
                     write_result.expect("write_at");
-                    let rbuf = BytesMut::from(vec![0u8; 24576]);
-                    raid.val.0.read_at(rbuf, 0)
+                    raid.val.0.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
-        assert_eq!(wbytes, r.buf.unwrap());
+        assert_eq!(wbuf0, r.buf.unwrap());
     }
 }
