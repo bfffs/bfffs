@@ -117,12 +117,8 @@ impl Vdev for VdevRaid {
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
         Box::new(fut.map(|v| {
-            let r0 = IoVecResult::default();
-            let result = v.into_iter().fold(r0, |mut acc, r| {
-                acc.value += r.value;
-                acc
-            });
-            result
+            let value = v.into_iter().map(|x| x.value).sum();
+            IoVecResult{value: value}
         }))
 
     }
