@@ -120,13 +120,6 @@ impl Vdev for VdevRaid {
             let r0 = IoVecResult::default();
             let result = v.into_iter().fold(r0, |mut acc, r| {
                 acc.value += r.value;
-                if let Some(right_buf) = r.buf {
-                    if let Some(ref mut left_buf) = acc.buf {
-                        left_buf.unsplit(right_buf).expect("DivBufMut::unsplit");
-                    } else {
-                        acc.buf = Some(right_buf);
-                    }
-                }
                 acc
             });
             result
@@ -223,10 +216,7 @@ impl Vdev for VdevRaid {
         // TODO: on error, record error statistics, and possibly fault a drive.
         Box::new(data_fut.join(parity_fut).map(move |_| {
             let _ = parity_dbses;   // Needs to live this long
-            IoVecResult {
-                value: buf.len() as isize,
-                buf: Some(buf),
-            }
+            IoVecResult { value: buf.len() as isize, }
         }))
     }
 }
@@ -455,8 +445,6 @@ fn read_at_one_stripe() {
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
         let r = IoVecResult {
-            // fake buf value
-            buf: None,
             value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
         };
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
@@ -514,8 +502,6 @@ fn write_at_one_stripe() {
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
         let r = IoVecResult {
-            // fake buf value
-            buf: None,
             value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
         };
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {

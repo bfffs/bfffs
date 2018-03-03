@@ -28,13 +28,12 @@ impl SGVdev for VdevFile {
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<SGListFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.readv_at(buf, off).unwrap().map(|r| {
+            // TODO: simplify this loop with fold
             let mut v = 0;
-            let mut sglist = SGList::new();
             for ar in r {
                 v += ar.value.unwrap();
-                sglist.push(ar.buf.into_divbuf_mut().unwrap().freeze());
             }
-            SGListResult{buf: sglist, value: v}
+            SGListResult{value: v}
         }).map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),
@@ -48,12 +47,11 @@ impl SGVdev for VdevFile {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.writev_at(&buf[..], off).unwrap().map(|r| {
             let mut v = 0;
-            let mut sglist = SGList::new();
+            // TODO: simplify this loop with fold
             for ar in r {
                 v += ar.value.unwrap();
-                sglist.push(ar.buf.into_divbuf().unwrap());
             }
-            SGListResult{buf: sglist, value: v}
+            SGListResult{value: v}
         }).map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),
@@ -75,12 +73,7 @@ impl Vdev for VdevFile {
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.read_at(buf, off).unwrap().map(|aio_result| {
-            let value = aio_result.value.unwrap();
-            let buf_ref = aio_result.into_buf_ref();
-            IoVecResult {
-                buf: Some(buf_ref.into_divbuf_mut().unwrap().freeze()),
-                value: value
-            }
+            IoVecResult{value: aio_result.value.unwrap()}
         }).map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),
@@ -100,12 +93,7 @@ impl Vdev for VdevFile {
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.write_at(buf, off).unwrap().map(|aio_result| {
-            let value = aio_result.value.unwrap();
-            let buf_ref = aio_result.into_buf_ref();
-            IoVecResult {
-                buf: Some(buf_ref.into_divbuf().unwrap()),
-                value: value
-            }
+            IoVecResult { value: aio_result.value.unwrap() }
         }).map_err(|e| {
             match e {
                 nix::Error::Sys(x) => io::Error::from(x),

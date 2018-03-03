@@ -68,7 +68,7 @@ test_suite! {
             vdev.read_at(rbuf, 0)
         })));
         assert_eq!(4096, result.value);
-        assert_eq!(result.buf.unwrap().deref().deref(), wbuf.as_slice());
+        assert_eq!(dbs.try().unwrap(), wbuf[..]);
     }
 
     test readv_at() {
@@ -92,8 +92,7 @@ test_suite! {
             vdev.readv_at(rbufs, 0)
         })));
         assert_eq!(4096, result.value);
-        assert_eq!(result.buf[0].deref().deref(), &wbuf[0..1024]);
-        assert_eq!(result.buf[1].deref().deref(), &wbuf[1024..4096]);
+        assert_eq!(dbs.try().unwrap(), wbuf[..]);
     }
 
     test write_at(vdev) {
@@ -152,6 +151,6 @@ test_suite! {
                 })
         })));
         assert_eq!(4096, result.value);
-        assert_eq!(result.buf.unwrap(), wbuf);
+        assert_eq!(wbuf, dbsr.try().unwrap());
     }
 }

@@ -298,18 +298,13 @@ impl VdevBlock {
                 .and_then(move|_| {
                     for sender in iovec_s.drain(..) {
                         // TODO We don't actually know how much data this
-                        // sender's receiver was expecting, or exactly which
-                        // IoVec it expects.
-                        let r = IoVecResult{
-                            buf: None,
-                            value: 0
-                        };
+                        // sender's receiver was expecting
+                        let r = IoVecResult{ value: 0 };
                         sender.send(r).unwrap();
                     }
                     for sender in sg_s.drain(..) {
                         // TODO We don't actually know how much data this
-                        // sender's receiver was expecting, or exactly which
-                        // SGList it expects.
+                        // sender's receiver was expecting
                         let r = SGListResult::default();
                         sender.send(r).unwrap();
                     }
@@ -501,16 +496,8 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        let r0 = IoVecResult {
-            // XXX fake buf value
-            buf: None,
-            value: 4096
-        };
-        let r1 = IoVecResult {
-            // XXX fake buf value
-            buf: None,
-            value: 4096
-        };
+        let r0 = IoVecResult { value: 4096 };
+        let r1 = IoVecResult { value: 4096 };
         seq.expect(leaf.read_at_call(ANY, 1)
                        .and_return(Box::new(future::ok::<IoVecResult,
                                                          Error>(r0))));
@@ -535,11 +522,7 @@ test_suite! {
     test write_at_0(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        let r = IoVecResult {
-            // XXX fake buf value
-            buf: None,
-            value: 4096
-        };
+        let r = IoVecResult { value: 4096 };
         scenario.expect(leaf.write_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<IoVecResult,
                                                               Error>(r))));
@@ -556,11 +539,7 @@ test_suite! {
     test writev_at_0(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        let r = SGListResult {
-            // XXX fake buf value
-            buf: SGList::default(),
-            value: 4096
-        };
+        let r = SGListResult { value: 4096 };
         scenario.expect(leaf.writev_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<SGListResult,
                                                               Error>(r))));
@@ -580,11 +559,7 @@ test_suite! {
     test write_at_combining(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        let r = SGListResult {
-            // XXX fake buf value
-            buf: SGList::default(),
-            value: 8192
-        };
+        let r = SGListResult { value: 8192 };
         scenario.expect(leaf.writev_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<SGListResult,
                                                               Error>(r))));
@@ -608,16 +583,8 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
         scenario.expect(leaf.lba2zone_call(2).and_return(0));
-        let r0 = SGListResult {
-            // XXX fake buf value
-            buf: SGList::default(),
-            value: 8192
-        };
-        let r1 = IoVecResult {
-            // XXX fake buf value
-            buf: None,
-            value: 4096
-        };
+        let r0 = SGListResult { value: 8192 };
+        let r1 = IoVecResult { value: 4096 };
         seq.expect(leaf.writev_at_call(ANY, 0)
                        .and_return(Box::new(future::ok::<SGListResult,
                                                          Error>(r0))));

@@ -65,6 +65,7 @@ test_suite! {
                     raid.val.0.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
-        assert_eq!(wbuf0, r.buf.unwrap());
+        assert_eq!(24576, r.value);
+        assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 }
