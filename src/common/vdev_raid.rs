@@ -445,7 +445,7 @@ fn read_at_one_stripe() {
         };
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
-        }), matchers::ANY)
+        }), 0)
             .and_return(
                 Box::new(
                     future::ok::<IoVecResult, Error>(r.clone())
@@ -459,7 +459,7 @@ fn read_at_one_stripe() {
         s.expect(m1.start_of_zone_call(1).and_return_clone(65536).times(..));
         s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
-        }), matchers::ANY)
+        }), 0)
             .and_return(
                 Box::new(
                     future::ok::<IoVecResult, Error>(r.clone())
@@ -502,7 +502,7 @@ fn write_at_one_stripe() {
         };
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
-        }), matchers::ANY)
+        }), 0)
             .and_return(
                 Box::new(
                     future::ok::<IoVecResult, Error>(r.clone())
@@ -516,7 +516,7 @@ fn write_at_one_stripe() {
         s.expect(m1.start_of_zone_call(1).and_return_clone(65536).times(..));
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
-        }), matchers::ANY)
+        }), 0)
             .and_return(
                 Box::new(
                     future::ok::<IoVecResult, Error>(r.clone())
@@ -530,7 +530,7 @@ fn write_at_one_stripe() {
         s.expect(m2.start_of_zone_call(1).and_return_clone(65536).times(..));
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
-        }), matchers::ANY)
+        }), 0)
             .and_return(
                 Box::new(
                     future::ok::<IoVecResult, Error>(r.clone())
