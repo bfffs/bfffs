@@ -1,5 +1,6 @@
 syntax: glob
 *.diff
+*.rej
 *.orig
 *.swp
 .byebug_history
