@@ -28,11 +28,7 @@ impl SGVdev for VdevFile {
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<SGListFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.readv_at(buf, off).unwrap().map(|r| {
-            // TODO: simplify this loop with fold
-            let mut v = 0;
-            for ar in r {
-                v += ar.value.unwrap();
-            }
+            let v = r.into_iter().map(|x| x.value.unwrap()).sum();
             SGListResult{value: v}
         }).map_err(|e| {
             match e {
@@ -46,11 +42,7 @@ impl SGVdev for VdevFile {
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.writev_at(&buf[..], off).unwrap().map(|r| {
-            let mut v = 0;
-            // TODO: simplify this loop with fold
-            for ar in r {
-                v += ar.value.unwrap();
-            }
+            let v = r.into_iter().map(|x| x.value.unwrap()).sum();
             SGListResult{value: v}
         }).map_err(|e| {
             match e {
