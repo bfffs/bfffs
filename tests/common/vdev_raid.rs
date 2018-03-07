@@ -57,19 +57,24 @@ test_suite! {
         }
     });
 
-    test write_read_one_stripe(raid) {
-        let stripe_chunks = (raid.params.k - raid.params.f) as LbaT;
-        let stripe_lbas = CHUNKSIZE * stripe_chunks;
-        let stripe_bytes = ((BYTES_PER_LBA as u64) * stripe_lbas) as usize;
-        let mut wvec = vec![0u8; stripe_bytes];
+    fn make_bufs(k: i16, f: i16, s: usize) -> (DivBufShared, DivBufShared) {
+        let chunks = s * (k - f) as usize;
+        let lbas = CHUNKSIZE * chunks as LbaT;
+        let bytes = ((BYTES_PER_LBA as u64) * lbas) as usize;
+        let mut wvec = vec![0u8; bytes];
         let mut rng = thread_rng();
         for x in wvec.iter_mut() {
             *x = rng.gen();
         }
         let dbsw = DivBufShared::from(wvec);
+        let dbsr = DivBufShared::from(vec![0u8; bytes]);
+        (dbsw, dbsr)
+    }
+
+    test write_read_one_stripe(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 1);
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
-        let dbsr = DivBufShared::from(vec![0u8; stripe_bytes]);
         let r = current_thread::block_on_all(future::lazy(|| {
             raid.val.0.write_at(wbuf1, 0)
                 .then(|write_result| {
@@ -77,7 +82,7 @@ test_suite! {
                     raid.val.0.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
-        assert_eq!(stripe_bytes as isize, r.value);
+        assert_eq!(dbsr.len() as isize, r.value);
         assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 }
