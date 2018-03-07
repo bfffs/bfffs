@@ -224,7 +224,7 @@ mod t {
 use super::*;
 use super::super::prime_s::PrimeS;
 use futures::future;
-use mockers::{matchers, Scenario};
+use mockers::Scenario;
 use std::io::Error;
 
 mock!{
