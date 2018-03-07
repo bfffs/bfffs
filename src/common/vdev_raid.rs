@@ -110,6 +110,75 @@ impl VdevRaid {
     fn read_at_multi(&self, _: IoVecMut, _: LbaT) -> Box<IoVecFut> {
         unimplemented!();
     }
+
+    /// Write two or more whole stripes
+    fn write_at_multi(&self, _: IoVec, _: LbaT) -> Box<IoVecFut> {
+        unimplemented!();
+    }
+
+    /// Write exactly one stripe
+    fn write_at_one(&self, mut buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let f = self.codec.protection() as usize;
+        let m = self.codec.stripesize() as usize - f as usize;
+
+        let mut data = Vec::<IoVec>::with_capacity(m);
+        let mut data_refs = Vec::<*const u8>::with_capacity(m);
+        for i in 0..m {
+            let b = col_len * i;
+            let e = b + col_len;
+            let col = buf.slice(b, e);
+            data_refs.push(col.as_ptr());
+            data.push(col);
+        }
+
+        let mut parity = Vec::<IoVecMut>::with_capacity(f);
+        let mut parity_refs = Vec::<*mut u8>::with_capacity(f);
+        let mut parity_dbses = Vec::<DivBufShared>::with_capacity(f);
+        for _ in 0..f {
+            let mut v = Vec::<u8>::with_capacity(col_len);
+            //codec::encode will actually fill the column
+            unsafe { v.set_len(col_len) };
+            let col = DivBufShared::from(v);
+            let mut dbm = col.try_mut().unwrap();
+            parity_refs.push(dbm.as_mut_ptr());
+            parity.push(dbm);
+            parity_dbses.push(col);
+        }
+
+        self.codec.encode(col_len, &data_refs, &(parity_refs));
+
+        let data_futs : Vec<Box<IoVecFut>> = data
+            .into_iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let chunk_id = ChunkId::Data(lba / self.chunksize + i as LbaT);
+                let loc = self.locator.id2loc(chunk_id);
+                let disk_lba = loc.offset * self.chunksize;
+                self.blockdevs[loc.disk as usize].write_at(d, disk_lba)
+            })
+            .collect();
+        let data_fut = future::join_all(data_futs);
+        let parity_futs : Vec<Box<IoVecFut>> =
+            parity
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let chunk_id = ChunkId::Parity(lba / self.chunksize, i as i16);
+                let loc = self.locator.id2loc(chunk_id);
+                let disk_lba = loc.offset * self.chunksize;
+                self.blockdevs[loc.disk as usize].write_at(p.freeze(), disk_lba)
+            })
+            .collect();
+        let parity_fut = future::join_all(parity_futs);
+        // TODO: on error, some futures get cancelled.  Figure out how to clean
+        // them up.
+        // TODO: on error, record error statistics, and possibly fault a drive.
+        Box::new(data_fut.join(parity_fut).map(move |_| {
+            let _ = parity_dbses;   // Needs to live this long
+            IoVecResult { value: buf.len() as isize, }
+        }))
+    }
 }
 
 impl Vdev for VdevRaid {
@@ -170,68 +239,18 @@ impl Vdev for VdevRaid {
         let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
-        assert_eq!(buf.len(),
-                   col_len * m,
-                   "Only single-stripe writes are currently supported");
+        assert_eq!(buf.len().modulo(col_len * m), 0,
+                   "Only stripe-aligned reads are currently supported");
         assert_eq!(lba.modulo(self.chunksize as u64 * m as u64), 0,
             "Unaligned writes are not yet supported");
+        let chunks = buf.len() / col_len;
+        let stripes = chunks / m;
 
-        let mut data = Vec::<IoVec>::with_capacity(m);
-        let mut data_refs = Vec::<*const u8>::with_capacity(m);
-        for i in 0..m {
-            let b = col_len * i;
-            let e = b + col_len;
-            let col = buf.slice(b, e);
-            data_refs.push(col.as_ptr());
-            data.push(col);
+        if stripes == 1 {
+            self.write_at_one(buf, lba)
+        } else {
+            self.write_at_multi(buf, lba)
         }
-
-        let mut parity = Vec::<IoVecMut>::with_capacity(f);
-        let mut parity_refs = Vec::<*mut u8>::with_capacity(f);
-        let mut parity_dbses = Vec::<DivBufShared>::with_capacity(f);
-        for _ in 0..f {
-            let mut v = Vec::<u8>::with_capacity(col_len);
-            //codec::encode will actually fill the column
-            unsafe { v.set_len(col_len) };
-            let col = DivBufShared::from(v);
-            let mut dbm = col.try_mut().unwrap();
-            parity_refs.push(dbm.as_mut_ptr());
-            parity.push(dbm);
-            parity_dbses.push(col);
-        }
-
-        self.codec.encode(col_len, &data_refs, &(parity_refs));
-
-        let data_futs : Vec<Box<IoVecFut>> = data
-            .into_iter()
-            .enumerate()
-            .map(|(i, d)| {
-                let chunk_id = ChunkId::Data(lba / self.chunksize + i as LbaT);
-                let loc = self.locator.id2loc(chunk_id);
-                let disk_lba = loc.offset * self.chunksize;
-                self.blockdevs[loc.disk as usize].write_at(d, disk_lba)
-            })
-            .collect();
-        let data_fut = future::join_all(data_futs);
-        let parity_futs : Vec<Box<IoVecFut>> =
-            parity
-            .into_iter()
-            .enumerate()
-            .map(|(i, p)| {
-                let chunk_id = ChunkId::Parity(lba / self.chunksize, i as i16);
-                let loc = self.locator.id2loc(chunk_id);
-                let disk_lba = loc.offset * self.chunksize;
-                self.blockdevs[loc.disk as usize].write_at(p.freeze(), disk_lba)
-            })
-            .collect();
-        let parity_fut = future::join_all(parity_futs);
-        // TODO: on error, some futures get cancelled.  Figure out how to clean
-        // them up.
-        // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::new(data_fut.join(parity_fut).map(move |_| {
-            let _ = parity_dbses;   // Needs to live this long
-            IoVecResult { value: buf.len() as isize, }
-        }))
     }
 }
 
