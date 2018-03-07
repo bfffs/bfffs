@@ -2,6 +2,7 @@
 
 use futures::Future;
 use nix;
+use std::borrow::{Borrow, BorrowMut};
 use std::io;
 use std::path::Path;
 use tokio::reactor::Handle;
@@ -24,10 +25,36 @@ pub struct VdevFile {
     size:   LbaT
 }
 
+/// Tokio-File requires boxed DivBufs, but the upper layers of ArkFS don't.
+/// Take care of the mismatch here, but wrapping DivBuf in a new struct
+struct IoVecContainer(IoVec);
+impl Borrow<[u8]> for IoVecContainer {
+    fn borrow(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+/// Tokio-File requires boxed DivBufMuts, but the upper layers of ArkFS don't.
+/// Take care of the mismatch here, but wrapping DivBufMut in a new struct
+struct IoVecMutContainer(IoVecMut);
+impl Borrow<[u8]> for IoVecMutContainer {
+    fn borrow(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+impl BorrowMut<[u8]> for IoVecMutContainer {
+    fn borrow_mut(&mut self) -> &mut [u8] {
+        self.0.as_mut()
+    }
+}
+
 impl SGVdev for VdevFile {
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<SGListFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.readv_at(buf, off).unwrap().map(|r| {
+        let containers = buf.into_iter().map(|iovec| {
+            Box::new(IoVecMutContainer(iovec)) as Box<BorrowMut<[u8]>>
+        }).collect();
+        Box::new(self.file.readv_at(containers, off).unwrap().map(|r| {
             let v = r.into_iter().map(|x| x.value.unwrap()).sum();
             SGListResult{value: v}
         }).map_err(|e| {
@@ -41,7 +68,10 @@ impl SGVdev for VdevFile {
 
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.writev_at(&buf[..], off).unwrap().map(|r| {
+        let containers = buf.into_iter().map(|iovec| {
+            Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
+        }).collect();
+        Box::new(self.file.writev_at(containers, off).unwrap().map(|r| {
             let v = r.into_iter().map(|x| x.value.unwrap()).sum();
             SGListResult{value: v}
         }).map_err(|e| {
@@ -63,8 +93,9 @@ impl Vdev for VdevFile {
     }
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+        let container = Box::new(IoVecMutContainer(buf));
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.read_at(buf, off).unwrap().map(|aio_result| {
+        Box::new(self.file.read_at(container, off).unwrap().map(|aio_result| {
             IoVecResult{value: aio_result.value.unwrap()}
         }).map_err(|e| {
             match e {
@@ -83,8 +114,9 @@ impl Vdev for VdevFile {
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+        let container = Box::new(IoVecContainer(buf));
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.write_at(buf, off).unwrap().map(|aio_result| {
+        Box::new(self.file.write_at(container, off).unwrap().map(|aio_result| {
             IoVecResult { value: aio_result.value.unwrap() }
         }).map_err(|e| {
             match e {
