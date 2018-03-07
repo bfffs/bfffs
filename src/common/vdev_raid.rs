@@ -47,6 +47,37 @@ pub struct VdevRaid {
     blockdevs: Box<[VdevBlockLike]>,
 }
 
+/// Convenience macro for VdevRaid I/O methods
+///
+/// # Examples
+///
+/// ```no_run
+/// let v = Vec::<IoVec>::with_capacity(4);
+/// let lba = 0;
+/// let fut = issue_1stripe_ops!(self, v, lba, false, write_at)
+/// ```
+macro_rules! issue_1stripe_ops {
+    ( $self:ident, $buf:expr, $lba:expr, $parity:expr, $func:ident) => {
+        {
+            let futs : Vec<Box<IoVecFut>> = $buf
+            .into_iter()
+            .enumerate()
+            .map(|(i, d)| {
+                let chunk_id = if $parity {
+                    ChunkId::Parity($lba / $self.chunksize, i as i16)
+                } else {
+                    ChunkId::Data($lba / $self.chunksize + i as LbaT)
+                };
+                let loc = $self.locator.id2loc(chunk_id);
+                let disk_lba = loc.offset * $self.chunksize;
+                $self.blockdevs[loc.disk as usize].$func(d, disk_lba)
+            })
+            .collect();
+        future::join_all(futs)
+        }
+    }
+}
+
 impl VdevRaid {
     pub fn new(chunksize: LbaT, codec: Codec, locator: Box<Locator>,
                blockdevs: Box<[VdevBlockLike]>) -> Self {
@@ -84,17 +115,7 @@ impl VdevRaid {
             data.push(col);
         }
 
-        let futs : Vec<Box<IoVecFut>> = data
-            .into_iter()
-            .enumerate()
-            .map(|(i, d)| {
-                let chunk_id = ChunkId::Data(lba / self.chunksize + i as LbaT);
-                let loc = self.locator.id2loc(chunk_id);
-                let disk_lba = loc.offset * self.chunksize;
-                self.blockdevs[loc.disk as usize].read_at(d, disk_lba)
-            })
-            .collect();
-        let fut = future::join_all(futs);
+        let fut = issue_1stripe_ops!(self, data, lba, false, read_at);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, possibly fault a drive,
@@ -124,10 +145,8 @@ impl VdevRaid {
 
         let mut data = Vec::<IoVec>::with_capacity(m);
         let mut data_refs = Vec::<*const u8>::with_capacity(m);
-        for i in 0..m {
-            let b = col_len * i;
-            let e = b + col_len;
-            let col = buf.slice(b, e);
+        for _ in 0..m {
+            let col = buf.split_to(col_len);
             data_refs.push(col.as_ptr());
             data.push(col);
         }
@@ -148,29 +167,9 @@ impl VdevRaid {
 
         self.codec.encode(col_len, &data_refs, &(parity_refs));
 
-        let data_futs : Vec<Box<IoVecFut>> = data
-            .into_iter()
-            .enumerate()
-            .map(|(i, d)| {
-                let chunk_id = ChunkId::Data(lba / self.chunksize + i as LbaT);
-                let loc = self.locator.id2loc(chunk_id);
-                let disk_lba = loc.offset * self.chunksize;
-                self.blockdevs[loc.disk as usize].write_at(d, disk_lba)
-            })
-            .collect();
-        let data_fut = future::join_all(data_futs);
-        let parity_futs : Vec<Box<IoVecFut>> =
-            parity
-            .into_iter()
-            .enumerate()
-            .map(|(i, p)| {
-                let chunk_id = ChunkId::Parity(lba / self.chunksize, i as i16);
-                let loc = self.locator.id2loc(chunk_id);
-                let disk_lba = loc.offset * self.chunksize;
-                self.blockdevs[loc.disk as usize].write_at(p.freeze(), disk_lba)
-            })
-            .collect();
-        let parity_fut = future::join_all(parity_futs);
+        let data_fut = issue_1stripe_ops!(self, data, lba, false, write_at);
+        let pw = parity.into_iter().map(|p| p.freeze());
+        let parity_fut = issue_1stripe_ops!(self, pw, lba, true, write_at);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
