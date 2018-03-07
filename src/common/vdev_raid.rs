@@ -71,28 +71,12 @@ impl VdevRaid {
                    locator: locator,
                    blockdevs: blockdevs}
     }
-}
 
-impl Vdev for VdevRaid {
-    fn handle(&self) -> Handle {
-        panic!("Unimplemented!  Perhaps handle() should not be part of Trait vdev, because it doesn't make sense for VdevRaid");
-    }
-
-    fn lba2zone(&self, lba: LbaT) -> ZoneT {
-        let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
-        let disk_lba = loc.offset * self.chunksize;
-        self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
-    }
-
-    fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+    /// Read exactly one stripe
+    fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
-        assert_eq!(buf.len(),
-                   col_len * m,
-                   "Only single-stripe reads are currently supported");
-        assert_eq!(lba.modulo(self.chunksize as u64 * m as u64), 0,
-            "Unaligned reads are not yet supported");
 
         let mut data = Vec::<IoVecMut>::with_capacity(m);
         for _ in 0..m {
@@ -120,7 +104,41 @@ impl Vdev for VdevRaid {
             let value = v.into_iter().map(|x| x.value).sum();
             IoVecResult{value: value}
         }))
+    }
 
+    /// Read two or more whole stripes
+    fn read_at_multi(&self, _: IoVecMut, _: LbaT) -> Box<IoVecFut> {
+        unimplemented!();
+    }
+}
+
+impl Vdev for VdevRaid {
+    fn handle(&self) -> Handle {
+        panic!("Unimplemented!  Perhaps handle() should not be part of Trait vdev, because it doesn't make sense for VdevRaid");
+    }
+
+    fn lba2zone(&self, lba: LbaT) -> ZoneT {
+        let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
+        let disk_lba = loc.offset * self.chunksize;
+        self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
+    }
+
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let f = self.codec.protection() as usize;
+        let m = self.codec.stripesize() as usize - f as usize;
+        assert_eq!(buf.len().modulo(col_len * m), 0,
+                   "Only stripe-aligned reads are currently supported");
+        assert_eq!(lba.modulo(self.chunksize as u64 * m as u64), 0,
+            "Unaligned reads are not yet supported");
+        let chunks = buf.len() / col_len;
+        let stripes = chunks / m;
+
+        if stripes == 1 {
+            self.read_at_one(buf, lba)
+        } else {
+            self.read_at_multi(buf, lba)
+        }
     }
 
     fn size(&self) -> LbaT {
