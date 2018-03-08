@@ -325,7 +325,6 @@ impl VdevRaid {
         }
 
         self.codec.encode(col_len, &data_refs, &parity_refs);
-        // TODO: add a no-op DivBuf::freeze method to eliminate this step
         let pw = parity.into_iter().map(|p| p.freeze());
 
         let data_fut = issue_1stripe_ops!(self, data, lba, false, write_at);
@@ -399,7 +398,7 @@ impl Vdev for VdevRaid {
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
         assert_eq!(buf.len().modulo(col_len * m), 0,
-                   "Only stripe-aligned reads are currently supported");
+                   "Only stripe-aligned writes are currently supported");
         assert_eq!(lba.modulo(self.chunksize as u64 * m as u64), 0,
             "Unaligned writes are not yet supported");
         let chunks = buf.len() / col_len;
