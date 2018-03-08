@@ -332,9 +332,11 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::new(data_fut.join(parity_fut).map(move |_| {
+        Box::new(data_fut.join(parity_fut).map(move |(data_r, parity_r)| {
             let _ = parity_dbses;   // Needs to live this long
-            IoVecResult { value: buf.len() as isize, }
+            let data_v : isize = data_r.into_iter().map(|x| x.value).sum();
+            let parity_v : isize = parity_r.into_iter().map(|x| x.value).sum();
+            IoVecResult { value: data_v + parity_v }
         }))
     }
 }
