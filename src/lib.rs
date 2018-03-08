@@ -6,6 +6,7 @@ extern crate fixedbitset;
 extern crate futures;
 #[cfg(test)]
 #[macro_use] extern crate galvanic_test;
+extern crate itertools;
 extern crate isa_l;
 #[cfg(test)]
 #[macro_use]

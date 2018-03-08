@@ -9,6 +9,7 @@ use common::raid::*;
 use common::declust::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
+use itertools::multizip;
 use modulo::Mod;
 use std::{mem, ptr};
 use tokio::reactor::Handle;
@@ -161,20 +162,11 @@ impl VdevRaid {
             }
         }
 
-        futs.extend(sglists
-            .into_iter()
-            // TODO: consider using itertools.multizip
-            .zip(start_lbas.into_iter())
-            .enumerate()
-            .filter_map(|(i, (sglist, lba))| {
-                if lba == SENTINEL {
-                    // None of these stripes belong to that disk
-                    None
-                } else {
-                    Some(self.blockdevs[i].readv_at(sglist, lba))
-                }
-            })
-        );
+        futs.extend(multizip((self.blockdevs.iter(),
+                              sglists.into_iter(),
+                              start_lbas.into_iter()))
+            .filter(|&(_, _, lba)| lba != SENTINEL)
+            .map(|(blockdev, sglist, lba)| blockdev.readv_at(sglist, lba)));
         let fut = future::join_all(futs);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
@@ -244,14 +236,13 @@ impl VdevRaid {
                 let end = (chunk + 1) * col_len;
                 let col = buf.slice(begin, end);
                 data_refs[i] = col.as_ptr();
-                //data.push(col);
                 for p in 0..f {
                     let begin = s * col_len;
                     let end = (s + 1) * col_len;
                     parity_refs[p] = parity[p][begin..end].as_mut_ptr();
                 }
             }
-            self.codec.encode(col_len, &data_refs, &(parity_refs));
+            self.codec.encode(col_len, &data_refs, &parity_refs);
         }
 
         // Create an SGList for each disk.
@@ -286,19 +277,11 @@ impl VdevRaid {
             }
         }
 
-        let futs : Vec<Box<SGListFut>> = sglists
-            .into_iter()
-            // TODO: consider using itertools.multizip
-            .zip(start_lbas.into_iter())
-            .enumerate()
-            .filter_map(|(i, (sglist, lba))| {
-                if lba == SENTINEL {
-                    // None of these stripes belong to that disk
-                    None
-                } else {
-                    Some(self.blockdevs[i].writev_at(sglist, lba))
-                }
-            })
+        let futs : Vec<Box<SGListFut>> = multizip((self.blockdevs.iter(),
+                                                   sglists.into_iter(),
+                                                   start_lbas.into_iter()))
+            .filter(|&(_, _, lba)| lba != SENTINEL)
+            .map(|(blockdev, sglist, lba)| blockdev.writev_at(sglist, lba))
             .collect();
         let fut = future::join_all(futs);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
@@ -341,7 +324,7 @@ impl VdevRaid {
             parity_dbses.push(col);
         }
 
-        self.codec.encode(col_len, &data_refs, &(parity_refs));
+        self.codec.encode(col_len, &data_refs, &parity_refs);
         // TODO: add a no-op DivBuf::freeze method to eliminate this step
         let pw = parity.into_iter().map(|p| p.freeze());
 

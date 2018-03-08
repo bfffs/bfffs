@@ -11,6 +11,7 @@ mocks = ["mockers", "mockers_codegen", "mockers_macros"]
 divbuf = { git = "https://github.com/asomers/divbuf", rev = "d3c5cfc" }
 fixedbitset = "0.1.8"
 futures = "0.1.14"
+itertools = "0.7"
 isa-l = { path = "isa-l" }
 # mockers should be a dev dependency, but can't because of issue 1596
 # https://github.com/rust-lang/cargo/issues/1596
