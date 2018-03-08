@@ -280,9 +280,8 @@ impl VdevBlock {
         if combined_bufs.is_empty() {
             // Nothing to do
             return;
-        } else if combined_bufs.len() == 1 {
+        } else if combined_bufs.len() == 1  && sg_s.is_empty(){
             assert_eq!(iovec_s.len(), 1);
-            assert!(sg_s.is_empty());
             let sender = iovec_s.pop().unwrap();
             let fut = self.leaf.write_at(combined_bufs.pop().unwrap(),
                                          start_lba)
@@ -535,8 +534,26 @@ test_suite! {
         })).unwrap();
     }
 
+    // Basic vectored writing of just 1 lba at the WP works
+    test writev_1_at_0(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
+        let r = SGListResult { value: 4096 };
+        scenario.expect(leaf.writev_at_call(ANY, 0)
+                            .and_return(Box::new(future::ok::<SGListResult,
+                                                              Error>(r))));
+
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let wbuf = dbs.try().unwrap();
+        let wbufs = vec![wbuf];
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.writev_at(wbufs, 0)
+        })).unwrap();
+    }
+
     // Basic vectored writing at the WP works
-    test writev_at_0(mocks) {
+    test writev_2_at_0(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let r = SGListResult { value: 4096 };
