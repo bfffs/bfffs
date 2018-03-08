@@ -10,6 +10,7 @@ use common::declust::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use modulo::Mod;
+use std::ptr;
 use tokio::reactor::Handle;
 
 #[cfg(test)]
@@ -103,6 +104,67 @@ impl VdevRaid {
                    blockdevs: blockdevs}
     }
 
+    /// Read two or more whole stripes
+    fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let f = self.codec.protection() as usize;
+        let m = self.codec.stripesize() as usize - f as usize;
+        let n = self.blockdevs.len();
+        let chunks = buf.len() / col_len;
+        let stripes = chunks / m;
+
+        // Create an SGList for each disk.
+        let mut sglists = Vec::<SGListMut>::with_capacity(n);
+        const SENTINEL : LbaT = LbaT::max_value();
+        let mut start_lbas : Vec<LbaT> = vec![SENTINEL; n];
+        for _ in 0..n {
+            // Size each SGList to the maximum possible size
+            // TODO: calculate a smaller maximum by considering the declustering
+            // ratio, especially when n >> m
+            sglists.push(SGListMut::with_capacity(stripes));
+        }
+        // Build the SGLists, one chunk at a time
+        // FIXME this code skips parity chunks, but doesn't tell readv_at to
+        // skip them.  This will cause read miscompares.
+        for i in 0..chunks {
+            let chunk_id = ChunkId::Data(lba / self.chunksize + i as LbaT);
+            let loc = self.locator.id2loc(chunk_id);
+            let disk_lba = loc.offset * self.chunksize;
+            if start_lbas[loc.disk as usize] == SENTINEL {
+                start_lbas[loc.disk as usize] = disk_lba;
+            } else {
+                debug_assert!(start_lbas[loc.disk as usize] < disk_lba);
+            }
+            let col = buf.split_to(col_len);
+            sglists[loc.disk as usize].push(col);
+        }
+
+        let futs : Vec<Box<SGListFut>> = sglists
+            .into_iter()
+            // TODO: consider using itertools.multizip
+            .zip(start_lbas.into_iter())
+            .enumerate()
+            .filter_map(|(i, (sglist, lba))| {
+                if lba == SENTINEL {
+                    // None of these stripes belong to that disk
+                    None
+                } else {
+                    Some(self.blockdevs[i].readv_at(sglist, lba))
+                }
+            })
+            .collect();
+        let fut = future::join_all(futs);
+        // TODO: on error, some futures get cancelled.  Figure out how to clean
+        // them up.
+        // TODO: on error, record error statistics, possibly fault a drive,
+        // request the faulty drive's zone to be rebuilt, and read parity to
+        // reconstruct the data.
+        Box::new(fut.map(|v| {
+            let value = v.into_iter().map(|x| x.value).sum();
+            IoVecResult{value: value}
+        }))
+    }
+
     /// Read exactly one stripe
     fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
@@ -127,14 +189,106 @@ impl VdevRaid {
         }))
     }
 
-    /// Read two or more whole stripes
-    fn read_at_multi(&self, _: IoVecMut, _: LbaT) -> Box<IoVecFut> {
-        unimplemented!();
-    }
-
     /// Write two or more whole stripes
-    fn write_at_multi(&self, _: IoVec, _: LbaT) -> Box<IoVecFut> {
-        unimplemented!();
+    fn write_at_multi(&self, mut buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let f = self.codec.protection() as usize;
+        let k = self.codec.stripesize() as usize;
+        let m = k - f as usize;
+        let n = self.blockdevs.len();
+        let chunks = buf.len() / col_len;
+        let stripes = chunks / m;
+
+        // Allocate storage for parity for the entire operation
+        let mut parity = Vec::<IoVecMut>::with_capacity(f);
+        let mut parity_dbses = Vec::<DivBufShared>::with_capacity(f);
+        for _ in 0..f {
+            let mut v = Vec::<u8>::with_capacity(stripes * col_len);
+            //codec::encode will actually fill the column
+            unsafe { v.set_len(stripes * col_len) };
+            let col = DivBufShared::from(v);
+            let mut dbm = col.try_mut().unwrap();
+            parity.push(dbm);
+            parity_dbses.push(col);
+        }
+
+        // Calculate parity.  We must do it separately for each stripe
+        let mut data_refs : Vec<*const u8> = vec![ptr::null(); m];
+        let mut parity_refs : Vec<*mut u8> = vec![ptr::null_mut(); f];
+        for s in 0..stripes {
+            for i in 0..m {
+                let chunk = s * m + i;
+                let begin = chunk * col_len;
+                let end = (chunk + 1) * col_len;
+                let col = buf.slice(begin, end);
+                data_refs[i] = col.as_ptr();
+                //data.push(col);
+                for p in 0..f {
+                    let begin = s * col_len;
+                    let end = (s + 1) * col_len;
+                    parity_refs[p] = parity[p][begin..end].as_mut_ptr();
+                }
+            }
+            self.codec.encode(col_len, &data_refs, &(parity_refs));
+        }
+
+        // Create an SGList for each disk.
+        let mut sglists = Vec::<SGList>::with_capacity(n);
+        const SENTINEL : LbaT = LbaT::max_value();
+        let mut start_lbas : Vec<LbaT> = vec![SENTINEL; n];
+        for _ in 0..n {
+            // Size each SGList to the maximum possible size
+            // TODO: calculate a smaller maximum by considering the declustering
+            // ratio, especially when n >> m
+            sglists.push(SGList::with_capacity(stripes));
+        }
+        // Build the SGLists, one chunk at a time
+        for s in 0..stripes {
+            for i in 0..k {
+                let (chunk_id, col) = if i < m {
+                    let chunk_offs = lba / self.chunksize + (s * m + i) as LbaT;
+                    (ChunkId::Data(chunk_offs), buf.split_to(col_len))
+                } else {
+                    let chunk_offs = lba / self.chunksize + (s * m) as LbaT;
+                    let col = parity[i - m].split_to(col_len).freeze();
+                    (ChunkId::Parity(chunk_offs, (i - m) as i16), col)
+                };
+                let loc = self.locator.id2loc(chunk_id);
+                let disk_lba = loc.offset * self.chunksize;
+                if start_lbas[loc.disk as usize] == SENTINEL {
+                    start_lbas[loc.disk as usize] = disk_lba;
+                } else {
+                    debug_assert!(start_lbas[loc.disk as usize] < disk_lba);
+                }
+                sglists[loc.disk as usize].push(col);
+            }
+        }
+
+        let futs : Vec<Box<SGListFut>> = sglists
+            .into_iter()
+            // TODO: consider using itertools.multizip
+            .zip(start_lbas.into_iter())
+            .enumerate()
+            .filter_map(|(i, (sglist, lba))| {
+                if lba == SENTINEL {
+                    // None of these stripes belong to that disk
+                    None
+                } else {
+                    Some(self.blockdevs[i].writev_at(sglist, lba))
+                }
+            })
+            .collect();
+        let fut = future::join_all(futs);
+        // TODO: on error, some futures get cancelled.  Figure out how to clean
+        // them up.
+        // TODO: on error, record error statistics, possibly fault a drive,
+        // request the faulty drive's zone to be rebuilt, and read parity to
+        // reconstruct the data.
+        Box::new(fut.map(move |v| {
+            let _ = parity_dbses;   // Needs to live this long
+            let value = v.into_iter().map(|x| x.value).sum();
+            IoVecResult{value: value}
+        }))
     }
 
     /// Write exactly one stripe
@@ -166,9 +320,10 @@ impl VdevRaid {
         }
 
         self.codec.encode(col_len, &data_refs, &(parity_refs));
+        // TODO: add a no-op DivBuf::freeze method to eliminate this step
+        let pw = parity.into_iter().map(|p| p.freeze());
 
         let data_fut = issue_1stripe_ops!(self, data, lba, false, write_at);
-        let pw = parity.into_iter().map(|p| p.freeze());
         let parity_fut = issue_1stripe_ops!(self, pw, lba, true, write_at);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
