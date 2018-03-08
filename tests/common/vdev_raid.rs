@@ -71,33 +71,30 @@ test_suite! {
         (dbsw, dbsr)
     }
 
-    test write_read_one_stripe(raid) {
-        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 1);
+    fn write_read_n_stripes(vdev_raid: VdevRaid, k: i16, f: i16, s: usize) {
+        let (dbsw, dbsr) = make_bufs(k, f, s);
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         let r = current_thread::block_on_all(future::lazy(|| {
-            raid.val.0.write_at(wbuf1, 0)
+            vdev_raid.write_at(wbuf1, 0)
                 .then(|write_result| {
                     write_result.expect("write_at");
-                    raid.val.0.read_at(dbsr.try_mut().unwrap(), 0)
+                    vdev_raid.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
         assert_eq!(dbsr.len() as isize, r.value);
         assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 
+    test write_read_one_stripe(raid) {
+        write_read_n_stripes(raid.val.0, *raid.params.k, *raid.params.f, 1);
+    }
+
     test write_read_two_stripes(raid) {
-        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 2);
-        let wbuf0 = dbsw.try().unwrap();
-        let wbuf1 = dbsw.try().unwrap();
-        let r = current_thread::block_on_all(future::lazy(|| {
-            raid.val.0.write_at(wbuf1, 0)
-                .then(|write_result| {
-                    write_result.expect("write_at");
-                    raid.val.0.read_at(dbsr.try_mut().unwrap(), 0)
-                })
-        })).expect("read_at");
-        assert_eq!(dbsr.len() as isize, r.value);
-        assert_eq!(wbuf0, dbsr.try().unwrap());
+        write_read_n_stripes(raid.val.0, *raid.params.k, *raid.params.f, 2);
+    }
+
+    test write_read_ten_stripes(raid) {
+        write_read_n_stripes(raid.val.0, *raid.params.k, *raid.params.f, 10);
     }
 }

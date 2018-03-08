@@ -10,7 +10,7 @@ use common::declust::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use modulo::Mod;
-use std::ptr;
+use std::{mem, ptr};
 use tokio::reactor::Handle;
 
 #[cfg(test)]
@@ -108,7 +108,8 @@ impl VdevRaid {
     fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
         let f = self.codec.protection() as usize;
-        let m = self.codec.stripesize() as usize - f as usize;
+        let k = self.codec.stripesize() as usize;
+        let m = k - f as usize;
         let n = self.blockdevs.len();
         let chunks = buf.len() / col_len;
         let stripes = chunks / m;
@@ -124,22 +125,43 @@ impl VdevRaid {
             sglists.push(SGListMut::with_capacity(stripes));
         }
         // Build the SGLists, one chunk at a time
-        // FIXME this code skips parity chunks, but doesn't tell readv_at to
-        // skip them.  This will cause read miscompares.
-        for i in 0..chunks {
-            let chunk_id = ChunkId::Data(lba / self.chunksize + i as LbaT);
-            let loc = self.locator.id2loc(chunk_id);
-            let disk_lba = loc.offset * self.chunksize;
-            if start_lbas[loc.disk as usize] == SENTINEL {
-                start_lbas[loc.disk as usize] = disk_lba;
-            } else {
-                debug_assert!(start_lbas[loc.disk as usize] < disk_lba);
+        let mut futs : Vec<Box<SGListFut>> = Vec::with_capacity(n * stripes);
+        for s in 0..stripes {
+            for i in 0..k {
+                if i < m {
+                    let chunk_offs = lba / self.chunksize + (s * m + i) as LbaT;
+                    let chunk_id = ChunkId::Data(chunk_offs);
+                    let loc = self.locator.id2loc(chunk_id);
+                    let disk_lba = loc.offset * self.chunksize;
+                    if start_lbas[loc.disk as usize] == SENTINEL {
+                        start_lbas[loc.disk as usize] = disk_lba;
+                    } else {
+                        debug_assert!(start_lbas[loc.disk as usize] < disk_lba);
+                    }
+                    let col = buf.split_to(col_len);
+                    sglists[loc.disk as usize].push(col);
+                } else {
+                    let chunk_offs = lba / self.chunksize + (s * m) as LbaT;
+                    let chunk_id = ChunkId::Parity(chunk_offs, (i - m) as i16);
+                    let loc = self.locator.id2loc(chunk_id);
+                    let disk = loc.disk as usize;
+                    if start_lbas[disk] == SENTINEL {
+                        // We haven't yet planned any reads from this disk.  We
+                        // can simply ignore the parity chunk
+                    } else {
+                        // We've already planned some reads to this disk.  We
+                        // must issue them now.
+                        let new = SGListMut::with_capacity(stripes - s);
+                        let old = mem::replace(&mut sglists[disk], new);
+                        let lba = start_lbas[disk];
+                        futs.push(self.blockdevs[disk].readv_at(old, lba));
+                        start_lbas[disk] = SENTINEL;
+                    }
+                }
             }
-            let col = buf.split_to(col_len);
-            sglists[loc.disk as usize].push(col);
         }
 
-        let futs : Vec<Box<SGListFut>> = sglists
+        futs.extend(sglists
             .into_iter()
             // TODO: consider using itertools.multizip
             .zip(start_lbas.into_iter())
@@ -152,7 +174,7 @@ impl VdevRaid {
                     Some(self.blockdevs[i].readv_at(sglist, lba))
                 }
             })
-            .collect();
+        );
         let fut = future::join_all(futs);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
