@@ -180,16 +180,13 @@ impl VdevRaid {
     }
 
     /// Read exactly one stripe
-    fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+    fn read_at_one(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
 
-        let mut data = Vec::<IoVecMut>::with_capacity(m);
-        for _ in 0..m {
-            let col = buf.split_to(col_len);
-            data.push(col);
-        }
+        let data: Vec<IoVecMut> = buf.into_chunks(col_len).collect();
+        debug_assert_eq!(data.len(), m);
 
         let fut = issue_1stripe_ops!(self, data, lba, false, read_at);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
@@ -297,21 +294,17 @@ impl VdevRaid {
     }
 
     /// Write exactly one stripe
-    fn write_at_one(&self, mut buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at_one(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
 
-        let mut data = Vec::<IoVec>::with_capacity(m);
-        let mut data_refs = Vec::<*const u8>::with_capacity(m);
-        for _ in 0..m {
-            let col = buf.split_to(col_len);
-            data_refs.push(col.as_ptr());
-            data.push(col);
-        }
+        let data : Vec<IoVec> = buf.into_chunks(col_len).collect();
+        let drefs : Vec<*const u8> = data.iter().map(|d| d.as_ptr()).collect();
+        debug_assert_eq!(data.len(), m);
 
         let mut parity = Vec::<IoVecMut>::with_capacity(f);
-        let mut parity_refs = Vec::<*mut u8>::with_capacity(f);
+        let mut prefs = Vec::<*mut u8>::with_capacity(f);
         let mut parity_dbses = Vec::<DivBufShared>::with_capacity(f);
         for _ in 0..f {
             let mut v = Vec::<u8>::with_capacity(col_len);
@@ -319,12 +312,12 @@ impl VdevRaid {
             unsafe { v.set_len(col_len) };
             let col = DivBufShared::from(v);
             let mut dbm = col.try_mut().unwrap();
-            parity_refs.push(dbm.as_mut_ptr());
+            prefs.push(dbm.as_mut_ptr());
             parity.push(dbm);
             parity_dbses.push(col);
         }
 
-        self.codec.encode(col_len, &data_refs, &parity_refs);
+        self.codec.encode(col_len, &drefs, &prefs);
         let pw = parity.into_iter().map(|p| p.freeze());
 
         let data_fut = issue_1stripe_ops!(self, data, lba, false, write_at);

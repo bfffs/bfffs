@@ -8,7 +8,7 @@ authors = ["Alan Somers <asomers@gmail.com>"]
 mocks = ["mockers", "mockers_codegen", "mockers_macros"]
 
 [dependencies]
-divbuf = { git = "https://github.com/asomers/divbuf", rev = "d3c5cfc" }
+divbuf = { git = "https://github.com/asomers/divbuf", rev = "03fb052" }
 fixedbitset = "0.1.8"
 futures = "0.1.14"
 itertools = "0.7"
