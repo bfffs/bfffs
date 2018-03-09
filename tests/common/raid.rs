@@ -1,4 +1,5 @@
 use arkfs::common::raid::*;
+use divbuf::*;
 use fixedbitset::FixedBitSet;
 use itertools::Itertools;
 use rand;
@@ -25,10 +26,58 @@ pub fn encode_decode() {
     let mut r0 = vec![0u8;len];
     let mut erasures = FixedBitSet::with_capacity(3);
     erasures.insert(0);
-    codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()], &erasures);
+    codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()],
+                 &erasures);
 
     // Verify that column was reconstructed correctly
     assert_eq!(d0, r0);
+}
+
+// Test encoding from discontiguous data columns
+#[test]
+pub fn encodev() {
+    let len = 16;
+    let codec = Codec::new(3, 1);
+    let mut rng = rand::thread_rng();
+
+    // First, make the reference parity using contiguous encode
+    let mut da0 = vec![0u8;len];
+    let mut da1 = vec![0u8;len];
+    let mut pa0 = vec![0u8;len];
+    for i in 0..len {
+        da0[i] = rng.gen();
+        da1[i] = rng.gen();
+    }
+    codec.encode(len, &[da0.as_ptr(), da1.as_ptr()], &[pa0.as_mut_ptr()]);
+
+    // Next, split the same data into discontiguous SGLists
+    // First segments are identically sized
+    let db0p0 = DivBufShared::from(Vec::from(&da0[0..4]));
+    let db1p0 = DivBufShared::from(Vec::from(&da1[0..4]));
+    // db0 has longer 2nd segment
+    let db0p1 = DivBufShared::from(Vec::from(&da0[4..9]));
+    let db1p1 = DivBufShared::from(Vec::from(&da1[4..8]));
+    // db1 has longer 3rd segment
+    let db0p2 = DivBufShared::from(Vec::from(&da0[9..14]));
+    let db1p2 = DivBufShared::from(Vec::from(&da1[8..14]));
+    // final segments are identically sized
+    let db0p3 = DivBufShared::from(Vec::from(&da0[14..len]));
+    // final segments are identically sized
+    let db1p3 = DivBufShared::from(Vec::from(&da1[14..len]));
+    let sgb0 = vec![db0p0.try().unwrap(),
+                    db0p1.try().unwrap(),
+                    db0p2.try().unwrap(),
+                    db0p3.try().unwrap()];
+    let sgb1 = vec![db1p0.try().unwrap(),
+                    db1p1.try().unwrap(),
+                    db1p2.try().unwrap(),
+                    db1p3.try().unwrap()];
+    let data = vec![sgb0, sgb1];
+    let pa1 = vec![0u8;len];
+    let mut pslice = [pa1];
+    codec.encodev(len, &data, &mut pslice[..]);
+
+    assert_eq!(pa0, pslice[0]);
 }
 
 // Test basic RAID update functionality using a small chunksize

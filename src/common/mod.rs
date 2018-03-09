@@ -6,6 +6,7 @@ pub mod declust;
 pub mod dva;
 pub mod prime_s;
 pub mod raid;
+mod sgcursor;
 pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_leaf;
@@ -21,3 +22,4 @@ pub type IoVecMut = DivBufMut;
 pub type SGList = Vec<IoVec>;
 /// Mutable version of `SGList`.  Uniquely owned.
 pub type SGListMut = Vec<IoVecMut>;
+pub use self::sgcursor::SGCursor;

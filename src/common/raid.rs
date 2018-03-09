@@ -1,7 +1,9 @@
 // vim: tw=80
 
+use common::*;
 use isa_l;
 use fixedbitset::FixedBitSet;
+use std::borrow::BorrowMut;
 
 /// An encoder/decoder for Reed-Solomon Erasure coding in GF(2^8), oriented
 /// towards RAID applications
@@ -124,6 +126,42 @@ impl Codec {
     pub fn encode(&self, len: usize, data: &[*const u8], parity: &[*mut u8]) {
         let k = self.m - self.f;
         isa_l::ec_encode_data(len, k, self.f, &self.enc_tables, data, parity);
+    }
+
+    /// Encode parity, using vectored input
+    ///
+    /// Like `encode`, but with discontiguous the data columns.
+    ///
+    /// # Parameters
+    /// - `len`:    Size of each column, in bytes
+    /// - `data`:   Input array: `k` columns of `len` bytes each.  They may be
+    ///             discontiguous, and each may have a different structure.
+    /// - `parity`: Storage for parity columns.  `f` columns of `len` bytes
+    ///             each: will be populated upon return.
+    pub fn encodev<T>(&self, len: usize, data: &[SGList],
+                      parity: &mut [T])
+                      where T : BorrowMut<[u8]> {
+        let mut cursors : Vec<SGCursor> =
+            data.iter()
+                .map(|sg| SGCursor::from(sg))
+                .collect();
+        let mut l = 0;
+        while l < len {
+            let ncl =
+                cursors.iter()
+                       .map(|c| c.peek_len())
+                       .min().unwrap();
+            let refs : Vec<*const u8> =
+                cursors.iter_mut()
+                       .map(|sg| sg.next(ncl).unwrap().as_ptr())
+                       .collect();
+            let prefs : Vec<*mut u8> =
+                parity.iter_mut()
+                      .map(|iov| iov.borrow_mut()[l..].as_mut_ptr())
+                      .collect();
+            self.encode(ncl, &refs, &prefs);
+            l += ncl;
+        }
     }
 
     /// Update parity columns from a single data column.
