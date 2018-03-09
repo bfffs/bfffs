@@ -32,5 +32,11 @@ itertools = "0.7.1"
 rand = "0.3"
 tempdir = "0.3"
 
+[profile.bench]
+lto = true
+
+[profile.release]
+lto = true
+
 [workspace]
 members = ["isa-l"]
