@@ -61,7 +61,7 @@ pub struct VdevRaid {
 macro_rules! issue_1stripe_ops {
     ( $self:ident, $buf:expr, $lba:expr, $parity:expr, $func:ident) => {
         {
-            let futs : Vec<Box<IoVecFut>> = $buf
+            let futs : Vec<_> = $buf
             .into_iter()
             .enumerate()
             .map(|(i, d)| {
@@ -299,9 +299,9 @@ impl VdevRaid {
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
 
-        let data : Vec<IoVec> = buf.into_chunks(col_len).collect();
-        let drefs : Vec<*const u8> = data.iter().map(|d| d.as_ptr()).collect();
-        debug_assert_eq!(data.len(), m);
+        let dcols : Vec<IoVec> = buf.into_chunks(col_len).collect();
+        let drefs : Vec<*const u8> = dcols.iter().map(|d| d.as_ptr()).collect();
+        debug_assert_eq!(dcols.len(), m);
 
         let mut parity = Vec::<IoVecMut>::with_capacity(f);
         let mut prefs = Vec::<*mut u8>::with_capacity(f);
@@ -320,7 +320,7 @@ impl VdevRaid {
         self.codec.encode(col_len, &drefs, &prefs);
         let pw = parity.into_iter().map(|p| p.freeze());
 
-        let data_fut = issue_1stripe_ops!(self, data, lba, false, write_at);
+        let data_fut = issue_1stripe_ops!(self, dcols, lba, false, write_at);
         let parity_fut = issue_1stripe_ops!(self, pw, lba, true, write_at);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
@@ -330,6 +330,62 @@ impl VdevRaid {
             let data_v : isize = data_r.into_iter().map(|x| x.value).sum();
             let parity_v : isize = parity_r.into_iter().map(|x| x.value).sum();
             IoVecResult { value: data_v + parity_v }
+        }))
+    }
+
+    /// Write exactly one stripe, with SGLists.
+    ///
+    /// This is mostly useful internally, for writing from the row buffer.  It
+    /// should not be used publicly.
+    #[doc(hidden)]
+    pub fn writev_at_one(&self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let f = self.codec.protection() as usize;
+        let m = self.codec.stripesize() as usize - f as usize;
+
+        //let mut bufd = buf.into_iter();
+        //let mut iovec = bufd.next();
+        let mut dcols = Vec::<SGList>::with_capacity(m);
+        let mut dcursor = SGCursor::from(&buf);
+        for _ in 0..m {
+            let mut l = 0;
+            let mut col = SGList::new();
+            while l < col_len {
+                let split = dcursor.next(col_len - l).unwrap();
+                l += split.len();
+                col.push(split);
+            }
+            dcols.push(col);
+        }
+        debug_assert!(dcursor.next(usize::max_value()).is_none());
+
+        let mut pcols = Vec::<IoVecMut>::with_capacity(f);
+        let mut prefs = Vec::<*mut u8>::with_capacity(f);
+        let mut parity_dbses = Vec::<DivBufShared>::with_capacity(f);
+        for _ in 0..f {
+            let mut v = Vec::<u8>::with_capacity(col_len);
+            //codec::encode will actually fill the column
+            unsafe { v.set_len(col_len) };
+            let col = DivBufShared::from(v);
+            let mut dbm = col.try_mut().unwrap();
+            prefs.push(dbm.as_mut_ptr());
+            pcols.push(dbm);
+            parity_dbses.push(col);
+        }
+
+        self.codec.encodev(col_len, &dcols, &mut pcols);
+        let pw = pcols.into_iter().map(|p| p.freeze());
+
+        let data_fut = issue_1stripe_ops!(self, dcols, lba, false, writev_at);
+        let parity_fut = issue_1stripe_ops!(self, pw, lba, true, write_at);
+        // TODO: on error, some futures get cancelled.  Figure out how to clean
+        // them up.
+        // TODO: on error, record error statistics, and possibly fault a drive.
+        Box::new(data_fut.join(parity_fut).map(move |(data_r, parity_r)| {
+            let _ = parity_dbses;   // Needs to live this long
+            let data_v : isize = data_r.into_iter().map(|x| x.value).sum();
+            let parity_v : isize = parity_r.into_iter().map(|x| x.value).sum();
+            SGListResult { value: data_v + parity_v }
         }))
     }
 }
