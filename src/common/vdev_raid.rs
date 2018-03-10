@@ -42,10 +42,6 @@ pub struct VdevRaid {
     locator: Box<Locator>,
 
     /// Underlying block devices.  Order is important!
-    #[cfg(not(test))]
-    blockdevs: Box<[VdevBlockLike]>,
-
-    #[cfg(test)]
     blockdevs: Box<[VdevBlockLike]>,
 }
 
