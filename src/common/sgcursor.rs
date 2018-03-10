@@ -16,7 +16,6 @@ use common::*;
 ///   for splitting an `SGList` up into multiple columns.
 pub struct SGCursor<'a> {
     sglist: &'a SGList,
-    cache: Option<IoVec>,
     sglist_idx: usize,
     iovec_idx: usize
 }
@@ -26,24 +25,24 @@ impl<'a> SGCursor<'a> {
     ///
     /// It will be at most `max` bytes long, but it may be less.  If the
     /// `SGCursor` is empty, `None` will be returned
-    pub fn next(&mut self, max: usize) -> Option<&IoVec> {
+    pub fn next(&mut self, max: usize) -> Option<IoVec> {
         let ncl = self.peek_len();
         if ncl == 0 {
             None
         } else if max < ncl {
             let b = self.iovec_idx;
             let e = b + max;
-            self.cache = Some(self.sglist[self.sglist_idx].slice(b, e));
+            let iovec = Some(self.sglist[self.sglist_idx].slice(b, e));
             self.iovec_idx += max;
-            self.cache.as_ref()
+            iovec
         } else if self.iovec_idx > 0 {
             let b = self.iovec_idx;
-            self.cache = Some(self.sglist[self.sglist_idx].slice_from(b));
+            let iovec = Some(self.sglist[self.sglist_idx].slice_from(b));
             self.iovec_idx = 0;
             self.sglist_idx += 1;
-            self.cache.as_ref()
+            iovec
         } else {
-            let r = Some(&self.sglist[self.sglist_idx]);
+            let r = Some(self.sglist[self.sglist_idx].clone());
             self.sglist_idx += 1;
             r
         }
@@ -64,7 +63,7 @@ impl<'a> SGCursor<'a> {
 
 impl<'a> From<&'a SGList> for SGCursor<'a> {
     fn from(src: &'a SGList) -> SGCursor {
-        SGCursor { sglist: src, cache: None, sglist_idx: 0, iovec_idx: 0}
+        SGCursor { sglist: src, sglist_idx: 0, iovec_idx: 0}
     }
 }
 
@@ -112,7 +111,7 @@ mod tests {
         {
             let mut cursor = SGCursor::from(&sglist);
             assert_eq!(cursor.peek_len(), 10);
-            assert_eq!(cursor.next(MAX).unwrap(), &divbuf);
+            assert_eq!(cursor.next(MAX).unwrap(), divbuf);
             assert_eq!(cursor.next(MAX), None);
         }
         // Now try smaller accesses

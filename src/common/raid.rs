@@ -151,10 +151,13 @@ impl Codec {
                 cursors.iter()
                        .map(|c| c.peek_len())
                        .min().unwrap();
-            let refs : Vec<*const u8> =
+            let (refs, _iovecs) : (Vec<_>, Vec<_>) =
                 cursors.iter_mut()
-                       .map(|sg| sg.next(ncl).unwrap().as_ptr())
-                       .collect();
+                       .map(|sg| {
+                           let iovec = sg.next(ncl).unwrap();
+                           (iovec.as_ptr(), iovec)
+                       })
+                       .unzip();
             let prefs : Vec<*mut u8> =
                 parity.iter_mut()
                       .map(|iov| iov.borrow_mut()[l..].as_mut_ptr())
