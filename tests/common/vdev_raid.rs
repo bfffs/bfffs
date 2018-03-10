@@ -60,7 +60,7 @@ test_suite! {
     fn make_bufs(k: i16, f: i16, s: usize) -> (DivBufShared, DivBufShared) {
         let chunks = s * (k - f) as usize;
         let lbas = CHUNKSIZE * chunks as LbaT;
-        let bytes = ((BYTES_PER_LBA as u64) * lbas) as usize;
+        let bytes = BYTES_PER_LBA * lbas as usize;
         let mut wvec = vec![0u8; bytes];
         let mut rng = thread_rng();
         for x in wvec.iter_mut() {

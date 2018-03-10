@@ -2,8 +2,8 @@
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 /// Always use 4K LBAs, even if the underlying device supports smaller
-pub const BYTES_PER_LBA: u32 = 4096;
-pub const BYTES_PER_FRAGMENT: u32 = 256;
+pub const BYTES_PER_LBA: usize = 4096;
+pub const BYTES_PER_FRAGMENT: usize = 256;
 
 /// Data Virtual Address for ArkFS.  Each DVA uniquely identifies a physical
 /// location of a block of storage
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn no_overflow() {
         let x = Dva { cluster: 0, lfa: u64::max_value() - 10 };
-        let max = x + 10 * BYTES_PER_FRAGMENT;
+        let max = x + (10 * BYTES_PER_FRAGMENT) as i64;
         assert_eq!(max.lfa, u64::max_value());
     }
 
@@ -89,19 +89,19 @@ mod tests {
     #[should_panic]
     fn overflow() {
         let x = Dva { cluster: 0, lfa: u64::max_value() - 10 };
-        let _ = x + 11 * BYTES_PER_FRAGMENT;
+        let _ = x + (11 * BYTES_PER_FRAGMENT) as i64;
     }
 
     #[test]
     fn no_underflow() {
         let x = Dva { cluster: 0, lfa: 10 };
-        let min = x - 10 * BYTES_PER_FRAGMENT;
+        let min = x - (10 * BYTES_PER_FRAGMENT) as i64;
         assert_eq!(min.lfa, u64::min_value());
     }
     #[test]
     #[should_panic]
     fn underflow() {
         let x = Dva { cluster: 0, lfa: 10 };
-        let _ = x - 11 * BYTES_PER_FRAGMENT;
+        let _ = x - (11 * BYTES_PER_FRAGMENT) as i64;
     }
 }

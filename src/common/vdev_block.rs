@@ -263,7 +263,7 @@ impl VdevBlock {
                 break;
             }
             let block_op = zq.q.pop().unwrap();
-            let lbas = (block_op.len() / BYTES_PER_LBA as usize) as LbaT;
+            let lbas = (block_op.len() / BYTES_PER_LBA) as LbaT;
             zq.wp += lbas;
             match block_op.bufs {
                 BlockOpBufT::IoVec(g) => {
@@ -396,7 +396,7 @@ impl SGVdev for VdevBlock {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<SGListResult>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
-        assert_eq!(block_op.len() % BYTES_PER_LBA as usize, 0,
+        assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not yet support fragmentary writes");
         self.sched_write(block_op);
         Box::new(VdevBlockFut::new(receiver))
@@ -432,7 +432,7 @@ impl Vdev for VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<IoVecResult>();
         let block_op = BlockOp::write_at(buf, lba, sender);
-        assert_eq!(block_op.len() % BYTES_PER_LBA as usize, 0,
+        assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not yet support fragmentary writes");
         self.sched_write(block_op);
         Box::new(VdevBlockFut::new(receiver))

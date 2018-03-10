@@ -103,7 +103,7 @@ impl VdevRaid {
 
     /// Read two or more whole stripes
     fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let k = self.codec.stripesize() as usize;
         let m = k - f as usize;
@@ -177,7 +177,7 @@ impl VdevRaid {
 
     /// Read exactly one stripe
     fn read_at_one(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
 
@@ -198,7 +198,7 @@ impl VdevRaid {
 
     /// Write two or more whole stripes
     fn write_at_multi(&self, mut buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let k = self.codec.stripesize() as usize;
         let m = k - f as usize;
@@ -291,7 +291,7 @@ impl VdevRaid {
 
     /// Write exactly one stripe
     fn write_at_one(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
 
@@ -335,7 +335,7 @@ impl VdevRaid {
     /// should not be used publicly.
     #[doc(hidden)]
     pub fn writev_at_one(&self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
 
@@ -398,7 +398,7 @@ impl Vdev for VdevRaid {
     }
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
         assert_eq!(buf.len().modulo(col_len * m), 0,
@@ -441,7 +441,7 @@ impl Vdev for VdevRaid {
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA as usize;
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
         assert_eq!(buf.len().modulo(col_len * m), 0,
@@ -686,7 +686,7 @@ fn read_at_one_stripe() {
             value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
         };
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
             .and_return(
                 Box::new(
@@ -700,7 +700,7 @@ fn read_at_one_stripe() {
         s.expect(m1.size_call().and_return_clone(262144).times(..));
         s.expect(m1.start_of_zone_call(1).and_return_clone(65536).times(..));
         s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
             .and_return(
                 Box::new(
@@ -743,7 +743,7 @@ fn write_at_one_stripe() {
             value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
         };
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
             .and_return(
                 Box::new(
@@ -757,7 +757,7 @@ fn write_at_one_stripe() {
         s.expect(m1.size_call().and_return_clone(262144).times(..));
         s.expect(m1.start_of_zone_call(1).and_return_clone(65536).times(..));
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
             .and_return(
                 Box::new(
@@ -771,7 +771,7 @@ fn write_at_one_stripe() {
         s.expect(m2.size_call().and_return_clone(262144).times(..));
         s.expect(m2.start_of_zone_call(1).and_return_clone(65536).times(..));
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA as usize
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
             .and_return(
                 Box::new(
