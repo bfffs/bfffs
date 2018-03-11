@@ -242,7 +242,7 @@ impl VdevBlock {
     }
 
     /// If possible, issue any writes from the given zone.
-    fn issue_writes(&self, zone: ZoneT) {
+    fn issue_writes(&mut self, zone: ZoneT) {
         let mut wq = self.write_queues.borrow_mut();
         let zq = wq.get_mut(&zone).expect("Tried to issue from a closed zone");
         assert!(! zq.q.is_empty(), "Tried to issue from an empty zone");
@@ -347,7 +347,7 @@ impl VdevBlock {
         };
     }
 
-    fn sched_write(&self, block_op: BlockOp) {
+    fn sched_write(&mut self, block_op: BlockOp) {
         let zone = self.leaf.lba2zone(block_op.lba);
         {
             let wq = &mut self.write_queues.borrow_mut();
@@ -392,7 +392,7 @@ impl SGVdev for VdevBlock {
         Box::new(VdevBlockFut::new(receiver))
     }
 
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<SGListFut> {
+    fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<SGListResult>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
@@ -428,7 +428,7 @@ impl Vdev for VdevBlock {
         self.leaf.start_of_zone(zone)
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<IoVecResult>();
         let block_op = BlockOp::write_at(buf, lba, sender);
@@ -462,12 +462,12 @@ test_suite! {
             fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
             fn size(&self) -> LbaT;
             fn start_of_zone(&self, zone: ZoneT) -> LbaT;
-            fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
+            fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
         },
         vdev,
         trait SGVdev  {
             fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
-            fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
+            fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
         },
         vdev_leaf,
         trait VdevLeaf  {
@@ -528,7 +528,7 @@ test_suite! {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.write_at(wbuf, 0)
         })).unwrap();
@@ -546,7 +546,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
         let wbufs = vec![wbuf];
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.writev_at(wbufs, 0)
         })).unwrap();
@@ -566,7 +566,7 @@ test_suite! {
         let wbuf0 = wbuf.slice_to(1024);
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0, wbuf1];
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.writev_at(wbufs, 0)
         })).unwrap();
@@ -581,7 +581,7 @@ test_suite! {
                             .and_return(Box::new(future::ok::<SGListResult,
                                                               Error>(r))));
 
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut vdev = VdevBlock::open(leaf, Handle::current());
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let wbuf = dbs.try().unwrap();
         let wbuf0 = wbuf.slice_to(4096);
@@ -615,7 +615,7 @@ test_suite! {
         let wbuf0 = wbuf.slice_to(4096);
         let wbuf1 = wbuf.slice(4096, 8192);
         let wbuf2 = wbuf.slice_from(8192);
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             let first = vdev.write_at(wbuf0, 1);
             let second = vdev.write_at(wbuf1, 0);

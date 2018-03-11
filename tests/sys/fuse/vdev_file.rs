@@ -139,7 +139,7 @@ test_suite! {
     }
 
     test read_after_write(vdev) {
-        let vd = vdev.val.0;
+        let mut vd = vdev.val.0;
         let dbsw = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbsw.try().unwrap();
         let dbsr = DivBufShared::from(vec![0u8; 4096]);

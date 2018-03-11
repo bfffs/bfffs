@@ -58,7 +58,7 @@ pub trait Vdev {
     fn start_of_zone(&self, zone: ZoneT) -> LbaT;
 
     /// Asynchronously write a contiguous portion of the vdev
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
+    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
 }
 
 /// Scatter-Gather Vdev
@@ -75,5 +75,5 @@ pub trait SGVdev : Vdev {
     /// 
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
+    fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
 }

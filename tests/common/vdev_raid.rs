@@ -71,30 +71,30 @@ test_suite! {
         (dbsw, dbsr)
     }
 
-    fn write_read_n_stripes(vdev_raid: VdevRaid, k: i16, f: i16, s: usize) {
+    fn write_read_n_stripes(mut vr: VdevRaid, k: i16, f: i16, s: usize) {
         let (dbsw, dbsr) = make_bufs(k, f, s);
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         let r = current_thread::block_on_all(future::lazy(|| {
-            vdev_raid.write_at(wbuf1, 0)
+            vr.write_at(wbuf1, 0)
                 .then(|write_result| {
                     write_result.expect("write_at");
-                    vdev_raid.read_at(dbsr.try_mut().unwrap(), 0)
+                    vr.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
         assert_eq!(dbsr.len() as isize, r.value);
         assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 
-    fn writev_read_n_stripes(vdev_raid: VdevRaid, k: i16, f: i16, s: usize) {
+    fn writev_read_n_stripes(mut vr: VdevRaid, k: i16, f: i16, s: usize) {
         let (dbsw, dbsr) = make_bufs(k, f, s);
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         let r = current_thread::block_on_all(future::lazy(|| {
-            vdev_raid.write_at(wbuf1, 0)
+            vr.write_at(wbuf1, 0)
                 .then(|write_result| {
                     write_result.expect("write_at");
-                    vdev_raid.read_at(dbsr.try_mut().unwrap(), 0)
+                    vr.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
         assert_eq!(dbsr.len() as isize, r.value);

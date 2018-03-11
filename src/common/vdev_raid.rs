@@ -197,7 +197,7 @@ impl VdevRaid {
     }
 
     /// Write two or more whole stripes
-    fn write_at_multi(&self, mut buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at_multi(&mut self, mut buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let k = self.codec.stripesize() as usize;
@@ -270,7 +270,7 @@ impl VdevRaid {
             }
         }
 
-        let futs : Vec<Box<SGListFut>> = multizip((self.blockdevs.iter(),
+        let futs : Vec<Box<SGListFut>> = multizip((self.blockdevs.iter_mut(),
                                                    sglists.into_iter(),
                                                    start_lbas.into_iter()))
             .filter(|&(_, _, lba)| lba != SENTINEL)
@@ -290,7 +290,7 @@ impl VdevRaid {
     }
 
     /// Write exactly one stripe
-    fn write_at_one(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at_one(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -334,7 +334,7 @@ impl VdevRaid {
     /// This is mostly useful internally, for writing from the row buffer.  It
     /// should not be used publicly.
     #[doc(hidden)]
-    pub fn writev_at_one(&self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
+    pub fn writev_at_one(&mut self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -440,7 +440,7 @@ impl Vdev for VdevRaid {
         }).min().unwrap()
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -478,12 +478,12 @@ mock!{
         fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
         fn size(&self) -> LbaT;
         fn start_of_zone(&self, zone: ZoneT) -> LbaT;
-        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
+        fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
     },
     vdev,
     trait SGVdev  {
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
-        fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
+        fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
     },
     self,
     trait VdevBlockTrait{
@@ -783,7 +783,7 @@ fn write_at_one_stripe() {
 
         let codec = Codec::new(k, f);
         let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+        let mut vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
                                       blockdevs.into_boxed_slice());
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try().unwrap();

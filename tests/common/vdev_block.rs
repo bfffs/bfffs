@@ -92,7 +92,8 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try().unwrap();
         current_thread::block_on_all(future::lazy(|| {
-            vdev.val.0.write_at(wbuf, vdev.val.0.size())
+            let size = vdev.val.0.size();
+            vdev.val.0.write_at(wbuf, size)
         })).unwrap();
     }
 
@@ -101,7 +102,8 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 8192]);
         let wbuf = dbs.try().unwrap();
         current_thread::block_on_all(future::lazy(|| {
-            vdev.val.0.write_at(wbuf, vdev.val.0.size() - 1)
+            let size = vdev.val.0.size() - 1;
+            vdev.val.0.write_at(wbuf, size)
         })).unwrap();
     }
 
@@ -113,7 +115,8 @@ test_suite! {
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         current_thread::block_on_all(future::lazy(|| {
-            vdev.val.0.writev_at(wbufs, vdev.val.0.size())
+            let size = vdev.val.0.size();
+            vdev.val.0.writev_at(wbufs, size)
         })).unwrap();
     }
 
@@ -125,7 +128,8 @@ test_suite! {
         let wbuf1 = wbuf.slice_from(5120);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         current_thread::block_on_all(future::lazy(|| {
-            vdev.val.0.writev_at(wbufs, vdev.val.0.size() - 2)
+            let size = vdev.val.0.size() - 1;
+            vdev.val.0.writev_at(wbufs, size)
         })).unwrap();
     }
 }

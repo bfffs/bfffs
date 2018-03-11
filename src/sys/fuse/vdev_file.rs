@@ -66,7 +66,7 @@ impl SGVdev for VdevFile {
 
     }
 
-    fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
+    fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
@@ -113,7 +113,7 @@ impl Vdev for VdevFile {
         zone as u64 * VdevFile::LBAS_PER_ZONE
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
         let container = Box::new(IoVecContainer(buf));
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.write_at(container, off).unwrap().map(|aio_result| {
