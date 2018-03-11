@@ -25,8 +25,8 @@ pub struct VdevFile {
     size:   LbaT
 }
 
-/// Tokio-File requires boxed DivBufs, but the upper layers of ArkFS don't.
-/// Take care of the mismatch here, but wrapping DivBuf in a new struct
+/// Tokio-File requires boxed `DivBufs`, but the upper layers of ArkFS don't.
+/// Take care of the mismatch here, but wrapping `DivBuf` in a new struct
 struct IoVecContainer(IoVec);
 impl Borrow<[u8]> for IoVecContainer {
     fn borrow(&self) -> &[u8] {
@@ -34,8 +34,8 @@ impl Borrow<[u8]> for IoVecContainer {
     }
 }
 
-/// Tokio-File requires boxed DivBufMuts, but the upper layers of ArkFS don't.
-/// Take care of the mismatch here, but wrapping DivBufMut in a new struct
+/// Tokio-File requires boxed `DivBufMuts`, but the upper layers of ArkFS don't.
+/// Take care of the mismatch here, but wrapping `DivBufMut` in a new struct
 struct IoVecMutContainer(IoVecMut);
 impl Borrow<[u8]> for IoVecMutContainer {
     fn borrow(&self) -> &[u8] {
@@ -110,7 +110,7 @@ impl Vdev for VdevFile {
     }
 
     fn start_of_zone(&self, zone: ZoneT) -> LbaT {
-        zone as u64 * VdevFile::LBAS_PER_ZONE
+        u64::from(zone) * VdevFile::LBAS_PER_ZONE
     }
 
     fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
@@ -142,6 +142,6 @@ impl VdevFile {
     pub fn open<P: AsRef<Path>>(path: P, h: Handle) -> Self {
         let f = File::open(path, h.clone()).unwrap();
         let size = f.metadata().unwrap().len() / dva::BYTES_PER_LBA as u64;
-        VdevFile{file: f, handle: h, size: size}
+        VdevFile{file: f, handle: h, size}
     }
 }

@@ -27,7 +27,7 @@ pub struct Chunkloc {
 
 impl Chunkloc {
     pub fn new(disk: i16, offset: u64) -> Self {
-        Chunkloc {disk: disk, offset: offset}
+        Chunkloc {disk, offset}
     }
 }
 

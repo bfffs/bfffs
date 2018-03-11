@@ -63,7 +63,7 @@ test_suite! {
         let bytes = BYTES_PER_LBA * lbas as usize;
         let mut wvec = vec![0u8; bytes];
         let mut rng = thread_rng();
-        for x in wvec.iter_mut() {
+        for x in &mut wvec {
             *x = rng.gen();
         }
         let dbsw = DivBufShared::from(wvec);

@@ -78,32 +78,29 @@ impl BlockOp {
     pub fn read_at(buf: IoVecMut, lba: LbaT,
                    sender: oneshot::Sender<IoVecResult>) -> BlockOp {
         let g = BlockOpBufG::<IoVecMut, IoVecResult>{
-            buf: buf,
-            sender: sender
+            buf, sender
         };
-        BlockOp { lba: lba, bufs: BlockOpBufT::IoVecMut(g)}
+        BlockOp { lba, bufs: BlockOpBufT::IoVecMut(g)}
     }
 
     pub fn readv_at(bufs: SGListMut, lba: LbaT,
                     sender: oneshot::Sender<SGListResult>) -> BlockOp {
-        let g = BlockOpBufG::<SGListMut, SGListResult>{buf: bufs,
-                                                       sender: sender};
-        BlockOp { lba: lba, bufs: BlockOpBufT::SGListMut(g)}
+        let g = BlockOpBufG::<SGListMut, SGListResult>{buf: bufs, sender};
+        BlockOp { lba, bufs: BlockOpBufT::SGListMut(g)}
     }
 
     pub fn write_at(buf: IoVec, lba: LbaT, sender:
                     oneshot::Sender<IoVecResult>) -> BlockOp {
         let g = BlockOpBufG::<IoVec, IoVecResult>{
-            buf: buf,
-            sender: sender
+            buf, sender
         };
         BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(g)}
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT,
                      sender: oneshot::Sender<SGListResult>) -> BlockOp {
-        let g = BlockOpBufG::<SGList, SGListResult>{buf: bufs, sender: sender};
-        BlockOp { lba: lba, bufs: BlockOpBufT::SGList(g)}
+        let g = BlockOpBufG::<SGList, SGListResult>{buf: bufs, sender};
+        BlockOp { lba, bufs: BlockOpBufT::SGList(g)}
     }
 }
 
@@ -115,7 +112,7 @@ struct VdevBlockFut<T> {
 
 impl<T> VdevBlockFut<T> {
     pub fn new( receiver: oneshot::Receiver<T>) -> Self {
-        VdevBlockFut::<T>{receiver: receiver}
+        VdevBlockFut::<T>{receiver}
     }
 }
 
@@ -209,7 +206,7 @@ impl VdevBlock {
     }
 
     /// Helper function for read and write methods
-    fn check_sglist_bounds(&self, lba: LbaT, bufs: &SGList) {
+    fn check_sglist_bounds(&self, lba: LbaT, bufs: &[IoVec]) {
         let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
             accumulator + buf.len() as u64
         });
@@ -219,7 +216,7 @@ impl VdevBlock {
     /// Helper function for readv and writev methods
     ///
     /// TODO: combine this method with `check_sglist_bounds`
-    fn check_sglistmut_bounds(&self, lba: LbaT, bufs: &SGListMut) {
+    fn check_sglistmut_bounds(&self, lba: LbaT, bufs: &[IoVecMut]) {
         let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
             accumulator + buf.len() as u64
         });
@@ -233,9 +230,9 @@ impl VdevBlock {
     // references, they must be 'static.
     pub fn open<T: VdevLeaf + 'static>(leaf: Box<T>, handle: Handle) -> Self {
         let size = leaf.size();
-        VdevBlock { handle: handle,
-                    leaf: leaf,
-                    size: size,
+        VdevBlock { handle,
+                    leaf,
+                    size,
                     write_queues: RefCell::new(BTreeMap::new()),
                     _read_queue: RefCell::new(BTreeMap::new())
                    }

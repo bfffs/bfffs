@@ -56,7 +56,7 @@ impl Codec {
         // rows k and higher)
         isa_l::ec_init_tables(k, f, &enc_matrix[(k*k) as usize ..],
                               &mut enc_tables);
-        Codec {m: m, f: f, enc_matrix: enc_matrix, enc_tables: enc_tables}
+        Codec {m, f, enc_matrix, enc_tables}
     }
 
     /// Verify parity and identify corrupt columns
@@ -143,7 +143,7 @@ impl Codec {
                       where T : BorrowMut<[u8]> {
         let mut cursors : Vec<SGCursor> =
             data.iter()
-                .map(|sg| SGCursor::from(sg))
+                .map(SGCursor::from)
                 .collect();
         let mut l = 0;
         while l < len {

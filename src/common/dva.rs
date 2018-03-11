@@ -32,6 +32,7 @@ impl<T: Into<i64>> Add<T> for Dva {
 
 impl AddAssign<i64> for Dva {
     /// Add a byte offset to this Dva
+    #[cfg_attr(feature = "cargo-clippy", allow(suspicious_op_assign_impl))]
     fn add_assign(&mut self, other: i64) {
         assert_eq!(other % BYTES_PER_FRAGMENT as i64, 0,
                    "Cannot add fractional fragment");
@@ -59,6 +60,7 @@ impl<T: Into<i64>> Sub<T> for Dva {
 
 impl SubAssign<i64> for Dva {
     /// Subtract a byte offset from this Dva
+    #[cfg_attr(feature = "cargo-clippy", allow(suspicious_op_assign_impl))]
     fn sub_assign(&mut self, other: i64) {
         assert_eq!(other % BYTES_PER_FRAGMENT as i64, 0,
                    "Cannot add fractional fragment");

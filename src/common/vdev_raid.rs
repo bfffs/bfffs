@@ -45,7 +45,7 @@ pub struct VdevRaid {
     blockdevs: Box<[VdevBlockLike]>,
 }
 
-/// Convenience macro for VdevRaid I/O methods
+/// Convenience macro for `VdevRaid` I/O methods
 ///
 /// # Examples
 ///
@@ -95,10 +95,7 @@ impl VdevRaid {
                        blockdevs[i].start_of_zone(1));
         }
 
-        VdevRaid { chunksize: chunksize,
-                   codec: codec,
-                   locator: locator,
-                   blockdevs: blockdevs}
+        VdevRaid { chunksize, codec, locator, blockdevs}
     }
 
     /// Read two or more whole stripes
@@ -171,7 +168,7 @@ impl VdevRaid {
         // reconstruct the data.
         Box::new(fut.map(|v| {
             let value = v.into_iter().map(|x| x.value).sum();
-            IoVecResult{value: value}
+            IoVecResult{value}
         }))
     }
 
@@ -192,7 +189,7 @@ impl VdevRaid {
         // reconstruct the data.
         Box::new(fut.map(|v| {
             let value = v.into_iter().map(|x| x.value).sum();
-            IoVecResult{value: value}
+            IoVecResult{value}
         }))
     }
 
@@ -285,7 +282,7 @@ impl VdevRaid {
         Box::new(fut.map(move |v| {
             let _ = parity_dbses;   // Needs to live this long
             let value = v.into_iter().map(|x| x.value).sum();
-            IoVecResult{value: value}
+            IoVecResult{value}
         }))
     }
 
@@ -334,15 +331,13 @@ impl VdevRaid {
     /// This is mostly useful internally, for writing from the row buffer.  It
     /// should not be used publicly.
     #[doc(hidden)]
-    pub fn writev_at_one(&mut self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
+    pub fn writev_at_one(&mut self, buf: &SGList, lba: LbaT) -> Box<SGListFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
 
-        //let mut bufd = buf.into_iter();
-        //let mut iovec = bufd.next();
         let mut dcols = Vec::<SGList>::with_capacity(m);
-        let mut dcursor = SGCursor::from(&buf);
+        let mut dcursor = SGCursor::from(buf);
         for _ in 0..m {
             let mut l = 0;
             let mut col = SGList::new();

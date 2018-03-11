@@ -125,13 +125,13 @@ fn exhaustive_5_4_2() {
     for stripe in 0 .. locator.stripes() {
         // First check data chunks
         for u in 0 .. k {
-            let chunkid = ChunkId::Data(stripe as u64 * k as u64 + u as u64);
+            let chunkid = ChunkId::Data(u64::from(stripe) * k as u64 + u as u64);
             assert_eq!(locator.loc2id(locator.id2loc(chunkid)), chunkid);
         }
 
         // Now check parity chunks
         for u in 0 .. f {
-            let chunkid = ChunkId::Parity(stripe as u64 * k as u64, u);
+            let chunkid = ChunkId::Parity(u64::from(stripe) * k as u64, u);
             assert_eq!(locator.loc2id(locator.id2loc(chunkid)), chunkid);
         }
     }
