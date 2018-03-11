@@ -531,37 +531,6 @@ impl Vdev for VdevRaid {
     }
 }
 
-#[cfg(feature = "mocks")]
-#[cfg(test)]
-mod t {
-
-use super::*;
-use super::super::prime_s::PrimeS;
-use futures::future;
-use mockers::Scenario;
-use std::io::Error;
-
-mock!{
-    MockVdevBlock,
-    vdev,
-    trait Vdev {
-        fn handle(&self) -> Handle;
-        fn lba2zone(&self, lba: LbaT) -> ZoneT;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
-        fn size(&self) -> LbaT;
-        fn start_of_zone(&self, zone: ZoneT) -> LbaT;
-        fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
-    },
-    vdev,
-    trait SGVdev  {
-        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
-        fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
-    },
-    self,
-    trait VdevBlockTrait{
-    }
-}
-
 #[test]
 fn stripe_buffer_empty() {
     let mut sb = StripeBuffer::new(99, 6);
@@ -655,6 +624,37 @@ fn stripe_buffer_two_iovecs_overflow() {
     assert_eq!(sglist.len(), 2);
     assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
     assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
+}
+
+#[cfg(feature = "mocks")]
+#[cfg(test)]
+mod t {
+
+use super::*;
+use super::super::prime_s::PrimeS;
+use futures::future;
+use mockers::Scenario;
+use std::io::Error;
+
+mock!{
+    MockVdevBlock,
+    vdev,
+    trait Vdev {
+        fn handle(&self) -> Handle;
+        fn lba2zone(&self, lba: LbaT) -> ZoneT;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
+        fn size(&self) -> LbaT;
+        fn start_of_zone(&self, zone: ZoneT) -> LbaT;
+        fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
+    },
+    vdev,
+    trait SGVdev  {
+        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
+        fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
+    },
+    self,
+    trait VdevBlockTrait{
+    }
 }
 
 #[test]
