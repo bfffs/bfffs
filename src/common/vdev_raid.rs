@@ -9,6 +9,7 @@ use common::raid::*;
 use common::declust::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
+use futures::sync::oneshot;
 use itertools::multizip;
 use modulo::Mod;
 use std::{cmp, mem, ptr};
@@ -34,14 +35,19 @@ struct StripeBuffer {
     lba: LbaT,
 
     /// Size of a full stripe, in LBAs
-    stripe_lbas: LbaT
+    stripe_lbas: LbaT,
+
+    /// Futures that we must notify whenever we eventually write our data
+    senders: Vec<oneshot::Sender<IoVecResult>>
 }
 
 impl StripeBuffer {
-    /// Read more data into this `StripeBuffer`, but don't overflow one row.
+    /// Store more data into this `StripeBuffer`, but don't overflow one row.
     ///
-    /// Return the unused part of the `IoVec`
-    pub fn fill(&mut self, mut iovec: IoVec) -> IoVec {
+    /// Return the unused part of the `IoVec`, and a future which will become
+    /// ready once the `StripeBuffer` eventually gets written
+    pub fn fill(&mut self,
+                mut iovec: IoVec) -> (IoVec, oneshot::Receiver<IoVecResult>) {
         let want_lbas = self.stripe_lbas - self.len();
         let want_bytes = want_lbas as usize * BYTES_PER_LBA as usize;
         let have_bytes = iovec.len();
@@ -49,7 +55,9 @@ impl StripeBuffer {
         if get_bytes > 0 {
             self.buf.push(iovec.split_to(get_bytes));
         }
-        iovec
+        let (sender, receiver) = oneshot::channel::<IoVecResult>();
+        self.senders.push(sender);
+        (iovec, receiver)
     }
 
     /// Is the stripe buffer full?
@@ -75,7 +83,8 @@ impl StripeBuffer {
     }
 
     pub fn new(lba: LbaT, stripe_lbas: LbaT) -> Self {
-        StripeBuffer {buf: SGList::new(), lba, stripe_lbas}
+        StripeBuffer{ buf: SGList::new(), lba, stripe_lbas,
+                      senders: Vec::<oneshot::Sender<IoVecResult>>::new()}
     }
 
     /// Return the value of the next LBA should be written into this buffer
@@ -83,10 +92,17 @@ impl StripeBuffer {
         self.lba + self.len()
     }
 
-    pub fn pop(&mut self) -> SGList {
-        let new = SGList::new();
+    /// Extract all data from the `StripeBuffer`
+    ///
+    /// Returns both the data and a collection of `oneshot::Sender`s that should
+    /// be notified once the data is successfully written
+    pub fn pop(&mut self) -> (SGList, Vec<oneshot::Sender<IoVecResult>>) {
+        let new_sglist = SGList::new();
         self.lba = self.next_lba();
-        mem::replace(&mut self.buf, new)
+        let old_sglist = mem::replace(&mut self.buf, new_sglist);
+        let new_senders = Vec::<oneshot::Sender<IoVecResult>>::new();
+        let old_senders = mem::replace(&mut self.senders, new_senders);
+        (old_sglist, old_senders)
     }
 }
 
@@ -539,18 +555,22 @@ fn stripe_buffer_empty() {
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 99);
     assert_eq!(sb.len(), 0);
-    assert!(sb.pop().is_empty());
-    // Adding an empty iovec should change nothing
+    let (sglist, senders) = sb.pop();
+    assert!(sglist.is_empty());
+    assert!(senders.is_empty());
+    // Adding an empty iovec should change nothing, but add a useless sender
     let dbs = DivBufShared::from(vec![0; 4096]);
     let db = dbs.try().unwrap();
     let db0 = db.slice(0, 0);
-    assert!(sb.fill(db0).is_empty());
+    assert!(sb.fill(db0).0.is_empty());
     assert!(!sb.is_full());
     assert!(sb.is_empty());
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 99);
     assert_eq!(sb.len(), 0);
-    assert!(sb.pop().is_empty());
+    let (sglist, senders) = sb.pop();
+    assert!(sglist.is_empty());
+    assert_eq!(senders.len(), 1);
 }
 
 #[test]
@@ -561,8 +581,8 @@ fn stripe_buffer_fill_when_full() {
     let db1 = dbs1.try().unwrap();
     {
         let mut sb = StripeBuffer::new(99, 6);
-        assert!(sb.fill(db0).is_empty());
-        assert_eq!(sb.fill(db1).len(), 4096);
+        assert!(sb.fill(db0).0.is_empty());
+        assert_eq!(sb.fill(db1).0.len(), 4096);
         assert!(sb.is_full());
         assert_eq!(sb.lba(), 99);
         assert_eq!(sb.next_lba(), 105);
@@ -575,15 +595,34 @@ fn stripe_buffer_one_iovec() {
     let mut sb = StripeBuffer::new(99, 6);
     let dbs = DivBufShared::from(vec![0; 4096]);
     let db = dbs.try().unwrap();
-    assert!(sb.fill(db).is_empty());
+    assert!(sb.fill(db).0.is_empty());
     assert!(!sb.is_full());
     assert!(!sb.is_empty());
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 100);
     assert_eq!(sb.len(), 1);
-    let sglist = sb.pop();
+    let (sglist, senders) = sb.pop();
     assert_eq!(sglist.len(), 1);
     assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
+    assert_eq!(senders.len(), 1);
+}
+
+#[test]
+fn stripe_buffer_rx_tx() {
+    use tokio::executor::current_thread;
+
+    let mut sb = StripeBuffer::new(99, 6);
+    let dbs = DivBufShared::from(vec![0; 4096]);
+    let db = dbs.try().unwrap();
+    let (_, mut rx) = sb.fill(db);
+    let (_, mut tx) = sb.pop();
+    let result = IoVecResult{value: 42};
+    current_thread::block_on_all(future::lazy(move || {
+        assert!(!rx.poll().unwrap().is_ready());
+        tx.pop().unwrap().send(result).unwrap();
+        assert!(rx.poll().unwrap().is_ready());
+        future::ok::<(),()>(())
+    })).unwrap();
 }
 
 #[test]
@@ -591,19 +630,20 @@ fn stripe_buffer_two_iovecs() {
     let mut sb = StripeBuffer::new(99, 6);
     let dbs0 = DivBufShared::from(vec![0; 8192]);
     let db0 = dbs0.try().unwrap();
-    assert!(sb.fill(db0).is_empty());
+    assert!(sb.fill(db0).0.is_empty());
     let dbs1 = DivBufShared::from(vec![1; 4096]);
     let db1 = dbs1.try().unwrap();
-    assert!(sb.fill(db1).is_empty());
+    assert!(sb.fill(db1).0.is_empty());
     assert!(!sb.is_full());
     assert!(!sb.is_empty());
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 102);
     assert_eq!(sb.len(), 3);
-    let sglist = sb.pop();
+    let (sglist, senders) = sb.pop();
     assert_eq!(sglist.len(), 2);
     assert_eq!(&sglist[0][..], &vec![0; 8192][..]);
     assert_eq!(&sglist[1][..], &vec![1; 4096][..]);
+    assert_eq!(senders.len(), 2);
 }
 
 #[test]
@@ -611,19 +651,20 @@ fn stripe_buffer_two_iovecs_overflow() {
     let mut sb = StripeBuffer::new(99, 6);
     let dbs0 = DivBufShared::from(vec![0; 16384]);
     let db0 = dbs0.try().unwrap();
-    assert!(sb.fill(db0).is_empty());
+    assert!(sb.fill(db0).0.is_empty());
     let dbs1 = DivBufShared::from(vec![1; 16384]);
     let db1 = dbs1.try().unwrap();
-    assert_eq!(sb.fill(db1).len(), 8192);
+    assert_eq!(sb.fill(db1).0.len(), 8192);
     assert!(sb.is_full());
     assert!(!sb.is_empty());
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 105);
     assert_eq!(sb.len(), 6);
-    let sglist = sb.pop();
+    let (sglist, senders) = sb.pop();
     assert_eq!(sglist.len(), 2);
     assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
     assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
+    assert_eq!(senders.len(), 2);
 }
 
 #[cfg(feature = "mocks")]
