@@ -675,7 +675,7 @@ use super::*;
 use super::super::prime_s::PrimeS;
 use futures::future;
 use mockers::Scenario;
-use std::io::Error;
+use nix;
 
 mock!{
     MockVdevBlock,
@@ -898,7 +898,7 @@ fn read_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
+                    future::ok::<IoVecResult, nix::Error>(r.clone())
                 )
             )
         );
@@ -912,7 +912,7 @@ fn read_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
+                    future::ok::<IoVecResult, nix::Error>(r.clone())
                 )
             )
         );
@@ -955,7 +955,7 @@ fn write_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
+                    future::ok::<IoVecResult, nix::Error>(r.clone())
                 )
             )
         );
@@ -969,7 +969,7 @@ fn write_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
+                    future::ok::<IoVecResult, nix::Error>(r.clone())
                 )
             )
         );
@@ -983,7 +983,7 @@ fn write_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
+                    future::ok::<IoVecResult, nix::Error>(r.clone())
                 )
             )
         );

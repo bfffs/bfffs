@@ -1,9 +1,7 @@
 // vim: tw=80
 
 use futures::Future;
-use nix;
 use std::borrow::{Borrow, BorrowMut};
-use std::io;
 use std::path::Path;
 use tokio::reactor::Handle;
 use tokio_file::File;
@@ -57,13 +55,7 @@ impl SGVdev for VdevFile {
         Box::new(self.file.readv_at(containers, off).unwrap().map(|r| {
             let v = r.into_iter().map(|x| x.value.unwrap()).sum();
             SGListResult{value: v}
-        }).map_err(|e| {
-            match e {
-                nix::Error::Sys(x) => io::Error::from(x),
-                _ => panic!("Unhandled error type")
-            }})
-        )
-
+        }))
     }
 
     fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
@@ -74,12 +66,7 @@ impl SGVdev for VdevFile {
         Box::new(self.file.writev_at(containers, off).unwrap().map(|r| {
             let v = r.into_iter().map(|x| x.value.unwrap()).sum();
             SGListResult{value: v}
-        }).map_err(|e| {
-            match e {
-                nix::Error::Sys(x) => io::Error::from(x),
-                _ => panic!("Unhandled error type")
-            }})
-        )
+        }))
     }
 }
 
@@ -97,11 +84,6 @@ impl Vdev for VdevFile {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.read_at(container, off).unwrap().map(|aio_result| {
             IoVecResult{value: aio_result.value.unwrap()}
-        }).map_err(|e| {
-            match e {
-                nix::Error::Sys(x) => io::Error::from(x),
-                _ => panic!("Unhandled error type")
-            }
         }))
     }
 
@@ -118,12 +100,7 @@ impl Vdev for VdevFile {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.write_at(container, off).unwrap().map(|aio_result| {
             IoVecResult { value: aio_result.value.unwrap() }
-        }).map_err(|e| {
-            match e {
-                nix::Error::Sys(x) => io::Error::from(x),
-                _ => panic!("Unhandled error type")
-            }})
-        )
+        }))
     }
 }
 

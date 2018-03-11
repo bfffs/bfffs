@@ -2,12 +2,12 @@
 
 use futures::{Future, Poll};
 use futures::sync::oneshot;
+use nix;
 use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
 use std::vec::Vec;
-use std::io;
 use tokio::executor::current_thread;
 use tokio::reactor::Handle;
 
@@ -118,12 +118,12 @@ impl<T> VdevBlockFut<T> {
 
 impl<T> Future for VdevBlockFut<T> {
     type Item = T;
-    type Error = io::Error;
+    type Error = nix::Error;
 
-    fn poll(&mut self) -> Poll<T, io::Error> {
+    fn poll(&mut self) -> Poll<T, nix::Error> {
         self.receiver.poll()
         .map_err(|_| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "")
+            nix::Error::from(nix::errno::Errno::EPIPE)
         })
     }
 }
@@ -446,7 +446,6 @@ test_suite! {
     use futures::future;
     use mockers::{Scenario, Sequence};
     use mockers::matchers::ANY;
-    use std::io::Error;
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
 
@@ -496,10 +495,10 @@ test_suite! {
         let r1 = IoVecResult { value: 4096 };
         seq.expect(leaf.read_at_call(ANY, 1)
                        .and_return(Box::new(future::ok::<IoVecResult,
-                                                         Error>(r0))));
+                                                         nix::Error>(r0))));
         seq.expect(leaf.read_at_call(ANY, 0)
                        .and_return(Box::new(future::ok::<IoVecResult,
-                                                         Error>(r1))));
+                                                         nix::Error>(r1))));
         scenario.expect(seq);
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
@@ -521,7 +520,7 @@ test_suite! {
         let r = IoVecResult { value: 4096 };
         scenario.expect(leaf.write_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<IoVecResult,
-                                                              Error>(r))));
+                                                              nix::Error>(r))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
@@ -538,7 +537,7 @@ test_suite! {
         let r = SGListResult { value: 4096 };
         scenario.expect(leaf.writev_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<SGListResult,
-                                                              Error>(r))));
+                                                              nix::Error>(r))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
@@ -556,7 +555,7 @@ test_suite! {
         let r = SGListResult { value: 4096 };
         scenario.expect(leaf.writev_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<SGListResult,
-                                                              Error>(r))));
+                                                              nix::Error>(r))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
@@ -576,7 +575,7 @@ test_suite! {
         let r = SGListResult { value: 8192 };
         scenario.expect(leaf.writev_at_call(ANY, 0)
                             .and_return(Box::new(future::ok::<SGListResult,
-                                                              Error>(r))));
+                                                              nix::Error>(r))));
 
         let mut vdev = VdevBlock::open(leaf, Handle::current());
         let dbs = DivBufShared::from(vec![0u8; 8192]);
@@ -601,10 +600,10 @@ test_suite! {
         let r1 = IoVecResult { value: 4096 };
         seq.expect(leaf.writev_at_call(ANY, 0)
                        .and_return(Box::new(future::ok::<SGListResult,
-                                                         Error>(r0))));
+                                                         nix::Error>(r0))));
         seq.expect(leaf.write_at_call(ANY, 2)
                        .and_return(Box::new(future::ok::<IoVecResult,
-                                                         Error>(r1))));
+                                                         nix::Error>(r1))));
         scenario.expect(seq);
 
         let dbs = DivBufShared::from(vec![0u8; 12288]);

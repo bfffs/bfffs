@@ -2,11 +2,11 @@
 
 use common::*;
 use futures;
-use std::io;
+use nix;
 use tokio::reactor::Handle;
 
 /// Type returned by `IoVec`-oriented `Vdev` operations on success.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct IoVecResult {
     /// The result that the operation would've had had it been synchronous.
     /// Usually the number of bytes read or written
@@ -14,7 +14,7 @@ pub struct IoVecResult {
 }
 
 /// Type returned by `SGList`-oriented `Vdev` operations on success.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SGListResult {
     /// The result that the operation would've had had it been synchronous.
     /// Usually the number of bytes read or written
@@ -24,12 +24,12 @@ pub struct SGListResult {
 /// Future representing an `IoVec`-oriented operation on a vdev.  The returned
 /// value is the amount of data that was actually read/written, or an errno on
 /// error.
-pub type IoVecFut = futures::Future<Item = IoVecResult, Error = io::Error>;
+pub type IoVecFut = futures::Future<Item = IoVecResult, Error = nix::Error>;
 
 /// Future representing an `SGList`-oriented operation on a vdev.  The returned
 /// value is the amount of data that was actually read/written, or an errno on
 /// error.
-pub type SGListFut = futures::Future<Item = SGListResult, Error = io::Error>;
+pub type SGListFut = futures::Future<Item = SGListResult, Error = nix::Error>;
 
 /// Vdev: Virtual Device
 ///
