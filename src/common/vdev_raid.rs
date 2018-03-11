@@ -11,7 +11,7 @@ use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
 use modulo::Mod;
-use std::{mem, ptr};
+use std::{cmp, mem, ptr};
 use tokio::reactor::Handle;
 
 #[cfg(test)]
@@ -22,6 +22,73 @@ pub trait VdevBlockTrait : SGVdev {
 pub type VdevBlockLike = Box<VdevBlockTrait>;
 #[cfg(not(test))]
 pub type VdevBlockLike = VdevBlock;
+
+/// In-memory cache of data that has not yet been flushed the Block devices.
+///
+/// Typically there will be one of these for each open zone.
+struct StripeBuffer {
+    /// Cache of `IoVec`s that haven't yet been flushed
+    buf: SGList,
+
+    /// The LBA of the beginning of the cached stripe
+    lba: LbaT,
+
+    /// Size of a full stripe, in LBAs
+    stripe_lbas: LbaT
+}
+
+impl StripeBuffer {
+    /// Read more data into this `StripeBuffer`, but don't overflow one row.
+    ///
+    /// Return the unused part of the `IoVec`
+    pub fn fill(&mut self, mut iovec: IoVec) -> IoVec {
+        let want_lbas = self.stripe_lbas - self.len();
+        let want_bytes = want_lbas as usize * BYTES_PER_LBA as usize;
+        let have_bytes = iovec.len();
+        let get_bytes = cmp::min(want_bytes, have_bytes);
+        if get_bytes > 0 {
+            self.buf.push(iovec.split_to(get_bytes));
+        }
+        iovec
+    }
+
+    /// Is the stripe buffer full?
+    pub fn is_full(&self) -> bool {
+        debug_assert!(self.len() <= self.stripe_lbas);
+        self.len() == self.stripe_lbas
+    }
+
+    /// The usual `is_empty` function
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    /// The LBA of the beginning of the stripe
+    pub fn lba(&self) -> LbaT {
+        self.lba
+    }
+
+    /// Number of LBAs worth of data contained in the buffer
+    fn len(&self) -> LbaT {
+        let bytes: usize = self.buf.iter().map(|iovec| iovec.len()).sum();
+        (bytes / BYTES_PER_LBA as usize) as LbaT
+    }
+
+    pub fn new(lba: LbaT, stripe_lbas: LbaT) -> Self {
+        StripeBuffer {buf: SGList::new(), lba, stripe_lbas}
+    }
+
+    /// Return the value of the next LBA should be written into this buffer
+    pub fn next_lba(&self) -> LbaT {
+        self.lba + self.len()
+    }
+
+    pub fn pop(&mut self) -> SGList {
+        let new = SGList::new();
+        self.lba = self.next_lba();
+        mem::replace(&mut self.buf, new)
+    }
+}
 
 /// `VdevRaid`: Virtual Device for the RAID transform
 ///
@@ -43,6 +110,14 @@ pub struct VdevRaid {
 
     /// Underlying block devices.  Order is important!
     blockdevs: Box<[VdevBlockLike]>,
+
+    /// In memory cache of data that has not yet been flushed to the block
+    /// devices.
+    ///
+    /// We cache up to one stripe per zone before flushing it.  Cacheing entire
+    /// stripes uses fewer resources than only cacheing the parity information.
+    /// TODO: make this a collection, indexed by zone_id
+    _stripe_buffer: StripeBuffer
 }
 
 /// Convenience macro for `VdevRaid` I/O methods
@@ -95,7 +170,9 @@ impl VdevRaid {
                        blockdevs[i].start_of_zone(1));
         }
 
-        VdevRaid { chunksize, codec, locator, blockdevs}
+        let stripe_lbas = codec.stripesize() as LbaT * chunksize as LbaT;
+        VdevRaid { chunksize, codec, locator, blockdevs,
+                   _stripe_buffer: StripeBuffer::new(0, stripe_lbas) }
     }
 
     /// Read two or more whole stripes
@@ -486,8 +563,103 @@ mock!{
 }
 
 #[test]
+fn stripe_buffer_empty() {
+    let mut sb = StripeBuffer::new(99, 6);
+    assert!(!sb.is_full());
+    assert!(sb.is_empty());
+    assert_eq!(sb.lba(), 99);
+    assert_eq!(sb.next_lba(), 99);
+    assert_eq!(sb.len(), 0);
+    assert!(sb.pop().is_empty());
+    // Adding an empty iovec should change nothing
+    let dbs = DivBufShared::from(vec![0; 4096]);
+    let db = dbs.try().unwrap();
+    let db0 = db.slice(0, 0);
+    assert!(sb.fill(db0).is_empty());
+    assert!(!sb.is_full());
+    assert!(sb.is_empty());
+    assert_eq!(sb.lba(), 99);
+    assert_eq!(sb.next_lba(), 99);
+    assert_eq!(sb.len(), 0);
+    assert!(sb.pop().is_empty());
+}
+
+#[test]
+fn stripe_buffer_fill_when_full() {
+    let dbs0 = DivBufShared::from(vec![0; 24576]);
+    let db0 = dbs0.try().unwrap();
+    let dbs1 = DivBufShared::from(vec![1; 4096]);
+    let db1 = dbs1.try().unwrap();
+    {
+        let mut sb = StripeBuffer::new(99, 6);
+        assert!(sb.fill(db0).is_empty());
+        assert_eq!(sb.fill(db1).len(), 4096);
+        assert!(sb.is_full());
+        assert_eq!(sb.lba(), 99);
+        assert_eq!(sb.next_lba(), 105);
+        assert_eq!(sb.len(), 6);
+    }
+}
+
+#[test]
+fn stripe_buffer_one_iovec() {
+    let mut sb = StripeBuffer::new(99, 6);
+    let dbs = DivBufShared::from(vec![0; 4096]);
+    let db = dbs.try().unwrap();
+    assert!(sb.fill(db).is_empty());
+    assert!(!sb.is_full());
+    assert!(!sb.is_empty());
+    assert_eq!(sb.lba(), 99);
+    assert_eq!(sb.next_lba(), 100);
+    assert_eq!(sb.len(), 1);
+    let sglist = sb.pop();
+    assert_eq!(sglist.len(), 1);
+    assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
+}
+
+#[test]
+fn stripe_buffer_two_iovecs() {
+    let mut sb = StripeBuffer::new(99, 6);
+    let dbs0 = DivBufShared::from(vec![0; 8192]);
+    let db0 = dbs0.try().unwrap();
+    assert!(sb.fill(db0).is_empty());
+    let dbs1 = DivBufShared::from(vec![1; 4096]);
+    let db1 = dbs1.try().unwrap();
+    assert!(sb.fill(db1).is_empty());
+    assert!(!sb.is_full());
+    assert!(!sb.is_empty());
+    assert_eq!(sb.lba(), 99);
+    assert_eq!(sb.next_lba(), 102);
+    assert_eq!(sb.len(), 3);
+    let sglist = sb.pop();
+    assert_eq!(sglist.len(), 2);
+    assert_eq!(&sglist[0][..], &vec![0; 8192][..]);
+    assert_eq!(&sglist[1][..], &vec![1; 4096][..]);
+}
+
+#[test]
+fn stripe_buffer_two_iovecs_overflow() {
+    let mut sb = StripeBuffer::new(99, 6);
+    let dbs0 = DivBufShared::from(vec![0; 16384]);
+    let db0 = dbs0.try().unwrap();
+    assert!(sb.fill(db0).is_empty());
+    let dbs1 = DivBufShared::from(vec![1; 16384]);
+    let db1 = dbs1.try().unwrap();
+    assert_eq!(sb.fill(db1).len(), 8192);
+    assert!(sb.is_full());
+    assert!(!sb.is_empty());
+    assert_eq!(sb.lba(), 99);
+    assert_eq!(sb.next_lba(), 105);
+    assert_eq!(sb.len(), 6);
+    let sglist = sb.pop();
+    assert_eq!(sglist.len(), 2);
+    assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
+    assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
+}
+
+#[test]
 #[should_panic(expected="mismatched cluster size")]
-fn mismatched_clustsize() {
+fn vdev_raid_mismatched_clustsize() {
         let n = 7;
         let k = 4;
         let f = 1;
@@ -500,7 +672,7 @@ fn mismatched_clustsize() {
 
 #[test]
 #[should_panic(expected="mismatched stripe size")]
-fn mismatched_stripesize() {
+fn vdev_raid_mismatched_stripesize() {
         let n = 7;
         let k = 4;
         let f = 1;
@@ -518,7 +690,7 @@ fn mismatched_stripesize() {
 
 #[test]
 #[should_panic(expected="mismatched protection level")]
-fn mismatched_protection() {
+fn vdev_raid_mismatched_protection() {
         let n = 7;
         let k = 4;
         let f = 1;
