@@ -45,11 +45,11 @@ struct StripeBuffer {
 impl StripeBuffer {
     /// Store more data into this `StripeBuffer`, but don't overflow one row.
     ///
-    /// Return the unused part of the `IoVec`, and a future which will become
-    /// ready once the `StripeBuffer` eventually gets written
-    pub fn fill(&mut self, mut iovec: IoVec)
-        -> (IoVec, oneshot::Receiver<Result<IoVecResult, Error>>) {
-
+    /// Return the unused part of the `IoVec`, and optionally a future which
+    /// will become ready once the `StripeBuffer` eventually gets written.  If
+    /// it is anticipated that a channel will not be needed, then none will be
+    /// returned.
+    pub fn fill(&mut self, mut iovec: IoVec) -> (IoVec, Option<Box<IoVecFut>>) {
         let want_lbas = self.stripe_lbas - self.len();
         let want_bytes = want_lbas as usize * BYTES_PER_LBA as usize;
         let have_bytes = iovec.len();
@@ -57,9 +57,24 @@ impl StripeBuffer {
         if get_bytes > 0 {
             self.buf.push(iovec.split_to(get_bytes));
         }
-        let (tx, rx) = oneshot::channel::<Result<IoVecResult, Error>>();
-        self.senders.push(tx);
-        (iovec, rx)
+        let rx_fut = if self.is_full() {
+            //Special case: don't create the channel, because we're about to
+            //write the entire stripe buffer
+            None
+        } else {
+            let (tx, rx) = oneshot::channel::<Result<IoVecResult, Error>>();
+            self.senders.push(tx);
+            let f: Box<IoVecFut> = Box::new(rx.then(|r| {
+                match r {
+                    Ok(Ok(sglist_result)) =>
+                        Ok(IoVecResult{ value: sglist_result.value}),
+                    Ok(Err(error)) => Err(error),
+                    Err(_) => Err(Error::from(errno::Errno::EPIPE))
+                }
+            }));
+            Some(f)
+        };
+        (iovec, rx_fut)
     }
 
     /// Is the stripe buffer full?
@@ -550,8 +565,10 @@ impl Vdev for VdevRaid {
         let mut buf3 = if !self.stripe_buffer.is_empty() ||
                        buf.len() < stripe_len {
 
-            let (buf2, mut rx) = self.stripe_buffer.fill(buf);
-            if self.stripe_buffer.is_full() {
+            let (buf2, rx_fut) = self.stripe_buffer.fill(buf);
+            match rx_fut {
+            None => {
+                debug_assert!(self.stripe_buffer.is_full());
                 let stripe_lba = self.stripe_buffer.lba();
                 let (sglist, senders) = self.stripe_buffer.pop();
                 lba += self.chunksize * m as LbaT;
@@ -573,25 +590,19 @@ impl Vdev for VdevRaid {
                         result
                     });
                 if buf2.is_empty() {
-                    // Special case: if we fully consumed buf, then there's
-                    // no need for the oneshot channel
-                    rx.close();
+                    // Special case: if we fully consumed buf, then return
+                    // immediately
                     return Box::new(fut);
                 } else {
                     futs.push(Box::new(fut));
                     buf2
                 }
-            } else {
-                return Box::new(rx.then(|r| {
-                    // TODO: move this translation step into common code
-                    // somewhere
-                    match r {
-                        Ok(Ok(sglist_result)) =>
-                            Ok(IoVecResult{ value: sglist_result.value}),
-                        Ok(Err(error)) => Err(error),
-                        Err(_) => Err(Error::from(errno::Errno::EPIPE))
-                    }
-                }));
+            },
+            Some(rx_fut) => {
+                // We didn't have enough data to fill the StripeBuffer, so
+                // return early
+                return rx_fut;
+            }
             }
         } else {
             buf
@@ -600,15 +611,9 @@ impl Vdev for VdevRaid {
         let nstripes = buf3.len() / stripe_len;
         let writable_buf = buf3.split_to(nstripes * stripe_len);
         if ! buf3.is_empty() {
-            let (buf4, rx) = self.stripe_buffer.fill(buf3);
-            futs.push(Box::new(rx.then(|r| {
-                    match r {
-                        Ok(Ok(sglist_result)) =>
-                            Ok(IoVecResult{ value: sglist_result.value}),
-                        Ok(Err(error)) => Err(error),
-                        Err(_) => Err(Error::from(errno::Errno::EPIPE))
-                    }
-                })));
+            let (buf4, rx_fut) = self.stripe_buffer.fill(buf3);
+            debug_assert!(!self.stripe_buffer.is_full());
+            futs.push(rx_fut.unwrap());
             debug_assert!(buf4.is_empty());
         }
         futs.push(if nstripes == 1 {
@@ -745,7 +750,7 @@ fn stripe_buffer_two_iovecs_overflow() {
     assert_eq!(sglist.len(), 2);
     assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
     assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
-    assert_eq!(senders.len(), 2);
+    assert_eq!(senders.len(), 1);
 }
 
 #[cfg(feature = "mocks")]
