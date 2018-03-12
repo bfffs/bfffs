@@ -12,6 +12,7 @@ use futures::{Future, future};
 use futures::sync::oneshot;
 use itertools::multizip;
 use modulo::Mod;
+use nix::{errno, Error};
 use std::{cmp, mem, ptr};
 use tokio::reactor::Handle;
 
@@ -38,7 +39,7 @@ struct StripeBuffer {
     stripe_lbas: LbaT,
 
     /// Futures that we must notify whenever we eventually write our data
-    senders: Vec<oneshot::Sender<IoVecResult>>
+    senders: Vec<oneshot::Sender<Result<IoVecResult, Error>>>
 }
 
 impl StripeBuffer {
@@ -46,8 +47,9 @@ impl StripeBuffer {
     ///
     /// Return the unused part of the `IoVec`, and a future which will become
     /// ready once the `StripeBuffer` eventually gets written
-    pub fn fill(&mut self,
-                mut iovec: IoVec) -> (IoVec, oneshot::Receiver<IoVecResult>) {
+    pub fn fill(&mut self, mut iovec: IoVec)
+        -> (IoVec, oneshot::Receiver<Result<IoVecResult, Error>>) {
+
         let want_lbas = self.stripe_lbas - self.len();
         let want_bytes = want_lbas as usize * BYTES_PER_LBA as usize;
         let have_bytes = iovec.len();
@@ -55,9 +57,9 @@ impl StripeBuffer {
         if get_bytes > 0 {
             self.buf.push(iovec.split_to(get_bytes));
         }
-        let (sender, receiver) = oneshot::channel::<IoVecResult>();
-        self.senders.push(sender);
-        (iovec, receiver)
+        let (tx, rx) = oneshot::channel::<Result<IoVecResult, Error>>();
+        self.senders.push(tx);
+        (iovec, rx)
     }
 
     /// Is the stripe buffer full?
@@ -83,8 +85,8 @@ impl StripeBuffer {
     }
 
     pub fn new(lba: LbaT, stripe_lbas: LbaT) -> Self {
-        StripeBuffer{ buf: SGList::new(), lba, stripe_lbas,
-                      senders: Vec::<oneshot::Sender<IoVecResult>>::new()}
+        let senders = Vec::<oneshot::Sender<Result<IoVecResult, Error>>>::new();
+        StripeBuffer{ buf: SGList::new(), lba, stripe_lbas, senders}
     }
 
     /// Return the value of the next LBA should be written into this buffer
@@ -96,11 +98,14 @@ impl StripeBuffer {
     ///
     /// Returns both the data and a collection of `oneshot::Sender`s that should
     /// be notified once the data is successfully written
-    pub fn pop(&mut self) -> (SGList, Vec<oneshot::Sender<IoVecResult>>) {
+    pub fn pop(&mut self) ->
+        (SGList, Vec<oneshot::Sender<Result<IoVecResult, Error>>>) {
+
         let new_sglist = SGList::new();
         self.lba = self.next_lba();
         let old_sglist = mem::replace(&mut self.buf, new_sglist);
-        let new_senders = Vec::<oneshot::Sender<IoVecResult>>::new();
+        let new_senders = Vec::<oneshot::Sender<Result<IoVecResult,
+                                                       Error>>>::new();
         let old_senders = mem::replace(&mut self.senders, new_senders);
         (old_sglist, old_senders)
     }
@@ -133,7 +138,7 @@ pub struct VdevRaid {
     /// We cache up to one stripe per zone before flushing it.  Cacheing entire
     /// stripes uses fewer resources than only cacheing the parity information.
     /// TODO: make this a collection, indexed by zone_id
-    _stripe_buffer: StripeBuffer
+    stripe_buffer: StripeBuffer
 }
 
 /// Convenience macro for `VdevRaid` I/O methods
@@ -188,7 +193,7 @@ impl VdevRaid {
 
         let stripe_lbas = codec.stripesize() as LbaT * chunksize as LbaT;
         VdevRaid { chunksize, codec, locator, blockdevs,
-                   _stripe_buffer: StripeBuffer::new(0, stripe_lbas) }
+                   stripe_buffer: StripeBuffer::new(0, stripe_lbas) }
     }
 
     /// Read two or more whole stripes
@@ -528,21 +533,96 @@ impl Vdev for VdevRaid {
         }).min().unwrap()
     }
 
-    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at(&mut self, buf: IoVec, mut lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
-        assert_eq!(buf.len().modulo(col_len * m), 0,
-                   "Only stripe-aligned writes are currently supported");
-        assert_eq!(lba.modulo(self.chunksize as u64 * m as u64), 0,
+        let stripe_len = col_len * m;
+        assert_eq!(buf.len().modulo(col_len), 0,
+                   "Only chunk-aligned writes are currently supported");
+        assert_eq!(lba.modulo(self.chunksize as u64), 0,
             "Unaligned writes are not yet supported");
-        let chunks = buf.len() / col_len;
-        let stripes = chunks / m;
 
-        if stripes == 1 {
-            self.write_at_one(buf, lba)
+        assert_eq!(self.stripe_buffer.next_lba(), lba);
+        // We may need to join up to three futures to satisfy the caller
+        let mut futs = Vec::<Box<IoVecFut>>::with_capacity(3);
+
+        let mut buf3 = if !self.stripe_buffer.is_empty() ||
+                       buf.len() < stripe_len {
+
+            let (buf2, mut rx) = self.stripe_buffer.fill(buf);
+            if self.stripe_buffer.is_full() {
+                let stripe_lba = self.stripe_buffer.lba();
+                let (sglist, senders) = self.stripe_buffer.pop();
+                lba += self.chunksize * m as LbaT;
+                let fut = self.writev_at_one(&sglist, stripe_lba)
+                    .then(move |r| {
+                        let result = match r {
+                            Ok(sglist_result) =>
+                                Ok(IoVecResult{ value: sglist_result.value}),
+                            Err(error) => Err(error)
+                        };
+                        for sender in senders {
+                            // XXX we can't send the correct value of size,
+                            // because we don't know what the original caller
+                            // asked for
+                            // Ignore the return value, because it could've
+                            // legitimately been cancelled
+                            let _ = sender.send(result.clone());
+                        }
+                        result
+                    });
+                if buf2.is_empty() {
+                    // Special case: if we fully consumed buf, then there's
+                    // no need for the oneshot channel
+                    rx.close();
+                    return Box::new(fut);
+                } else {
+                    futs.push(Box::new(fut));
+                    buf2
+                }
+            } else {
+                return Box::new(rx.then(|r| {
+                    // TODO: move this translation step into common code
+                    // somewhere
+                    match r {
+                        Ok(Ok(sglist_result)) =>
+                            Ok(IoVecResult{ value: sglist_result.value}),
+                        Ok(Err(error)) => Err(error),
+                        Err(_) => Err(Error::from(errno::Errno::EPIPE))
+                    }
+                }));
+            }
         } else {
-            self.write_at_multi(buf, lba)
+            buf
+        };
+        debug_assert!(self.stripe_buffer.is_empty());
+        let nstripes = buf3.len() / stripe_len;
+        let writable_buf = buf3.split_to(nstripes * stripe_len);
+        if ! buf3.is_empty() {
+            let (buf4, rx) = self.stripe_buffer.fill(buf3);
+            futs.push(Box::new(rx.then(|r| {
+                    match r {
+                        Ok(Ok(sglist_result)) =>
+                            Ok(IoVecResult{ value: sglist_result.value}),
+                        Ok(Err(error)) => Err(error),
+                        Err(_) => Err(Error::from(errno::Errno::EPIPE))
+                    }
+                })));
+            debug_assert!(buf4.is_empty());
+        }
+        futs.push(if nstripes == 1 {
+            self.write_at_one(writable_buf, lba)
+        } else {
+            self.write_at_multi(writable_buf, lba)
+        });
+        if futs.len() == 1 {
+            futs.pop().unwrap()
+        } else {
+            Box::new(future::join_all(futs).map(|v| {
+                let value = v.into_iter().map(|x| x.value).sum();
+                IoVecResult{value}
+            }))
         }
     }
 }
@@ -615,11 +695,12 @@ fn stripe_buffer_rx_tx() {
     let dbs = DivBufShared::from(vec![0; 4096]);
     let db = dbs.try().unwrap();
     let (_, mut rx) = sb.fill(db);
-    let (_, mut tx) = sb.pop();
-    let result = IoVecResult{value: 42};
+    let (_, mut senders) = sb.pop();
+    let tx = senders.pop().unwrap();
+    let result = Ok(IoVecResult{value: 42});
     current_thread::block_on_all(future::lazy(move || {
         assert!(!rx.poll().unwrap().is_ready());
-        tx.pop().unwrap().send(result).unwrap();
+        tx.send(result).unwrap();
         assert!(rx.poll().unwrap().is_ready());
         future::ok::<(),()>(())
     })).unwrap();
@@ -675,7 +756,6 @@ use super::*;
 use super::super::prime_s::PrimeS;
 use futures::future;
 use mockers::Scenario;
-use nix;
 
 mock!{
     MockVdevBlock,
@@ -898,7 +978,7 @@ fn read_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, nix::Error>(r.clone())
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );
@@ -912,7 +992,7 @@ fn read_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, nix::Error>(r.clone())
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );
@@ -955,7 +1035,7 @@ fn write_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, nix::Error>(r.clone())
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );
@@ -969,7 +1049,7 @@ fn write_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, nix::Error>(r.clone())
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );
@@ -983,7 +1063,7 @@ fn write_at_one_stripe() {
         }), 0)
             .and_return(
                 Box::new(
-                    future::ok::<IoVecResult, nix::Error>(r.clone())
+                    future::ok::<IoVecResult, Error>(r.clone())
                 )
             )
         );
