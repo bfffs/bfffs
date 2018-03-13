@@ -35,9 +35,6 @@ fn exhaustive_5_4_2() {
     let f = 2;
 
     let locator = PrimeS::new(n, k, f);
-    assert_eq!(locator.depth(), 16);
-    assert_eq!(locator.datachunks(), 40);
-    assert_eq!(locator.stripes(), 20);
 
     // Check forward mappings against a precomputed list
     assert_eq!(locator.id2loc(ChunkId::Data(0)), Chunkloc::new(0, 0));
@@ -133,6 +130,46 @@ fn exhaustive_5_4_2() {
         for u in 0 .. f {
             let chunkid = ChunkId::Parity(u64::from(stripe) * k as u64, u);
             assert_eq!(locator.loc2id(locator.id2loc(chunkid)), chunkid);
+        }
+    }
+}
+
+// Exhaustive iterator output for a small array.
+// Compare the iterator output against id2loc, which itself is compared against
+// the ruby program.
+#[test]
+fn iter_5_4_2() {
+    let n = 5;
+    let k = 4;
+    let f = 2;
+    let m = k - f;
+
+    let locator = PrimeS::new(n, k, f);
+    let mut iter = locator.iter(ChunkId::Data(0));
+    for rep in 0..2 {
+        for s in 0..locator.stripes() {
+            for a in 0..m {
+                let id = ChunkId::Data(rep * locator.datachunks() +
+                                       s as u64 * m as u64 + a as u64);
+                // check that an iterator can be correctly created at this
+                // ChunkId
+                let iter2 = locator.iter(id);
+                assert_eq!(iter, iter2);
+
+                // And of course, check that it yields the right value
+                assert_eq!((id, locator.id2loc(id)), iter.next().unwrap());
+            }
+            for p in 0..f {
+                let id = ChunkId::Parity(rep * locator.datachunks() +
+                                         s as u64 * m as u64, p);
+                // check that an iterator can be correctly created at this
+                // ChunkId
+                let iter2 = locator.iter(id);
+                assert_eq!(iter, iter2);
+
+                // And of course, check that it yields the right value
+                assert_eq!((id, locator.id2loc(id)), iter.next().unwrap());
+            }
         }
     }
 }

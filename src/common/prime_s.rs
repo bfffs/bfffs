@@ -53,6 +53,16 @@ fn is_prime(n: i16) -> bool {
 	true
 }
 
+/// Internal struture that captures some of the intermediate values used in
+/// `id2loc`
+struct ChunklocInt {
+    a: i16,                 // Index of data chunk within its repetition
+    r: u32,                 // Repetition
+    s: i16,                 // Stripe within its repetition
+    y: i16,                 // Stride
+    z: i16,                 // Iteration
+}
+
 /// PRIME-S: PRIME-Sequential declustering
 /// 
 /// This class implements a variation of the PRIME algorithm, described by
@@ -86,6 +96,7 @@ fn is_prime(n: i16) -> bool {
 /// optimal and near-optimal parallelism." ACM SIGARCH Computer Architecture
 /// News. Vol. 26. No. 3. IEEE Computer Society, 1998.
 /// 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PrimeS {
     /// Total number of disks
     n:  i16,
@@ -132,7 +143,24 @@ impl PrimeS {
                 f: redundancy, stripes, datachunks, depth}
     }
 
-    /// Return the repetition and iteration numbers where a given Chunk is stored
+    /// Internal helper function
+    fn id2loc_int(&self, chunkid: &ChunkId) -> ChunklocInt {
+        // The chunk address
+        let id = match *chunkid {
+            ChunkId::Data(id) | ChunkId::Parity(id, _) => id,
+        };
+        let a = id.modulo(self.datachunks) as i16;
+        // The repetition and iteration
+        let (r, z) = self.id2rep_and_iter(&chunkid);
+        // The stripe
+        let s = a / self.m;
+        // The stride
+        let y = (z.modulo(self.n - 1)) + 1;
+        ChunklocInt{a, r, s, y, z}
+    }
+
+    /// Return the repetition and iteration numbers where a given Chunk is
+    /// stored
     fn id2rep_and_iter(&self, chunkid: &ChunkId) -> (u32, i16) {
         let id = match *chunkid {
             ChunkId::Data(id) | ChunkId::Parity(id, _) => id
@@ -145,6 +173,47 @@ impl PrimeS {
         assert!(rep <= u64::from(u32::max_value()));
         assert!(iter <= u64::from(i16::max_value() as u16));
         (rep as u32, iter as i16)
+    }
+
+    pub fn iter(&self, id: ChunkId) -> PrimeSIter {
+        PrimeSIter::new(&self, id)
+    }
+
+    fn iterations_per_rep(&self) -> i16 {
+        self.n - 1
+    }
+
+    /// Return the offset of a chunk relative to the first offset of its
+    /// iteration
+    ///
+    /// # Parameters
+    /// - `cli`:    Output of `id2loc_int` for this chunk
+    /// - `b`:      Chunk's index within its stripe
+    fn offset_within_iteration(&self, cli: &ChunklocInt, b: i16,
+                               disk: i16) -> i16 {
+        // We must loop to calculate the offset.  That's PRIME-S's disadvantage
+        // vis-a-vis PRIME
+        let y_inv = invmod(cli.y, self.n);
+        // Contribution to offset from data chunks in this repetition
+        let o0 = (cli.s * self.m + b) / self.n;
+        // Contributions to offset from parity chunks in previous iterations
+        let o1 = self.f * cli.z;
+        // Contributions to offset from parity chunks in this iteration
+        let o2 = (0 .. self.f).fold(0, |acc, j| {
+                let cb_stripe = ((disk * y_inv - j) *
+                                 self.m_inv - 1).modulo(self.n);
+                let x = if cli.s.modulo(self.n) > cb_stripe {
+                    1
+                } else {
+                    0
+                };
+                x + acc
+            });
+        o0 + o1 + o2
+    }
+
+    fn stripes_per_iteration(&self) -> i16 {
+        self.n
     }
 }
 
@@ -162,43 +231,15 @@ impl Locator for PrimeS {
     }
 
     fn id2loc(&self, chunkid: ChunkId) -> Chunkloc {
-        // The repetition and iteration
-        let (r, z) = self.id2rep_and_iter(&chunkid);
-        // The stride
-        let y = (z.modulo(self.n - 1)) + 1;
-        let id = match chunkid {
-            ChunkId::Data(id) | ChunkId::Parity(id, _) => id,
-        };
-        let a = id.modulo(self.datachunks) as i16;
-        // The stripe
-        let s = a / self.m;
+        let cli = self.id2loc_int(&chunkid);
         // Unit's position within its stripe
         let b = match chunkid {
-            ChunkId::Data(_) => a - s * self.m,
+            ChunkId::Data(_) => cli.a - cli.s * self.m,
             ChunkId::Parity(_, i) => self.m + i
         };
-        let disk = ((s * self.m + b) * y).modulo(self.n);
-
-        // We must loop to calculate the offset.  That's PRIME-S's disadvantage
-        // vis-a-vis PRIME
-        let y_inv = invmod(y, self.n);
-        // Contribution to offset from data chunks in this iteration
-        let o0 = (s * self.m + b) / self.n;
-        // Contributions to offset from parity chunks in previous iterations
-        let o1 = self.f * z;
-        // Contributions to offset from parity chunks in this iteration
-        let o2 = (0 .. self.f).fold(0, |acc, j| {
-                let cb_stripe = ((disk * y_inv - j) * self.m_inv - 1).modulo(self.n);
-                let x = if s.modulo(self.n) > cb_stripe {
-                    1
-                } else {
-                    0
-                };
-                x + acc
-            });
-        let o3 = u64::from(r) * self.depth as u64;
-
-        let offset = (o0 + o1 + o2) as u64 + o3;
+        let disk = ((cli.s * self.m + b) * cli.y).modulo(self.n);
+        let o3 = u64::from(cli.r) * self.depth as u64;
+        let offset = self.offset_within_iteration(&cli, b, disk) as u64 + o3;
         Chunkloc { disk, offset}
     }
 
@@ -259,6 +300,117 @@ impl Locator for PrimeS {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrimeSIter<'a> {
+    id: ChunkId,        // Id of next chunk
+    layout: &'a PrimeS, // Layout to iterate over
+    a: i16,             // Index of a data chunk within its repetition
+    o: Vec<i16>,        // Offsets within an iteration for each disk
+    r: u32,             // Repetition number
+    stripe: i16,        // Stripe with its repetition
+    stripe_iter: i16,   // Stripe within its iteration
+    y: i16,             // Stride
+    z: i16,             // Iteration number
+}
+
+impl<'a> PrimeSIter<'a> {
+    /// Create a new iterator.  `id` is the id of the first chunk that the
+    /// iterator should return.
+    fn new(layout: &'a PrimeS, id: ChunkId) -> Self {
+        let cli = layout.id2loc_int(&id);
+        let s_z = cli.s.modulo(layout.stripes_per_iteration());
+        let b = match id {
+            ChunkId::Data(_) => cli.a - cli.s * layout.m,
+            ChunkId::Parity(_, i) => layout.m + i
+        };
+        // Start with offset contributions from previous iterations
+        let mut o: Vec<i16> = vec![layout.k * cli.z; layout.n as usize];
+        for s in 0..(s_z + 1) {
+            let end = if s == s_z { b } else { layout.k };
+            // Add contributions from other chunks in this iteration
+            for b in 0..end {
+                let disk = ((s * layout.m + b) * cli.y).modulo(layout.n);
+                o[disk as usize] += 1;
+            }
+        }
+        PrimeSIter { a: cli.a,
+                     stripe_iter: s_z,
+                     id,
+                     layout,
+                     o,
+                     r: cli.r,
+                     stripe: cli.s,
+                     y: cli.y,
+                     z: cli.z}
+    }
+}
+
+impl<'a> Iterator for PrimeSIter<'a> {
+    type Item = (ChunkId, Chunkloc);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let layout = self.layout;
+        let b = match self.id {
+            ChunkId::Data(_) => self.a - self.stripe * layout.m,
+            ChunkId::Parity(_, i) => layout.m + i
+        };
+        let disk = ((self.stripe * layout.m + b) * self.y).modulo(layout.n);
+        let o3 = u64::from(self.r) * layout.depth as u64;
+        let offset = self.o[disk as usize] as u64 + o3;
+        let result = Some((self.id, Chunkloc{disk, offset}));
+
+        // Now update the internal state
+        self.id = match self.id {
+        ChunkId::Data(i) => {
+            self.o[disk as usize] += 1;
+            if self.a < (self.stripe + 1) * layout.m - 1 {
+                self.a += 1;
+                ChunkId::Data(i + 1)
+            } else {
+                self.a = self.stripe * layout.m;
+                ChunkId::Parity(i - (layout.m - 1) as u64, 0)
+            }
+        },
+        ChunkId::Parity(a, i) => {
+            if i < layout.f - 1 {
+                self.o[disk as usize] += 1;
+                ChunkId::Parity(a, i + 1)
+            } else {
+                // Roll over to the next stripe
+                if self.stripe_iter == layout.stripes_per_iteration() - 1 {
+                    // Roll over to the next iteration
+                    self.stripe_iter = 0;
+                    if self.z == layout.iterations_per_rep() - 1 {
+                        // Roll over to the next repetition
+                        for mut o in self.o.iter_mut() {
+                            *o = 0;
+                        }
+                        self.a = 0;
+                        self.r += 1;
+                        self.stripe = 0;
+                        self.y = 1;
+                        self.z = 0;
+                    } else {
+                        self.a += layout.m;
+                        self.o[disk as usize] += 1;
+                        self.z += 1;
+                        self.stripe += 1;
+                        self.y = (self.z.modulo(layout.n - 1)) + 1;
+                    }
+                } else {
+                    self.a += layout.m;
+                    self.o[disk as usize] += 1;
+                    self.stripe_iter += 1;
+                    self.stripe += 1;
+                }
+                ChunkId::Data(a + layout.m as u64)
+            }
+        }
+        };
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +422,21 @@ mod tests {
         assert_eq!(invmod(3, 11), 4);
         assert_eq!(invmod(17, 19), 9);
         assert_eq!(invmod(128, 251), 151);
+    }
+
+    /// Test basic info about a 5-4-2 layout
+    #[test]
+    fn basic_5_4_2() {
+        let n = 5;
+        let k = 4;
+        let f = 2;
+
+        let locator = PrimeS::new(n, k, f);
+        assert_eq!(locator.depth(), 16);
+        assert_eq!(locator.datachunks(), 40);
+        assert_eq!(locator.stripes(), 20);
+        assert_eq!(locator.stripes_per_iteration(), 5);
+        assert_eq!(locator.iterations_per_rep(), 4);
     }
 
     #[test]
