@@ -225,14 +225,14 @@ impl VdevRaid {
         let mut sglists = Vec::<SGListMut>::with_capacity(n);
         const SENTINEL : LbaT = LbaT::max_value();
         let mut start_lbas : Vec<LbaT> = vec![SENTINEL; n];
+        let max_chunks_per_disk = self.locator.parallel_read_count(chunks);
         for _ in 0..n {
             // Size each SGList to the maximum possible size
-            // TODO: calculate a smaller maximum by considering the declustering
-            // ratio, especially when n >> m
-            sglists.push(SGListMut::with_capacity(stripes));
+            sglists.push(SGListMut::with_capacity(max_chunks_per_disk));
         }
         // Build the SGLists, one chunk at a time
-        let mut futs : Vec<Box<SGListFut>> = Vec::with_capacity(n * stripes);
+        let max_futs = n * max_chunks_per_disk;
+        let mut futs: Vec<Box<SGListFut>> = Vec::with_capacity(max_futs);
         for s in 0..stripes {
             for i in 0..k {
                 if i < m {
@@ -352,11 +352,10 @@ impl VdevRaid {
         let mut sglists = Vec::<SGList>::with_capacity(n);
         const SENTINEL : LbaT = LbaT::max_value();
         let mut start_lbas : Vec<LbaT> = vec![SENTINEL; n];
+        let max_chunks_per_disk = self.locator.parallel_read_count(chunks);
         for _ in 0..n {
             // Size each SGList to the maximum possible size
-            // TODO: calculate a smaller maximum by considering the declustering
-            // ratio, especially when n >> m
-            sglists.push(SGList::with_capacity(stripes));
+            sglists.push(SGList::with_capacity(max_chunks_per_disk));
         }
         // Build the SGLists, one chunk at a time
         for s in 0..stripes {
