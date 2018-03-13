@@ -29,7 +29,8 @@ fn bench_primesiter_next(bench: &mut Bencher) {
     let f = 3;
 
     let locator = PrimeS::new(n, k, f);
-    let mut iter = locator.iter(ChunkId::Data(0));
+    let mut iter = locator.iter(ChunkId::Data(0),
+                                ChunkId::Data(u64::max_value()));
 
     bench.iter(|| {
         iter.next()

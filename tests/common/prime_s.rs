@@ -142,32 +142,23 @@ fn iter_5_4_2() {
     let n = 5;
     let k = 4;
     let f = 2;
+    let reps = 2;
     let m = k - f;
 
     let locator = PrimeS::new(n, k, f);
-    let mut iter = locator.iter(ChunkId::Data(0));
-    for rep in 0..2 {
+    let end = ChunkId::Data(locator.datachunks() * reps);
+    let mut iter = locator.iter(ChunkId::Data(0), end);
+
+    for rep in 0..reps {
         for s in 0..locator.stripes() {
             for a in 0..m {
                 let id = ChunkId::Data(rep * locator.datachunks() +
                                        s as u64 * m as u64 + a as u64);
-                // check that an iterator can be correctly created at this
-                // ChunkId
-                let iter2 = locator.iter(id);
-                assert_eq!(iter, iter2);
-
-                // And of course, check that it yields the right value
                 assert_eq!((id, locator.id2loc(id)), iter.next().unwrap());
             }
             for p in 0..f {
                 let id = ChunkId::Parity(rep * locator.datachunks() +
                                          s as u64 * m as u64, p);
-                // check that an iterator can be correctly created at this
-                // ChunkId
-                let iter2 = locator.iter(id);
-                assert_eq!(iter, iter2);
-
-                // And of course, check that it yields the right value
                 assert_eq!((id, locator.id2loc(id)), iter.next().unwrap());
             }
         }

@@ -62,7 +62,20 @@ pub trait Locator {
     /// Number of rows in a single repetition of the layout
     fn depth(&self) -> i16;
 
-    /// Inverse of `id2loc`.  Returns the chunk id of the chunk at this location.
+    /// Get an iterator that will iterate through many `ChunkId`s.
+    ///
+    /// This is faster than calling `id2loc` repeatedly.
+    ///
+    /// # Parameters
+    ///
+    /// - `start`:  The first `ChunkId` whose location will be returned
+    /// - `end`:    The first `ChunkId` beyond the end of the iterator
+    fn iter<'a>(&'a self, start: ChunkId, end: ChunkId)
+        -> Box<Iterator<Item=(ChunkId, Chunkloc)> + 'a>;
+
+    /// Inverse of `id2loc`.
+    ///
+    /// Returns the chunk id of the chunk at this location.
     ///
     /// # Parameters
     /// 
