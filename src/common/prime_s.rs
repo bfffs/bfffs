@@ -118,7 +118,7 @@ impl PrimeS {
     /// # Parameters
     ///
     /// `num_disks`:        Total number of disks in the array
-    /// `disks_per_strip`:  Number of disks in each parity group  
+    /// `disks_per_stripe`: Number of disks in each parity group  
     /// `redundancy`:       Redundancy level of the RAID array.  This many disks
     ///                     may fail before the data becomes irrecoverable.
     pub fn new(num_disks: i16, disks_per_stripe: i16, redundancy: i16) -> Self {
@@ -172,7 +172,7 @@ impl Locator for PrimeS {
         let a = id.modulo(self.datachunks) as i16;
         // The stripe
         let s = a / self.m;
-        // Unit's positition within its stripe
+        // Unit's position within its stripe
         let b = match chunkid {
             ChunkId::Data(_) => a - s * self.m,
             ChunkId::Parity(_, i) => self.m + i
