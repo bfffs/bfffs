@@ -137,6 +137,22 @@ fn exhaustive_5_4_2() {
     }
 }
 
+// Test parallel_read_count for a typical layout
+#[test]
+fn parallel_read_count() {
+    let n = 5;
+    let k = 4;
+    let f = 2;
+    let locator = PrimeS::new(n, k, f);
+
+    assert_eq!(locator.parallel_read_count(1), 2);
+    assert_eq!(locator.parallel_read_count(2), 2);
+    assert_eq!(locator.parallel_read_count(3), 2);
+    assert_eq!(locator.parallel_read_count(4), 2);
+    assert_eq!(locator.parallel_read_count(5), 2);
+    assert_eq!(locator.parallel_read_count(6), 3);
+}
+
 // Test repetition calculations for a simple layout
 #[test]
 fn repetition() {

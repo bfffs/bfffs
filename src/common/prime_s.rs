@@ -240,6 +240,12 @@ impl Locator for PrimeS {
         }
     }
 
+    fn parallel_read_count(&self, consecutive_data_chunks: usize) -> usize {
+        // As given in page 5 of Alvarez et al's PRIME paper:
+        // τ(ο) ≤ ⌈ο/n⌉ + 1
+        (consecutive_data_chunks + self.n as usize - 1) / self.n as usize + 1
+    }
+
     fn protection(&self) -> i16 {
         self.f
     }

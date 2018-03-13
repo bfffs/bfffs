@@ -76,6 +76,15 @@ pub trait Locator {
 	/// - `a`:	ID of the data chunk
     fn id2loc(&self, id: ChunkId) -> Chunkloc;
 
+    /// Parallel Read Count, as defined by [^RELPR_]
+    ///
+    /// It's the maximum number of data chunks that any disk must supply when
+    /// reading a given number of consecutive data chunks.  This value is purely
+    /// advisory, and a valid implementation could return anything at all.
+    ///
+    /// [^RELPR_]: Alvarez, Guillermo A., et al. "Declustered disk array architectures with optimal and near-optimal parallelism." ACM SIGARCH Computer Architecture News. Vol. 26. No. 3. IEEE Computer Society, 1998.
+    fn parallel_read_count(&self, consecutive_data_chunks: usize) -> usize;
+
     /// Return the degree of redundancy
     fn protection(&self) -> i16;
 
