@@ -219,17 +219,14 @@ impl VdevRaid {
     /// Read two or more whole stripes
     fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
-        let f = self.codec.protection() as usize;
-        let k = self.codec.stripesize() as usize;
-        let m = k - f as usize;
         let n = self.blockdevs.len();
         let chunks = buf.len() / col_len;
-        let stripes = chunks / m;
 
         // Create an SGList for each disk.
         let mut sglists = Vec::<SGListMut>::with_capacity(n);
         const SENTINEL : LbaT = LbaT::max_value();
         let mut start_lbas : Vec<LbaT> = vec![SENTINEL; n];
+        let mut next_lbas : Vec<LbaT> = vec![SENTINEL; n];
         let max_chunks_per_disk = self.locator.parallel_read_count(chunks);
         for _ in 0..n {
             // Size each SGList to the maximum possible size
@@ -238,39 +235,27 @@ impl VdevRaid {
         // Build the SGLists, one chunk at a time
         let max_futs = n * max_chunks_per_disk;
         let mut futs: Vec<Box<SGListFut>> = Vec::with_capacity(max_futs);
-        for s in 0..stripes {
-            for i in 0..k {
-                if i < m {
-                    let chunk_offs = lba / self.chunksize + (s * m + i) as LbaT;
-                    let chunk_id = ChunkId::Data(chunk_offs);
-                    let loc = self.locator.id2loc(chunk_id);
-                    let disk_lba = loc.offset * self.chunksize;
-                    if start_lbas[loc.disk as usize] == SENTINEL {
-                        start_lbas[loc.disk as usize] = disk_lba;
-                    } else {
-                        debug_assert!(start_lbas[loc.disk as usize] < disk_lba);
-                    }
-                    let col = buf.split_to(col_len);
-                    sglists[loc.disk as usize].push(col);
-                } else {
-                    let chunk_offs = lba / self.chunksize + (s * m) as LbaT;
-                    let chunk_id = ChunkId::Parity(chunk_offs, (i - m) as i16);
-                    let loc = self.locator.id2loc(chunk_id);
-                    let disk = loc.disk as usize;
-                    if start_lbas[disk] == SENTINEL {
-                        // We haven't yet planned any reads from this disk.  We
-                        // can simply ignore the parity chunk
-                    } else {
-                        // We've already planned some reads to this disk.  We
-                        // must issue them now.
-                        let new = SGListMut::with_capacity(stripes - s);
-                        let old = mem::replace(&mut sglists[disk], new);
-                        let lba = start_lbas[disk];
-                        futs.push(self.blockdevs[disk].readv_at(old, lba));
-                        start_lbas[disk] = SENTINEL;
-                    }
-                }
+        let start = ChunkId::Data(lba / self.chunksize);
+        let end = ChunkId::Data((lba + (buf.len() / BYTES_PER_LBA) as LbaT) /
+                                self.chunksize);
+        for (_, loc) in self.locator.iter_data(start, end) {
+            let col = buf.split_to(col_len);
+            let disk_lba = loc.offset * self.chunksize;
+            let disk = loc.disk as usize;
+            if start_lbas[disk as usize] == SENTINEL {
+                // First chunk assigned to this disk
+                start_lbas[disk as usize] = disk_lba;
+            } else if next_lbas[disk as usize] < disk_lba {
+                // There must've been a parity chunk on this disk, which we
+                // skipped.  Fire off a readv_at and keep going
+                let new = SGListMut::with_capacity(max_chunks_per_disk - 1);
+                let old = mem::replace(&mut sglists[disk], new);
+                let lba = start_lbas[disk];
+                futs.push(self.blockdevs[disk].readv_at(old, lba));
+                start_lbas[disk] = disk_lba;
             }
+            sglists[disk as usize].push(col);
+            next_lbas[disk as usize] = disk_lba + self.chunksize;
         }
 
         futs.extend(multizip((self.blockdevs.iter(),
