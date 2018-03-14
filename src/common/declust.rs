@@ -70,8 +70,8 @@ pub trait Locator {
     ///
     /// - `start`:  The first `ChunkId` whose location will be returned
     /// - `end`:    The first `ChunkId` beyond the end of the iterator
-    fn iter<'a>(&'a self, start: ChunkId, end: ChunkId)
-        -> Box<Iterator<Item=(ChunkId, Chunkloc)> + 'a>;
+    fn iter(&self, start: ChunkId, end: ChunkId)
+        -> Box<Iterator<Item=(ChunkId, Chunkloc)>>;
 
     /// Inverse of `id2loc`.
     ///
