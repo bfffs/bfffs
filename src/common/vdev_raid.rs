@@ -168,16 +168,21 @@ pub struct VdevRaid {
 macro_rules! issue_1stripe_ops {
     ( $self:ident, $buf:expr, $lba:expr, $parity:expr, $func:ident) => {
         {
+            //let start = ChunkId::Data($lba / $self.chunksize);
+            let (start, end) = if $parity {
+                let m = $self.codec.stripesize() - $self.codec.protection();
+                (ChunkId::Parity($lba / $self.chunksize, 0),
+                 ChunkId::Data($lba / $self.chunksize + m as u64))
+            } else {
+                (ChunkId::Data($lba / $self.chunksize),
+                 ChunkId::Parity($lba / $self.chunksize, 0))
+            };
+            let mut iter = $self.locator.iter(start, end);
             let futs : Vec<_> = $buf
             .into_iter()
             .enumerate()
-            .map(|(i, d)| {
-                let chunk_id = if $parity {
-                    ChunkId::Parity($lba / $self.chunksize, i as i16)
-                } else {
-                    ChunkId::Data($lba / $self.chunksize + i as LbaT)
-                };
-                let loc = $self.locator.id2loc(chunk_id);
+            .map(|(_, d)| {
+                let (_, loc) = iter.next().unwrap();
                 let disk_lba = loc.offset * $self.chunksize;
                 $self.blockdevs[loc.disk as usize].$func(d, disk_lba)
             })
@@ -358,25 +363,22 @@ impl VdevRaid {
             sglists.push(SGList::with_capacity(max_chunks_per_disk));
         }
         // Build the SGLists, one chunk at a time
-        for s in 0..stripes {
-            for i in 0..k {
-                let (chunk_id, col) = if i < m {
-                    let chunk_offs = lba / self.chunksize + (s * m + i) as LbaT;
-                    (ChunkId::Data(chunk_offs), buf.split_to(col_len))
-                } else {
-                    let chunk_offs = lba / self.chunksize + (s * m) as LbaT;
-                    let col = parity[i - m].split_to(col_len).freeze();
-                    (ChunkId::Parity(chunk_offs, (i - m) as i16), col)
-                };
-                let loc = self.locator.id2loc(chunk_id);
-                let disk_lba = loc.offset * self.chunksize;
-                if start_lbas[loc.disk as usize] == SENTINEL {
-                    start_lbas[loc.disk as usize] = disk_lba;
-                } else {
-                    debug_assert!(start_lbas[loc.disk as usize] < disk_lba);
-                }
-                sglists[loc.disk as usize].push(col);
+        let start = ChunkId::Data(lba / self.chunksize);
+        let end = ChunkId::Data((lba + (buf.len() / BYTES_PER_LBA) as LbaT) /
+                                self.chunksize);
+        for (chunk_id, loc) in self.locator.iter(start, end) {
+            let col = match &chunk_id {
+                &ChunkId::Data(_) => buf.split_to(col_len),
+                &ChunkId::Parity(_, ref i) =>
+                    parity[*i as usize].split_to(col_len).freeze()
+            };
+            let disk_lba = loc.offset * self.chunksize;
+            if start_lbas[loc.disk as usize] == SENTINEL {
+                start_lbas[loc.disk as usize] = disk_lba;
+            } else {
+                debug_assert!(start_lbas[loc.disk as usize] < disk_lba);
             }
+            sglists[loc.disk as usize].push(col);
         }
 
         let futs : Vec<Box<SGListFut>> = multizip((self.blockdevs.iter_mut(),
