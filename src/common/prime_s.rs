@@ -240,6 +240,13 @@ impl Locator for PrimeS {
         Box::new(PrimeSIter::new(&self, start, end))
     }
 
+    fn iter_data(&self, start: ChunkId, end: ChunkId)
+        -> Box<Iterator<Item=(ChunkId, Chunkloc)>> {
+        assert!(start.is_data());
+        assert!(end.is_data());
+        Box::new(PrimeSIterData::new(&self, start, end))
+    }
+
     fn loc2id(&self, chunkloc: Chunkloc) -> ChunkId {
         // Algorithm:
         // Generate the set of stripes that are stored on this iteration of this
@@ -445,6 +452,91 @@ impl Iterator for PrimeSIter {
     }
 }
 
+/// Like PrimeSIter, but only iterates through Data chunks, not Parity chunks
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrimeSIterData(PrimeSIter);
+
+impl PrimeSIterData {
+    /// Create a new iterator.  `id` is the id of the first chunk that the
+    /// iterator should return.
+    fn new(layout: &PrimeS, start: ChunkId, end: ChunkId) -> Self {
+        PrimeSIterData(PrimeSIter::new(layout, start, end))
+    }
+
+    /// Return the next element in the iterator, _without_ advancing the
+    /// iterator.
+    ///
+    /// This differs from `std::iter::Peekable::peek` in that it actually
+    /// doesn't modify the iterator's internal state
+    #[cfg(test)]
+    fn peek(&self) -> Option<(ChunkId, Chunkloc)> {
+        self.0.peek()
+    }
+}
+
+impl Iterator for PrimeSIterData {
+    type Item = (ChunkId, Chunkloc);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0.id == self.0.end {
+            return None;
+        }
+        let (disk, offset) = self.0.next_elem();
+        let result = Some((self.0.id, Chunkloc{disk, offset}));
+
+        // Now update the internal state
+        self.0.id = match self.0.id {
+        ChunkId::Data(a) => {
+            if self.0.a < (self.0.stripe + 1) * self.0.m - 1 {
+                self.0.o[disk as usize] += 1;
+                self.0.a += 1;
+                ChunkId::Data(a + 1)
+            } else {
+                // Update offsets for all the parity chunks, but don't actually
+                // return any.  Instead, skip parity chunks and go directly to
+                // the next stripe
+                for i in 0..self.0.f {
+                    let b = self.0.m + i;
+                    let disk = ((self.0.stripe * self.0.m + b) * self.0.y)
+                        .modulo(self.0.n);
+                    self.0.o[disk as usize] += 1;
+                }
+                // Roll over to the next stripe
+                if self.0.stripe_iter == self.0.stripes_per_iteration() - 1 {
+                    // Roll over to the next iteration
+                    self.0.stripe_iter = 0;
+                    if self.0.z == self.0.iterations_per_rep() - 1 {
+                        // Roll over to the next repetition
+                        for mut o in self.0.o.iter_mut() {
+                            *o = 0;
+                        }
+                        self.0.a = 0;
+                        self.0.r += 1;
+                        self.0.stripe = 0;
+                        self.0.y = 1;
+                        self.0.z = 0;
+                    } else {
+                        self.0.a += 1;
+                        self.0.o[disk as usize] += 1;
+                        self.0.z += 1;
+                        self.0.stripe += 1;
+                        self.0.y = (self.0.z.modulo(self.0.n - 1)) + 1;
+                    }
+                } else {
+                    self.0.a += 1;
+                    self.0.o[disk as usize] += 1;
+                    self.0.stripe_iter += 1;
+                    self.0.stripe += 1;
+                }
+                ChunkId::Data(a + 1)
+            }
+        },
+        ChunkId::Parity(_, _) => unreachable!()
+        };
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,7 +582,7 @@ mod tests {
         assert!(is_prime(251));
     }
 
-    // Test creating iterators from any starting point in a 5-4-2 PRIME-S layout
+    // Test creating iterators from any starting point in a 7-5-2 PRIME-S layout
     #[test]
     fn iter_7_5_2_any_start() {
         let n = 7;
@@ -511,6 +603,34 @@ mod tests {
                 break;
             }
             let iter2 = PrimeSIter::new(&locator, next_id.unwrap(), end);
+            assert_eq!(&iter, &iter2);
+            // Now advance the iterator
+            let _ = iter.next();
+        }
+    }
+
+    // Test creating data iterators from any starting point in a 7-5-2 PRIME-S
+    // layout
+    #[test]
+    fn iter_data_7_5_2_any_start() {
+        let n = 7;
+        let k = 5;
+        let f = 2;
+
+        let locator = PrimeS::new(n, k, f);
+        let id = Some(ChunkId::Data(0));
+        // Go for two repetitions
+        let end = ChunkId::Data(locator.datachunks() * 2);
+        // Create the PrimeSIter directly instead of through Locator::iter so we
+        // can get the real return type, not just the Trait object.
+        let mut iter = PrimeSIterData::new(&locator, id.unwrap(), end);
+        loop {
+            // Check that the internal state is identical
+            let next_id = iter.peek().map(|(i, _)| i);
+            if next_id.is_none() {
+                break;
+            }
+            let iter2 = PrimeSIterData::new(&locator, next_id.unwrap(), end);
             assert_eq!(&iter, &iter2);
             // Now advance the iterator
             let _ = iter.next();

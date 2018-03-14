@@ -15,6 +15,18 @@ pub enum ChunkId {
     Parity(u64, i16)
 }
 
+impl ChunkId {
+    /// Is this a Data chunk?
+    pub fn is_data(&self) -> bool {
+        if let &ChunkId::Data(_) = self { true } else { false }
+    }
+
+    /// Is this a Parity chunk?
+    pub fn is_parity(&self) -> bool {
+        if let &ChunkId::Parity(_, _) = self { true } else { false }
+    }
+}
+
 /// Describes the location of a Chunk within the declustering layout
 #[derive(Debug, PartialEq, Eq)]
 pub struct Chunkloc {
@@ -71,6 +83,19 @@ pub trait Locator {
     /// - `start`:  The first `ChunkId` whose location will be returned
     /// - `end`:    The first `ChunkId` beyond the end of the iterator
     fn iter(&self, start: ChunkId, end: ChunkId)
+        -> Box<Iterator<Item=(ChunkId, Chunkloc)>>;
+
+    /// Like [`iter`], but only iterates through Data chunks, skipping Parity
+    ///
+    /// This is faster than calling `id2loc` repeatedly.
+    ///
+    /// # Parameters
+    ///
+    /// - `start`:  The first Data `ChunkId` whose location will be returned
+    /// - `end`:    The first Data `ChunkId` beyond the end of the iterator.
+    ///
+    /// [`iter`]: #method.iter
+    fn iter_data(&self, start: ChunkId, end: ChunkId)
         -> Box<Iterator<Item=(ChunkId, Chunkloc)>>;
 
     /// Inverse of `id2loc`.

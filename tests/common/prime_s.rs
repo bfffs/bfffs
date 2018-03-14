@@ -162,6 +162,7 @@ fn iter_7_5_2() {
     let locator = PrimeS::new(n, k, f);
     let end = ChunkId::Data(locator.datachunks() * reps);
     let mut iter = locator.iter(ChunkId::Data(0), end);
+    let mut iter_data = locator.iter_data(ChunkId::Data(0), end);
 
     for rep in 0..reps {
         for s in 0..locator.stripes() {
@@ -169,6 +170,7 @@ fn iter_7_5_2() {
                 let id = ChunkId::Data(rep * locator.datachunks() +
                                        s as u64 * m as u64 + a as u64);
                 assert_eq!((id, locator.id2loc(id)), iter.next().unwrap());
+                assert_eq!((id, locator.id2loc(id)), iter_data.next().unwrap());
             }
             for p in 0..f {
                 let id = ChunkId::Parity(rep * locator.datachunks() +
