@@ -168,7 +168,6 @@ pub struct VdevRaid {
 macro_rules! issue_1stripe_ops {
     ( $self:ident, $buf:expr, $lba:expr, $parity:expr, $func:ident) => {
         {
-            //let start = ChunkId::Data($lba / $self.chunksize);
             let (start, end) = if $parity {
                 let m = $self.codec.stripesize() - $self.codec.protection();
                 (ChunkId::Parity($lba / $self.chunksize, 0),
@@ -216,11 +215,13 @@ impl VdevRaid {
                    stripe_buffer: StripeBuffer::new(0, stripe_lbas) }
     }
 
-    /// Read two or more whole stripes
+    /// Read more than one whole stripe
     fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let n = self.blockdevs.len();
-        let chunks = buf.len() / col_len;
+        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
+        let lbas = (buf.len() / BYTES_PER_LBA) as LbaT;
+        let chunks = div_roundup(buf.len(), col_len);
 
         // Create an SGList for each disk.
         let mut sglists = Vec::<SGListMut>::with_capacity(n);
@@ -236,11 +237,23 @@ impl VdevRaid {
         let max_futs = n * max_chunks_per_disk;
         let mut futs: Vec<Box<SGListFut>> = Vec::with_capacity(max_futs);
         let start = ChunkId::Data(lba / self.chunksize);
-        let end = ChunkId::Data((lba + (buf.len() / BYTES_PER_LBA) as LbaT) /
-                                self.chunksize);
+        let end = ChunkId::Data(div_roundup(lba + lbas, self.chunksize));
+        let mut starting = true;
         for (_, loc) in self.locator.iter_data(start, end) {
-            let col = buf.split_to(col_len);
-            let disk_lba = loc.offset * self.chunksize;
+            let (col, disk_lba) = if starting && lba % self.chunksize != 0 {
+                // The operation begins mid-chunk
+                starting = false;
+                let lbas_into_chunk = lba % self.chunksize;
+                let chunk1lbas = self.chunksize - lbas_into_chunk;
+                let chunk1size = chunk1lbas as usize * BYTES_PER_LBA;
+                let col = buf.split_to(chunk1size);
+                let disk_lba = loc.offset * self.chunksize + lbas_into_chunk;
+                (col, disk_lba)
+            } else {
+                let col = buf.split_to(col_len);
+                let disk_lba = loc.offset * self.chunksize;
+                (col, disk_lba)
+            };
             let disk = loc.disk as usize;
             if start_lbas[disk as usize] == SENTINEL {
                 // First chunk assigned to this disk
@@ -495,14 +508,10 @@ impl Vdev for VdevRaid {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
-        assert_eq!(buf.len().modulo(col_len * m), 0,
-                   "Only stripe-aligned reads are currently supported");
-        assert_eq!(lba.modulo(self.chunksize as u64 * m as u64), 0,
-            "Unaligned reads are not yet supported");
-        let chunks = buf.len() / col_len;
-        let stripes = chunks / m;
 
-        if stripes == 1 {
+        if lba % self.chunksize == 0 && buf.len() == col_len * m {
+            // TODO: generalize read_at_one so it can work with any read of
+            // smaller than a stripe
             self.read_at_one(buf, lba)
         } else {
             self.read_at_multi(buf, lba)
