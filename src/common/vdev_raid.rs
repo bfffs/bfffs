@@ -177,12 +177,18 @@ macro_rules! issue_1stripe_ops {
                  ChunkId::Parity($lba / $self.chunksize, 0))
             };
             let mut iter = $self.locator.iter(start, end);
+            let mut first = true;
             let futs : Vec<_> = $buf
             .into_iter()
             .enumerate()
             .map(|(_, d)| {
                 let (_, loc) = iter.next().unwrap();
-                let disk_lba = loc.offset * $self.chunksize;
+                let disk_lba = if first {
+                    first = false;
+                    $lba    // The op may begin mid-chunk
+                } else {
+                    loc.offset * $self.chunksize
+                };
                 $self.blockdevs[loc.disk as usize].$func(d, disk_lba)
             })
             .collect();
@@ -244,9 +250,9 @@ impl VdevRaid {
                 // The operation begins mid-chunk
                 starting = false;
                 let lbas_into_chunk = lba % self.chunksize;
-                let chunk1lbas = self.chunksize - lbas_into_chunk;
-                let chunk1size = chunk1lbas as usize * BYTES_PER_LBA;
-                let col = buf.split_to(chunk1size);
+                let chunk0lbas = self.chunksize - lbas_into_chunk;
+                let chunk0size = chunk0lbas as usize * BYTES_PER_LBA;
+                let col = buf.split_to(chunk0size);
                 let disk_lba = loc.offset * self.chunksize + lbas_into_chunk;
                 (col, disk_lba)
             } else {
@@ -288,14 +294,23 @@ impl VdevRaid {
         }))
     }
 
-    /// Read exactly one stripe
-    fn read_at_one(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+    /// Read a (possibly improper) subset of one stripe
+    fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
 
-        let data: Vec<IoVecMut> = buf.into_chunks(col_len).collect();
-        debug_assert_eq!(data.len(), m);
+        let data: Vec<IoVecMut> = if lba % self.chunksize == 0 {
+            buf.into_chunks(col_len).collect()
+        } else {
+            let lbas_into_chunk = lba % self.chunksize;
+            let chunk0lbas = self.chunksize - lbas_into_chunk;
+            let chunk0size = chunk0lbas as usize * BYTES_PER_LBA;
+            let col0 = buf.split_to(chunk0size);
+            let rest = buf.into_chunks(col_len);
+            Some(col0).into_iter().chain(rest).collect()
+        };
+        debug_assert!(data.len() <= m);
 
         let fut = issue_1stripe_ops!(self, data, lba, false, read_at);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
@@ -505,13 +520,14 @@ impl Vdev for VdevRaid {
     }
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA;
-        let f = self.codec.protection() as usize;
-        let m = self.codec.stripesize() as usize - f as usize;
+        let f = self.codec.protection();
+        let m = (self.codec.stripesize() - f) as LbaT;
+        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
 
-        if lba % self.chunksize == 0 && buf.len() == col_len * m {
-            // TODO: generalize read_at_one so it can work with any read of
-            // smaller than a stripe
+        let start_stripe = lba / (self.chunksize * m as LbaT);
+        let end_stripe = (lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT) /
+                         (self.chunksize * m);
+        if start_stripe == end_stripe {
             self.read_at_one(buf, lba)
         } else {
             self.read_at_multi(buf, lba)
