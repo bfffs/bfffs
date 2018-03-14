@@ -482,9 +482,9 @@ mod tests {
 
     // Test creating iterators from any starting point in a 5-4-2 PRIME-S layout
     #[test]
-    fn iter_5_4_2_any_start() {
-        let n = 5;
-        let k = 4;
+    fn iter_7_5_2_any_start() {
+        let n = 7;
+        let k = 5;
         let f = 2;
 
         let locator = PrimeS::new(n, k, f);
