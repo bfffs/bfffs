@@ -88,17 +88,19 @@ test_suite! {
 
     fn writev_read_n_stripes(mut vr: VdevRaid, k: i16, f: i16, s: usize) {
         let (dbsw, dbsr) = make_bufs(k, f, s);
-        let wbuf0 = dbsw.try().unwrap();
-        let wbuf1 = dbsw.try().unwrap();
+        let wbuf = dbsw.try().unwrap();
+        let mut wbuf_l = wbuf.clone();
+        let wbuf_r = wbuf_l.split_off(wbuf.len() / 2);
+        let sglist = vec![wbuf_l, wbuf_r];
         let r = current_thread::block_on_all(future::lazy(|| {
-            vr.write_at(wbuf1, 0)
+            vr.writev_at_one(&sglist, 0)
                 .then(|write_result| {
-                    write_result.expect("write_at");
+                    write_result.expect("writev_at_one");
                     vr.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
         assert_eq!(dbsr.len() as isize, r.value);
-        assert_eq!(wbuf0, dbsr.try().unwrap());
+        assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
     test write_read_one_stripe(raid) {
