@@ -8,7 +8,8 @@ macro_rules! t {
 test_suite! {
     name vdev_file;
 
-    use arkfs::common::vdev::{SGVdev, Vdev};
+    use arkfs::common::vdev::*;
+    use arkfs::common::vdev_leaf::*;
     use arkfs::sys::vdev_file::*;
     use futures::{future, Future};
     use std::fs;

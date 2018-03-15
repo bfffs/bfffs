@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use futures::{Future, Poll};
+use futures::Future;
 use futures::sync::oneshot;
 use nix;
 use std::cell::RefCell;
@@ -16,17 +16,17 @@ use common::dva::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 
-struct BlockOpBufG<T, S> {
+struct BlockOpBufG<T> {
     pub buf: T,
     /// Used by the `VdevLeaf` to complete this future
-    pub sender: oneshot::Sender<S>
+    pub sender: oneshot::Sender<()>
 }
 
 enum BlockOpBufT {
-    IoVec(BlockOpBufG<IoVec, IoVecResult>),
-    IoVecMut(BlockOpBufG<IoVecMut, IoVecResult>),
-    SGList(BlockOpBufG<SGList, SGListResult>),
-    SGListMut(BlockOpBufG<SGListMut, SGListResult>)
+    IoVec(BlockOpBufG<IoVec>),
+    IoVecMut(BlockOpBufG<IoVecMut>),
+    SGList(BlockOpBufG<SGList>),
+    SGListMut(BlockOpBufG<SGListMut>)
 }
 
 /// A single read or write command that is queued at the `VdevBlock` layer
@@ -75,58 +75,35 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
-    pub fn read_at(buf: IoVecMut, lba: LbaT,
-                   sender: oneshot::Sender<IoVecResult>) -> BlockOp {
-        let g = BlockOpBufG::<IoVecMut, IoVecResult>{
-            buf, sender
-        };
+    pub fn read_at(buf: IoVecMut, lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+        let g = BlockOpBufG::<IoVecMut>{ buf, sender };
         BlockOp { lba, bufs: BlockOpBufT::IoVecMut(g)}
     }
 
-    pub fn readv_at(bufs: SGListMut, lba: LbaT,
-                    sender: oneshot::Sender<SGListResult>) -> BlockOp {
-        let g = BlockOpBufG::<SGListMut, SGListResult>{buf: bufs, sender};
+    pub fn readv_at(bufs: SGListMut, lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+        let g = BlockOpBufG::<SGListMut>{buf: bufs, sender};
         BlockOp { lba, bufs: BlockOpBufT::SGListMut(g)}
     }
 
-    pub fn write_at(buf: IoVec, lba: LbaT, sender:
-                    oneshot::Sender<IoVecResult>) -> BlockOp {
-        let g = BlockOpBufG::<IoVec, IoVecResult>{
-            buf, sender
-        };
+    pub fn write_at(buf: IoVec, lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+        let g = BlockOpBufG::<IoVec>{ buf, sender };
         BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(g)}
     }
 
-    pub fn writev_at(bufs: SGList, lba: LbaT,
-                     sender: oneshot::Sender<SGListResult>) -> BlockOp {
-        let g = BlockOpBufG::<SGList, SGListResult>{buf: bufs, sender};
+    pub fn writev_at(bufs: SGList, lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+        let g = BlockOpBufG::<SGList>{buf: bufs, sender};
         BlockOp { lba, bufs: BlockOpBufT::SGList(g)}
     }
 }
 
+/// Future representing an any operation on a block vdev.
+///
+/// Since the scheduler combines adjacent operations, it's not always possible
+/// to know how much of an original operation's data was successfully transacted
+/// (as opposed to the combined operation's), so the return value is merely `()`
+/// on success, or an error code on failure.
 #[must_use = "futures do nothing unless polled"]
-struct VdevBlockFut<T> {
-    // Used by the mio stuff
-    receiver: oneshot::Receiver<T>
-}
-
-impl<T> VdevBlockFut<T> {
-    pub fn new( receiver: oneshot::Receiver<T>) -> Self {
-        VdevBlockFut::<T>{receiver}
-    }
-}
-
-impl<T> Future for VdevBlockFut<T> {
-    type Item = T;
-    type Error = nix::Error;
-
-    fn poll(&mut self) -> Poll<T, nix::Error> {
-        self.receiver.poll()
-        .map_err(|_| {
-            nix::Error::from(nix::errno::Errno::EPIPE)
-        })
-    }
-}
+pub type VdevBlockFut = Future<Item = (), Error = nix::Error>;
 
 /// Used for scheduling writes within a single Zone
 struct ZoneQueue {
@@ -151,20 +128,6 @@ impl ZoneQueue {
         }
     }
 }
-
-///// An iterator that yields successive `BlockOp`s of a `ZoneScheduler` that are
-///// ready to issue
-//pub struct ZoneSchedIter {
-//}
-
-//impl Iterator for ZoneSchedIter {
-    //type Item = BlockOp;
-
-    //fn next(&mut self) -> Option<BlockOp> {
-        ////TODO
-        //None
-    //}
-//}
 
 /// `VdevBlock`: Virtual Device for basic block device
 ///
@@ -245,8 +208,8 @@ impl VdevBlock {
         assert!(! zq.q.is_empty(), "Tried to issue from an empty zone");
         // Optimistically allocate enough for every BlockOp in the zone queue.
         let l = zq.q.len();
-        let mut iovec_s = Vec::<oneshot::Sender<IoVecResult>>::with_capacity(l);
-        let mut sg_s = Vec::<oneshot::Sender<SGListResult>>::with_capacity(l);
+        let mut iovec_s = Vec::<oneshot::Sender<()>>::with_capacity(l);
+        let mut sg_s = Vec::<oneshot::Sender<()>>::with_capacity(l);
         let mut combined_bufs = SGList::with_capacity(l);
         let start_lba = zq.wp;
         loop {
@@ -282,8 +245,8 @@ impl VdevBlock {
             let sender = iovec_s.pop().unwrap();
             let fut = self.leaf.write_at(combined_bufs.pop().unwrap(),
                                          start_lba)
-                .and_then(move |r| {
-                    sender.send(r).unwrap();
+                .and_then(move |_| {
+                    sender.send(()).unwrap();
                     Ok(())
                 }).map_err(|_| {
                     ()
@@ -293,16 +256,10 @@ impl VdevBlock {
             let fut = self.leaf.writev_at(combined_bufs, start_lba)
                 .and_then(move|_| {
                     for sender in iovec_s.drain(..) {
-                        // TODO We don't actually know how much data this
-                        // sender's receiver was expecting
-                        let r = IoVecResult{ value: 0 };
-                        sender.send(r).unwrap();
+                        sender.send(()).unwrap();
                     }
                     for sender in sg_s.drain(..) {
-                        // TODO We don't actually know how much data this
-                        // sender's receiver was expecting
-                        let r = SGListResult::default();
-                        sender.send(r).unwrap();
+                        sender.send(()).unwrap();
                     }
                     Ok(())
                 }).map_err(|_| {
@@ -310,6 +267,33 @@ impl VdevBlock {
                 });
             current_thread::spawn(fut);
         }
+    }
+
+    /// Asynchronously read a contiguous portion of the vdev.
+    ///
+    /// Return the number of bytes actually read.
+    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut> {
+        self.check_iovec_bounds(lba, &buf);
+        let (sender, receiver) = oneshot::channel::<()>();
+        let block_op = BlockOp::read_at(buf, lba, sender);
+        self.sched_read(block_op);
+        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+    }
+
+    /// The asynchronous scatter/gather read function.
+    ///
+    /// Returns nothing on success, and on error on failure
+    ///
+    /// # Parameters
+    ///
+    /// * `bufs`	Scatter-gather list of buffers to receive data
+    /// * `lba`     LBA from which to read
+    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevBlockFut> {
+        self.check_sglistmut_bounds(lba, &bufs);
+        let (sender, receiver) = oneshot::channel::<()>();
+        let block_op = BlockOp::readv_at(bufs, lba, sender);
+        self.sched_read(block_op);
+        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 
     fn sched_read(&self, block_op: BlockOp) {
@@ -322,8 +306,8 @@ impl VdevBlock {
                 let sender = iovec_mut.sender;
                 current_thread::spawn(
                     self.leaf.read_at(iovec_mut.buf, block_op.lba)
-                    .and_then(move |r| {
-                        sender.send(r).unwrap();
+                    .and_then(move |_| {
+                        sender.send(()).unwrap();
                         Ok(())})
                     .map_err(|_| {
                         ()
@@ -333,8 +317,8 @@ impl VdevBlock {
                 let sender = sglist_mut.sender;
                 current_thread::spawn(
                     self.leaf.readv_at(sglist_mut.buf, block_op.lba)
-                    .and_then(move |r| {
-                        sender.send(r).unwrap();
+                    .and_then(move |_| {
+                        sender.send(()).unwrap();
                         Ok(())})
                     .map_err(|_| {
                         ()
@@ -369,34 +353,35 @@ impl VdevBlock {
         self.issue_writes(zone);
     }
 
-    ///// Helper function that writes a `BlockOp` popped off the scheduler
-    //fn write_blockop(&self, block_op: BlockOp) -> io::Result<AioFut<isize>>{
-        //let bufs = block_op.bufs;
-        //if bufs.len() == 1 {
-            //self.leaf.write_at(bufs.first().unwrap().clone(), block_op.lba)
-        //} else {
-            //self.leaf.writev_at(bufs, block_op.lba)
-        //}
-    //}
-}
-
-impl SGVdev for VdevBlock {
-    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut> {
-        self.check_sglistmut_bounds(lba, &bufs);
-        let (sender, receiver) = oneshot::channel::<SGListResult>();
-        let block_op = BlockOp::readv_at(bufs, lba, sender);
-        self.sched_read(block_op);
-        Box::new(VdevBlockFut::new(receiver))
+    /// Asynchronously write a contiguous portion of the vdev.
+    ///
+    /// Returns nothing on success, and on error on failure
+    pub fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut> {
+        self.check_iovec_bounds(lba, &buf);
+        let (sender, receiver) = oneshot::channel::<()>();
+        let block_op = BlockOp::write_at(buf, lba, sender);
+        assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
+            "VdevBlock does not yet support fragmentary writes");
+        self.sched_write(block_op);
+        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 
-    fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut> {
+    /// The asynchronous scatter/gather write function.
+    ///
+    /// Returns nothing on success, or an error on failure
+    ///
+    /// # Parameters
+    ///
+    /// * `bufs`	Scatter-gather list of buffers to receive data
+    /// * `lba`     LBA from which to read
+    pub fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_sglist_bounds(lba, &bufs);
-        let (sender, receiver) = oneshot::channel::<SGListResult>();
+        let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not yet support fragmentary writes");
         self.sched_write(block_op);
-        Box::new(VdevBlockFut::new(receiver))
+        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 }
 
@@ -409,30 +394,12 @@ impl Vdev for VdevBlock {
         self.leaf.lba2zone(lba)
     }
 
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
-        self.check_iovec_bounds(lba, &buf);
-        let (sender, receiver) = oneshot::channel::<IoVecResult>();
-        let block_op = BlockOp::read_at(buf, lba, sender);
-        self.sched_read(block_op);
-        Box::new(VdevBlockFut::new(receiver))
-    }
-
     fn size(&self) -> LbaT {
         self.size
     }
 
     fn start_of_zone(&self, zone: ZoneT) -> LbaT {
         self.leaf.start_of_zone(zone)
-    }
-
-    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
-        self.check_iovec_bounds(lba, &buf);
-        let (sender, receiver) = oneshot::channel::<IoVecResult>();
-        let block_op = BlockOp::write_at(buf, lba, sender);
-        assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
-            "VdevBlock does not yet support fragmentary writes");
-        self.sched_write(block_op);
-        Box::new(VdevBlockFut::new(receiver))
     }
 }
 
@@ -455,18 +422,15 @@ test_suite! {
         trait Vdev {
             fn handle(&self) -> Handle;
             fn lba2zone(&self, lba: LbaT) -> ZoneT;
-            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
             fn size(&self) -> LbaT;
             fn start_of_zone(&self, zone: ZoneT) -> LbaT;
-            fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
-        },
-        vdev,
-        trait SGVdev  {
-            fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
-            fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
         },
         vdev_leaf,
         trait VdevLeaf  {
+            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
+            fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
+            fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
+            fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
         }
     }
 

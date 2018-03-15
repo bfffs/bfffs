@@ -3,7 +3,6 @@
 use common::*;
 use common::dva::*;
 use common::vdev::*;
-#[cfg(not(test))]
 use common::vdev_block::*;
 use common::raid::*;
 use common::declust::*;
@@ -18,7 +17,11 @@ use tokio::reactor::Handle;
 
 #[cfg(test)]
 /// Only exists so mockers can replace VdevBlock
-pub trait VdevBlockTrait : SGVdev {
+pub trait VdevBlockTrait : Vdev {
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut>;
+    fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevBlockFut>;
+    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;
+    fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<VdevBlockFut>;
 }
 #[cfg(test)]
 pub type VdevBlockLike = Box<VdevBlockTrait>;
@@ -39,7 +42,7 @@ struct StripeBuffer {
     stripe_lbas: LbaT,
 
     /// Futures that we must notify whenever we eventually write our data
-    senders: Vec<oneshot::Sender<Result<IoVecResult, Error>>>
+    senders: Vec<oneshot::Sender<Result<(), Error>>>
 }
 
 impl StripeBuffer {
@@ -49,7 +52,7 @@ impl StripeBuffer {
     /// will become ready once the `StripeBuffer` eventually gets written.  If
     /// it is anticipated that a channel will not be needed, then none will be
     /// returned.
-    pub fn fill(&mut self, mut iovec: IoVec) -> (IoVec, Option<Box<IoVecFut>>) {
+    pub fn fill(&mut self, mut iovec: IoVec) -> (IoVec, Option<Box<VdevRaidFut>>) {
         let want_lbas = self.stripe_lbas - self.len();
         let want_bytes = want_lbas as usize * BYTES_PER_LBA as usize;
         let have_bytes = iovec.len();
@@ -62,12 +65,11 @@ impl StripeBuffer {
             //write the entire stripe buffer
             None
         } else {
-            let (tx, rx) = oneshot::channel::<Result<IoVecResult, Error>>();
+            let (tx, rx) = oneshot::channel::<Result<(), Error>>();
             self.senders.push(tx);
-            let f: Box<IoVecFut> = Box::new(rx.then(|r| {
+            let f: Box<VdevRaidFut> = Box::new(rx.then(|r| {
                 match r {
-                    Ok(Ok(sglist_result)) =>
-                        Ok(IoVecResult{ value: sglist_result.value}),
+                    Ok(Ok(_)) => Ok(()),
                     Ok(Err(error)) => Err(error),
                     Err(_) => Err(Error::from(errno::Errno::EPIPE))
                 }
@@ -100,7 +102,7 @@ impl StripeBuffer {
     }
 
     pub fn new(lba: LbaT, stripe_lbas: LbaT) -> Self {
-        let senders = Vec::<oneshot::Sender<Result<IoVecResult, Error>>>::new();
+        let senders = Vec::<oneshot::Sender<Result<(), Error>>>::new();
         StripeBuffer{ buf: SGList::new(), lba, stripe_lbas, senders}
     }
 
@@ -120,14 +122,11 @@ impl StripeBuffer {
     ///
     /// Returns both the data and a collection of `oneshot::Sender`s that should
     /// be notified once the data is successfully written
-    pub fn pop(&mut self) ->
-        (SGList, Vec<oneshot::Sender<Result<IoVecResult, Error>>>) {
-
+    pub fn pop(&mut self) -> (SGList, Vec<oneshot::Sender<Result<(), Error>>>) {
         let new_sglist = SGList::new();
         self.lba = self.next_lba();
         let old_sglist = mem::replace(&mut self.buf, new_sglist);
-        let new_senders = Vec::<oneshot::Sender<Result<IoVecResult,
-                                                       Error>>>::new();
+        let new_senders = Vec::<oneshot::Sender<Result<(), Error>>>::new();
         let old_senders = mem::replace(&mut self.senders, new_senders);
         (old_sglist, old_senders)
     }
@@ -140,6 +139,13 @@ impl StripeBuffer {
         self.lba = lba;
     }
 }
+
+/// Future representing an any operation on a RAID vdev.
+///
+/// It's not always possible to know how much data was actually transacted (as
+/// opposed to data + parity), so the return value is merely `()` on success, or
+/// an error code on failure.
+pub type VdevRaidFut = Future<Item = (), Error = Error>;
 
 /// `VdevRaid`: Virtual Device for the RAID transform
 ///
@@ -236,8 +242,43 @@ impl VdevRaid {
                    stripe_buffer: StripeBuffer::new(0, stripe_lbas) }
     }
 
+    /// Asynchronously read a contiguous portion of the vdev.
+    ///
+    /// Returns `()` on success, or an error on failure
+    pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<VdevRaidFut> {
+        let f = self.codec.protection();
+        let m = (self.codec.stripesize() - f) as LbaT;
+        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
+
+        // end_lba is inclusive.  The highest LBA from which data will be read
+        let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
+        let buf2 = if !self.stripe_buffer.is_empty() &&
+            end_lba >= self.stripe_buffer.lba() {
+            // We need to service part of the read from the StripeBuffer
+            end_lba = self.stripe_buffer.lba() - 1;
+            let direct_len = (self.stripe_buffer.lba() - lba) as usize /
+                             BYTES_PER_LBA;
+            let mut sb_buf = buf.split_off(direct_len);
+            // Copy from StripeBuffer into sb_buf
+            for iovec in self.stripe_buffer.peek() {
+                sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
+            }
+            buf
+        } else {
+            // Don't involve the StripeBuffer
+            buf
+        };
+        let start_stripe = lba / (self.chunksize * m as LbaT);
+        let end_stripe = end_lba / (self.chunksize * m);
+        if start_stripe == end_stripe {
+            self.read_at_one(buf2, lba)
+        } else {
+            self.read_at_multi(buf2, lba)
+        }
+    }
+
     /// Read more than one whole stripe
-    fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+    fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let n = self.blockdevs.len();
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
@@ -256,7 +297,7 @@ impl VdevRaid {
         }
         // Build the SGLists, one chunk at a time
         let max_futs = n * max_chunks_per_disk;
-        let mut futs: Vec<Box<SGListFut>> = Vec::with_capacity(max_futs);
+        let mut futs: Vec<Box<VdevBlockFut>> = Vec::with_capacity(max_futs);
         let start = ChunkId::Data(lba / self.chunksize);
         let end = ChunkId::Data(div_roundup(lba + lbas, self.chunksize));
         let mut starting = true;
@@ -303,14 +344,11 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(|v| {
-            let value = v.into_iter().map(|x| x.value).sum();
-            IoVecResult{value}
-        }))
+        Box::new(fut.map(|_| { () }))
     }
 
     /// Read a (possibly improper) subset of one stripe
-    fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+    fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -333,14 +371,89 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(|v| {
-            let value = v.into_iter().map(|x| x.value).sum();
-            IoVecResult{value}
-        }))
+        Box::new(fut.map(|_| { () }))
     }
 
+    /// Asynchronously write a contiguous portion of the vdev.
+    ///
+    /// Returns `()` on success, or an error on failure
+    pub fn write_at(&mut self, buf: IoVec, mut lba: LbaT) -> Box<VdevRaidFut> {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
+        let f = self.codec.protection() as usize;
+        let m = self.codec.stripesize() as usize - f as usize;
+        let stripe_len = col_len * m;
+        assert_eq!(buf.len().modulo(col_len), 0,
+                   "Only chunk-aligned writes are currently supported");
+        assert_eq!(lba.modulo(self.chunksize as u64), 0,
+            "Unaligned writes are not yet supported");
+
+        assert_eq!(self.stripe_buffer.next_lba(), lba);
+        // We may need to join up to three futures to satisfy the caller
+        let mut futs = Vec::<Box<VdevRaidFut>>::with_capacity(3);
+
+        let mut buf3 = if !self.stripe_buffer.is_empty() ||
+                       buf.len() < stripe_len {
+
+            let (buf2, rx_fut) = self.stripe_buffer.fill(buf);
+            match rx_fut {
+            None => {
+                debug_assert!(self.stripe_buffer.is_full());
+                let stripe_lba = self.stripe_buffer.lba();
+                let (sglist, senders) = self.stripe_buffer.pop();
+                lba += self.chunksize * m as LbaT;
+                let fut = self.writev_at_one(&sglist, stripe_lba)
+                    .then(move |r| {
+                        for sender in senders {
+                            // XXX we can't send the correct value of size,
+                            // because we don't know what the original caller
+                            // asked for
+                            // Ignore the return value, because it could've
+                            // legitimately been cancelled
+                            let _ = sender.send(r.clone());
+                        }
+                        r
+                    });
+                if buf2.is_empty() {
+                    // Special case: if we fully consumed buf, then return
+                    // immediately
+                    return Box::new(fut);
+                } else {
+                    futs.push(Box::new(fut));
+                    buf2
+                }
+            },
+            Some(rx_fut) => {
+                // We didn't have enough data to fill the StripeBuffer, so
+                // return early
+                return rx_fut;
+            }
+            }
+        } else {
+            buf
+        };
+        debug_assert!(self.stripe_buffer.is_empty());
+        let nstripes = buf3.len() / stripe_len;
+        let writable_buf = buf3.split_to(nstripes * stripe_len);
+        futs.push(if nstripes == 1 {
+            self.write_at_one(writable_buf, lba)
+        } else {
+            self.write_at_multi(writable_buf, lba)
+        });
+        self.stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
+        if ! buf3.is_empty() {
+            let (buf4, rx_fut) = self.stripe_buffer.fill(buf3);
+            debug_assert!(!self.stripe_buffer.is_full());
+            futs.push(rx_fut.unwrap());
+            debug_assert!(buf4.is_empty());
+        }
+        if futs.len() == 1 {
+            futs.pop().unwrap()
+        } else {
+            Box::new(future::join_all(futs).map(|_| ()))
+        }
+    }
     /// Write two or more whole stripes
-    fn write_at_multi(&mut self, mut buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at_multi(&mut self, mut buf: IoVec, lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let k = self.codec.stripesize() as usize;
@@ -409,9 +522,9 @@ impl VdevRaid {
             sglists[loc.disk as usize].push(col);
         }
 
-        let futs : Vec<Box<SGListFut>> = multizip((self.blockdevs.iter_mut(),
-                                                   sglists.into_iter(),
-                                                   start_lbas.into_iter()))
+        let futs : Vec<Box<VdevBlockFut>> = multizip((self.blockdevs.iter_mut(),
+                                                      sglists.into_iter(),
+                                                      start_lbas.into_iter()))
             .filter(|&(_, _, lba)| lba != SENTINEL)
             .map(|(blockdev, sglist, lba)| blockdev.writev_at(sglist, lba))
             .collect();
@@ -421,15 +534,14 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(move |v| {
+        Box::new(fut.map(move |_| {
             let _ = parity_dbses;   // Needs to live this long
-            let value = v.into_iter().map(|x| x.value).sum();
-            IoVecResult{value}
+            ()
         }))
     }
 
     /// Write exactly one stripe
-    fn write_at_one(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at_one(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -460,20 +572,17 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::new(data_fut.join(parity_fut).map(move |(data_r, parity_r)| {
+        Box::new(data_fut.join(parity_fut).map(move |_| {
             let _ = parity_dbses;   // Needs to live this long
-            let data_v : isize = data_r.into_iter().map(|x| x.value).sum();
-            let parity_v : isize = parity_r.into_iter().map(|x| x.value).sum();
-            IoVecResult { value: data_v + parity_v }
         }))
     }
 
     /// Write exactly one stripe, with SGLists.
     ///
-    /// This is mostly useful internally, for writing from the row buffer.  It
+    /// This is mostly useful internally, for writing from the stripe buffer.  It
     /// should not be used publicly.
     #[doc(hidden)]
-    pub fn writev_at_one(&mut self, buf: &SGList, lba: LbaT) -> Box<SGListFut> {
+    pub fn writev_at_one(&mut self, buf: &SGList, lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -514,11 +623,9 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::new(data_fut.join(parity_fut).map(move |(data_r, parity_r)| {
+        Box::new(data_fut.join(parity_fut).map(move |_| {
             let _ = parity_dbses;   // Needs to live this long
-            let data_v : isize = data_r.into_iter().map(|x| x.value).sum();
-            let parity_v : isize = parity_r.into_iter().map(|x| x.value).sum();
-            SGListResult { value: data_v + parity_v }
+            ()
         }))
     }
 }
@@ -532,38 +639,6 @@ impl Vdev for VdevRaid {
         let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
         let disk_lba = loc.offset * self.chunksize;
         self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
-    }
-
-    fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
-        let f = self.codec.protection();
-        let m = (self.codec.stripesize() - f) as LbaT;
-        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
-
-        // end_lba is inclusive.  The highest LBA from which data will be read
-        let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
-        let buf2 = if !self.stripe_buffer.is_empty() &&
-            end_lba >= self.stripe_buffer.lba() {
-            // We need to service part of the read from the StripeBuffer
-            end_lba = self.stripe_buffer.lba() - 1;
-            let direct_len = (self.stripe_buffer.lba() - lba) as usize /
-                             BYTES_PER_LBA;
-            let mut sb_buf = buf.split_off(direct_len);
-            // Copy from StripeBuffer into sb_buf
-            for iovec in self.stripe_buffer.peek() {
-                sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
-            }
-            buf
-        } else {
-            // Don't involve the StripeBuffer
-            buf
-        };
-        let start_stripe = lba / (self.chunksize * m as LbaT);
-        let end_stripe = end_lba / (self.chunksize * m);
-        if start_stripe == end_stripe {
-            self.read_at_one(buf2, lba)
-        } else {
-            self.read_at_multi(buf2, lba)
-        }
     }
 
     fn size(&self) -> LbaT {
@@ -591,89 +666,6 @@ impl Vdev for VdevRaid {
         }).min().unwrap()
     }
 
-    fn write_at(&mut self, buf: IoVec, mut lba: LbaT) -> Box<IoVecFut> {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA;
-        let f = self.codec.protection() as usize;
-        let m = self.codec.stripesize() as usize - f as usize;
-        let stripe_len = col_len * m;
-        assert_eq!(buf.len().modulo(col_len), 0,
-                   "Only chunk-aligned writes are currently supported");
-        assert_eq!(lba.modulo(self.chunksize as u64), 0,
-            "Unaligned writes are not yet supported");
-
-        assert_eq!(self.stripe_buffer.next_lba(), lba);
-        // We may need to join up to three futures to satisfy the caller
-        let mut futs = Vec::<Box<IoVecFut>>::with_capacity(3);
-
-        let mut buf3 = if !self.stripe_buffer.is_empty() ||
-                       buf.len() < stripe_len {
-
-            let (buf2, rx_fut) = self.stripe_buffer.fill(buf);
-            match rx_fut {
-            None => {
-                debug_assert!(self.stripe_buffer.is_full());
-                let stripe_lba = self.stripe_buffer.lba();
-                let (sglist, senders) = self.stripe_buffer.pop();
-                lba += self.chunksize * m as LbaT;
-                let fut = self.writev_at_one(&sglist, stripe_lba)
-                    .then(move |r| {
-                        let result = match r {
-                            Ok(sglist_result) =>
-                                Ok(IoVecResult{ value: sglist_result.value}),
-                            Err(error) => Err(error)
-                        };
-                        for sender in senders {
-                            // XXX we can't send the correct value of size,
-                            // because we don't know what the original caller
-                            // asked for
-                            // Ignore the return value, because it could've
-                            // legitimately been cancelled
-                            let _ = sender.send(result.clone());
-                        }
-                        result
-                    });
-                if buf2.is_empty() {
-                    // Special case: if we fully consumed buf, then return
-                    // immediately
-                    return Box::new(fut);
-                } else {
-                    futs.push(Box::new(fut));
-                    buf2
-                }
-            },
-            Some(rx_fut) => {
-                // We didn't have enough data to fill the StripeBuffer, so
-                // return early
-                return rx_fut;
-            }
-            }
-        } else {
-            buf
-        };
-        debug_assert!(self.stripe_buffer.is_empty());
-        let nstripes = buf3.len() / stripe_len;
-        let writable_buf = buf3.split_to(nstripes * stripe_len);
-        futs.push(if nstripes == 1 {
-            self.write_at_one(writable_buf, lba)
-        } else {
-            self.write_at_multi(writable_buf, lba)
-        });
-        self.stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
-        if ! buf3.is_empty() {
-            let (buf4, rx_fut) = self.stripe_buffer.fill(buf3);
-            debug_assert!(!self.stripe_buffer.is_full());
-            futs.push(rx_fut.unwrap());
-            debug_assert!(buf4.is_empty());
-        }
-        if futs.len() == 1 {
-            futs.pop().unwrap()
-        } else {
-            Box::new(future::join_all(futs).map(|v| {
-                let value = v.into_iter().map(|x| x.value).sum();
-                IoVecResult{value}
-            }))
-        }
-    }
 }
 
 #[test]
@@ -771,7 +763,7 @@ fn stripe_buffer_rx_tx() {
     let (_, mut rx) = sb.fill(db);
     let (_, mut senders) = sb.pop();
     let tx = senders.pop().unwrap();
-    let result = Ok(IoVecResult{value: 42});
+    let result = Ok(());
     current_thread::block_on_all(future::lazy(move || {
         assert!(!rx.poll().unwrap().is_ready());
         tx.send(result).unwrap();
@@ -849,18 +841,15 @@ mock!{
     trait Vdev {
         fn handle(&self) -> Handle;
         fn lba2zone(&self, lba: LbaT) -> ZoneT;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
         fn size(&self) -> LbaT;
         fn start_of_zone(&self, zone: ZoneT) -> LbaT;
-        fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
-    },
-    vdev,
-    trait SGVdev  {
-        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
-        fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
     },
     self,
     trait VdevBlockTrait{
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut>;
+        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevBlockFut>;
+        fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;
+        fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut>;
     }
 }
 
@@ -1056,17 +1045,10 @@ fn read_at_one_stripe() {
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
-        let r = IoVecResult {
-            value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
-        };
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
-            .and_return(
-                Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
-                )
-            )
+            .and_return( Box::new( future::ok::<(), Error>(())))
         );
 
         blockdevs.push(m0);
@@ -1076,11 +1058,7 @@ fn read_at_one_stripe() {
         s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
-            .and_return(
-                Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
-                )
-            )
+            .and_return( Box::new( future::ok::<(), Error>(())))
         );
 
         blockdevs.push(m1);
@@ -1113,17 +1091,10 @@ fn write_at_one_stripe() {
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
-        let r = IoVecResult {
-            value: CHUNKSIZE as isize * BYTES_PER_LBA as isize
-        };
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
-            .and_return(
-                Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
-                )
-            )
+            .and_return( Box::new( future::ok::<(), Error>(())))
         );
 
         blockdevs.push(m0);
@@ -1133,11 +1104,7 @@ fn write_at_one_stripe() {
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
-            .and_return(
-                Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
-                )
-            )
+            .and_return( Box::new( future::ok::<(), Error>(())))
         );
 
         blockdevs.push(m1);
@@ -1147,11 +1114,7 @@ fn write_at_one_stripe() {
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
-            .and_return(
-                Box::new(
-                    future::ok::<IoVecResult, Error>(r.clone())
-                )
-            )
+            .and_return( Box::new( future::ok::<(), Error>(())))
         );
         blockdevs.push(m2);
 

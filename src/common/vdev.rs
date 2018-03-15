@@ -38,15 +38,16 @@ pub type SGListFut = futures::Future<Item = SGListResult, Error = nix::Error>;
 /// ZFS, vdevs may not be stacked arbitrarily.  Not all Vdevs have the same data
 /// plane API.  These methods here are the methods that are common to all Vdev
 /// types.
+///
+/// The main datapath interface to any `Vdev` is `read_at` and `write_at`.
+/// However, those methods are not technically part of the trait, because they
+/// have different return values at different levels.
 pub trait Vdev {
     /// Return the Tokio reactor handle used for this vdev
     fn handle(&self) -> Handle;
 
     /// Return the zone number at which the given LBA resides
     fn lba2zone(&self, lba: LbaT) -> ZoneT;
-
-    /// Asynchronously read a contiguous portion of the vdev
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
 
     /// Return the usable space of the Vdev.
     ///
@@ -56,24 +57,4 @@ pub trait Vdev {
 
     /// Return the first LBA of the given zone
     fn start_of_zone(&self, zone: ZoneT) -> LbaT;
-
-    /// Asynchronously write a contiguous portion of the vdev
-    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
-}
-
-/// Scatter-Gather Vdev
-///
-/// These Vdevs support scatter-gather operations analogous to preadv/pwritev.
-pub trait SGVdev : Vdev {
-    /// The asynchronous scatter/gather read function.
-    /// 
-    /// * `bufs`	Scatter-gather list of buffers to receive data
-    /// * `lba`     LBA from which to read
-    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
-
-    /// The asynchronous scatter/gather write function.
-    /// 
-    /// * `bufs`	Scatter-gather list of buffers to receive data
-    /// * `lba`     LBA from which to read
-    fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
 }

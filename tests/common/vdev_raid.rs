@@ -13,7 +13,6 @@ test_suite! {
     use arkfs::common::dva::*;
     use arkfs::common::prime_s::PrimeS;
     use arkfs::common::raid::Codec;
-    use arkfs::common::vdev::Vdev;
     use arkfs::common::vdev_block::*;
     use arkfs::common::vdev_raid::*;
     use arkfs::sys::vdev_file::*;
@@ -75,14 +74,13 @@ test_suite! {
         let (dbsw, dbsr) = make_bufs(k, f, s);
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
-        let r = current_thread::block_on_all(future::lazy(|| {
+        current_thread::block_on_all(future::lazy(|| {
             vr.write_at(wbuf1, 0)
                 .then(|write_result| {
                     write_result.expect("write_at");
                     vr.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
-        assert_eq!(dbsr.len() as isize, r.value);
         assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 
@@ -92,14 +90,13 @@ test_suite! {
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(wbuf.len() / 2);
         let sglist = vec![wbuf_l, wbuf_r];
-        let r = current_thread::block_on_all(future::lazy(|| {
+        current_thread::block_on_all(future::lazy(|| {
             vr.writev_at_one(&sglist, 0)
                 .then(|write_result| {
                     write_result.expect("writev_at_one");
                     vr.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
-        assert_eq!(dbsr.len() as isize, r.value);
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 

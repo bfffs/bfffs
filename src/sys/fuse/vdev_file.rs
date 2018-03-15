@@ -46,7 +46,33 @@ impl BorrowMut<[u8]> for IoVecMutContainer {
     }
 }
 
-impl SGVdev for VdevFile {
+impl Vdev for VdevFile {
+    fn handle(&self) -> Handle {
+        self.handle.clone()
+    }
+
+    fn lba2zone(&self, lba: LbaT) -> ZoneT {
+        (lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT
+    }
+
+    fn size(&self) -> LbaT {
+        self.size
+    }
+
+    fn start_of_zone(&self, zone: ZoneT) -> LbaT {
+        u64::from(zone) * VdevFile::LBAS_PER_ZONE
+    }
+}
+
+impl VdevLeaf for VdevFile {
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+        let container = Box::new(IoVecMutContainer(buf));
+        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        Box::new(self.file.read_at(container, off).unwrap().map(|aio_result| {
+            IoVecResult{value: aio_result.value.unwrap()}
+        }))
+    }
+
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<SGListFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
@@ -55,6 +81,14 @@ impl SGVdev for VdevFile {
         Box::new(self.file.readv_at(containers, off).unwrap().map(|r| {
             let v = r.into_iter().map(|x| x.value.unwrap()).sum();
             SGListResult{value: v}
+        }))
+    }
+
+    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+        let container = Box::new(IoVecContainer(buf));
+        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        Box::new(self.file.write_at(container, off).unwrap().map(|aio_result| {
+            IoVecResult { value: aio_result.value.unwrap() }
         }))
     }
 
@@ -68,43 +102,6 @@ impl SGVdev for VdevFile {
             SGListResult{value: v}
         }))
     }
-}
-
-impl Vdev for VdevFile {
-    fn handle(&self) -> Handle {
-        self.handle.clone()
-    }
-
-    fn lba2zone(&self, lba: LbaT) -> ZoneT {
-        (lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT
-    }
-
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
-        let container = Box::new(IoVecMutContainer(buf));
-        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.read_at(container, off).unwrap().map(|aio_result| {
-            IoVecResult{value: aio_result.value.unwrap()}
-        }))
-    }
-
-    fn size(&self) -> LbaT {
-        self.size
-    }
-
-    fn start_of_zone(&self, zone: ZoneT) -> LbaT {
-        u64::from(zone) * VdevFile::LBAS_PER_ZONE
-    }
-
-    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
-        let container = Box::new(IoVecContainer(buf));
-        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.write_at(container, off).unwrap().map(|aio_result| {
-            IoVecResult { value: aio_result.value.unwrap() }
-        }))
-    }
-}
-
-impl VdevLeaf for VdevFile {
 }
 
 impl VdevFile {

@@ -9,7 +9,7 @@ test_suite! {
     // These tests use a real VdevLeaf object
     name vdev_block;
 
-    use arkfs::common::vdev::{SGVdev, Vdev};
+    use arkfs::common::vdev::*;
     use arkfs::common::vdev_block::*;
     use arkfs::sys::vdev_file::*;
     use divbuf::DivBufShared;
