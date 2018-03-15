@@ -131,6 +131,14 @@ impl StripeBuffer {
         let old_senders = mem::replace(&mut self.senders, new_senders);
         (old_sglist, old_senders)
     }
+
+    /// Reset an empty `StripeBuffer` to point to a new stripe.
+    ///
+    /// It is illegal to call this method on a non-empty `StripeBuffer`
+    pub fn reset(&mut self, lba: LbaT) {
+        assert!(self.is_empty(), "A StripeBuffer with data cannot be moved");
+        self.lba = lba;
+    }
 }
 
 /// `VdevRaid`: Virtual Device for the RAID transform
@@ -645,17 +653,18 @@ impl Vdev for VdevRaid {
         debug_assert!(self.stripe_buffer.is_empty());
         let nstripes = buf3.len() / stripe_len;
         let writable_buf = buf3.split_to(nstripes * stripe_len);
+        futs.push(if nstripes == 1 {
+            self.write_at_one(writable_buf, lba)
+        } else {
+            self.write_at_multi(writable_buf, lba)
+        });
+        self.stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
         if ! buf3.is_empty() {
             let (buf4, rx_fut) = self.stripe_buffer.fill(buf3);
             debug_assert!(!self.stripe_buffer.is_full());
             futs.push(rx_fut.unwrap());
             debug_assert!(buf4.is_empty());
         }
-        futs.push(if nstripes == 1 {
-            self.write_at_one(writable_buf, lba)
-        } else {
-            self.write_at_multi(writable_buf, lba)
-        });
         if futs.len() == 1 {
             futs.pop().unwrap()
         } else {
@@ -732,6 +741,24 @@ fn stripe_buffer_one_iovec() {
     assert_eq!(sglist.len(), 1);
     assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
     assert_eq!(senders.len(), 1);
+}
+
+#[test]
+fn stripe_buffer_reset() {
+    let mut sb = StripeBuffer::new(99, 6);
+    assert_eq!(sb.lba(), 99);
+    sb.reset(111);
+    assert_eq!(sb.lba(), 111);
+}
+
+#[test]
+#[should_panic(expected = "A StripeBuffer with data cannot be moved")]
+fn stripe_buffer_reset_nonempty() {
+    let mut sb = StripeBuffer::new(99, 6);
+    let dbs = DivBufShared::from(vec![0; 4096]);
+    let db = dbs.try().unwrap();
+    let _ = sb.fill(db);
+    sb.reset(111);
 }
 
 #[test]
