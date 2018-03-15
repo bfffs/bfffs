@@ -109,6 +109,13 @@ impl StripeBuffer {
         self.lba + self.len()
     }
 
+    /// Get a reference to the data contained by the `StripeBuffer`
+    ///
+    /// This can be used to read out the currently buffered data
+    pub fn peek(&self) -> &SGList {
+        &self.buf
+    }
+
     /// Extract all data from the `StripeBuffer`
     ///
     /// Returns both the data and a collection of `oneshot::Sender`s that should
@@ -519,18 +526,35 @@ impl Vdev for VdevRaid {
         self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
     }
 
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+    fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
 
-        let start_stripe = lba / (self.chunksize * m as LbaT);
-        let end_stripe = (lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT) /
-                         (self.chunksize * m);
-        if start_stripe == end_stripe {
-            self.read_at_one(buf, lba)
+        // end_lba is inclusive.  The highest LBA from which data will be read
+        let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
+        let buf2 = if !self.stripe_buffer.is_empty() &&
+            end_lba >= self.stripe_buffer.lba() {
+            // We need to service part of the read from the StripeBuffer
+            end_lba = self.stripe_buffer.lba() - 1;
+            let direct_len = (self.stripe_buffer.lba() - lba) as usize /
+                             BYTES_PER_LBA;
+            let mut sb_buf = buf.split_off(direct_len);
+            // Copy from StripeBuffer into sb_buf
+            for iovec in self.stripe_buffer.peek() {
+                sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
+            }
+            buf
         } else {
-            self.read_at_multi(buf, lba)
+            // Don't involve the StripeBuffer
+            buf
+        };
+        let start_stripe = lba / (self.chunksize * m as LbaT);
+        let end_stripe = end_lba / (self.chunksize * m);
+        if start_stripe == end_stripe {
+            self.read_at_one(buf2, lba)
+        } else {
+            self.read_at_multi(buf2, lba)
         }
     }
 
@@ -651,6 +675,7 @@ fn stripe_buffer_empty() {
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 99);
     assert_eq!(sb.len(), 0);
+    assert!(sb.peek().is_empty());
     let (sglist, senders) = sb.pop();
     assert!(sglist.is_empty());
     assert!(senders.is_empty());
@@ -664,6 +689,7 @@ fn stripe_buffer_empty() {
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 99);
     assert_eq!(sb.len(), 0);
+    assert!(sb.peek().is_empty());
     let (sglist, senders) = sb.pop();
     assert!(sglist.is_empty());
     assert_eq!(senders.len(), 1);
@@ -697,6 +723,11 @@ fn stripe_buffer_one_iovec() {
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 100);
     assert_eq!(sb.len(), 1);
+    {
+        let sglist = sb.peek();
+        assert_eq!(sglist.len(), 1);
+        assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
+    }
     let (sglist, senders) = sb.pop();
     assert_eq!(sglist.len(), 1);
     assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
@@ -736,6 +767,12 @@ fn stripe_buffer_two_iovecs() {
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 102);
     assert_eq!(sb.len(), 3);
+    {
+        let sglist = sb.peek();
+        assert_eq!(sglist.len(), 2);
+        assert_eq!(&sglist[0][..], &vec![0; 8192][..]);
+        assert_eq!(&sglist[1][..], &vec![1; 4096][..]);
+    }
     let (sglist, senders) = sb.pop();
     assert_eq!(sglist.len(), 2);
     assert_eq!(&sglist[0][..], &vec![0; 8192][..]);
@@ -757,6 +794,12 @@ fn stripe_buffer_two_iovecs_overflow() {
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 105);
     assert_eq!(sb.len(), 6);
+    {
+        let sglist = sb.peek();
+        assert_eq!(sglist.len(), 2);
+        assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
+        assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
+    }
     let (sglist, senders) = sb.pop();
     assert_eq!(sglist.len(), 2);
     assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
