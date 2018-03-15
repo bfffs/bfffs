@@ -1,3 +1,5 @@
+// vim: tw=80
+
 macro_rules! t {
     ($e:expr) => (match $e {
         Ok(e) => e,
@@ -9,7 +11,7 @@ test_suite! {
     // These tests use real VdevBlock and VdevLeaf objects
     name vdev_raid;
 
-    use arkfs::common::LbaT;
+    use arkfs::common::*;
     use arkfs::common::dva::*;
     use arkfs::common::prime_s::PrimeS;
     use arkfs::common::raid::Codec;
@@ -70,17 +72,42 @@ test_suite! {
         (dbsw, dbsr)
     }
 
-    fn write_read_n_stripes(mut vr: VdevRaid, k: i16, f: i16, s: usize) {
+    fn write_read(mut vr: VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>) {
+        current_thread::block_on_all(future::lazy(|| {
+            future::join_all( {
+                let mut lba = 0;
+                // The ugly collect() call is necessary to appease the borrow
+                // checker, because write_at must mutably borrow the VdevRaid
+                let wfuts: Vec<_> = wbufs.into_iter()
+                .map(|wb| {
+                    let lbas = (wb.len() / BYTES_PER_LBA) as LbaT;
+                    let fut = vr.write_at(wb, lba);
+                    lba += lbas;
+                    fut
+                }).collect();
+                wfuts }
+            ).and_then(|_| {
+                future::join_all({
+                    // The ugly collect() call is necessary to appease the
+                    // borrow checker, because lba is borrowed
+                    let mut lba = 0;
+                    rbufs.into_iter()
+                    .map(|rb| {
+                        let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
+                        let fut = vr.read_at(rb, lba);
+                        lba += lbas;
+                        fut
+                    }).collect::<Vec<_>>()
+                })
+            })
+        })).expect("current_thread::block_on_all");
+    }
+
+    fn write_read_n_stripes(vr: VdevRaid, k: i16, f: i16, s: usize) {
         let (dbsw, dbsr) = make_bufs(k, f, s);
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
-        current_thread::block_on_all(future::lazy(|| {
-            vr.write_at(wbuf1, 0)
-                .then(|write_result| {
-                    write_result.expect("write_at");
-                    vr.read_at(dbsr.try_mut().unwrap(), 0)
-                })
-        })).expect("read_at");
+        write_read(vr, vec![wbuf1], vec![dbsr.try_mut().unwrap()]);
         assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 
@@ -110,6 +137,15 @@ test_suite! {
 
     test write_read_ten_stripes(raid) {
         write_read_n_stripes(raid.val.0, *raid.params.k, *raid.params.f, 10);
+    }
+
+    test write_completes_a_partial_stripe(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 1);
+        let wbuf = dbsw.try().unwrap();
+        let mut wbuf_l = wbuf.clone();
+        let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
+        write_read(raid.val.0, vec![wbuf_l, wbuf_r], vec![dbsr.try_mut().unwrap()]);
+        assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
     test writev_read_one_stripe(raid) {

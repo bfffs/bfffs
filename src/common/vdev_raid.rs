@@ -10,7 +10,6 @@ use divbuf::DivBufShared;
 use futures::{Future, future};
 use futures::sync::oneshot;
 use itertools::multizip;
-use modulo::Mod;
 use nix::{errno, Error};
 use std::{cmp, mem, ptr};
 use tokio::reactor::Handle;
@@ -38,7 +37,7 @@ struct StripeBuffer {
     /// The LBA of the beginning of the cached stripe
     lba: LbaT,
 
-    /// Size of a full stripe, in LBAs
+    /// Amount of data in a full stripe, in LBAs
     stripe_lbas: LbaT,
 
     /// Futures that we must notify whenever we eventually write our data
@@ -227,6 +226,8 @@ impl VdevRaid {
             "mismatched stripe size");
         assert_eq!(codec.protection(), locator.protection(),
             "mismatched protection level");
+        let f = codec.protection();
+        let m = (codec.stripesize() - f) as LbaT;
         for i in 1..blockdevs.len() {
             // All blockdevs must be the same size
             assert_eq!(blockdevs[0].size(), blockdevs[i].size());
@@ -237,7 +238,7 @@ impl VdevRaid {
                        blockdevs[i].start_of_zone(1));
         }
 
-        let stripe_lbas = codec.stripesize() as LbaT * chunksize as LbaT;
+        let stripe_lbas = m * chunksize as LbaT;
         VdevRaid { chunksize, codec, locator, blockdevs,
                    stripe_buffer: StripeBuffer::new(0, stripe_lbas) }
     }
@@ -248,7 +249,7 @@ impl VdevRaid {
     pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<VdevRaidFut> {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
-        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
+        assert_eq!(buf.len() % BYTES_PER_LBA, 0, "reads must be LBA-aligned");
 
         // end_lba is inclusive.  The highest LBA from which data will be read
         let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
@@ -382,12 +383,9 @@ impl VdevRaid {
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
         let stripe_len = col_len * m;
-        assert_eq!(buf.len().modulo(col_len), 0,
-                   "Only chunk-aligned writes are currently supported");
-        assert_eq!(lba.modulo(self.chunksize as u64), 0,
-            "Unaligned writes are not yet supported");
-
+        assert_eq!(buf.len() % BYTES_PER_LBA, 0, "Writes must be LBA-aligned");
         assert_eq!(self.stripe_buffer.next_lba(), lba);
+
         // We may need to join up to three futures to satisfy the caller
         let mut futs = Vec::<Box<VdevRaidFut>>::with_capacity(3);
 
