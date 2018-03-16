@@ -293,7 +293,8 @@ impl VdevRaid {
                 let disk_lba = loc.offset * self.chunksize + lbas_into_chunk;
                 (col, disk_lba)
             } else {
-                let col = buf.split_to(col_len);
+                let chunklen = cmp::min(buf.len(), col_len);
+                let col = buf.split_to(chunklen);
                 let disk_lba = loc.offset * self.chunksize;
                 (col, disk_lba)
             };

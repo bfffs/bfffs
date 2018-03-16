@@ -134,7 +134,6 @@ test_suite! {
 
     // Read a stripe in several pieces, from disk
     test read_parts_of_stripe(raid((7, 7, 1, 16))) {
-        let m = raid.params.k - raid.params.f;
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let cs = *raid.params.chunksize as usize;
@@ -160,6 +159,21 @@ test_suite! {
         assert_eq!(&wbuf[..], &dbsr.try().unwrap()[..]);
     }
 
+    // Read the end of one stripe and the beginning of another
+    test read_partial_stripes(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 2);
+        let wbuf = dbsw.try().unwrap();
+        {
+            let mut rbuf_m = dbsr.try_mut().unwrap();
+            let rbuf_b = rbuf_m.split_to(BYTES_PER_LBA);
+            let l = rbuf_m.len();
+            let rbuf_e = rbuf_m.split_off(l - BYTES_PER_LBA);
+            write_read(raid.val.0, vec![wbuf.clone()],
+                       vec![rbuf_b, rbuf_m, rbuf_e]);
+        }
+        assert_eq!(wbuf, dbsr.try().unwrap());
+    }
 
     test write_read_one_stripe(raid) {
         write_read_n_stripes(raid.val.0, *raid.params.chunksize,
