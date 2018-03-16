@@ -26,17 +26,18 @@ test_suite! {
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
 
-    const CHUNKSIZE : LbaT = 2;
+    fixture!( raid(n: i16, k: i16, f: i16, chunksize: LbaT) ->
+              (VdevRaid, TempDir) {
 
-    fixture!( raid(n: i16, k: i16, f: i16) -> (VdevRaid, TempDir) {
         params {
-            vec![(3, 3, 1),     // Smallest possible configuration
-                 (5, 4, 1),     // Smallest PRIME-S declustered configuration
-                 (5, 5, 2),     // Smallest double-parity configuration
-                 (7, 4, 1),     // Smallest non-ideal PRIME-S configuration
-                 (7, 7, 3),     // Smallest triple-parity configuration
-                 (11, 9, 4),    // Smallest quad-parity configuration
-                 (41, 20, 4),   // Jumbo configuration
+            vec![(3, 3, 1, 2),      // Smallest possible configuration
+                 (5, 4, 1, 2),      // Smallest PRIMES declustered configuration
+                 (5, 5, 2, 2),      // Smallest double-parity configuration
+                 (7, 4, 1, 2),      // Smallest non-ideal PRIME-S configuration
+                 (7, 7, 3, 2),      // Smallest triple-parity configuration
+                 (11, 9, 4, 2),     // Smallest quad-parity configuration
+                 (41, 20, 4, 2),    // Jumbo configuration
+                 (3, 3, 1, 16),     // Large chunk configuration
             ].into_iter()
         }
         setup(&mut self) {
@@ -52,15 +53,17 @@ test_suite! {
             }).collect();
             let codec = Codec::new(*self.k as u32, *self.f as u32);
             let locator = Box::new(PrimeS::new(*self.n, *self.k, *self.f));
-            let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+            let vdev_raid = VdevRaid::new(*self.chunksize, codec, locator,
                                       blockdevs.into_boxed_slice());
             (vdev_raid, tempdir)
         }
     });
 
-    fn make_bufs(k: i16, f: i16, s: usize) -> (DivBufShared, DivBufShared) {
+    fn make_bufs(chunksize: LbaT, k: i16, f: i16, s: usize) ->
+        (DivBufShared, DivBufShared) {
+
         let chunks = s * (k - f) as usize;
-        let lbas = CHUNKSIZE * chunks as LbaT;
+        let lbas = chunksize * chunks as LbaT;
         let bytes = BYTES_PER_LBA * lbas as usize;
         let mut wvec = vec![0u8; bytes];
         let mut rng = thread_rng();
@@ -103,16 +106,18 @@ test_suite! {
         })).expect("current_thread::block_on_all");
     }
 
-    fn write_read_n_stripes(vr: VdevRaid, k: i16, f: i16, s: usize) {
-        let (dbsw, dbsr) = make_bufs(k, f, s);
+    fn write_read_n_stripes(vr: VdevRaid, chunksize: LbaT, k: i16, f: i16,
+                            s: usize) {
+        let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         write_read(vr, vec![wbuf1], vec![dbsr.try_mut().unwrap()]);
         assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 
-    fn writev_read_n_stripes(mut vr: VdevRaid, k: i16, f: i16, s: usize) {
-        let (dbsw, dbsr) = make_bufs(k, f, s);
+    fn writev_read_n_stripes(mut vr: VdevRaid, chunksize: LbaT, k: i16, f: i16,
+                             s: usize) {
+        let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
         let wbuf = dbsw.try().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(wbuf.len() / 2);
@@ -128,19 +133,23 @@ test_suite! {
     }
 
     test write_read_one_stripe(raid) {
-        write_read_n_stripes(raid.val.0, *raid.params.k, *raid.params.f, 1);
+        write_read_n_stripes(raid.val.0, *raid.params.chunksize,
+                             *raid.params.k, *raid.params.f, 1);
     }
 
     test write_read_two_stripes(raid) {
-        write_read_n_stripes(raid.val.0, *raid.params.k, *raid.params.f, 2);
+        write_read_n_stripes(raid.val.0, *raid.params.chunksize,
+                             *raid.params.k, *raid.params.f, 2);
     }
 
     test write_read_ten_stripes(raid) {
-        write_read_n_stripes(raid.val.0, *raid.params.k, *raid.params.f, 10);
+        write_read_n_stripes(raid.val.0, *raid.params.chunksize,
+                             *raid.params.k, *raid.params.f, 10);
     }
 
     test write_completes_a_partial_stripe(raid) {
-        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 1);
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
@@ -150,7 +159,8 @@ test_suite! {
     }
 
     test write_completes_a_partial_stripe_and_writes_a_bit_more(raid) {
-        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 2);
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 2);
         {
             // Truncate buffers to be < 2 stripes' length
             let mut dbwm = dbsw.try_mut().unwrap();
@@ -169,7 +179,8 @@ test_suite! {
     }
 
     test write_completes_a_partial_stripe_and_writes_another(raid) {
-        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 2);
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 2);
         let wbuf = dbsw.try().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
@@ -179,7 +190,8 @@ test_suite! {
     }
 
     test write_completes_a_partial_stripe_and_writes_two_more(raid) {
-        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 3);
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 3);
         let wbuf = dbsw.try().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
@@ -189,7 +201,8 @@ test_suite! {
     }
 
     test write_partial_at_start_of_stripe(raid) {
-        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 1);
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         {
@@ -201,7 +214,27 @@ test_suite! {
                    &dbsr.try().unwrap()[0..BYTES_PER_LBA]);
     }
 
+    // Test that write_at works when directed at the middle of the StripeBuffer.
+    // This test requires a chunksize > 2
+    test write_partial_at_middle_of_stripe(raid((3, 3, 1, 16))) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let wbuf = dbsw.try().unwrap().slice_to(2 * BYTES_PER_LBA);
+        let wbuf_begin = wbuf.slice_to(BYTES_PER_LBA);
+        let wbuf_middle = wbuf.slice_from(BYTES_PER_LBA);
+        {
+            let mut rbuf = dbsr.try_mut().unwrap();
+            let _ = rbuf.split_off(2 * BYTES_PER_LBA);
+            write_read(raid.val.0, vec![wbuf_begin, wbuf_middle], vec![rbuf]);
+        }
+        assert_eq!(&wbuf[..],
+                   &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA],
+                   "{:#?}\n{:#?}", &wbuf[..],
+                   &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA]);
+    }
+
     test writev_read_one_stripe(raid) {
-        writev_read_n_stripes(raid.val.0, *raid.params.k, *raid.params.f, 1);
+        writev_read_n_stripes(raid.val.0, *raid.params.chunksize,
+                              *raid.params.k, *raid.params.f, 1);
     }
 }
