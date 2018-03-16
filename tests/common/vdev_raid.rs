@@ -149,20 +149,24 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
-    //test write_completes_a_partial_stripe_and_writes_a_bit_more(raid) {
-        //let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 2);
-        //{
-            //let mut wbuf = dbsw.try().unwrap();
-            //let wbuf_short_len = wbuf.len() - BYTES_PER_LBA;
-            //let mut wbuf_l = wbuf.split_to(wbuf_short_len);
-            //let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
-            //let mut rbuf = dbsr.try_mut().unwrap();
-            //let rbuf_short_len = rbuf.len() - BYTES_PER_LBA;
-            //let rbuf_short = rbuf.split_to(rbuf_short_len);
-            //write_read(raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf_short]);
-        //}
-        //assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
-    //}
+    test write_completes_a_partial_stripe_and_writes_a_bit_more(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 2);
+        {
+            // Truncate buffers to be < 2 stripes' length
+            let mut dbwm = dbsw.try_mut().unwrap();
+            let dbwm_len = dbwm.len();
+            dbwm.try_truncate(dbwm_len - BYTES_PER_LBA).expect("truncate");
+            let mut dbrm = dbsr.try_mut().unwrap();
+            dbrm.try_truncate(dbwm_len - BYTES_PER_LBA).expect("truncate");
+        }
+        {
+            let mut wbuf_l = dbsw.try().unwrap();
+            let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
+            let rbuf = dbsr.try_mut().unwrap();
+            write_read(raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf]);
+        }
+        assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
+    }
 
     test write_completes_a_partial_stripe_and_writes_another(raid) {
         let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 2);

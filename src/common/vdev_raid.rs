@@ -229,7 +229,7 @@ impl VdevRaid {
         let buf2 = if !self.stripe_buffer.is_empty() &&
             end_lba >= self.stripe_buffer.lba() {
             // We need to service part of the read from the StripeBuffer
-            let direct_len = (self.stripe_buffer.lba() - lba) as usize /
+            let direct_len = (self.stripe_buffer.lba() - lba) as usize *
                              BYTES_PER_LBA;
             let mut sb_buf = buf.split_off(direct_len);
             // Copy from StripeBuffer into sb_buf
@@ -374,8 +374,6 @@ impl VdevRaid {
             let buflen = buf.len();
             let buf2 = self.stripe_buffer.fill(buf);
             if self.stripe_buffer.is_full() {
-                //lba = self.stripe_buffer.lba();
-                //sglist.push(self.stripe_buffer.pop());
                 let stripe_lba = self.stripe_buffer.lba();
                 let sglist = self.stripe_buffer.pop();
                 lba += ((buflen - buf2.len()) / BYTES_PER_LBA) as LbaT;
