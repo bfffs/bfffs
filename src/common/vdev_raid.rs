@@ -339,7 +339,8 @@ impl VdevRaid {
         } else {
             let lbas_into_chunk = lba % self.chunksize;
             let chunk0lbas = self.chunksize - lbas_into_chunk;
-            let chunk0size = chunk0lbas as usize * BYTES_PER_LBA;
+            let chunk0size = cmp::min(chunk0lbas as usize * BYTES_PER_LBA,
+                                      buf.len());
             let col0 = buf.split_to(chunk0size);
             let rest = buf.into_chunks(col_len);
             Some(col0).into_iter().chain(rest).collect()

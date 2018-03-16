@@ -37,7 +37,7 @@ test_suite! {
                  (7, 7, 3, 2),      // Smallest triple-parity configuration
                  (11, 9, 4, 2),     // Smallest quad-parity configuration
                  (41, 20, 4, 2),    // Jumbo configuration
-                 (3, 3, 1, 16),     // Large chunk configuration
+                 (7, 7, 1, 16),     // Large chunk configuration
             ].into_iter()
         }
         setup(&mut self) {
@@ -132,6 +132,35 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
+    // Read a stripe in several pieces, from disk
+    test read_parts_of_stripe(raid((7, 7, 1, 16))) {
+        let m = raid.params.k - raid.params.f;
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let cs = *raid.params.chunksize as usize;
+        let wbuf = dbsw.try().unwrap();
+        {
+            let mut rbuf0 = dbsr.try_mut().unwrap();
+            // rbuf0 will get the first part of the first chunk
+            let mut rbuf1 = rbuf0.split_off(cs / 4 * BYTES_PER_LBA);
+            // rbuf1 will get the middle of the first chunk
+            let mut rbuf2 = rbuf1.split_off(cs / 2 * BYTES_PER_LBA);
+            // rbuf2 will get the end of the first chunk
+            let mut rbuf3 = rbuf2.split_off(cs / 4 * BYTES_PER_LBA);
+            // rbuf3 will get an entire chunk
+            let mut rbuf4 = rbuf3.split_off(cs * BYTES_PER_LBA);
+            // rbuf4 will get 2 chunks
+            let mut rbuf5 = rbuf4.split_off(2 * cs * BYTES_PER_LBA);
+            // rbuf5 will get one and a half chunks
+            // rbuf6 will get the last half chunk
+            let rbuf6 = rbuf5.split_off(3 * cs / 2 * BYTES_PER_LBA);
+            write_read(raid.val.0, vec![wbuf.clone()],
+                       vec![rbuf0, rbuf1, rbuf2, rbuf3, rbuf4, rbuf5, rbuf6]);
+        }
+        assert_eq!(&wbuf[..], &dbsr.try().unwrap()[..]);
+    }
+
+
     test write_read_one_stripe(raid) {
         write_read_n_stripes(raid.val.0, *raid.params.chunksize,
                              *raid.params.k, *raid.params.f, 1);
@@ -207,6 +236,26 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
+    test write_completes_a_partial_stripe_and_writes_two_more_with_leftovers(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 4);
+        {
+            // Truncate buffers to be < 4 stripes' length
+            let mut dbwm = dbsw.try_mut().unwrap();
+            let dbwm_len = dbwm.len();
+            dbwm.try_truncate(dbwm_len - BYTES_PER_LBA).expect("truncate");
+            let mut dbrm = dbsr.try_mut().unwrap();
+            dbrm.try_truncate(dbwm_len - BYTES_PER_LBA).expect("truncate");
+        }
+        {
+            let mut wbuf_l = dbsw.try().unwrap();
+            let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
+            let rbuf = dbsr.try_mut().unwrap();
+            write_read(raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf]);
+        }
+        assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
+    }
+
     test write_partial_at_start_of_stripe(raid) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
@@ -223,7 +272,7 @@ test_suite! {
 
     // Test that write_at works when directed at the middle of the StripeBuffer.
     // This test requires a chunksize > 2
-    test write_partial_at_middle_of_stripe(raid((3, 3, 1, 16))) {
+    test write_partial_at_middle_of_stripe(raid((7, 7, 1, 16))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap().slice_to(2 * BYTES_PER_LBA);
@@ -238,6 +287,25 @@ test_suite! {
                    &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA],
                    "{:#?}\n{:#?}", &wbuf[..],
                    &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA]);
+    }
+
+    test write_two_stripes_with_leftovers(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 3);
+        {
+            // Truncate buffers to be < 3 stripes' length
+            let mut dbwm = dbsw.try_mut().unwrap();
+            let dbwm_len = dbwm.len();
+            dbwm.try_truncate(dbwm_len - BYTES_PER_LBA).expect("truncate");
+            let mut dbrm = dbsr.try_mut().unwrap();
+            dbrm.try_truncate(dbwm_len - BYTES_PER_LBA).expect("truncate");
+        }
+        {
+            let wbuf = dbsw.try().unwrap();
+            let rbuf = dbsr.try_mut().unwrap();
+            write_read(raid.val.0, vec![wbuf], vec![rbuf]);
+        }
+        assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
     }
 
     test writev_read_one_stripe(raid) {
