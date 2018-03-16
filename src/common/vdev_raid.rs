@@ -8,9 +8,8 @@ use common::raid::*;
 use common::declust::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
-use futures::sync::oneshot;
 use itertools::multizip;
-use nix::{errno, Error};
+use nix::Error;
 use std::{cmp, mem, ptr};
 use tokio::reactor::Handle;
 
@@ -39,19 +38,13 @@ struct StripeBuffer {
 
     /// Amount of data in a full stripe, in LBAs
     stripe_lbas: LbaT,
-
-    /// Futures that we must notify whenever we eventually write our data
-    senders: Vec<oneshot::Sender<Result<(), Error>>>
 }
 
 impl StripeBuffer {
     /// Store more data into this `StripeBuffer`, but don't overflow one row.
     ///
-    /// Return the unused part of the `IoVec`, and optionally a future which
-    /// will become ready once the `StripeBuffer` eventually gets written.  If
-    /// it is anticipated that a channel will not be needed, then none will be
-    /// returned.
-    pub fn fill(&mut self, mut iovec: IoVec) -> (IoVec, Option<Box<VdevRaidFut>>) {
+    /// Return the unused part of the `IoVec`
+    pub fn fill(&mut self, mut iovec: IoVec) -> IoVec {
         let want_lbas = self.stripe_lbas - self.len();
         let want_bytes = want_lbas as usize * BYTES_PER_LBA as usize;
         let have_bytes = iovec.len();
@@ -59,23 +52,7 @@ impl StripeBuffer {
         if get_bytes > 0 {
             self.buf.push(iovec.split_to(get_bytes));
         }
-        let rx_fut = if self.is_full() {
-            //Special case: don't create the channel, because we're about to
-            //write the entire stripe buffer
-            None
-        } else {
-            let (tx, rx) = oneshot::channel::<Result<(), Error>>();
-            self.senders.push(tx);
-            let f: Box<VdevRaidFut> = Box::new(rx.then(|r| {
-                match r {
-                    Ok(Ok(_)) => Ok(()),
-                    Ok(Err(error)) => Err(error),
-                    Err(_) => Err(Error::from(errno::Errno::EPIPE))
-                }
-            }));
-            Some(f)
-        };
-        (iovec, rx_fut)
+        iovec
     }
 
     /// Is the stripe buffer full?
@@ -101,8 +78,7 @@ impl StripeBuffer {
     }
 
     pub fn new(lba: LbaT, stripe_lbas: LbaT) -> Self {
-        let senders = Vec::<oneshot::Sender<Result<(), Error>>>::new();
-        StripeBuffer{ buf: SGList::new(), lba, stripe_lbas, senders}
+        StripeBuffer{ buf: SGList::new(), lba, stripe_lbas}
     }
 
     /// Return the value of the next LBA should be written into this buffer
@@ -118,16 +94,11 @@ impl StripeBuffer {
     }
 
     /// Extract all data from the `StripeBuffer`
-    ///
-    /// Returns both the data and a collection of `oneshot::Sender`s that should
-    /// be notified once the data is successfully written
-    pub fn pop(&mut self) -> (SGList, Vec<oneshot::Sender<Result<(), Error>>>) {
+    pub fn pop(&mut self) -> SGList {
         let new_sglist = SGList::new();
         self.lba = self.next_lba();
         let old_sglist = mem::replace(&mut self.buf, new_sglist);
-        let new_senders = Vec::<oneshot::Sender<Result<(), Error>>>::new();
-        let old_senders = mem::replace(&mut self.senders, new_senders);
-        (old_sglist, old_senders)
+        old_sglist
     }
 
     /// Reset an empty `StripeBuffer` to point to a new stripe.
@@ -205,7 +176,9 @@ macro_rules! issue_1stripe_ops {
                 let (_, loc) = iter.next().unwrap();
                 let disk_lba = if first {
                     first = false;
-                    $lba    // The op may begin mid-chunk
+                    // The op may begin mid-chunk
+                    let chunk_offset = $lba % $self.chunksize;
+                    loc.offset * $self.chunksize + chunk_offset
                 } else {
                     loc.offset * $self.chunksize
                 };
@@ -256,13 +229,20 @@ impl VdevRaid {
         let buf2 = if !self.stripe_buffer.is_empty() &&
             end_lba >= self.stripe_buffer.lba() {
             // We need to service part of the read from the StripeBuffer
-            end_lba = self.stripe_buffer.lba() - 1;
             let direct_len = (self.stripe_buffer.lba() - lba) as usize /
                              BYTES_PER_LBA;
             let mut sb_buf = buf.split_off(direct_len);
             // Copy from StripeBuffer into sb_buf
             for iovec in self.stripe_buffer.peek() {
                 sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
+            }
+            if direct_len == 0 {
+                // Read was fully serviced by StripeBuffer.  No need to go to
+                // disks.
+                return Box::new(future::ok(()));
+            } else {
+                // Service the first part of the read from the disks
+                end_lba = self.stripe_buffer.lba() - 1;
             }
             buf
         } else {
@@ -386,45 +366,31 @@ impl VdevRaid {
         assert_eq!(buf.len() % BYTES_PER_LBA, 0, "Writes must be LBA-aligned");
         assert_eq!(self.stripe_buffer.next_lba(), lba);
 
-        // We may need to join up to three futures to satisfy the caller
-        let mut futs = Vec::<Box<VdevRaidFut>>::with_capacity(3);
-
+        let mut sb_fut = None;
+        //let sglist = SGList::with_capacity(2);
         let mut buf3 = if !self.stripe_buffer.is_empty() ||
-                       buf.len() < stripe_len {
+            buf.len() < stripe_len {
 
-            let (buf2, rx_fut) = self.stripe_buffer.fill(buf);
-            match rx_fut {
-            None => {
-                debug_assert!(self.stripe_buffer.is_full());
+            let buflen = buf.len();
+            let buf2 = self.stripe_buffer.fill(buf);
+            if self.stripe_buffer.is_full() {
+                //lba = self.stripe_buffer.lba();
+                //sglist.push(self.stripe_buffer.pop());
                 let stripe_lba = self.stripe_buffer.lba();
-                let (sglist, senders) = self.stripe_buffer.pop();
-                lba += self.chunksize * m as LbaT;
-                let fut = self.writev_at_one(&sglist, stripe_lba)
-                    .then(move |r| {
-                        for sender in senders {
-                            // XXX we can't send the correct value of size,
-                            // because we don't know what the original caller
-                            // asked for
-                            // Ignore the return value, because it could've
-                            // legitimately been cancelled
-                            let _ = sender.send(r.clone());
-                        }
-                        r
-                    });
+                let sglist = self.stripe_buffer.pop();
+                lba += ((buflen - buf2.len()) / BYTES_PER_LBA) as LbaT;
+                sb_fut = Some(self.writev_at_one(&sglist, stripe_lba));
                 if buf2.is_empty() {
-                    // Special case: if we fully consumed buf, then return
-                    // immediately
-                    return Box::new(fut);
+                    //Special case: if we fully consumed buf, then return
+                    //immediately
+                    return Box::new(sb_fut.unwrap());
                 } else {
-                    futs.push(Box::new(fut));
                     buf2
                 }
-            },
-            Some(rx_fut) => {
+            } else {
                 // We didn't have enough data to fill the StripeBuffer, so
                 // return early
-                return rx_fut;
-            }
+                return Box::new(future::ok(()));
             }
         } else {
             buf
@@ -432,24 +398,24 @@ impl VdevRaid {
         debug_assert!(self.stripe_buffer.is_empty());
         let nstripes = buf3.len() / stripe_len;
         let writable_buf = buf3.split_to(nstripes * stripe_len);
-        futs.push(if nstripes == 1 {
+        self.stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
+        if ! buf3.is_empty() {
+            let buf4 = self.stripe_buffer.fill(buf3);
+            debug_assert!(!self.stripe_buffer.is_full());
+            debug_assert!(buf4.is_empty());
+        }
+        let fut = if nstripes == 1 {
             self.write_at_one(writable_buf, lba)
         } else {
             self.write_at_multi(writable_buf, lba)
-        });
-        self.stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
-        if ! buf3.is_empty() {
-            let (buf4, rx_fut) = self.stripe_buffer.fill(buf3);
-            debug_assert!(!self.stripe_buffer.is_full());
-            futs.push(rx_fut.unwrap());
-            debug_assert!(buf4.is_empty());
-        }
-        if futs.len() == 1 {
-            futs.pop().unwrap()
+        };
+        if sb_fut.is_some() {
+            Box::new(sb_fut.unwrap().join(fut).map(|_| ()))
         } else {
-            Box::new(future::join_all(futs).map(|_| ()))
+            Box::new(fut)
         }
     }
+
     /// Write two or more whole stripes
     fn write_at_multi(&mut self, mut buf: IoVec, lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
@@ -675,23 +641,21 @@ fn stripe_buffer_empty() {
     assert_eq!(sb.next_lba(), 99);
     assert_eq!(sb.len(), 0);
     assert!(sb.peek().is_empty());
-    let (sglist, senders) = sb.pop();
+    let sglist = sb.pop();
     assert!(sglist.is_empty());
-    assert!(senders.is_empty());
     // Adding an empty iovec should change nothing, but add a useless sender
     let dbs = DivBufShared::from(vec![0; 4096]);
     let db = dbs.try().unwrap();
     let db0 = db.slice(0, 0);
-    assert!(sb.fill(db0).0.is_empty());
+    assert!(sb.fill(db0).is_empty());
     assert!(!sb.is_full());
     assert!(sb.is_empty());
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 99);
     assert_eq!(sb.len(), 0);
     assert!(sb.peek().is_empty());
-    let (sglist, senders) = sb.pop();
+    let sglist = sb.pop();
     assert!(sglist.is_empty());
-    assert_eq!(senders.len(), 1);
 }
 
 #[test]
@@ -702,8 +666,8 @@ fn stripe_buffer_fill_when_full() {
     let db1 = dbs1.try().unwrap();
     {
         let mut sb = StripeBuffer::new(99, 6);
-        assert!(sb.fill(db0).0.is_empty());
-        assert_eq!(sb.fill(db1).0.len(), 4096);
+        assert!(sb.fill(db0).is_empty());
+        assert_eq!(sb.fill(db1).len(), 4096);
         assert!(sb.is_full());
         assert_eq!(sb.lba(), 99);
         assert_eq!(sb.next_lba(), 105);
@@ -716,7 +680,7 @@ fn stripe_buffer_one_iovec() {
     let mut sb = StripeBuffer::new(99, 6);
     let dbs = DivBufShared::from(vec![0; 4096]);
     let db = dbs.try().unwrap();
-    assert!(sb.fill(db).0.is_empty());
+    assert!(sb.fill(db).is_empty());
     assert!(!sb.is_full());
     assert!(!sb.is_empty());
     assert_eq!(sb.lba(), 99);
@@ -727,10 +691,9 @@ fn stripe_buffer_one_iovec() {
         assert_eq!(sglist.len(), 1);
         assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
     }
-    let (sglist, senders) = sb.pop();
+    let sglist = sb.pop();
     assert_eq!(sglist.len(), 1);
     assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
-    assert_eq!(senders.len(), 1);
 }
 
 #[test]
@@ -752,33 +715,14 @@ fn stripe_buffer_reset_nonempty() {
 }
 
 #[test]
-fn stripe_buffer_rx_tx() {
-    use tokio::executor::current_thread;
-
-    let mut sb = StripeBuffer::new(99, 6);
-    let dbs = DivBufShared::from(vec![0; 4096]);
-    let db = dbs.try().unwrap();
-    let (_, mut rx) = sb.fill(db);
-    let (_, mut senders) = sb.pop();
-    let tx = senders.pop().unwrap();
-    let result = Ok(());
-    current_thread::block_on_all(future::lazy(move || {
-        assert!(!rx.poll().unwrap().is_ready());
-        tx.send(result).unwrap();
-        assert!(rx.poll().unwrap().is_ready());
-        future::ok::<(),()>(())
-    })).unwrap();
-}
-
-#[test]
 fn stripe_buffer_two_iovecs() {
     let mut sb = StripeBuffer::new(99, 6);
     let dbs0 = DivBufShared::from(vec![0; 8192]);
     let db0 = dbs0.try().unwrap();
-    assert!(sb.fill(db0).0.is_empty());
+    assert!(sb.fill(db0).is_empty());
     let dbs1 = DivBufShared::from(vec![1; 4096]);
     let db1 = dbs1.try().unwrap();
-    assert!(sb.fill(db1).0.is_empty());
+    assert!(sb.fill(db1).is_empty());
     assert!(!sb.is_full());
     assert!(!sb.is_empty());
     assert_eq!(sb.lba(), 99);
@@ -790,11 +734,10 @@ fn stripe_buffer_two_iovecs() {
         assert_eq!(&sglist[0][..], &vec![0; 8192][..]);
         assert_eq!(&sglist[1][..], &vec![1; 4096][..]);
     }
-    let (sglist, senders) = sb.pop();
+    let sglist = sb.pop();
     assert_eq!(sglist.len(), 2);
     assert_eq!(&sglist[0][..], &vec![0; 8192][..]);
     assert_eq!(&sglist[1][..], &vec![1; 4096][..]);
-    assert_eq!(senders.len(), 2);
 }
 
 #[test]
@@ -802,10 +745,10 @@ fn stripe_buffer_two_iovecs_overflow() {
     let mut sb = StripeBuffer::new(99, 6);
     let dbs0 = DivBufShared::from(vec![0; 16384]);
     let db0 = dbs0.try().unwrap();
-    assert!(sb.fill(db0).0.is_empty());
+    assert!(sb.fill(db0).is_empty());
     let dbs1 = DivBufShared::from(vec![1; 16384]);
     let db1 = dbs1.try().unwrap();
-    assert_eq!(sb.fill(db1).0.len(), 8192);
+    assert_eq!(sb.fill(db1).len(), 8192);
     assert!(sb.is_full());
     assert!(!sb.is_empty());
     assert_eq!(sb.lba(), 99);
@@ -817,11 +760,10 @@ fn stripe_buffer_two_iovecs_overflow() {
         assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
         assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
     }
-    let (sglist, senders) = sb.pop();
+    let sglist = sb.pop();
     assert_eq!(sglist.len(), 2);
     assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
     assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
-    assert_eq!(senders.len(), 1);
 }
 
 #[cfg(feature = "mocks")]

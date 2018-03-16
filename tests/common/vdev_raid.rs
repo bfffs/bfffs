@@ -144,8 +144,57 @@ test_suite! {
         let wbuf = dbsw.try().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
-        write_read(raid.val.0, vec![wbuf_l, wbuf_r], vec![dbsr.try_mut().unwrap()]);
+        write_read(raid.val.0, vec![wbuf_l, wbuf_r],
+                   vec![dbsr.try_mut().unwrap()]);
         assert_eq!(wbuf, dbsr.try().unwrap());
+    }
+
+    //test write_completes_a_partial_stripe_and_writes_a_bit_more(raid) {
+        //let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 2);
+        //{
+            //let mut wbuf = dbsw.try().unwrap();
+            //let wbuf_short_len = wbuf.len() - BYTES_PER_LBA;
+            //let mut wbuf_l = wbuf.split_to(wbuf_short_len);
+            //let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
+            //let mut rbuf = dbsr.try_mut().unwrap();
+            //let rbuf_short_len = rbuf.len() - BYTES_PER_LBA;
+            //let rbuf_short = rbuf.split_to(rbuf_short_len);
+            //write_read(raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf_short]);
+        //}
+        //assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
+    //}
+
+    test write_completes_a_partial_stripe_and_writes_another(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 2);
+        let wbuf = dbsw.try().unwrap();
+        let mut wbuf_l = wbuf.clone();
+        let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
+        write_read(raid.val.0, vec![wbuf_l, wbuf_r],
+                   vec![dbsr.try_mut().unwrap()]);
+        assert_eq!(wbuf, dbsr.try().unwrap());
+    }
+
+    test write_completes_a_partial_stripe_and_writes_two_more(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 3);
+        let wbuf = dbsw.try().unwrap();
+        let mut wbuf_l = wbuf.clone();
+        let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
+        write_read(raid.val.0, vec![wbuf_l, wbuf_r],
+                   vec![dbsr.try_mut().unwrap()]);
+        assert_eq!(wbuf, dbsr.try().unwrap());
+    }
+
+    test write_partial_at_start_of_stripe(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.k, *raid.params.f, 1);
+        let wbuf = dbsw.try().unwrap();
+        let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
+        {
+            let mut rbuf = dbsr.try_mut().unwrap();
+            let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
+            write_read(raid.val.0, vec![wbuf_short], vec![rbuf_short]);
+        }
+        assert_eq!(&wbuf[0..BYTES_PER_LBA],
+                   &dbsr.try().unwrap()[0..BYTES_PER_LBA]);
     }
 
     test writev_read_one_stripe(raid) {
