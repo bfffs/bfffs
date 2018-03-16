@@ -142,9 +142,16 @@ test_suite! {
                              *raid.params.k, *raid.params.f, 2);
     }
 
-    test write_read_ten_stripes(raid) {
+    // Write at least three rows to the layout.  Writing three rows guarantees
+    // that some disks will have two data chunks separated by one parity chunk,
+    // which tests the ability of VdevRaid::read_at to split a single disk's
+    // data up into multiple VdevBlock::readv_at calls.
+    test write_read_three_rows(raid) {
+        let rows = 3;
+        let stripes = div_roundup((rows * *raid.params.n) as usize,
+                                   *raid.params.k as usize);
         write_read_n_stripes(raid.val.0, *raid.params.chunksize,
-                             *raid.params.k, *raid.params.f, 10);
+                             *raid.params.k, *raid.params.f, stripes);
     }
 
     test write_completes_a_partial_stripe(raid) {
