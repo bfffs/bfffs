@@ -36,8 +36,6 @@ test_suite! {
                  (7, 4, 1, 2),      // Smallest non-ideal PRIME-S configuration
                  (7, 7, 3, 2),      // Smallest triple-parity configuration
                  (11, 9, 4, 2),     // Smallest quad-parity configuration
-                 (41, 20, 4, 2),    // Jumbo configuration
-                 (7, 7, 1, 16),     // Large chunk configuration
             ].into_iter()
         }
         setup(&mut self) {
@@ -160,7 +158,7 @@ test_suite! {
     }
 
     // Read the end of one stripe and the beginning of another
-    test read_partial_stripes(raid) {
+    test read_partial_stripes(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
         let wbuf = dbsw.try().unwrap();
@@ -176,7 +174,7 @@ test_suite! {
     }
 
     #[should_panic]
-    test read_past_end_of_stripe_buffer(raid) {
+    test read_past_end_of_stripe_buffer(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -186,7 +184,7 @@ test_suite! {
     }
 
     #[should_panic]
-    test read_starts_past_end_of_stripe_buffer(raid) {
+    test read_starts_past_end_of_stripe_buffer(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -201,7 +199,19 @@ test_suite! {
                              *raid.params.k, *raid.params.f, 1);
     }
 
+    // read_at_one/write_at_one with a large configuration
+    test write_read_one_stripe_jumbo(raid((41, 19, 3, 2))) {
+        write_read_n_stripes(raid.val.0, *raid.params.chunksize,
+                             *raid.params.k, *raid.params.f, 1);
+    }
+
     test write_read_two_stripes(raid) {
+        write_read_n_stripes(raid.val.0, *raid.params.chunksize,
+                             *raid.params.k, *raid.params.f, 2);
+    }
+
+    // read_at_multi/write_at_multi with a large configuration
+    test write_read_two_stripes_jumbo(raid((41, 19, 3, 2))) {
         write_read_n_stripes(raid.val.0, *raid.params.chunksize,
                              *raid.params.k, *raid.params.f, 2);
     }
@@ -218,7 +228,7 @@ test_suite! {
                              *raid.params.k, *raid.params.f, stripes);
     }
 
-    test write_completes_a_partial_stripe(raid) {
+    test write_completes_a_partial_stripe(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -229,7 +239,7 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
-    test write_completes_a_partial_stripe_and_writes_a_bit_more(raid) {
+    test write_completes_a_partial_stripe_and_writes_a_bit_more(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
         {
@@ -249,7 +259,7 @@ test_suite! {
         assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
     }
 
-    test write_completes_a_partial_stripe_and_writes_another(raid) {
+    test write_completes_a_partial_stripe_and_writes_another(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
         let wbuf = dbsw.try().unwrap();
@@ -260,7 +270,7 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
-    test write_completes_a_partial_stripe_and_writes_two_more(raid) {
+    test write_completes_a_partial_stripe_and_writes_two_more(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 3);
         let wbuf = dbsw.try().unwrap();
@@ -271,7 +281,7 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
-    test write_completes_a_partial_stripe_and_writes_two_more_with_leftovers(raid) {
+    test write_completes_a_partial_stripe_and_writes_two_more_with_leftovers(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 4);
         {
@@ -291,7 +301,7 @@ test_suite! {
         assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
     }
 
-    test write_partial_at_start_of_stripe(raid) {
+    test write_partial_at_start_of_stripe(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -307,7 +317,7 @@ test_suite! {
 
     // Test that write_at works when directed at the middle of the StripeBuffer.
     // This test requires a chunksize > 2
-    test write_partial_at_middle_of_stripe(raid((7, 7, 1, 16))) {
+    test write_partial_at_middle_of_stripe(raid((3, 3, 1, 16))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap().slice_to(2 * BYTES_PER_LBA);
@@ -324,7 +334,7 @@ test_suite! {
                    &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA]);
     }
 
-    test write_two_stripes_with_leftovers(raid) {
+    test write_two_stripes_with_leftovers(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 3);
         {
