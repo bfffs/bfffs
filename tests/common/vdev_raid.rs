@@ -175,6 +175,27 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
+    #[should_panic]
+    test read_past_end_of_stripe_buffer(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let wbuf = dbsw.try().unwrap();
+        let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
+        let rbuf = dbsr.try_mut().unwrap();
+        write_read(raid.val.0, vec![wbuf_short], vec![rbuf]);
+    }
+
+    #[should_panic]
+    test read_starts_past_end_of_stripe_buffer(raid) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let wbuf = dbsw.try().unwrap();
+        let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
+        let mut rbuf = dbsr.try_mut().unwrap();
+        let rbuf_r = rbuf.split_off(BYTES_PER_LBA);
+        write_read(raid.val.0, vec![wbuf_short], vec![rbuf_r]);
+    }
+
     test write_read_one_stripe(raid) {
         write_read_n_stripes(raid.val.0, *raid.params.chunksize,
                              *raid.params.k, *raid.params.f, 1);

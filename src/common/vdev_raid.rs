@@ -236,6 +236,8 @@ impl VdevRaid {
             for iovec in self.stripe_buffer.peek() {
                 sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
             }
+            assert!(sb_buf.is_empty(),
+                "Read beyond the stripe buffer into unallocated space");
             if direct_len == 0 {
                 // Read was fully serviced by StripeBuffer.  No need to go to
                 // disks.
