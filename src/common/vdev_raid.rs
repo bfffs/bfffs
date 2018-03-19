@@ -933,19 +933,19 @@ fn vdev_raid_mismatched_protection() {
 }
 
 test_suite! {
-    // A small layout that is a multiple of the zone size
-    name small;
+    // Test basic layout properties
+    name basic;
 
     use super::super::*;
     use super::MockVdevBlock;
     use super::super::super::prime_s::PrimeS;
     use mockers::{matchers, Scenario};
 
-    fixture!( mocks() -> (Scenario, VdevRaid) {
-            setup(&mut self) {
+    fixture!( mocks(n: i16, k: i16, f:i16) -> (Scenario, VdevRaid) {
+        setup(&mut self) {
             let s = Scenario::new();
             let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
-            for _ in 0..5 {
+            for _ in 0..*self.n {
                 let mock = Box::new(s.create_mock::<MockVdevBlock>());
                 s.expect(mock.size_call()
                                     .and_return_clone(262144)
@@ -967,149 +967,44 @@ test_suite! {
                 blockdevs.push(mock);
             }
 
-            let n = 5;
-            let k = 4;
-            let f = 1;
-
-            let codec = Codec::new(k, f);
-            let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+            let codec = Codec::new(*self.k as u32, *self.f as u32);
+            let locator = Box::new(PrimeS::new(*self.n, *self.k, *self.f));
             let vdev_raid = VdevRaid::new(16, codec, locator,
                                           blockdevs.into_boxed_slice());
             (s, vdev_raid)
         }
     });
 
-    test lba2zone(mocks) {
+    test small(mocks((5, 4, 1))) {
         assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
         assert_eq!(mocks.val.1.lba2zone(245759), Some(0));
         // First LBA in zone 1
         assert_eq!(mocks.val.1.lba2zone(245760), Some(1));
-    }
 
-    test size(mocks) {
         assert_eq!(mocks.val.1.size(), 983040);
-    }
 
-    test zone_limits(mocks) {
         assert_eq!(mocks.val.1.zone_limits(0), (0, 245760));
         assert_eq!(mocks.val.1.zone_limits(1), (245760, 491520));
     }
-}
 
-test_suite! {
-    // A medium layout that is not a multiple of the zone size
-    name medium;
-
-    use super::super::*;
-    use super::MockVdevBlock;
-    use super::super::super::prime_s::PrimeS;
-    use mockers::{matchers, Scenario};
-
-    fixture!( mocks() -> (Scenario, VdevRaid) {
-            setup(&mut self) {
-            let s = Scenario::new();
-            let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
-            for _ in 0..7 {
-                let mock = Box::new(s.create_mock::<MockVdevBlock>());
-                s.expect(mock.size_call()
-                                    .and_return_clone(262144)
-                                    .times(..));  // 256k LBAs
-                s.expect(mock.lba2zone_call(matchers::lt(65536))
-                                    .and_return_clone(Some(0))
-                                    .times(..));
-                s.expect(mock.lba2zone_call(matchers::in_range(65536..131072))
-                                    .and_return_clone(Some(1))
-                                    .times(..));
-                s.expect(mock.zone_limits_call(0)
-                                    .and_return_clone((0, 65536))
-                                    .times(..));
-                s.expect(mock.zone_limits_call(1)
-                                    .and_return_clone((65536, 131072))
-                                    .times(..));
-
-                blockdevs.push(mock);
-            }
-
-            let n = 7;
-            let k = 4;
-            let f = 1;
-
-            let codec = Codec::new(k, f);
-            let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-            let vdev_raid = VdevRaid::new(16, codec, locator,
-                                          blockdevs.into_boxed_slice());
-            (s, vdev_raid)
-        }
-    });
-
-    test lba2zone(mocks) {
+    test medium(mocks((7, 4, 1))) {
         assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
         assert_eq!(mocks.val.1.lba2zone(344063), Some(0));
         // First LBA in zone 1
         assert_eq!(mocks.val.1.lba2zone(344064), Some(1));
-    }
 
-    test size(mocks) {
         assert_eq!(mocks.val.1.size(), 1376256);
-    }
 
-    test zone_limits(mocks) {
         assert_eq!(mocks.val.1.zone_limits(0), (0, 344064));
         assert_eq!(mocks.val.1.zone_limits(1), (344064, 688128));
     }
-}
 
-test_suite! {
     // A layout whose depth depth does not evenly divide the zone size.  The
     // zone size is not even a multiple of this layout's iterations.  So, it has
     // a gap of unused LBAs between zones
-    name has_gap;
-
-    use super::super::*;
-    use super::MockVdevBlock;
-    use super::super::super::prime_s::PrimeS;
-    use mockers::{matchers, Scenario};
-
-    fixture!( mocks() -> (Scenario, VdevRaid) {
-            setup(&mut self) {
-            let s = Scenario::new();
-            let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
-            for _ in 0..7 {
-                let mock = Box::new(s.create_mock::<MockVdevBlock>());
-                s.expect(mock.size_call()
-                                    .and_return_clone(262144)
-                                    .times(..));  // 256k LBAs
-                s.expect(mock.lba2zone_call(matchers::lt(65536))
-                                    .and_return_clone(Some(0))
-                                    .times(..));
-                s.expect(mock.lba2zone_call(matchers::in_range(65536..131072))
-                                    .and_return_clone(Some(1))
-                                    .times(..));
-                s.expect(mock.zone_limits_call(0)
-                                    .and_return_clone((0, 65536))
-                                    .times(..));
-                s.expect(mock.zone_limits_call(1)
-                                    .and_return_clone((65536, 131072))
-                                    .times(..));
-
-                blockdevs.push(mock);
-            }
-
-            let n = 7;
-            let k = 5;
-            let f = 1;
-
-            let codec = Codec::new(k, f);
-            let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-            let vdev_raid = VdevRaid::new(16, codec, locator,
-                                          blockdevs.into_boxed_slice());
-            (s, vdev_raid)
-        }
-    });
-
-    test lba2zone(mocks) {
+    test has_gap(mocks((7, 5, 1))) {
         assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
         assert_eq!(mocks.val.1.lba2zone(366975), Some(0));
@@ -1117,13 +1012,9 @@ test_suite! {
         assert_eq!(mocks.val.1.lba2zone(366976), None);
         // First LBA in zone 1
         assert_eq!(mocks.val.1.lba2zone(367040), Some(1));
-    }
 
-    test size(mocks) {
         assert_eq!(mocks.val.1.size(), 1468006);
-    }
 
-    test zone_limits(mocks) {
         assert_eq!(mocks.val.1.zone_limits(0), (0, 366976));
         assert_eq!(mocks.val.1.zone_limits(1), (367040, 733952));
     }
