@@ -47,14 +47,22 @@ pub trait Vdev {
     fn handle(&self) -> Handle;
 
     /// Return the zone number at which the given LBA resides
-    fn lba2zone(&self, lba: LbaT) -> ZoneT;
-
-    /// Return the usable space of the Vdev.
     ///
-    /// Does not include wasted space, space reserved for labels, space used by
+    /// There may be unused space in between the zones.  A return value of
+    /// `None` indicates that the LBA is unused.
+    fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
+
+    /// Return approximately the usable space of the Vdev.
+    ///
+    /// Actual usable space may be slightly different due to alignment issues,
+    /// fragmentation, etc.  Does not space reserved for labels, space used by
     /// parity, etc.  May not change within the lifetime of a Vdev.
     fn size(&self) -> LbaT;
 
-    /// Return the first LBA of the given zone
-    fn start_of_zone(&self, zone: ZoneT) -> LbaT;
+    /// Return the first and last LBAs of a zone.
+    ///
+    /// The end LBA is *exclusive*; it is the first LBA that is *not* in the
+    /// requested zone.  Note that there may be some unused LBAs in between
+    /// adjacent zones.
+    fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
 }

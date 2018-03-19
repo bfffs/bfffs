@@ -207,8 +207,8 @@ impl VdevRaid {
 
             // All blockdevs must have the same zone boundaries
             // XXX this check assumes fixed-size zones
-            assert_eq!(blockdevs[0].start_of_zone(1),
-                       blockdevs[i].start_of_zone(1));
+            assert_eq!(blockdevs[0].zone_limits(0),
+                       blockdevs[i].zone_limits(0));
         }
 
         let stripe_lbas = m * chunksize as LbaT;
@@ -596,15 +596,35 @@ impl VdevRaid {
     }
 }
 
+/// Helper function that returns both the minimum and the maximum element of the
+/// iterable.
+fn min_max<I>(iterable: I) -> Option<(I::Item, I::Item)>
+    where I: Iterator, I::Item: Ord + Copy {
+    iterable.fold(None, |acc, i| {
+        if acc.is_none() {
+            Some((i, i))
+        } else {
+            Some((cmp::min(acc.unwrap().0, i), cmp::max(acc.unwrap().1, i)))
+        }
+    })
+}
+
 impl Vdev for VdevRaid {
     fn handle(&self) -> Handle {
         panic!("Unimplemented!  Perhaps handle() should not be part of Trait vdev, because it doesn't make sense for VdevRaid");
     }
 
-    fn lba2zone(&self, lba: LbaT) -> ZoneT {
+    fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
         let disk_lba = loc.offset * self.chunksize;
-        self.blockdevs[loc.disk as usize].lba2zone(disk_lba)
+        let tentative = self.blockdevs[loc.disk as usize].lba2zone(disk_lba);
+        // NB: this call to zone_limits is slow, but unfortunately necessary.
+        let limits = self.zone_limits(tentative.unwrap());
+        if lba >= limits.0 && lba < limits.1 {
+            tentative
+        } else {
+            None
+        }
     }
 
     fn size(&self) -> LbaT {
@@ -613,25 +633,93 @@ impl Vdev for VdevRaid {
             self.chunksize / (self.locator.depth() as LbaT)
     }
 
-    fn start_of_zone(&self, zone: ZoneT) -> LbaT {
-        // Zones don't necessarily line up with repetition boundaries.  So we
-        // don't know the disk were a given zone begins.  Instead, we'll have to
-        // search through every disk to find the one where the zone begins,
-        // which will be disk that has the lowest LBA for that disk LBA.
+    // Zones don't necessarily line up with repetition boundaries.  So we don't
+    // know the disk where a given zone begins.  Worse, declustered RAID is
+    // usually not monotonic across all disks.  That is, RAID LBA X may
+    // translate to disk 0 LBA Y, while RAID LBA X+1 may translate to disk 1 LBA
+    // Y-1.  That is a problem if Y is the first LBA of one of the disks' zones.
+    //
+    // So we must exclude any stripe that crosses two of the underlying disks'
+    // zones.  We must also exclude any row whose chunks cross the underlying
+    // zone boundary.
+    //
+    // Outline:
+    // 1) Determine the disks' zone limits.  This will be the same for all
+    //    disks.
+    // 2) Find both the lowest and the highest stripe that use that LBA, on
+    //    any disk.
+    // 3) Determine whether any of those stripes also include a chunk from
+    //    the previous zone.
+    // 4) Return the first LBA of the lowest stripe after all stripes that
+    //    do span the previous zone.
+    // 5) Repeat steps 2-4, in mirror image, for the end of the zone.
+    fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
+        let m = (self.codec.stripesize() - self.codec.protection()) as LbaT;
 
-        // All blockdevs must have the same zone map, so we only need to do the
-        // start_of_zone call once.
-        let disk_lba = self.blockdevs[0].start_of_zone(zone);
-        (0..self.blockdevs.len()).map(|i| {
-            let disk_chunk = disk_lba / self.chunksize;
-            let cid = self.locator.loc2id(Chunkloc::new(i as i16, disk_chunk));
-            match cid {
-                ChunkId::Data(id) => id * self.chunksize,
-                ChunkId::Parity(_, _) => LbaT::max_value()
-            }
-        }).min().unwrap()
+        // 1) All blockdevs must have the same zone map, so we only need to do
+        //    the zone_limits call once.
+        let (disk_lba_b, disk_lba_e) = self.blockdevs[0].zone_limits(zone);
+        let disk_chunk_b = disk_lba_b / self.chunksize;
+        let disk_chunk_e = disk_lba_e / self.chunksize - 1; //inclusive endpoint
+
+        let endpoint_lba = |boundary_chunk, is_highend| {
+            // 2) Find the lowest and highest stripe
+            let stripes = (0..self.blockdevs.len()).map(|i| {
+                let cid = self.locator.loc2id(Chunkloc::new(i as i16,
+                                                            boundary_chunk));
+                let stripe = match cid {
+                    ChunkId::Data(id) => id,
+                    ChunkId::Parity(id, _) => id
+                } / m;
+                stripe
+            });
+            let (min_stripe, max_stripe) = min_max(stripes).unwrap();
+
+            // 3,4) Find stripes that cross zones.  Return the innermost that
+            // doesn't
+            let mut innermost_stripe = None;
+            'stripe_loop: for stripe in min_stripe..max_stripe + 1 {
+                let minchunk = ChunkId::Data(stripe * m);
+                let maxchunk = ChunkId::Data((stripe + 1) * m);
+                let chunk_iter = self.locator.iter(minchunk, maxchunk);
+                for (id, loc) in chunk_iter {
+                    println!("stripe={:?} id={:?} loc={:?} boundary_chunk={:?}", stripe, id, loc, boundary_chunk);
+                    if is_highend && (loc.offset > boundary_chunk) {
+                        continue 'stripe_loop;
+                    } else if !is_highend && (loc.offset < boundary_chunk) {
+                        innermost_stripe = None;
+                        continue 'stripe_loop;
+                    }
+                }
+                println!("\tstripe={:?}", stripe);
+                if innermost_stripe.is_none() || is_highend {
+                    innermost_stripe = Some(stripe);
+                }
+            };
+            assert!(innermost_stripe.is_some(),
+                "No stripes found that don't cross zones.  fix the algorithm");
+            let limit_stripe = if is_highend {
+                innermost_stripe.unwrap() + 1  // The high limit is exclusive
+            } else {
+                innermost_stripe.unwrap()
+            };
+            limit_stripe * m * self.chunksize
+        };
+
+        // 5)
+        (endpoint_lba(disk_chunk_b, false),
+         endpoint_lba(disk_chunk_e, true))
     }
+}
 
+
+#[test]
+fn test_min_max() {
+    let empty: Vec<u8> = Vec::with_capacity(0);
+    assert_eq!(min_max(empty.iter()), None);
+    assert_eq!(min_max(vec![42u8].iter()), Some((&42, &42)));
+    assert_eq!(min_max(vec![1u32, 2u32, 3u32].iter()), Some((&1, &3)));
+    assert_eq!(min_max(vec![0i8, -9i8, 18i8, 1i8].iter()), Some((&-9, &18)));
 }
 
 #[test]
@@ -782,9 +870,9 @@ mock!{
     vdev,
     trait Vdev {
         fn handle(&self) -> Handle;
-        fn lba2zone(&self, lba: LbaT) -> ZoneT;
+        fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn size(&self) -> LbaT;
-        fn start_of_zone(&self, zone: ZoneT) -> LbaT;
+        fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
     },
     self,
     trait VdevBlockTrait{
@@ -863,16 +951,17 @@ test_suite! {
                                     .and_return_clone(262144)
                                     .times(..));  // 256k LBAs
                 s.expect(mock.lba2zone_call(matchers::lt(65536))
-                                    .and_return_clone(0)
+                                    .and_return_clone(Some(0))
                                     .times(..));
                 s.expect(mock.lba2zone_call(matchers::in_range(65536..131072))
-                                    .and_return_clone(1)
+                                    .and_return_clone(Some(1))
                                     .times(..));
-                s.expect(mock.start_of_zone_call(0)
-                                    .and_return_clone(0)
+                s.expect(mock.zone_limits_call(0)
+                                    .and_return_clone((0, 65536))
                                     .times(..));
-                s.expect(mock.start_of_zone_call(1)
-                                    .and_return_clone(65536)   // 64k LBAs/zone
+                s.expect(mock.zone_limits_call(1)
+                                    // 64k LBAs/zone
+                                    .and_return_clone((65536, 131072))
                                     .times(..));
 
                 blockdevs.push(mock);
@@ -891,20 +980,20 @@ test_suite! {
     });
 
     test lba2zone(mocks) {
-        assert_eq!(mocks.val.1.lba2zone(0), 0);
+        assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(245759), 0);
+        assert_eq!(mocks.val.1.lba2zone(245759), Some(0));
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(245760), 1);
+        assert_eq!(mocks.val.1.lba2zone(245760), Some(1));
     }
 
     test size(mocks) {
         assert_eq!(mocks.val.1.size(), 983040);
     }
 
-    test start_of_zone(mocks) {
-        assert_eq!(mocks.val.1.start_of_zone(0), 0);
-        assert_eq!(mocks.val.1.start_of_zone(1), 245760);
+    test zone_limits(mocks) {
+        assert_eq!(mocks.val.1.zone_limits(0), (0, 245760));
+        assert_eq!(mocks.val.1.zone_limits(1), (245760, 491520));
     }
 }
 
@@ -927,16 +1016,16 @@ test_suite! {
                                     .and_return_clone(262144)
                                     .times(..));  // 256k LBAs
                 s.expect(mock.lba2zone_call(matchers::lt(65536))
-                                    .and_return_clone(0)
+                                    .and_return_clone(Some(0))
                                     .times(..));
                 s.expect(mock.lba2zone_call(matchers::in_range(65536..131072))
-                                    .and_return_clone(1)
+                                    .and_return_clone(Some(1))
                                     .times(..));
-                s.expect(mock.start_of_zone_call(0)
-                                    .and_return_clone(0)
+                s.expect(mock.zone_limits_call(0)
+                                    .and_return_clone((0, 65536))
                                     .times(..));
-                s.expect(mock.start_of_zone_call(1)
-                                    .and_return_clone(65536)   // 64k LBAs/zone
+                s.expect(mock.zone_limits_call(1)
+                                    .and_return_clone((65536, 131072))
                                     .times(..));
 
                 blockdevs.push(mock);
@@ -955,20 +1044,88 @@ test_suite! {
     });
 
     test lba2zone(mocks) {
-        assert_eq!(mocks.val.1.lba2zone(0), 0);
+        assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(344063), 0);
+        assert_eq!(mocks.val.1.lba2zone(344063), Some(0));
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(344064), 1);
+        assert_eq!(mocks.val.1.lba2zone(344064), Some(1));
     }
 
     test size(mocks) {
         assert_eq!(mocks.val.1.size(), 1376256);
     }
 
-    test start_of_zone(mocks) {
-        assert_eq!(mocks.val.1.start_of_zone(0), 0);
-        assert_eq!(mocks.val.1.start_of_zone(1), 344064);
+    test zone_limits(mocks) {
+        assert_eq!(mocks.val.1.zone_limits(0), (0, 344064));
+        assert_eq!(mocks.val.1.zone_limits(1), (344064, 688128));
+    }
+}
+
+test_suite! {
+    // A layout whose depth depth does not evenly divide the zone size.  The
+    // zone size is not even a multiple of this layout's iterations.  So, it has
+    // a gap of unused LBAs between zones
+    name has_gap;
+
+    use super::super::*;
+    use super::MockVdevBlock;
+    use super::super::super::prime_s::PrimeS;
+    use mockers::{matchers, Scenario};
+
+    fixture!( mocks() -> (Scenario, VdevRaid) {
+            setup(&mut self) {
+            let s = Scenario::new();
+            let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+            for _ in 0..7 {
+                let mock = Box::new(s.create_mock::<MockVdevBlock>());
+                s.expect(mock.size_call()
+                                    .and_return_clone(262144)
+                                    .times(..));  // 256k LBAs
+                s.expect(mock.lba2zone_call(matchers::lt(65536))
+                                    .and_return_clone(Some(0))
+                                    .times(..));
+                s.expect(mock.lba2zone_call(matchers::in_range(65536..131072))
+                                    .and_return_clone(Some(1))
+                                    .times(..));
+                s.expect(mock.zone_limits_call(0)
+                                    .and_return_clone((0, 65536))
+                                    .times(..));
+                s.expect(mock.zone_limits_call(1)
+                                    .and_return_clone((65536, 131072))
+                                    .times(..));
+
+                blockdevs.push(mock);
+            }
+
+            let n = 7;
+            let k = 5;
+            let f = 1;
+
+            let codec = Codec::new(k, f);
+            let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+            let vdev_raid = VdevRaid::new(16, codec, locator,
+                                          blockdevs.into_boxed_slice());
+            (s, vdev_raid)
+        }
+    });
+
+    test lba2zone(mocks) {
+        assert_eq!(mocks.val.1.lba2zone(0), Some(0));
+        // Last LBA in zone 0
+        assert_eq!(mocks.val.1.lba2zone(366975), Some(0));
+        // An LBA in between zones 0 and 1
+        assert_eq!(mocks.val.1.lba2zone(366976), None);
+        // First LBA in zone 1
+        assert_eq!(mocks.val.1.lba2zone(367040), Some(1));
+    }
+
+    test size(mocks) {
+        assert_eq!(mocks.val.1.size(), 1468006);
+    }
+
+    test zone_limits(mocks) {
+        assert_eq!(mocks.val.1.zone_limits(0), (0, 366976));
+        assert_eq!(mocks.val.1.zone_limits(1), (367040, 733952));
     }
 }
 
@@ -986,7 +1143,7 @@ fn read_at_one_stripe() {
         let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
-        s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
@@ -996,7 +1153,7 @@ fn read_at_one_stripe() {
         blockdevs.push(m0);
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m1.size_call().and_return_clone(262144).times(..));
-        s.expect(m1.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
@@ -1006,7 +1163,7 @@ fn read_at_one_stripe() {
         blockdevs.push(m1);
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m2.size_call().and_return_clone(262144).times(..));
-        s.expect(m2.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         blockdevs.push(m2);
 
         let codec = Codec::new(k, f);
@@ -1032,7 +1189,7 @@ fn write_at_one_stripe() {
         let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
-        s.expect(m0.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
@@ -1042,7 +1199,7 @@ fn write_at_one_stripe() {
         blockdevs.push(m0);
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m1.size_call().and_return_clone(262144).times(..));
-        s.expect(m1.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
@@ -1052,7 +1209,7 @@ fn write_at_one_stripe() {
         blockdevs.push(m1);
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m2.size_call().and_return_clone(262144).times(..));
-        s.expect(m2.start_of_zone_call(1).and_return_clone(65536).times(..));
+        s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
         }), 0)
@@ -1068,5 +1225,5 @@ fn write_at_one_stripe() {
         let wbuf = dbs.try().unwrap();
         vdev_raid.write_at(wbuf, 0);
 }
-
 }
+

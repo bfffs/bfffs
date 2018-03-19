@@ -179,6 +179,8 @@ fn iter_7_5_2() {
             }
         }
     }
+    assert!(iter.next().is_none());
+    assert!(iter_data.next().is_none());
 }
 
 // Test parallel_read_count for a typical layout

@@ -51,16 +51,17 @@ impl Vdev for VdevFile {
         self.handle.clone()
     }
 
-    fn lba2zone(&self, lba: LbaT) -> ZoneT {
-        (lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT
+    fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
+        Some((lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT)
     }
 
     fn size(&self) -> LbaT {
         self.size
     }
 
-    fn start_of_zone(&self, zone: ZoneT) -> LbaT {
-        u64::from(zone) * VdevFile::LBAS_PER_ZONE
+    fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
+        (u64::from(zone) * VdevFile::LBAS_PER_ZONE,
+         u64::from(zone + 1) * VdevFile::LBAS_PER_ZONE)
     }
 }
 

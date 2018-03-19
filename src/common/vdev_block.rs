@@ -329,7 +329,7 @@ impl VdevBlock {
     }
 
     fn sched_write(&mut self, block_op: BlockOp) {
-        let zone = self.leaf.lba2zone(block_op.lba);
+        let zone = self.leaf.lba2zone(block_op.lba).unwrap();
         {
             let wq = &mut self.write_queues.borrow_mut();
             let newzone : Option<ZoneQueue> = {
@@ -338,7 +338,7 @@ impl VdevBlock {
                     zq.unwrap().q.push(block_op);
                     None
                 } else {
-                    let mut zq = ZoneQueue::new(self.leaf.start_of_zone(zone));
+                    let mut zq = ZoneQueue::new(self.leaf.zone_limits(zone).0);
                     zq.q.push(block_op);
                     Some(zq)
                 }
@@ -390,7 +390,7 @@ impl Vdev for VdevBlock {
         self.handle.clone()
     }
 
-    fn lba2zone(&self, lba: LbaT) -> ZoneT {
+    fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         self.leaf.lba2zone(lba)
     }
 
@@ -398,8 +398,8 @@ impl Vdev for VdevBlock {
         self.size
     }
 
-    fn start_of_zone(&self, zone: ZoneT) -> LbaT {
-        self.leaf.start_of_zone(zone)
+    fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
+        self.leaf.zone_limits(zone)
     }
 }
 
@@ -421,9 +421,9 @@ test_suite! {
         vdev,
         trait Vdev {
             fn handle(&self) -> Handle;
-            fn lba2zone(&self, lba: LbaT) -> ZoneT;
+            fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
             fn size(&self) -> LbaT;
-            fn start_of_zone(&self, zone: ZoneT) -> LbaT;
+            fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         },
         vdev_leaf,
         trait VdevLeaf  {
@@ -441,10 +441,10 @@ test_suite! {
             scenario.expect(leaf.size_call()
                                 .and_return(16384));
             scenario.expect(leaf.lba2zone_call(ANY)
-                                .and_return_clone(0)
+                                .and_return_clone(Some(0))
                                 .times(..));
-            scenario.expect(leaf.start_of_zone_call(0)
-                                .and_return_clone(0)
+            scenario.expect(leaf.zone_limits_call(0)
+                                .and_return_clone((0, 1 << 19))
                                 .times(..));
             (scenario, leaf)
         }
@@ -559,7 +559,7 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        scenario.expect(leaf.lba2zone_call(2).and_return(0));
+        scenario.expect(leaf.lba2zone_call(2).and_return(Some(0)));
         let r0 = SGListResult { value: 8192 };
         let r1 = IoVecResult { value: 4096 };
         seq.expect(leaf.writev_at_call(ANY, 0)

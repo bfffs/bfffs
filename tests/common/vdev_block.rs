@@ -33,19 +33,19 @@ test_suite! {
     });
 
     test lba2zone(vdev) {
-        assert_eq!(vdev.val.0.lba2zone(0), 0);
-        assert_eq!(vdev.val.0.lba2zone(1), 0);
-        assert_eq!(vdev.val.0.lba2zone((1 << 19) - 1), 0);
-        assert_eq!(vdev.val.0.lba2zone(1 << 19), 1);
+        assert_eq!(vdev.val.0.lba2zone(0), Some(0));
+        assert_eq!(vdev.val.0.lba2zone(1), Some(0));
+        assert_eq!(vdev.val.0.lba2zone((1 << 19) - 1), Some(0));
+        assert_eq!(vdev.val.0.lba2zone(1 << 19), Some(1));
     }
 
     test size(vdev) {
         assert_eq!(vdev.val.0.size(), 16_384);
     }
 
-    test start_of_zone(vdev) {
-        assert_eq!(vdev.val.0.start_of_zone(0), 0);
-        assert_eq!(vdev.val.0.start_of_zone(1), 1 << 19);
+    test zone_limits(vdev) {
+        assert_eq!(vdev.val.0.zone_limits(0), (0, 1 << 19));
+        assert_eq!(vdev.val.0.zone_limits(1), (1 << 19, 2 << 19));
     }
 
     #[should_panic]
