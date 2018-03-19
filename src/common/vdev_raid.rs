@@ -683,7 +683,6 @@ impl Vdev for VdevRaid {
                 let maxchunk = ChunkId::Data((stripe + 1) * m);
                 let chunk_iter = self.locator.iter(minchunk, maxchunk);
                 for (id, loc) in chunk_iter {
-                    println!("stripe={:?} id={:?} loc={:?} boundary_chunk={:?}", stripe, id, loc, boundary_chunk);
                     if is_highend && (loc.offset > boundary_chunk) {
                         continue 'stripe_loop;
                     } else if !is_highend && (loc.offset < boundary_chunk) {
@@ -691,7 +690,6 @@ impl Vdev for VdevRaid {
                         continue 'stripe_loop;
                     }
                 }
-                println!("\tstripe={:?}", stripe);
                 if innermost_stripe.is_none() || is_highend {
                     innermost_stripe = Some(stripe);
                 }
@@ -1001,9 +999,9 @@ test_suite! {
         assert_eq!(mocks.val.1.zone_limits(1), (344064, 688128));
     }
 
-    // A layout whose depth depth does not evenly divide the zone size.  The
-    // zone size is not even a multiple of this layout's iterations.  So, it has
-    // a gap of unused LBAs between zones
+    // A layout whose depth does not evenly divide the zone size.  The zone size
+    // is not even a multiple of this layout's iterations.  So, it has a gap of
+    // unused LBAs between zones
     test has_gap(mocks((7, 5, 1))) {
         assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
@@ -1017,6 +1015,25 @@ test_suite! {
 
         assert_eq!(mocks.val.1.zone_limits(0), (0, 366976));
         assert_eq!(mocks.val.1.zone_limits(1), (367040, 733952));
+    }
+
+    // A layout whose depth does not evenly divide the zone size and has
+    // multiple whole stripes per row.  So, it has a gap of multiple stripes
+    // between zones.
+    test has_multistripe_gap(mocks((11, 3, 1))) {
+        assert_eq!(mocks.val.1.lba2zone(0), Some(0));
+        // Last LBA in zone 0
+        assert_eq!(mocks.val.1.lba2zone(480511), Some(0));
+        // LBAs in between zones 0 and 1
+        assert_eq!(mocks.val.1.lba2zone(480512), None);
+        assert_eq!(mocks.val.1.lba2zone(480639), None);
+        // First LBA in zone 1
+        assert_eq!(mocks.val.1.lba2zone(480640), Some(1));
+
+        assert_eq!(mocks.val.1.size(), 1922389);
+
+        assert_eq!(mocks.val.1.zone_limits(0), (0, 480512));
+        assert_eq!(mocks.val.1.zone_limits(1), (480640, 961152));
     }
 }
 
