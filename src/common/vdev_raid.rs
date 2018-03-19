@@ -646,8 +646,8 @@ impl Vdev for VdevRaid {
     // Outline:
     // 1) Determine the disks' zone limits.  This will be the same for all
     //    disks.
-    // 2) Find both the lowest and the highest stripe that use that LBA, on
-    //    any disk.
+    // 2) Find both the lowest and the highest stripe that are fully contained
+    //    within those limits, on any disk.
     // 3) Determine whether any of those stripes also include a chunk from
     //    the previous zone.
     // 4) Return the first LBA of the lowest stripe after all stripes that
@@ -659,7 +659,7 @@ impl Vdev for VdevRaid {
         // 1) All blockdevs must have the same zone map, so we only need to do
         //    the zone_limits call once.
         let (disk_lba_b, disk_lba_e) = self.blockdevs[0].zone_limits(zone);
-        let disk_chunk_b = disk_lba_b / self.chunksize;
+        let disk_chunk_b = div_roundup(disk_lba_b, self.chunksize);
         let disk_chunk_e = disk_lba_e / self.chunksize - 1; //inclusive endpoint
 
         let endpoint_lba = |boundary_chunk, is_highend| {
@@ -682,7 +682,7 @@ impl Vdev for VdevRaid {
                 let minchunk = ChunkId::Data(stripe * m);
                 let maxchunk = ChunkId::Data((stripe + 1) * m);
                 let chunk_iter = self.locator.iter(minchunk, maxchunk);
-                for (id, loc) in chunk_iter {
+                for (_, loc) in chunk_iter {
                     if is_highend && (loc.offset > boundary_chunk) {
                         continue 'stripe_loop;
                     } else if !is_highend && (loc.offset < boundary_chunk) {
@@ -939,7 +939,9 @@ test_suite! {
     use super::super::super::prime_s::PrimeS;
     use mockers::{matchers, Scenario};
 
-    fixture!( mocks(n: i16, k: i16, f:i16) -> (Scenario, VdevRaid) {
+    fixture!( mocks(n: i16, k: i16, f:i16, chunksize: LbaT)
+              -> (Scenario, VdevRaid) {
+
         setup(&mut self) {
             let s = Scenario::new();
             let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
@@ -967,13 +969,13 @@ test_suite! {
 
             let codec = Codec::new(*self.k as u32, *self.f as u32);
             let locator = Box::new(PrimeS::new(*self.n, *self.k, *self.f));
-            let vdev_raid = VdevRaid::new(16, codec, locator,
+            let vdev_raid = VdevRaid::new(*self.chunksize, codec, locator,
                                           blockdevs.into_boxed_slice());
             (s, vdev_raid)
         }
     });
 
-    test small(mocks((5, 4, 1))) {
+    test small(mocks((5, 4, 1, 16))) {
         assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
         assert_eq!(mocks.val.1.lba2zone(245759), Some(0));
@@ -986,7 +988,7 @@ test_suite! {
         assert_eq!(mocks.val.1.zone_limits(1), (245760, 491520));
     }
 
-    test medium(mocks((7, 4, 1))) {
+    test medium(mocks((7, 4, 1, 16))) {
         assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
         assert_eq!(mocks.val.1.lba2zone(344063), Some(0));
@@ -1002,7 +1004,7 @@ test_suite! {
     // A layout whose depth does not evenly divide the zone size.  The zone size
     // is not even a multiple of this layout's iterations.  So, it has a gap of
     // unused LBAs between zones
-    test has_gap(mocks((7, 5, 1))) {
+    test has_gap(mocks((7, 5, 1, 16))) {
         assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
         assert_eq!(mocks.val.1.lba2zone(366975), Some(0));
@@ -1020,7 +1022,7 @@ test_suite! {
     // A layout whose depth does not evenly divide the zone size and has
     // multiple whole stripes per row.  So, it has a gap of multiple stripes
     // between zones.
-    test has_multistripe_gap(mocks((11, 3, 1))) {
+    test has_multistripe_gap(mocks((11, 3, 1, 16))) {
         assert_eq!(mocks.val.1.lba2zone(0), Some(0));
         // Last LBA in zone 0
         assert_eq!(mocks.val.1.lba2zone(480511), Some(0));
@@ -1034,6 +1036,24 @@ test_suite! {
 
         assert_eq!(mocks.val.1.zone_limits(0), (0, 480512));
         assert_eq!(mocks.val.1.zone_limits(1), (480640, 961152));
+    }
+
+    // A layout whose chunksize does not evenly divide the zone size.  One or
+    // more entire rows must be skipped
+    test misaligned_chunksize(mocks((5, 4, 1, 5))) {
+        assert_eq!(mocks.val.1.lba2zone(0), Some(0));
+        // Last LBA in zone 0
+        assert_eq!(mocks.val.1.lba2zone(245744), Some(0));
+        // LBAs in the zone 0-1 gap
+        assert_eq!(mocks.val.1.lba2zone(245745), None);
+        assert_eq!(mocks.val.1.lba2zone(245774), None);
+        // First LBA in zone 1
+        assert_eq!(mocks.val.1.lba2zone(245775), Some(1));
+
+        assert_eq!(mocks.val.1.size(), 983025);
+
+        assert_eq!(mocks.val.1.zone_limits(0), (0, 245745));
+        assert_eq!(mocks.val.1.zone_limits(1), (245775, 491505));
     }
 }
 
