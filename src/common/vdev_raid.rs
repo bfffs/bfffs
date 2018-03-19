@@ -171,8 +171,7 @@ macro_rules! issue_1stripe_ops {
             let mut first = true;
             let futs : Vec<_> = $buf
             .into_iter()
-            .enumerate()
-            .map(|(_, d)| {
+            .map(|d| {
                 let (_, loc) = iter.next().unwrap();
                 let disk_lba = if first {
                     first = false;
