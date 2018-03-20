@@ -6,8 +6,7 @@ use nix;
 use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
-use std::collections::btree_map::BTreeMap;
-use std::vec::Vec;
+use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
 use tokio::reactor::Handle;
 
@@ -33,6 +32,11 @@ enum BlockOpBufT {
 struct BlockOp {
     pub lba: LbaT,
     pub bufs: BlockOpBufT,
+    /// The priority is the opposite of the distance from the scheduler's LBA at
+    /// the time of `BlockOp` creation to the `BlockOp`'s LBA.  We use the
+    /// opposite of distance because Rust's standard library includes a max heap
+    /// but not a min heap.
+    priority: LbaT
 }
 
 impl BlockOp {
@@ -54,17 +58,18 @@ impl Eq for BlockOp {
 }
 
 impl Ord for BlockOp {
-    /// Compare `BlockOp`s by LBA in *reverse* order.  We must use reverse order
-    /// because Rust's standard library includes a max heap but not a min heap,
-    /// and we want to pop `BlockOp`s lowest-LBA first.
+    /// Compare `BlockOp`s by priority.
+    ///
+    /// The priority is determined by the op's LBA compared to the scheduler's
+    /// LBA *when the `BlockOp` is created*.
     fn cmp(&self, other: &BlockOp) -> Ordering {
-        self.lba.cmp(&other.lba).reverse()
+        self.priority.cmp(&other.priority)
     }
 }
 
 impl PartialEq for BlockOp {
     fn eq(&self, other: &BlockOp) -> bool {
-        self.lba == other.lba
+        self.priority == other.priority
     }
 }
 
@@ -75,24 +80,28 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
-    pub fn read_at(buf: IoVecMut, lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+    pub fn read_at(buf: IoVecMut, lba: LbaT, priority: LbaT,
+                   sender: oneshot::Sender<()>) -> BlockOp {
         let g = BlockOpBufG::<IoVecMut>{ buf, sender };
-        BlockOp { lba, bufs: BlockOpBufT::IoVecMut(g)}
+        BlockOp { lba, bufs: BlockOpBufT::IoVecMut(g), priority: priority}
     }
 
-    pub fn readv_at(bufs: SGListMut, lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+    pub fn readv_at(bufs: SGListMut, lba: LbaT, priority: LbaT,
+                    sender: oneshot::Sender<()>) -> BlockOp {
         let g = BlockOpBufG::<SGListMut>{buf: bufs, sender};
-        BlockOp { lba, bufs: BlockOpBufT::SGListMut(g)}
+        BlockOp { lba, bufs: BlockOpBufT::SGListMut(g), priority: priority}
     }
 
-    pub fn write_at(buf: IoVec, lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+    pub fn write_at(buf: IoVec, lba: LbaT, priority: LbaT,
+                    sender: oneshot::Sender<()>) -> BlockOp {
         let g = BlockOpBufG::<IoVec>{ buf, sender };
-        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(g)}
+        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(g), priority: priority}
     }
 
-    pub fn writev_at(bufs: SGList, lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+    pub fn writev_at(bufs: SGList, lba: LbaT, priority: LbaT,
+                     sender: oneshot::Sender<()>) -> BlockOp {
         let g = BlockOpBufG::<SGList>{buf: bufs, sender};
-        BlockOp { lba, bufs: BlockOpBufT::SGList(g)}
+        BlockOp { lba, bufs: BlockOpBufT::SGList(g), priority: priority}
     }
 }
 
@@ -105,27 +114,107 @@ impl BlockOp {
 #[must_use = "futures do nothing unless polled"]
 pub type VdevBlockFut = Future<Item = (), Error = nix::Error>;
 
-/// Used for scheduling writes within a single Zone
-struct ZoneQueue {
-    /// The zone's write pointer, as an LBA.  Absolute, not relative to
-    /// start-of-zone.
-    pub wp: LbaT,
+struct Inner {
+    /// Current queue depth
+    queue_depth: usize,
 
-    /// Priority queue of pending `BlockOp`s for a single zone.  It stores
-    /// operations that aren't ready to be issued to the underlying storage,
-    /// then issues them in LBA order.  There may be gaps between adjacent ops.
-    /// However, sine it is illegal for the client to write to the same location
-    /// twice without explicitly erasing the zone, there are guaranteed to be no
-    /// overlapping ops.
-    pub q: BinaryHeap<BlockOp>
+    /// Underlying device
+    pub leaf: Box<VdevLeaf>,
+
+    /// The last LBA issued an operation
+    last_lba: LbaT,
+
+    /// A collection of BlockOps.  Newly received operations must land here.
+    /// They will be issued to the OS as the scheduler sees fit.
+    queue: BinaryHeap<BlockOp>,
+
+    /// A `Weak` pointer back to `self`.  Used for closures that require a
+    /// reference to `self`, but also require `'static` lifetime.
+    weakself: Weak<RefCell<Inner>>
 }
 
-impl ZoneQueue {
-    fn new(start_of_zone: LbaT) -> Self {
-        ZoneQueue {
-            wp: start_of_zone,
-            q: BinaryHeap::<BlockOp>::new()
+/// Helper macro used by Inner::issue_one
+macro_rules! leaf_op {
+    ( $buf:expr, $self:ident, $lba:expr, $weakself:ident, $func:ident) => {
+        {
+            let sender = $buf.sender;
+            current_thread::spawn(
+                $self.leaf.$func($buf.buf, $lba)
+                .and_then( move |_| {
+                    sender.send(()).unwrap();
+                    let inner = $weakself.upgrade().expect(
+                        "VdevBlock dropped with outstanding I/O");
+                    inner.borrow_mut().queue_depth -= 1;
+                    inner.borrow_mut().issue_all();
+                    Ok(())
+                })
+                .map_err(|_| {
+                    ()
+                })
+            )
         }
+    }
+}
+
+//macro_rules! leaf_continuation {
+    //( $sender:ident, $weakself:ident) => {
+        //move |_| {
+            //$sender.send(()).unwrap();
+            //let inner = $weakself.upgrade().expect(
+                //"VdevBlock dropped with outstanding I/O");
+            //inner.borrow_mut().queue_depth -= 1;
+            //inner.borrow_mut().issue_all();
+            //Ok(())
+        //}
+    //}
+//}
+
+impl Inner {
+    /// Maximum queue depth.  The value `10` is unscientifically chosen, and
+    /// different values may be optimal for different drive types.
+    const MAX_QUEUE_DEPTH: usize = 10;
+
+    /// Issue as many scheduled operations as possible
+    // Use the C-LOOK scheduling algorithm.  It guarantees that writes scheduled
+    // in LBA order will also be issued in LBA order.
+    fn issue_all(&mut self) {
+        while self.queue_depth < Inner::MAX_QUEUE_DEPTH {
+            let op = match self.queue.pop() {
+                Some(op) => op,
+                None => break
+            };
+            self.issue_one(op);
+            // TODO: handle EAGAIN
+        }
+        // Ran out of operations to issue or exceeded queue depth.  If queue
+        // depth was exceeded, an operation's completion will call issue_all
+        // again.
+    }
+
+    /// Immediately issue one I/O operation
+    fn issue_one(&mut self, block_op: BlockOp) {
+        self.last_lba = block_op.lba;
+        self.queue_depth += 1;
+        let weakself = self.weakself.clone();
+
+        // In the context where this is called, we can't return a future.  So we
+        // have to spawn it into the event loop manually
+        match block_op.bufs {
+            BlockOpBufT::IoVec(iovec) =>
+                leaf_op!(iovec, self, block_op.lba, weakself, write_at) ,
+            BlockOpBufT::IoVecMut(iovec_mut) =>
+                leaf_op!(iovec_mut, self, block_op.lba, weakself, read_at) ,
+            BlockOpBufT::SGList(sglist) =>
+                leaf_op!(sglist, self, block_op.lba, weakself, writev_at) ,
+            BlockOpBufT::SGListMut(sglist_mut) =>
+                leaf_op!(sglist_mut, self, block_op.lba, weakself, readv_at) ,
+        };
+    }
+
+    /// Schedule the `block_op`, and possibly issue it too
+    fn sched(&mut self, block_op: BlockOp) {
+        self.queue.push(block_op);
+        self.issue_all();
     }
 }
 
@@ -134,30 +223,13 @@ impl ZoneQueue {
 /// This struct contains the functionality that is common between all types of
 /// leaf vdev.
 pub struct VdevBlock {
+    inner: Rc<RefCell<Inner>>,
+
     /// Handle to a Tokio reactor
     handle: Handle,
 
-    /// Underlying device
-    pub leaf: Box<VdevLeaf>,
-
     /// Usable size of the vdev, in LBAs
     size:   LbaT,
-
-    /// A collection of BlockOps.  Newly received reads must land here.  They
-    /// will be issued to the OS as the scheduler sees fit.
-    // Use a RefCell so that the VdevBlock can be manipulated by multiple
-    // continuations which may have shared references, but all run in the same
-    // reactor.
-    _read_queue: RefCell<BTreeMap<LbaT, BlockOp>>,
-
-    /// A collection of ZoneQueues, one for each open Zone.  Newly received
-    /// writes must land here.  They will be issued to the OS in LBA-order, per
-    /// zone.  If a Zone is not present in the map, then it must be either full
-    /// or empty.
-    // Use a RefCell so that the VdevBlock can be manipulated by multiple
-    // continuations which may have shared references, but all run in the same
-    // reactor.
-    write_queues: RefCell<BTreeMap<ZoneT, ZoneQueue>>,
 }
 
 impl VdevBlock {
@@ -193,80 +265,26 @@ impl VdevBlock {
     // references, they must be 'static.
     pub fn open<T: VdevLeaf + 'static>(leaf: Box<T>, handle: Handle) -> Self {
         let size = leaf.size();
-        VdevBlock { handle,
-                    leaf,
-                    size,
-                    write_queues: RefCell::new(BTreeMap::new()),
-                    _read_queue: RefCell::new(BTreeMap::new())
-                   }
+        let inner = Rc::new(RefCell::new(Inner {
+            queue_depth: 0,
+            leaf,
+            last_lba: 0,
+            queue: BinaryHeap::new(),
+            weakself: Weak::new()
+        }));
+        inner.borrow_mut().weakself = Rc::downgrade(&inner);
+        VdevBlock {
+            inner,
+            handle,
+            size,
+        }
     }
 
-    /// If possible, issue any writes from the given zone.
-    fn issue_writes(&mut self, zone: ZoneT) {
-        let mut wq = self.write_queues.borrow_mut();
-        let zq = wq.get_mut(&zone).expect("Tried to issue from a closed zone");
-        assert!(! zq.q.is_empty(), "Tried to issue from an empty zone");
-        // Optimistically allocate enough for every BlockOp in the zone queue.
-        let l = zq.q.len();
-        let mut iovec_s = Vec::<oneshot::Sender<()>>::with_capacity(l);
-        let mut sg_s = Vec::<oneshot::Sender<()>>::with_capacity(l);
-        let mut combined_bufs = SGList::with_capacity(l);
-        let start_lba = zq.wp;
-        loop {
-            if zq.q.is_empty() {
-                // TODO: close the zone if it's full
-                break;
-            }
-            if zq.q.peek().unwrap().lba != zq.wp {
-                //Lowest queued write is higher than the block pointer; can't
-                //issue yet.
-                break;
-            }
-            let block_op = zq.q.pop().unwrap();
-            let lbas = (block_op.len() / BYTES_PER_LBA) as LbaT;
-            zq.wp += lbas;
-            match block_op.bufs {
-                BlockOpBufT::IoVec(g) => {
-                    combined_bufs.push(g.buf);
-                    iovec_s.push(g.sender);
-                },
-                BlockOpBufT::SGList(g) => {
-                    combined_bufs.extend_from_slice(&g.buf);
-                    sg_s.push(g.sender);
-                },
-                _ => unreachable!("buffer type that's not used for writing!")
-            };
-        }
-        if combined_bufs.is_empty() {
-            // Nothing to do
-            return;
-        } else if combined_bufs.len() == 1  && sg_s.is_empty(){
-            assert_eq!(iovec_s.len(), 1);
-            let sender = iovec_s.pop().unwrap();
-            let fut = self.leaf.write_at(combined_bufs.pop().unwrap(),
-                                         start_lba)
-                .and_then(move |_| {
-                    sender.send(()).unwrap();
-                    Ok(())
-                }).map_err(|_| {
-                    ()
-                });
-            current_thread::spawn(fut);
-        } else {
-            let fut = self.leaf.writev_at(combined_bufs, start_lba)
-                .and_then(move|_| {
-                    for sender in iovec_s.drain(..) {
-                        sender.send(()).unwrap();
-                    }
-                    for sender in sg_s.drain(..) {
-                        sender.send(()).unwrap();
-                    }
-                    Ok(())
-                }).map_err(|_| {
-                    ()
-                });
-            current_thread::spawn(fut);
-        }
+    /// Compute the current scheduling priority of the given LBA.
+    ///
+    /// Though `self` may change, the computed priority will remain valid.
+    fn priority(&self, lba: LbaT) -> LbaT {
+        self.inner.borrow().last_lba.wrapping_sub(lba + 1)
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -275,8 +293,9 @@ impl VdevBlock {
     pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
-        let block_op = BlockOp::read_at(buf, lba, sender);
-        self.sched_read(block_op);
+        let priority = self.priority(lba);
+        let block_op = BlockOp::read_at(buf, lba, priority, sender);
+        self.inner.borrow_mut().sched(block_op);
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 
@@ -291,78 +310,23 @@ impl VdevBlock {
     pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_sglistmut_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
-        let block_op = BlockOp::readv_at(bufs, lba, sender);
-        self.sched_read(block_op);
+        let priority = self.priority(lba);
+        let block_op = BlockOp::readv_at(bufs, lba, priority, sender);
+        self.inner.borrow_mut().sched(block_op);
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
-    }
-
-    fn sched_read(&self, block_op: BlockOp) {
-        // TODO eventually these should be scheduled by LBA order to reduce
-        // the disks' queue depth, but for now push them straight through.  In
-        // the context where this is called, we can't return a future.  So we
-        // have to spawn it into the event loop manually
-        match block_op.bufs {
-            BlockOpBufT::IoVecMut(iovec_mut) => {
-                let sender = iovec_mut.sender;
-                current_thread::spawn(
-                    self.leaf.read_at(iovec_mut.buf, block_op.lba)
-                    .and_then(move |_| {
-                        sender.send(()).unwrap();
-                        Ok(())})
-                    .map_err(|_| {
-                        ()
-                    }))
-            },
-            BlockOpBufT::SGListMut(sglist_mut) => {
-                let sender = sglist_mut.sender;
-                current_thread::spawn(
-                    self.leaf.readv_at(sglist_mut.buf, block_op.lba)
-                    .and_then(move |_| {
-                        sender.send(()).unwrap();
-                        Ok(())})
-                    .map_err(|_| {
-                        ()
-                    }))
-            },
-            _ => unreachable!("buffer type that's not used for reading!")
-        };
-    }
-
-    fn sched_write(&mut self, block_op: BlockOp) {
-        let zone = self.leaf.lba2zone(block_op.lba).unwrap();
-        {
-            let wq = &mut self.write_queues.borrow_mut();
-            let newzone : Option<ZoneQueue> = {
-                let zq = wq.get_mut(&zone);
-                if zq.is_some() {
-                    zq.unwrap().q.push(block_op);
-                    None
-                } else {
-                    let mut zq = ZoneQueue::new(self.leaf.zone_limits(zone).0);
-                    zq.q.push(block_op);
-                    Some(zq)
-                }
-            };
-            if newzone.is_some() {
-                // Placate the borrow checker.  We can't do this if the previous
-                // reference to wq is still alive.
-                wq.insert(zone, newzone.unwrap());
-            }
-        }
-
-        self.issue_writes(zone);
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns nothing on success, and on error on failure
-    pub fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut> {
+    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
-        let block_op = BlockOp::write_at(buf, lba, sender);
+        let priority = self.priority(lba);
+        let block_op = BlockOp::write_at(buf, lba, priority, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
-            "VdevBlock does not yet support fragmentary writes");
-        self.sched_write(block_op);
+            "VdevBlock does not support fragmentary writes");
+        self.inner.borrow_mut().sched(block_op);
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 
@@ -377,10 +341,11 @@ impl VdevBlock {
     pub fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
-        let block_op = BlockOp::writev_at(bufs, lba, sender);
+        let priority = self.priority(lba);
+        let block_op = BlockOp::writev_at(bufs, lba, priority, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
-            "VdevBlock does not yet support fragmentary writes");
-        self.sched_write(block_op);
+            "VdevBlock does not support fragmentary writes");
+        self.inner.borrow_mut().sched(block_op);
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 }
@@ -391,7 +356,7 @@ impl Vdev for VdevBlock {
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        self.leaf.lba2zone(lba)
+        self.inner.borrow().leaf.lba2zone(lba)
     }
 
     fn size(&self) -> LbaT {
@@ -399,7 +364,7 @@ impl Vdev for VdevBlock {
     }
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
-        self.leaf.zone_limits(zone)
+        self.inner.borrow().leaf.zone_limits(zone)
     }
 }
 
@@ -450,35 +415,136 @@ test_suite! {
         }
     });
 
-    // Reads should be passed straight through, even if they're out-of-order
+    // basic reading works
     test read_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
         let r0 = IoVecResult { value: 4096 };
-        let r1 = IoVecResult { value: 4096 };
         seq.expect(leaf.read_at_call(ANY, 1)
                        .and_return(Box::new(future::ok::<IoVecResult,
                                                          nix::Error>(r0))));
-        seq.expect(leaf.read_at_call(ANY, 0)
-                       .and_return(Box::new(future::ok::<IoVecResult,
-                                                         nix::Error>(r1))));
         scenario.expect(seq);
 
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let rbuf0 = dbs0.try_mut().unwrap();
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.read_at(rbuf0, 1)
+        })).unwrap();
+    }
+
+    // vectored reading works
+    test readv_at(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
+        let mut seq = Sequence::new();
+        let r0 = SGListResult { value: 4096 };
+        seq.expect(leaf.readv_at_call(ANY, 1)
+                       .and_return(Box::new(future::ok::<SGListResult,
+                                                         nix::Error>(r0))));
+        scenario.expect(seq);
+
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let rbuf0 = vec![dbs0.try_mut().unwrap()];
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.readv_at(rbuf0, 1)
+        })).unwrap();
+    }
+
+    // Queued operations will both complete
+    test queued(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
+        let r0 = IoVecResult { value: 4096 };
+        let r1 = IoVecResult { value: 4096 };
+        let (sender, receiver) = oneshot::channel::<()>();
+        let e = nix::Error::from(nix::errno::Errno::EPIPE);
+        let fut0 = receiver.map(move |_| r0).map_err(move |_| e);
+        let fut1 = future::ok::<IoVecResult, nix::Error>(r1);
+        scenario.expect(leaf.read_at_call(ANY, 0)
+                            .and_return(Box::new(fut0)));
+        scenario.expect(leaf.read_at_call(ANY, 1)
+                            .and_call(|_, _| {
+                                sender.send(()).unwrap();
+                                Box::new(fut1)
+                            }));
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            let first = vdev.read_at(rbuf0, 1);
-            let second = vdev.read_at(rbuf1, 0);
-            future::Future::join(first, second)
+            let f0 = vdev.read_at(rbuf0, 0);
+            let f1 = vdev.read_at(rbuf1, 1);
+            f0.join(f1)
         })).unwrap();
     }
 
-    // Basic writing at the WP works
-    test write_at_0(mocks) {
+    // Operations will be buffered after the max queue depth is reached
+    // The first MAX_QUEUE_DEPTH operations will be issued immediately, in the
+    // order in which they are requested.  Subsequent operations will be
+    // reordered into LBA order
+    test queue_depth(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
+        let num_ops = Inner::MAX_QUEUE_DEPTH + 2;
+        let mut seq = Sequence::new();
+
+        let channels = (0..num_ops - 2).map(|_| oneshot::channel::<()>());
+        let (futs, senders) : (Vec<_>, Vec<_>) = channels.map(|chan| {
+            let e = nix::Error::from(nix::errno::Errno::EPIPE);
+            (chan.1.map(|_| IoVecResult{value: 4096}).map_err(move |_| e),
+             chan.0)
+        })
+        .unzip();
+        for (i, f) in futs.into_iter().enumerate().rev() {
+            seq.expect(leaf.write_at_call(ANY, i as LbaT)
+                           .and_return(Box::new(f)));
+        }
+        // Schedule the final two operations in reverse LBA order, but verify
+        // that they get issued in actual LBA order
+        let final_result = IoVecResult {value: 4096};
+        let final_fut = future::ok::<IoVecResult, nix::Error>(final_result);
+        seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 2)
+                            .and_call(|_, _| {
+                                Box::new(final_fut)
+                            }));
+        let penultimate_result = IoVecResult {value: 4096};
+        let penultimate_fut = future::ok::<IoVecResult,
+                                           nix::Error>(penultimate_result);
+        seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 1)
+                            .and_call(|_, _| {
+                                Box::new(penultimate_fut)
+                            }));
+        scenario.expect(seq);
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let wbuf = dbs.try().unwrap();
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            // First schedule all operations.  There are too many to issue them
+            // all immediately
+            let unbuf_fut = future::join_all((0..num_ops - 2).rev().map(|i| {
+                vdev.write_at(wbuf.clone(), i as LbaT)
+            }));
+            let penultimate_fut = vdev.write_at(wbuf.clone(),
+                                                (num_ops - 1) as LbaT);
+            let final_fut = vdev.write_at(wbuf.clone(),
+                                          (num_ops - 2) as LbaT);
+            let fut = unbuf_fut.join3(penultimate_fut, final_fut);
+            // Verify that they weren't all issued
+            assert_eq!(vdev.inner.borrow_mut().queue.len(), 2);
+            // Finally, complete them.
+            for chan in senders {
+                chan.send(()).unwrap();
+            }
+            fut
+        })).unwrap();
+    }
+
+    // Basic writing works
+    test write_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let r = IoVecResult { value: 4096 };
@@ -488,14 +554,14 @@ test_suite! {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
-        let mut vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.write_at(wbuf, 0)
         })).unwrap();
     }
 
-    // Basic vectored writing of just 1 lba at the WP works
-    test writev_1_at_0(mocks) {
+    // vectored writing works
+    test writev_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let r = SGListResult { value: 4096 };
@@ -504,83 +570,10 @@ test_suite! {
                                                               nix::Error>(r))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = dbs.try().unwrap();
-        let wbufs = vec![wbuf];
+        let wbuf = vec![dbs.try().unwrap()];
         let mut vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            vdev.writev_at(wbufs, 0)
-        })).unwrap();
-    }
-
-    // Basic vectored writing at the WP works
-    test writev_2_at_0(mocks) {
-        let scenario = mocks.val.0;
-        let leaf = mocks.val.1;
-        let r = SGListResult { value: 4096 };
-        scenario.expect(leaf.writev_at_call(ANY, 0)
-                            .and_return(Box::new(future::ok::<SGListResult,
-                                                              nix::Error>(r))));
-
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = dbs.try().unwrap();
-        let wbuf0 = wbuf.slice_to(1024);
-        let wbuf1 = wbuf.slice_from(1024);
-        let wbufs = vec![wbuf0, wbuf1];
-        let mut vdev = VdevBlock::open(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
-            vdev.writev_at(wbufs, 0)
-        })).unwrap();
-    }
-
-    // Writes should be reordered and combined if out-of-order
-    test write_at_combining(mocks) {
-        let scenario = mocks.val.0;
-        let leaf = mocks.val.1;
-        let r = SGListResult { value: 8192 };
-        scenario.expect(leaf.writev_at_call(ANY, 0)
-                            .and_return(Box::new(future::ok::<SGListResult,
-                                                              nix::Error>(r))));
-
-        let mut vdev = VdevBlock::open(leaf, Handle::current());
-        let dbs = DivBufShared::from(vec![0u8; 8192]);
-        let wbuf = dbs.try().unwrap();
-        let wbuf0 = wbuf.slice_to(4096);
-        let wbuf1 = wbuf.slice_from(4096);
-        current_thread::block_on_all(future::lazy(|| {
-            // Issue writes out-of-order
-            let first = vdev.write_at(wbuf0, 1);
-            let second = vdev.write_at(wbuf1, 0);
-            future::Future::join(first, second)
-        })).unwrap();
-    }
-
-    // Writes should be issued ASAP, even if they could be combined later
-    test write_at_issue_asap(mocks) {
-        let scenario = mocks.val.0;
-        let leaf = mocks.val.1;
-        let mut seq = Sequence::new();
-        scenario.expect(leaf.lba2zone_call(2).and_return(Some(0)));
-        let r0 = SGListResult { value: 8192 };
-        let r1 = IoVecResult { value: 4096 };
-        seq.expect(leaf.writev_at_call(ANY, 0)
-                       .and_return(Box::new(future::ok::<SGListResult,
-                                                         nix::Error>(r0))));
-        seq.expect(leaf.write_at_call(ANY, 2)
-                       .and_return(Box::new(future::ok::<IoVecResult,
-                                                         nix::Error>(r1))));
-        scenario.expect(seq);
-
-        let dbs = DivBufShared::from(vec![0u8; 12288]);
-        let wbuf = dbs.try().unwrap();
-        let wbuf0 = wbuf.slice_to(4096);
-        let wbuf1 = wbuf.slice(4096, 8192);
-        let wbuf2 = wbuf.slice_from(8192);
-        let mut vdev = VdevBlock::open(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
-            let first = vdev.write_at(wbuf0, 1);
-            let second = vdev.write_at(wbuf1, 0);
-            let third = vdev.write_at(wbuf2, 2);
-            future::Future::join3(first, second, third)
+            vdev.writev_at(wbuf, 0)
         })).unwrap();
     }
 }
