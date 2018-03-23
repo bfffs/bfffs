@@ -22,9 +22,9 @@ mockers = { version = "=0.9.4", optional = true }
 # https://github.com/rust-lang/rfcs/pull/2169
 # If it gets merged, we can remove this crate
 modulo = "0.1.2"
-nix = { git = "https://github.com/asomers/nix", rev = "71fe963" }
-tokio-file = { git = "git://github.com/asomers/tokio-file.git", rev = "832dca9" }
-tokio = { git = "git://github.com/tokio-rs/tokio.git", rev = "1190176" }
+nix = { git = "https://github.com/asomers/nix", rev = "fef70ad" }
+tokio-file = { git = "git://github.com/asomers/tokio-file.git", rev = "08c321b" }
+tokio = "0.1.4"
 
 [dev-dependencies]
 galvanic-test = "0.1.3"
