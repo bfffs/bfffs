@@ -66,41 +66,41 @@ impl Vdev for VdevFile {
 }
 
 impl VdevLeaf for VdevFile {
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut> {
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecMutContainer(buf));
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.read_at(container, off).unwrap().map(|aio_result| {
-            IoVecResult{value: aio_result.value.unwrap()}
+            VdevResult{value: aio_result.value.unwrap()}
         }))
     }
 
-    fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<SGListFut> {
+    fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecMutContainer(iovec)) as Box<BorrowMut<[u8]>>
         }).collect();
         Box::new(self.file.readv_at(containers, off).unwrap().map(|r| {
             let v = r.into_iter().map(|x| x.value.unwrap()).sum();
-            SGListResult{value: v}
+            VdevResult{value: v}
         }))
     }
 
-    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut> {
+    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecContainer(buf));
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         Box::new(self.file.write_at(container, off).unwrap().map(|aio_result| {
-            IoVecResult { value: aio_result.value.unwrap() }
+            VdevResult { value: aio_result.value.unwrap() }
         }))
     }
 
-    fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<SGListFut> {
+    fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
         }).collect();
         Box::new(self.file.writev_at(containers, off).unwrap().map(|r| {
             let v = r.into_iter().map(|x| x.value.unwrap()).sum();
-            SGListResult{value: v}
+            VdevResult{value: v}
         }))
     }
 }

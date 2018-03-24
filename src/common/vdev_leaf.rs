@@ -10,22 +10,22 @@ pub trait VdevLeaf : Vdev {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
 
     /// The asynchronous scatter/gather read function.
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
+    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
 
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually written.
-    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
+    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
 
     /// The asynchronous scatter/gather write function.
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
+    fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
 }

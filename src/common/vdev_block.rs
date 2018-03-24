@@ -392,10 +392,10 @@ test_suite! {
         },
         vdev_leaf,
         trait VdevLeaf  {
-            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<IoVecFut>;
-            fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<SGListFut>;
-            fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<IoVecFut>;
-            fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<SGListFut>;
+            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+            fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
+            fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+            fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
         }
     }
 
@@ -420,9 +420,9 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        let r0 = IoVecResult { value: 4096 };
+        let r0 = VdevResult { value: 4096 };
         seq.expect(leaf.read_at_call(ANY, 1)
-                       .and_return(Box::new(future::ok::<IoVecResult,
+                       .and_return(Box::new(future::ok::<VdevResult,
                                                          nix::Error>(r0))));
         scenario.expect(seq);
 
@@ -439,9 +439,9 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        let r0 = SGListResult { value: 4096 };
+        let r0 = VdevResult { value: 4096 };
         seq.expect(leaf.readv_at_call(ANY, 1)
-                       .and_return(Box::new(future::ok::<SGListResult,
+                       .and_return(Box::new(future::ok::<VdevResult,
                                                          nix::Error>(r0))));
         scenario.expect(seq);
 
@@ -457,12 +457,12 @@ test_suite! {
     test queued(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        let r0 = IoVecResult { value: 4096 };
-        let r1 = IoVecResult { value: 4096 };
+        let r0 = VdevResult { value: 4096 };
+        let r1 = VdevResult { value: 4096 };
         let (sender, receiver) = oneshot::channel::<()>();
         let e = nix::Error::from(nix::errno::Errno::EPIPE);
         let fut0 = receiver.map(move |_| r0).map_err(move |_| e);
-        let fut1 = future::ok::<IoVecResult, nix::Error>(r1);
+        let fut1 = future::ok::<VdevResult, nix::Error>(r1);
         scenario.expect(leaf.read_at_call(ANY, 0)
                             .and_return(Box::new(fut0)));
         scenario.expect(leaf.read_at_call(ANY, 1)
@@ -495,7 +495,7 @@ test_suite! {
         let channels = (0..num_ops - 2).map(|_| oneshot::channel::<()>());
         let (futs, senders) : (Vec<_>, Vec<_>) = channels.map(|chan| {
             let e = nix::Error::from(nix::errno::Errno::EPIPE);
-            (chan.1.map(|_| IoVecResult{value: 4096}).map_err(move |_| e),
+            (chan.1.map(|_| VdevResult{value: 4096}).map_err(move |_| e),
              chan.0)
         })
         .unzip();
@@ -505,14 +505,14 @@ test_suite! {
         }
         // Schedule the final two operations in reverse LBA order, but verify
         // that they get issued in actual LBA order
-        let final_result = IoVecResult {value: 4096};
-        let final_fut = future::ok::<IoVecResult, nix::Error>(final_result);
+        let final_result = VdevResult {value: 4096};
+        let final_fut = future::ok::<VdevResult, nix::Error>(final_result);
         seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 2)
                             .and_call(|_, _| {
                                 Box::new(final_fut)
                             }));
-        let penultimate_result = IoVecResult {value: 4096};
-        let penultimate_fut = future::ok::<IoVecResult,
+        let penultimate_result = VdevResult {value: 4096};
+        let penultimate_fut = future::ok::<VdevResult,
                                            nix::Error>(penultimate_result);
         seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 1)
                             .and_call(|_, _| {
@@ -547,9 +547,9 @@ test_suite! {
     test write_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        let r = IoVecResult { value: 4096 };
+        let r = VdevResult { value: 4096 };
         scenario.expect(leaf.write_at_call(ANY, 0)
-                            .and_return(Box::new(future::ok::<IoVecResult,
+                            .and_return(Box::new(future::ok::<VdevResult,
                                                               nix::Error>(r))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -564,9 +564,9 @@ test_suite! {
     test writev_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        let r = SGListResult { value: 4096 };
+        let r = VdevResult { value: 4096 };
         scenario.expect(leaf.writev_at_call(ANY, 0)
-                            .and_return(Box::new(future::ok::<SGListResult,
+                            .and_return(Box::new(future::ok::<VdevResult,
                                                               nix::Error>(r))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
