@@ -1,11 +1,12 @@
 // vim: tw=80
 
-use futures::Future;
+use futures::{Async, Future, future};
 use futures::sync::oneshot;
 use nix;
 use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
+use std::mem;
 use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
 use tokio::reactor::Handle;
@@ -115,6 +116,10 @@ impl BlockOp {
 pub type VdevBlockFut = Future<Item = (), Error = nix::Error>;
 
 struct Inner {
+    /// A VdevLeaf future that got delayed by an EAGAIN error.  We hold the
+    /// future around instead of spawning it into the reactor.
+    delayed: Option<(oneshot::Sender<()>, Box<VdevFut>)>,
+
     /// Current queue depth
     queue_depth: usize,
 
@@ -133,42 +138,6 @@ struct Inner {
     weakself: Weak<RefCell<Inner>>
 }
 
-/// Helper macro used by Inner::issue_one
-macro_rules! leaf_op {
-    ( $buf:expr, $self:ident, $lba:expr, $weakself:ident, $func:ident) => {
-        {
-            let sender = $buf.sender;
-            current_thread::spawn(
-                $self.leaf.$func($buf.buf, $lba)
-                .and_then( move |_| {
-                    sender.send(()).unwrap();
-                    let inner = $weakself.upgrade().expect(
-                        "VdevBlock dropped with outstanding I/O");
-                    inner.borrow_mut().queue_depth -= 1;
-                    inner.borrow_mut().issue_all();
-                    Ok(())
-                })
-                .map_err(|_| {
-                    ()
-                })
-            )
-        }
-    }
-}
-
-//macro_rules! leaf_continuation {
-    //( $sender:ident, $weakself:ident) => {
-        //move |_| {
-            //$sender.send(()).unwrap();
-            //let inner = $weakself.upgrade().expect(
-                //"VdevBlock dropped with outstanding I/O");
-            //inner.borrow_mut().queue_depth -= 1;
-            //inner.borrow_mut().issue_all();
-            //Ok(())
-        //}
-    //}
-//}
-
 impl Inner {
     /// Maximum queue depth.  The value `10` is unscientifically chosen, and
     /// different values may be optimal for different drive types.
@@ -179,36 +148,92 @@ impl Inner {
     // in LBA order will also be issued in LBA order.
     fn issue_all(&mut self) {
         while self.queue_depth < Inner::MAX_QUEUE_DEPTH {
-            let op = match self.queue.pop() {
-                Some(op) => op,
-                None => break
+            let delayed = mem::replace(&mut self.delayed, None);
+            let (sender, fut) = if let Some((sender, fut)) = delayed {
+                (sender, fut)
+            } else if let Some(op) = self.queue.pop() {
+                self.make_fut(op)
+            } else {
+                break;
             };
-            self.issue_one(op);
-            // TODO: handle EAGAIN
+            if let Some(d) = self.issue_fut(sender, fut) {
+                self.delayed = Some(d);
+                break;
+            }
         }
         // Ran out of operations to issue or exceeded queue depth.  If queue
         // depth was exceeded, an operation's completion will call issue_all
         // again.
     }
 
-    /// Immediately issue one I/O operation
-    fn issue_one(&mut self, block_op: BlockOp) {
+    /// Immediately issue one I/O future
+    fn issue_fut(&mut self, sender: oneshot::Sender<()>, mut fut: Box<VdevFut>)
+        -> Option<(oneshot::Sender<()>, Box<VdevFut>)> {
+
+        let weakself = self.weakself.clone();
+        let inner = weakself.upgrade().expect(
+            "VdevBlock dropped with outstanding I/O");
+
+        // Certain errors, like EAGAIN, happen synchronously.  If the future is
+        // going to fail synchronously, then we want to handle the error
+        // synchronously.  So we will poll it once before spawning it into the
+        // reactor.
+        match fut.poll() {
+            Err(nix::Error::Sys(nix::errno::Errno::EAGAIN)) => {
+                // Out of resources to issue this future.  Delay it
+                return Some((sender, fut));
+            },
+            Err(e) => panic!("got error {:?}", e),
+            Ok(r) => {
+                let sendit = move |_| {
+                    sender.send(()).unwrap();
+                    inner.borrow_mut().queue_depth -= 1;
+                    inner.borrow_mut().issue_all();
+                    Ok(())
+                };
+                match r {
+                    Async::NotReady => {
+                        current_thread::spawn(
+                            fut.and_then(sendit).map_err(|e| {
+                                panic!("Unhandled error {:?}", e);
+                            })
+                        );
+                    },
+                    Async::Ready(r) => {
+                        // This normally doesn't happen, but it can happen on a
+                        // heavily laden system or one with very fast storage.
+                        // TODO: don't bother spawning
+                        current_thread::spawn(future::lazy(move || {
+                            future::result(sendit(r)).map_err(|_| { () })
+                        }));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Create a future from a BlockOp, but don't spawn it yet
+    fn make_fut(&mut self, block_op: BlockOp)
+        -> (oneshot::Sender<()>, Box<VdevFut>) {
+
         self.last_lba = block_op.lba;
         self.queue_depth += 1;
-        let weakself = self.weakself.clone();
+        let lba = block_op.lba;
 
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
-        match block_op.bufs {
+        let (sender, fut) = match block_op.bufs {
             BlockOpBufT::IoVec(iovec) =>
-                leaf_op!(iovec, self, block_op.lba, weakself, write_at) ,
+                (iovec.sender, self.leaf.write_at(iovec.buf, lba)),
             BlockOpBufT::IoVecMut(iovec_mut) =>
-                leaf_op!(iovec_mut, self, block_op.lba, weakself, read_at) ,
+                (iovec_mut.sender, self.leaf.read_at(iovec_mut.buf, lba)),
             BlockOpBufT::SGList(sglist) =>
-                leaf_op!(sglist, self, block_op.lba, weakself, writev_at) ,
+                (sglist.sender, self.leaf.writev_at(sglist.buf, lba)),
             BlockOpBufT::SGListMut(sglist_mut) =>
-                leaf_op!(sglist_mut, self, block_op.lba, weakself, readv_at) ,
+                (sglist_mut.sender, self.leaf.readv_at(sglist_mut.buf, lba)),
         };
+        (sender, fut)
     }
 
     /// Schedule the `block_op`, and possibly issue it too
@@ -266,6 +291,7 @@ impl VdevBlock {
     pub fn open<T: VdevLeaf + 'static>(leaf: Box<T>, handle: Handle) -> Self {
         let size = leaf.size();
         let inner = Rc::new(RefCell::new(Inner {
+            delayed: None,
             queue_depth: 0,
             leaf,
             last_lba: 0,
@@ -375,7 +401,8 @@ test_suite! {
 
     use super::*;
     use divbuf::DivBufShared;
-    use futures::future;
+    use futures;
+    use futures::{Poll, future};
     use mockers::{Scenario, Sequence};
     use mockers::matchers::ANY;
     use tokio::executor::current_thread;
@@ -399,6 +426,16 @@ test_suite! {
         }
     }
 
+    mock!{
+        MockVdevFut,
+        futures,
+        trait Future {
+            type Item = VdevResult;
+            type Error = nix::Error;
+            fn poll(&mut self) -> Poll<Item, Error>;
+        },
+    }
+
     fixture!( mocks() -> (Scenario, Box<MockVdevLeaf2>) {
             setup(&mut self) {
             let scenario = Scenario::new();
@@ -414,6 +451,51 @@ test_suite! {
             (scenario, leaf)
         }
     });
+
+    // Issueing an operation fails with EAGAIN.  This can happen if the
+    // per-process or per-system AIO limits are reached
+    test eagain(mocks) {
+        let scenario = mocks.val.0;
+        let scenario_handle = scenario.handle();
+        let leaf = mocks.val.1;
+        let mut seq0 = Sequence::new();
+
+        let r0 = VdevResult { value: 4096 };
+        let r1 = VdevResult { value: 4096 };
+        let (sender, receiver) = oneshot::channel::<()>();
+        let e = nix::Error::from(nix::errno::Errno::EPIPE);
+        let fut0 = receiver.map(move |_| r0).map_err(move |_| e);
+        // The first operation succeeds.  When it does, that will cause the
+        // second to be reissued
+        seq0.expect(leaf.read_at_call(ANY, 0)
+                       .and_return(Box::new(fut0)));
+        seq0.expect(leaf.read_at_call(ANY, 1)
+            .and_call( move |_, _| {
+                let mut seq1 = Sequence::new();
+                let fut = scenario_handle.create_mock::<MockVdevFut<VdevResult,
+                                                        nix::Error>>();
+                seq1.expect(fut.poll_call()
+                    .and_return(
+                        Err(nix::Error::Sys(nix::errno::Errno::EAGAIN))));
+                seq1.expect(fut.poll_call()
+                    .and_return(
+                        Ok(Async::Ready(r1))));
+                scenario_handle.expect(seq1);
+                Box::new(fut)
+            }));
+        scenario.expect(seq0);
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![0u8; 4096]);
+        let rbuf0 = dbs0.try_mut().unwrap();
+        let rbuf1 = dbs1.try_mut().unwrap();
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            let f0 = vdev.read_at(rbuf0, 0);
+            let f1 = vdev.read_at(rbuf1, 1);
+            sender.send(()).expect("send");
+            f0.join(f1)
+        })).expect("test eagain");
+    }
 
     // basic reading works
     test read_at(mocks) {
@@ -457,19 +539,22 @@ test_suite! {
     test queued(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
+        let mut seq = Sequence::new();
+
         let r0 = VdevResult { value: 4096 };
         let r1 = VdevResult { value: 4096 };
         let (sender, receiver) = oneshot::channel::<()>();
         let e = nix::Error::from(nix::errno::Errno::EPIPE);
         let fut0 = receiver.map(move |_| r0).map_err(move |_| e);
         let fut1 = future::ok::<VdevResult, nix::Error>(r1);
-        scenario.expect(leaf.read_at_call(ANY, 0)
-                            .and_return(Box::new(fut0)));
-        scenario.expect(leaf.read_at_call(ANY, 1)
-                            .and_call(|_, _| {
-                                sender.send(()).unwrap();
-                                Box::new(fut1)
-                            }));
+        seq.expect(leaf.read_at_call(ANY, 0)
+                       .and_return(Box::new(fut0)));
+        seq.expect(leaf.read_at_call(ANY, 1)
+                       .and_call(|_, _| {
+                           sender.send(()).unwrap();
+                           Box::new(fut1)
+                       }));
+        scenario.expect(seq);
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
