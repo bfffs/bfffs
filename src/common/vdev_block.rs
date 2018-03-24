@@ -185,27 +185,26 @@ impl Inner {
             },
             Err(e) => panic!("got error {:?}", e),
             Ok(r) => {
-                let sendit = move |_| {
-                    sender.send(()).unwrap();
-                    inner.borrow_mut().queue_depth -= 1;
-                    inner.borrow_mut().issue_all();
-                    Ok(())
-                };
                 match r {
                     Async::NotReady => {
                         current_thread::spawn(
-                            fut.and_then(sendit).map_err(|e| {
+                            fut.and_then(move |_| {
+                                sender.send(()).unwrap();
+                                inner.borrow_mut().queue_depth -= 1;
+                                inner.borrow_mut().issue_all();
+                                Ok(())
+                            })
+                            .map_err(|e| {
                                 panic!("Unhandled error {:?}", e);
                             })
                         );
                     },
-                    Async::Ready(r) => {
+                    Async::Ready(_) => {
                         // This normally doesn't happen, but it can happen on a
                         // heavily laden system or one with very fast storage.
                         // TODO: don't bother spawning
-                        current_thread::spawn(future::lazy(move || {
-                            future::result(sendit(r)).map_err(|_| { () })
-                        }));
+                        sender.send(()).unwrap();
+                        self.queue_depth -= 1;
                     }
                 }
             }
