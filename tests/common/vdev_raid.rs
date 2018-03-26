@@ -75,32 +75,27 @@ test_suite! {
         (dbsw, dbsr)
     }
 
-    fn write_read(mut vr: VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>) {
+    fn write_read(vr: VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>) {
+        let mut write_lba = 0;
+        let mut read_lba = 0;
         current_thread::block_on_all(future::lazy(|| {
             future::join_all( {
-                let mut lba = 0;
-                // The ugly collect() call is necessary to appease the borrow
-                // checker, because write_at must mutably borrow the VdevRaid
-                let wfuts: Vec<_> = wbufs.into_iter()
+                wbufs.into_iter()
                 .map(|wb| {
                     let lbas = (wb.len() / BYTES_PER_LBA) as LbaT;
-                    let fut = vr.write_at(wb, 0, lba);
-                    lba += lbas;
+                    let fut = vr.write_at(wb, 0, write_lba);
+                    write_lba += lbas;
                     fut
-                }).collect();
-                wfuts }
-            ).and_then(|_| {
+                })
+            }).and_then(|_| {
                 future::join_all({
-                    // The ugly collect() call is necessary to appease the
-                    // borrow checker, because lba is borrowed
-                    let mut lba = 0;
                     rbufs.into_iter()
                     .map(|rb| {
                         let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
-                        let fut = vr.read_at(rb, 0, lba);
-                        lba += lbas;
+                        let fut = vr.read_at(rb, 0, read_lba);
+                        read_lba += lbas;
                         fut
-                    }).collect::<Vec<_>>()
+                    })
                 })
             })
         })).expect("current_thread::block_on_all");
@@ -115,7 +110,7 @@ test_suite! {
         assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 
-    fn writev_read_n_stripes(mut vr: VdevRaid, chunksize: LbaT, k: i16, f: i16,
+    fn writev_read_n_stripes(vr: VdevRaid, chunksize: LbaT, k: i16, f: i16,
                              s: usize) {
         let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
         let wbuf = dbsw.try().unwrap();

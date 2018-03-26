@@ -33,12 +33,12 @@ pub trait Vdev {
     ///
     /// After this, the zone will be in the empty state.  The data may or may
     /// not be inaccessible, and should not be considered securely erased.
-    fn erase_zone(&mut self, zone: ZoneT);
+    fn erase_zone(&self, zone: ZoneT);
 
     /// Finish the given zone.
     ///
     /// After this, the zone will be in the Full state.
-    fn finish_zone(&mut self, zone: ZoneT);
+    fn finish_zone(&self, zone: ZoneT);
 
     /// Return the Tokio reactor handle used for this vdev
     fn handle(&self) -> Handle;
@@ -52,7 +52,7 @@ pub trait Vdev {
     /// Open the given zone.
     ///
     /// This should be called on an empty zone before writing to that zone.
-    fn open_zone(&mut self, zone: ZoneT);
+    fn open_zone(&self, zone: ZoneT);
 
     /// Return approximately the usable space of the Vdev.
     ///

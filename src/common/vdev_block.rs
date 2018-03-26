@@ -372,7 +372,7 @@ impl VdevBlock {
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    pub fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut> {
+    pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let priority = self.priority(lba);
@@ -385,13 +385,13 @@ impl VdevBlock {
 }
 
 impl Vdev for VdevBlock {
-    fn erase_zone(&mut self, zone: ZoneT) {
+    fn erase_zone(&self, zone: ZoneT) {
         // The zone must already be closed, but VdevBlock doesn't keep enough
         // information to assert that
         self.inner.borrow_mut().leaf.open_zone(zone)
     }
 
-    fn finish_zone(&mut self, zone: ZoneT) {
+    fn finish_zone(&self, zone: ZoneT) {
         // TODO: schedule these operations with the lowest priority in their
         // zones, so all writes in the zone will finish first
         self.inner.borrow_mut().leaf.finish_zone(zone)
@@ -405,7 +405,7 @@ impl Vdev for VdevBlock {
         self.inner.borrow().leaf.lba2zone(lba)
     }
 
-    fn open_zone(&mut self, zone: ZoneT) {
+    fn open_zone(&self, zone: ZoneT) {
         self.inner.borrow_mut().leaf.open_zone(zone)
     }
 
@@ -436,11 +436,11 @@ test_suite! {
         MockVdevLeaf2,
         vdev,
         trait Vdev {
-            fn erase_zone(&mut self, zone: ZoneT);
-            fn finish_zone(&mut self, zone: ZoneT);
+            fn erase_zone(&self, zone: ZoneT);
+            fn finish_zone(&self, zone: ZoneT);
             fn handle(&self) -> Handle;
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
-            fn open_zone(&mut self, zone: ZoneT);
+            fn open_zone(&self, zone: ZoneT);
             fn size(&self) -> LbaT;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         },
@@ -716,7 +716,7 @@ test_suite! {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = vec![dbs.try().unwrap()];
-        let mut vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.writev_at(wbuf, 0)
         })).unwrap();

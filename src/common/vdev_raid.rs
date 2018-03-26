@@ -10,6 +10,7 @@ use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
 use nix::Error;
+use std::cell::RefCell;
 use std::{cmp, mem, ptr};
 use std::collections::BTreeMap;
 use tokio::reactor::Handle;
@@ -19,8 +20,8 @@ use tokio::reactor::Handle;
 pub trait VdevBlockTrait : Vdev {
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut>;
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevBlockFut>;
-    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;
-    fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<VdevBlockFut>;
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;
+    fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevBlockFut>;
 }
 #[cfg(test)]
 pub type VdevBlockLike = Box<VdevBlockTrait>;
@@ -144,7 +145,7 @@ pub struct VdevRaid {
     ///
     /// We cache up to one stripe per zone before flushing it.  Cacheing entire
     /// stripes uses fewer resources than only cacheing the parity information.
-    stripe_buffers: BTreeMap<ZoneT, StripeBuffer>
+    stripe_buffers: RefCell<BTreeMap<ZoneT, StripeBuffer>>
 }
 
 /// Convenience macro for `VdevRaid` I/O methods
@@ -209,7 +210,7 @@ impl VdevRaid {
         }
 
         VdevRaid { chunksize, codec, locator, blockdevs,
-                   stripe_buffers: BTreeMap::new()}
+                   stripe_buffers: RefCell::new(BTreeMap::new())}
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -225,7 +226,8 @@ impl VdevRaid {
         // end_lba is inclusive.  The highest LBA from which data will be read
         let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
         // TODO: allow reading from a closed zone
-        let stripe_buffer = self.stripe_buffers.get(&zone).unwrap();
+        let sb_ref = self.stripe_buffers.borrow();
+        let stripe_buffer = sb_ref.get(&zone).unwrap();
         let buf2 = if !stripe_buffer.is_empty() &&
             end_lba >= stripe_buffer.lba() {
             // We need to service part of the read from the StripeBuffer
@@ -362,7 +364,7 @@ impl VdevRaid {
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns `()` on success, or an error on failure
-    pub fn write_at(&mut self, buf: IoVec, zone: ZoneT,
+    pub fn write_at(&self, buf: IoVec, zone: ZoneT,
                     mut lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
@@ -370,22 +372,20 @@ impl VdevRaid {
         let stripe_len = col_len * m;
         assert_eq!(buf.len() % BYTES_PER_LBA, 0, "Writes must be LBA-aligned");
         debug_assert_eq!(zone, self.lba2zone(lba).unwrap());
-        // Annoyingly, the borrow checker won't let us hold a reference to the
-        // stripe_buffer, because we're going to borrow self for the write calls
-        assert_eq!(self.stripe_buffers.get(&zone)
-                                      .expect("Can't write to a closed zone")
-                                      .next_lba(), lba);
+        let mut sb_ref = self.stripe_buffers.borrow_mut();
+        let stripe_buffer = sb_ref.get_mut(&zone)
+                                  .expect("Can't write to a closed zone");
+        assert_eq!(stripe_buffer.next_lba(), lba);
 
         let mut sb_fut = None;
-        //let sglist = SGList::with_capacity(2);
-        let mut buf3 = if !self.stripe_buffers.get(&zone).unwrap().is_empty() ||
+        let mut buf3 = if !stripe_buffer.is_empty() ||
             buf.len() < stripe_len {
 
             let buflen = buf.len();
-            let buf2 = self.stripe_buffers.get_mut(&zone).unwrap().fill(buf);
-            if self.stripe_buffers.get(&zone).unwrap().is_full() {
-                let stripe_lba = self.stripe_buffers.get(&zone).unwrap().lba();
-                let sglist = self.stripe_buffers.get_mut(&zone).unwrap().pop();
+            let buf2 = stripe_buffer.fill(buf);
+            if stripe_buffer.is_full() {
+                let stripe_lba = stripe_buffer.lba();
+                let sglist = stripe_buffer.pop();
                 lba += ((buflen - buf2.len()) / BYTES_PER_LBA) as LbaT;
                 sb_fut = Some(self.writev_at_one(&sglist, stripe_lba));
                 if buf2.is_empty() {
@@ -403,14 +403,13 @@ impl VdevRaid {
         } else {
             buf
         };
-        debug_assert!(self.stripe_buffers.get(&zone).unwrap().is_empty());
+        debug_assert!(stripe_buffer.is_empty());
         let nstripes = buf3.len() / stripe_len;
         let writable_buf = buf3.split_to(nstripes * stripe_len);
-        self.stripe_buffers.get_mut(&zone).unwrap()
-                           .reset(lba + (nstripes * m) as LbaT * self.chunksize);
+        stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
         if ! buf3.is_empty() {
-            let buf4 = self.stripe_buffers.get_mut(&zone).unwrap().fill(buf3);
-            debug_assert!(!self.stripe_buffers.get(&zone).unwrap().is_full());
+            let buf4 = stripe_buffer.fill(buf3);
+            debug_assert!(!stripe_buffer.is_full());
             debug_assert!(buf4.is_empty());
         }
         let fut = if nstripes == 1 {
@@ -426,7 +425,7 @@ impl VdevRaid {
     }
 
     /// Write two or more whole stripes
-    fn write_at_multi(&mut self, mut buf: IoVec, lba: LbaT) -> Box<VdevRaidFut> {
+    fn write_at_multi(&self, mut buf: IoVec, lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let k = self.codec.stripesize() as usize;
@@ -495,7 +494,7 @@ impl VdevRaid {
             sglists[loc.disk as usize].push(col);
         }
 
-        let futs : Vec<Box<VdevBlockFut>> = multizip((self.blockdevs.iter_mut(),
+        let futs : Vec<Box<VdevBlockFut>> = multizip((self.blockdevs.iter(),
                                                       sglists.into_iter(),
                                                       start_lbas.into_iter()))
             .filter(|&(_, _, lba)| lba != SENTINEL)
@@ -514,7 +513,7 @@ impl VdevRaid {
     }
 
     /// Write exactly one stripe
-    fn write_at_one(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevRaidFut> {
+    fn write_at_one(&self, buf: IoVec, lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -552,10 +551,10 @@ impl VdevRaid {
 
     /// Write exactly one stripe, with SGLists.
     ///
-    /// This is mostly useful internally, for writing from the stripe buffer.  It
-    /// should not be used publicly.
+    /// This is mostly useful internally, for writing from the stripe buffer.
+    /// It should not be used publicly.
     #[doc(hidden)]
-    pub fn writev_at_one(&mut self, buf: &SGList, lba: LbaT) -> Box<VdevRaidFut> {
+    pub fn writev_at_one(&self, buf: &SGList, lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -621,22 +620,22 @@ impl Vdev for VdevRaid {
         panic!("Unimplemented!  Perhaps handle() should not be part of Trait vdev, because it doesn't make sense for VdevRaid");
     }
 
-    fn erase_zone(&mut self, zone: ZoneT) {
-        assert!(!self.stripe_buffers.contains_key(&zone),
+    fn erase_zone(&self, zone: ZoneT) {
+        assert!(!self.stripe_buffers.borrow().contains_key(&zone),
             "Tried to erase an open zone");
-        for blockdev in self.blockdevs.iter_mut() {
+        for blockdev in self.blockdevs.iter() {
             blockdev.erase_zone(zone);
         }
     }
 
     // Zero-fill the current StripeBuffer and write it out.  Then drop the
     // StripeBuffer.
-    fn finish_zone(&mut self, zone: ZoneT) {
+    fn finish_zone(&self, zone: ZoneT) {
         // TODO: zero fill StripeBuffer and write it out
-        for blockdev in self.blockdevs.iter_mut() {
+        for blockdev in self.blockdevs.iter() {
             blockdev.finish_zone(zone);
         }
-        assert!(self.stripe_buffers.remove(&zone).is_some());
+        assert!(self.stripe_buffers.borrow_mut().remove(&zone).is_some());
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
@@ -653,14 +652,14 @@ impl Vdev for VdevRaid {
     }
 
     // Create a new StripeBuffer, and zero fill and leading wasted space
-    fn open_zone(&mut self, zone: ZoneT) {
+    fn open_zone(&self, zone: ZoneT) {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         let stripe_lbas = m * self.chunksize as LbaT;
         let (start, _) = self.zone_limits(zone);
         let sb = StripeBuffer::new(start, stripe_lbas);
-        assert!(self.stripe_buffers.insert(zone, sb).is_none());
-        for blockdev in self.blockdevs.iter_mut() {
+        assert!(self.stripe_buffers.borrow_mut().insert(zone, sb).is_none());
+        for blockdev in self.blockdevs.iter() {
             blockdev.open_zone(zone);
         }
         // TODO: zero-fill leading wasted space
@@ -906,11 +905,11 @@ mock!{
     MockVdevBlock,
     vdev,
     trait Vdev {
-        fn erase_zone(&mut self, zone: ZoneT);
-        fn finish_zone(&mut self, zone: ZoneT);
+        fn erase_zone(&self, zone: ZoneT);
+        fn finish_zone(&self, zone: ZoneT);
         fn handle(&self) -> Handle;
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
-        fn open_zone(&mut self, zone: ZoneT);
+        fn open_zone(&self, zone: ZoneT);
         fn size(&self) -> LbaT;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
     },
@@ -918,8 +917,8 @@ mock!{
     trait VdevBlockTrait{
         fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut>;
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevBlockFut>;
-        fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;
-        fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut>;
+        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;
+        fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut>;
     }
 }
 
@@ -1144,8 +1143,8 @@ fn read_at_one_stripe() {
 
         let codec = Codec::new(k, f);
         let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let mut vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
-                                          blockdevs.into_boxed_slice());
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+                                      blockdevs.into_boxed_slice());
         vdev_raid.open_zone(0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
@@ -1202,7 +1201,7 @@ fn write_at_one_stripe() {
 
         let codec = Codec::new(k, f);
         let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let mut vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
                                       blockdevs.into_boxed_slice());
         vdev_raid.open_zone(0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);

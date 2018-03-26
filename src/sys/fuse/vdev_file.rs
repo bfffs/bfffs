@@ -48,11 +48,11 @@ impl BorrowMut<[u8]> for IoVecMutContainer {
 }
 
 impl Vdev for VdevFile {
-    fn erase_zone(&mut self, _zone: ZoneT) {
+    fn erase_zone(&self, _zone: ZoneT) {
         // ordinary files don't have Zone operations
     }
 
-    fn finish_zone(&mut self, _zone: ZoneT) {
+    fn finish_zone(&self, _zone: ZoneT) {
         // ordinary files don't have Zone operations
     }
 
@@ -64,7 +64,7 @@ impl Vdev for VdevFile {
         Some((lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT)
     }
 
-    fn open_zone(&mut self, _zone: ZoneT) {
+    fn open_zone(&self, _zone: ZoneT) {
         // ordinary files don't have Zone operations
     }
 
