@@ -16,17 +16,12 @@ use common::dva::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 
-struct BlockOpBufG<T> {
-    pub buf: T,
-    /// Used by the `VdevLeaf` to complete this future
-    pub sender: oneshot::Sender<()>
-}
 
 enum BlockOpBufT {
-    IoVec(BlockOpBufG<IoVec>),
-    IoVecMut(BlockOpBufG<IoVecMut>),
-    SGList(BlockOpBufG<SGList>),
-    SGListMut(BlockOpBufG<SGListMut>)
+    IoVec(IoVec),
+    IoVecMut(IoVecMut),
+    SGList(SGList),
+    SGListMut(SGListMut)
 }
 
 /// A single read or write command that is queued at the `VdevBlock` layer
@@ -37,19 +32,21 @@ struct BlockOp {
     /// the time of `BlockOp` creation to the `BlockOp`'s LBA.  We use the
     /// opposite of distance because Rust's standard library includes a max heap
     /// but not a min heap.
-    priority: LbaT
+    priority: LbaT,
+    /// Used by the `VdevLeaf` to complete this future
+    pub sender: oneshot::Sender<()>
 }
 
 impl BlockOp {
     pub fn len(&self) -> usize {
         match self.bufs {
-            BlockOpBufT::IoVec(ref iovec) => iovec.buf.len(),
-            BlockOpBufT::IoVecMut(ref iovec) => iovec.buf.len(),
+            BlockOpBufT::IoVec(ref iovec) => iovec.len(),
+            BlockOpBufT::IoVecMut(ref iovec) => iovec.len(),
             BlockOpBufT::SGList(ref sglist) => {
-                sglist.buf.iter().fold(0, |acc, iovec| acc + iovec.len())
+                sglist.iter().fold(0, |acc, iovec| acc + iovec.len())
             }
             BlockOpBufT::SGListMut(ref sglist) => {
-                sglist.buf.iter().fold(0, |acc, iovec| acc + iovec.len())
+                sglist.iter().fold(0, |acc, iovec| acc + iovec.len())
             }
         }
     }
@@ -83,26 +80,22 @@ impl PartialOrd for BlockOp {
 impl BlockOp {
     pub fn read_at(buf: IoVecMut, lba: LbaT, priority: LbaT,
                    sender: oneshot::Sender<()>) -> BlockOp {
-        let g = BlockOpBufG::<IoVecMut>{ buf, sender };
-        BlockOp { lba, bufs: BlockOpBufT::IoVecMut(g), priority: priority}
+        BlockOp { lba, bufs: BlockOpBufT::IoVecMut(buf), priority , sender}
     }
 
     pub fn readv_at(bufs: SGListMut, lba: LbaT, priority: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        let g = BlockOpBufG::<SGListMut>{buf: bufs, sender};
-        BlockOp { lba, bufs: BlockOpBufT::SGListMut(g), priority: priority}
+        BlockOp { lba, bufs: BlockOpBufT::SGListMut(bufs), priority, sender}
     }
 
     pub fn write_at(buf: IoVec, lba: LbaT, priority: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        let g = BlockOpBufG::<IoVec>{ buf, sender };
-        BlockOp { lba: lba, bufs: BlockOpBufT::IoVec(g), priority: priority}
+        BlockOp { lba, bufs: BlockOpBufT::IoVec(buf), priority, sender}
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT, priority: LbaT,
                      sender: oneshot::Sender<()>) -> BlockOp {
-        let g = BlockOpBufG::<SGList>{buf: bufs, sender};
-        BlockOp { lba, bufs: BlockOpBufT::SGList(g), priority: priority}
+        BlockOp { lba, bufs: BlockOpBufT::SGList(bufs), priority, sender}
     }
 }
 
@@ -231,17 +224,17 @@ impl Inner {
 
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
-        let (sender, fut) = match block_op.bufs {
+        let fut = match block_op.bufs {
             BlockOpBufT::IoVec(iovec) =>
-                (iovec.sender, self.leaf.write_at(iovec.buf, lba)),
+                self.leaf.write_at(iovec, lba),
             BlockOpBufT::IoVecMut(iovec_mut) =>
-                (iovec_mut.sender, self.leaf.read_at(iovec_mut.buf, lba)),
+                self.leaf.read_at(iovec_mut, lba),
             BlockOpBufT::SGList(sglist) =>
-                (sglist.sender, self.leaf.writev_at(sglist.buf, lba)),
+                self.leaf.writev_at(sglist, lba),
             BlockOpBufT::SGListMut(sglist_mut) =>
-                (sglist_mut.sender, self.leaf.readv_at(sglist_mut.buf, lba)),
+                self.leaf.readv_at(sglist_mut, lba),
         };
-        (sender, fut)
+        (block_op.sender, fut)
     }
 
     /// Schedule the `block_op`, and possibly issue it too
