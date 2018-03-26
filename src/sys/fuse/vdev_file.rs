@@ -1,10 +1,11 @@
 // vim: tw=80
 
-use futures::Future;
+use futures::{Async, Future, Poll};
+use nix;
 use std::borrow::{Borrow, BorrowMut};
 use std::path::Path;
 use tokio::reactor::Handle;
-use tokio_file::File;
+use tokio_file::{AioFut, File, LioFut};
 
 use common::*;
 use common::vdev::*;
@@ -24,7 +25,7 @@ pub struct VdevFile {
 }
 
 /// Tokio-File requires boxed `DivBufs`, but the upper layers of ArkFS don't.
-/// Take care of the mismatch here, but wrapping `DivBuf` in a new struct
+/// Take care of the mismatch here, by wrapping `DivBuf` in a new struct
 struct IoVecContainer(IoVec);
 impl Borrow<[u8]> for IoVecContainer {
     fn borrow(&self) -> &[u8] {
@@ -33,7 +34,7 @@ impl Borrow<[u8]> for IoVecContainer {
 }
 
 /// Tokio-File requires boxed `DivBufMuts`, but the upper layers of ArkFS don't.
-/// Take care of the mismatch here, but wrapping `DivBufMut` in a new struct
+/// Take care of the mismatch here, by wrapping `DivBufMut` in a new struct
 struct IoVecMutContainer(IoVecMut);
 impl Borrow<[u8]> for IoVecMutContainer {
     fn borrow(&self) -> &[u8] {
@@ -69,9 +70,7 @@ impl VdevLeaf for VdevFile {
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecMutContainer(buf));
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.read_at(container, off).unwrap().map(|aio_result| {
-            VdevResult{value: aio_result.value.unwrap()}
-        }))
+        Box::new(VdevFileFut(self.file.read_at(container, off).unwrap()))
     }
 
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
@@ -79,18 +78,13 @@ impl VdevLeaf for VdevFile {
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecMutContainer(iovec)) as Box<BorrowMut<[u8]>>
         }).collect();
-        Box::new(self.file.readv_at(containers, off).unwrap().map(|r| {
-            let v = r.into_iter().map(|x| x.value.unwrap()).sum();
-            VdevResult{value: v}
-        }))
+        Box::new(VdevFileLioFut(self.file.readv_at(containers, off).unwrap()))
     }
 
     fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecContainer(buf));
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
-        Box::new(self.file.write_at(container, off).unwrap().map(|aio_result| {
-            VdevResult { value: aio_result.value.unwrap() }
-        }))
+        Box::new(VdevFileFut(self.file.write_at(container, off).unwrap()))
     }
 
     fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
@@ -98,10 +92,7 @@ impl VdevLeaf for VdevFile {
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
         }).collect();
-        Box::new(self.file.writev_at(containers, off).unwrap().map(|r| {
-            let v = r.into_iter().map(|x| x.value.unwrap()).sum();
-            VdevResult{value: v}
-        }))
+        Box::new(VdevFileLioFut(self.file.writev_at(containers, off).unwrap()))
     }
 }
 
@@ -118,5 +109,48 @@ impl VdevFile {
         let f = File::open(path, h.clone()).unwrap();
         let size = f.metadata().unwrap().len() / dva::BYTES_PER_LBA as u64;
         VdevFile{file: f, handle: h, size}
+    }
+}
+
+struct VdevFileFut(AioFut);
+
+impl Future for VdevFileFut {
+    type Item = VdevResult;
+    type Error = nix::Error;
+
+    // aio_write and friends will sometimes return an error synchronously (like
+    // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
+    // once before spawning the future into the event loop.  But that results in
+    // calling poll again after it returns an error, which is incompatible with
+    // FuturesExt::map's implementation.  So we have to define a custom poll
+    // method here, with map's functionality inlined.
+    fn poll(&mut self) -> Poll<VdevResult, nix::Error>{
+        match self.0.poll() {
+            Ok(Async::Ready(aio_result)) => {
+                Ok(Async::Ready(VdevResult{value: aio_result.value.unwrap()}))},
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(e) => Err(e)
+        }
+    }
+}
+
+struct VdevFileLioFut(LioFut);
+
+impl Future for VdevFileLioFut {
+    type Item = VdevResult;
+    type Error = nix::Error;
+
+    // See comments for VdevFileFut::poll
+    fn poll(&mut self) -> Poll<VdevResult, nix::Error>{
+        match self.0.poll() {
+            Ok(Async::Ready(lio_result)) => {
+                let value = lio_result.into_iter()
+                                       .map(|x| x.value.unwrap())
+                                       .sum();
+                Ok(Async::Ready(VdevResult{value: value}))
+            },
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(e) => Err(e)
+        }
     }
 }

@@ -1,12 +1,12 @@
 // vim: tw=80
 
-use futures::{Async, Future, future};
+use futures::{Async, Future};
 use futures::sync::oneshot;
 use nix;
 use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
-use std::mem;
+use std::{mem, thread, time};
 use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
 use tokio::reactor::Handle;
@@ -158,6 +158,14 @@ impl Inner {
             };
             if let Some(d) = self.issue_fut(sender, fut) {
                 self.delayed = Some(d);
+                if self.queue_depth == 1 {
+                    // XXX this sleep works if there is only one VdevBlock in
+                    // the entire reactor.  But if there are more than one, then
+                    // we need a tokio-enabled sleep so the other VdevBlocks can
+                    // complete their futures
+                    thread::sleep(time::Duration::from_millis(10));
+                    continue;
+                }
                 break;
             }
         }
@@ -202,7 +210,6 @@ impl Inner {
                     Async::Ready(_) => {
                         // This normally doesn't happen, but it can happen on a
                         // heavily laden system or one with very fast storage.
-                        // TODO: don't bother spawning
                         sender.send(()).unwrap();
                         self.queue_depth -= 1;
                     }
@@ -494,6 +501,39 @@ test_suite! {
             sender.send(()).expect("send");
             f0.join(f1)
         })).expect("test eagain");
+    }
+
+    // Issueing an operation fails with EAGAIN, when the queue depth is 0.  This
+    // can happen if the per-process or per-system AIO limits are monopolized by
+    // other reactors.  In this case, we need a timer to wake us up.
+    test eagain_queue_depth_0(mocks) {
+        let scenario = mocks.val.0;
+        let scenario_handle = scenario.handle();
+        let leaf = mocks.val.1;
+        let mut seq0 = Sequence::new();
+
+        let r = VdevResult { value: 4096 };
+        seq0.expect(leaf.read_at_call(ANY, 0)
+            .and_call( move |_, _| {
+                let mut seq1 = Sequence::new();
+                let fut = scenario_handle.create_mock::<MockVdevFut<VdevResult,
+                                                        nix::Error>>();
+                seq1.expect(fut.poll_call()
+                    .and_return(
+                        Err(nix::Error::Sys(nix::errno::Errno::EAGAIN))));
+                seq1.expect(fut.poll_call()
+                    .and_return(
+                        Ok(Async::Ready(r))));
+                scenario_handle.expect(seq1);
+                Box::new(fut)
+            }));
+        scenario.expect(seq0);
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let rbuf = dbs.try_mut().unwrap();
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.read_at(rbuf, 0)
+        })).expect("test eagain_queue_depth_0");
     }
 
     // basic reading works
