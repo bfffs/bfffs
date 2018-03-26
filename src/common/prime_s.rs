@@ -366,7 +366,8 @@ impl PrimeSIter {
             ChunkId::Data(_) => self.a - self.stripe * self.m,
             ChunkId::Parity(_, i) => self.m + i
         };
-        let disk = ((self.stripe * self.m + b) * self.y).modulo(self.n);
+        let disk = ((self.stripe as i32 * self.m as i32 + b as i32)
+                    * self.y as i32).modulo(self.n as i32) as i16;
         let o3 = u64::from(self.r) * self.depth as u64;
         let offset = self.o[disk as usize] as u64 + o3;
         (disk, offset)
