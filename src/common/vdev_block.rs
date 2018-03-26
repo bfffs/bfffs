@@ -6,7 +6,7 @@ use nix;
 use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
-use std::{mem, thread, time};
+use std::{thread, time};
 use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
 use tokio::reactor::Handle;
@@ -148,7 +148,7 @@ impl Inner {
     // in LBA order will also be issued in LBA order.
     fn issue_all(&mut self) {
         while self.queue_depth < Inner::MAX_QUEUE_DEPTH {
-            let delayed = mem::replace(&mut self.delayed, None);
+            let delayed = self.delayed.take();
             let (sender, fut) = if let Some((sender, fut)) = delayed {
                 (sender, fut)
             } else if let Some(op) = self.queue.pop() {
