@@ -385,12 +385,28 @@ impl VdevBlock {
 }
 
 impl Vdev for VdevBlock {
+    fn erase_zone(&mut self, zone: ZoneT) {
+        // The zone must already be closed, but VdevBlock doesn't keep enough
+        // information to assert that
+        self.inner.borrow_mut().leaf.open_zone(zone)
+    }
+
+    fn finish_zone(&mut self, zone: ZoneT) {
+        // TODO: schedule these operations with the lowest priority in their
+        // zones, so all writes in the zone will finish first
+        self.inner.borrow_mut().leaf.finish_zone(zone)
+    }
+
     fn handle(&self) -> Handle {
         self.handle.clone()
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         self.inner.borrow().leaf.lba2zone(lba)
+    }
+
+    fn open_zone(&mut self, zone: ZoneT) {
+        self.inner.borrow_mut().leaf.open_zone(zone)
     }
 
     fn size(&self) -> LbaT {
@@ -420,8 +436,11 @@ test_suite! {
         MockVdevLeaf2,
         vdev,
         trait Vdev {
+            fn erase_zone(&mut self, zone: ZoneT);
+            fn finish_zone(&mut self, zone: ZoneT);
             fn handle(&self) -> Handle;
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
+            fn open_zone(&mut self, zone: ZoneT);
             fn size(&self) -> LbaT;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         },

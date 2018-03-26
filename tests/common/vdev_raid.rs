@@ -17,6 +17,7 @@ test_suite! {
     use arkfs::common::raid::Codec;
     use arkfs::common::vdev_block::*;
     use arkfs::common::vdev_raid::*;
+    use arkfs::common::vdev::Vdev;
     use arkfs::sys::vdev_file::*;
     use divbuf::DivBufShared;
     use futures::{Future, future};
@@ -51,8 +52,9 @@ test_suite! {
             }).collect();
             let codec = Codec::new(*self.k as u32, *self.f as u32);
             let locator = Box::new(PrimeS::new(*self.n, *self.k, *self.f));
-            let vdev_raid = VdevRaid::new(*self.chunksize, codec, locator,
-                                      blockdevs.into_boxed_slice());
+            let mut vdev_raid = VdevRaid::new(*self.chunksize, codec, locator,
+                                              blockdevs.into_boxed_slice());
+            vdev_raid.open_zone(0);
             (vdev_raid, tempdir)
         }
     });

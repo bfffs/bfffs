@@ -11,6 +11,7 @@ use futures::{Future, future};
 use itertools::multizip;
 use nix::Error;
 use std::{cmp, mem, ptr};
+use std::collections::BTreeMap;
 use tokio::reactor::Handle;
 
 #[cfg(test)]
@@ -143,8 +144,7 @@ pub struct VdevRaid {
     ///
     /// We cache up to one stripe per zone before flushing it.  Cacheing entire
     /// stripes uses fewer resources than only cacheing the parity information.
-    /// TODO: make this a collection, indexed by zone_id
-    stripe_buffer: StripeBuffer
+    stripe_buffers: BTreeMap<ZoneT, StripeBuffer>
 }
 
 /// Convenience macro for `VdevRaid` I/O methods
@@ -198,8 +198,6 @@ impl VdevRaid {
             "mismatched stripe size");
         assert_eq!(codec.protection(), locator.protection(),
             "mismatched protection level");
-        let f = codec.protection();
-        let m = (codec.stripesize() - f) as LbaT;
         for i in 1..blockdevs.len() {
             // All blockdevs must be the same size
             assert_eq!(blockdevs[0].size(), blockdevs[i].size());
@@ -210,9 +208,8 @@ impl VdevRaid {
                        blockdevs[i].zone_limits(0));
         }
 
-        let stripe_lbas = m * chunksize as LbaT;
         VdevRaid { chunksize, codec, locator, blockdevs,
-                   stripe_buffer: StripeBuffer::new(0, stripe_lbas) }
+                   stripe_buffers: BTreeMap::new()}
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -227,14 +224,16 @@ impl VdevRaid {
 
         // end_lba is inclusive.  The highest LBA from which data will be read
         let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
-        let buf2 = if !self.stripe_buffer.is_empty() &&
-            end_lba >= self.stripe_buffer.lba() {
+        // TODO: allow reading from a closed zone
+        let stripe_buffer = self.stripe_buffers.get(&zone).unwrap();
+        let buf2 = if !stripe_buffer.is_empty() &&
+            end_lba >= stripe_buffer.lba() {
             // We need to service part of the read from the StripeBuffer
-            let direct_len = (self.stripe_buffer.lba() - lba) as usize *
+            let direct_len = (stripe_buffer.lba() - lba) as usize *
                              BYTES_PER_LBA;
             let mut sb_buf = buf.split_off(direct_len);
             // Copy from StripeBuffer into sb_buf
-            for iovec in self.stripe_buffer.peek() {
+            for iovec in stripe_buffer.peek() {
                 sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
             }
             assert!(sb_buf.is_empty(),
@@ -245,7 +244,7 @@ impl VdevRaid {
                 return Box::new(future::ok(()));
             } else {
                 // Service the first part of the read from the disks
-                end_lba = self.stripe_buffer.lba() - 1;
+                end_lba = stripe_buffer.lba() - 1;
             }
             buf
         } else {
@@ -370,19 +369,23 @@ impl VdevRaid {
         let m = self.codec.stripesize() as usize - f as usize;
         let stripe_len = col_len * m;
         assert_eq!(buf.len() % BYTES_PER_LBA, 0, "Writes must be LBA-aligned");
-        assert_eq!(self.stripe_buffer.next_lba(), lba);
         debug_assert_eq!(zone, self.lba2zone(lba).unwrap());
+        // Annoyingly, the borrow checker won't let us hold a reference to the
+        // stripe_buffer, because we're going to borrow self for the write calls
+        assert_eq!(self.stripe_buffers.get(&zone)
+                                      .expect("Can't write to a closed zone")
+                                      .next_lba(), lba);
 
         let mut sb_fut = None;
         //let sglist = SGList::with_capacity(2);
-        let mut buf3 = if !self.stripe_buffer.is_empty() ||
+        let mut buf3 = if !self.stripe_buffers.get(&zone).unwrap().is_empty() ||
             buf.len() < stripe_len {
 
             let buflen = buf.len();
-            let buf2 = self.stripe_buffer.fill(buf);
-            if self.stripe_buffer.is_full() {
-                let stripe_lba = self.stripe_buffer.lba();
-                let sglist = self.stripe_buffer.pop();
+            let buf2 = self.stripe_buffers.get_mut(&zone).unwrap().fill(buf);
+            if self.stripe_buffers.get(&zone).unwrap().is_full() {
+                let stripe_lba = self.stripe_buffers.get(&zone).unwrap().lba();
+                let sglist = self.stripe_buffers.get_mut(&zone).unwrap().pop();
                 lba += ((buflen - buf2.len()) / BYTES_PER_LBA) as LbaT;
                 sb_fut = Some(self.writev_at_one(&sglist, stripe_lba));
                 if buf2.is_empty() {
@@ -400,13 +403,14 @@ impl VdevRaid {
         } else {
             buf
         };
-        debug_assert!(self.stripe_buffer.is_empty());
+        debug_assert!(self.stripe_buffers.get(&zone).unwrap().is_empty());
         let nstripes = buf3.len() / stripe_len;
         let writable_buf = buf3.split_to(nstripes * stripe_len);
-        self.stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
+        self.stripe_buffers.get_mut(&zone).unwrap()
+                           .reset(lba + (nstripes * m) as LbaT * self.chunksize);
         if ! buf3.is_empty() {
-            let buf4 = self.stripe_buffer.fill(buf3);
-            debug_assert!(!self.stripe_buffer.is_full());
+            let buf4 = self.stripe_buffers.get_mut(&zone).unwrap().fill(buf3);
+            debug_assert!(!self.stripe_buffers.get(&zone).unwrap().is_full());
             debug_assert!(buf4.is_empty());
         }
         let fut = if nstripes == 1 {
@@ -617,6 +621,24 @@ impl Vdev for VdevRaid {
         panic!("Unimplemented!  Perhaps handle() should not be part of Trait vdev, because it doesn't make sense for VdevRaid");
     }
 
+    fn erase_zone(&mut self, zone: ZoneT) {
+        assert!(!self.stripe_buffers.contains_key(&zone),
+            "Tried to erase an open zone");
+        for blockdev in self.blockdevs.iter_mut() {
+            blockdev.erase_zone(zone);
+        }
+    }
+
+    // Zero-fill the current StripeBuffer and write it out.  Then drop the
+    // StripeBuffer.
+    fn finish_zone(&mut self, zone: ZoneT) {
+        // TODO: zero fill StripeBuffer and write it out
+        for blockdev in self.blockdevs.iter_mut() {
+            blockdev.finish_zone(zone);
+        }
+        assert!(self.stripe_buffers.remove(&zone).is_some());
+    }
+
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
         let disk_lba = loc.offset * self.chunksize;
@@ -628,6 +650,20 @@ impl Vdev for VdevRaid {
         } else {
             None
         }
+    }
+
+    // Create a new StripeBuffer, and zero fill and leading wasted space
+    fn open_zone(&mut self, zone: ZoneT) {
+        let f = self.codec.protection();
+        let m = (self.codec.stripesize() - f) as LbaT;
+        let stripe_lbas = m * self.chunksize as LbaT;
+        let (start, _) = self.zone_limits(zone);
+        let sb = StripeBuffer::new(start, stripe_lbas);
+        assert!(self.stripe_buffers.insert(zone, sb).is_none());
+        for blockdev in self.blockdevs.iter_mut() {
+            blockdev.open_zone(zone);
+        }
+        // TODO: zero-fill leading wasted space
     }
 
     fn size(&self) -> LbaT {
@@ -870,8 +906,11 @@ mock!{
     MockVdevBlock,
     vdev,
     trait Vdev {
+        fn erase_zone(&mut self, zone: ZoneT);
+        fn finish_zone(&mut self, zone: ZoneT);
         fn handle(&self) -> Handle;
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
+        fn open_zone(&mut self, zone: ZoneT);
         fn size(&self) -> LbaT;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
     },
@@ -1075,6 +1114,7 @@ fn read_at_one_stripe() {
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.lba2zone_call(0).and_return_clone(Some(0)).times(..));
+        s.expect(m0.open_zone_call(0).and_return(()));
         s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1086,6 +1126,7 @@ fn read_at_one_stripe() {
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m1.size_call().and_return_clone(262144).times(..));
         s.expect(m1.lba2zone_call(0).and_return_clone(Some(0)).times(..));
+        s.expect(m1.open_zone_call(0).and_return(()));
         s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1097,13 +1138,15 @@ fn read_at_one_stripe() {
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m2.size_call().and_return_clone(262144).times(..));
         s.expect(m2.lba2zone_call(0).and_return_clone(Some(0)).times(..));
+        s.expect(m2.open_zone_call(0).and_return(()));
         s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         blockdevs.push(m2);
 
         let codec = Codec::new(k, f);
         let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
-                                      blockdevs.into_boxed_slice());
+        let mut vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+                                          blockdevs.into_boxed_slice());
+        vdev_raid.open_zone(0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
         vdev_raid.read_at(rbuf, 0, 0);
@@ -1124,6 +1167,7 @@ fn write_at_one_stripe() {
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.lba2zone_call(0).and_return_clone(Some(0)).times(..));
+        s.expect(m0.open_zone_call(0).and_return(()));
         s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1135,6 +1179,7 @@ fn write_at_one_stripe() {
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m1.size_call().and_return_clone(262144).times(..));
         s.expect(m1.lba2zone_call(0).and_return_clone(Some(0)).times(..));
+        s.expect(m1.open_zone_call(0).and_return(()));
         s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1146,6 +1191,7 @@ fn write_at_one_stripe() {
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m2.size_call().and_return_clone(262144).times(..));
         s.expect(m2.lba2zone_call(0).and_return_clone(Some(0)).times(..));
+        s.expect(m2.open_zone_call(0).and_return(()));
         s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1158,6 +1204,7 @@ fn write_at_one_stripe() {
         let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
         let mut vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
                                       blockdevs.into_boxed_slice());
+        vdev_raid.open_zone(0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try().unwrap();
         vdev_raid.write_at(wbuf, 0, 0);
