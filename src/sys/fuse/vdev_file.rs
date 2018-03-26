@@ -110,7 +110,7 @@ impl VdevLeaf for VdevFile {
 
 impl VdevFile {
     /// Size of a simulated zone
-    const LBAS_PER_ZONE: LbaT = 1 << 19;  // 256 MB
+    const LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
 
     /// Open a file for use as a Vdev
     ///

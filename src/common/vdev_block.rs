@@ -473,7 +473,7 @@ test_suite! {
                                 .and_return_clone(Some(0))
                                 .times(..));
             scenario.expect(leaf.zone_limits_call(0)
-                                .and_return_clone((0, 1 << 19))
+                                .and_return_clone((0, 1 << 16))
                                 .times(..));
             (scenario, leaf)
         }
