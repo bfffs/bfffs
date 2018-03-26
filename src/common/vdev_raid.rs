@@ -218,10 +218,12 @@ impl VdevRaid {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Returns `()` on success, or an error on failure
-    pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<VdevRaidFut> {
+    pub fn read_at(&self, mut buf: IoVecMut, zone: ZoneT,
+                   lba: LbaT) -> Box<VdevRaidFut> {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         assert_eq!(buf.len() % BYTES_PER_LBA, 0, "reads must be LBA-aligned");
+        debug_assert_eq!(zone, self.lba2zone(lba).unwrap());
 
         // end_lba is inclusive.  The highest LBA from which data will be read
         let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
@@ -361,13 +363,15 @@ impl VdevRaid {
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns `()` on success, or an error on failure
-    pub fn write_at(&mut self, buf: IoVec, mut lba: LbaT) -> Box<VdevRaidFut> {
+    pub fn write_at(&mut self, buf: IoVec, zone: ZoneT,
+                    mut lba: LbaT) -> Box<VdevRaidFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
         let stripe_len = col_len * m;
         assert_eq!(buf.len() % BYTES_PER_LBA, 0, "Writes must be LBA-aligned");
         assert_eq!(self.stripe_buffer.next_lba(), lba);
+        debug_assert_eq!(zone, self.lba2zone(lba).unwrap());
 
         let mut sb_fut = None;
         //let sglist = SGList::with_capacity(2);
@@ -1070,6 +1074,7 @@ fn read_at_one_stripe() {
         let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
+        s.expect(m0.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1080,6 +1085,7 @@ fn read_at_one_stripe() {
         blockdevs.push(m0);
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m1.size_call().and_return_clone(262144).times(..));
+        s.expect(m1.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1090,6 +1096,7 @@ fn read_at_one_stripe() {
         blockdevs.push(m1);
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m2.size_call().and_return_clone(262144).times(..));
+        s.expect(m2.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         blockdevs.push(m2);
 
@@ -1099,7 +1106,7 @@ fn read_at_one_stripe() {
                                       blockdevs.into_boxed_slice());
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
-        vdev_raid.read_at(rbuf, 0);
+        vdev_raid.read_at(rbuf, 0, 0);
 }
 
 // Use mock VdevBlock objects to test that RAID writes hit the right LBAs from
@@ -1116,6 +1123,7 @@ fn write_at_one_stripe() {
         let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
+        s.expect(m0.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1126,6 +1134,7 @@ fn write_at_one_stripe() {
         blockdevs.push(m0);
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m1.size_call().and_return_clone(262144).times(..));
+        s.expect(m1.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1136,6 +1145,7 @@ fn write_at_one_stripe() {
         blockdevs.push(m1);
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m2.size_call().and_return_clone(262144).times(..));
+        s.expect(m2.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1150,7 +1160,7 @@ fn write_at_one_stripe() {
                                       blockdevs.into_boxed_slice());
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try().unwrap();
-        vdev_raid.write_at(wbuf, 0);
+        vdev_raid.write_at(wbuf, 0, 0);
 }
 }
 

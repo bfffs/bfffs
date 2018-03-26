@@ -82,7 +82,7 @@ test_suite! {
                 let wfuts: Vec<_> = wbufs.into_iter()
                 .map(|wb| {
                     let lbas = (wb.len() / BYTES_PER_LBA) as LbaT;
-                    let fut = vr.write_at(wb, lba);
+                    let fut = vr.write_at(wb, 0, lba);
                     lba += lbas;
                     fut
                 }).collect();
@@ -95,7 +95,7 @@ test_suite! {
                     rbufs.into_iter()
                     .map(|rb| {
                         let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
-                        let fut = vr.read_at(rb, lba);
+                        let fut = vr.read_at(rb, 0, lba);
                         lba += lbas;
                         fut
                     }).collect::<Vec<_>>()
@@ -124,7 +124,7 @@ test_suite! {
             vr.writev_at_one(&sglist, 0)
                 .then(|write_result| {
                     write_result.expect("writev_at_one");
-                    vr.read_at(dbsr.try_mut().unwrap(), 0)
+                    vr.read_at(dbsr.try_mut().unwrap(), 0, 0)
                 })
         })).expect("read_at");
         assert_eq!(wbuf, dbsr.try().unwrap());
