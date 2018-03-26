@@ -41,7 +41,7 @@ test_suite! {
         }
         setup(&mut self) {
 
-            let len = 1 << 26;  // 64MB
+            let len = 1 << 30;  // 1 GB
             let tempdir = t!(TempDir::new("test_vdev_raid"));
             let blockdevs : Vec<VdevBlock> = (0..*self.n).map(|i| {
                 let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
@@ -75,15 +75,16 @@ test_suite! {
         (dbsw, dbsr)
     }
 
-    fn write_read(vr: VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>) {
-        let mut write_lba = 0;
-        let mut read_lba = 0;
+    fn write_read(vr: &VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>,
+                  zone: ZoneT, start_lba: LbaT) {
+        let mut write_lba = start_lba;
+        let mut read_lba = start_lba;
         current_thread::block_on_all(future::lazy(|| {
             future::join_all( {
                 wbufs.into_iter()
                 .map(|wb| {
                     let lbas = (wb.len() / BYTES_PER_LBA) as LbaT;
-                    let fut = vr.write_at(wb, 0, write_lba);
+                    let fut = vr.write_at(wb, zone, write_lba);
                     write_lba += lbas;
                     fut
                 })
@@ -92,7 +93,7 @@ test_suite! {
                     rbufs.into_iter()
                     .map(|rb| {
                         let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
-                        let fut = vr.read_at(rb, 0, read_lba);
+                        let fut = vr.read_at(rb, zone, read_lba);
                         read_lba += lbas;
                         fut
                     })
@@ -101,12 +102,16 @@ test_suite! {
         })).expect("current_thread::block_on_all");
     }
 
+    fn write_read0(vr: VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>) {
+        write_read(&vr, wbufs, rbufs, 0, 0)
+    }
+
     fn write_read_n_stripes(vr: VdevRaid, chunksize: LbaT, k: i16, f: i16,
                             s: usize) {
         let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
-        write_read(vr, vec![wbuf1], vec![dbsr.try_mut().unwrap()]);
+        write_read0(vr, vec![wbuf1], vec![dbsr.try_mut().unwrap()]);
         assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 
@@ -148,8 +153,8 @@ test_suite! {
             // rbuf5 will get one and a half chunks
             // rbuf6 will get the last half chunk
             let rbuf6 = rbuf5.split_off(3 * cs / 2 * BYTES_PER_LBA);
-            write_read(raid.val.0, vec![wbuf.clone()],
-                       vec![rbuf0, rbuf1, rbuf2, rbuf3, rbuf4, rbuf5, rbuf6]);
+            write_read0(raid.val.0, vec![wbuf.clone()],
+                        vec![rbuf0, rbuf1, rbuf2, rbuf3, rbuf4, rbuf5, rbuf6]);
         }
         assert_eq!(&wbuf[..], &dbsr.try().unwrap()[..]);
     }
@@ -164,8 +169,8 @@ test_suite! {
             let rbuf_b = rbuf_m.split_to(BYTES_PER_LBA);
             let l = rbuf_m.len();
             let rbuf_e = rbuf_m.split_off(l - BYTES_PER_LBA);
-            write_read(raid.val.0, vec![wbuf.clone()],
-                       vec![rbuf_b, rbuf_m, rbuf_e]);
+            write_read0(raid.val.0, vec![wbuf.clone()],
+                        vec![rbuf_b, rbuf_m, rbuf_e]);
         }
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
@@ -177,7 +182,7 @@ test_suite! {
         let wbuf = dbsw.try().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         let rbuf = dbsr.try_mut().unwrap();
-        write_read(raid.val.0, vec![wbuf_short], vec![rbuf]);
+        write_read0(raid.val.0, vec![wbuf_short], vec![rbuf]);
     }
 
     #[should_panic]
@@ -188,7 +193,7 @@ test_suite! {
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         let mut rbuf = dbsr.try_mut().unwrap();
         let rbuf_r = rbuf.split_off(BYTES_PER_LBA);
-        write_read(raid.val.0, vec![wbuf_short], vec![rbuf_r]);
+        write_read0(raid.val.0, vec![wbuf_short], vec![rbuf_r]);
     }
 
     test write_read_one_stripe(raid) {
@@ -231,8 +236,8 @@ test_suite! {
         let wbuf = dbsw.try().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
-        write_read(raid.val.0, vec![wbuf_l, wbuf_r],
-                   vec![dbsr.try_mut().unwrap()]);
+        write_read0(raid.val.0, vec![wbuf_l, wbuf_r],
+                    vec![dbsr.try_mut().unwrap()]);
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
@@ -251,7 +256,7 @@ test_suite! {
             let mut wbuf_l = dbsw.try().unwrap();
             let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
             let rbuf = dbsr.try_mut().unwrap();
-            write_read(raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf]);
+            write_read0(raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf]);
         }
         assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
     }
@@ -262,8 +267,8 @@ test_suite! {
         let wbuf = dbsw.try().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
-        write_read(raid.val.0, vec![wbuf_l, wbuf_r],
-                   vec![dbsr.try_mut().unwrap()]);
+        write_read0(raid.val.0, vec![wbuf_l, wbuf_r],
+                    vec![dbsr.try_mut().unwrap()]);
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
@@ -273,8 +278,8 @@ test_suite! {
         let wbuf = dbsw.try().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
-        write_read(raid.val.0, vec![wbuf_l, wbuf_r],
-                   vec![dbsr.try_mut().unwrap()]);
+        write_read0(raid.val.0, vec![wbuf_l, wbuf_r],
+                    vec![dbsr.try_mut().unwrap()]);
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
@@ -293,7 +298,7 @@ test_suite! {
             let mut wbuf_l = dbsw.try().unwrap();
             let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
             let rbuf = dbsr.try_mut().unwrap();
-            write_read(raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf]);
+            write_read0(raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf]);
         }
         assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
     }
@@ -306,7 +311,7 @@ test_suite! {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
-            write_read(raid.val.0, vec![wbuf_short], vec![rbuf_short]);
+            write_read0(raid.val.0, vec![wbuf_short], vec![rbuf_short]);
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try().unwrap()[0..BYTES_PER_LBA]);
@@ -323,7 +328,7 @@ test_suite! {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let _ = rbuf.split_off(2 * BYTES_PER_LBA);
-            write_read(raid.val.0, vec![wbuf_begin, wbuf_middle], vec![rbuf]);
+            write_read0(raid.val.0, vec![wbuf_begin, wbuf_middle], vec![rbuf]);
         }
         assert_eq!(&wbuf[..],
                    &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA],
@@ -345,7 +350,7 @@ test_suite! {
         {
             let wbuf = dbsw.try().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
-            write_read(raid.val.0, vec![wbuf], vec![rbuf]);
+            write_read0(raid.val.0, vec![wbuf], vec![rbuf]);
         }
         assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
     }
@@ -353,5 +358,81 @@ test_suite! {
     test writev_read_one_stripe(raid) {
         writev_read_n_stripes(raid.val.0, *raid.params.chunksize,
                               *raid.params.k, *raid.params.f, 1);
+    }
+
+    test zone_read_closed(raid((3, 3, 1, 2))) {
+        let zone = 0;
+        let lba=0;
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let wbuf0 = dbsw.try().unwrap();
+        let wbuf1 = dbsw.try().unwrap();
+        let rbuf = dbsr.try_mut().unwrap();
+        current_thread::block_on_all(future::lazy(|| {
+            raid.val.0.write_at(wbuf0, zone, lba)
+                .map(|r| {
+                    raid.val.0.finish_zone(zone);
+                    r
+                }).and_then(|_| {
+                    raid.val.0.read_at(rbuf, zone, lba)
+                })
+        })).expect("current_thread::block_on_all");
+        assert_eq!(wbuf1, dbsr.try().unwrap());
+    }
+
+    #[should_panic]
+    // Writing to an explicitly closed a zone fails
+    test zone_close(raid((3, 3, 1, 2))) {
+        let zone = 1;
+        let (start, _) = raid.val.0.zone_limits(zone);
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let wbuf0 = dbsw.try().unwrap();
+        let wbuf1 = dbsw.try().unwrap();
+        let rbuf = dbsr.try_mut().unwrap();
+        raid.val.0.open_zone(zone);
+        raid.val.0.finish_zone(zone);
+        write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
+        assert_eq!(wbuf1, dbsr.try().unwrap());
+    }
+
+    #[should_panic]
+    // Writing to a closed zone should fail
+    test zone_write_closed(raid((3, 3, 1, 2))) {
+        let zone = 1;
+        let (start, _) = raid.val.0.zone_limits(zone);
+        let dbsw = DivBufShared::from(vec![0;4096]);
+        let wbuf = dbsw.try().unwrap();
+        raid.val.0.write_at(wbuf, zone, start);
+    }
+
+    // Opening a closed zone should allow writing
+    test zone_write_open(raid((3, 3, 1, 2))) {
+        let zone = 1;
+        let (start, _) = raid.val.0.zone_limits(zone);
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let wbuf0 = dbsw.try().unwrap();
+        let wbuf1 = dbsw.try().unwrap();
+        let rbuf = dbsr.try_mut().unwrap();
+        raid.val.0.open_zone(zone);
+        write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
+        assert_eq!(wbuf1, dbsr.try().unwrap());
+    }
+
+    // Two zones can be open simultaneously
+    test zone_write_two_zones(raid((3, 3, 1, 2))) {
+        let vdev_raid = raid.val.0;
+        for zone in 1..3 {
+            let (start, _) = vdev_raid.zone_limits(zone);
+            let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                         *raid.params.f, 1);
+            let wbuf0 = dbsw.try().unwrap();
+            let wbuf1 = dbsw.try().unwrap();
+            let rbuf = dbsr.try_mut().unwrap();
+            vdev_raid.open_zone(zone);
+            write_read(&vdev_raid, vec![wbuf0], vec![rbuf], zone, start);
+            assert_eq!(wbuf1, dbsr.try().unwrap());
+        }
     }
 }

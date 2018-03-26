@@ -227,15 +227,17 @@ impl VdevRaid {
         let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
         // TODO: allow reading from a closed zone
         let sb_ref = self.stripe_buffers.borrow();
-        let stripe_buffer = sb_ref.get(&zone).unwrap();
-        let buf2 = if !stripe_buffer.is_empty() &&
-            end_lba >= stripe_buffer.lba() {
+        let stripe_buffer = sb_ref.get(&zone);
+        let buf2 = if stripe_buffer.is_some() &&
+            !stripe_buffer.unwrap().is_empty() &&
+            end_lba >= stripe_buffer.unwrap().lba() {
+
             // We need to service part of the read from the StripeBuffer
-            let direct_len = (stripe_buffer.lba() - lba) as usize *
+            let direct_len = (stripe_buffer.unwrap().lba() - lba) as usize *
                              BYTES_PER_LBA;
             let mut sb_buf = buf.split_off(direct_len);
             // Copy from StripeBuffer into sb_buf
-            for iovec in stripe_buffer.peek() {
+            for iovec in stripe_buffer.unwrap().peek() {
                 sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
             }
             assert!(sb_buf.is_empty(),
@@ -246,7 +248,7 @@ impl VdevRaid {
                 return Box::new(future::ok(()));
             } else {
                 // Service the first part of the read from the disks
-                end_lba = stripe_buffer.lba() - 1;
+                end_lba = stripe_buffer.unwrap().lba() - 1;
             }
             buf
         } else {
