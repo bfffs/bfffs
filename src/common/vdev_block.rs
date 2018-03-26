@@ -162,7 +162,9 @@ impl Inner {
                     // XXX this sleep works if there is only one VdevBlock in
                     // the entire reactor.  But if there are more than one, then
                     // we need a tokio-enabled sleep so the other VdevBlocks can
-                    // complete their futures
+                    // complete their futures.  tokio-timer has lousy
+                    // performance, and tokio doesn't yet have a builtin timer,
+                    // so I'll defer this until it does.
                     thread::sleep(time::Duration::from_millis(10));
                     continue;
                 }
