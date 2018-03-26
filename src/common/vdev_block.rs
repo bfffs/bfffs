@@ -6,7 +6,7 @@ use nix;
 use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
-use std::{thread, time};
+use std::{ops, thread, time};
 use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
 use tokio::reactor::Handle;
@@ -273,18 +273,10 @@ impl VdevBlock {
         assert!(last_lba < self.size as u64)
     }
 
-    /// Helper function for read and write methods
-    fn check_sglist_bounds(&self, lba: LbaT, bufs: &[IoVec]) {
-        let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
-            accumulator + buf.len() as u64
-        });
-        assert!(lba + len / (dva::BYTES_PER_LBA as u64) < self.size as u64)
-    }
-
     /// Helper function for readv and writev methods
-    ///
-    /// TODO: combine this method with `check_sglist_bounds`
-    fn check_sglistmut_bounds(&self, lba: LbaT, bufs: &[IoVecMut]) {
+    fn check_sglist_bounds<T>(&self, lba: LbaT, bufs: &[T])
+        where T: ops::Deref<Target=[u8]> {
+
         let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
             accumulator + buf.len() as u64
         });
@@ -342,7 +334,7 @@ impl VdevBlock {
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
     pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevBlockFut> {
-        self.check_sglistmut_bounds(lba, &bufs);
+        self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let priority = self.priority(lba);
         let block_op = BlockOp::readv_at(bufs, lba, priority, sender);
