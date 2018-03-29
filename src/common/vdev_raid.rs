@@ -277,7 +277,6 @@ impl VdevRaid {
 
         // end_lba is inclusive.  The highest LBA from which data will be read
         let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
-        // TODO: allow reading from a closed zone
         let sb_ref = self.stripe_buffers.borrow();
         let stripe_buffer = sb_ref.get(&zone);
         let buf2 = if stripe_buffer.is_some() &&
