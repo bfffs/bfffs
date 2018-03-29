@@ -6,7 +6,7 @@ use nix;
 use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
-use std::{ops, thread, time};
+use std::{mem, ops, thread, time};
 use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
 use tokio::reactor::Handle;
@@ -28,11 +28,6 @@ enum BlockOpBufT {
 struct BlockOp {
     pub lba: LbaT,
     pub bufs: BlockOpBufT,
-    /// The priority is the opposite of the distance from the scheduler's LBA at
-    /// the time of `BlockOp` creation to the `BlockOp`'s LBA.  We use the
-    /// opposite of distance because Rust's standard library includes a max heap
-    /// but not a min heap.
-    priority: LbaT,
     /// Used by the `VdevLeaf` to complete this future
     pub sender: oneshot::Sender<()>
 }
@@ -56,18 +51,22 @@ impl Eq for BlockOp {
 }
 
 impl Ord for BlockOp {
-    /// Compare `BlockOp`s by priority.
+    /// Compare `BlockOp`s by LBA.
     ///
-    /// The priority is determined by the op's LBA compared to the scheduler's
-    /// LBA *when the `BlockOp` is created*.
+    /// This comparison is only correct for `BlockOp`s that are both on the same
+    /// side of the scheduler.  Comparing `BlockOp`s on different sides of the
+    /// scheduler would require knowledge of `Inner::last_lba`, and the `Ord`
+    /// trait doesn't allow that.
     fn cmp(&self, other: &BlockOp) -> Ordering {
-        self.priority.cmp(&other.priority)
+        // Reverse the usual ordering, because we want to issue the minimum LBA
+        // first, and Rust provides a max heap but not a min heap.
+        other.lba.cmp(&self.lba)
     }
 }
 
 impl PartialEq for BlockOp {
     fn eq(&self, other: &BlockOp) -> bool {
-        self.priority == other.priority
+        self.lba == other.lba
     }
 }
 
@@ -78,24 +77,24 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
-    pub fn read_at(buf: IoVecMut, lba: LbaT, priority: LbaT,
+    pub fn read_at(buf: IoVecMut, lba: LbaT,
                    sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, bufs: BlockOpBufT::IoVecMut(buf), priority , sender}
+        BlockOp { lba, bufs: BlockOpBufT::IoVecMut(buf), sender}
     }
 
-    pub fn readv_at(bufs: SGListMut, lba: LbaT, priority: LbaT,
+    pub fn readv_at(bufs: SGListMut, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, bufs: BlockOpBufT::SGListMut(bufs), priority, sender}
+        BlockOp { lba, bufs: BlockOpBufT::SGListMut(bufs), sender}
     }
 
-    pub fn write_at(buf: IoVec, lba: LbaT, priority: LbaT,
+    pub fn write_at(buf: IoVec, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, bufs: BlockOpBufT::IoVec(buf), priority, sender}
+        BlockOp { lba, bufs: BlockOpBufT::IoVec(buf), sender}
     }
 
-    pub fn writev_at(bufs: SGList, lba: LbaT, priority: LbaT,
+    pub fn writev_at(bufs: SGList, lba: LbaT,
                      sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, bufs: BlockOpBufT::SGList(bufs), priority, sender}
+        BlockOp { lba, bufs: BlockOpBufT::SGList(bufs), sender}
     }
 }
 
@@ -122,9 +121,15 @@ struct Inner {
     /// The last LBA issued an operation
     last_lba: LbaT,
 
-    /// A collection of BlockOps.  Newly received operations must land here.
-    /// They will be issued to the OS as the scheduler sees fit.
-    queue: BinaryHeap<BlockOp>,
+    // Pending operations are stored in a pair of priority queues.  They _could_
+    // be stored in a single queue, _if_ the priority queue's comparison
+    // function were allowed to be stateful, as in C++'s STL.  However, Rust's
+    // standard library does not have any way to create a priority queueful with
+    // a stateful comparison function.
+    /// Pending operations ahead of the scheduler's current LBA.
+    ahead: BinaryHeap<BlockOp>,
+    /// Pending operations behind the scheduler's current LBA.
+    behind: BinaryHeap<BlockOp>,
 
     /// A `Weak` pointer back to `self`.  Used for closures that require a
     /// reference to `self`, but also require `'static` lifetime.
@@ -144,9 +149,10 @@ impl Inner {
             let delayed = self.delayed.take();
             let (sender, fut) = if let Some((sender, fut)) = delayed {
                 (sender, fut)
-            } else if let Some(op) = self.queue.pop() {
+            } else if let Some(op) = self.pop_op() {
                 self.make_fut(op)
             } else {
+                // Ran out of pending operations
                 break;
             };
             if let Some(d) = self.issue_fut(sender, fut) {
@@ -218,7 +224,6 @@ impl Inner {
     fn make_fut(&mut self, block_op: BlockOp)
         -> (oneshot::Sender<()>, Box<VdevFut>) {
 
-        self.last_lba = block_op.lba;
         self.queue_depth += 1;
         let lba = block_op.lba;
 
@@ -237,9 +242,38 @@ impl Inner {
         (block_op.sender, fut)
     }
 
-    /// Schedule the `block_op`, and possibly issue it too
+    /// Get the next pending operation, if any
+    fn pop_op(&mut self) -> Option<BlockOp> {
+        if let Some(op) = self.ahead.pop() {
+            self.last_lba = op.lba;
+            Some(op)
+        } else if !self.behind.is_empty() {
+            // Ran out of operations ahead of the scheduler.  Go back to the
+            // beginning
+            mem::swap(&mut self.behind, &mut self.ahead);
+            let op = self.ahead.pop().unwrap();
+            self.last_lba = op.lba;
+            Some(op)
+        } else {
+            // Ran out of operations everywhere.  Go back to LBA 0, and prepare
+            // to idle
+            self.last_lba = 0;
+            None
+        }
+    }
+
+    /// Schedule the `block_op`
     fn sched(&mut self, block_op: BlockOp) {
-        self.queue.push(block_op);
+        if block_op.lba >= self.last_lba {
+            self.ahead.push(block_op);
+        } else {
+            self.behind.push(block_op);
+        }
+    }
+
+    /// Schedule the `block_op`, and try to issue it
+    fn sched_and_issue(&mut self, block_op: BlockOp) {
+        self.sched(block_op);
         self.issue_all();
     }
 }
@@ -288,7 +322,8 @@ impl VdevBlock {
             queue_depth: 0,
             leaf,
             last_lba: 0,
-            queue: BinaryHeap::new(),
+            ahead: BinaryHeap::new(),
+            behind: BinaryHeap::new(),
             weakself: Weak::new()
         }));
         inner.borrow_mut().weakself = Rc::downgrade(&inner);
@@ -299,22 +334,14 @@ impl VdevBlock {
         }
     }
 
-    /// Compute the current scheduling priority of the given LBA.
-    ///
-    /// Though `self` may change, the computed priority will remain valid.
-    fn priority(&self, lba: LbaT) -> LbaT {
-        self.inner.borrow().last_lba.wrapping_sub(lba + 1)
-    }
-
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
     pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
-        let priority = self.priority(lba);
-        let block_op = BlockOp::read_at(buf, lba, priority, sender);
-        self.inner.borrow_mut().sched(block_op);
+        let block_op = BlockOp::read_at(buf, lba, sender);
+        self.inner.borrow_mut().sched_and_issue(block_op);
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 
@@ -329,9 +356,8 @@ impl VdevBlock {
     pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
-        let priority = self.priority(lba);
-        let block_op = BlockOp::readv_at(bufs, lba, priority, sender);
-        self.inner.borrow_mut().sched(block_op);
+        let block_op = BlockOp::readv_at(bufs, lba, sender);
+        self.inner.borrow_mut().sched_and_issue(block_op);
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 
@@ -341,11 +367,10 @@ impl VdevBlock {
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
-        let priority = self.priority(lba);
-        let block_op = BlockOp::write_at(buf, lba, priority, sender);
+        let block_op = BlockOp::write_at(buf, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        self.inner.borrow_mut().sched(block_op);
+        self.inner.borrow_mut().sched_and_issue(block_op);
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 
@@ -360,11 +385,10 @@ impl VdevBlock {
     pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
-        let priority = self.priority(lba);
-        let block_op = BlockOp::writev_at(bufs, lba, priority, sender);
+        let block_op = BlockOp::writev_at(bufs, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        self.inner.borrow_mut().sched(block_op);
+        self.inner.borrow_mut().sched_and_issue(block_op);
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 }
@@ -406,7 +430,7 @@ impl Vdev for VdevBlock {
 #[cfg(feature = "mocks")]
 #[cfg(test)]
 test_suite! {
-    name mock_vdev_block;
+    name t;
 
     use super::*;
     use divbuf::DivBufShared;
@@ -466,7 +490,7 @@ test_suite! {
 
     // Issueing an operation fails with EAGAIN.  This can happen if the
     // per-process or per-system AIO limits are reached
-    test eagain(mocks) {
+    test scheduling_eagain(mocks) {
         let scenario = mocks.val.0;
         let scenario_handle = scenario.handle();
         let leaf = mocks.val.1;
@@ -512,7 +536,7 @@ test_suite! {
     // Issueing an operation fails with EAGAIN, when the queue depth is 0.  This
     // can happen if the per-process or per-system AIO limits are monopolized by
     // other reactors.  In this case, we need a timer to wake us up.
-    test eagain_queue_depth_0(mocks) {
+    test scheduling_eagain_queue_depth_0(mocks) {
         let scenario = mocks.val.0;
         let scenario_handle = scenario.handle();
         let leaf = mocks.val.1;
@@ -543,7 +567,7 @@ test_suite! {
     }
 
     // basic reading works
-    test read_at(mocks) {
+    test basic_read_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
@@ -562,7 +586,7 @@ test_suite! {
     }
 
     // vectored reading works
-    test readv_at(mocks) {
+    test basic_readv_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
@@ -580,8 +604,61 @@ test_suite! {
         })).unwrap();
     }
 
+    // data operations will be issued in C-LOOK order (from lowest LBA to
+    // highest, then start over at lowest)
+    test sched_data(mocks) {
+        let leaf = mocks.val.1;
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut inner = vdev.inner.borrow_mut();
+        let dummy_dbs = DivBufShared::from(vec![0; 4096]);
+        let dummy_buffer = dummy_dbs.try().unwrap();
+
+        // Start with some intermedia LBA and schedule some ops
+        inner.last_lba = 1000;
+        let same_lba = BlockOp::write_at(dummy_buffer.clone(), 1000,
+            oneshot::channel::<()>().0);
+        let just_after = BlockOp::write_at(dummy_buffer.clone(), 1001,
+            oneshot::channel::<()>().0);
+        let just_after_dup = BlockOp::write_at(dummy_buffer.clone(), 1001,
+            oneshot::channel::<()>().0);
+        let just_before = BlockOp::write_at(dummy_buffer.clone(), 999,
+            oneshot::channel::<()>().0);
+        let min = BlockOp::write_at(dummy_buffer.clone(), 0,
+            oneshot::channel::<()>().0);
+        let max = BlockOp::write_at(dummy_buffer.clone(), 16383,
+            oneshot::channel::<()>().0);
+
+        inner.sched(same_lba);
+        inner.sched(just_after);
+        inner.sched(just_after_dup);
+        inner.sched(just_before);
+        inner.sched(min);
+        inner.sched(max);
+        // Check that they're scheduled in the correct order
+        assert_eq!(inner.pop_op().unwrap().lba, 1000);
+        assert_eq!(inner.pop_op().unwrap().lba, 1001);
+        assert_eq!(inner.pop_op().unwrap().lba, 1001);
+
+        // Schedule two more operations behind the scheduler, but ahead of some
+        // already-scheduled ops, to make sure they get issued in the right
+        // order
+        let just_before2 = BlockOp::write_at(dummy_buffer.clone(), 1000,
+            oneshot::channel::<()>().0);
+        let well_before = BlockOp::write_at(dummy_buffer.clone(), 990,
+            oneshot::channel::<()>().0);
+        inner.sched(just_before2);
+        inner.sched(well_before);
+
+        assert_eq!(inner.pop_op().unwrap().lba, 16383);
+        assert_eq!(inner.pop_op().unwrap().lba, 0);
+        assert_eq!(inner.pop_op().unwrap().lba, 990);
+        assert_eq!(inner.pop_op().unwrap().lba, 999);
+        assert_eq!(inner.pop_op().unwrap().lba, 1000);
+        assert!(inner.pop_op().is_none());
+    }
+
     // Queued operations will both complete
-    test queued(mocks) {
+    test scheduling_queued(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
@@ -616,7 +693,7 @@ test_suite! {
     // The first MAX_QUEUE_DEPTH operations will be issued immediately, in the
     // order in which they are requested.  Subsequent operations will be
     // reordered into LBA order
-    test queue_depth(mocks) {
+    test scheduling_queue_depth(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let num_ops = Inner::MAX_QUEUE_DEPTH + 2;
@@ -664,7 +741,8 @@ test_suite! {
                                           (num_ops - 2) as LbaT);
             let fut = unbuf_fut.join3(penultimate_fut, final_fut);
             // Verify that they weren't all issued
-            assert_eq!(vdev.inner.borrow_mut().queue.len(), 2);
+            let inner = vdev.inner.borrow_mut();
+            assert_eq!(inner.ahead.len() + inner.behind.len(), 2);
             // Finally, complete them.
             for chan in senders {
                 chan.send(()).unwrap();
@@ -674,7 +752,7 @@ test_suite! {
     }
 
     // Basic writing works
-    test write_at(mocks) {
+    test basic_write_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let r = VdevResult { value: 4096 };
@@ -691,7 +769,7 @@ test_suite! {
     }
 
     // vectored writing works
-    test writev_at(mocks) {
+    test basic_writev_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let r = VdevResult { value: 4096 };
