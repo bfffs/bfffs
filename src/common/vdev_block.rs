@@ -16,35 +16,27 @@ use common::dva::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 
-
-enum BlockOpBufT {
-    IoVec(IoVec),
-    IoVecMut(IoVecMut),
-    SGList(SGList),
-    SGListMut(SGListMut)
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+enum Cmd {
+    OpenZone,
+    ReadAt(IoVecMut),
+    ReadvAt(SGListMut),
+    WriteAt(IoVec),
+    WritevAt(SGList),
+    // The extra LBA is the zone's starting LBA
+    EraseZone(LbaT),
+    // The extra LBA is the zone's starting LBA
+    FinishZone(LbaT),
 }
 
 /// A single read or write command that is queued at the `VdevBlock` layer
 struct BlockOp {
+    /// The effective LBA for sorting purposes.  Usually it's also the command's
+    /// actual LBA
     pub lba: LbaT,
-    pub bufs: BlockOpBufT,
+    pub cmd: Cmd,
     /// Used by the `VdevLeaf` to complete this future
     pub sender: oneshot::Sender<()>
-}
-
-impl BlockOp {
-    pub fn len(&self) -> usize {
-        match self.bufs {
-            BlockOpBufT::IoVec(ref iovec) => iovec.len(),
-            BlockOpBufT::IoVecMut(ref iovec) => iovec.len(),
-            BlockOpBufT::SGList(ref sglist) => {
-                sglist.iter().fold(0, |acc, iovec| acc + iovec.len())
-            }
-            BlockOpBufT::SGListMut(ref sglist) => {
-                sglist.iter().fold(0, |acc, iovec| acc + iovec.len())
-            }
-        }
-    }
 }
 
 impl Eq for BlockOp {
@@ -60,13 +52,15 @@ impl Ord for BlockOp {
     fn cmp(&self, other: &BlockOp) -> Ordering {
         // Reverse the usual ordering, because we want to issue the minimum LBA
         // first, and Rust provides a max heap but not a min heap.
-        other.lba.cmp(&self.lba)
+        other.lba.cmp(&self.lba).then_with(|| {
+            other.cmd.cmp(&self.cmd)
+        })
     }
 }
 
 impl PartialEq for BlockOp {
     fn eq(&self, other: &BlockOp) -> bool {
-        self.lba == other.lba
+        self.lba == other.lba && self.cmd == other.cmd
     }
 }
 
@@ -77,24 +71,52 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
+    pub fn erase_zone(start: LbaT, end: LbaT,
+                      sender: oneshot::Sender<()>) -> BlockOp {
+        BlockOp { lba: end, cmd: Cmd::EraseZone(start), sender }
+    }
+
+    pub fn finish_zone(start: LbaT, end: LbaT,
+                       sender: oneshot::Sender<()>) -> BlockOp {
+        BlockOp { lba: end, cmd: Cmd::FinishZone(start), sender }
+    }
+
+    pub fn len(&self) -> usize {
+        match self.cmd {
+            Cmd::WriteAt(ref iovec) => iovec.len(),
+            Cmd::ReadAt(ref iovec) => iovec.len(),
+            Cmd::WritevAt(ref sglist) => {
+                sglist.iter().fold(0, |acc, iovec| acc + iovec.len())
+            },
+            Cmd::ReadvAt(ref sglist) => {
+                sglist.iter().fold(0, |acc, iovec| acc + iovec.len())
+            },
+            _ => 0
+        }
+    }
+
+    pub fn open_zone(lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+        BlockOp { lba, cmd: Cmd::OpenZone, sender }
+    }
+
     pub fn read_at(buf: IoVecMut, lba: LbaT,
                    sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, bufs: BlockOpBufT::IoVecMut(buf), sender}
+        BlockOp { lba, cmd: Cmd::ReadAt(buf), sender}
     }
 
     pub fn readv_at(bufs: SGListMut, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, bufs: BlockOpBufT::SGListMut(bufs), sender}
+        BlockOp { lba, cmd: Cmd::ReadvAt(bufs), sender}
     }
 
     pub fn write_at(buf: IoVec, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, bufs: BlockOpBufT::IoVec(buf), sender}
+        BlockOp { lba, cmd: Cmd::WriteAt(buf), sender}
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT,
                      sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, bufs: BlockOpBufT::SGList(bufs), sender}
+        BlockOp { lba, cmd: Cmd::WritevAt(bufs), sender}
     }
 }
 
@@ -229,15 +251,14 @@ impl Inner {
 
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
-        let fut = match block_op.bufs {
-            BlockOpBufT::IoVec(iovec) =>
-                self.leaf.write_at(iovec, lba),
-            BlockOpBufT::IoVecMut(iovec_mut) =>
-                self.leaf.read_at(iovec_mut, lba),
-            BlockOpBufT::SGList(sglist) =>
-                self.leaf.writev_at(sglist, lba),
-            BlockOpBufT::SGListMut(sglist_mut) =>
-                self.leaf.readv_at(sglist_mut, lba),
+        let fut = match block_op.cmd {
+            Cmd::WriteAt(iovec) => self.leaf.write_at(iovec, lba),
+            Cmd::ReadAt(iovec_mut) => self.leaf.read_at(iovec_mut, lba),
+            Cmd::WritevAt(sglist) => self.leaf.writev_at(sglist, lba),
+            Cmd::ReadvAt(sglist_mut) => self.leaf.readv_at(sglist_mut, lba),
+            Cmd::EraseZone(start) => self.leaf.erase_zone(start),
+            Cmd::FinishZone(start) => self.leaf.finish_zone(start),
+            Cmd::OpenZone => self.leaf.open_zone(lba),
         };
         (block_op.sender, fut)
     }
@@ -306,6 +327,82 @@ impl VdevBlock {
             accumulator + buf.len() as u64
         });
         assert!(lba + len / (dva::BYTES_PER_LBA as u64) < self.size as u64)
+    }
+
+    /// Asynchronously erase a zone on a block device
+    ///
+    /// # Parameters
+    /// - `start`:  The first LBA within the target zone
+    /// - `end`:    The last LBA within the target zone
+    pub fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevBlockFut> {
+        // The zone must already be closed, but VdevBlock doesn't keep enough
+        // information to assert that
+        let (sender, receiver) = oneshot::channel::<()>();
+        let block_op = BlockOp::erase_zone(start, end, sender);
+
+        // Sanity check LBAs
+        #[cfg(test)]
+        {
+            let inner = self.inner.borrow();
+            let limits = inner.leaf.zone_limits(
+                inner.leaf.lba2zone(start).unwrap());
+            // The LBA must be the end of a zone
+            debug_assert_eq!(start, limits.0);
+            debug_assert_eq!(end, limits.1 - 1);
+        }
+
+        self.inner.borrow_mut().sched_and_issue(block_op);
+        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+    }
+
+    /// Asynchronously finish a zone on a block device
+    ///
+    /// # Parameters
+    /// - `start`:  The first LBA within the target zone
+    /// - `end`:    The last LBA within the target zone
+    pub fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevBlockFut> {
+        let (sender, receiver) = oneshot::channel::<()>();
+        let block_op = BlockOp::finish_zone(start, end, sender);
+
+        // Sanity check LBAs
+        #[cfg(test)]
+        {
+            let inner = self.inner.borrow();
+            let limits = inner.leaf.zone_limits(
+                inner.leaf.lba2zone(start).unwrap());
+            // The LBA must be the end of a zone
+            debug_assert_eq!(start, limits.0);
+            debug_assert_eq!(end, limits.1 - 1);
+        }
+
+        self.inner.borrow_mut().sched_and_issue(block_op);
+        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+    }
+
+    /// Asynchronously open a zone on a block device
+    ///
+    /// # Parameters
+    /// - `start`:    The first LBA within the target zone
+    pub fn open_zone(&self, start: LbaT) -> Box<VdevBlockFut> {
+        let (sender, receiver) = oneshot::channel::<()>();
+        let block_op = BlockOp::open_zone(start, sender);
+
+        // Sanity check LBA
+        #[cfg(test)]
+        {
+            let inner = self.inner.borrow();
+            let limits = inner.leaf.zone_limits(
+                inner.leaf.lba2zone(start).unwrap());
+            // The LBA must be the begining of a zone
+            debug_assert_eq!(start, limits.0);
+            // The scheduler must not currently reside in this zone.  That would
+            // imply that we just operated on an empty zone
+            debug_assert!(inner.last_lba >= limits.1 ||
+                          inner.last_lba < limits.0);
+        }
+
+        self.inner.borrow_mut().sched_and_issue(block_op);
+        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 
     /// Open a VdevBlock
@@ -392,28 +489,12 @@ impl VdevBlock {
 }
 
 impl Vdev for VdevBlock {
-    fn erase_zone(&self, zone: ZoneT) {
-        // The zone must already be closed, but VdevBlock doesn't keep enough
-        // information to assert that
-        self.inner.borrow_mut().leaf.open_zone(zone)
-    }
-
-    fn finish_zone(&self, zone: ZoneT) {
-        // TODO: schedule these operations with the lowest priority in their
-        // zones, so all writes in the zone will finish first
-        self.inner.borrow_mut().leaf.finish_zone(zone)
-    }
-
     fn handle(&self) -> Handle {
         self.handle.clone()
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         self.inner.borrow().leaf.lba2zone(lba)
-    }
-
-    fn open_zone(&self, zone: ZoneT) {
-        self.inner.borrow_mut().leaf.open_zone(zone)
     }
 
     fn size(&self) -> LbaT {
@@ -444,16 +525,16 @@ test_suite! {
         MockVdevLeaf2,
         vdev,
         trait Vdev {
-            fn erase_zone(&self, zone: ZoneT);
-            fn finish_zone(&self, zone: ZoneT);
             fn handle(&self) -> Handle;
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
-            fn open_zone(&self, zone: ZoneT);
             fn size(&self) -> LbaT;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         },
         vdev_leaf,
         trait VdevLeaf  {
+            fn erase_zone(&self, lba: LbaT) -> Box<VdevFut>;
+            fn finish_zone(&self, lba: LbaT) -> Box<VdevFut>;
+            fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
             fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
             fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
             fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
@@ -483,13 +564,19 @@ test_suite! {
             scenario.expect(leaf.zone_limits_call(0)
                                 .and_return_clone((0, 1 << 16))
                                 .times(..));
+            scenario.expect(leaf.zone_limits_call(1)
+                                .and_return_clone((1 << 16, 2 << 16))
+                                .times(..));
+            scenario.expect(leaf.zone_limits_call(2)
+                                .and_return_clone((2 << 16, 3 << 16))
+                                .times(..));
             (scenario, leaf)
         }
     });
 
     // Issueing an operation fails with EAGAIN.  This can happen if the
     // per-process or per-system AIO limits are reached
-    test scheduling_eagain(mocks) {
+    test issueing_eagain(mocks) {
         let scenario = mocks.val.0;
         let scenario_handle = scenario.handle();
         let leaf = mocks.val.1;
@@ -535,7 +622,7 @@ test_suite! {
     // Issueing an operation fails with EAGAIN, when the queue depth is 0.  This
     // can happen if the per-process or per-system AIO limits are monopolized by
     // other reactors.  In this case, we need a timer to wake us up.
-    test scheduling_eagain_queue_depth_0(mocks) {
+    test issueing_eagain_queue_depth_0(mocks) {
         let scenario = mocks.val.0;
         let scenario_handle = scenario.handle();
         let leaf = mocks.val.1;
@@ -654,8 +741,154 @@ test_suite! {
         });
     }
 
+    // An erase zone command should be scheduled after any reads from that zone
+    test sched_erase_zone(mocks) {
+        let leaf = mocks.val.1;
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut inner = vdev.inner.borrow_mut();
+        let dummy_dbs = DivBufShared::from(vec![0; 12288]);
+        let mut dummy = dummy_dbs.try_mut().unwrap();
+
+        inner.last_lba = 1 << 16;   // In zone 1
+        // Read from zones that lie behind, around, and ahead of the scheduler,
+        // then erase them.  This simulates garbage collection.
+        let ez0 = BlockOp::erase_zone(0, (1 << 16) - 1,
+            oneshot::channel::<()>().0);
+        let ez_discriminant = mem::discriminant(&ez0.cmd);
+        inner.sched(ez0);
+        let r = BlockOp::read_at(dummy.split_to(4096), (1 << 16) - 1,
+            oneshot::channel::<()>().0);
+        let read_at_discriminant = mem::discriminant(&r.cmd);
+        inner.sched(r);
+        inner.sched(BlockOp::erase_zone(1 << 16, (2 << 16) - 1,
+            oneshot::channel::<()>().0));
+        inner.sched(BlockOp::read_at(dummy.split_to(4096), (2 << 16) - 1,
+            oneshot::channel::<()>().0));
+        inner.sched(BlockOp::erase_zone(2 << 16, (3 << 16) - 1,
+            oneshot::channel::<()>().0));
+        inner.sched(BlockOp::read_at(dummy, (3 << 16) - 1,
+            oneshot::channel::<()>().0));
+
+        let first = inner.pop_op().unwrap();
+        assert_eq!(first.lba, (2 << 16) - 1);
+        assert_eq!(mem::discriminant(&first.cmd), read_at_discriminant);
+        let second = inner.pop_op().unwrap();
+        assert_eq!(second.lba, (2 << 16) - 1);
+        assert_eq!(mem::discriminant(&second.cmd), ez_discriminant);
+        let third = inner.pop_op().unwrap();
+        assert_eq!(third.lba, (3 << 16) - 1);
+        assert_eq!(mem::discriminant(&third.cmd), read_at_discriminant);
+        let fourth = inner.pop_op().unwrap();
+        assert_eq!(fourth.lba, (3 << 16) - 1);
+        assert_eq!(mem::discriminant(&fourth.cmd), ez_discriminant);
+        let fifth = inner.pop_op().unwrap();
+        assert_eq!(fifth.lba, (1 << 16) - 1);
+        assert_eq!(mem::discriminant(&fifth.cmd), read_at_discriminant);
+        let sixth = inner.pop_op().unwrap();
+        assert_eq!(sixth.lba, (1 << 16) - 1);
+        assert_eq!(mem::discriminant(&sixth.cmd), ez_discriminant);
+    }
+
+    // A finish zone command should be scheduled after any writes to that zone
+    test sched_finish_zone(mocks) {
+        let leaf = mocks.val.1;
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut inner = vdev.inner.borrow_mut();
+        let dummy_dbs = DivBufShared::from(vec![0; 4096]);
+        let dummy = dummy_dbs.try().unwrap();
+
+        inner.last_lba = 1 << 16;   // In zone 1
+        // Write to zones that lie behind, around, and ahead of the scheduler,
+        // then finish them.
+        let fz0 = BlockOp::finish_zone(0, (1 << 16) - 1,
+            oneshot::channel::<()>().0);
+        let fz_discriminant = mem::discriminant(&fz0.cmd);
+        inner.sched(fz0);
+        let r = BlockOp::write_at(dummy.clone(), (1 << 16) - 1,
+            oneshot::channel::<()>().0);
+        let write_at_discriminant = mem::discriminant(&r.cmd);
+        inner.sched(r);
+        inner.sched(BlockOp::finish_zone(1 << 16, (2 << 16) - 1,
+            oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy.clone(), (2 << 16) - 1,
+            oneshot::channel::<()>().0));
+        inner.sched(BlockOp::finish_zone(2 << 16, (3 << 16) - 1,
+            oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy, (3 << 16) - 1,
+            oneshot::channel::<()>().0));
+
+        let first = inner.pop_op().unwrap();
+        assert_eq!(first.lba, (2 << 16) - 1);
+        assert_eq!(mem::discriminant(&first.cmd), write_at_discriminant);
+        let second = inner.pop_op().unwrap();
+        assert_eq!(second.lba, (2 << 16) - 1);
+        assert_eq!(mem::discriminant(&second.cmd), fz_discriminant);
+        let third = inner.pop_op().unwrap();
+        assert_eq!(third.lba, (3 << 16) - 1);
+        assert_eq!(mem::discriminant(&third.cmd), write_at_discriminant);
+        let fourth = inner.pop_op().unwrap();
+        assert_eq!(fourth.lba, (3 << 16) - 1);
+        assert_eq!(mem::discriminant(&fourth.cmd), fz_discriminant);
+        let fifth = inner.pop_op().unwrap();
+        assert_eq!(fifth.lba, (1 << 16) - 1);
+        assert_eq!(mem::discriminant(&fifth.cmd), write_at_discriminant);
+        let sixth = inner.pop_op().unwrap();
+        assert_eq!(sixth.lba, (1 << 16) - 1);
+        assert_eq!(mem::discriminant(&sixth.cmd), fz_discriminant);
+    }
+
+    // An open zone command should be scheduled before any writes to that zone
+    test sched_open_zone(mocks) {
+        let leaf = mocks.val.1;
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut inner = vdev.inner.borrow_mut();
+        let dummy_dbs = DivBufShared::from(vec![0; 4096]);
+        let dummy = dummy_dbs.try().unwrap();
+
+        inner.last_lba = 1 << 16;   // In zone 1
+        // Open zones 0 and 2 and write to both.  Note that it is illegal for
+        // the scheduler's last_lba to lie within either of these zones, because
+        // that would imply that it had just performed an operation on an empty
+        // zone.
+        let w = BlockOp::write_at(dummy.clone(), 0, oneshot::channel::<()>().0);
+        let write_at_discriminant = mem::discriminant(&w.cmd);
+        inner.sched(w);
+        inner.sched(BlockOp::write_at(dummy.clone(), (1 << 16) - 1,
+                    oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy.clone(), 1,
+                    oneshot::channel::<()>().0));
+        let oz0 = BlockOp::open_zone(0, oneshot::channel::<()>().0);
+        let oz_discriminant = mem::discriminant(&oz0.cmd);
+        inner.sched(oz0);
+        inner.sched(BlockOp::open_zone(2 << 16, oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy.clone(), (2 << 16) + 1,
+                    oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy.clone(), 2 << 16,
+                    oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy.clone(), (3 << 16) - 1,
+                    oneshot::channel::<()>().0));
+
+        let first = inner.pop_op().unwrap();
+        assert_eq!(first.lba, 2 << 16);
+        assert_eq!(mem::discriminant(&first.cmd), oz_discriminant);
+        let second = inner.pop_op().unwrap();
+        assert_eq!(second.lba, 2 << 16);
+        assert_eq!(mem::discriminant(&second.cmd), write_at_discriminant);
+        assert_eq!(inner.pop_op().unwrap().lba, (2 << 16) + 1);
+        assert_eq!(inner.pop_op().unwrap().lba, (3 << 16) - 1);
+        let fifth = inner.pop_op().unwrap();
+        assert_eq!(fifth.lba, 0);
+        assert_eq!(mem::discriminant(&fifth.cmd), oz_discriminant);
+        let sixth = inner.pop_op().unwrap();
+        assert_eq!(sixth.lba, 0);
+        assert_eq!(mem::discriminant(&sixth.cmd), write_at_discriminant);
+        assert_eq!(inner.pop_op().unwrap().lba, 1);
+        assert_eq!(inner.pop_op().unwrap().lba, (1 << 16) - 1);
+        assert!(inner.pop_op().is_none());
+    }
+
     // Queued operations will both complete
-    test scheduling_queued(mocks) {
+    test issueing_queued(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
@@ -690,7 +923,7 @@ test_suite! {
     // The first MAX_QUEUE_DEPTH operations will be issued immediately, in the
     // order in which they are requested.  Subsequent operations will be
     // reordered into LBA order
-    test scheduling_queue_depth(mocks) {
+    test issueing_queue_depth(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let num_ops = Inner::MAX_QUEUE_DEPTH + 2;

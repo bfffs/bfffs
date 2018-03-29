@@ -7,6 +7,35 @@ use common::vdev::*;
 /// interface.  I/O operations on `VdevLeaf` happen immediately; they are not
 /// scheduled.
 pub trait VdevLeaf : Vdev {
+    /// Asynchronously erase the given zone.
+    ///
+    /// After this, the zone will be in the empty state.  The data may or may
+    /// not be inaccessible, and should not be considered securely erased.
+    ///
+    /// # Parameters
+    ///
+    /// -`lba`: The first LBA of the zone to erase
+    fn erase_zone(&self, lba: LbaT) -> Box<VdevFut>;
+
+    /// Asynchronously finish the given zone.
+    ///
+    /// After this, the zone will be in the Full state and writes will not be
+    /// allowed.
+    ///
+    /// # Parameters
+    ///
+    /// -`lba`: The first LBA of the zone to finish
+    fn finish_zone(&self, lba: LbaT) -> Box<VdevFut>;
+
+    /// Asynchronously open the given zone.
+    ///
+    /// This should be called on an empty zone before writing to that zone.
+    ///
+    /// # Parameters
+    ///
+    /// -`lba`: The first LBA of the zone to open
+    fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
+
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.

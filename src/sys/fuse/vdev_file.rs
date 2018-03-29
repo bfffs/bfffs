@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use futures::{Async, Future, Poll};
+use futures::{Async, Future, Poll, future};
 use nix;
 use std::borrow::{Borrow, BorrowMut};
 use std::path::Path;
@@ -48,24 +48,12 @@ impl BorrowMut<[u8]> for IoVecMutContainer {
 }
 
 impl Vdev for VdevFile {
-    fn erase_zone(&self, _zone: ZoneT) {
-        // ordinary files don't have Zone operations
-    }
-
-    fn finish_zone(&self, _zone: ZoneT) {
-        // ordinary files don't have Zone operations
-    }
-
     fn handle(&self) -> Handle {
         self.handle.clone()
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         Some((lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT)
-    }
-
-    fn open_zone(&self, _zone: ZoneT) {
-        // ordinary files don't have Zone operations
     }
 
     fn size(&self) -> LbaT {
@@ -79,6 +67,21 @@ impl Vdev for VdevFile {
 }
 
 impl VdevLeaf for VdevFile {
+    fn erase_zone(&self, _lba: LbaT) -> Box<VdevFut> {
+        // ordinary files don't have Zone operations
+        Box::new(future::ok::<VdevResult, nix::Error>(VdevResult{value: 0}))
+    }
+
+    fn finish_zone(&self, _lba: LbaT) -> Box<VdevFut> {
+        // ordinary files don't have Zone operations
+        Box::new(future::ok::<VdevResult, nix::Error>(VdevResult{value: 0}))
+    }
+
+    fn open_zone(&self, _lba: LbaT) -> Box<VdevFut> {
+        // ordinary files don't have Zone operations
+        Box::new(future::ok::<VdevResult, nix::Error>(VdevResult{value: 0}))
+    }
+
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecMutContainer(buf));
         let off = lba as i64 * (dva::BYTES_PER_LBA as i64);

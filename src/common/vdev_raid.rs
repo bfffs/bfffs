@@ -18,6 +18,9 @@ use tokio::reactor::Handle;
 #[cfg(test)]
 /// Only exists so mockers can replace VdevBlock
 pub trait VdevBlockTrait : Vdev {
+    fn erase_zone(&self, start: LbaT, end: LbaT);
+    fn finish_zone(&self, start: LbaT, end: LbaT);
+    fn open_zone(&self, lba: LbaT);
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut>;
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevBlockFut>;
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;
@@ -211,6 +214,55 @@ impl VdevRaid {
 
         VdevRaid { chunksize, codec, locator, blockdevs,
                    stripe_buffers: RefCell::new(BTreeMap::new())}
+    }
+
+    /// Asynchronously erase a zone on a RAID device
+    ///
+    /// # Parameters
+    /// - `zone`:    The target zone ID
+    pub fn erase_zone(&self, zone: ZoneT) {
+        assert!(!self.stripe_buffers.borrow().contains_key(&zone),
+            "Tried to erase an open zone");
+        let (start, end) = self.blockdevs[0].zone_limits(zone);
+        for blockdev in self.blockdevs.iter() {
+            blockdev.erase_zone(start, end);
+        }
+    }
+
+    /// Asynchronously finish a zone on a RAID device
+    ///
+    /// # Parameters
+    /// - `zone`:    The target zone ID
+    // Zero-fill the current StripeBuffer and write it out.  Then drop the
+    // StripeBuffer.
+    pub fn finish_zone(&self, zone: ZoneT) {
+        // TODO: zero fill StripeBuffer and write it out
+        let (start, end) = self.blockdevs[0].zone_limits(zone);
+        for blockdev in self.blockdevs.iter() {
+            blockdev.finish_zone(start, end);
+        }
+
+        assert!(self.stripe_buffers.borrow_mut().remove(&zone).is_some());
+    }
+
+    /// Asynchronously open a zone on a RAID device
+    ///
+    /// # Parameters
+    /// - `zone`:    The target zone ID
+    // Create a new StripeBuffer, and zero fill and leading wasted space
+    pub fn open_zone(&self, zone: ZoneT) {
+        let f = self.codec.protection();
+        let m = (self.codec.stripesize() - f) as LbaT;
+        let stripe_lbas = m * self.chunksize as LbaT;
+        let (start, _) = self.zone_limits(zone);
+        let sb = StripeBuffer::new(start, stripe_lbas);
+        assert!(self.stripe_buffers.borrow_mut().insert(zone, sb).is_none());
+
+        let (disk_lba, _) = self.blockdevs[0].zone_limits(zone);
+        for blockdev in self.blockdevs.iter() {
+            blockdev.open_zone(disk_lba);
+        }
+        // TODO: zero-fill leading wasted space
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -622,24 +674,6 @@ impl Vdev for VdevRaid {
         panic!("Unimplemented!  Perhaps handle() should not be part of Trait vdev, because it doesn't make sense for VdevRaid");
     }
 
-    fn erase_zone(&self, zone: ZoneT) {
-        assert!(!self.stripe_buffers.borrow().contains_key(&zone),
-            "Tried to erase an open zone");
-        for blockdev in self.blockdevs.iter() {
-            blockdev.erase_zone(zone);
-        }
-    }
-
-    // Zero-fill the current StripeBuffer and write it out.  Then drop the
-    // StripeBuffer.
-    fn finish_zone(&self, zone: ZoneT) {
-        // TODO: zero fill StripeBuffer and write it out
-        for blockdev in self.blockdevs.iter() {
-            blockdev.finish_zone(zone);
-        }
-        assert!(self.stripe_buffers.borrow_mut().remove(&zone).is_some());
-    }
-
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
         let disk_lba = loc.offset * self.chunksize;
@@ -651,20 +685,6 @@ impl Vdev for VdevRaid {
         } else {
             None
         }
-    }
-
-    // Create a new StripeBuffer, and zero fill and leading wasted space
-    fn open_zone(&self, zone: ZoneT) {
-        let f = self.codec.protection();
-        let m = (self.codec.stripesize() - f) as LbaT;
-        let stripe_lbas = m * self.chunksize as LbaT;
-        let (start, _) = self.zone_limits(zone);
-        let sb = StripeBuffer::new(start, stripe_lbas);
-        assert!(self.stripe_buffers.borrow_mut().insert(zone, sb).is_none());
-        for blockdev in self.blockdevs.iter() {
-            blockdev.open_zone(zone);
-        }
-        // TODO: zero-fill leading wasted space
     }
 
     fn size(&self) -> LbaT {
@@ -907,16 +927,16 @@ mock!{
     MockVdevBlock,
     vdev,
     trait Vdev {
-        fn erase_zone(&self, zone: ZoneT);
-        fn finish_zone(&self, zone: ZoneT);
         fn handle(&self) -> Handle;
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
-        fn open_zone(&self, zone: ZoneT);
         fn size(&self) -> LbaT;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
     },
     self,
     trait VdevBlockTrait{
+        fn erase_zone(&self, start: LbaT, end: LbaT);
+        fn finish_zone(&self, start: LbaT, end: LbaT);
+        fn open_zone(&self, lba: LbaT);
         fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut>;
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevBlockFut>;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;

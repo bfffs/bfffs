@@ -29,17 +29,6 @@ pub type VdevFut = futures::Future<Item = VdevResult, Error = nix::Error>;
 /// However, those methods are not technically part of the trait, because they
 /// have different return values at different levels.
 pub trait Vdev {
-    /// Erase the given zone.
-    ///
-    /// After this, the zone will be in the empty state.  The data may or may
-    /// not be inaccessible, and should not be considered securely erased.
-    fn erase_zone(&self, zone: ZoneT);
-
-    /// Finish the given zone.
-    ///
-    /// After this, the zone will be in the Full state.
-    fn finish_zone(&self, zone: ZoneT);
-
     /// Return the Tokio reactor handle used for this vdev
     fn handle(&self) -> Handle;
 
@@ -48,11 +37,6 @@ pub trait Vdev {
     /// There may be unused space in between the zones.  A return value of
     /// `None` indicates that the LBA is unused.
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
-
-    /// Open the given zone.
-    ///
-    /// This should be called on an empty zone before writing to that zone.
-    fn open_zone(&self, zone: ZoneT);
 
     /// Return approximately the usable space of the Vdev.
     ///
