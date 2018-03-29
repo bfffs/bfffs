@@ -12,6 +12,8 @@ extern crate isa_l;
 #[macro_use]
 #[cfg(feature = "mocks")] extern crate mockers;
 extern crate modulo;
+#[cfg(test)]
+extern crate permutohedron;
 extern crate nix;
 extern crate tokio;
 extern crate tokio_file;

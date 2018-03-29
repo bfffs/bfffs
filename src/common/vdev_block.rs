@@ -255,9 +255,7 @@ impl Inner {
             self.last_lba = op.lba;
             Some(op)
         } else {
-            // Ran out of operations everywhere.  Go back to LBA 0, and prepare
-            // to idle
-            self.last_lba = 0;
+            // Ran out of operations everywhere.  Prepare to idle
             None
         }
     }
@@ -438,6 +436,7 @@ test_suite! {
     use futures::{Poll, future};
     use mockers::{Scenario, Sequence};
     use mockers::matchers::ANY;
+    use permutohedron;
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
 
@@ -614,47 +613,45 @@ test_suite! {
         let dummy_buffer = dummy_dbs.try().unwrap();
 
         // Start with some intermedia LBA and schedule some ops
-        inner.last_lba = 1000;
-        let same_lba = BlockOp::write_at(dummy_buffer.clone(), 1000,
-            oneshot::channel::<()>().0);
-        let just_after = BlockOp::write_at(dummy_buffer.clone(), 1001,
-            oneshot::channel::<()>().0);
-        let just_after_dup = BlockOp::write_at(dummy_buffer.clone(), 1001,
-            oneshot::channel::<()>().0);
-        let just_before = BlockOp::write_at(dummy_buffer.clone(), 999,
-            oneshot::channel::<()>().0);
-        let min = BlockOp::write_at(dummy_buffer.clone(), 0,
-            oneshot::channel::<()>().0);
-        let max = BlockOp::write_at(dummy_buffer.clone(), 16383,
-            oneshot::channel::<()>().0);
+        let same_lba = 1000;
+        let just_after = 1001;
+        let just_after_dup = 1001;
+        let just_before = 999;
+        let min = 0;
+        let max = 16383;
+        let mut lbas = vec![same_lba, just_after, just_after_dup, just_before,
+                            min, max];
+        // Test scheduling the ops in all possible permutations
+        permutohedron::heap_recursive(&mut lbas, |permutation| {
+            inner.last_lba = 1000;
+            for lba in permutation {
+                let op = BlockOp::write_at(dummy_buffer.clone(), *lba,
+                    oneshot::channel::<()>().0);
+                inner.sched(op);
+            }
 
-        inner.sched(same_lba);
-        inner.sched(just_after);
-        inner.sched(just_after_dup);
-        inner.sched(just_before);
-        inner.sched(min);
-        inner.sched(max);
-        // Check that they're scheduled in the correct order
-        assert_eq!(inner.pop_op().unwrap().lba, 1000);
-        assert_eq!(inner.pop_op().unwrap().lba, 1001);
-        assert_eq!(inner.pop_op().unwrap().lba, 1001);
+            // Check that they're scheduled in the correct order
+            assert_eq!(inner.pop_op().unwrap().lba, 1000);
+            assert_eq!(inner.pop_op().unwrap().lba, 1001);
+            assert_eq!(inner.pop_op().unwrap().lba, 1001);
 
-        // Schedule two more operations behind the scheduler, but ahead of some
-        // already-scheduled ops, to make sure they get issued in the right
-        // order
-        let just_before2 = BlockOp::write_at(dummy_buffer.clone(), 1000,
-            oneshot::channel::<()>().0);
-        let well_before = BlockOp::write_at(dummy_buffer.clone(), 990,
-            oneshot::channel::<()>().0);
-        inner.sched(just_before2);
-        inner.sched(well_before);
+            // Schedule two more operations behind the scheduler, but ahead of
+            // some already-scheduled ops, to make sure they get issued in the
+            // right order
+            let just_before2 = BlockOp::write_at(dummy_buffer.clone(), 1000,
+                oneshot::channel::<()>().0);
+            let well_before = BlockOp::write_at(dummy_buffer.clone(), 990,
+                oneshot::channel::<()>().0);
+            inner.sched(just_before2);
+            inner.sched(well_before);
 
-        assert_eq!(inner.pop_op().unwrap().lba, 16383);
-        assert_eq!(inner.pop_op().unwrap().lba, 0);
-        assert_eq!(inner.pop_op().unwrap().lba, 990);
-        assert_eq!(inner.pop_op().unwrap().lba, 999);
-        assert_eq!(inner.pop_op().unwrap().lba, 1000);
-        assert!(inner.pop_op().is_none());
+            assert_eq!(inner.pop_op().unwrap().lba, 16383);
+            assert_eq!(inner.pop_op().unwrap().lba, 0);
+            assert_eq!(inner.pop_op().unwrap().lba, 990);
+            assert_eq!(inner.pop_op().unwrap().lba, 999);
+            assert_eq!(inner.pop_op().unwrap().lba, 1000);
+            assert!(inner.pop_op().is_none());
+        });
     }
 
     // Queued operations will both complete

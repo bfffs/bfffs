@@ -29,6 +29,7 @@ tokio = "0.1.4"
 [dev-dependencies]
 galvanic-test = "0.1.3"
 itertools = "0.7.1"
+permutohedron = "0.2"
 rand = "0.3"
 tempdir = "0.3"
 
