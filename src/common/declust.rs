@@ -1,5 +1,30 @@
 // vim: tw=80
 
+//! Common interface to declustering RAID transforms.
+//!
+//! Traditional RAID is *fully clustered*.  That is, each parity group, or
+//! stripe, has the same number of disks as the entire array.  *Declustered*
+//! RAID arrays, by contrast, can have more disks in the array that there are in
+//! each stripe.  Declustering improves the performance of user reads during a
+//! rebuild, and decreases the CPU and I/O usage of rebuilds too.  For a given
+//! array size, declustered RAID has worse space efficiency than fully clustered
+//! RAID.  However, it has the same space efficiency as fully clustered RAID for
+//! a given stripe size.  Declustered RAID makes large array sizes practical,
+//! where a fully clustered RAID system would resort to a stripe of multiple
+//! RAID arrays instead.
+//!
+//! # References
+//!
+//! Muntz, Richard R., and John CS Lui. Performance analysis of disk arrays
+//! under failure. Computer Science Department, University of California, 1990.
+//!
+//! Holland, Mark, and Garth A. Gibson. Parity declustering for continuous
+//! operation in redundant disk arrays. Vol. 27. No. 9.  ACM, 1992.
+//!
+//! Alvarez, Guillermo A., et al. "Declustered disk array architectures with
+//! optimal and near-optimal parallelism." ACM SIGARCH Computer Architecture
+//! News. Vol. 26. No. 3. IEEE Computer Society, 1998.
+
 /// ID of a chunk.  A chunk is the fundamental unit of declustering.  One chunk
 /// (typically several KB) is the largest amount of data that can be written to
 /// a single disk before the Locator switches to a new disk.
@@ -64,18 +89,6 @@ impl Chunkloc {
 /// design, but it has performance benefits as well.  Chiefly, during a rebuild
 /// no healthy disk will be saturated, so user I/O suffers less than in a
 /// traditional RAID array.
-///
-/// # References
-///
-/// Muntz, Richard R., and John CS Lui. Performance analysis of disk arrays
-/// under failure. Computer Science Department, University of California, 1990.
-///
-/// Holland, Mark, and Garth A. Gibson. Parity declustering for continuous
-/// operation in redundant disk arrays. Vol. 27. No. 9.  ACM, 1992.
-///
-/// Alvarez, Guillermo A., et al. "Declustered disk array architectures with
-/// optimal and near-optimal parallelism." ACM SIGARCH Computer Architecture
-/// News. Vol. 26. No. 3. IEEE Computer Society, 1998.
 pub trait Locator {
     /// Return the total number of disks in the layout
     fn clustsize(&self) -> i16;
@@ -126,7 +139,7 @@ pub trait Locator {
 	/// - `a`:	ID of the data chunk
     fn id2loc(&self, id: ChunkId) -> Chunkloc;
 
-    /// Parallel Read Count, as defined by [^RELPR_]
+    /// Parallel Read Count, as defined by Alvarez et al.[^RELPR_]
     ///
     /// It's the maximum number of data chunks that any disk must supply when
     /// reading a given number of consecutive data chunks.  This value is purely

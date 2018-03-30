@@ -299,8 +299,9 @@ impl Inner {
 
 /// `VdevBlock`: Virtual Device for basic block device
 ///
-/// This struct contains the functionality that is common between all types of
-/// leaf vdev.
+/// Wraps a single `VdevLeaf`.  But unlike `VdevLeaf`, `VdevBlock` operations
+/// are scheduled.  They may not be issued in the order requested, and they may
+/// not be issued immediately.
 pub struct VdevBlock {
     inner: Rc<RefCell<Inner>>,
 
@@ -476,7 +477,7 @@ impl VdevBlock {
     /// # Parameters
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
-    /// * `lba`     LBA from which to read
+    /// * `lba`     LBA at which to write
     pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();

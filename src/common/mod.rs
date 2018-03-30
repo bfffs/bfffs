@@ -12,7 +12,10 @@ pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_leaf;
 pub mod vdev_raid;
+/// Indexes an LBA.  LBAs are always 4096 bytes
 pub type LbaT = u64;
+/// Indexes a `Vdev`'s Zones.  A Zone is the smallest allocation unit that can
+/// be independently erased.
 pub type ZoneT = u32;
 /// Our `IoVec`.  Unlike the standard library's, ours is reference-counted so it
 /// can have more than one owner.

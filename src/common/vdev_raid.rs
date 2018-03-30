@@ -29,6 +29,7 @@ pub trait VdevBlockTrait : Vdev {
 #[cfg(test)]
 pub type VdevBlockLike = Box<VdevBlockTrait>;
 #[cfg(not(test))]
+#[doc(hidden)]
 pub type VdevBlockLike = VdevBlock;
 
 /// In-memory cache of data that has not yet been flushed the Block devices.

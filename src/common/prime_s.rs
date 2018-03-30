@@ -1,5 +1,15 @@
 // vim: tw=80
 
+//! The PRIME-S Declustering Layout
+//!
+//! This layout is based on PRIME[^PRIME_], but modified for compatibility with
+//! SMR drives.  See `doc/prime-s.tex` in ArkFS's source directory for a more
+//! detailed description.
+//!
+//! [^PRIME_]: Alvarez, Guillermo A., et al. "Declustered disk array
+//! architectures with optimal and near-optimal parallelism." ACM SIGARCH
+//! Computer Architecture News. Vol. 26. No. 3. IEEE Computer Society, 1998.
+
 use fixedbitset::FixedBitSet;
 use common::declust::*;
 use common::*;
@@ -301,6 +311,7 @@ impl Locator for PrimeS {
     }
 }
 
+/// Return type for [`PrimeS::iter`](struct.PrimeS.html#method.iter)
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrimeSIter {
     a: i16,             // Index of a data chunk within its repetition
@@ -450,7 +461,7 @@ impl Iterator for PrimeSIter {
     }
 }
 
-/// Like PrimeSIter, but only iterates through Data chunks, not Parity chunks
+/// Return type for [`PrimeS::iter_data`](struct.PrimeS.html#method.iter_data)
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrimeSIterData(PrimeSIter);
 

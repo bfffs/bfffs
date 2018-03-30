@@ -1,8 +1,12 @@
 // vim: tw=80
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
-/// Always use 4K LBAs, even if the underlying device supports smaller
+/// LBAs always use 4K LBAs, even if the underlying device supports smaller.
 pub const BYTES_PER_LBA: usize = 4096;
+
+/// A Fragment is the smallest amount of space that can be independently
+/// allocated.  Several small files can have their fragments packed into a
+/// single LBA.
 pub const BYTES_PER_FRAGMENT: usize = 256;
 
 /// Data Virtual Address for ArkFS.  Each DVA uniquely identifies a physical
