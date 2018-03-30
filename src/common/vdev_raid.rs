@@ -279,15 +279,49 @@ impl VdevRaid {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         let stripe_lbas = m * self.chunksize as LbaT;
-        let (start, _) = self.zone_limits(zone);
-        let sb = StripeBuffer::new(start, stripe_lbas);
+        let (start_lba, _) = self.zone_limits(zone);
+        let sb = StripeBuffer::new(start_lba, stripe_lbas);
         assert!(self.stripe_buffers.borrow_mut().insert(zone, sb).is_none());
 
-        let (disk_lba, _) = self.blockdevs[0].zone_limits(zone);
-        let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
-            blockdev.open_zone(disk_lba)
-        }).collect();
-        // TODO: zero-fill leading wasted space
+        let (first_disk_lba, _) = self.blockdevs[0].zone_limits(zone);
+        let start_disk_chunk = div_roundup(first_disk_lba, self.chunksize);
+        let futs: Vec<_> = self.blockdevs.iter()
+            .enumerate()
+            .map(|(idx, blockdev)| {
+                // Find the first LBA of this disk that's within our zone
+                let mut first_usable_disk_lba = 0;
+                for chunk in start_disk_chunk.. {
+                    let loc = Chunkloc::new(idx as i16, chunk);
+                    let chunk_id = self.locator.loc2id(loc);
+                    let chunk_lba = chunk_id.address() * self.chunksize;
+                    if chunk_lba >= start_lba {
+                        first_usable_disk_lba = chunk * self.chunksize;
+                        break;
+                    }
+                }
+                let zero_fut: Box<VdevBlockFut> =
+                    if first_usable_disk_lba > first_disk_lba {
+
+                    // Zero-fill leading wasted space so as not to cause a
+                    // write pointer violation on SMR disks.
+                    let zero_lbas = first_usable_disk_lba - first_disk_lba;
+                    let zero_len = zero_lbas as usize * BYTES_PER_LBA;
+                    // TODO: use a global zero-region
+                    let dbs = DivBufShared::from(vec![0; zero_len]);
+                    let db = dbs.try().unwrap();
+                    Box::new(blockdev.write_at(db, first_disk_lba)
+                        .map(move |r| {
+                            let _ = dbs;    //needs to live this long
+                            r
+                        })
+                     )
+                } else {
+                    Box::new(future::ok::<(), Error>(()))
+                };
+
+                blockdev.open_zone(first_disk_lba).join(zero_fut)
+            }).collect();
+
         Box::new(future::join_all(futs).map(|_| ()))
     }
 
@@ -1258,5 +1292,102 @@ fn write_at_one_stripe() {
         let wbuf = dbs.try().unwrap();
         vdev_raid.write_at(wbuf, 0, 0);
 }
+
+// Open a zone that has wasted leading space due to a chunksize misaligned with
+// the zone size.
+// Use highly unrealistic disks with 32 LBAs per zone
+#[test]
+fn open_zone_zero_fill_wasted_chunks() {
+        let n = 5;
+        let k = 5;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 5;
+        let zl0 = (0, 32);
+        let zl1 = (32, 64);
+
+        let s = Scenario::new();
+        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+
+        let bd = || {
+            let bd = Box::new(s.create_mock::<MockVdevBlock>());
+            s.expect(bd.size_call().and_return_clone(262144).times(..));
+            s.expect(bd.lba2zone_call(0).and_return_clone(Some(0)).times(..));
+            s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
+            s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
+            s.expect(bd.open_zone_call(32)
+                     .and_return(Box::new(future::ok::<(), Error>(())))
+            );
+            s.expect(bd.write_at_call(check!(|buf: &IoVec| {
+                buf.len() == 3 * BYTES_PER_LBA
+            }), 32)
+                .and_return( Box::new( future::ok::<(), Error>(())))
+            );
+            bd
+        };
+
+        blockdevs.push(bd());    //disk 0
+        blockdevs.push(bd());    //disk 1
+        blockdevs.push(bd());    //disk 2
+        blockdevs.push(bd());    //disk 3
+        blockdevs.push(bd());    //disk 4
+
+        let codec = Codec::new(k, f);
+        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+                                      blockdevs.into_boxed_slice());
+        vdev_raid.open_zone(1);
 }
 
+// Open a zone that has some leading wasted space.  Use mock VdevBlock objects
+// to verify that the leading wasted space gets zero-filled.
+// Use highly unrealistic disks with 32 LBAs per zone
+#[test]
+fn open_zone_zero_fill_wasted_stripes() {
+        let n = 7;
+        let k = 5;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 1;
+        let zl0 = (0, 32);
+        let zl1 = (32, 64);
+
+        let s = Scenario::new();
+        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+
+        let bd = |gap_chunks: LbaT| {
+            let bd = Box::new(s.create_mock::<MockVdevBlock>());
+            s.expect(bd.size_call().and_return_clone(262144).times(..));
+            s.expect(bd.lba2zone_call(0).and_return_clone(Some(0)).times(..));
+            s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
+            s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
+            s.expect(bd.open_zone_call(32)
+                     .and_return(Box::new(future::ok::<(), Error>(())))
+            );
+            if gap_chunks > 0 {
+                s.expect(bd.write_at_call(check!(move |buf: &IoVec| {
+                    let gap_lbas = gap_chunks * CHUNKSIZE; 
+                    buf.len() == gap_lbas as usize * BYTES_PER_LBA
+                }), 32)
+                    .and_return( Box::new( future::ok::<(), Error>(())))
+                );
+            }
+            bd
+        };
+
+        // On this layout, zone 1 begins at the third row in the repetition.
+        // Stripes 2 and 3 are wasted, so disks 0, 1, 2, 4, and 5 have a wasted
+        // LBA that needs zero-filling.  Disks 3 and 6 have no wasted LBA.
+        blockdevs.push(bd(1));  //disk 0
+        blockdevs.push(bd(2));  //disk 1
+        blockdevs.push(bd(1));  //disk 2
+        blockdevs.push(bd(0));  //disk 3
+        blockdevs.push(bd(1));  //disk 4
+        blockdevs.push(bd(1));  //disk 5
+        blockdevs.push(bd(0));  //disk 6
+
+        let codec = Codec::new(k, f);
+        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+                                      blockdevs.into_boxed_slice());
+        vdev_raid.open_zone(1);
+}
+}
