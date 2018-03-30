@@ -752,10 +752,7 @@ impl Vdev for VdevRaid {
             let stripes = (0..self.blockdevs.len()).map(|i| {
                 let cid = self.locator.loc2id(Chunkloc::new(i as i16,
                                                             boundary_chunk));
-                let stripe = match cid {
-                    ChunkId::Data(id) => id,
-                    ChunkId::Parity(id, _) => id
-                } / m;
+                let stripe = cid.address() / m;
                 stripe
             });
             let (min_stripe, max_stripe) = min_max(stripes).unwrap();

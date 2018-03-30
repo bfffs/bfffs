@@ -147,9 +147,7 @@ impl PrimeS {
     /// Internal helper function
     fn id2loc_int(&self, chunkid: &ChunkId) -> ChunklocInt {
         // The chunk address
-        let id = match *chunkid {
-            ChunkId::Data(id) | ChunkId::Parity(id, _) => id,
-        };
+        let id = chunkid.address();
         let a = id.modulo(self.datachunks) as i16;
         // The repetition and iteration
         let (r, z) = self.id2rep_and_iter(&chunkid);
@@ -163,9 +161,7 @@ impl PrimeS {
     /// Return the repetition and iteration numbers where a given Chunk is
     /// stored
     fn id2rep_and_iter(&self, chunkid: &ChunkId) -> (u32, i16) {
-        let id = match *chunkid {
-            ChunkId::Data(id) | ChunkId::Parity(id, _) => id
-        };
+        let id = chunkid.address();
         // Good candidate for a combined division-modulo operation, if one ever
         // gets added
         // https://github.com/rust-lang/rfcs/pull/2169

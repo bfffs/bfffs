@@ -16,6 +16,18 @@ pub enum ChunkId {
 }
 
 impl ChunkId {
+    /// Return the chunk's chunk address.
+    ///
+    /// For `Data` chunks, this is the zero-based index of all `Data` chunks in
+    /// the layout.  For `Parity` chunks, it's the zero-based index of the first
+    /// `Data` chunk in the same stripe.
+    pub fn address(&self) -> u64 {
+        match self {
+            &ChunkId::Data(id) => id,
+            &ChunkId::Parity(id, _) => id
+        }
+    }
+
     /// Is this a Data chunk?
     pub fn is_data(&self) -> bool {
         if let &ChunkId::Data(_) = self { true } else { false }
