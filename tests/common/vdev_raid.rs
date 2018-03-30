@@ -54,7 +54,9 @@ test_suite! {
             let locator = Box::new(PrimeS::new(*self.n, *self.k, *self.f));
             let mut vdev_raid = VdevRaid::new(*self.chunksize, codec, locator,
                                               blockdevs.into_boxed_slice());
-            vdev_raid.open_zone(0);
+            current_thread::block_on_all(
+                vdev_raid.open_zone(0)
+            ).expect("open_zone");
             (vdev_raid, tempdir)
         }
     });
@@ -370,9 +372,8 @@ test_suite! {
         let rbuf = dbsr.try_mut().unwrap();
         current_thread::block_on_all(future::lazy(|| {
             raid.val.0.write_at(wbuf0, zone, lba)
-                .map(|r| {
-                    raid.val.0.finish_zone(zone);
-                    r
+                .and_then(|_| {
+                    raid.val.0.finish_zone(zone)
                 }).and_then(|_| {
                     raid.val.0.read_at(rbuf, zone, lba)
                 })
@@ -390,8 +391,10 @@ test_suite! {
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        raid.val.0.open_zone(zone);
-        raid.val.0.finish_zone(zone);
+        current_thread::block_on_all(
+            raid.val.0.open_zone(zone)
+            .and_then(|_| raid.val.0.finish_zone(zone))
+        ).expect("open and finish");
         write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
         assert_eq!(wbuf1, dbsr.try().unwrap());
     }
@@ -415,7 +418,9 @@ test_suite! {
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        raid.val.0.open_zone(zone);
+        current_thread::block_on_all(
+            raid.val.0.open_zone(zone)
+        ).expect("open_zone");
         write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
         assert_eq!(wbuf1, dbsr.try().unwrap());
     }
@@ -430,7 +435,9 @@ test_suite! {
             let wbuf0 = dbsw.try().unwrap();
             let wbuf1 = dbsw.try().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
-            vdev_raid.open_zone(zone);
+            current_thread::block_on_all(
+                vdev_raid.open_zone(zone)
+            ).expect("open_zone");
             write_read(&vdev_raid, vec![wbuf0], vec![rbuf], zone, start);
             assert_eq!(wbuf1, dbsr.try().unwrap());
         }

@@ -18,9 +18,9 @@ use tokio::reactor::Handle;
 #[cfg(test)]
 /// Only exists so mockers can replace VdevBlock
 pub trait VdevBlockTrait : Vdev {
-    fn erase_zone(&self, start: LbaT, end: LbaT);
-    fn finish_zone(&self, start: LbaT, end: LbaT);
-    fn open_zone(&self, lba: LbaT);
+    fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevBlockFut>;
+    fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevBlockFut>;
+    fn open_zone(&self, lba: LbaT) -> Box<VdevBlockFut>;
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut>;
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevBlockFut>;
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;
@@ -188,7 +188,7 @@ macro_rules! issue_1stripe_ops {
                 $self.blockdevs[loc.disk as usize].$func(d, disk_lba)
             })
             .collect();
-        future::join_all(futs)
+            future::join_all(futs)
         }
     }
 }
@@ -220,13 +220,14 @@ impl VdevRaid {
     ///
     /// # Parameters
     /// - `zone`:    The target zone ID
-    pub fn erase_zone(&self, zone: ZoneT) {
+    pub fn erase_zone(&self, zone: ZoneT) -> Box<VdevRaidFut> {
         assert!(!self.stripe_buffers.borrow().contains_key(&zone),
             "Tried to erase an open zone");
         let (start, end) = self.blockdevs[0].zone_limits(zone);
-        for blockdev in self.blockdevs.iter() {
-            blockdev.erase_zone(start, end);
-        }
+        let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
+            blockdev.erase_zone(start, end)
+        }).collect();
+        Box::new(future::join_all(futs).map(|_| ()))
     }
 
     /// Asynchronously finish a zone on a RAID device
@@ -235,14 +236,16 @@ impl VdevRaid {
     /// - `zone`:    The target zone ID
     // Zero-fill the current StripeBuffer and write it out.  Then drop the
     // StripeBuffer.
-    pub fn finish_zone(&self, zone: ZoneT) {
+    pub fn finish_zone(&self, zone: ZoneT) -> Box<VdevRaidFut> {
         // TODO: zero fill StripeBuffer and write it out
         let (start, end) = self.blockdevs[0].zone_limits(zone);
-        for blockdev in self.blockdevs.iter() {
-            blockdev.finish_zone(start, end);
-        }
+        let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
+            blockdev.finish_zone(start, end)
+        }).collect();
 
         assert!(self.stripe_buffers.borrow_mut().remove(&zone).is_some());
+
+        Box::new(future::join_all(futs).map(|_| ()))
     }
 
     /// Asynchronously open a zone on a RAID device
@@ -250,7 +253,7 @@ impl VdevRaid {
     /// # Parameters
     /// - `zone`:    The target zone ID
     // Create a new StripeBuffer, and zero fill and leading wasted space
-    pub fn open_zone(&self, zone: ZoneT) {
+    pub fn open_zone(&self, zone: ZoneT) -> Box<VdevRaidFut> {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         let stripe_lbas = m * self.chunksize as LbaT;
@@ -259,10 +262,11 @@ impl VdevRaid {
         assert!(self.stripe_buffers.borrow_mut().insert(zone, sb).is_none());
 
         let (disk_lba, _) = self.blockdevs[0].zone_limits(zone);
-        for blockdev in self.blockdevs.iter() {
-            blockdev.open_zone(disk_lba);
-        }
+        let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
+            blockdev.open_zone(disk_lba)
+        }).collect();
         // TODO: zero-fill leading wasted space
+        Box::new(future::join_all(futs).map(|_| ()))
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -933,9 +937,9 @@ mock!{
     },
     self,
     trait VdevBlockTrait{
-        fn erase_zone(&self, start: LbaT, end: LbaT);
-        fn finish_zone(&self, start: LbaT, end: LbaT);
-        fn open_zone(&self, lba: LbaT);
+        fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevBlockFut> ;
+        fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevBlockFut> ;
+        fn open_zone(&self, lba: LbaT) -> Box<VdevBlockFut> ;
         fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut>;
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevBlockFut>;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut>;
@@ -1134,7 +1138,8 @@ fn read_at_one_stripe() {
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.lba2zone_call(0).and_return_clone(Some(0)).times(..));
-        s.expect(m0.open_zone_call(0).and_return(()));
+        s.expect(m0.open_zone_call(0).and_return(
+                Box::new(future::ok::<(), Error>(()))));
         s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1146,7 +1151,8 @@ fn read_at_one_stripe() {
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m1.size_call().and_return_clone(262144).times(..));
         s.expect(m1.lba2zone_call(0).and_return_clone(Some(0)).times(..));
-        s.expect(m1.open_zone_call(0).and_return(()));
+        s.expect(m1.open_zone_call(0).and_return(
+                Box::new(future::ok::<(), Error>(()))));
         s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1158,7 +1164,8 @@ fn read_at_one_stripe() {
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m2.size_call().and_return_clone(262144).times(..));
         s.expect(m2.lba2zone_call(0).and_return_clone(Some(0)).times(..));
-        s.expect(m2.open_zone_call(0).and_return(()));
+        s.expect(m2.open_zone_call(0).and_return(
+                Box::new(future::ok::<(), Error>(()))));
         s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         blockdevs.push(m2);
 
@@ -1187,7 +1194,8 @@ fn write_at_one_stripe() {
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262144).times(..));
         s.expect(m0.lba2zone_call(0).and_return_clone(Some(0)).times(..));
-        s.expect(m0.open_zone_call(0).and_return(()));
+        s.expect(m0.open_zone_call(0).and_return(
+                Box::new(future::ok::<(), Error>(()))));
         s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1199,7 +1207,8 @@ fn write_at_one_stripe() {
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m1.size_call().and_return_clone(262144).times(..));
         s.expect(m1.lba2zone_call(0).and_return_clone(Some(0)).times(..));
-        s.expect(m1.open_zone_call(0).and_return(()));
+        s.expect(m1.open_zone_call(0).and_return(
+                Box::new(future::ok::<(), Error>(()))));
         s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1211,7 +1220,8 @@ fn write_at_one_stripe() {
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m2.size_call().and_return_clone(262144).times(..));
         s.expect(m2.lba2zone_call(0).and_return_clone(Some(0)).times(..));
-        s.expect(m2.open_zone_call(0).and_return(()));
+        s.expect(m2.open_zone_call(0).and_return(
+                Box::new(future::ok::<(), Error>(()))));
         s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
