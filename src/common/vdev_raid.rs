@@ -148,7 +148,13 @@ pub struct VdevRaid {
     ///
     /// We cache up to one stripe per zone before flushing it.  Cacheing entire
     /// stripes uses fewer resources than only cacheing the parity information.
-    stripe_buffers: RefCell<BTreeMap<ZoneT, StripeBuffer>>
+    stripe_buffers: RefCell<BTreeMap<ZoneT, StripeBuffer>>,
+
+    /// A convenient buffer prepopulated with zeros with a lifetime as long as
+    /// the `VdevRaid`.
+    // It would be nice to share this between multiple `VdevRaid`s, but how
+    // would you calculate the maximum size?
+    zero_region: DivBufShared
 }
 
 /// Convenience macro for `VdevRaid` I/O methods
@@ -212,8 +218,14 @@ impl VdevRaid {
                        blockdevs[i].zone_limits(0));
         }
 
+        let f = codec.protection();
+        let m = (codec.stripesize() - f) as LbaT;
+        let stripesize = (m * chunksize) as usize * BYTES_PER_LBA;
+        let zero_region = DivBufShared::from(vec![0u8; stripesize]);
+
         VdevRaid { chunksize, codec, locator, blockdevs,
-                   stripe_buffers: RefCell::new(BTreeMap::new())}
+                   stripe_buffers: RefCell::new(BTreeMap::new()),
+                   zero_region }
     }
 
     /// Asynchronously erase a zone on a RAID device
@@ -243,16 +255,14 @@ impl VdevRaid {
         {
             let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
             if ! sb.is_empty() {
-                let pad_len = (sb.stripe_lbas - sb.len()) as usize;
-                let dbs = DivBufShared::from(vec![0; pad_len * BYTES_PER_LBA]);
-                sb.fill(dbs.try().unwrap());
+                let pad_lbas = (sb.stripe_lbas - sb.len()) as usize;
+                let padsize = pad_lbas * BYTES_PER_LBA;
+                let db = self.zero_region.try().unwrap().slice_to(padsize);
+                sb.fill(db);
                 debug_assert!(sb.is_full());
                 let lba = sb.lba();
                 let sgl = sb.pop();
-                futs.push(Box::new(self.writev_at_one(&sgl, lba).map(move |r| {
-                    let _ = dbs;        // Needs to live this long
-                    r
-                })))
+                futs.push(self.writev_at_one(&sgl, lba));
             }
             let (start, end) = self.blockdevs[0].zone_limits(zone);
             futs.extend(
@@ -299,22 +309,13 @@ impl VdevRaid {
                         break;
                     }
                 }
-                let zero_fut: Box<VdevBlockFut> =
-                    if first_usable_disk_lba > first_disk_lba {
-
+                let zero_fut = if first_usable_disk_lba > first_disk_lba {
                     // Zero-fill leading wasted space so as not to cause a
                     // write pointer violation on SMR disks.
                     let zero_lbas = first_usable_disk_lba - first_disk_lba;
                     let zero_len = zero_lbas as usize * BYTES_PER_LBA;
-                    // TODO: use a global zero-region
-                    let dbs = DivBufShared::from(vec![0; zero_len]);
-                    let db = dbs.try().unwrap();
-                    Box::new(blockdev.write_at(db, first_disk_lba)
-                        .map(move |r| {
-                            let _ = dbs;    //needs to live this long
-                            r
-                        })
-                     )
+                    let db = self.zero_region.try().unwrap().slice_to(zero_len);
+                    blockdev.write_at(db, first_disk_lba)
                 } else {
                     Box::new(future::ok::<(), Error>(()))
                 };
