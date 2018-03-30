@@ -381,6 +381,31 @@ test_suite! {
         assert_eq!(wbuf1, dbsr.try().unwrap());
     }
 
+    // Close a zone with an incomplete StripeBuffer, then read back from it
+    test zone_read_closed_partial(raid((3, 3, 1, 2))) {
+        let zone = 0;
+        let lba=0;
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let wbuf = dbsw.try().unwrap();
+        let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
+        {
+            let mut rbuf = dbsr.try_mut().unwrap();
+            let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
+            current_thread::block_on_all(future::lazy(|| {
+                raid.val.0.write_at(wbuf_short, zone, lba)
+                    .and_then(|_| {
+                        raid.val.0.finish_zone(zone)
+                    }).and_then(|_| {
+                        raid.val.0.read_at(rbuf_short, zone, lba)
+                    })
+            })).expect("current_thread::block_on_all");
+        }
+        assert_eq!(&wbuf[0..BYTES_PER_LBA],
+                   &dbsr.try().unwrap()[0..BYTES_PER_LBA]);
+    }
+
+
     #[should_panic]
     // Writing to an explicitly closed a zone fails
     test zone_close(raid((3, 3, 1, 2))) {

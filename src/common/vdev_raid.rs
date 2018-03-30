@@ -237,13 +237,35 @@ impl VdevRaid {
     // Zero-fill the current StripeBuffer and write it out.  Then drop the
     // StripeBuffer.
     pub fn finish_zone(&self, zone: ZoneT) -> Box<VdevRaidFut> {
-        // TODO: zero fill StripeBuffer and write it out
-        let (start, end) = self.blockdevs[0].zone_limits(zone);
-        let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
-            blockdev.finish_zone(start, end)
-        }).collect();
+        let mut sbs = self.stripe_buffers.borrow_mut();
+        let nfuts = self.blockdevs.len() + 1;
+        let mut futs: Vec<Box<VdevRaidFut>> = Vec::with_capacity(nfuts);
+        {
+            let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
+            if ! sb.is_empty() {
+                let pad_len = (sb.stripe_lbas - sb.len()) as usize;
+                let dbs = DivBufShared::from(vec![0; pad_len * BYTES_PER_LBA]);
+                sb.fill(dbs.try().unwrap());
+                debug_assert!(sb.is_full());
+                let lba = sb.lba();
+                let sgl = sb.pop();
+                futs.push(Box::new(self.writev_at_one(&sgl, lba).map(move |r| {
+                    let _ = dbs;        // Needs to live this long
+                    r
+                })))
+            }
+            let (start, end) = self.blockdevs[0].zone_limits(zone);
+            futs.extend(
+                Box::new(
+                    self.blockdevs.iter()
+                    .map(|blockdev| {
+                        blockdev.finish_zone(start, end)
+                    })
+                )
+            );
+        }
 
-        assert!(self.stripe_buffers.borrow_mut().remove(&zone).is_some());
+        assert!(sbs.remove(&zone).is_some());
 
         Box::new(future::join_all(futs).map(|_| ()))
     }
