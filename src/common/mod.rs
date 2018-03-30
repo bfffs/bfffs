@@ -3,6 +3,7 @@
 use divbuf::{DivBuf, DivBufMut};
 use std::ops::{Add, Div, Sub};
 
+pub mod cluster;
 pub mod declust;
 pub mod dva;
 pub mod prime_s;
