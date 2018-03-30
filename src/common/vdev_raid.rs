@@ -330,17 +330,26 @@ impl VdevRaid {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Returns `()` on success, or an error on failure
-    pub fn read_at(&self, mut buf: IoVecMut, zone: ZoneT,
-                   lba: LbaT) -> Box<VdevRaidFut> {
+    pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<VdevRaidFut> {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         assert_eq!(buf.len() % BYTES_PER_LBA, 0, "reads must be LBA-aligned");
-        debug_assert_eq!(zone, self.lba2zone(lba).unwrap());
 
         // end_lba is inclusive.  The highest LBA from which data will be read
         let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
         let sb_ref = self.stripe_buffers.borrow();
-        let stripe_buffer = sb_ref.get(&zone);
+
+        // Look for a StripeBuffer that contains part of the requested range.
+        // There should only be a few zones open at any one time, so it's ok to
+        // search through them all.
+        let stripe_buffer = sb_ref.iter()
+            .map(|(_, sb)| sb)
+            .filter(|&stripe_buffer| {
+                !stripe_buffer.is_empty() &&
+                lba < stripe_buffer.next_lba() &&
+                end_lba >= stripe_buffer.lba()
+            }).nth(0);
+
         let buf2 = if stripe_buffer.is_some() &&
             !stripe_buffer.unwrap().is_empty() &&
             end_lba >= stripe_buffer.unwrap().lba() {
@@ -1231,7 +1240,7 @@ fn read_at_one_stripe() {
         vdev_raid.open_zone(0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
-        vdev_raid.read_at(rbuf, 0, 0);
+        vdev_raid.read_at(rbuf, 0);
 }
 
 // Use mock VdevBlock objects to test that RAID writes hit the right LBAs from

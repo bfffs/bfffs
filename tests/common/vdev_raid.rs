@@ -95,7 +95,7 @@ test_suite! {
                     rbufs.into_iter()
                     .map(|rb| {
                         let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
-                        let fut = vr.read_at(rb, zone, read_lba);
+                        let fut = vr.read_at(rb, read_lba);
                         read_lba += lbas;
                         fut
                     })
@@ -128,7 +128,7 @@ test_suite! {
             vr.writev_at_one(&sglist, 0)
                 .then(|write_result| {
                     write_result.expect("writev_at_one");
-                    vr.read_at(dbsr.try_mut().unwrap(), 0, 0)
+                    vr.read_at(dbsr.try_mut().unwrap(), 0)
                 })
         })).expect("read_at");
         assert_eq!(wbuf, dbsr.try().unwrap());
@@ -375,7 +375,7 @@ test_suite! {
                 .and_then(|_| {
                     raid.val.0.finish_zone(zone)
                 }).and_then(|_| {
-                    raid.val.0.read_at(rbuf, zone, lba)
+                    raid.val.0.read_at(rbuf, lba)
                 })
         })).expect("current_thread::block_on_all");
         assert_eq!(wbuf1, dbsr.try().unwrap());
@@ -397,7 +397,7 @@ test_suite! {
                     .and_then(|_| {
                         raid.val.0.finish_zone(zone)
                     }).and_then(|_| {
-                        raid.val.0.read_at(rbuf_short, zone, lba)
+                        raid.val.0.read_at(rbuf_short, lba)
                     })
             })).expect("current_thread::block_on_all");
         }
