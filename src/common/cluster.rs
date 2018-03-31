@@ -6,7 +6,7 @@ use common::vdev::Vdev;
 use common::vdev_raid::*;
 use futures::Future;
 use nix::{Error, errno};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub type ClusterFut = Future<Item = (), Error = Error>;
 
@@ -30,25 +30,10 @@ pub type VdevRaidLike = VdevRaid;
 /// A full zone is one which contains data, and may not be written to again
 /// until it has been garbage collected.  An open zone is one which may contain
 /// data, and may be written to.  An Empty zone contains no data.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 struct Zone {
     pub freed_blocks: LbaT,
     pub total_blocks: LbaT
-}
-
-impl Zone {
-    const EMPTY_SENTINEL: LbaT = LbaT::max_value();
-
-    fn is_empty(&self) -> bool {
-        self.freed_blocks == Zone::EMPTY_SENTINEL
-    }
-}
-
-impl Default for Zone {
-    /// The Default Zone is an Empty Zone
-    fn default() -> Zone {
-        Zone { freed_blocks: Zone::EMPTY_SENTINEL, total_blocks: 0}
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -66,10 +51,14 @@ struct OpenZone {
 // * Find all zones modified in a certain txg range
 struct FreeSpaceMap {
     /// `Vec` of all zones in the Vdev.  Any zones past the end of the `Vec` are
-    /// implicitly Empty.  Any zones whose value of `freed_blocks` is
-    /// `EMPTY_SENTINEL` are also Empty.  Any zones whose index is also present
-    /// in `open_zones` are implicitly open.  All other zones are Closed.
+    /// implicitly Empty.  Any zones whose index is present in `empty_zones` are
+    /// also Empty.  Any zones whose index is also present in `open_zones` are
+    /// implicitly open.  All other zones are Closed.
     zones: Vec<Zone>,
+
+    /// Stores the set of empty zones with id less than zones.len().  All zones
+    /// with id greater than or equal to zones.len() are implicitly empty
+    empty_zones: BTreeSet<ZoneT>,
 
     /// Currently open zones
     open_zones: BTreeMap<ZoneT, OpenZone>,
@@ -86,21 +75,21 @@ impl FreeSpaceMap {
             "Can't erase an open zone");
         assert!(zone_idx < self.zones.len(),
             "Can't erase an empty zone");
-        self.zones[zone_idx].freed_blocks = Zone::EMPTY_SENTINEL;
+        self.empty_zones.insert(zone_id);
         // If this was the last zone, then remove all trailing Empty zones
         if zone_idx == self.zones.len() - 1 {
             // NB: determining first_empty should be rewritten with
             // Iterator::rfind once that feature is stable
             // https://github.com/rust-lang/rust/issues/39480
-            let first_empty;
+            let first_empty: ZoneT;
             {
                 let mut iter = self.zones.iter().enumerate();
                 loop {
                     let elem = iter.next_back();
                     match elem {
-                        Some((_, z)) if z.is_empty() => continue,
+                        Some((i, _)) if self.is_empty(i as ZoneT) => continue,
                         Some((i, _)) => {
-                            first_empty = i + 1;
+                            first_empty = i as ZoneT + 1;
                             break;
                         },
                         None => {
@@ -110,16 +99,14 @@ impl FreeSpaceMap {
                     }
                 }
             }
-            self.zones.truncate(first_empty);
+            self.zones.truncate(first_empty as usize);
+            let _going_away = self.empty_zones.split_off(&first_empty);
         }
     }
 
     /// Find the first Empty zone
     fn find_empty(&self) -> Option<ZoneT> {
-        self.zones.iter()
-            .enumerate()
-            .find(|&(_, &zone)| zone.is_empty())
-            .map(|(i, _)| i as ZoneT)
+        self.empty_zones.iter().nth(0).map(|&z| z)
             .or_else(|| {
                 if (self.zones.len() as ZoneT) < self.total_zones {
                     Some(self.zones.len() as ZoneT)
@@ -136,9 +123,9 @@ impl FreeSpaceMap {
     }
 
     fn free(&mut self, zone_id: ZoneT, length: LbaT) {
+        assert!(!self.is_empty(zone_id), "Can't free from an empty zone");
         let zone = self.zones.get_mut(zone_id as usize).expect(
             "Can't free from an empty zone");
-        assert!(!zone.is_empty(), "Can't free from an empty zone");
         zone.freed_blocks += length;
         assert!(zone.freed_blocks <= zone.total_blocks,
                 "Double free detected");
@@ -148,8 +135,15 @@ impl FreeSpaceMap {
         }
     }
 
+    /// Is the Zone with the given id empty?
+    fn is_empty(&self, zone_id: ZoneT) -> bool {
+        zone_id >= self.zones.len() as ZoneT ||
+            self.empty_zones.contains(&zone_id)
+    }
+
     fn new(total_zones: ZoneT) -> Self {
-        FreeSpaceMap{open_zones: BTreeMap::new(),
+        FreeSpaceMap{empty_zones: BTreeSet::new(),
+                     open_zones: BTreeMap::new(),
                      total_zones,
                      zones: Vec::new()}
     }
@@ -171,12 +165,14 @@ impl FreeSpaceMap {
     fn open_zone(&mut self, id: ZoneT, start: LbaT, end: LbaT,
                  lbas: LbaT) -> Option<(ZoneT, LbaT)> {
         let idx = id as usize;
+        assert!(self.is_empty(id), "Can only open empty zones");
         if idx >= self.zones.len() {
+            for z in self.zones.len()..idx {
+                assert!(self.empty_zones.insert(z as ZoneT));
+            }
             // NB: this should use resize_default, once that API is stabilized:
             // https://github.com/rust-lang/rust/issues/41758
             self.zones.resize(idx + 1, Zone::default());
-        } else {
-            assert!(self.zones[idx].is_empty(), "Can't open an open zone");
         }
         let space = end - start;
         self.zones[idx].total_blocks = space;
@@ -187,8 +183,9 @@ impl FreeSpaceMap {
             (start, false)
         };
         let oz = OpenZone{start, write_pointer: wp};
+        self.empty_zones.remove(&id);
         assert!(self.open_zones.insert(id, oz).is_none(),
-            "Can't open an already open zone");
+            "Can only open empty zones");
         if allocated {
             Some((id, start))
         } else {
@@ -422,8 +419,8 @@ mod free_space_map {
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(1, 1000, 2000, 0);
         fsm.erase_zone(0);
-        assert!(fsm.zones[0].is_empty());
-        assert!(!fsm.zones[1].is_empty());
+        assert!(fsm.is_empty(0));
+        assert!(!fsm.is_empty(1));
     }
 
     #[test]
@@ -440,7 +437,7 @@ mod free_space_map {
         fsm.open_zone(1, 1000, 2000, 0);
         fsm.finish_zone(1);
         fsm.erase_zone(1);
-        assert!(!fsm.zones[0].is_empty());
+        assert!(!fsm.is_empty(0));
         assert_eq!(fsm.zones.len(), 1);
     }
 
@@ -451,7 +448,7 @@ mod free_space_map {
         fsm.open_zone(2, 2000, 3000, 0);
         fsm.finish_zone(2);
         fsm.erase_zone(2);
-        assert!(!fsm.zones[0].is_empty());
+        assert!(!fsm.is_empty(0));
         assert_eq!(fsm.zones.len(), 1);
     }
 
@@ -503,7 +500,7 @@ mod free_space_map {
         fsm.open_zone(zid, 0, 1000, 0).is_none();
         fsm.finish_zone(zid);
         assert!(!fsm.open_zones.contains_key(&zid));
-        assert!(!fsm.zones[zid as usize].is_empty());
+        assert!(!fsm.is_empty(zid));
     }
 
     #[should_panic(expected = "Can't finish a Zone that isn't open")]
@@ -641,15 +638,25 @@ mod free_space_map {
         assert_eq!(fsm.zones[zid as usize].freed_blocks, 0);
         assert_eq!(fsm.open_zones[&zid].start, 1000);
         assert_eq!(fsm.open_zones[&zid].write_pointer, 1000);
-        assert!(fsm.zones[0].is_empty())
+        assert!(fsm.is_empty(0))
     }
 
     #[test]
-    #[should_panic(expected="open an open zone")]
+    #[should_panic(expected="Can only open empty zones")]
     fn open_already_open() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(zid, 0, 1000, 0);
+        fsm.open_zone(zid, 0, 1000, 0);
+    }
+
+    #[test]
+    #[should_panic(expected="Can only open empty zones")]
+    fn open_closed_zone() {
+        let zid: ZoneT = 0;
+        let mut fsm = FreeSpaceMap::new(32768);
+        fsm.open_zone(zid, 0, 1000, 0);
+        fsm.finish_zone(zid);
         fsm.open_zone(zid, 0, 1000, 0);
     }
 
