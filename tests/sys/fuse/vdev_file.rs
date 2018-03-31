@@ -50,6 +50,10 @@ test_suite! {
         assert_eq!(vdev.val.0.zone_limits(1), (1 << 16, 2 << 16));
     }
 
+    test zones(vdev) {
+        assert_eq!(vdev.val.0.zones(), 1);
+    }
+
     test read_at() {
         // Create the initial file
         let dir = t!(TempDir::new("test_read_at"));

@@ -505,6 +505,10 @@ impl Vdev for VdevBlock {
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         self.inner.borrow().leaf.zone_limits(zone)
     }
+
+    fn zones(&self) -> ZoneT {
+        self.inner.borrow().leaf.zones()
+    }
 }
 
 #[cfg(feature = "mocks")]
@@ -530,6 +534,7 @@ test_suite! {
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
             fn size(&self) -> LbaT;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
+            fn zones(&self) -> ZoneT;
         },
         vdev_leaf,
         trait VdevLeaf  {

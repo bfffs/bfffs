@@ -835,6 +835,12 @@ impl Vdev for VdevRaid {
         (endpoint_lba(disk_chunk_b, false),
          endpoint_lba(disk_chunk_e, true))
     }
+
+    // The RAID transform does not increase the number of zones; it just makes
+    // them bigger
+    fn zones(&self) -> ZoneT {
+        self.blockdevs[0].zones()
+    }
 }
 
 
@@ -998,6 +1004,7 @@ mock!{
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn size(&self) -> LbaT;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
+        fn zones(&self) -> ZoneT;
     },
     self,
     trait VdevBlockTrait{

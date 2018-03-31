@@ -38,11 +38,11 @@ pub trait Vdev {
     /// `None` indicates that the LBA is unused.
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
 
-    /// Return approximately the usable space of the Vdev.
+    /// Return approximately the usable space of the Vdev in LBAs.
     ///
     /// Actual usable space may be slightly different due to alignment issues,
-    /// fragmentation, etc.  Does not space reserved for labels, space used by
-    /// parity, etc.  May not change within the lifetime of a Vdev.
+    /// fragmentation, etc.  Does not include space reserved for labels, space
+    /// used by parity, etc.  May not change within the lifetime of a Vdev.
     fn size(&self) -> LbaT;
 
     /// Return the first and last LBAs of a zone.
@@ -51,4 +51,7 @@ pub trait Vdev {
     /// requested zone.  Note that there may be some unused LBAs in between
     /// adjacent zones.
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
+
+    /// Return the number of zones in the Vdev
+    fn zones(&self) -> ZoneT;
 }

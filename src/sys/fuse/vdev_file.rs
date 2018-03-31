@@ -64,6 +64,10 @@ impl Vdev for VdevFile {
         (u64::from(zone) * VdevFile::LBAS_PER_ZONE,
          u64::from(zone + 1) * VdevFile::LBAS_PER_ZONE)
     }
+
+    fn zones(&self) -> ZoneT {
+        div_roundup(self.size, VdevFile::LBAS_PER_ZONE) as ZoneT
+    }
 }
 
 impl VdevLeaf for VdevFile {

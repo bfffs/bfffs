@@ -267,6 +267,7 @@ mod cluster {
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
             fn size(&self) -> LbaT;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
+            fn zones(&self) -> ZoneT;
         },
         self,
         trait VdevRaidTrait{
