@@ -103,8 +103,7 @@ impl StripeBuffer {
     pub fn pop(&mut self) -> SGList {
         let new_sglist = SGList::new();
         self.lba = self.next_lba();
-        let old_sglist = mem::replace(&mut self.buf, new_sglist);
-        old_sglist
+        mem::replace(&mut self.buf, new_sglist)
     }
 
     /// Reset an empty `StripeBuffer` to point to a new stripe.
@@ -604,9 +603,9 @@ impl VdevRaid {
         let end = ChunkId::Data((lba + (buf.len() / BYTES_PER_LBA) as LbaT) /
                                 self.chunksize);
         for (chunk_id, loc) in self.locator.iter(start, end) {
-            let col = match &chunk_id {
-                &ChunkId::Data(_) => buf.split_to(col_len),
-                &ChunkId::Parity(_, ref i) =>
+            let col = match chunk_id {
+                ChunkId::Data(_) => buf.split_to(col_len),
+                ChunkId::Parity(_, ref i) =>
                     parity[*i as usize].split_to(col_len).freeze()
             };
             let disk_lba = loc.offset * self.chunksize;
@@ -812,7 +811,8 @@ impl Vdev for VdevRaid {
                 for (_, loc) in chunk_iter {
                     if is_highend && (loc.offset > boundary_chunk) {
                         continue 'stripe_loop;
-                    } else if !is_highend && (loc.offset < boundary_chunk) {
+                    }
+                    if !is_highend && (loc.offset < boundary_chunk) {
                         innermost_stripe = None;
                         continue 'stripe_loop;
                     }

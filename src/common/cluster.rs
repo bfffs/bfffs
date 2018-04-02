@@ -9,7 +9,7 @@ use nix::{Error, errno};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub type ClusterFut = Future<Item = (), Error = Error>;
+pub type ClusterFut<'a> = Future<Item = (), Error = Error> + 'a;
 
 #[cfg(test)]
 /// Only exists so mockers can replace VdevRaid
@@ -107,7 +107,7 @@ impl FreeSpaceMap {
 
     /// Find the first Empty zone
     fn find_empty(&self) -> Option<ZoneT> {
-        self.empty_zones.iter().nth(0).map(|&z| z)
+        self.empty_zones.iter().nth(0).cloned()
             .or_else(|| {
                 if (self.zones.len() as ZoneT) < self.total_zones {
                     Some(self.zones.len() as ZoneT)
@@ -237,7 +237,7 @@ pub struct Cluster {
 impl<'a> Cluster {
     /// Finish any zones that are too full for new allocations
     // This method defines the policy of when to close nearly full zones
-    fn close_zones(&self, nearly_full_zones: Vec<ZoneT>) -> Vec<Box<VdevRaidFut>> {
+    fn close_zones(&self, nearly_full_zones: &[ZoneT]) -> Vec<Box<VdevRaidFut>> {
         // Any zone that had too little space for one allocation will probably
         // have too little space for the next allocation, too.  Go ahead and
         // close it
@@ -248,7 +248,7 @@ impl<'a> Cluster {
     }
 
     /// Delete the underlying storage for a Zone.
-    pub fn erase_zone(&mut self, zone: ZoneT) -> Box<ClusterFut> {
+    pub fn erase_zone(&mut self, zone: ZoneT) -> Box<ClusterFut<'static>> {
         self.fsm.borrow_mut().erase_zone(zone);
         self.vdev.erase_zone(zone)
     }
@@ -281,7 +281,7 @@ impl<'a> Cluster {
     }
 
     /// Asynchronously read from the cluster
-    pub fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut> {
+    pub fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>> {
         self.vdev.read_at(buf, lba)
     }
 
@@ -292,8 +292,7 @@ impl<'a> Cluster {
     /// The LBA where the data will be written, and a
     /// `Future` for the operation in progress.
     // TODO: finish zones that are full or nearly so
-    pub fn write(&'a self, buf: IoVec) ->
-        Result<(LbaT, Box<Future<Item = (), Error = Error>+ 'a>), Error> {
+    pub fn write(&'a self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'a>>), Error> {
         // Outline:
         // 1) Try allocating in an open zone
         // 2) If that doesn't work, try opening a new one, and allocating from
@@ -302,9 +301,9 @@ impl<'a> Cluster {
         // 4) write to the vdev
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
         let (alloc_result, nearly_full_zones) = self.fsm.borrow_mut().try_allocate(space);
-        let finish_futs = self.close_zones(nearly_full_zones);
+        let finish_futs = self.close_zones(&nearly_full_zones);
         alloc_result.map(|(zone_id, lba)| {
-            let oz_fut: Box<ClusterFut> = Box::new(future::ok::<(), Error>(()));
+            let oz_fut: Box<ClusterFut<'static>> = Box::new(future::ok::<(), Error>(()));
             (zone_id, lba, oz_fut)
         }).or_else(|| {
             let empty_zone = self.fsm.borrow().find_empty();
@@ -328,7 +327,7 @@ impl<'a> Cluster {
             );
             fut = Box::new(future::join_all(finish_futs).join(wfut).map(|_| ()));
             (lba, fut)
-        }).ok_or(Error::from(errno::Errno::ENOSPC))
+        }).ok_or(Error::Sys(errno::Errno::ENOSPC))
     }
 }
 

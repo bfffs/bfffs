@@ -166,7 +166,7 @@ impl Future for VdevFileLioFut {
                 let value = lio_result.into_iter()
                                        .map(|x| x.value.unwrap())
                                        .sum();
-                Ok(Async::Ready(VdevResult{value: value}))
+                Ok(Async::Ready(VdevResult{value}))
             },
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Err(e) => Err(e)

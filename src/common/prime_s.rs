@@ -160,7 +160,7 @@ impl PrimeS {
         let id = chunkid.address();
         let a = id.modulo(self.datachunks) as i16;
         // The repetition and iteration
-        let (r, z) = self.id2rep_and_iter(&chunkid);
+        let (r, z) = self.id2rep_and_iter(chunkid);
         // The stripe
         let s = a / self.m;
         // The stride
@@ -244,14 +244,14 @@ impl Locator for PrimeS {
 
     fn iter(&self, start: ChunkId, end: ChunkId)
         -> Box<Iterator<Item=(ChunkId, Chunkloc)>> {
-        Box::new(PrimeSIter::new(&self, start, end))
+        Box::new(PrimeSIter::new(self, start, end))
     }
 
     fn iter_data(&self, start: ChunkId, end: ChunkId)
         -> Box<Iterator<Item=(ChunkId, Chunkloc)>> {
         assert!(start.is_data());
         assert!(end.is_data());
-        Box::new(PrimeSIterData::new(&self, start, end))
+        Box::new(PrimeSIterData::new(self, start, end))
     }
 
     fn loc2id(&self, chunkloc: Chunkloc) -> ChunkId {
@@ -432,7 +432,7 @@ impl Iterator for PrimeSIter {
                     self.stripe_iter = 0;
                     if self.z == self.iterations_per_rep() - 1 {
                         // Roll over to the next repetition
-                        for mut o in self.o.iter_mut() {
+                        for mut o in &mut self.o {
                             *o = 0;
                         }
                         self.a = 0;
@@ -516,7 +516,7 @@ impl Iterator for PrimeSIterData {
                     self.0.stripe_iter = 0;
                     if self.0.z == self.0.iterations_per_rep() - 1 {
                         // Roll over to the next repetition
-                        for mut o in self.0.o.iter_mut() {
+                        for mut o in &mut self.0.o {
                             *o = 0;
                         }
                         self.0.a = 0;

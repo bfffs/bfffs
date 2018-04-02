@@ -117,7 +117,7 @@ test_suite! {
         assert_eq!(wbuf0, dbsr.try().unwrap());
     }
 
-    fn writev_read_n_stripes(vr: VdevRaid, chunksize: LbaT, k: i16, f: i16,
+    fn writev_read_n_stripes(vr: &VdevRaid, chunksize: LbaT, k: i16, f: i16,
                              s: usize) {
         let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
         let wbuf = dbsw.try().unwrap();
@@ -358,7 +358,7 @@ test_suite! {
     }
 
     test writev_read_one_stripe(raid) {
-        writev_read_n_stripes(raid.val.0, *raid.params.chunksize,
+        writev_read_n_stripes(&raid.val.0, *raid.params.chunksize,
                               *raid.params.k, *raid.params.f, 1);
     }
 
