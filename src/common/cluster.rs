@@ -197,19 +197,31 @@ impl FreeSpaceMap {
         }
     }
 
-    /// Try to allocate `lbas` worth of space in any open zone.  If no open
+    /// Try to allocate `space` worth of space in any open zone.  If no open
     /// zones can satisfy the allocation, return `None` instead.
-    fn try_allocate(&mut self, lbas: LbaT) -> Option<(ZoneT, LbaT)> {
+    ///
+    /// # Returns
+    ///
+    /// The Zone and LBA where the allocation happened, and a vector of Zone IDs
+    /// of Zones which has too little space.
+    fn try_allocate(&mut self, space: LbaT) -> (Option<(ZoneT, LbaT)>, Vec<ZoneT>) {
         let zones = &self.zones;
-        self.open_zones.iter_mut().find(|&(zone_id, ref oz)| {
+        let mut nearly_full_zones = Vec::with_capacity(1);
+        let result = self.open_zones.iter_mut().find(|&(zone_id, ref oz)| {
             let zone = &zones[*zone_id as usize];
             let avail_lbas = zone.total_blocks - (oz.write_pointer - oz.start);
-            avail_lbas >= lbas
+            if avail_lbas < space {
+                nearly_full_zones.push(*zone_id);
+                false
+            } else {
+                true
+            }
         }).and_then(|(zone_id, oz)| {
             let lba = oz.write_pointer;
-            oz.write_pointer += lbas;
+            oz.write_pointer += space;
             Some((*zone_id, lba))
-        })
+        });
+        (result, nearly_full_zones)
     }
 }
 
@@ -223,6 +235,18 @@ pub struct Cluster {
 }
 
 impl<'a> Cluster {
+    /// Finish any zones that are too full for new allocations
+    // This method defines the policy of when to close nearly full zones
+    fn close_zones(&self, nearly_full_zones: Vec<ZoneT>) -> Vec<Box<VdevRaidFut>> {
+        // Any zone that had too little space for one allocation will probably
+        // have too little space for the next allocation, too.  Go ahead and
+        // close it
+        nearly_full_zones.iter().map(|&zone_id| {
+            self.fsm.borrow_mut().finish_zone(zone_id);
+            self.vdev.finish_zone(zone_id)
+        }).collect::<Vec<_>>()
+    }
+
     /// Delete the underlying storage for a Zone.
     pub fn erase_zone(&mut self, zone: ZoneT) -> Box<ClusterFut> {
         self.fsm.borrow_mut().erase_zone(zone);
@@ -277,10 +301,11 @@ impl<'a> Cluster {
         // 3) If that doesn't work, return ENOSPC
         // 4) write to the vdev
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
-        let allocate_result = self.fsm.borrow_mut().try_allocate(space);
-        allocate_result.map(|(zone_id, lba)| {
-            let fut: Box<ClusterFut> = Box::new(future::ok::<(), Error>(()));
-            (zone_id, lba, fut)
+        let (alloc_result, nearly_full_zones) = self.fsm.borrow_mut().try_allocate(space);
+        let finish_futs = self.close_zones(nearly_full_zones);
+        alloc_result.map(|(zone_id, lba)| {
+            let oz_fut: Box<ClusterFut> = Box::new(future::ok::<(), Error>(()));
+            (zone_id, lba, oz_fut)
         }).or_else(|| {
             let empty_zone = self.fsm.borrow().find_empty();
             empty_zone.and_then(|zone_id| {
@@ -289,8 +314,8 @@ impl<'a> Cluster {
                                                         space);
                 match e {
                     Ok(Some((zone_id, lba))) => {
-                        let fut = self.vdev.open_zone(zone_id);
-                        Some((zone_id, lba, fut))
+                        let oz_fut = self.vdev.open_zone(zone_id);
+                        Some((zone_id, lba, oz_fut))
                     },
                     Err(_) => None,
                     Ok(None) => unreachable!("Tried a 0-length write?"),
@@ -298,9 +323,10 @@ impl<'a> Cluster {
             })
         }).map(|(zone_id, lba, oz_fut)| {
             let fut : Box<Future<Item = (), Error = Error>+ 'a>;
-            fut = Box::new(oz_fut.and_then(move |_|
-                self.vdev.write_at(buf, zone_id, lba))
+            let wfut = oz_fut.and_then(move |_|
+                self.vdev.write_at(buf, zone_id, lba)
             );
+            fut = Box::new(future::join_all(finish_futs).join(wfut).map(|_| ()));
             (lba, fut)
         }).ok_or(Error::from(errno::Errno::ENOSPC))
     }
@@ -370,7 +396,9 @@ mod cluster {
         let cluster = Cluster::new(Box::new(vr));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
-        let result = cluster.write(dbs.try().unwrap());
+         let result = current_thread::block_on_all(future::lazy(|| {
+           cluster.write(dbs.try().unwrap())
+        }));
         assert_eq!(result.err().unwrap(), Error::Sys(errno::Errno::ENOSPC));
     }
 
@@ -447,6 +475,50 @@ mod cluster {
             })
         })).expect("write failed");
     }
+
+    // When one zone is too full to satisfy an allocation, it should be closed
+    // and a new zone opened.
+    #[test]
+    fn write_zone_full() {
+        let s = Scenario::new();
+        let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.zones_call().and_return_clone(32768).times(..));
+        s.expect(vr.zone_limits_call(0).and_return_clone((0, 3)).times(..));
+        s.expect(vr.zone_limits_call(1).and_return_clone((3, 6)).times(..));
+        s.expect(vr.open_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
+                buf.len() == 2 * BYTES_PER_LBA
+            }),
+            0,  // Zone
+            0   /* Lba */)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.finish_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.open_zone_call(1)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
+                buf.len() == 2 * BYTES_PER_LBA
+            }),
+            1,  // Zone
+            3   /* Lba */)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let cluster = Cluster::new(Box::new(vr));
+
+        let dbs = DivBufShared::from(vec![0u8; 8192]);
+        let db0 = dbs.try().unwrap();
+        let db1 = dbs.try().unwrap();
+        current_thread::block_on_all(future::lazy(|| {
+            let cluster_ref = &cluster;
+            let (_, fut0) = cluster.write(db0).expect("Cluster::write");
+            fut0.and_then(move |_| {
+                let (lba1, fut1) = cluster_ref.write(db1).expect("Cluster::write");
+                assert_eq!(lba1, 3);
+                fut1
+            })
+        })).expect("write failed");
+    }
+
 }
 
 mod free_space_map {
@@ -714,7 +786,9 @@ mod free_space_map {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
         assert!(fsm.open_zone(zid, 0, 1000, 0).unwrap().is_none());
-        assert_eq!(fsm.try_allocate(64), Some((zid, 0)));
+        let (res, full_zones) = fsm.try_allocate(64);
+        assert_eq!(res, Some((zid, 0)));
+        assert!(full_zones.is_empty());
         assert_eq!(fsm.open_zones[&zid].write_pointer, 64);
     }
 
@@ -723,7 +797,7 @@ mod free_space_map {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
         assert!(fsm.open_zone(zid, 0, 1000, 0).unwrap().is_none());
-        assert!(fsm.try_allocate(2000).is_none());
+        assert!(fsm.try_allocate(2000).0.is_none());
     }
 
     #[test]
@@ -733,7 +807,9 @@ mod free_space_map {
         // Pretend that zone 0 is too small for our allocation, but zone 1 isn't
         assert!(fsm.open_zone(0, 0, 10, 0).unwrap().is_none());
         assert!(fsm.open_zone(zid, 10, 1000, 0).unwrap().is_none());
-        assert_eq!(fsm.try_allocate(64), Some((zid, 10)));
+        let (res, full_zones) = fsm.try_allocate(64);
+        assert_eq!(res, Some((zid, 10)));
+        assert_eq!(full_zones, vec![0]);
         assert_eq!(fsm.open_zones[&0].write_pointer, 0);
         assert_eq!(fsm.open_zones[&zid].write_pointer, 74);
     }
@@ -744,13 +820,13 @@ mod free_space_map {
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(zid, 0, 1000, 0).unwrap().is_none();
         fsm.finish_zone(zid);
-        assert!(fsm.try_allocate(64).is_none());
+        assert!(fsm.try_allocate(64).0.is_none());
     }
 
     #[test]
     fn try_allocate_only_empty_zones() {
         let mut fsm = FreeSpaceMap::new(32768);
-        assert!(fsm.try_allocate(64).is_none());
+        assert!(fsm.try_allocate(64).0.is_none());
     }
 
 
