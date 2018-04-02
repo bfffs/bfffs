@@ -135,7 +135,7 @@ struct Inner {
     delayed: Option<(oneshot::Sender<()>, Box<VdevFut>)>,
 
     /// Current queue depth
-    queue_depth: usize,
+    queue_depth: u32,
 
     /// Underlying device
     pub leaf: Box<VdevLeaf>,
@@ -161,7 +161,7 @@ struct Inner {
 impl Inner {
     /// Maximum queue depth.  The value `10` is unscientifically chosen, and
     /// different values may be optimal for different drive types.
-    const MAX_QUEUE_DEPTH: usize = 10;
+    const MAX_QUEUE_DEPTH: u32 = 10;
 
     /// Issue as many scheduled operations as possible
     // Use the C-LOOK scheduling algorithm.  It guarantees that writes scheduled
