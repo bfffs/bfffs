@@ -6,7 +6,6 @@ use common::cluster::*;
 use futures::Future;
 use nix::Error;
 use std::cell::RefCell;
-use std::cmp;
 
 pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 
@@ -59,7 +58,7 @@ impl Stats {
         // on every write.  A better implementation would perform the full
         // calculation only occasionally, to update coefficients, and perform a
         // quick calculation on each write.
-        let cluster = (0..self.size.len()).map(|i| {
+        (0..self.size.len()).map(|i| {
             let space_util = (self.allocated_space[i] as f64) /
                              (self.size[i] as f64);
             let queue_fraction = (self.queue_depth[i] as f64) /
@@ -70,8 +69,7 @@ impl Stats {
         })
         .min_by(|&(_, x), &(_, y)| x.partial_cmp(&y).unwrap())
         .map(|(i, _)| i)
-        .unwrap() as ClusterT;
-        cluster
+        .unwrap() as ClusterT
     }
 }
 
