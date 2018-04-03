@@ -17,6 +17,7 @@ pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 pub trait ClusterTrait {
     fn erase_zone(&mut self, zone: ZoneT) -> Box<ClusterFut<'static>>;
     fn free(&self, lba: LbaT, length: LbaT);
+    fn optimum_queue_depth(&self) -> u32;
     fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>>;
     fn size(&self) -> LbaT;
     fn write(&self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'static>>), Error>;
@@ -28,6 +29,13 @@ pub type ClusterLike = Box<ClusterTrait>;
 pub type ClusterLike = Cluster;
 
 struct Stats {
+    /// The queue depth of each `Cluster`, including both commands that have
+    /// been sent to the disks, and commands that are pending in `VdevBlock`
+    queue_depth: Vec<i32>,
+
+    /// "Best" number of commands to queue to each VdevRaid
+    optimum_queue_depth: Vec<f64>,
+
     /// The total size of each `Cluster`
     size: Vec<LbaT>,
 
@@ -44,16 +52,22 @@ impl Stats {
     /// 2) Balance IOPs amongst all Clusters
     /// 3) Run quickly
     fn choose_cluster(&self) -> ClusterT {
-        // This simplistic implementation chooses whichever Cluster is the least
-        // full.  It ignores IOPs, and is slow because it iterates through all
-        // clusters on every write.  A better implementation would perform the
-        // full calculation only occasionally, to update coefficients, and
-        // perform a quick calculation on each write.
-        let cluster = (0..self.size.len()).map(|i|
-            (i, (self.allocated_space[i] as f64) / (self.size[i] as f64)))
-            .min_by(|&(_, x), &(_, y)| x.partial_cmp(&y).unwrap())
-            .map(|(i, _)| i)
-            .unwrap() as ClusterT;
+        // This simple implementation weighs both capacity utilization and IOPs.
+        // It's slow because it iterates through all clusters on every write.  A
+        // better implementation would perform the full calculation only
+        // occasionally, to update coefficients, and perform a quick calculation
+        // on each write.
+        let cluster = (0..self.size.len()).map(|i| {
+            let space_util = (self.allocated_space[i] as f64) /
+                             (self.size[i] as f64);
+            let queue_fraction = (self.queue_depth[i] as f64) /
+                                  self.optimum_queue_depth[i];
+            let weight = (1.0 - space_util) * queue_fraction + space_util;
+            (i, weight)
+        })
+        .min_by(|&(_, x), &(_, y)| x.partial_cmp(&y).unwrap())
+        .map(|(i, _)| i)
+        .unwrap() as ClusterT;
         cluster
     }
 }
@@ -86,14 +100,28 @@ impl<'a> Pool {
             .map(|cluster| cluster.size())
             .collect();
         let allocated_space: Vec<_> = clusters.iter().map(|_| 0).collect();
-        Pool{clusters,
-             stats: RefCell::new(Stats{allocated_space, size})}
+        let optimum_queue_depth: Vec<_> = clusters.iter().map(|cluster| {
+            cluster.optimum_queue_depth() as f64
+        }).collect();
+        let queue_depth: Vec<_> = clusters.iter().map(|_| 0).collect();
+        let stats = RefCell::new(Stats{
+            allocated_space,
+            optimum_queue_depth,
+            queue_depth,
+            size
+        });
+        Pool{clusters, stats}
     }
 
     /// Asynchronously read from the pool
     pub fn read(&'a self, buf: IoVecMut, cluster: ClusterT,
                 lba: LbaT) -> Box<PoolFut<'a>> {
-        self.clusters[cluster as usize].read(buf, lba)
+        let mut stats = self.stats.borrow_mut();
+        stats.queue_depth[cluster as usize] += 1;
+        Box::new(self.clusters[cluster as usize].read(buf, lba).then(move |r| {
+            stats.queue_depth[cluster as usize] -= 1;
+            r
+        }))
     }
 
     /// Write a buffer to the pool
@@ -106,11 +134,15 @@ impl<'a> Pool {
                                                   Box<PoolFut<'a>>), Error> {
         let cluster = self.stats.borrow().choose_cluster();
         let mut stats = self.stats.borrow_mut();
+        stats.queue_depth[cluster as usize] += 1;
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
         self.clusters[cluster as usize].write(buf)
             .map(|(lba, wfut)| {
                 stats.allocated_space[cluster as usize] += space;
-                let fut: Box<PoolFut> = wfut;
+                let fut: Box<PoolFut> = Box::new(wfut.then(move |r| {
+                    stats.queue_depth[cluster as usize] -= 1;
+                    r
+                }));
                 (cluster, lba, fut)
             })
     }
@@ -133,6 +165,7 @@ mod pool {
         trait ClusterTrait {
             fn erase_zone(&mut self, zone: ZoneT) -> Box<ClusterFut<'static>>;
             fn free(&self, lba: LbaT, length: LbaT);
+            fn optimum_queue_depth(&self) -> u32;
             fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>>;
             fn size(&self) -> LbaT;
             fn write(&self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'static>>), Error>;
@@ -143,6 +176,9 @@ mod pool {
     fn write() {
         let s = Scenario::new();
         let cluster = s.create_mock::<MockCluster>();
+        s.expect(cluster.optimum_queue_depth_call()
+                 .and_return_clone(10)
+                 .times(..));
         s.expect(cluster.size_call().and_return_clone(32768000).times(..));
         s.expect(cluster.write_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
@@ -169,6 +205,8 @@ mod stats {
     fn choose_cluster_empty() {
         // Two clusters, one full and one empty.  Choose the empty one
         let mut stats = Stats {
+            optimum_queue_depth: vec![10.0, 10.0],
+            queue_depth: vec![0, 0],
             size: vec![1000, 1000],
             allocated_space: vec![0, 1000]
         };
@@ -177,6 +215,40 @@ mod stats {
         // Try the reverse, too
         stats.allocated_space = vec![1000, 0];
         assert_eq!(stats.choose_cluster(), 1);
+    }
+
+    #[test]
+    fn choose_cluster_queue_depth() {
+        // Two clusters, one busy and one idle.  Choose the idle one
+        let mut stats = Stats {
+            optimum_queue_depth: vec![10.0, 10.0],
+            queue_depth: vec![0, 10],
+            size: vec![1000, 1000],
+            allocated_space: vec![0, 0]
+        };
+        assert_eq!(stats.choose_cluster(), 0);
+
+        // Try the reverse, too
+        stats.queue_depth = vec![10, 0];
+        assert_eq!(stats.choose_cluster(), 1);
+    }
+
+    #[test]
+    fn choose_cluster_nearly_full() {
+        // Two clusters, one nearly full and idle, the other busy but not very
+        // full.  Choose the not very full one.
+        let mut stats = Stats {
+            optimum_queue_depth: vec![10.0, 10.0],
+            queue_depth: vec![0, 5],
+            size: vec![1000, 1000],
+            allocated_space: vec![950, 50]
+        };
+        assert_eq!(stats.choose_cluster(), 1);
+
+        // Try the reverse, too
+        stats.queue_depth = vec![5, 0];
+        stats.allocated_space = vec![50, 950];
+        assert_eq!(stats.choose_cluster(), 0);
     }
 }
 }
