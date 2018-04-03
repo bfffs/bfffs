@@ -56,6 +56,11 @@ impl Vdev for VdevFile {
         Some((lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT)
     }
 
+    fn optimum_queue_depth(&self) -> u32 {
+        // The value `10` is just a total guess.
+        10
+    }
+
     fn size(&self) -> LbaT {
         self.size
     }

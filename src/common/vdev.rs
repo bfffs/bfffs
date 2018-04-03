@@ -38,6 +38,12 @@ pub trait Vdev {
     /// `None` indicates that the LBA is unused.
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
 
+    /// Returns the "best" number of operations to queue to this `Vdev`.  A
+    /// smaller number may result in inefficient use of resources, or even
+    /// starvation.  A larger number won't hurt, but won't accrue any economies
+    /// of scale, either.
+    fn optimum_queue_depth(&self) -> u32;
+
     /// Return approximately the usable space of the Vdev in LBAs.
     ///
     /// Actual usable space may be slightly different due to alignment issues,

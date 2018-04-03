@@ -134,6 +134,9 @@ struct Inner {
     /// future around instead of spawning it into the reactor.
     delayed: Option<(oneshot::Sender<()>, Box<VdevFut>)>,
 
+    /// Max commands that will be simultaneously queued to the VdevLeaf
+    optimum_queue_depth: u32,
+
     /// Current queue depth
     queue_depth: u32,
 
@@ -159,15 +162,11 @@ struct Inner {
 }
 
 impl Inner {
-    /// Maximum queue depth.  The value `10` is unscientifically chosen, and
-    /// different values may be optimal for different drive types.
-    const MAX_QUEUE_DEPTH: u32 = 10;
-
     /// Issue as many scheduled operations as possible
     // Use the C-LOOK scheduling algorithm.  It guarantees that writes scheduled
     // in LBA order will also be issued in LBA order.
     fn issue_all(&mut self) {
-        while self.queue_depth < Inner::MAX_QUEUE_DEPTH {
+        while self.queue_depth < self.optimum_queue_depth {
             let delayed = self.delayed.take();
             let (sender, fut) = if let Some((sender, fut)) = delayed {
                 (sender, fut)
@@ -180,7 +179,7 @@ impl Inner {
             if let Some(d) = self.issue_fut(sender, fut) {
                 self.delayed = Some(d);
                 if self.queue_depth == 1 {
-                    // XXX this sleep works if there is only one VdevBlock in
+                    // TODO this sleep works if there is only one VdevBlock in
                     // the entire reactor.  But if there are more than one, then
                     // we need a tokio-enabled sleep so the other VdevBlocks can
                     // complete their futures.  tokio-timer has lousy
@@ -415,6 +414,7 @@ impl VdevBlock {
         let size = leaf.size();
         let inner = Rc::new(RefCell::new(Inner {
             delayed: None,
+            optimum_queue_depth: leaf.optimum_queue_depth(),
             queue_depth: 0,
             leaf,
             last_lba: 0,
@@ -498,6 +498,14 @@ impl Vdev for VdevBlock {
         self.inner.borrow().leaf.lba2zone(lba)
     }
 
+    /// Returns the "best" number of operations to queue to this `VdevBlock`.  A
+    /// smaller number may result in inefficient use of resources, or even
+    /// starvation.  A larger number won't hurt, but won't accrue any economies
+    /// of scale, either.
+    fn optimum_queue_depth(&self) -> u32 {
+        self.inner.borrow().optimum_queue_depth
+    }
+
     fn size(&self) -> LbaT {
         self.size
     }
@@ -532,6 +540,7 @@ test_suite! {
         trait Vdev {
             fn handle(&self) -> Handle;
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
+            fn optimum_queue_depth(&self) -> u32;
             fn size(&self) -> LbaT;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
             fn zones(&self) -> ZoneT;
@@ -566,6 +575,9 @@ test_suite! {
                                 .and_return(16384));
             scenario.expect(leaf.lba2zone_call(ANY)
                                 .and_return_clone(Some(0))
+                                .times(..));
+            scenario.expect(leaf.optimum_queue_depth_call()
+                                .and_return_clone(10)
                                 .times(..));
             scenario.expect(leaf.zone_limits_call(0)
                                 .and_return_clone((0, 1 << 16))
@@ -932,7 +944,7 @@ test_suite! {
     test issueing_queue_depth(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        let num_ops = Inner::MAX_QUEUE_DEPTH + 2;
+        let num_ops = leaf.optimum_queue_depth() + 2;
         let mut seq = Sequence::new();
 
         let channels = (0..num_ops - 2).map(|_| oneshot::channel::<()>());

@@ -143,6 +143,9 @@ pub struct VdevRaid {
     /// Underlying block devices.  Order is important!
     blockdevs: Box<[VdevBlockLike]>,
 
+    /// Best number of queued commands for the whole `VdevRaid`
+    optimum_queue_depth: u32,
+
     /// In memory cache of data that has not yet been flushed to the block
     /// devices.
     ///
@@ -223,7 +226,14 @@ impl VdevRaid {
         let stripesize = (m * chunksize) as usize * BYTES_PER_LBA;
         let zero_region = DivBufShared::from(vec![0u8; stripesize]);
 
-        VdevRaid { chunksize, codec, locator, blockdevs,
+        // NB: the optimum queue depth should actually be a little higher for
+        // healthy reads than for writes or degraded reads.  This calculation
+        // computes the optimum for writes and degraded reads.
+        let optimum_queue_depth = blockdevs.iter().map(|bd| {
+            bd.optimum_queue_depth()
+        }).sum::<u32>() / (codec.stripesize() as u32);
+
+        VdevRaid { chunksize, codec, locator, blockdevs, optimum_queue_depth,
                    stripe_buffers: RefCell::new(BTreeMap::new()),
                    zero_region }
     }
@@ -756,6 +766,10 @@ impl Vdev for VdevRaid {
         }
     }
 
+    fn optimum_queue_depth(&self) -> u32 {
+        self.optimum_queue_depth
+    }
+
     fn size(&self) -> LbaT {
         let disk_size_in_chunks = self.blockdevs[0].size() / self.chunksize;
         disk_size_in_chunks * self.locator.datachunks() *
@@ -1002,6 +1016,7 @@ mock!{
     trait Vdev {
         fn handle(&self) -> Handle;
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
+        fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
@@ -1093,6 +1108,9 @@ test_suite! {
                 s.expect(mock.lba2zone_call(matchers::in_range(65536..131072))
                                     .and_return_clone(Some(1))
                                     .times(..));
+                s.expect(mock.optimum_queue_depth_call()
+                                    .and_return_clone(10)
+                                    .times(..));
                 s.expect(mock.zone_limits_call(0)
                                     .and_return_clone((0, 65536))
                                     .times(..));
@@ -1119,6 +1137,8 @@ test_suite! {
         // First LBA in zone 1
         assert_eq!(mocks.val.1.lba2zone(245760), Some(1));
 
+        assert_eq!(mocks.val.1.optimum_queue_depth(), 12);
+
         assert_eq!(mocks.val.1.size(), 983040);
 
         assert_eq!(mocks.val.1.zone_limits(0), (0, 245760));
@@ -1131,6 +1151,8 @@ test_suite! {
         assert_eq!(mocks.val.1.lba2zone(344063), Some(0));
         // First LBA in zone 1
         assert_eq!(mocks.val.1.lba2zone(344064), Some(1));
+
+        assert_eq!(mocks.val.1.optimum_queue_depth(), 17);
 
         assert_eq!(mocks.val.1.size(), 1376256);
 
@@ -1149,6 +1171,8 @@ test_suite! {
         assert_eq!(mocks.val.1.lba2zone(366976), None);
         // First LBA in zone 1
         assert_eq!(mocks.val.1.lba2zone(367040), Some(1));
+
+        assert_eq!(mocks.val.1.optimum_queue_depth(), 14);
 
         assert_eq!(mocks.val.1.size(), 1468006);
 
@@ -1211,6 +1235,8 @@ fn read_at_one_stripe() {
         s.expect(m0.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m0.open_zone_call(0).and_return(
                 Box::new(future::ok::<(), Error>(()))));
+        s.expect(m0.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
         s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1224,6 +1250,8 @@ fn read_at_one_stripe() {
         s.expect(m1.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m1.open_zone_call(0).and_return(
                 Box::new(future::ok::<(), Error>(()))));
+        s.expect(m1.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
         s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1237,6 +1265,8 @@ fn read_at_one_stripe() {
         s.expect(m2.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m2.open_zone_call(0).and_return(
                 Box::new(future::ok::<(), Error>(()))));
+        s.expect(m2.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
         s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         blockdevs.push(m2);
 
@@ -1267,6 +1297,8 @@ fn write_at_one_stripe() {
         s.expect(m0.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m0.open_zone_call(0).and_return(
                 Box::new(future::ok::<(), Error>(()))));
+        s.expect(m0.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
         s.expect(m0.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1280,6 +1312,8 @@ fn write_at_one_stripe() {
         s.expect(m1.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m1.open_zone_call(0).and_return(
                 Box::new(future::ok::<(), Error>(()))));
+        s.expect(m1.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
         s.expect(m1.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1293,6 +1327,8 @@ fn write_at_one_stripe() {
         s.expect(m2.lba2zone_call(0).and_return_clone(Some(0)).times(..));
         s.expect(m2.open_zone_call(0).and_return(
                 Box::new(future::ok::<(), Error>(()))));
+        s.expect(m2.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
         s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1335,6 +1371,8 @@ fn open_zone_zero_fill_wasted_chunks() {
             s.expect(bd.open_zone_call(32)
                      .and_return(Box::new(future::ok::<(), Error>(())))
             );
+            s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
+                     .times(..));
             s.expect(bd.write_at_call(check!(|buf: &IoVec| {
                 buf.len() == 3 * BYTES_PER_LBA
             }), 32)
@@ -1380,6 +1418,8 @@ fn open_zone_zero_fill_wasted_stripes() {
             s.expect(bd.open_zone_call(32)
                      .and_return(Box::new(future::ok::<(), Error>(())))
             );
+            s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
+                     .times(..));
             if gap_chunks > 0 {
                 s.expect(bd.write_at_call(check!(move |buf: &IoVec| {
                     let gap_lbas = gap_chunks * CHUNKSIZE; 

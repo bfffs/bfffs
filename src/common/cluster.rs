@@ -280,6 +280,14 @@ impl<'a> Cluster {
         Cluster{fsm: RefCell::new(FreeSpaceMap::new(vdev.zones())), vdev}
     }
 
+    /// Returns the "best" number of operations to queue to this `Cluster`.  A
+    /// smaller number may result in inefficient use of resources, or even
+    /// starvation.  A larger number won't hurt, but won't accrue any economies
+    /// of scale, either.
+    pub fn optimum_queue_depth(&self) -> u32 {
+        self.vdev.optimum_queue_depth()
+    }
+
     /// Asynchronously read from the cluster
     pub fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>> {
         self.vdev.read_at(buf, lba)
@@ -352,6 +360,7 @@ mod cluster {
         trait Vdev {
             fn handle(&self) -> Handle;
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
+            fn optimum_queue_depth(&self) -> u32;
             fn size(&self) -> LbaT;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
             fn zones(&self) -> ZoneT;
