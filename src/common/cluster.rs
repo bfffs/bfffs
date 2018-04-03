@@ -33,14 +33,28 @@ pub type VdevRaidLike = VdevRaid;
 /// data, and may be written to.  An Empty zone contains no data.
 #[derive(Clone, Copy, Debug, Default)]
 struct Zone {
-    pub freed_blocks: LbaT,
-    pub total_blocks: LbaT
+    /// Number of LBAs that have been freed from this `Zone` since it was
+    /// opened.
+    pub freed_blocks: u32,
+    /// Total number of LBAs in the `Zone`.  It may never change while the
+    /// `Zone` is open or full.
+    pub total_blocks: u32
 }
 
 #[derive(Clone, Copy, Debug)]
 struct OpenZone {
+    /// First LBA of the `Zone`.  It may never change while the `Zone` is open
+    /// or full.
     pub start: LbaT,
-    pub write_pointer: LbaT,
+    /// Number of LBAs that have been allocated within this `Zone` so far.
+    pub allocated_blocks: u32,
+}
+
+impl OpenZone {
+    /// Returns the next LBA within this `Zone` that should be allocated
+    fn write_pointer(&self) -> LbaT {
+        self.start + (self.allocated_blocks as LbaT)
+    }
 }
 
 /// In-core representation of the free-space map.  Used for deciding when to
@@ -127,11 +141,15 @@ impl FreeSpaceMap {
         assert!(!self.is_empty(zone_id), "Can't free from an empty zone");
         let zone = self.zones.get_mut(zone_id as usize).expect(
             "Can't free from an empty zone");
-        zone.freed_blocks += length;
+        // NB: the next two lines can be replaced by u32::try_from(length), once
+        // that feature is stabilized
+        // https://github.com/rust-lang/rust/issues/33417
+        assert!(length < u32::max_value() as LbaT);
+        zone.freed_blocks += length as u32;
         assert!(zone.freed_blocks <= zone.total_blocks,
                 "Double free detected");
         if let Some(oz) = self.open_zones.get(&zone_id) {
-            assert!(oz.write_pointer - oz.start >= zone.freed_blocks,
+            assert!(oz.allocated_blocks >= zone.freed_blocks,
                     "Double free detected in an open zone");
         }
     }
@@ -184,9 +202,9 @@ impl FreeSpaceMap {
             // https://github.com/rust-lang/rust/issues/41758
             self.zones.resize(idx + 1, Zone::default());
         }
-        self.zones[idx].total_blocks = space;
+        self.zones[idx].total_blocks = space as u32;
         self.zones[idx].freed_blocks = 0;
-        let oz = OpenZone{start, write_pointer: start + lbas};
+        let oz = OpenZone{start, allocated_blocks: lbas as u32};
         self.empty_zones.remove(&id);
         assert!(self.open_zones.insert(id, oz).is_none(),
             "Can only open empty zones");
@@ -209,16 +227,20 @@ impl FreeSpaceMap {
         let mut nearly_full_zones = Vec::with_capacity(1);
         let result = self.open_zones.iter_mut().find(|&(zone_id, ref oz)| {
             let zone = &zones[*zone_id as usize];
-            let avail_lbas = zone.total_blocks - (oz.write_pointer - oz.start);
-            if avail_lbas < space {
+            let avail_lbas = zone.total_blocks - oz.allocated_blocks;
+            // NB the next two lines can be replaced by u32::try_from(space),
+            // once that feature is stabilized
+            // https://github.com/rust-lang/rust/issues/33417
+            assert!(space < u32::max_value() as LbaT);
+            if avail_lbas < space as u32 {
                 nearly_full_zones.push(*zone_id);
                 false
             } else {
                 true
             }
         }).and_then(|(zone_id, oz)| {
-            let lba = oz.write_pointer;
-            oz.write_pointer += space;
+            let lba = oz.write_pointer();
+            oz.allocated_blocks += space as u32;
             Some((*zone_id, lba))
         });
         (result, nearly_full_zones)
@@ -674,7 +696,7 @@ mod free_space_map {
         fsm.open_zone(zid, 0, 1000, space).unwrap();
         fsm.finish_zone(zid);
         fsm.free(zid, space);
-        assert_eq!(fsm.zones[zid as usize].freed_blocks, space);
+        assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space);
     }
 
     #[test]
@@ -704,7 +726,7 @@ mod free_space_map {
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(zid, 0, 1000, space).unwrap();
         fsm.free(zid, space);
-        assert_eq!(fsm.zones[zid as usize].freed_blocks, space);
+        assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space);
     }
 
     #[test]
@@ -716,7 +738,7 @@ mod free_space_map {
         assert_eq!(fsm.zones[zid as usize].total_blocks, 1000);
         assert_eq!(fsm.zones[zid as usize].freed_blocks, 0);
         assert_eq!(fsm.open_zones[&zid].start, 0);
-        assert_eq!(fsm.open_zones[&zid].write_pointer, 0);
+        assert_eq!(fsm.open_zones[&zid].write_pointer(), 0);
     }
 
     #[test]
@@ -729,7 +751,7 @@ mod free_space_map {
         assert_eq!(fsm.zones[zid as usize].total_blocks, 1000);
         assert_eq!(fsm.zones[zid as usize].freed_blocks, 0);
         assert_eq!(fsm.open_zones[&zid].start, 0);
-        assert_eq!(fsm.open_zones[&zid].write_pointer, space);
+        assert_eq!(fsm.open_zones[&zid].write_pointer(), space);
     }
 
     #[test]
@@ -758,7 +780,7 @@ mod free_space_map {
         assert_eq!(fsm.zones[zid as usize].total_blocks, 1000);
         assert_eq!(fsm.zones[zid as usize].freed_blocks, 0);
         assert_eq!(fsm.open_zones[&zid].start, 0);
-        assert_eq!(fsm.open_zones[&zid].write_pointer, 0);
+        assert_eq!(fsm.open_zones[&zid].write_pointer(), 0);
     }
 
     #[test]
@@ -770,7 +792,7 @@ mod free_space_map {
         assert_eq!(fsm.zones[zid as usize].total_blocks, 1000);
         assert_eq!(fsm.zones[zid as usize].freed_blocks, 0);
         assert_eq!(fsm.open_zones[&zid].start, 1000);
-        assert_eq!(fsm.open_zones[&zid].write_pointer, 1000);
+        assert_eq!(fsm.open_zones[&zid].write_pointer(), 1000);
         assert!(fsm.is_empty(0))
     }
 
@@ -801,7 +823,7 @@ mod free_space_map {
         let (res, full_zones) = fsm.try_allocate(64);
         assert_eq!(res, Some((zid, 0)));
         assert!(full_zones.is_empty());
-        assert_eq!(fsm.open_zones[&zid].write_pointer, 64);
+        assert_eq!(fsm.open_zones[&zid].write_pointer(), 64);
     }
 
     #[test]
@@ -822,8 +844,8 @@ mod free_space_map {
         let (res, full_zones) = fsm.try_allocate(64);
         assert_eq!(res, Some((zid, 10)));
         assert_eq!(full_zones, vec![0]);
-        assert_eq!(fsm.open_zones[&0].write_pointer, 0);
-        assert_eq!(fsm.open_zones[&zid].write_pointer, 74);
+        assert_eq!(fsm.open_zones[&0].write_pointer(), 0);
+        assert_eq!(fsm.open_zones[&zid].write_pointer(), 74);
     }
 
     #[test]
