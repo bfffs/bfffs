@@ -8,25 +8,36 @@ pub mod declust;
 pub mod dva;
 pub mod prime_s;
 pub mod raid;
+pub mod pool;
 mod sgcursor;
 pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_leaf;
 pub mod vdev_raid;
+
+/// Indexes a `Cluster` within the `Pool`.
+pub type ClusterT = u16;
+
 /// Indexes an LBA.  LBAs are always 4096 bytes
 pub type LbaT = u64;
+
 /// Indexes a `Vdev`'s Zones.  A Zone is the smallest allocation unit that can
 /// be independently erased.
 pub type ZoneT = u32;
+
 /// Our `IoVec`.  Unlike the standard library's, ours is reference-counted so it
 /// can have more than one owner.
 pub type IoVec = DivBuf;
+
 /// Mutable version of `IoVec`.  Uniquely owned.
 pub type IoVecMut = DivBufMut;
+
 /// Our scatter-gather list.  A slice of reference-counted `IoVec`s.
 pub type SGList = Vec<IoVec>;
+
 /// Mutable version of `SGList`.  Uniquely owned.
 pub type SGListMut = Vec<IoVecMut>;
+
 pub use self::sgcursor::SGCursor;
 
 /// "Private" trait; only exists to ensure that div_roundup will fail to compile

@@ -285,13 +285,17 @@ impl<'a> Cluster {
         self.vdev.read_at(buf, lba)
     }
 
+    /// Return approximately the usable space of the Cluster in LBAs.
+    pub fn size(&self) -> LbaT {
+        self.vdev.size()
+    }
+
     /// Write a buffer to the cluster
     ///
     /// # Returns
     ///
     /// The LBA where the data will be written, and a
     /// `Future` for the operation in progress.
-    // TODO: finish zones that are full or nearly so
     pub fn write(&'a self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'a>>), Error> {
         // Outline:
         // 1) Try allocating in an open zone

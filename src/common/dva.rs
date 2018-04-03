@@ -1,4 +1,5 @@
 // vim: tw=80
+use common::*;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 /// LBAs always use 4K LBAs, even if the underlying device supports smaller.
@@ -9,13 +10,13 @@ pub const BYTES_PER_LBA: usize = 4096;
 /// single LBA.
 pub const BYTES_PER_FRAGMENT: usize = 256;
 
-/// Data Virtual Address for ArkFS.  Each DVA uniquely identifies a physical
-/// location of a block of storage
+/// Data Virtual Address for ArkFS.  Each DVA uniquely identifies the physical
+/// location of a record.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Dva {
     /// Cluster id.  Analogous to a ZFS top-level vdev
     // NB: This element must come first so Ord can be Derived!
-    cluster : u16,
+    cluster : ClusterT,
 
     /// Logical fragment address.
 	///
