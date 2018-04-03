@@ -6,6 +6,7 @@ use common::cluster::*;
 use futures::Future;
 use nix::Error;
 use std::cell::RefCell;
+use std::cmp;
 
 pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 
@@ -52,17 +53,19 @@ impl Stats {
     /// 2) Balance IOPs amongst all Clusters
     /// 3) Run quickly
     fn choose_cluster(&self) -> ClusterT {
-        // This simple implementation weighs both capacity utilization and IOPs.
-        // It's slow because it iterates through all clusters on every write.  A
-        // better implementation would perform the full calculation only
-        // occasionally, to update coefficients, and perform a quick calculation
-        // on each write.
+        // This simple implementation weighs both capacity utilization and IOPs,
+        // though above 95% utilization it switches to weighing by capacity
+        // utilization only.  It's slow because it iterates through all clusters
+        // on every write.  A better implementation would perform the full
+        // calculation only occasionally, to update coefficients, and perform a
+        // quick calculation on each write.
         let cluster = (0..self.size.len()).map(|i| {
             let space_util = (self.allocated_space[i] as f64) /
                              (self.size[i] as f64);
             let queue_fraction = (self.queue_depth[i] as f64) /
                                   self.optimum_queue_depth[i];
-            let weight = (1.0 - space_util) * queue_fraction + space_util;
+            let q_coeff = if 0.95 > space_util {0.95 - space_util} else {0.0};
+            let weight = q_coeff * queue_fraction + space_util;
             (i, weight)
         })
         .min_by(|&(_, x), &(_, y)| x.partial_cmp(&y).unwrap())
@@ -239,15 +242,15 @@ mod stats {
         // full.  Choose the not very full one.
         let mut stats = Stats {
             optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![0, 5],
+            queue_depth: vec![0, 10],
             size: vec![1000, 1000],
-            allocated_space: vec![950, 50]
+            allocated_space: vec![960, 50]
         };
         assert_eq!(stats.choose_cluster(), 1);
 
         // Try the reverse, too
-        stats.queue_depth = vec![5, 0];
-        stats.allocated_space = vec![50, 950];
+        stats.queue_depth = vec![10, 0];
+        stats.allocated_space = vec![50, 960];
         assert_eq!(stats.choose_cluster(), 0);
     }
 }
