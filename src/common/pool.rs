@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use common::*;
-use common::dva::*;
 use common::cluster::*;
 use futures::{Future, future};
 use nix::Error;

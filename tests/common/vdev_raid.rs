@@ -12,7 +12,6 @@ test_suite! {
     name vdev_raid;
 
     use arkfs::common::*;
-    use arkfs::common::dva::*;
     use arkfs::common::prime_s::PrimeS;
     use arkfs::common::raid::Codec;
     use arkfs::common::vdev_block::*;

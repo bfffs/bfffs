@@ -13,7 +13,6 @@ use tokio::executor::current_thread;
 use tokio::reactor::Handle;
 
 use common::*;
-use common::dva::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 
@@ -347,7 +346,7 @@ impl VdevBlock {
     /// Helper function for read and write methods
     fn check_iovec_bounds(&self, lba: LbaT, buf: &[u8]) {
         let buflen = buf.len() as u64;
-        let last_lba : LbaT = lba + buflen / (dva::BYTES_PER_LBA as u64);
+        let last_lba : LbaT = lba + buflen / (BYTES_PER_LBA as u64);
         assert!(last_lba < self.size as u64)
     }
 
@@ -358,7 +357,7 @@ impl VdevBlock {
         let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
             accumulator + buf.len() as u64
         });
-        assert!(lba + len / (dva::BYTES_PER_LBA as u64) < self.size as u64)
+        assert!(lba + len / (BYTES_PER_LBA as u64) < self.size as u64)
     }
 
     /// Asynchronously erase a zone on a block device

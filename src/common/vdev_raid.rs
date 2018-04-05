@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use common::*;
-use common::dva::*;
 use common::vdev::*;
 #[cfg(not(test))]
 use common::vdev_block::*;

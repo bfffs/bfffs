@@ -97,12 +97,12 @@ impl VdevLeaf for VdevFile {
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecMutContainer(buf));
-        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        let off = lba as i64 * (BYTES_PER_LBA as i64);
         Box::new(self.file.read_at(container, off).unwrap().map(|_| ()))
     }
 
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
-        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        let off = lba as i64 * (BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecMutContainer(iovec)) as Box<BorrowMut<[u8]>>
         }).collect();
@@ -115,12 +115,12 @@ impl VdevLeaf for VdevFile {
 
     fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecContainer(buf));
-        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        let off = lba as i64 * (BYTES_PER_LBA as i64);
         Box::new(self.file.write_at(container, off).unwrap().map(|_| ()))
     }
 
     fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
-        let off = lba as i64 * (dva::BYTES_PER_LBA as i64);
+        let off = lba as i64 * (BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
         }).collect();
@@ -143,7 +143,7 @@ impl VdevFile {
     ///             this vdev.  
     pub fn open<P: AsRef<Path>>(path: P, h: Handle) -> Self {
         let f = File::open(path, h.clone()).unwrap();
-        let size = f.metadata().unwrap().len() / dva::BYTES_PER_LBA as u64;
+        let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
         VdevFile{file: f, handle: h, size}
     }
 }

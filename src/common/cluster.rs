@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use common::*;
-use common::dva::*;
 use common::vdev::{Vdev, VdevFut};
 #[cfg(not(test))]
 use common::vdev_raid::*;

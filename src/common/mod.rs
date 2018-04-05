@@ -15,6 +15,8 @@ pub mod vdev_block;
 pub mod vdev_leaf;
 pub mod vdev_raid;
 
+pub use self::sgcursor::SGCursor;
+
 /// Indexes a `Cluster` within the `Pool`.
 pub type ClusterT = u16;
 
@@ -38,7 +40,13 @@ pub type SGList = Vec<IoVec>;
 /// Mutable version of `SGList`.  Uniquely owned.
 pub type SGListMut = Vec<IoVecMut>;
 
-pub use self::sgcursor::SGCursor;
+/// LBAs always use 4K LBAs, even if the underlying device supports smaller.
+pub const BYTES_PER_LBA: usize = 4096;
+
+/// A Fragment is the smallest amount of space that can be independently
+/// allocated.  Several small files can have their fragments packed into a
+/// single LBA.
+pub const BYTES_PER_FRAGMENT: usize = 256;
 
 /// "Private" trait; only exists to ensure that div_roundup will fail to compile
 /// when used with signed numbers.  It would be nice to use a negative trait
