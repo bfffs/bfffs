@@ -5,14 +5,6 @@ use futures;
 use nix;
 use tokio::reactor::Handle;
 
-/// Type returned by `Vdev` read/write operations on success.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct VdevResult {
-    /// The result that the operation would've had had it been synchronous.
-    /// Usually the number of bytes read or written
-    pub value: isize
-}
-
 /// Future representing an operation on a vdev.
 pub type VdevFut = futures::Future<Item = (), Error = nix::Error>;
 
