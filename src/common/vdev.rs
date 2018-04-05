@@ -13,9 +13,8 @@ pub struct VdevResult {
     pub value: isize
 }
 
-/// Future representing an operation on a vdev.  The returned value is the
-/// amount of data that was actually read/written, or an errno on error.
-pub type VdevFut = futures::Future<Item = VdevResult, Error = nix::Error>;
+/// Future representing an operation on a vdev.
+pub type VdevFut = futures::Future<Item = (), Error = nix::Error>;
 
 /// Vdev: Virtual Device
 ///

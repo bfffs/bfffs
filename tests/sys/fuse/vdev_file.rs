@@ -69,10 +69,9 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevFile::open(path, Handle::current());
-        let result = t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::block_on_all(future::lazy(|| {
             vdev.read_at(rbuf, 0)
         })));
-        assert_eq!(4096, result.value);
         assert_eq!(dbs.try().unwrap(), wbuf[..]);
     }
 
@@ -93,10 +92,9 @@ test_suite! {
         let rbuf1 = rbuf0.split_off(1024);
         let rbufs = vec![rbuf0, rbuf1];
         let vdev = VdevFile::open(path, Handle::current());
-        let result = t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::block_on_all(future::lazy(|| {
             vdev.readv_at(rbufs, 0)
         })));
-        assert_eq!(4096, result.value);
         assert_eq!(dbs.try().unwrap(), wbuf[..]);
     }
 
@@ -104,10 +102,9 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
-        let result = t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.write_at(wbuf.clone(), 0)
         })));
-        assert_eq!(4096, result.value);
         let mut f = t!(fs::File::open(vdev.val.1));
         t!(f.read_exact(&mut rbuf));
         assert_eq!(rbuf, wbuf.deref().deref());
@@ -117,10 +114,9 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
-        let result = t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.write_at(wbuf.clone(), 1)
         })));
-        assert_eq!(4096, result.value);
         let mut f = t!(fs::File::open(vdev.val.1));
         t!(f.seek(SeekFrom::Start(4096)));
         t!(f.read_exact(&mut rbuf));
@@ -133,10 +129,9 @@ test_suite! {
         let wbuf1 = wbuf0.split_off(1024);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let mut rbuf = vec![0u8; 4096];
-        let result = t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::block_on_all(future::lazy(|| {
             vdev.val.0.writev_at(wbufs, 0)
         })));
-        assert_eq!(4096, result.value);
         let mut f = t!(fs::File::open(vdev.val.1));
         t!(f.read_exact(&mut rbuf));
         assert_eq!(&rbuf[0..1024], wbuf0.deref().deref());
@@ -149,13 +144,12 @@ test_suite! {
         let wbuf = dbsw.try().unwrap();
         let dbsr = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbsr.try_mut().unwrap();
-        let result = t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::block_on_all(future::lazy(|| {
             vd.write_at(wbuf.clone(), 0)
                 .and_then(|_| {
                     vd.read_at(rbuf, 0)
                 })
         })));
-        assert_eq!(4096, result.value);
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 }

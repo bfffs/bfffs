@@ -561,7 +561,7 @@ test_suite! {
         MockVdevFut,
         futures,
         trait Future {
-            type Item = VdevResult;
+            type Item = ();
             type Error = nix::Error;
             fn poll(&mut self) -> Poll<Item, Error>;
         },
@@ -596,31 +596,25 @@ test_suite! {
     // per-process or per-system AIO limits are reached
     test issueing_eagain(mocks) {
         let scenario = mocks.val.0;
-        let scenario_handle = scenario.handle();
+        let s_handle = scenario.handle();
         let leaf = mocks.val.1;
         let mut seq0 = Sequence::new();
 
-        let r0 = VdevResult { value: 4096 };
-        let r1 = VdevResult { value: 4096 };
         let (sender, receiver) = oneshot::channel::<()>();
         let e = nix::Error::from(nix::errno::Errno::EPIPE);
-        let fut0 = receiver.map(move |_| r0).map_err(move |_| e);
+        let fut0 = receiver.map_err(move |_| e);
         // The first operation succeeds.  When it does, that will cause the
         // second to be reissued
-        seq0.expect(leaf.read_at_call(ANY, 0)
-                       .and_return(Box::new(fut0)));
+        seq0.expect(leaf.read_at_call(ANY, 0).and_return(Box::new(fut0)));
         seq0.expect(leaf.read_at_call(ANY, 1)
             .and_call( move |_, _| {
                 let mut seq1 = Sequence::new();
-                let fut = scenario_handle.create_mock::<MockVdevFut<VdevResult,
-                                                        nix::Error>>();
+                let fut = s_handle.create_mock::<MockVdevFut<(), nix::Error>>();
                 seq1.expect(fut.poll_call()
                     .and_return(
                         Err(nix::Error::Sys(nix::errno::Errno::EAGAIN))));
-                seq1.expect(fut.poll_call()
-                    .and_return(
-                        Ok(Async::Ready(r1))));
-                scenario_handle.expect(seq1);
+                seq1.expect(fut.poll_call().and_return(Ok(Async::Ready(()))));
+                s_handle.expect(seq1);
                 Box::new(fut)
             }));
         scenario.expect(seq0);
@@ -642,23 +636,20 @@ test_suite! {
     // other reactors.  In this case, we need a timer to wake us up.
     test issueing_eagain_queue_depth_0(mocks) {
         let scenario = mocks.val.0;
-        let scenario_handle = scenario.handle();
+        let s_handle = scenario.handle();
         let leaf = mocks.val.1;
         let mut seq0 = Sequence::new();
 
-        let r = VdevResult { value: 4096 };
         seq0.expect(leaf.read_at_call(ANY, 0)
             .and_call( move |_, _| {
                 let mut seq1 = Sequence::new();
-                let fut = scenario_handle.create_mock::<MockVdevFut<VdevResult,
-                                                        nix::Error>>();
+                let fut = s_handle.create_mock::<MockVdevFut<(), nix::Error>>();
                 seq1.expect(fut.poll_call()
                     .and_return(
                         Err(nix::Error::Sys(nix::errno::Errno::EAGAIN))));
                 seq1.expect(fut.poll_call()
-                    .and_return(
-                        Ok(Async::Ready(r))));
-                scenario_handle.expect(seq1);
+                    .and_return(Ok(Async::Ready(()))));
+                s_handle.expect(seq1);
                 Box::new(fut)
             }));
         scenario.expect(seq0);
@@ -675,10 +666,8 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        let r0 = VdevResult { value: 4096 };
         seq.expect(leaf.read_at_call(ANY, 1)
-                       .and_return(Box::new(future::ok::<VdevResult,
-                                                         nix::Error>(r0))));
+                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
         scenario.expect(seq);
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
@@ -694,10 +683,8 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        let r0 = VdevResult { value: 4096 };
         seq.expect(leaf.readv_at_call(ANY, 1)
-                       .and_return(Box::new(future::ok::<VdevResult,
-                                                         nix::Error>(r0))));
+                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
         scenario.expect(seq);
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
@@ -911,12 +898,10 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
 
-        let r0 = VdevResult { value: 4096 };
-        let r1 = VdevResult { value: 4096 };
         let (sender, receiver) = oneshot::channel::<()>();
         let e = nix::Error::from(nix::errno::Errno::EPIPE);
-        let fut0 = receiver.map(move |_| r0).map_err(move |_| e);
-        let fut1 = future::ok::<VdevResult, nix::Error>(r1);
+        let fut0 = receiver.map_err(move |_| e);
+        let fut1 = future::ok::<(), nix::Error>(());
         seq.expect(leaf.read_at_call(ANY, 0)
                        .and_return(Box::new(fut0)));
         seq.expect(leaf.read_at_call(ANY, 1)
@@ -950,8 +935,7 @@ test_suite! {
         let channels = (0..num_ops - 2).map(|_| oneshot::channel::<()>());
         let (futs, senders) : (Vec<_>, Vec<_>) = channels.map(|chan| {
             let e = nix::Error::from(nix::errno::Errno::EPIPE);
-            (chan.1.map(|_| VdevResult{value: 4096}).map_err(move |_| e),
-             chan.0)
+            (chan.1.map_err(move |_| e), chan.0)
         })
         .unzip();
         for (i, f) in futs.into_iter().enumerate().rev() {
@@ -960,15 +944,12 @@ test_suite! {
         }
         // Schedule the final two operations in reverse LBA order, but verify
         // that they get issued in actual LBA order
-        let final_result = VdevResult {value: 4096};
-        let final_fut = future::ok::<VdevResult, nix::Error>(final_result);
+        let final_fut = future::ok::<(), nix::Error>(());
         seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 2)
                             .and_call(|_, _| {
                                 Box::new(final_fut)
                             }));
-        let penultimate_result = VdevResult {value: 4096};
-        let penultimate_fut = future::ok::<VdevResult,
-                                           nix::Error>(penultimate_result);
+        let penultimate_fut = future::ok::<(), nix::Error>(());
         seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 1)
                             .and_call(|_, _| {
                                 Box::new(penultimate_fut)
@@ -1003,10 +984,8 @@ test_suite! {
     test basic_write_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        let r = VdevResult { value: 4096 };
         scenario.expect(leaf.write_at_call(ANY, 0)
-                            .and_return(Box::new(future::ok::<VdevResult,
-                                                              nix::Error>(r))));
+                    .and_return(Box::new(future::ok::<(), nix::Error>(()))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
@@ -1020,10 +999,8 @@ test_suite! {
     test basic_writev_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        let r = VdevResult { value: 4096 };
         scenario.expect(leaf.writev_at_call(ANY, 0)
-                            .and_return(Box::new(future::ok::<VdevResult,
-                                                              nix::Error>(r))));
+                    .and_return(Box::new(future::ok::<(), nix::Error>(()))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = vec![dbs.try().unwrap()];
