@@ -136,12 +136,12 @@ impl VdevFile {
     /// Size of a simulated zone
     const LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
 
-    /// Open a file for use as a Vdev
+    /// Create a new Vdev, backed by a file
     ///
     /// * `path`    Pathname for the file.  It may be a device node.
     /// * `h`       Handle to the Tokio reactor that will be used to service
     ///             this vdev.  
-    pub fn open<P: AsRef<Path>>(path: P, h: Handle) -> Self {
+    pub fn create<P: AsRef<Path>>(path: P, h: Handle) -> Self {
         let f = File::open(path, h.clone()).unwrap();
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
         VdevFile{file: f, handle: h, size}

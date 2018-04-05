@@ -29,7 +29,7 @@ test_suite! {
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
             let pb = filename.to_path_buf();
-            let vdev = VdevFile::open(filename, Handle::current());
+            let vdev = VdevFile::create(filename, Handle::current());
             (vdev, pb, tempdir)
         }
     });
@@ -68,7 +68,7 @@ test_suite! {
         // Run the test
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
-        let vdev = VdevFile::open(path, Handle::current());
+        let vdev = VdevFile::create(path, Handle::current());
         t!(current_thread::block_on_all(future::lazy(|| {
             vdev.read_at(rbuf, 0)
         })));
@@ -91,7 +91,7 @@ test_suite! {
         let mut rbuf0 = dbs.try_mut().unwrap();
         let rbuf1 = rbuf0.split_off(1024);
         let rbufs = vec![rbuf0, rbuf1];
-        let vdev = VdevFile::open(path, Handle::current());
+        let vdev = VdevFile::create(path, Handle::current());
         t!(current_thread::block_on_all(future::lazy(|| {
             vdev.readv_at(rbufs, 0)
         })));

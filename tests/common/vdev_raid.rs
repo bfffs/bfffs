@@ -46,7 +46,7 @@ test_suite! {
                 let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
                 let file = t!(fs::File::create(&fname));
                 t!(file.set_len(len));
-                let leaf = Box::new(VdevFile::open(fname, Handle::current()));
+                let leaf = Box::new(VdevFile::create(fname, Handle::current()));
                 VdevBlock::open(leaf, Handle::current())
             }).collect();
             let codec = Codec::new(*self.k as u32, *self.f as u32);

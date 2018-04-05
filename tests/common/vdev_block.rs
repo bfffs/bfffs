@@ -26,7 +26,7 @@ test_suite! {
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
-            let leaf = Box::new(VdevFile::open(filename, Handle::current()));
+            let leaf = Box::new(VdevFile::create(filename, Handle::current()));
             let vdev = VdevBlock::open(leaf, Handle::current());
             (vdev, tempdir)
         }
