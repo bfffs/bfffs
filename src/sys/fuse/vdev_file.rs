@@ -65,6 +65,10 @@ impl Vdev for VdevFile {
         self.size
     }
 
+    fn sync_all(&self) -> Box<Future<Item = (), Error = nix::Error>> {
+        Box::new(self.file.sync_all().unwrap().map(|_| ()))
+    }
+
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         (u64::from(zone) * VdevFile::LBAS_PER_ZONE,
          u64::from(zone + 1) * VdevFile::LBAS_PER_ZONE)

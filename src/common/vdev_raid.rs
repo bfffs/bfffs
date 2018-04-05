@@ -770,6 +770,16 @@ impl Vdev for VdevRaid {
             self.chunksize / (self.locator.depth() as LbaT)
     }
 
+    fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
+        Box::new(
+            future::join_all(
+                self.blockdevs.iter()
+                .map(|bd| bd.sync_all())
+                .collect::<Vec<_>>()
+            ).map(|_| ())
+        )
+    }
+
     // Zones don't necessarily line up with repetition boundaries.  So we don't
     // know the disk where a given zone begins.  Worse, declustered RAID is
     // usually not monotonic across all disks.  That is, RAID LBA X may
@@ -1012,6 +1022,7 @@ mock!{
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
+        fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     },

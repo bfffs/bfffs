@@ -6,6 +6,7 @@ use nix;
 use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
+use std::collections::VecDeque;
 use std::{mem, ops, thread, time};
 use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
@@ -16,7 +17,7 @@ use common::dva::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 
-#[derive(Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum Cmd {
     OpenZone,
     ReadAt(IoVecMut),
@@ -27,6 +28,7 @@ enum Cmd {
     EraseZone(LbaT),
     // The extra LBA is the zone's starting LBA
     FinishZone(LbaT),
+    SyncAll,
 }
 
 /// A single read or write command that is queued at the `VdevBlock` layer
@@ -109,6 +111,10 @@ impl BlockOp {
         BlockOp { lba, cmd: Cmd::ReadvAt(bufs), sender}
     }
 
+    pub fn sync_all(sender: oneshot::Sender<()>) -> BlockOp {
+        BlockOp { lba: 0, cmd: Cmd::SyncAll, sender}
+    }
+
     pub fn write_at(buf: IoVec, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
         BlockOp { lba, cmd: Cmd::WriteAt(buf), sender}
@@ -137,6 +143,10 @@ struct Inner {
     /// The last LBA issued an operation
     last_lba: LbaT,
 
+    /// If true, then we are preparing to issue sync_all to the underlying
+    /// storage
+    syncing: bool,
+
     // Pending operations are stored in a pair of priority queues.  They _could_
     // be stored in a single queue, _if_ the priority queue's comparison
     // function were allowed to be stateful, as in C++'s STL.  However, Rust's
@@ -144,8 +154,14 @@ struct Inner {
     // a stateful comparison function.
     /// Pending operations ahead of the scheduler's current LBA.
     ahead: BinaryHeap<BlockOp>,
+
     /// Pending operations behind the scheduler's current LBA.
     behind: BinaryHeap<BlockOp>,
+
+    /// Pending operations that should strictly follow a sync_all (possibly
+    /// including other sync_all operations).  We store these in a FIFO because
+    /// we can't correctly schedule them until the sync_all is complete.
+    after_sync: VecDeque<BlockOp>,
 
     /// A `Weak` pointer back to `self`.  Used for closures that require a
     /// reference to `self`, but also require `'static` lifetime.
@@ -249,6 +265,7 @@ impl Inner {
             Cmd::EraseZone(start) => self.leaf.erase_zone(start),
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
             Cmd::OpenZone => self.leaf.open_zone(lba),
+            Cmd::SyncAll => self.leaf.sync_all(),
         };
         (block_op.sender, fut)
     }
@@ -265,6 +282,27 @@ impl Inner {
             let op = self.ahead.pop().unwrap();
             self.last_lba = op.lba;
             Some(op)
+        } else if self.syncing {
+            debug_assert!(self.after_sync.len() > 0);
+            let op = self.after_sync.pop_front().unwrap();
+            if op.cmd == Cmd::SyncAll {
+                // If this op was the sync_all, then reschedule all the
+                // following operations (until and unless there's another
+                // sync_all)
+                self.syncing = false;
+                loop {
+                    if self.after_sync.is_empty() {
+                        break;
+                    }
+                    if self.after_sync.front().unwrap().cmd == Cmd::SyncAll {
+                        self.syncing = true;
+                        break;
+                    }
+                    let next_op = self.after_sync.pop_front().unwrap();
+                    self.sched(next_op);
+                }
+            }
+            Some(op)
         } else {
             // Ran out of operations everywhere.  Prepare to idle
             None
@@ -273,7 +311,10 @@ impl Inner {
 
     /// Schedule the `block_op`
     fn sched(&mut self, block_op: BlockOp) {
-        if block_op.lba >= self.last_lba {
+        if block_op.cmd == Cmd::SyncAll || self.syncing {
+            self.syncing = true;
+            self.after_sync.push_back(block_op);
+        } else if block_op.lba >= self.last_lba {
             self.ahead.push(block_op);
         } else {
             self.behind.push(block_op);
@@ -409,6 +450,8 @@ impl VdevBlock {
             queue_depth: 0,
             leaf,
             last_lba: 0,
+            syncing: false,
+            after_sync: VecDeque::new(),
             ahead: BinaryHeap::new(),
             behind: BinaryHeap::new(),
             weakself: Weak::new()
@@ -444,6 +487,15 @@ impl VdevBlock {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
+        self.inner.borrow_mut().sched_and_issue(block_op);
+        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+    }
+
+    /// Asynchronously sync the underlying device, ensuring that all data
+    /// reaches stable storage
+    pub fn sync_all(&self) -> Box<VdevFut> {
+        let (sender, receiver) = oneshot::channel::<()>();
+        let block_op = BlockOp::sync_all(sender);
         self.inner.borrow_mut().sched_and_issue(block_op);
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
@@ -501,6 +553,13 @@ impl Vdev for VdevBlock {
         self.size
     }
 
+    fn sync_all(&self) -> Box<Future<Item = (), Error = nix::Error>> {
+        let (sender, receiver) = oneshot::channel::<()>();
+        let block_op = BlockOp::sync_all(sender);
+        self.inner.borrow_mut().sched_and_issue(block_op);
+        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+    }
+
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         self.inner.borrow().leaf.zone_limits(zone)
     }
@@ -533,6 +592,7 @@ test_suite! {
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
             fn optimum_queue_depth(&self) -> u32;
             fn size(&self) -> LbaT;
+            fn sync_all(&self) -> Box<futures::Future<Item = (), Error = nix::Error>>;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
             fn zones(&self) -> ZoneT;
         },
@@ -683,6 +743,21 @@ test_suite! {
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.readv_at(rbuf0, 1)
+        })).unwrap();
+    }
+
+    // sync_all works
+    test basic_sync_all(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
+        let mut seq = Sequence::new();
+        seq.expect(leaf.sync_all_call()
+                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+        scenario.expect(seq);
+
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.sync_all()
         })).unwrap();
     }
 
@@ -881,6 +956,48 @@ test_suite! {
         assert_eq!(inner.pop_op().unwrap().lba, 1);
         assert_eq!(inner.pop_op().unwrap().lba, (1 << 16) - 1);
         assert!(inner.pop_op().is_none());
+    }
+
+    // A sync_all command should be issued in strictly ordered mode; after all
+    // previous commands and before all subsequent commands
+    test sched_sync_all(mocks) {
+        let leaf = mocks.val.1;
+        let vdev = VdevBlock::open(leaf, Handle::current());
+        let mut inner = vdev.inner.borrow_mut();
+        let dummy_dbs = DivBufShared::from(vec![0; 4096]);
+        let dummy_buffer = dummy_dbs.try().unwrap();
+
+        // Start with some intermedia LBA and schedule ops both before and after
+        inner.last_lba = 1000;
+        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1001,
+            oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 999,
+            oneshot::channel::<()>().0));
+        // Now schedule a sync_all, too
+        inner.sched(BlockOp::sync_all(oneshot::channel::<()>().0));
+        // Now schedule some more data ops both before and after the scheudler
+        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1002,
+            oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 998,
+            oneshot::channel::<()>().0));
+        // For good measure, schedule a second sync and some more data after
+        // that
+        inner.sched(BlockOp::sync_all(oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1003,
+            oneshot::channel::<()>().0));
+        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 997,
+            oneshot::channel::<()>().0));
+
+        // All pre-sync operations should be issued, then the sync, then the
+        // post-sync operations
+        assert_eq!(inner.pop_op().unwrap().lba, 1001);
+        assert_eq!(inner.pop_op().unwrap().lba, 999);
+        assert_eq!(inner.pop_op().unwrap().cmd, Cmd::SyncAll);
+        assert_eq!(inner.pop_op().unwrap().lba, 1002);
+        assert_eq!(inner.pop_op().unwrap().lba, 998);
+        assert_eq!(inner.pop_op().unwrap().cmd, Cmd::SyncAll);
+        assert_eq!(inner.pop_op().unwrap().lba, 1003);
+        assert_eq!(inner.pop_op().unwrap().lba, 997);
     }
 
     // Queued operations will both complete

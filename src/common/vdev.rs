@@ -50,6 +50,10 @@ pub trait Vdev {
     /// used by parity, etc.  May not change within the lifetime of a Vdev.
     fn size(&self) -> LbaT;
 
+    /// Sync the `Vdev`, ensuring that all data written so far reaches stable
+    /// storage.
+    fn sync_all(&self) -> Box<VdevFut>;
+
     /// Return the first and last LBAs of a zone.
     ///
     /// The end LBA is *exclusive*; it is the first LBA that is *not* in the

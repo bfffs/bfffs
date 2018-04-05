@@ -3,7 +3,7 @@
 use common::*;
 use common::dva::*;
 use common::cluster::*;
-use futures::Future;
+use futures::{Future, future};
 use nix::Error;
 use std::cell::RefCell;
 
@@ -20,6 +20,7 @@ pub trait ClusterTrait {
     fn optimum_queue_depth(&self) -> u32;
     fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>>;
     fn size(&self) -> LbaT;
+    fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
     fn write(&self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'static>>), Error>;
 }
 #[cfg(test)]
@@ -125,6 +126,18 @@ impl<'a> Pool {
         }))
     }
 
+    /// Sync the `Pool`, ensuring that all data written so far reaches stable
+    /// storage.
+    pub fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
+        Box::new(
+            future::join_all(
+                self.clusters.iter()
+                .map(|bd| bd.sync_all())
+                .collect::<Vec<_>>()
+            ).map(|_| ())
+        )
+    }
+
     /// Write a buffer to the pool
     ///
     /// # Returns
@@ -169,6 +182,7 @@ mod pool {
             fn optimum_queue_depth(&self) -> u32;
             fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>>;
             fn size(&self) -> LbaT;
+            fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
             fn write(&self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'static>>), Error>;
         }
     }

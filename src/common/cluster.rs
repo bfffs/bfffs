@@ -321,6 +321,12 @@ impl<'a> Cluster {
         self.vdev.size()
     }
 
+    /// Sync the `Cluster`, ensuring that all data written so far reaches stable
+    /// storage.
+    pub fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
+        self.vdev.sync_all()
+    }
+
     /// Write a buffer to the cluster
     ///
     /// # Returns
@@ -385,6 +391,7 @@ mod cluster {
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
             fn optimum_queue_depth(&self) -> u32;
             fn size(&self) -> LbaT;
+            fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
             fn zones(&self) -> ZoneT;
         },
