@@ -120,15 +120,6 @@ impl BlockOp {
     }
 }
 
-/// Future representing an any operation on a block vdev.
-///
-/// Since the scheduler combines adjacent operations, it's not always possible
-/// to know how much of an original operation's data was successfully transacted
-/// (as opposed to the combined operation's), so the return value is merely `()`
-/// on success, or an error code on failure.
-#[must_use = "futures do nothing unless polled"]
-pub type VdevBlockFut = Future<Item = (), Error = nix::Error>;
-
 struct Inner {
     /// A VdevLeaf future that got delayed by an EAGAIN error.  We hold the
     /// future around instead of spawning it into the reactor.
@@ -334,7 +325,7 @@ impl VdevBlock {
     /// # Parameters
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
-    pub fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevBlockFut> {
+    pub fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut> {
         // The zone must already be closed, but VdevBlock doesn't keep enough
         // information to assert that
         let (sender, receiver) = oneshot::channel::<()>();
@@ -360,7 +351,7 @@ impl VdevBlock {
     /// # Parameters
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
-    pub fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevBlockFut> {
+    pub fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut> {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::finish_zone(start, end, sender);
 
@@ -383,7 +374,7 @@ impl VdevBlock {
     ///
     /// # Parameters
     /// - `start`:    The first LBA within the target zone
-    pub fn open_zone(&self, start: LbaT) -> Box<VdevBlockFut> {
+    pub fn open_zone(&self, start: LbaT) -> Box<VdevFut> {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::open_zone(start, sender);
 
@@ -433,7 +424,7 @@ impl VdevBlock {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevBlockFut> {
+    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::read_at(buf, lba, sender);
@@ -449,7 +440,7 @@ impl VdevBlock {
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevBlockFut> {
+    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
@@ -460,7 +451,7 @@ impl VdevBlock {
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns nothing on success, and on error on failure
-    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevBlockFut> {
+    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_at(buf, lba, sender);
@@ -478,7 +469,7 @@ impl VdevBlock {
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA at which to write
-    pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevBlockFut> {
+    pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);

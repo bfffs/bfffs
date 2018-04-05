@@ -2,7 +2,8 @@
 
 use common::*;
 use common::dva::*;
-use common::vdev::Vdev;
+use common::vdev::{Vdev, VdevFut};
+#[cfg(not(test))]
 use common::vdev_raid::*;
 use futures::{Future, future};
 use nix::{Error, errno};
@@ -14,11 +15,11 @@ pub type ClusterFut<'a> = Future<Item = (), Error = Error> + 'a;
 #[cfg(test)]
 /// Only exists so mockers can replace VdevRaid
 pub trait VdevRaidTrait : Vdev {
-    fn erase_zone(&self, zone: ZoneT) -> Box<VdevRaidFut>;
-    fn finish_zone(&self, zone: ZoneT) -> Box<VdevRaidFut>;
-    fn open_zone(&self, zone: ZoneT) -> Box<VdevRaidFut>;
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevRaidFut>;
-    fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> Box<VdevRaidFut>;
+    fn erase_zone(&self, zone: ZoneT) -> Box<VdevFut>;
+    fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut>;
+    fn open_zone(&self, zone: ZoneT) -> Box<VdevFut>;
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+    fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> Box<VdevFut>;
 }
 #[cfg(test)]
 pub type VdevRaidLike = Box<VdevRaidTrait>;
@@ -259,7 +260,7 @@ pub struct Cluster {
 impl<'a> Cluster {
     /// Finish any zones that are too full for new allocations
     // This method defines the policy of when to close nearly full zones
-    fn close_zones(&self, nearly_full_zones: &[ZoneT]) -> Vec<Box<VdevRaidFut>> {
+    fn close_zones(&self, nearly_full_zones: &[ZoneT]) -> Vec<Box<VdevFut>> {
         // Any zone that had too little space for one allocation will probably
         // have too little space for the next allocation, too.  Go ahead and
         // close it
@@ -389,12 +390,12 @@ mod cluster {
         },
         self,
         trait VdevRaidTrait{
-            fn erase_zone(&self, zone: ZoneT) -> Box<VdevRaidFut>;
-            fn finish_zone(&self, zone: ZoneT) -> Box<VdevRaidFut>;
-            fn open_zone(&self, zone: ZoneT) -> Box<VdevRaidFut>;
-            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevRaidFut>;
+            fn erase_zone(&self, zone: ZoneT) -> Box<VdevFut>;
+            fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut>;
+            fn open_zone(&self, zone: ZoneT) -> Box<VdevFut>;
+            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
             fn write_at(&self, buf: IoVec, zone: ZoneT,
-                        lba: LbaT) -> Box<VdevRaidFut>;
+                        lba: LbaT) -> Box<VdevFut>;
         }
     }
 
