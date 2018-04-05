@@ -128,7 +128,7 @@ impl<'a> Pool {
 
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
+    pub fn sync_all(&'a self) -> Box<PoolFut<'a>> {
         Box::new(
             future::join_all(
                 self.clusters.iter()

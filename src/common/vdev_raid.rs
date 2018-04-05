@@ -284,6 +284,39 @@ impl VdevRaid {
         Box::new(future::join_all(futs).map(|_| ()))
     }
 
+    /// Asynchronously flush the `StripeBuffer` for the given zone.
+    ///
+    /// # Returns
+    /// The number of LBAs that were zero-filled, and `Future` that will
+    /// complete when the zone's contents are fully written
+    pub fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>) {
+        // Flushing a partially written zone to disk requires zero-filling the
+        // StripeBuffer so the parity be correct
+        let mut sb_ref = self.stripe_buffers.borrow_mut();
+        let sb_opt = sb_ref.get_mut(&zone);
+        match sb_opt {
+            None => {
+                // This zone isn't open, or the buffer is empty.  Nothing to do!
+                (0, Box::new(future::ok::<(), Error>(())))
+            },
+            Some(sb) => {
+                if sb.is_empty() {
+                    //Nothing to do!
+                    (0, Box::new(future::ok::<(), Error>(())))
+                } else {
+                    let pad_lbas = sb.stripe_lbas - sb.len();
+                    let padsize = pad_lbas as usize * BYTES_PER_LBA;
+                    let db = self.zero_region.try().unwrap().slice_to(padsize);
+                    sb.fill(db);
+                    debug_assert!(sb.is_full());
+                    let lba = sb.lba();
+                    let sgl = sb.pop();
+                    (pad_lbas, self.writev_at_one(&sgl, lba))
+                }
+            }
+        }
+    }
+
     /// Asynchronously open a zone on a RAID device
     ///
     /// # Parameters
@@ -1350,6 +1383,75 @@ fn write_at_one_stripe() {
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try().unwrap();
         vdev_raid.write_at(wbuf, 0, 0);
+}
+
+// Partially written stripes should be flushed by flush_zone
+#[test]
+fn write_at_and_sync_all() {
+    let n = 3;
+    let k = 3;
+    let f = 1;
+    const CHUNKSIZE: LbaT = 2;
+    let zl0 = (0, 60_000);
+    let zl1 = (60_000, 120_000);
+
+    let s = Scenario::new();
+    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+
+    let bd = || {
+        let bd = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.lba2zone_call(0).and_return_clone(Some(0)).times(..));
+        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
+        s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
+        s.expect(bd.open_zone_call(0)
+                 .and_return(Box::new(future::ok::<(), Error>(())))
+        );
+        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
+        bd
+    };
+    let bd0 = bd();
+    s.expect(bd0.writev_at_call(check!(|buf: &SGList| {
+        // The first segment is user data
+        &buf[0][..] == &vec![1u8; BYTES_PER_LBA][..] &&
+        // The second segment is zero-fill from flush_zone
+        &buf[1][..] == &vec![0u8; BYTES_PER_LBA][..]
+    }), 0)
+        .and_return( Box::new( future::ok::<(), Error>(())))
+    );
+
+    let bd1 = bd();
+    // This write is from the zero-fill
+    s.expect(bd1.writev_at_call(check!(|buf: &SGList| {
+        &buf[0][..] == &vec![0u8; 2 * BYTES_PER_LBA][..]
+    }), 0)
+        .and_return( Box::new( future::ok::<(), Error>(())))
+    );
+
+    let bd2 = bd();
+    // This write is generated parity
+    s.expect(bd2.write_at_call(check!(|buf: &IoVec| {
+        // single disk parity is a simple XOR
+        &buf[0..4096] == &vec![1u8; BYTES_PER_LBA][..] &&
+        &buf[4096..8192] == &vec![0u8; BYTES_PER_LBA][..]
+    }), 0)
+        .and_return( Box::new( future::ok::<(), Error>(())))
+    );
+
+    blockdevs.push(bd0);
+    blockdevs.push(bd1);
+    blockdevs.push(bd2);
+
+    let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
+    let codec = Codec::new(k, f);
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+                                  blockdevs.into_boxed_slice());
+    vdev_raid.open_zone(0);
+    let dbs = DivBufShared::from(vec![1u8; 4096]);
+    let wbuf = dbs.try().unwrap();
+    vdev_raid.write_at(wbuf, 0, 0);
+    vdev_raid.flush_zone(0);
 }
 
 // Open a zone that has wasted leading space due to a chunksize misaligned with

@@ -9,6 +9,7 @@ use futures::{Future, future};
 use nix::{Error, errno};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::collections::btree_map::Keys;
 
 pub type ClusterFut<'a> = Future<Item = (), Error = Error> + 'a;
 
@@ -17,6 +18,7 @@ pub type ClusterFut<'a> = Future<Item = (), Error = Error> + 'a;
 pub trait VdevRaidTrait : Vdev {
     fn erase_zone(&self, zone: ZoneT) -> Box<VdevFut>;
     fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut>;
+    fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>);
     fn open_zone(&self, zone: ZoneT) -> Box<VdevFut>;
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> Box<VdevFut>;
@@ -55,6 +57,12 @@ impl OpenZone {
     /// Returns the next LBA within this `Zone` that should be allocated
     fn write_pointer(&self) -> LbaT {
         self.start + (self.allocated_blocks as LbaT)
+    }
+
+    /// Mark some space in this Zone as wasted, usually because `VdevRaid`
+    /// zero-filled them.
+    fn waste_space(&mut self, space: LbaT) {
+        self.allocated_blocks += space as u32;
     }
 }
 
@@ -216,6 +224,11 @@ impl FreeSpaceMap {
         }
     }
 
+    /// Return an iterator over the zone IDs of all open zones
+    pub fn open_zone_ids(&self) -> Keys<ZoneT, OpenZone> {
+        self.open_zones.keys()
+    }
+
     /// Try to allocate `space` worth of space in any open zone.  If no open
     /// zones can satisfy the allocation, return `None` instead.
     ///
@@ -245,6 +258,14 @@ impl FreeSpaceMap {
             Some((*zone_id, lba))
         });
         (result, nearly_full_zones)
+    }
+
+    /// Mark the next `space` LBAs in zone `zid` as wasted
+    pub fn waste_space(&mut self, zid: ZoneT, space: LbaT) {
+        let oz = self.open_zones.get_mut(&zid).unwrap();
+        oz.waste_space(space);
+        self.zones[zid as usize].freed_blocks += space as u32;
+        assert!(oz.allocated_blocks <= self.zones[zid as usize].total_blocks);
     }
 }
 
@@ -323,8 +344,16 @@ impl<'a> Cluster {
 
     /// Sync the `Cluster`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
-        self.vdev.sync_all()
+    pub fn sync_all(&'a self) -> Box<ClusterFut<'a>> {
+        let mut fsm = self.fsm.borrow_mut();
+        let zone_ids = fsm.open_zone_ids().cloned().collect::<Vec<_>>();
+        let flush_futs = zone_ids.iter().map(|&zone_id| {
+            let (gap, fut) = self.vdev.flush_zone(zone_id);
+            fsm.waste_space(zone_id, gap);
+            fut
+        }).collect::<Vec<_>>();
+        let flush_fut = future::join_all(flush_futs);
+        Box::new(flush_fut.and_then(move |_| self.vdev.sync_all()))
     }
 
     /// Write a buffer to the cluster
@@ -399,6 +428,7 @@ mod cluster {
         trait VdevRaidTrait{
             fn erase_zone(&self, zone: ZoneT) -> Box<VdevFut>;
             fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut>;
+            fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>);
             fn open_zone(&self, zone: ZoneT) -> Box<VdevFut>;
             fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
             fn write_at(&self, buf: IoVec, zone: ZoneT,
@@ -427,6 +457,39 @@ mod cluster {
         s.expect(vr.lba2zone_call(1000).and_return_clone(None).times(..));
         let cluster = Cluster::new(Box::new(vr));
         cluster.free(1000, 10);
+    }
+
+    // Cluster.sync_all should flush all open VdevRaid zones, then sync_all the
+    // VdevRaid
+    #[test]
+    fn sync_all() {
+        let s = Scenario::new();
+        let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.zones_call().and_return_clone(32768).times(..));
+        s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
+        s.expect(vr.open_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
+                buf.len() == BYTES_PER_LBA
+            }),
+            0,  // Zone
+            0   /* Lba */)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.flush_zone_call(0)
+                 .and_return((5, Box::new(future::ok::<(), Error>(())))));
+        s.expect(vr.sync_all_call()
+                 .and_return(Box::new(future::ok::<(), Error>(()))));
+        let cluster = Cluster::new(Box::new(vr));
+
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let db0 = dbs.try().unwrap();
+        current_thread::block_on_all(future::lazy(|| {
+            let (_, fut) = cluster.write(db0).expect("write failed early");
+            fut.and_then(|_| cluster.sync_all())
+        })).unwrap();
+        let fsm = cluster.fsm.borrow();
+        assert_eq!(fsm.open_zones.get(&0).unwrap().write_pointer(), 6);
+        assert_eq!(fsm.zones[0].freed_blocks, 5);
     }
 
     #[test]
