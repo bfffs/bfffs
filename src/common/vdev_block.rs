@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use futures::{Async, Future};
+use futures::{Async, Future, Poll};
 use futures::sync::oneshot;
 use nix;
 use std::cell::RefCell;
@@ -327,6 +327,25 @@ impl Inner {
     }
 }
 
+struct VdevBlockFut {
+    block_op: Option<BlockOp>,
+    inner: Rc<RefCell<Inner>>,
+    receiver: oneshot::Receiver<()>,
+}
+
+impl Future for VdevBlockFut {
+    type Item = ();
+    type Error = nix::Error;
+
+    fn poll(&mut self) -> Poll<(), nix::Error> {
+        if self.block_op.is_some() {
+            let block_op = self.block_op.take().unwrap();
+            self.inner.borrow_mut().sched_and_issue(block_op);
+        }
+        self.receiver.poll().or(Err(nix::Error::Sys(nix::errno::Errno::EPIPE)))
+    }
+}
+
 /// `VdevBlock`: Virtual Device for basic block device
 ///
 /// Wraps a single `VdevLeaf`.  But unlike `VdevLeaf`, `VdevBlock` operations
@@ -382,8 +401,7 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        self.inner.borrow_mut().sched_and_issue(block_op);
-        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+        Box::new(self.new_fut(block_op, receiver))
     }
 
     /// Asynchronously finish a zone on a block device
@@ -406,8 +424,16 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        self.inner.borrow_mut().sched_and_issue(block_op);
-        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+        Box::new(self.new_fut(block_op, receiver))
+    }
+
+    fn new_fut(&self, block_op: BlockOp,
+               receiver: oneshot::Receiver<()>) -> VdevBlockFut {
+        VdevBlockFut {
+            block_op: Some(block_op),
+            inner: self.inner.clone(),
+            receiver
+        }
     }
 
     /// Asynchronously open a zone on a block device
@@ -432,8 +458,7 @@ impl VdevBlock {
                           inner.last_lba < limits.0);
         }
 
-        self.inner.borrow_mut().sched_and_issue(block_op);
-        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+        Box::new(self.new_fut(block_op, receiver))
     }
 
     /// Open a VdevBlock
@@ -470,8 +495,7 @@ impl VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::read_at(buf, lba, sender);
-        self.inner.borrow_mut().sched_and_issue(block_op);
-        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+        Box::new(self.new_fut(block_op, receiver))
     }
 
     /// The asynchronous scatter/gather read function.
@@ -486,8 +510,7 @@ impl VdevBlock {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
-        self.inner.borrow_mut().sched_and_issue(block_op);
-        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+        Box::new(self.new_fut(block_op, receiver))
     }
 
     /// Asynchronously sync the underlying device, ensuring that all data
@@ -495,8 +518,7 @@ impl VdevBlock {
     pub fn sync_all(&self) -> Box<VdevFut> {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::sync_all(sender);
-        self.inner.borrow_mut().sched_and_issue(block_op);
-        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+        Box::new(self.new_fut(block_op, receiver))
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
@@ -508,8 +530,7 @@ impl VdevBlock {
         let block_op = BlockOp::write_at(buf, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        self.inner.borrow_mut().sched_and_issue(block_op);
-        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+        Box::new(self.new_fut(block_op, receiver))
     }
 
     /// The asynchronous scatter/gather write function.
@@ -526,8 +547,7 @@ impl VdevBlock {
         let block_op = BlockOp::writev_at(bufs, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        self.inner.borrow_mut().sched_and_issue(block_op);
-        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+        Box::new(self.new_fut(block_op, receiver))
     }
 }
 
@@ -1069,12 +1089,19 @@ test_suite! {
             // First schedule all operations.  There are too many to issue them
             // all immediately
             let unbuf_fut = future::join_all((0..num_ops - 2).rev().map(|i| {
-                vdev.write_at(wbuf.clone(), i as LbaT)
+                let mut fut = vdev.write_at(wbuf.clone(), i as LbaT);
+                // Manually poll so the VdevBlockFut will get scheduled
+                fut.poll().unwrap();
+                fut
             }));
-            let penultimate_fut = vdev.write_at(wbuf.clone(),
-                                                (num_ops - 1) as LbaT);
-            let final_fut = vdev.write_at(wbuf.clone(),
-                                          (num_ops - 2) as LbaT);
+            let mut penultimate_fut = vdev.write_at(wbuf.clone(),
+                                                    (num_ops - 1) as LbaT);
+            // Manually poll so the VdevBlockFut will get scheduled
+            penultimate_fut.poll().unwrap();
+            let mut final_fut = vdev.write_at(wbuf.clone(),
+                                              (num_ops - 2) as LbaT);
+            // Manually poll so the VdevBlockFut will get scheduled
+            final_fut.poll().unwrap();
             let fut = unbuf_fut.join3(penultimate_fut, final_fut);
             // Verify that they weren't all issued
             let inner = vdev.inner.borrow_mut();
