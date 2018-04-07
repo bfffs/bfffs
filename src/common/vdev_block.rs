@@ -11,6 +11,7 @@ use std::{mem, ops, thread, time};
 use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
 use tokio::reactor::Handle;
+use uuid::Uuid;
 
 use common::*;
 use common::vdev::*;
@@ -579,6 +580,10 @@ impl Vdev for VdevBlock {
         Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
     }
 
+    fn uuid(&self) -> Uuid {
+        self.inner.borrow().leaf.uuid()
+    }
+
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         self.inner.borrow().leaf.zone_limits(zone)
     }
@@ -611,7 +616,9 @@ test_suite! {
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
             fn optimum_queue_depth(&self) -> u32;
             fn size(&self) -> LbaT;
-            fn sync_all(&self) -> Box<futures::Future<Item = (), Error = nix::Error>>;
+            fn sync_all(&self) -> Box<futures::Future<Item = (),
+                                      Error = nix::Error>>;
+            fn uuid(&self) -> Uuid;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
             fn zones(&self) -> ZoneT;
         },

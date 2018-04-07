@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::{cmp, mem, ptr};
 use std::collections::BTreeMap;
 use tokio::reactor::Handle;
+use uuid::Uuid;
 
 #[cfg(test)]
 /// Only exists so mockers can replace VdevBlock
@@ -146,6 +147,8 @@ pub struct VdevRaid {
     /// stripes uses fewer resources than only cacheing the parity information.
     stripe_buffers: RefCell<BTreeMap<ZoneT, StripeBuffer>>,
 
+    uuid: Uuid,
+
     /// A convenient buffer prepopulated with zeros with a lifetime as long as
     /// the `VdevRaid`.
     // It would be nice to share this between multiple `VdevRaid`s, but how
@@ -217,6 +220,7 @@ impl VdevRaid {
         let f = codec.protection();
         let m = (codec.stripesize() - f) as LbaT;
         let stripesize = (m * chunksize) as usize * BYTES_PER_LBA;
+        let uuid = Uuid::new_v4();
         let zero_region = DivBufShared::from(vec![0u8; stripesize]);
 
         // NB: the optimum queue depth should actually be a little higher for
@@ -228,7 +232,7 @@ impl VdevRaid {
 
         VdevRaid { chunksize, codec, locator, blockdevs, optimum_queue_depth,
                    stripe_buffers: RefCell::new(BTreeMap::new()),
-                   zero_region }
+                   uuid, zero_region }
     }
 
     /// Asynchronously erase a zone on a RAID device
@@ -812,6 +816,10 @@ impl Vdev for VdevRaid {
         )
     }
 
+    fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
     // Zones don't necessarily line up with repetition boundaries.  So we don't
     // know the disk where a given zone begins.  Worse, declustered RAID is
     // usually not monotonic across all disks.  That is, RAID LBA X may
@@ -1055,6 +1063,7 @@ mock!{
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
         fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
+        fn uuid(&self) -> Uuid;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     },

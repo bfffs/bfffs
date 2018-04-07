@@ -4,6 +4,7 @@ use common::*;
 use futures;
 use nix;
 use tokio::reactor::Handle;
+use uuid::Uuid;
 
 /// Future representing an operation on a vdev.
 pub type VdevFut = futures::Future<Item = (), Error = nix::Error>;
@@ -49,6 +50,10 @@ pub trait Vdev {
     /// Sync the `Vdev`, ensuring that all data written so far reaches stable
     /// storage.
     fn sync_all(&self) -> Box<VdevFut>;
+
+    /// Return the UUID for this vdev.  It is the persistent, unique identifier
+    /// for each vdev.
+    fn uuid(&self) -> Uuid;
 
     /// Return the first and last LBAs of a zone.
     ///

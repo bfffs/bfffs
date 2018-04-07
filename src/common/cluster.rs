@@ -9,6 +9,7 @@ use nix::{Error, errno};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::btree_map::Keys;
+use uuid::Uuid;
 
 pub type ClusterFut<'a> = Future<Item = (), Error = Error> + 'a;
 
@@ -355,6 +356,11 @@ impl<'a> Cluster {
         Box::new(flush_fut.and_then(move |_| self.vdev.sync_all()))
     }
 
+    /// Return the `Cluster`'s UUID.  It's the same as its RAID device's.
+    pub fn uuid(&self) -> Uuid {
+        self.vdev.uuid()
+    }
+
     /// Write a buffer to the cluster
     ///
     /// # Returns
@@ -420,6 +426,7 @@ mod cluster {
             fn optimum_queue_depth(&self) -> u32;
             fn size(&self) -> LbaT;
             fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
+            fn uuid(&self) -> Uuid;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
             fn zones(&self) -> ZoneT;
         },

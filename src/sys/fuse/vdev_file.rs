@@ -97,6 +97,10 @@ impl Vdev for VdevFile {
         Box::new(self.file.sync_all().unwrap().map(|_| ()))
     }
 
+    fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         if zone == 0 {
             (VdevFile::LABEL_LBAS,
@@ -213,11 +217,6 @@ impl VdevFile {
                     })
                 }
             }))
-    }
-
-    // TODO: move to the Vdev trait
-    pub fn uuid(&self) -> Uuid {
-        self.uuid
     }
 
     pub fn write_label(&mut self) -> Box<VdevFut> {
