@@ -170,6 +170,7 @@ test_suite! {
 
     use arkfs::common::vdev::*;
     use arkfs::sys::vdev_file::*;
+    use arkfs::common::vdev_leaf::*;
     use futures::{future, Future};
     use std::fs;
     use std::io::{Read, Write};

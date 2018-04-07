@@ -156,6 +156,25 @@ impl VdevLeaf for VdevFile {
         self.write_at_unchecked(container, lba)
     }
 
+    fn write_label(&mut self) -> Box<VdevFut> {
+        let label_size = VdevFile::LABEL_LBAS as usize * BYTES_PER_LBA;
+        let mut buf = Vec::with_capacity(label_size);
+        let label = Label {
+            checksum: [0, 0, 0, 0, 0, 0, 0, 0], //TODO
+            data: LabelData {
+                uuid: self.uuid,
+                lbas_per_zone: VdevFile::LBAS_PER_ZONE,
+                lbas: self.size
+            }
+        };
+        buf.write_all(&MAGIC).unwrap();
+        // ser::to_writer_packed would be more compact, but we're committed to
+        // burning an LBA anyway
+        serde_cbor::ser::to_writer(&mut buf, &label).unwrap();
+        buf.resize(label_size, 0);
+        self.write_at_unchecked(Box::new(buf), 0)
+    }
+
     fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
         let off = lba as i64 * (BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
@@ -217,25 +236,6 @@ impl VdevFile {
                     })
                 }
             }))
-    }
-
-    pub fn write_label(&mut self) -> Box<VdevFut> {
-        let label_size = VdevFile::LABEL_LBAS as usize * BYTES_PER_LBA;
-        let mut buf = Vec::with_capacity(label_size);
-        let label = Label {
-            checksum: [0, 0, 0, 0, 0, 0, 0, 0], //TODO
-            data: LabelData {
-                uuid: self.uuid,
-                lbas_per_zone: VdevFile::LBAS_PER_ZONE,
-                lbas: self.size
-            }
-        };
-        buf.write_all(&MAGIC).unwrap();
-        // ser::to_writer_packed would be more compact, but we're committed to
-        // burning an LBA anyway
-        serde_cbor::ser::to_writer(&mut buf, &label).unwrap();
-        buf.resize(label_size, 0);
-        self.write_at_unchecked(Box::new(buf), 0)
     }
 
     fn write_at_unchecked(&mut self, buf: Box<Borrow<[u8]>>,

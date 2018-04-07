@@ -28,6 +28,7 @@ enum Cmd {
     EraseZone(LbaT),
     // The extra LBA is the zone's starting LBA
     FinishZone(LbaT),
+    WriteLabel,
     SyncAll,
 }
 
@@ -118,6 +119,10 @@ impl BlockOp {
     pub fn write_at(buf: IoVec, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
         BlockOp { lba, cmd: Cmd::WriteAt(buf), sender}
+    }
+
+    pub fn write_label(sender: oneshot::Sender<()>) -> BlockOp {
+        BlockOp { lba: 0, cmd: Cmd::WriteLabel, sender}
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT,
@@ -265,6 +270,7 @@ impl Inner {
             Cmd::EraseZone(start) => self.leaf.erase_zone(start),
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
             Cmd::OpenZone => self.leaf.open_zone(lba),
+            Cmd::WriteLabel => self.leaf.write_label(),
             Cmd::SyncAll => self.leaf.sync_all(),
         };
         (block_op.sender, fut)
@@ -534,6 +540,12 @@ impl VdevBlock {
         Box::new(self.new_fut(block_op, receiver))
     }
 
+    pub fn write_label(&mut self) -> Box<VdevFut> {
+        let (sender, receiver) = oneshot::channel::<()>();
+        let block_op = BlockOp::write_label(sender);
+        Box::new(self.new_fut(block_op, receiver))
+    }
+
     /// The asynchronous scatter/gather write function.
     ///
     /// Returns nothing on success, or an error on failure
@@ -630,6 +642,7 @@ test_suite! {
             fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
             fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
             fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+            fn write_label(&mut self) -> Box<VdevFut>;
             fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
         }
     }

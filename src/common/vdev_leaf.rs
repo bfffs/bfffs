@@ -52,6 +52,9 @@ pub trait VdevLeaf : Vdev {
     /// Return the number of bytes actually written.
     fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
 
+    /// Asynchronously write this Vdev's label
+    fn write_label(&mut self) -> Box<VdevFut>;
+
     /// The asynchronous scatter/gather write function.
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
