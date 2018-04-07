@@ -104,7 +104,8 @@ test_suite! {
     }
 
     fn write_read0(vr: VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>) {
-        write_read(&vr, wbufs, rbufs, 0, 0)
+        let zl = vr.zone_limits(0);
+        write_read(&vr, wbufs, rbufs, 0, zl.0)
     }
 
     fn write_read_n_stripes(vr: VdevRaid, chunksize: LbaT, k: i16, f: i16,
@@ -118,16 +119,17 @@ test_suite! {
 
     fn writev_read_n_stripes(vr: &VdevRaid, chunksize: LbaT, k: i16, f: i16,
                              s: usize) {
+        let zl = vr.zone_limits(0);
         let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
         let wbuf = dbsw.try().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(wbuf.len() / 2);
         let sglist = vec![wbuf_l, wbuf_r];
         current_thread::block_on_all(future::lazy(|| {
-            vr.writev_at_one(&sglist, 0)
+            vr.writev_at_one(&sglist, zl.0)
                 .then(|write_result| {
                     write_result.expect("writev_at_one");
-                    vr.read_at(dbsr.try_mut().unwrap(), 0)
+                    vr.read_at(dbsr.try_mut().unwrap(), zl.0)
                 })
         })).expect("read_at");
         assert_eq!(wbuf, dbsr.try().unwrap());
@@ -363,18 +365,18 @@ test_suite! {
 
     test zone_read_closed(raid((3, 3, 1, 2))) {
         let zone = 0;
-        let lba=0;
+        let zl = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
         current_thread::block_on_all(future::lazy(|| {
-            raid.val.0.write_at(wbuf0, zone, lba)
+            raid.val.0.write_at(wbuf0, zone, zl.0)
                 .and_then(|_| {
                     raid.val.0.finish_zone(zone)
                 }).and_then(|_| {
-                    raid.val.0.read_at(rbuf, lba)
+                    raid.val.0.read_at(rbuf, zl.0)
                 })
         })).expect("current_thread::block_on_all");
         assert_eq!(wbuf1, dbsr.try().unwrap());
@@ -383,7 +385,7 @@ test_suite! {
     // Close a zone with an incomplete StripeBuffer, then read back from it
     test zone_read_closed_partial(raid((3, 3, 1, 2))) {
         let zone = 0;
-        let lba=0;
+        let zl = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -392,11 +394,11 @@ test_suite! {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
             current_thread::block_on_all(future::lazy(|| {
-                raid.val.0.write_at(wbuf_short, zone, lba)
+                raid.val.0.write_at(wbuf_short, zone, zl.0)
                     .and_then(|_| {
                         raid.val.0.finish_zone(zone)
                     }).and_then(|_| {
-                        raid.val.0.read_at(rbuf_short, lba)
+                        raid.val.0.read_at(rbuf_short, zl.0)
                     })
             })).expect("current_thread::block_on_all");
         }

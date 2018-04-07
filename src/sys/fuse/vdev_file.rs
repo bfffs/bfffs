@@ -1,16 +1,39 @@
 // vim: tw=80
 
-use futures::{Future, future};
-use nix;
-use std::borrow::{Borrow, BorrowMut};
-use std::path::Path;
-use tokio::reactor::Handle;
-use tokio_file::File;
-
 use common::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
+use divbuf::DivBufShared;
+use futures::{Future, future};
+use nix;
+use serde;
+use serde_cbor;
+use std::borrow::{Borrow, BorrowMut};
+use std::io::Write;
+use std::path::Path;
+use tokio::reactor::Handle;
+use tokio_file::File;
+use uuid::Uuid;
 
+/// The file magic is "ArkFS VdevFile\0\0"
+const MAGIC: [u8; 16] = [0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64,
+                         0x65, 0x76, 0x46, 0x69, 0x6c, 0x65, 0x00, 0x00];
+
+#[derive(Serialize, Deserialize, Debug)]
+struct LabelData {
+    /// Vdev UUID, fixed at format time
+    uuid:           Uuid,
+    /// Number of LBAs per simulated zone
+    lbas_per_zone:  LbaT,
+    /// Number of LBAs that were present at format time
+    lbas:           LbaT
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Label {
+    checksum:   [u8; 8],
+    data:       LabelData
+}
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`
 ///
@@ -21,7 +44,8 @@ use common::vdev_leaf::*;
 pub struct VdevFile {
     file:   File,
     handle: Handle,
-    size:   LbaT
+    size:   LbaT,
+    uuid:   Uuid
 }
 
 /// Tokio-File requires boxed `DivBufs`, but the upper layers of ArkFS don't.
@@ -53,7 +77,11 @@ impl Vdev for VdevFile {
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        Some((lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT)
+        if lba >= VdevFile::LABEL_LBAS {
+            Some((lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT)
+        } else {
+            None
+        }
     }
 
     fn optimum_queue_depth(&self) -> u32 {
@@ -70,8 +98,13 @@ impl Vdev for VdevFile {
     }
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
-        (u64::from(zone) * VdevFile::LBAS_PER_ZONE,
-         u64::from(zone + 1) * VdevFile::LBAS_PER_ZONE)
+        if zone == 0 {
+            (VdevFile::LABEL_LBAS,
+             u64::from(VdevFile::LABEL_LBAS) * VdevFile::LBAS_PER_ZONE)
+        } else {
+            (u64::from(zone) * VdevFile::LBAS_PER_ZONE,
+             u64::from(zone + 1) * VdevFile::LBAS_PER_ZONE)
+        }
     }
 
     fn zones(&self) -> ZoneT {
@@ -114,9 +147,9 @@ impl VdevLeaf for VdevFile {
     }
 
     fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+        assert!(lba >= VdevFile::LABEL_LBAS, "Don't overwrite the label!");
         let container = Box::new(IoVecContainer(buf));
-        let off = lba as i64 * (BYTES_PER_LBA as i64);
-        Box::new(self.file.write_at(container, off).unwrap().map(|_| ()))
+        self.write_at_unchecked(container, lba)
     }
 
     fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
@@ -135,6 +168,7 @@ impl VdevLeaf for VdevFile {
 impl VdevFile {
     /// Size of a simulated zone
     const LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
+    const LABEL_LBAS: LbaT = 1;
 
     /// Create a new Vdev, backed by a file
     ///
@@ -144,6 +178,70 @@ impl VdevFile {
     pub fn create<P: AsRef<Path>>(path: P, h: Handle) -> Self {
         let f = File::open(path, h.clone()).unwrap();
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
-        VdevFile{file: f, handle: h, size}
+        let uuid = Uuid::new_v4();
+        VdevFile{file: f, handle: h, size, uuid}
+    }
+
+    pub fn open<P: AsRef<Path>>(path: P, h: Handle)
+        -> Box<Future<Item=Self, Error=nix::Error>> {
+
+        let f = File::open(path, h.clone()).unwrap();
+        let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
+
+        let label_size = VdevFile::LABEL_LBAS as usize * BYTES_PER_LBA;
+        let dbs = DivBufShared::from(vec![0u8; label_size]);
+        let dbm = dbs.try_mut().unwrap();
+        let container = Box::new(IoVecMutContainer(dbm));
+        Box::new(f.read_at(container, 0).unwrap()
+            .and_then(move |aio_result| {
+                drop(aio_result);   // release reference on dbs
+                let db = dbs.try().unwrap();
+                if &db[0..16] != MAGIC {
+                    Err(nix::Error::Sys(nix::errno::Errno::EINVAL))
+                } else {
+                    let mut deserializer = serde_cbor::Deserializer::from_slice(
+                        &db[16..]);
+                    let label: Label = serde::Deserialize::deserialize(
+                        &mut deserializer).unwrap();
+                    assert!(size >= label.data.lbas,
+                               "Vdev has shrunk since creation");
+                    Ok(VdevFile {
+                        file: f,
+                        handle: h,
+                        size: label.data.lbas,
+                        uuid: label.data.uuid
+                    })
+                }
+            }))
+    }
+
+    // TODO: move to the Vdev trait
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
+    pub fn write_label(&mut self) -> Box<VdevFut> {
+        let label_size = VdevFile::LABEL_LBAS as usize * BYTES_PER_LBA;
+        let mut buf = Vec::with_capacity(label_size);
+        let label = Label {
+            checksum: [0, 0, 0, 0, 0, 0, 0, 0], //TODO
+            data: LabelData {
+                uuid: self.uuid,
+                lbas_per_zone: VdevFile::LBAS_PER_ZONE,
+                lbas: self.size
+            }
+        };
+        buf.write_all(&MAGIC).unwrap();
+        // ser::to_writer_packed would be more compact, but we're committed to
+        // burning an LBA anyway
+        serde_cbor::ser::to_writer(&mut buf, &label).unwrap();
+        buf.resize(label_size, 0);
+        self.write_at_unchecked(Box::new(buf), 0)
+    }
+
+    fn write_at_unchecked(&mut self, buf: Box<Borrow<[u8]>>,
+                          lba: LbaT) -> Box<VdevFut> {
+        let off = lba as i64 * (BYTES_PER_LBA as i64);
+        Box::new(self.file.write_at(buf, off).unwrap().map(|_| ()))
     }
 }

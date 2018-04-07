@@ -597,7 +597,7 @@ test_suite! {
     use divbuf::DivBufShared;
     use futures;
     use futures::{Poll, future};
-    use mockers::{Scenario, Sequence};
+    use mockers::{Scenario, Sequence, matchers};
     use mockers::matchers::ANY;
     use permutohedron;
     use tokio::executor::current_thread;
@@ -643,14 +643,14 @@ test_suite! {
             let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
             scenario.expect(leaf.size_call()
                                 .and_return(16384));
-            scenario.expect(leaf.lba2zone_call(ANY)
+            scenario.expect(leaf.lba2zone_call(matchers::in_range(1..1<<16))
                                 .and_return_clone(Some(0))
                                 .times(..));
             scenario.expect(leaf.optimum_queue_depth_call()
                                 .and_return_clone(10)
                                 .times(..));
             scenario.expect(leaf.zone_limits_call(0)
-                                .and_return_clone((0, 1 << 16))
+                                .and_return_clone((1, 1 << 16))
                                 .times(..));
             scenario.expect(leaf.zone_limits_call(1)
                                 .and_return_clone((1 << 16, 2 << 16))
@@ -675,8 +675,8 @@ test_suite! {
         let fut0 = receiver.map_err(move |_| e);
         // The first operation succeeds.  When it does, that will cause the
         // second to be reissued
-        seq0.expect(leaf.read_at_call(ANY, 0).and_return(Box::new(fut0)));
-        seq0.expect(leaf.read_at_call(ANY, 1)
+        seq0.expect(leaf.read_at_call(ANY, 1).and_return(Box::new(fut0)));
+        seq0.expect(leaf.read_at_call(ANY, 2)
             .and_call( move |_, _| {
                 let mut seq1 = Sequence::new();
                 let fut = s_handle.create_mock::<MockVdevFut<(), nix::Error>>();
@@ -694,8 +694,8 @@ test_suite! {
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            let f0 = vdev.read_at(rbuf0, 0);
-            let f1 = vdev.read_at(rbuf1, 1);
+            let f0 = vdev.read_at(rbuf0, 1);
+            let f1 = vdev.read_at(rbuf1, 2);
             sender.send(()).expect("send");
             f0.join(f1)
         })).expect("test eagain");
@@ -710,7 +710,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq0 = Sequence::new();
 
-        seq0.expect(leaf.read_at_call(ANY, 0)
+        seq0.expect(leaf.read_at_call(ANY, 1)
             .and_call( move |_, _| {
                 let mut seq1 = Sequence::new();
                 let fut = s_handle.create_mock::<MockVdevFut<(), nix::Error>>();
@@ -727,7 +727,7 @@ test_suite! {
         let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            vdev.read_at(rbuf, 0)
+            vdev.read_at(rbuf, 1)
         })).expect("test eagain_queue_depth_0");
     }
 
@@ -736,7 +736,7 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        seq.expect(leaf.read_at_call(ANY, 1)
+        seq.expect(leaf.read_at_call(ANY, 2)
                        .and_return(Box::new(future::ok::<(), nix::Error>(()))));
         scenario.expect(seq);
 
@@ -744,7 +744,7 @@ test_suite! {
         let rbuf0 = dbs0.try_mut().unwrap();
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            vdev.read_at(rbuf0, 1)
+            vdev.read_at(rbuf0, 2)
         })).unwrap();
     }
 
@@ -753,7 +753,7 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
-        seq.expect(leaf.readv_at_call(ANY, 1)
+        seq.expect(leaf.readv_at_call(ANY, 2)
                        .and_return(Box::new(future::ok::<(), nix::Error>(()))));
         scenario.expect(seq);
 
@@ -761,7 +761,7 @@ test_suite! {
         let rbuf0 = vec![dbs0.try_mut().unwrap()];
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            vdev.readv_at(rbuf0, 1)
+            vdev.readv_at(rbuf0, 2)
         })).unwrap();
     }
 
@@ -794,7 +794,7 @@ test_suite! {
         let just_after = 1001;
         let just_after_dup = 1001;
         let just_before = 999;
-        let min = 0;
+        let min = 1;
         let max = 16383;
         let mut lbas = vec![same_lba, just_after, just_after_dup, just_before,
                             min, max];
@@ -823,7 +823,7 @@ test_suite! {
             inner.sched(well_before);
 
             assert_eq!(inner.pop_op().unwrap().lba, 16383);
-            assert_eq!(inner.pop_op().unwrap().lba, 0);
+            assert_eq!(inner.pop_op().unwrap().lba, 1);
             assert_eq!(inner.pop_op().unwrap().lba, 990);
             assert_eq!(inner.pop_op().unwrap().lba, 999);
             assert_eq!(inner.pop_op().unwrap().lba, 1000);
@@ -940,14 +940,14 @@ test_suite! {
         // the scheduler's last_lba to lie within either of these zones, because
         // that would imply that it had just performed an operation on an empty
         // zone.
-        let w = BlockOp::write_at(dummy.clone(), 0, oneshot::channel::<()>().0);
+        let w = BlockOp::write_at(dummy.clone(), 1, oneshot::channel::<()>().0);
         let write_at_discriminant = mem::discriminant(&w.cmd);
         inner.sched(w);
         inner.sched(BlockOp::write_at(dummy.clone(), (1 << 16) - 1,
                     oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy.clone(), 1,
+        inner.sched(BlockOp::write_at(dummy.clone(), 2,
                     oneshot::channel::<()>().0));
-        let oz0 = BlockOp::open_zone(0, oneshot::channel::<()>().0);
+        let oz0 = BlockOp::open_zone(1, oneshot::channel::<()>().0);
         let oz_discriminant = mem::discriminant(&oz0.cmd);
         inner.sched(oz0);
         inner.sched(BlockOp::open_zone(2 << 16, oneshot::channel::<()>().0));
@@ -967,12 +967,12 @@ test_suite! {
         assert_eq!(inner.pop_op().unwrap().lba, (2 << 16) + 1);
         assert_eq!(inner.pop_op().unwrap().lba, (3 << 16) - 1);
         let fifth = inner.pop_op().unwrap();
-        assert_eq!(fifth.lba, 0);
+        assert_eq!(fifth.lba, 1);
         assert_eq!(mem::discriminant(&fifth.cmd), oz_discriminant);
         let sixth = inner.pop_op().unwrap();
-        assert_eq!(sixth.lba, 0);
+        assert_eq!(sixth.lba, 1);
         assert_eq!(mem::discriminant(&sixth.cmd), write_at_discriminant);
-        assert_eq!(inner.pop_op().unwrap().lba, 1);
+        assert_eq!(inner.pop_op().unwrap().lba, 2);
         assert_eq!(inner.pop_op().unwrap().lba, (1 << 16) - 1);
         assert!(inner.pop_op().is_none());
     }
@@ -986,7 +986,8 @@ test_suite! {
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
         let dummy_buffer = dummy_dbs.try().unwrap();
 
-        // Start with some intermedia LBA and schedule ops both before and after
+        // Start with some intermediate LBA and schedule ops both before and
+        // after
         inner.last_lba = 1000;
         inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1001,
             oneshot::channel::<()>().0));
@@ -1029,9 +1030,9 @@ test_suite! {
         let e = nix::Error::from(nix::errno::Errno::EPIPE);
         let fut0 = receiver.map_err(move |_| e);
         let fut1 = future::ok::<(), nix::Error>(());
-        seq.expect(leaf.read_at_call(ANY, 0)
-                       .and_return(Box::new(fut0)));
         seq.expect(leaf.read_at_call(ANY, 1)
+                       .and_return(Box::new(fut0)));
+        seq.expect(leaf.read_at_call(ANY, 2)
                        .and_call(|_, _| {
                            sender.send(()).unwrap();
                            Box::new(fut1)
@@ -1043,8 +1044,8 @@ test_suite! {
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            let f0 = vdev.read_at(rbuf0, 0);
-            let f1 = vdev.read_at(rbuf1, 1);
+            let f0 = vdev.read_at(rbuf0, 1);
+            let f1 = vdev.read_at(rbuf1, 2);
             f0.join(f1)
         })).unwrap();
     }
@@ -1066,18 +1067,18 @@ test_suite! {
         })
         .unzip();
         for (i, f) in futs.into_iter().enumerate().rev() {
-            seq.expect(leaf.write_at_call(ANY, i as LbaT)
+            seq.expect(leaf.write_at_call(ANY, i as LbaT + 1)
                            .and_return(Box::new(f)));
         }
         // Schedule the final two operations in reverse LBA order, but verify
         // that they get issued in actual LBA order
         let final_fut = future::ok::<(), nix::Error>(());
-        seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 2)
+        seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 1)
                             .and_call(|_, _| {
                                 Box::new(final_fut)
                             }));
         let penultimate_fut = future::ok::<(), nix::Error>(());
-        seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 1)
+        seq.expect(leaf.write_at_call(ANY, num_ops as LbaT)
                             .and_call(|_, _| {
                                 Box::new(penultimate_fut)
                             }));
@@ -1088,18 +1089,18 @@ test_suite! {
         current_thread::block_on_all(future::lazy(|| {
             // First schedule all operations.  There are too many to issue them
             // all immediately
-            let unbuf_fut = future::join_all((0..num_ops - 2).rev().map(|i| {
+            let unbuf_fut = future::join_all((1..num_ops - 1).rev().map(|i| {
                 let mut fut = vdev.write_at(wbuf.clone(), i as LbaT);
                 // Manually poll so the VdevBlockFut will get scheduled
                 fut.poll().unwrap();
                 fut
             }));
             let mut penultimate_fut = vdev.write_at(wbuf.clone(),
-                                                    (num_ops - 1) as LbaT);
+                                                    num_ops as LbaT);
             // Manually poll so the VdevBlockFut will get scheduled
             penultimate_fut.poll().unwrap();
             let mut final_fut = vdev.write_at(wbuf.clone(),
-                                              (num_ops - 2) as LbaT);
+                                              (num_ops - 1) as LbaT);
             // Manually poll so the VdevBlockFut will get scheduled
             final_fut.poll().unwrap();
             let fut = unbuf_fut.join3(penultimate_fut, final_fut);
@@ -1118,14 +1119,14 @@ test_suite! {
     test basic_write_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        scenario.expect(leaf.write_at_call(ANY, 0)
+        scenario.expect(leaf.write_at_call(ANY, 1)
                     .and_return(Box::new(future::ok::<(), nix::Error>(()))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            vdev.write_at(wbuf, 0)
+            vdev.write_at(wbuf, 1)
         })).unwrap();
     }
 
@@ -1133,14 +1134,14 @@ test_suite! {
     test basic_writev_at(mocks) {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
-        scenario.expect(leaf.writev_at_call(ANY, 0)
+        scenario.expect(leaf.writev_at_call(ANY, 1)
                     .and_return(Box::new(future::ok::<(), nix::Error>(()))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = vec![dbs.try().unwrap()];
         let vdev = VdevBlock::open(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
-            vdev.writev_at(wbuf, 0)
+            vdev.writev_at(wbuf, 1)
         })).unwrap();
     }
 }

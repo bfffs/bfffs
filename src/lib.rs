@@ -16,8 +16,13 @@ extern crate modulo;
 #[cfg(test)]
 extern crate permutohedron;
 extern crate nix;
+extern crate serde;
+extern crate serde_cbor;
+#[macro_use]
+extern crate serde_derive;
 extern crate tokio;
 extern crate tokio_file;
+extern crate uuid;
 
 pub mod common;
 pub mod sys;

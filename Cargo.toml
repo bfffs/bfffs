@@ -8,7 +8,7 @@ authors = ["Alan Somers <asomers@gmail.com>"]
 mocks = ["mockers", "mockers_codegen", "mockers_macros"]
 
 [dependencies]
-divbuf = { git = "https://github.com/asomers/divbuf", rev = "52ed9b0" }
+divbuf = { git = "https://github.com/asomers/divbuf", rev = "0ca406c" }
 fixedbitset = "0.1.8"
 futures = "0.1.14"
 itertools = "0.7"
@@ -23,8 +23,12 @@ mockers = { version = "=0.9.4", optional = true }
 # If it gets merged, we can remove this crate
 modulo = "0.1.2"
 nix = { git = "https://github.com/asomers/nix", rev = "fef70ad" }
+serde = "1.0"
+serde_cbor = "0.8"
+serde_derive = "1.0"
 tokio-file = { git = "git://github.com/asomers/tokio-file.git", rev = "23cd619" }
 tokio = "0.1.4"
+uuid = { version = "0.6", features = ["serde", "v4"]}
 
 [dev-dependencies]
 galvanic-test = "0.1.3"
