@@ -12,8 +12,6 @@ test_suite! {
     name vdev_raid;
 
     use arkfs::common::*;
-    use arkfs::common::prime_s::PrimeS;
-    use arkfs::common::raid::Codec;
     use arkfs::common::vdev_block::*;
     use arkfs::common::vdev_raid::*;
     use arkfs::common::vdev::Vdev;
@@ -49,10 +47,8 @@ test_suite! {
                 let leaf = Box::new(VdevFile::create(fname, Handle::current()));
                 VdevBlock::open(leaf, Handle::current())
             }).collect();
-            let codec = Codec::new(*self.k as u32, *self.f as u32);
-            let locator = Box::new(PrimeS::new(*self.n, *self.k, *self.f));
-            let mut vdev_raid = VdevRaid::new(*self.chunksize, codec, locator,
-                                              blockdevs.into_boxed_slice());
+            let mut vdev_raid = VdevRaid::new(*self.chunksize, *self.n, *self.k,
+                *self.f, LayoutAlgorithm::PrimeS, blockdevs.into_boxed_slice());
             current_thread::block_on_all(
                 vdev_raid.open_zone(0)
             ).expect("open_zone");

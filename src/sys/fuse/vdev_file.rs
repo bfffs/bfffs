@@ -222,6 +222,7 @@ impl VdevFile {
                 if &db[0..16] != MAGIC {
                     Err(nix::Error::Sys(nix::errno::Errno::EINVAL))
                 } else {
+                    // TODO: verify checksum
                     let mut deserializer = serde_cbor::Deserializer::from_slice(
                         &db[16..]);
                     let label: Label = serde::Deserialize::deserialize(

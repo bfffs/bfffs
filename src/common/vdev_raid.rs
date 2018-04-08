@@ -6,6 +6,7 @@ use common::vdev::*;
 use common::vdev_block::*;
 use common::raid::*;
 use common::declust::*;
+use common::prime_s::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
@@ -32,6 +33,11 @@ pub type VdevBlockLike = Box<VdevBlockTrait>;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type VdevBlockLike = VdevBlock;
+
+pub enum LayoutAlgorithm {
+    /// A good declustered algorithm for any prime number of disks
+    PrimeS,
+}
 
 /// In-memory cache of data that has not yet been flushed the Block devices.
 ///
@@ -199,14 +205,20 @@ macro_rules! issue_1stripe_ops {
 }
 
 impl VdevRaid {
-    pub fn new(chunksize: LbaT, codec: Codec, locator: Box<Locator>,
+    pub fn new(chunksize: LbaT,
+               num_disks: i16,
+               disks_per_stripe: i16,
+               redundancy: i16,
+               algorithm: LayoutAlgorithm,
                blockdevs: Box<[VdevBlockLike]>) -> Self {
+
+        let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
+        let locator = Box::new(match algorithm {
+            LayoutAlgorithm::PrimeS =>
+                PrimeS::new(num_disks, disks_per_stripe, redundancy)
+        });
         assert_eq!(blockdevs.len(), locator.clustsize() as usize,
             "mismatched cluster size");
-        assert_eq!(codec.stripesize(), locator.stripesize(),
-            "mismatched stripe size");
-        assert_eq!(codec.protection(), locator.protection(),
-            "mismatched protection level");
         for i in 1..blockdevs.len() {
             // All blockdevs must be the same size
             assert_eq!(blockdevs[0].size(), blockdevs[i].size());
@@ -1050,7 +1062,6 @@ fn stripe_buffer_two_iovecs_overflow() {
 mod t {
 
 use super::*;
-use super::super::prime_s::PrimeS;
 use futures::future;
 use mockers::Scenario;
 
@@ -1087,45 +1098,8 @@ fn vdev_raid_mismatched_clustsize() {
         let f = 1;
 
         let blockdevs = Vec::<Box<VdevBlockTrait>>::new();
-        let codec = Codec::new(k, f);
-        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        VdevRaid::new(16, codec, locator, blockdevs.into_boxed_slice());
-}
-
-#[test]
-#[should_panic(expected="mismatched stripe size")]
-fn vdev_raid_mismatched_stripesize() {
-        let n = 7;
-        let k = 4;
-        let f = 1;
-
-        let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
-        for _ in 0..n {
-            let mock = Box::new(s.create_mock::<MockVdevBlock>());
-            blockdevs.push(mock);
-        }
-        let codec = Codec::new(5, f);
-        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        VdevRaid::new(16, codec, locator, blockdevs.into_boxed_slice());
-}
-
-#[test]
-#[should_panic(expected="mismatched protection level")]
-fn vdev_raid_mismatched_protection() {
-        let n = 7;
-        let k = 4;
-        let f = 1;
-
-        let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
-        for _ in 0..n {
-            let mock = Box::new(s.create_mock::<MockVdevBlock>());
-            blockdevs.push(mock);
-        }
-        let codec = Codec::new(k, f);
-        let locator = Box::new(PrimeS::new(n, k as i16, 2));
-        VdevRaid::new(16, codec, locator, blockdevs.into_boxed_slice());
+        VdevRaid::new(16, n, k, f, LayoutAlgorithm::PrimeS,
+                      blockdevs.into_boxed_slice());
 }
 
 test_suite! {
@@ -1134,7 +1108,6 @@ test_suite! {
 
     use super::super::*;
     use super::MockVdevBlock;
-    use super::super::super::prime_s::PrimeS;
     use mockers::{matchers, Scenario};
 
     fixture!( mocks(n: i16, k: i16, f:i16, chunksize: LbaT)
@@ -1168,9 +1141,8 @@ test_suite! {
                 blockdevs.push(mock);
             }
 
-            let codec = Codec::new(*self.k as u32, *self.f as u32);
-            let locator = Box::new(PrimeS::new(*self.n, *self.k, *self.f));
-            let vdev_raid = VdevRaid::new(*self.chunksize, codec, locator,
+            let vdev_raid = VdevRaid::new(*self.chunksize, *self.n, *self.k,
+                                          *self.f, LayoutAlgorithm::PrimeS,
                                           blockdevs.into_boxed_slice());
             (s, vdev_raid)
         }
@@ -1316,9 +1288,8 @@ fn read_at_one_stripe() {
         s.expect(m2.zone_limits_call(0).and_return_clone((0, 65536)).times(..));
         blockdevs.push(m2);
 
-        let codec = Codec::new(k, f);
-        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+                                      LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
         vdev_raid.open_zone(0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
@@ -1383,9 +1354,8 @@ fn write_at_one_stripe() {
         );
         blockdevs.push(m2);
 
-        let codec = Codec::new(k, f);
-        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+                                      LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
         vdev_raid.open_zone(0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
@@ -1451,9 +1421,8 @@ fn write_at_and_sync_all() {
     blockdevs.push(bd1);
     blockdevs.push(bd2);
 
-    let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-    let codec = Codec::new(k, f);
-    let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+                                  LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
     vdev_raid.open_zone(0);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
@@ -1502,9 +1471,8 @@ fn open_zone_zero_fill_wasted_chunks() {
         blockdevs.push(bd());    //disk 3
         blockdevs.push(bd());    //disk 4
 
-        let codec = Codec::new(k, f);
-        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+                                      LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
         vdev_raid.open_zone(1);
 }
@@ -1557,9 +1525,8 @@ fn open_zone_zero_fill_wasted_stripes() {
         blockdevs.push(bd(1));  //disk 5
         blockdevs.push(bd(0));  //disk 6
 
-        let codec = Codec::new(k, f);
-        let locator = Box::new(PrimeS::new(n, k as i16, f as i16));
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, codec, locator,
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+                                      LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
         vdev_raid.open_zone(1);
 }
