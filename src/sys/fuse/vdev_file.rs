@@ -177,6 +177,7 @@ impl VdevLeaf for VdevFile {
     }
 
     fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
+        assert!(lba >= VdevFile::LABEL_LBAS, "Don't overwrite the label!");
         let off = lba as i64 * (BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
