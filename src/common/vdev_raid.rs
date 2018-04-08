@@ -12,9 +12,11 @@ use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
 use nix::Error;
+use serde_cbor;
 use std::cell::RefCell;
 use std::{cmp, mem, ptr};
 use std::collections::BTreeMap;
+use std::io::Write;
 #[cfg(not(test))]
 use std::path::Path;
 use tokio::reactor::Handle;
@@ -41,6 +43,7 @@ pub type VdevBlockLike = VdevBlock;
 ///
 /// This algorithm maps RAID chunks to specific disks and offsets.  It does not
 /// encode or decode parity.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum LayoutAlgorithm {
     /// A good declustered algorithm for any prime number of disks
     PrimeS,
@@ -129,6 +132,23 @@ impl StripeBuffer {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct LabelData {
+    /// Vdev UUID, fixed at format time
+    uuid:               Uuid,
+    chunksize:          LbaT,
+    disks_per_stripe:   i16,
+    redundancy:         i16,
+    layout_algorithm:   LayoutAlgorithm,
+    children:           Vec<Uuid>
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Label {
+    checksum:   [u8; 8],
+    data:       LabelData
+}
+
 /// `VdevRaid`: Virtual Device for the RAID transform
 ///
 /// This Vdev implements the RAID I/O path, for all types of RAID encodings and
@@ -152,6 +172,9 @@ pub struct VdevRaid {
 
     /// Underlying block devices.  Order is important!
     blockdevs: Box<[VdevBlockLike]>,
+
+    /// RAID placement algorithm.
+    layout_algorithm: LayoutAlgorithm,
 
     /// Best number of queued commands for the whole `VdevRaid`
     optimum_queue_depth: u32,
@@ -215,6 +238,14 @@ macro_rules! issue_1stripe_ops {
 }
 
 impl VdevRaid {
+    /// LBAs reserved for the RAID label, on each VdevBlock
+    // With 233 or more devices, the label will spill over onto two LBAs
+    const LABEL_LBAS: LbaT = 2;
+
+    /// The file magic is "ArkFS VdevRaid\0\0"
+    const MAGIC: [u8; 16] = [0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64,
+                             0x65, 0x76, 0x52, 0x61, 0x69, 0x64, 0x00, 0x00];
+
     /// Create a new VdevRaid from unused files or devices
     ///
     /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
@@ -228,7 +259,7 @@ impl VdevRaid {
     /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
     ///                         disks may fail before the array becomes
     ///                         inoperable.
-    /// * `algorithm`:          The RAID layout algorithm to use.
+    /// * `layout_algorithm`:   The RAID layout algorithm to use.
     /// * `paths`:              Slice of pathnames of files and/or devices
     /// * `handle`:             Handle to the Tokio reactor that will be used to
     ///                         service this vdev.
@@ -237,15 +268,14 @@ impl VdevRaid {
                                   num_disks: i16,
                                   disks_per_stripe: i16,
                                   redundancy: i16,
-                                  algorithm: LayoutAlgorithm,
+                                  layout_algorithm: LayoutAlgorithm,
                                   paths: &[P],
                                   handle: Handle) -> Self {
-                  //blockdevs: Box<[VdevBlockLike]>) -> Self {
         let blockdevs = paths.iter().map(|path| {
             VdevBlock::create(path, handle.clone()).unwrap()
         }).collect::<Vec<_>>();
         VdevRaid::new(chunksize, num_disks, disks_per_stripe, redundancy,
-                      algorithm, blockdevs.into_boxed_slice(), handle)
+                      layout_algorithm, blockdevs.into_boxed_slice(), handle)
     }
 
     #[cfg(any(not(test), feature = "mocks"))]
@@ -253,12 +283,12 @@ impl VdevRaid {
            num_disks: i16,
            disks_per_stripe: i16,
            redundancy: i16,
-           algorithm: LayoutAlgorithm,
+           layout_algorithm: LayoutAlgorithm,
            blockdevs: Box<[VdevBlockLike]>,
            handle: Handle) -> Self {
 
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
-        let locator = Box::new(match algorithm {
+        let locator = Box::new(match layout_algorithm {
             LayoutAlgorithm::PrimeS =>
                 PrimeS::new(num_disks, disks_per_stripe, redundancy)
         });
@@ -287,7 +317,8 @@ impl VdevRaid {
             bd.optimum_queue_depth()
         }).sum::<u32>() / (codec.stripesize() as u32);
 
-        VdevRaid { chunksize, codec, locator, blockdevs, optimum_queue_depth,
+        VdevRaid { chunksize, codec, locator, blockdevs, layout_algorithm,
+                   optimum_queue_depth,
                    stripe_buffers: RefCell::new(BTreeMap::new()),
                    uuid, zero_region, handle }
     }
@@ -766,6 +797,39 @@ impl VdevRaid {
         // TODO: on error, record error statistics, and possibly fault a drive.
         Box::new(data_fut.join(parity_fut).map(move |_| {
             let _ = parity_dbses;   // Needs to live this long
+        }))
+    }
+
+    /// Asynchronously write this Vdev's label to all component devices
+    pub fn write_label(&mut self) -> Box<VdevFut> {
+        let label_size = VdevRaid::LABEL_LBAS as usize * BYTES_PER_LBA;
+        let dbs = DivBufShared::with_capacity(label_size);
+        let mut dbm = dbs.try_mut().unwrap();
+        let children_uuids = self.blockdevs.iter().map(|bd| bd.uuid())
+            .collect::<Vec<_>>();
+        let label = Label {
+            checksum: [0, 0, 0, 0, 0, 0, 0, 0], //TODO
+            data: LabelData {
+                uuid: self.uuid,
+                chunksize: self.chunksize,
+                disks_per_stripe: self.locator.stripesize(),
+                redundancy: self.locator.protection(),
+                layout_algorithm: self.layout_algorithm,
+                children: children_uuids
+            }
+        };
+        dbm.write_all(&VdevRaid::MAGIC).unwrap();
+        // ser::to_writer_packed would be more compact, but we're committed to
+        // burning an LBA anyway
+        serde_cbor::ser::to_writer(&mut dbm, &label).unwrap();
+        dbm.try_resize(label_size, 0).unwrap();
+        drop(dbm);
+        let futs = self.blockdevs.iter().map(|bd| {
+            // TODO: prevent user code from writing LBA 1
+            bd.write_at(dbs.try().unwrap(), 1)
+        }).collect::<Vec<_>>();
+        Box::new(future::join_all(futs).map(move |_| {
+            let _ = dbs;    // needs to live this long
         }))
     }
 
