@@ -9,6 +9,7 @@ use nix;
 use serde;
 use serde_cbor;
 use std::borrow::{Borrow, BorrowMut};
+use std::io;
 use std::io::Write;
 use std::path::Path;
 use tokio::reactor::Handle;
@@ -198,11 +199,11 @@ impl VdevFile {
     /// * `path`    Pathname for the file.  It may be a device node.
     /// * `h`       Handle to the Tokio reactor that will be used to service
     ///             this vdev.  
-    pub fn create<P: AsRef<Path>>(path: P, h: Handle) -> Self {
-        let f = File::open(path, h.clone()).unwrap();
+    pub fn create<P: AsRef<Path>>(path: P, h: Handle) -> io::Result<Self> {
+        let f = File::open(path, h.clone())?;
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
         let uuid = Uuid::new_v4();
-        VdevFile{file: f, handle: h, size, uuid}
+        Ok(VdevFile{file: f, handle: h, size, uuid})
     }
 
     pub fn open<P: AsRef<Path>>(path: P, h: Handle)

@@ -29,7 +29,7 @@ test_suite! {
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
             let pb = filename.to_path_buf();
-            let vdev = VdevFile::create(filename, Handle::current());
+            let vdev = VdevFile::create(filename, Handle::current()).unwrap();
             (vdev, pb, tempdir)
         }
     });
@@ -69,7 +69,7 @@ test_suite! {
         // Run the test
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
-        let vdev = VdevFile::create(path, Handle::current());
+        let vdev = VdevFile::create(path, Handle::current()).unwrap();
         t!(current_thread::block_on_all(future::lazy(|| {
             vdev.read_at(rbuf, 1)
         })));
@@ -93,7 +93,7 @@ test_suite! {
         let mut rbuf0 = dbs.try_mut().unwrap();
         let rbuf1 = rbuf0.split_off(1024);
         let rbufs = vec![rbuf0, rbuf1];
-        let vdev = VdevFile::create(path, Handle::current());
+        let vdev = VdevFile::create(path, Handle::current()).unwrap();
         t!(current_thread::block_on_all(future::lazy(|| {
             vdev.readv_at(rbufs, 1)
         })));
@@ -242,7 +242,7 @@ test_suite! {
     // Write the label, and compare to a golden master
     test write_label(fixture) {
         let mut vdev = VdevFile::create(fixture.val.0.clone(),
-                                        Handle::current());
+                                        Handle::current()).unwrap();
         t!(current_thread::block_on_all(future::lazy(|| {
             vdev.write_label()
         })));

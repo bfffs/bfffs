@@ -11,7 +11,6 @@ test_suite! {
 
     use arkfs::common::vdev::*;
     use arkfs::common::vdev_block::*;
-    use arkfs::sys::vdev_file::*;
     use divbuf::DivBufShared;
     use futures::future;
     use std::fs;
@@ -26,8 +25,7 @@ test_suite! {
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
-            let leaf = Box::new(VdevFile::create(filename, Handle::current()));
-            let vdev = VdevBlock::open(leaf, Handle::current());
+            let vdev = VdevBlock::create(filename, Handle::current()).unwrap();
             (vdev, tempdir)
         }
     });

@@ -12,10 +12,8 @@ test_suite! {
     name vdev_raid;
 
     use arkfs::common::*;
-    use arkfs::common::vdev_block::*;
     use arkfs::common::vdev_raid::*;
     use arkfs::common::vdev::Vdev;
-    use arkfs::sys::vdev_file::*;
     use divbuf::DivBufShared;
     use futures::{Future, future};
     use rand::{Rng, thread_rng};
@@ -40,15 +38,15 @@ test_suite! {
 
             let len = 1 << 30;  // 1 GB
             let tempdir = t!(TempDir::new("test_vdev_raid"));
-            let blockdevs : Vec<VdevBlock> = (0..*self.n).map(|i| {
+            let paths = (0..*self.n).map(|i| {
                 let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
                 let file = t!(fs::File::create(&fname));
                 t!(file.set_len(len));
-                let leaf = Box::new(VdevFile::create(fname, Handle::current()));
-                VdevBlock::open(leaf, Handle::current())
-            }).collect();
-            let mut vdev_raid = VdevRaid::new(*self.chunksize, *self.n, *self.k,
-                *self.f, LayoutAlgorithm::PrimeS, blockdevs.into_boxed_slice());
+                fname
+            }).collect::<Vec<_>>();
+            let mut vdev_raid = VdevRaid::create(*self.chunksize,
+                *self.n, *self.k, *self.f, LayoutAlgorithm::PrimeS, &paths,
+                Handle::default());
             current_thread::block_on_all(
                 vdev_raid.open_zone(0)
             ).expect("open_zone");

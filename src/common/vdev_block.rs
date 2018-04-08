@@ -7,7 +7,8 @@ use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::VecDeque;
-use std::{mem, ops, thread, time};
+use std::{io, mem, ops, thread, time};
+use std::path::Path;
 use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
 use tokio::reactor::Handle;
@@ -15,6 +16,7 @@ use uuid::Uuid;
 
 use common::*;
 use common::vdev::*;
+use sys::vdev_file::*;
 use common::vdev_leaf::*;
 
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -386,6 +388,16 @@ impl VdevBlock {
         assert!(lba + len / (BYTES_PER_LBA as u64) < self.size as u64)
     }
 
+    /// Create a new VdevBlock from an unused file or device
+    ///
+    /// * `path`:   A pathname to a file or device
+    /// * `handle`: Handle to the Tokio reactor that will be used to service
+    ///             this vdev.
+    pub fn create<P: AsRef<Path>>(path: P, handle: Handle) -> io::Result<Self> {
+        let leaf = Box::new(VdevFile::create(path, handle.clone())?);
+        Ok(VdevBlock::new(leaf, handle))
+    }
+
     /// Asynchronously erase a zone on a block device
     ///
     /// # Parameters
@@ -468,12 +480,12 @@ impl VdevBlock {
         Box::new(self.new_fut(block_op, receiver))
     }
 
-    /// Open a VdevBlock
+    /// Instantiate a new VdevBlock from an existing VdevLeaf
     ///
     /// * `leaf`    An already-open underlying VdevLeaf 
     // The 'static enforces that if the VdevLeaf implementor contains any
     // references, they must be 'static.
-    pub fn open<T: VdevLeaf + 'static>(leaf: Box<T>, handle: Handle) -> Self {
+    fn new<T: VdevLeaf + 'static>(leaf: Box<T>, handle: Handle) -> Self {
         let size = leaf.size();
         let inner = Rc::new(RefCell::new(Inner {
             delayed: None,
@@ -712,7 +724,7 @@ test_suite! {
         let dbs1 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
@@ -745,7 +757,7 @@ test_suite! {
         scenario.expect(seq0);
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.read_at(rbuf, 1)
         })).expect("test eagain_queue_depth_0");
@@ -762,7 +774,7 @@ test_suite! {
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.read_at(rbuf0, 2)
         })).unwrap();
@@ -779,7 +791,7 @@ test_suite! {
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = vec![dbs0.try_mut().unwrap()];
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.readv_at(rbuf0, 2)
         })).unwrap();
@@ -794,7 +806,7 @@ test_suite! {
                        .and_return(Box::new(future::ok::<(), nix::Error>(()))));
         scenario.expect(seq);
 
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.sync_all()
         })).unwrap();
@@ -804,7 +816,7 @@ test_suite! {
     // highest, then start over at lowest)
     test sched_data(mocks) {
         let leaf = mocks.val.1;
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         let mut inner = vdev.inner.borrow_mut();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
         let dummy_buffer = dummy_dbs.try().unwrap();
@@ -854,7 +866,7 @@ test_suite! {
     // An erase zone command should be scheduled after any reads from that zone
     test sched_erase_zone(mocks) {
         let leaf = mocks.val.1;
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         let mut inner = vdev.inner.borrow_mut();
         let dummy_dbs = DivBufShared::from(vec![0; 12288]);
         let mut dummy = dummy_dbs.try_mut().unwrap();
@@ -902,7 +914,7 @@ test_suite! {
     // A finish zone command should be scheduled after any writes to that zone
     test sched_finish_zone(mocks) {
         let leaf = mocks.val.1;
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         let mut inner = vdev.inner.borrow_mut();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
         let dummy = dummy_dbs.try().unwrap();
@@ -950,7 +962,7 @@ test_suite! {
     // An open zone command should be scheduled before any writes to that zone
     test sched_open_zone(mocks) {
         let leaf = mocks.val.1;
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         let mut inner = vdev.inner.borrow_mut();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
         let dummy = dummy_dbs.try().unwrap();
@@ -1001,7 +1013,7 @@ test_suite! {
     // previous commands and before all subsequent commands
     test sched_sync_all(mocks) {
         let leaf = mocks.val.1;
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         let mut inner = vdev.inner.borrow_mut();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
         let dummy_buffer = dummy_dbs.try().unwrap();
@@ -1062,7 +1074,7 @@ test_suite! {
         let dbs1 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
@@ -1105,7 +1117,7 @@ test_suite! {
         scenario.expect(seq);
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             // First schedule all operations.  There are too many to issue them
             // all immediately
@@ -1144,7 +1156,7 @@ test_suite! {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.write_at(wbuf, 1)
         })).unwrap();
@@ -1159,7 +1171,7 @@ test_suite! {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = vec![dbs.try().unwrap()];
-        let vdev = VdevBlock::open(leaf, Handle::current());
+        let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.writev_at(wbuf, 1)
         })).unwrap();

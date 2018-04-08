@@ -6,6 +6,7 @@ use common::vdev::*;
 use common::vdev_block::*;
 use common::raid::*;
 use common::declust::*;
+#[cfg(any(not(test), feature = "mocks"))]
 use common::prime_s::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
@@ -14,6 +15,8 @@ use nix::Error;
 use std::cell::RefCell;
 use std::{cmp, mem, ptr};
 use std::collections::BTreeMap;
+#[cfg(not(test))]
+use std::path::Path;
 use tokio::reactor::Handle;
 use uuid::Uuid;
 
@@ -34,6 +37,10 @@ pub type VdevBlockLike = Box<VdevBlockTrait>;
 #[doc(hidden)]
 pub type VdevBlockLike = VdevBlock;
 
+/// RAID placement algorithm.
+///
+/// This algorithm maps RAID chunks to specific disks and offsets.  It does not
+/// encode or decode parity.
 pub enum LayoutAlgorithm {
     /// A good declustered algorithm for any prime number of disks
     PrimeS,
@@ -137,6 +144,9 @@ pub struct VdevRaid {
     /// RAID codec
     codec: Codec,
 
+    /// Tokio reactor handle
+    handle: Handle,
+
     /// Locator, declustering or otherwise
     locator: Box<Locator>,
 
@@ -205,12 +215,47 @@ macro_rules! issue_1stripe_ops {
 }
 
 impl VdevRaid {
-    pub fn new(chunksize: LbaT,
-               num_disks: i16,
-               disks_per_stripe: i16,
-               redundancy: i16,
-               algorithm: LayoutAlgorithm,
-               blockdevs: Box<[VdevBlockLike]>) -> Self {
+    /// Create a new VdevRaid from unused files or devices
+    ///
+    /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
+    ///                         amount of data that will be read/written to a
+    ///                         single device before the `Locator` switches to
+    ///                         the next device.
+    /// * `num_disks`:          Total number of disks in the array
+    /// * `disks_per_stripe`:   Number of data plus parity chunks in each
+    ///                         self-contained RAID stripe.  Must be less than
+    ///                         or equal to `num_disks`.
+    /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
+    ///                         disks may fail before the array becomes
+    ///                         inoperable.
+    /// * `algorithm`:          The RAID layout algorithm to use.
+    /// * `paths`:              Slice of pathnames of files and/or devices
+    /// * `handle`:             Handle to the Tokio reactor that will be used to
+    ///                         service this vdev.
+    #[cfg(not(test))]
+    pub fn create<P: AsRef<Path>>(chunksize: LbaT,
+                                  num_disks: i16,
+                                  disks_per_stripe: i16,
+                                  redundancy: i16,
+                                  algorithm: LayoutAlgorithm,
+                                  paths: &[P],
+                                  handle: Handle) -> Self {
+                  //blockdevs: Box<[VdevBlockLike]>) -> Self {
+        let blockdevs = paths.iter().map(|path| {
+            VdevBlock::create(path, handle.clone()).unwrap()
+        }).collect::<Vec<_>>();
+        VdevRaid::new(chunksize, num_disks, disks_per_stripe, redundancy,
+                      algorithm, blockdevs.into_boxed_slice(), handle)
+    }
+
+    #[cfg(any(not(test), feature = "mocks"))]
+    fn new(chunksize: LbaT,
+           num_disks: i16,
+           disks_per_stripe: i16,
+           redundancy: i16,
+           algorithm: LayoutAlgorithm,
+           blockdevs: Box<[VdevBlockLike]>,
+           handle: Handle) -> Self {
 
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
         let locator = Box::new(match algorithm {
@@ -244,7 +289,7 @@ impl VdevRaid {
 
         VdevRaid { chunksize, codec, locator, blockdevs, optimum_queue_depth,
                    stripe_buffers: RefCell::new(BTreeMap::new()),
-                   uuid, zero_region }
+                   uuid, zero_region, handle }
     }
 
     /// Asynchronously erase a zone on a RAID device
@@ -792,7 +837,7 @@ fn min_max<I>(iterable: I) -> Option<(I::Item, I::Item)>
 
 impl Vdev for VdevRaid {
     fn handle(&self) -> Handle {
-        panic!("Unimplemented!  Perhaps handle() should not be part of Trait vdev, because it doesn't make sense for VdevRaid");
+        self.handle.clone()
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
@@ -1099,7 +1144,7 @@ fn vdev_raid_mismatched_clustsize() {
 
         let blockdevs = Vec::<Box<VdevBlockTrait>>::new();
         VdevRaid::new(16, n, k, f, LayoutAlgorithm::PrimeS,
-                      blockdevs.into_boxed_slice());
+                      blockdevs.into_boxed_slice(), Handle::default());
 }
 
 test_suite! {
@@ -1143,7 +1188,8 @@ test_suite! {
 
             let vdev_raid = VdevRaid::new(*self.chunksize, *self.n, *self.k,
                                           *self.f, LayoutAlgorithm::PrimeS,
-                                          blockdevs.into_boxed_slice());
+                                          blockdevs.into_boxed_slice(),
+                                          Handle::default());
             (s, vdev_raid)
         }
     });
@@ -1290,7 +1336,8 @@ fn read_at_one_stripe() {
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
                                       LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice());
+                                      blockdevs.into_boxed_slice(),
+                                      Handle::default());
         vdev_raid.open_zone(0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
@@ -1356,7 +1403,8 @@ fn write_at_one_stripe() {
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
                                       LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice());
+                                      blockdevs.into_boxed_slice(),
+                                      Handle::default());
         vdev_raid.open_zone(0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try().unwrap();
@@ -1423,7 +1471,8 @@ fn write_at_and_sync_all() {
 
     let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
                                   LayoutAlgorithm::PrimeS,
-                                  blockdevs.into_boxed_slice());
+                                  blockdevs.into_boxed_slice(),
+                                  Handle::default());
     vdev_raid.open_zone(0);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try().unwrap();
@@ -1473,7 +1522,8 @@ fn open_zone_zero_fill_wasted_chunks() {
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
                                       LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice());
+                                      blockdevs.into_boxed_slice(),
+                                      Handle::default());
         vdev_raid.open_zone(1);
 }
 
@@ -1527,7 +1577,8 @@ fn open_zone_zero_fill_wasted_stripes() {
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
                                       LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice());
+                                      blockdevs.into_boxed_slice(),
+                                      Handle::default());
         vdev_raid.open_zone(1);
 }
 }
