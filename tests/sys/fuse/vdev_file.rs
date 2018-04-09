@@ -150,7 +150,7 @@ test_suite! {
     }
 
     test read_after_write(vdev) {
-        let mut vd = vdev.val.0;
+        let vd = vdev.val.0;
         let dbsw = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbsw.try().unwrap();
         let dbsr = DivBufShared::from(vec![0u8; 4096]);
@@ -241,7 +241,7 @@ test_suite! {
 
     // Write the label, and compare to a golden master
     test write_label(fixture) {
-        let mut vdev = VdevFile::create(fixture.val.0.clone(),
+        let vdev = VdevFile::create(fixture.val.0.clone(),
                                         Handle::current()).unwrap();
         t!(current_thread::block_on_all(future::lazy(|| {
             vdev.write_label()

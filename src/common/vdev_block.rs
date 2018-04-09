@@ -566,7 +566,7 @@ impl VdevBlock {
         Box::new(self.new_fut(block_op, receiver))
     }
 
-    pub fn write_label(&mut self) -> Box<VdevFut> {
+    pub fn write_label(&self) -> Box<VdevFut> {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_label(sender);
         Box::new(self.new_fut(block_op, receiver))
@@ -667,9 +667,9 @@ test_suite! {
             fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
             fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
             fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
-            fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-            fn write_label(&mut self) -> Box<VdevFut>;
-            fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+            fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+            fn write_label(&self) -> Box<VdevFut>;
+            fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
         }
     }
 

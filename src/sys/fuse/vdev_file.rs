@@ -151,13 +151,13 @@ impl VdevLeaf for VdevFile {
         }))
     }
 
-    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         assert!(lba >= VdevFile::LABEL_LBAS, "Don't overwrite the label!");
         let container = Box::new(IoVecContainer(buf));
         self.write_at_unchecked(container, lba)
     }
 
-    fn write_label(&mut self) -> Box<VdevFut> {
+    fn write_label(&self) -> Box<VdevFut> {
         let label_size = VdevFile::LABEL_LBAS as usize * BYTES_PER_LBA;
         let mut buf = Vec::with_capacity(label_size);
         let label = Label {
@@ -176,7 +176,7 @@ impl VdevLeaf for VdevFile {
         self.write_at_unchecked(Box::new(buf), 0)
     }
 
-    fn writev_at(&mut self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
+    fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
         assert!(lba >= VdevFile::LABEL_LBAS, "Don't overwrite the label!");
         let off = lba as i64 * (BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
@@ -246,7 +246,7 @@ impl VdevFile {
             }))
     }
 
-    fn write_at_unchecked(&mut self, buf: Box<Borrow<[u8]>>,
+    fn write_at_unchecked(&self, buf: Box<Borrow<[u8]>>,
                           lba: LbaT) -> Box<VdevFut> {
         let off = lba as i64 * (BYTES_PER_LBA as i64);
         Box::new(self.file.write_at(buf, off).unwrap().map(|_| ()))

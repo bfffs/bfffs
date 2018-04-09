@@ -35,6 +35,7 @@ pub trait VdevBlockTrait : Vdev {
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+    fn write_label(&self) -> Box<VdevFut>;
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut>;
 }
 #[cfg(test)]
@@ -378,8 +379,8 @@ impl VdevRaid {
             }).nth(0).unwrap();
             let mut blockdevs = Vec::with_capacity(label.data.children.len());
             let num_disks = label.data.children.len() as i16;
-            for uuid in label.data.children {
-                match all_blockdevs.remove(&uuid) {
+            for child_uuid in label.data.children {
+                match all_blockdevs.remove(&child_uuid) {
                     Some(bd) => blockdevs.push(bd),
                     None => break,
                 }
@@ -389,7 +390,7 @@ impl VdevRaid {
                                  num_disks,
                                  label.data.disks_per_stripe,
                                  label.data.redundancy,
-                                 Uuid::new_v4(),
+                                 uuid,
                                  label.data.layout_algorithm,
                                  blockdevs.into_boxed_slice(),
                                  handle2))
@@ -878,7 +879,7 @@ impl VdevRaid {
     }
 
     /// Asynchronously write this Vdev's label to all component devices
-    pub fn write_label(&mut self) -> Box<VdevFut> {
+    pub fn write_label(&self) -> Box<VdevFut> {
         let label_size = VdevRaid::LABEL_LBAS as usize * BYTES_PER_LBA;
         let dbs = DivBufShared::with_capacity(label_size);
         let mut dbm = dbs.try_mut().unwrap();
@@ -903,7 +904,7 @@ impl VdevRaid {
         drop(dbm);
         let futs = self.blockdevs.iter().map(|bd| {
             // TODO: prevent user code from writing LBA 1
-            bd.write_at(dbs.try().unwrap(), 1)
+            bd.write_label().join(bd.write_at(dbs.try().unwrap(), 1))
         }).collect::<Vec<_>>();
         Box::new(future::join_all(futs).map(move |_| {
             let _ = dbs;    // needs to live this long
@@ -1272,6 +1273,7 @@ mock!{
         fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+        fn write_label(&self) -> Box<VdevFut>;
         fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
     }
 }

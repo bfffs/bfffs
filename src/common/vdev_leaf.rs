@@ -50,14 +50,14 @@ pub trait VdevLeaf : Vdev {
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually written.
-    fn write_at(&mut self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
 
     /// Asynchronously write this Vdev's label
-    fn write_label(&mut self) -> Box<VdevFut>;
+    fn write_label(&self) -> Box<VdevFut>;
 
     /// The asynchronous scatter/gather write function.
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    fn writev_at(&mut self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
 }
