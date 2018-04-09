@@ -7,7 +7,10 @@ use std::cell::RefCell;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::collections::BinaryHeap;
 use std::collections::VecDeque;
-use std::{io, mem, ops, thread, time};
+#[cfg(not(test))]
+use std::io;
+use std::{mem, ops, thread, time};
+#[cfg(not(test))]
 use std::path::Path;
 use std::rc::{Rc, Weak};
 use tokio::executor::current_thread;
@@ -16,8 +19,14 @@ use uuid::Uuid;
 
 use common::*;
 use common::vdev::*;
+#[cfg(not(test))]
 use sys::vdev_file::*;
 use common::vdev_leaf::*;
+
+#[cfg(test)]
+pub type VdevLeaf = Box<VdevLeafApi>;
+#[cfg(not(test))]
+pub type VdevLeaf = VdevFile;
 
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum Cmd {
@@ -145,7 +154,7 @@ struct Inner {
     queue_depth: u32,
 
     /// Underlying device
-    pub leaf: Box<VdevLeaf>,
+    pub leaf: VdevLeaf,
 
     /// The last LBA issued an operation
     last_lba: LbaT,
@@ -393,8 +402,9 @@ impl VdevBlock {
     /// * `path`:   A pathname to a file or device
     /// * `handle`: Handle to the Tokio reactor that will be used to service
     ///             this vdev.
+    #[cfg(not(test))]
     pub fn create<P: AsRef<Path>>(path: P, handle: Handle) -> io::Result<Self> {
-        let leaf = Box::new(VdevFile::create(path, handle.clone())?);
+        let leaf = VdevLeaf::create(path, handle.clone())?;
         Ok(VdevBlock::new(leaf, handle))
     }
 
@@ -483,9 +493,8 @@ impl VdevBlock {
     /// Instantiate a new VdevBlock from an existing VdevLeaf
     ///
     /// * `leaf`    An already-open underlying VdevLeaf 
-    // The 'static enforces that if the VdevLeaf implementor contains any
-    // references, they must be 'static.
-    fn new<T: VdevLeaf + 'static>(leaf: Box<T>, handle: Handle) -> Self {
+    #[cfg(any(not(test), feature = "mocks"))]
+    fn new(leaf: VdevLeaf, handle: Handle) -> Self {
         let size = leaf.size();
         let inner = Rc::new(RefCell::new(Inner {
             delayed: None,
@@ -512,11 +521,12 @@ impl VdevBlock {
     /// * `path`    Pathname for the backing file.  It may be a device node.
     /// * `h`       Handle to the Tokio reactor that will be used to service
     ///             this vdev.
+    #[cfg(not(test))]
     pub fn open<P: AsRef<Path>>(path: P, h: Handle)
         -> Box<Future<Item=Self, Error=nix::Error>> {
         Box::new(
-            VdevFile::open(path, h.clone()).map(|leaf| {
-                VdevBlock::new(Box::new(leaf), h)
+            VdevLeaf::open(path, h.clone()).map(|leaf| {
+                VdevBlock::new(leaf, h)
             })
         )
     }
@@ -661,7 +671,7 @@ test_suite! {
             fn zones(&self) -> ZoneT;
         },
         vdev_leaf,
-        trait VdevLeaf  {
+        trait VdevLeafApi  {
             fn erase_zone(&self, lba: LbaT) -> Box<VdevFut>;
             fn finish_zone(&self, lba: LbaT) -> Box<VdevFut>;
             fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;

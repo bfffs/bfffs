@@ -6,7 +6,7 @@ use common::vdev::*;
 /// vdevs are typically files or disks, and this trait is their minimum common
 /// interface.  I/O operations on `VdevLeaf` happen immediately; they are not
 /// scheduled.
-pub trait VdevLeaf : Vdev {
+pub trait VdevLeafApi : Vdev {
     /// Asynchronously erase the given zone.
     ///
     /// After this, the zone will be in the empty state.  The data may or may

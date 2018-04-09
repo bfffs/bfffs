@@ -117,7 +117,7 @@ impl Vdev for VdevFile {
     }
 }
 
-impl VdevLeaf for VdevFile {
+impl VdevLeafApi for VdevFile {
     fn erase_zone(&self, _lba: LbaT) -> Box<VdevFut> {
         // ordinary files don't have Zone operations
         Box::new(future::ok::<(), nix::Error>(()))
