@@ -199,7 +199,7 @@ impl VdevFile {
     ///
     /// * `path`    Pathname for the file.  It may be a device node.
     /// * `h`       Handle to the Tokio reactor that will be used to service
-    ///             this vdev.  
+    ///             this vdev.
     pub fn create<P: AsRef<Path>>(path: P, h: Handle) -> io::Result<Self> {
         let f = File::open(path, h.clone())?;
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
@@ -207,6 +207,11 @@ impl VdevFile {
         Ok(VdevFile{file: f, handle: h, size, uuid})
     }
 
+    /// Open an existing `VdevFile`
+    ///
+    /// * `path`    Pathname for the file.  It may be a device node.
+    /// * `h`       Handle to the Tokio reactor that will be used to service
+    ///             this vdev.
     pub fn open<P: AsRef<Path>>(path: P, h: Handle)
         -> Box<Future<Item=Self, Error=nix::Error>> {
 

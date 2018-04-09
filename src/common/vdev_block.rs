@@ -507,6 +507,20 @@ impl VdevBlock {
         }
     }
 
+    /// Open an existing `VdevBlock`
+    ///
+    /// * `path`    Pathname for the backing file.  It may be a device node.
+    /// * `h`       Handle to the Tokio reactor that will be used to service
+    ///             this vdev.
+    pub fn open<P: AsRef<Path>>(path: P, h: Handle)
+        -> Box<Future<Item=Self, Error=nix::Error>> {
+        Box::new(
+            VdevFile::open(path, h.clone()).map(|leaf| {
+                VdevBlock::new(Box::new(leaf), h)
+            })
+        )
+    }
+
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
