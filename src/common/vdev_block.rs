@@ -28,7 +28,7 @@ pub type VdevLeaf = Box<VdevLeafApi>;
 #[cfg(not(test))]
 pub type VdevLeaf = VdevFile;
 
-#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Debug)]
 enum Cmd {
     OpenZone,
     ReadAt(IoVecMut),
@@ -42,6 +42,49 @@ enum Cmd {
     WriteLabel,
     SyncAll,
 }
+
+impl Cmd {
+    // Oh, this would be so much easier if only `std::mem::Discriminant`
+    // implemented `Ord`!
+    fn discriminant(&self) -> i32 {
+        match *self {
+            Cmd::OpenZone => 0,
+            Cmd::ReadAt(_) => 1,
+            Cmd::ReadvAt(_) => 2,
+            Cmd::WriteAt(_) => 3,
+            Cmd::WritevAt(_) => 4,
+            Cmd::EraseZone(_) => 5,
+            Cmd::FinishZone(_) => 6,
+            Cmd::WriteLabel => 7,
+            Cmd::SyncAll => 8,
+        }
+    }
+}
+
+impl Eq for Cmd {
+}
+
+impl Ord for Cmd {
+    /// Compare `Cmd` type only, not contents
+    fn cmp(&self, other: &Cmd) -> Ordering {
+        self.discriminant().cmp(&other.discriminant())
+    }
+}
+
+impl PartialEq for Cmd {
+    /// Compare the `Cmd` type only, not its contents
+    fn eq(&self, other: &Cmd) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl PartialOrd for Cmd {
+    /// Compare the `Cmd` type only, not its contents
+    fn partial_cmp(&self, other: &Cmd) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 
 /// A single read or write command that is queued at the `VdevBlock` layer
 struct BlockOp {
