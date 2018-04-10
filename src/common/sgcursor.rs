@@ -9,8 +9,8 @@ use common::*;
 /// composed of.  It has two main purposes:
 ///
 /// - Immutably iterate through several `SGList`s simultaneously.  This is
-///   necessary for calculating parity for calculating parity when the data
-///   columns are `SGList`s instead of `IoVec`s.
+///   necessary for calculating parity when the data columns are `SGList`s
+///   instead of `IoVec`s.
 /// - Transform an `SGList` into another `SGList` with `IoVec` boundaries at
 ///   chosen locations (plus the original boundaries, too).  This is necessary
 ///   for splitting an `SGList` up into multiple columns.
