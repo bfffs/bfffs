@@ -42,9 +42,9 @@ pub type ClusterLike = cluster::Cluster;
 pub struct Cluster(cluster::Cluster);
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Label<'a> {
+struct Label {
     /// Human-readable name
-    name:               &'a str,
+    name:               String,
 
     /// Pool UUID, fixed at format time
     uuid:               Uuid,
@@ -231,7 +231,7 @@ impl<'a> Pool {
         let cluster_uuids = self.clusters.iter().map(|cluster| cluster.uuid())
             .collect::<Vec<_>>();
         let label = Label {
-            name: &self.name,
+            name: self.name.clone(),
             uuid: self.uuid,
             children: cluster_uuids
         };
