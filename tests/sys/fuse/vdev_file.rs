@@ -36,7 +36,8 @@ test_suite! {
 
     test lba2zone(vdev) {
         assert_eq!(vdev.val.0.lba2zone(0), None);
-        assert_eq!(vdev.val.0.lba2zone(1), Some(0));
+        assert_eq!(vdev.val.0.lba2zone(3), None);
+        assert_eq!(vdev.val.0.lba2zone(4), Some(0));
         assert_eq!(vdev.val.0.lba2zone((1 << 16) - 1), Some(0));
         assert_eq!(vdev.val.0.lba2zone(1 << 16), Some(1));
     }
@@ -46,7 +47,7 @@ test_suite! {
     }
 
     test zone_limits(vdev) {
-        assert_eq!(vdev.val.0.zone_limits(0), (1, 1 << 16));
+        assert_eq!(vdev.val.0.zone_limits(0), (4, 1 << 16));
         assert_eq!(vdev.val.0.zone_limits(1), (1 << 16, 2 << 16));
     }
 
@@ -61,7 +62,7 @@ test_suite! {
         let wbuf = vec![42u8; 4096];
         {
             let mut f = t!(fs::File::create(&path));
-            f.seek(SeekFrom::Start(4096)).unwrap();   // Skip the label
+            f.seek(SeekFrom::Start(4 * 4096)).unwrap();   // Skip the label
             t!(f.write_all(wbuf.as_slice()));
             t!(f.set_len(1 << 26));
         }
@@ -71,7 +72,7 @@ test_suite! {
         let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevFile::create(path, Handle::current()).unwrap();
         t!(current_thread::block_on_all(future::lazy(|| {
-            vdev.read_at(rbuf, 1)
+            vdev.read_at(rbuf, 4)
         })));
         assert_eq!(dbs.try().unwrap(), wbuf[..]);
     }
@@ -83,7 +84,7 @@ test_suite! {
         let wbuf = vec![42u8; 4096];
         {
             let mut f = t!(fs::File::create(&path));
-            f.seek(SeekFrom::Start(4096)).unwrap();   // Skip the label
+            f.seek(SeekFrom::Start(4 * 4096)).unwrap();   // Skip the label
             t!(f.write_all(wbuf.as_slice()));
             t!(f.set_len(1 << 26));
         }
@@ -95,7 +96,7 @@ test_suite! {
         let rbufs = vec![rbuf0, rbuf1];
         let vdev = VdevFile::create(path, Handle::current()).unwrap();
         t!(current_thread::block_on_all(future::lazy(|| {
-            vdev.readv_at(rbufs, 1)
+            vdev.readv_at(rbufs, 4)
         })));
         assert_eq!(dbs.try().unwrap(), wbuf[..]);
     }
@@ -105,10 +106,10 @@ test_suite! {
         let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
         t!(current_thread::block_on_all(future::lazy(|| {
-            vdev.val.0.write_at(wbuf.clone(), 1)
+            vdev.val.0.write_at(wbuf.clone(), 4)
         })));
         let mut f = t!(fs::File::open(vdev.val.1));
-        f.seek(SeekFrom::Start(4096)).unwrap();   // Skip the label
+        f.seek(SeekFrom::Start(4 * 4096)).unwrap();   // Skip the label
         t!(f.read_exact(&mut rbuf));
         assert_eq!(rbuf, wbuf.deref().deref());
     }
@@ -125,10 +126,10 @@ test_suite! {
         let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
         t!(current_thread::block_on_all(future::lazy(|| {
-            vdev.val.0.write_at(wbuf.clone(), 2)
+            vdev.val.0.write_at(wbuf.clone(), 5)
         })));
         let mut f = t!(fs::File::open(vdev.val.1));
-        t!(f.seek(SeekFrom::Start(8192)));
+        t!(f.seek(SeekFrom::Start(5 * 4096)));
         t!(f.read_exact(&mut rbuf));
         assert_eq!(rbuf, wbuf.deref().deref());
     }
@@ -140,10 +141,10 @@ test_suite! {
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let mut rbuf = vec![0u8; 4096];
         t!(current_thread::block_on_all(future::lazy(|| {
-            vdev.val.0.writev_at(wbufs, 1)
+            vdev.val.0.writev_at(wbufs, 4)
         })));
         let mut f = t!(fs::File::open(vdev.val.1));
-        t!(f.seek(SeekFrom::Start(4096)));
+        t!(f.seek(SeekFrom::Start(4 * 4096)));
         t!(f.read_exact(&mut rbuf));
         assert_eq!(&rbuf[0..1024], wbuf0.deref().deref());
         assert_eq!(&rbuf[1024..4096], wbuf1.deref().deref());
@@ -156,9 +157,9 @@ test_suite! {
         let dbsr = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbsr.try_mut().unwrap();
         t!(current_thread::block_on_all(future::lazy(|| {
-            vd.write_at(wbuf.clone(), 1)
+            vd.write_at(wbuf.clone(), 4)
                 .and_then(|_| {
-                    vd.read_at(rbuf, 1)
+                    vd.read_at(rbuf, 4)
                 })
         })));
         assert_eq!(wbuf, dbsr.try().unwrap());

@@ -66,7 +66,7 @@ impl Vdev for VdevFile {
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        if lba >= VdevFile::LABEL_LBAS {
+        if lba >= LABEL_LBAS {
             Some((lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT)
         } else {
             None
@@ -92,8 +92,7 @@ impl Vdev for VdevFile {
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         if zone == 0 {
-            (VdevFile::LABEL_LBAS,
-             u64::from(VdevFile::LABEL_LBAS) * VdevFile::LBAS_PER_ZONE)
+            (LABEL_LBAS, VdevFile::LBAS_PER_ZONE)
         } else {
             (u64::from(zone) * VdevFile::LBAS_PER_ZONE,
              u64::from(zone + 1) * VdevFile::LBAS_PER_ZONE)
@@ -140,7 +139,7 @@ impl VdevLeafApi for VdevFile {
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
-        assert!(lba >= VdevFile::LABEL_LBAS, "Don't overwrite the label!");
+        assert!(lba >= LABEL_LBAS, "Don't overwrite the label!");
         let container = Box::new(IoVecContainer(buf));
         self.write_at_unchecked(container, lba)
     }
@@ -175,7 +174,6 @@ impl VdevLeafApi for VdevFile {
 impl VdevFile {
     /// Size of a simulated zone
     const LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
-    const LABEL_LBAS: LbaT = 1;
 
     /// Create a new Vdev, backed by a file
     ///
@@ -203,8 +201,7 @@ impl VdevFile {
         let f = File::open(path, h.clone()).unwrap();
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
 
-        let label_size = VdevFile::LABEL_LBAS as usize * BYTES_PER_LBA;
-        let dbs = DivBufShared::from(vec![0u8; label_size]);
+        let dbs = DivBufShared::from(vec![0u8; LABEL_SIZE]);
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
         Box::new(f.read_at(container, 0).unwrap()

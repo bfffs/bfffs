@@ -13,9 +13,10 @@ const MAGIC_LEN: usize = 16;
 /// The file magic is "ArkFS Vdev\0\0\0\0\0\0"
 const MAGIC: [u8; MAGIC_LEN] = [0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64,
                                 0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-// With 233 or more devices, the VdevRaid label will spill over onto two LBAs
-const LABEL_LBAS: LbaT = 2;
-const LABEL_SIZE: usize = LABEL_LBAS as usize * BYTES_PER_LBA;
+// Actual label size is about 17 bytes for each RAID member plus 17 bytes for
+// each Cluster, plus a couple hundred bytes more.
+pub const LABEL_LBAS: LbaT = 4;
+pub const LABEL_SIZE: usize = LABEL_LBAS as usize * BYTES_PER_LBA;
 
 /// Used to read successive structs out of the label
 pub struct LabelReader {
