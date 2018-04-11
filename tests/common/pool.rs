@@ -18,23 +18,25 @@ test_suite! {
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
 
-    const GOLDEN_POOL_LABEL: [u8; 67] = [
+    const GOLDEN_POOL_LABEL: [u8; 81] = [
         // Past the VdevRaid::Label, we have a VdevRaid::Label
-                                                  0xa2,// ...B....
-        0x64, 0x75, 0x75, 0x69, 0x64, 0x50,
+                                                  0xa3,// ...B....
+        0x64, 0x6e, 0x61, 0x6d, 0x65, 0x68, 0x54, 0x65,// dnamehTe
+        0x73, 0x74, 0x50, 0x6f, 0x6f, 0x6c, 0x64, 0x75,// stPooldu
+        0x75, 0x69, 0x64, 0x50,
         // This is the pool UUID
-                                            0x13, 0xac,// duuidP..
-        0x27, 0x3a, 0x6c, 0x96, 0x4c, 0xdf, 0xbf, 0x1e,// ':l.L...
-        0xd8, 0x07, 0x79, 0x19, 0x69, 0x6c,
+                                0xff, 0x68, 0xe4, 0x59,// uidP.h.Y
+        0xea, 0xf8, 0x43, 0xc4, 0x84, 0xcb, 0xee, 0xe9,// ..C.....
+        0xdb, 0x56, 0x1b, 0x49,
         // UUID over, here's the rest of the label
-                                            0x68, 0x63,// ..y.ilhc
-        0x68, 0x69, 0x6c, 0x64, 0x72, 0x65, 0x6e, 0x82,// hildren.
+                                0x68, 0x63, 0x68, 0x69,// .V.Ihchi
+        0x6c, 0x64, 0x72, 0x65, 0x6e, 0x82,
         // These are the Cluster UUIDs
-        0x50, 0xd7, 0xca, 0x7a, 0xb7, 0xea, 0xb5, 0x47,// P..z...G
-        0x61, 0xb5, 0x97, 0xc6, 0x6a, 0x79, 0x33, 0xc0,// a...jy3.
-        0x7a, 0x50, 0x29, 0x86, 0x19, 0xc7, 0xc2, 0x63,// zP)....c
-        0x4e, 0x2a, 0x99, 0x8f, 0x16, 0x56, 0x19, 0x86,// N*...V..
-        0xd0, 0xf8
+                                            0x50, 0x6a,// ldren.Pj
+        0xc9, 0x59, 0x54, 0xf1, 0xf4, 0x4b, 0xd2, 0x96,// .YT..K..
+        0x97, 0x24, 0x38, 0x4a, 0xac, 0x9f, 0x87, 0x50,// .$8J...P
+        0xcb, 0xef, 0x21, 0x74, 0x43, 0xff, 0x41, 0xf5,// ..!tC.A.
+        0xbc, 0x72, 0x40, 0x33, 0xa9, 0x72, 0x89, 0x69,// .r@3.r.i
     ];
 
     fixture!( objects() -> (Pool, TempDir, Vec<String>) {
@@ -51,7 +53,7 @@ test_suite! {
             let clusters = paths.iter().map(|p| {
                 Pool::create_cluster(1, 1, 1, 0, &[p][..], Handle::default())
             }).collect::<Vec<_>>();;
-            let pool = Pool::create(clusters);
+            let pool = Pool::create("TestPool".to_string(), clusters);
             (pool, tempdir, paths)
         }
     });
@@ -67,10 +69,10 @@ test_suite! {
             f.read_exact(&mut v).unwrap();
             // Compare against the golden master, skipping the checksum and UUID
             // fields
-            assert_eq!(&v[0..7], &GOLDEN_POOL_LABEL[0..7]);
-            assert_eq!(&v[23..33], &GOLDEN_POOL_LABEL[23..33]);
+            assert_eq!(&v[0..21], &GOLDEN_POOL_LABEL[0..21]);
+            assert_eq!(&v[38..48], &GOLDEN_POOL_LABEL[38..48]);
             // Rest of the buffer should be zero-filled
-            assert!(v[67..].iter().all(|&x| x == 0));
+            assert!(v[81..].iter().all(|&x| x == 0));
         }
     }
 }

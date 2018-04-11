@@ -42,7 +42,10 @@ pub type ClusterLike = cluster::Cluster;
 pub struct Cluster(cluster::Cluster);
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Label {
+struct Label<'a> {
+    /// Human-readable name
+    name:               &'a str,
+
     /// Pool UUID, fixed at format time
     uuid:               Uuid,
 
@@ -99,6 +102,9 @@ impl Stats {
 pub struct Pool {
     clusters: Vec<ClusterLike>,
 
+    /// Human-readable pool name.  Must be unique on any one system.
+    name: String,
+
     stats: RefCell<Stats>,
 
     uuid: Uuid,
@@ -133,8 +139,8 @@ impl<'a> Pool {
     }
 
     #[cfg(not(test))]
-    pub fn create(clusters: Vec<Cluster>) -> Self {
-        Pool::new(clusters.into_iter().map(|c| c.0).collect::<Vec<_>>())
+    pub fn create(name: String, clusters: Vec<Cluster>) -> Self {
+        Pool::new(name, clusters.into_iter().map(|c| c.0).collect::<Vec<_>>())
     }
 
     /// Mark `length` LBAs beginning at LBA `lba` on cluster `cluster` as
@@ -153,7 +159,7 @@ impl<'a> Pool {
     /// Construct a new `Pool` from some already constructed
     /// [`Cluster`](struct.Cluster.html)s
     #[cfg(any(not(test), feature = "mocks"))]
-    fn new(clusters: Vec<ClusterLike>) -> Self {
+    fn new(name: String, clusters: Vec<ClusterLike>) -> Self {
         let size: Vec<_> = clusters.iter()
             .map(|cluster| cluster.size())
             .collect();
@@ -170,7 +176,7 @@ impl<'a> Pool {
         });
         // TODO: get uuid from label
         let uuid = Uuid::new_v4();
-        Pool{clusters, stats, uuid}
+        Pool{name, clusters, stats, uuid}
     }
 
     /// Asynchronously read from the pool
@@ -225,6 +231,7 @@ impl<'a> Pool {
         let cluster_uuids = self.clusters.iter().map(|cluster| cluster.uuid())
             .collect::<Vec<_>>();
         let label = Label {
+            name: &self.name,
             uuid: self.uuid,
             children: cluster_uuids
         };
@@ -279,7 +286,7 @@ mod pool {
             .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
         );
 
-        let pool = Pool::new(vec![Box::new(cluster)]);
+        let pool = Pool::new("foo".to_string(), vec![Box::new(cluster)]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
