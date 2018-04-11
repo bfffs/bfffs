@@ -36,10 +36,6 @@ pub trait Vdev {
     /// of scale, either.
     fn optimum_queue_depth(&self) -> u32;
 
-    // /// Write a label to the beginning of the Vdev containing all of the
-    // /// information needed to reload this Vdev following unmount of crash
-    //fn serialize(&self) -> Box<VdevFut> ;
-
     /// Return approximately the usable space of the Vdev in LBAs.
     ///
     /// Actual usable space may be slightly different due to alignment issues,
