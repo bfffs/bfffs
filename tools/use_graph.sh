@@ -26,6 +26,7 @@ for f in `find $SRC -name '*.rs'`; do
 		/^use .*{/ {
 			sub(/use /, "", $0);
 			gsub(/::/, "/", $0);
+			sub(/sys\//, "sys/fuse/", $0);
 			prefix=$0
 			tail=$0
 			sub(/\/?\{.*/, "", prefix);
@@ -41,10 +42,12 @@ for f in `find $SRC -name '*.rs'`; do
 			else
 				for (mod in modules)
 					print prefix, modules[mod]
-		}		/^use / {
+		}
+		/^use / {
 			sub(/(::\*)?;/, "", $2);
 			sub(/^::/, "", $2);
 			gsub(/::/, "/", $2);
+			sub(/sys\//, "sys/fuse/", $2);
 			print $2
 		}' $f`
 	for u in $uses; do
