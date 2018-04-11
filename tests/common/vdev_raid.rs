@@ -467,6 +467,7 @@ test_suite! {
 test_suite! {
     name persistence;
 
+    use arkfs::common::label::*;
     use arkfs::common::vdev_raid::*;
     use arkfs::common::vdev::Vdev;
     use futures::future;
@@ -534,18 +535,20 @@ test_suite! {
         let (old_raid, _tempdir, paths) = raid.val;
         let uuid = old_raid.uuid();
         current_thread::block_on_all(future::lazy(|| {
-            old_raid.write_label()
+            let label_writer = LabelWriter::new();
+            old_raid.write_label(label_writer)
         })).unwrap();
         drop(old_raid);
         let vdev_raid = current_thread::block_on_all(future::lazy(|| {
             VdevRaid::open(uuid, paths, Handle::default())
-        })).unwrap();
+        })).unwrap().0;
         assert_eq!(uuid, vdev_raid.uuid());
     }
     
     test write_label(raid()) {
         current_thread::block_on_all(future::lazy(|| {
-            raid.val.0.write_label()
+            let label_writer = LabelWriter::new();
+            raid.val.0.write_label(label_writer)
         })).unwrap();
         for path in raid.val.2 {
             let mut f = fs::File::open(path).unwrap();

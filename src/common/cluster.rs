@@ -1,6 +1,7 @@
 // vim: tw=80
 
 use common::*;
+use common::label::*;
 use common::vdev::{Vdev, VdevFut};
 #[cfg(not(test))]
 use common::vdev_raid::*;
@@ -9,6 +10,10 @@ use nix::{Error, errno};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::btree_map::Keys;
+#[cfg(not(test))]
+use std::path::Path;
+#[cfg(not(test))]
+use tokio::reactor::Handle;
 use uuid::Uuid;
 
 pub type ClusterFut<'a> = Future<Item = (), Error = Error> + 'a;
@@ -22,6 +27,7 @@ pub trait VdevRaidTrait : Vdev {
     fn open_zone(&self, zone: ZoneT) -> Box<VdevFut>;
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> Box<VdevFut>;
+    fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
 }
 #[cfg(test)]
 pub type VdevRaidLike = Box<VdevRaidTrait>;
@@ -324,6 +330,28 @@ impl<'a> Cluster {
         Cluster{fsm: RefCell::new(FreeSpaceMap::new(vdev.zones())), vdev}
     }
 
+    /// Open an existing `Cluster`
+    ///
+    /// Returns both a new `Cluster` object, and a `LabelReader` that may be
+    /// used to construct other vdevs stacked on top of this one.
+    ///
+    /// * `uuid`:   UUID of the desired `VdevRaid`
+    /// * `paths`:  Pathnames to search for the `VdevRaid`.  All child devices
+    ///             must be present.
+    /// * `h`:      Handle to the Tokio reactor that will be used to service
+    ///             this vdev.
+    #[cfg(not(test))]
+    pub fn open<P>(uuid: Uuid, paths: Vec<P>, handle: Handle)
+        -> Box<Future<Item=(Self, LabelReader), Error=Error>>
+        where P: AsRef<Path> + 'static {
+
+        Box::new(
+            VdevRaid::open(uuid, paths, handle).map(|(vdev_raid, reader)| {
+                (Cluster::new(vdev_raid), reader)
+            })
+        )
+    }
+
     /// Returns the "best" number of operations to queue to this `Cluster`.  A
     /// smaller number may result in inefficient use of resources, or even
     /// starvation.  A larger number won't hurt, but won't accrue any economies
@@ -407,6 +435,11 @@ impl<'a> Cluster {
             (lba, fut)
         }).ok_or(Error::Sys(errno::Errno::ENOSPC))
     }
+
+    /// Asynchronously write this Vdev's label to all component devices
+    pub fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut> {
+        self.vdev.write_label(labeller)
+    }
 }
 
 #[cfg(test)]
@@ -442,6 +475,7 @@ mod cluster {
             fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
             fn write_at(&self, buf: IoVec, zone: ZoneT,
                         lba: LbaT) -> Box<VdevFut>;
+            fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
         }
     }
 

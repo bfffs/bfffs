@@ -314,6 +314,9 @@ impl VdevRaid {
 
     /// Open an existing `VdevRaid`
     ///
+    /// Returns both a new `VdevRaid` object, and a `LabelReader` that may be
+    /// used to construct other vdevs stacked on top of this one.
+    ///
     /// * `uuid`:   UUID of the desired `VdevRaid`
     /// * `paths`:  Pathnames to search for the `VdevRaid`.  All child devices
     ///             must be present.
@@ -321,7 +324,7 @@ impl VdevRaid {
     ///             this vdev.
     #[cfg(not(test))]
     pub fn open<P>(uuid: Uuid, paths: Vec<P>, handle: Handle)
-        -> Box<Future<Item=Self, Error=Error>>
+        -> Box<Future<Item=(Self, LabelReader), Error=Error>>
         where P: AsRef<Path> + 'static {
 
         let handle2 = handle.clone();
@@ -331,31 +334,33 @@ impl VdevRaid {
             VdevBlock::open(path, handle.clone())
         })).and_then(move |blockdevs| {
             let mut all_blockdevs = blockdevs.into_iter().map(|(bd, reader)| {
-                (bd.uuid(), (bd, reader))
-            }).collect::<BTreeMap<Uuid, (VdevBlock, LabelReader)>>();
-            let raid_label = all_blockdevs.iter_mut().map(|(_, v)| {
-                let label: Label = v.1.deserialize().unwrap();
-                label
-            }).filter(|label| label.uuid == uuid)
+                (bd.uuid(), (bd, Some(reader)))
+            }).collect::<BTreeMap<Uuid, (VdevBlock, Option<LabelReader>)>>();
+            let (rlabel, label_reader) = all_blockdevs.iter_mut().map(|(_, v)| {
+                let mut label_reader = v.1.take().unwrap();
+                let label: Label = label_reader.deserialize().unwrap();
+                (label, label_reader)
+            }).filter(|&(ref label, _)| label.uuid == uuid)
             .nth(0).unwrap();
 
-            let mut blockdevs = Vec::with_capacity(raid_label.children.len());
-            let num_disks = raid_label.children.len() as i16;
-            for child_uuid in raid_label.children {
+            let mut blockdevs = Vec::with_capacity(rlabel.children.len());
+            let num_disks = rlabel.children.len() as i16;
+            for child_uuid in rlabel.children {
                 match all_blockdevs.remove(&child_uuid) {
                     Some(bd) => blockdevs.push(bd.0),
                     None => break,
                 }
             }
             if blockdevs.len() == num_disks as usize {
-                Ok(VdevRaid::new(raid_label.chunksize,
-                                 num_disks,
-                                 raid_label.disks_per_stripe,
-                                 raid_label.redundancy,
-                                 uuid,
-                                 raid_label.layout_algorithm,
-                                 blockdevs.into_boxed_slice(),
-                                 handle2))
+                Ok((VdevRaid::new(rlabel.chunksize,
+                                  num_disks,
+                                  rlabel.disks_per_stripe,
+                                  rlabel.redundancy,
+                                  uuid,
+                                  rlabel.layout_algorithm,
+                                  blockdevs.into_boxed_slice(),
+                                  handle2),
+                   label_reader))
             } else {
                 // Some block devices weren't found
                 Err(Error::Sys(errno::Errno::ENOENT))
@@ -841,8 +846,7 @@ impl VdevRaid {
     }
 
     /// Asynchronously write this Vdev's label to all component devices
-    pub fn write_label(&self) -> Box<VdevFut> {
-        let mut labeller = LabelWriter::new();
+    pub fn write_label(&self, mut labeller: LabelWriter) -> Box<VdevFut> {
         let children_uuids = self.blockdevs.iter().map(|bd| bd.uuid())
             .collect::<Vec<_>>();
         let label = Label {

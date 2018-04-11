@@ -2,9 +2,11 @@
 
 use common::*;
 use common::cluster::*;
+use common::label::*;
 use futures::{Future, future};
 use nix::Error;
 use std::cell::RefCell;
+use uuid::Uuid;
 
 pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 
@@ -20,13 +22,24 @@ pub trait ClusterTrait {
     fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>>;
     fn size(&self) -> LbaT;
     fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
+    fn uuid(&self) -> Uuid;
     fn write(&self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'static>>), Error>;
+    fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
 }
 #[cfg(test)]
 pub type ClusterLike = Box<ClusterTrait>;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type ClusterLike = Cluster;
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Label {
+    /// Pool UUID, fixed at format time
+    uuid:               Uuid,
+
+    /// `UUID`s of all component `VdevRaid`s
+    children:           Vec<Uuid>
+}
 
 struct Stats {
     /// The queue depth of each `Cluster`, including both commands that have
@@ -39,8 +52,8 @@ struct Stats {
     /// The total size of each `Cluster`
     size: Vec<LbaT>,
 
-    /// The total percentage of allocated space in each `Cluster`, excluding space
-    /// that has already been freed but not erased.
+    /// The total percentage of allocated space in each `Cluster`, excluding
+    /// space that has already been freed but not erased.
     allocated_space: Vec<u64>,
 }
 
@@ -77,7 +90,9 @@ impl Stats {
 pub struct Pool {
     clusters: Vec<ClusterLike>,
 
-    stats: RefCell<Stats>
+    stats: RefCell<Stats>,
+
+    uuid: Uuid,
 }
 
 impl<'a> Pool {
@@ -94,7 +109,7 @@ impl<'a> Pool {
         self.clusters[cluster as usize].free(lba, length)
     }
 
-    /// Construct a new `Pool` from a some already constructed
+    /// Construct a new `Pool` from some already constructed
     /// [`Cluster`](struct.Cluster.html)s
     pub fn new(clusters: Vec<ClusterLike>) -> Self {
         let size: Vec<_> = clusters.iter()
@@ -111,7 +126,9 @@ impl<'a> Pool {
             queue_depth,
             size
         });
-        Pool{clusters, stats}
+        // TODO: get uuid from label
+        let uuid = Uuid::new_v4();
+        Pool{clusters, stats, uuid}
     }
 
     /// Asynchronously read from the pool
@@ -159,6 +176,24 @@ impl<'a> Pool {
                 (cluster, lba, fut)
             })
     }
+
+    /// Asynchronously write this `Pool`'s label to all component devices
+    pub fn write_label(&self) -> Box<PoolFut> {
+        let mut labeller = LabelWriter::new();
+        let cluster_uuids = self.clusters.iter().map(|cluster| cluster.uuid())
+            .collect::<Vec<_>>();
+        let label = Label {
+            uuid: self.uuid,
+            children: cluster_uuids
+        };
+        let dbs = labeller.serialize(label);
+        let futs = self.clusters.iter().map(|cluster| {
+            cluster.write_label(labeller.clone())
+        }).collect::<Vec<_>>();
+        Box::new(future::join_all(futs).map(move |_| {
+            let _ = dbs;    // needs to live this long
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -182,7 +217,9 @@ mod pool {
             fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>>;
             fn size(&self) -> LbaT;
             fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
+            fn uuid(&self) -> Uuid;
             fn write(&self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'static>>), Error>;
+            fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
         }
     }
 
