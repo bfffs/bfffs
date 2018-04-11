@@ -297,6 +297,33 @@ impl<'a> Cluster {
         }).collect::<Vec<_>>()
     }
 
+    /// Create a new `Cluster` from unused files or devices
+    ///
+    /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
+    ///                         amount of data that will be read/written to a
+    ///                         single device before the `Locator` switches to
+    ///                         the next device.
+    /// * `num_disks`:          Total number of disks in the array
+    /// * `disks_per_stripe`:   Number of data plus parity chunks in each
+    ///                         self-contained RAID stripe.  Must be less than
+    ///                         or equal to `num_disks`.
+    /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
+    ///                         disks may fail before the array becomes
+    ///                         inoperable.
+    /// * `paths`:              Slice of pathnames of files and/or devices
+    /// * `handle`:             Handle to the Tokio reactor that will be used to
+    ///                         service this vdev.
+    #[cfg(not(test))]
+    pub fn create<P: AsRef<Path>>(chunksize: LbaT,
+                                  num_disks: i16,
+                                  disks_per_stripe: i16,
+                                  redundancy: i16,
+                                  paths: &[P],
+                                  handle: Handle) -> Self {
+        Cluster::new(VdevRaid::create(chunksize, num_disks, disks_per_stripe,
+                                      redundancy, paths, handle))
+    }
+
     /// Delete the underlying storage for a Zone.
     pub fn erase_zone(&mut self, zone: ZoneT) -> Box<ClusterFut<'static>> {
         self.fsm.borrow_mut().erase_zone(zone);
@@ -326,7 +353,8 @@ impl<'a> Cluster {
 
     /// Construct a new `Cluster` from an already constructed
     /// [`VdevRaid`](struct.VdevRaid.html)
-    pub fn new(vdev: VdevRaidLike) -> Self {
+    #[cfg(any(not(test), feature = "mocks"))]
+    fn new(vdev: VdevRaidLike) -> Self {
         Cluster{fsm: RefCell::new(FreeSpaceMap::new(vdev.zones())), vdev}
     }
 

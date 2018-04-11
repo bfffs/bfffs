@@ -1,11 +1,16 @@
 // vim: tw=80
 
 use common::*;
-use common::cluster::*;
+#[cfg(not(test))]
+use common::cluster;
 use common::label::*;
 use futures::{Future, future};
 use nix::Error;
 use std::cell::RefCell;
+#[cfg(not(test))]
+use std::path::Path;
+#[cfg(not(test))]
+use tokio::reactor::Handle;
 use uuid::Uuid;
 
 pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
@@ -16,21 +21,25 @@ pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 /// than in the non-test version.  This is because mockers doesn't work with
 /// parameterized traits.
 pub trait ClusterTrait {
-    fn erase_zone(&mut self, zone: ZoneT) -> Box<ClusterFut<'static>>;
+    fn erase_zone(&mut self, zone: ZoneT) -> Box<PoolFut<'static>>;
     fn free(&self, lba: LbaT, length: LbaT);
     fn optimum_queue_depth(&self) -> u32;
-    fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>>;
+    fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
     fn size(&self) -> LbaT;
     fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
     fn uuid(&self) -> Uuid;
-    fn write(&self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'static>>), Error>;
-    fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
+    fn write(&self, buf: IoVec) -> Result<(LbaT, Box<PoolFut<'static>>), Error>;
+    fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut<'static>>;
 }
 #[cfg(test)]
 pub type ClusterLike = Box<ClusterTrait>;
 #[cfg(not(test))]
 #[doc(hidden)]
-pub type ClusterLike = Cluster;
+pub type ClusterLike = cluster::Cluster;
+
+/// Opaque helper type used for `Pool::create`
+#[cfg(not(test))]
+pub struct Cluster(cluster::Cluster);
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
@@ -96,6 +105,38 @@ pub struct Pool {
 }
 
 impl<'a> Pool {
+    /// Create a new `Cluster` from unused files or devices
+    ///
+    /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
+    ///                         amount of data that will be read/written to a
+    ///                         single device before the `Locator` switches to
+    ///                         the next device.
+    /// * `num_disks`:          Total number of disks in the array
+    /// * `disks_per_stripe`:   Number of data plus parity chunks in each
+    ///                         self-contained RAID stripe.  Must be less than
+    ///                         or equal to `num_disks`.
+    /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
+    ///                         disks may fail before the array becomes
+    ///                         inoperable.
+    /// * `paths`:              Slice of pathnames of files and/or devices
+    /// * `handle`:             Handle to the Tokio reactor that will be used to
+    ///                         service this vdev.
+    #[cfg(not(test))]
+    pub fn create_cluster<P: AsRef<Path>>(chunksize: LbaT,
+                               num_disks: i16,
+                               disks_per_stripe: i16,
+                               redundancy: i16,
+                               paths: &[P],
+                               handle: Handle) -> Cluster {
+        Cluster(cluster::Cluster::create(chunksize, num_disks, disks_per_stripe,
+                                         redundancy, paths, handle))
+    }
+
+    #[cfg(not(test))]
+    pub fn create(clusters: Vec<Cluster>) -> Self {
+        Pool::new(clusters.into_iter().map(|c| c.0).collect::<Vec<_>>())
+    }
+
     /// Mark `length` LBAs beginning at LBA `lba` on cluster `cluster` as
     /// unused, but do not delete them from the underlying storage.
     ///
@@ -111,7 +152,8 @@ impl<'a> Pool {
 
     /// Construct a new `Pool` from some already constructed
     /// [`Cluster`](struct.Cluster.html)s
-    pub fn new(clusters: Vec<ClusterLike>) -> Self {
+    #[cfg(any(not(test), feature = "mocks"))]
+    fn new(clusters: Vec<ClusterLike>) -> Self {
         let size: Vec<_> = clusters.iter()
             .map(|cluster| cluster.size())
             .collect();
@@ -211,15 +253,15 @@ mod pool {
         MockCluster,
         self,
         trait ClusterTrait {
-            fn erase_zone(&mut self, zone: ZoneT) -> Box<ClusterFut<'static>>;
+            fn erase_zone(&mut self, zone: ZoneT) -> Box<PoolFut<'static>>;
             fn free(&self, lba: LbaT, length: LbaT);
             fn optimum_queue_depth(&self) -> u32;
-            fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>>;
+            fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
             fn size(&self) -> LbaT;
             fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
             fn uuid(&self) -> Uuid;
-            fn write(&self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'static>>), Error>;
-            fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
+            fn write(&self, buf: IoVec) -> Result<(LbaT, Box<PoolFut<'static>>), Error>;
+            fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut<'static>>;
         }
     }
 
