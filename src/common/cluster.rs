@@ -367,7 +367,8 @@ impl<'a> Cluster {
     ///
     /// The LBA where the data will be written, and a
     /// `Future` for the operation in progress.
-    pub fn write(&'a self, buf: IoVec) -> Result<(LbaT, Box<ClusterFut<'a>>), Error> {
+    pub fn write(&'a self, buf: IoVec)
+        -> Result<(LbaT, Box<ClusterFut<'a>>), Error> {
         // Outline:
         // 1) Try allocating in an open zone
         // 2) If that doesn't work, try opening a new one, and allocating from
@@ -375,10 +376,12 @@ impl<'a> Cluster {
         // 3) If that doesn't work, return ENOSPC
         // 4) write to the vdev
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
-        let (alloc_result, nearly_full_zones) = self.fsm.borrow_mut().try_allocate(space);
+        let (alloc_result, nearly_full_zones) =
+            self.fsm.borrow_mut().try_allocate(space);
         let finish_futs = self.close_zones(&nearly_full_zones);
         alloc_result.map(|(zone_id, lba)| {
-            let oz_fut: Box<ClusterFut<'static>> = Box::new(future::ok::<(), Error>(()));
+            let oz_fut: Box<ClusterFut<'static>> = Box::new(future::ok::<(),
+                                                            Error>(()));
             (zone_id, lba, oz_fut)
         }).or_else(|| {
             let empty_zone = self.fsm.borrow().find_empty();
