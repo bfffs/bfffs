@@ -358,24 +358,25 @@ impl<'a> Cluster {
         Cluster{fsm: RefCell::new(FreeSpaceMap::new(vdev.zones())), vdev}
     }
 
-    /// Open an existing `Cluster`
+    /// Open all existing `Cluster`s fuond in `paths`.
     ///
-    /// Returns both a new `Cluster` object, and a `LabelReader` that may be
-    /// used to construct other vdevs stacked on top of this one.
+    /// Returns a vector of new `Cluster` objects and `LabelReader`s that may
+    /// be used to construct other vdevs stacked on top of these.
     ///
-    /// * `uuid`:   UUID of the desired `VdevRaid`
     /// * `paths`:  Pathnames to search for the `VdevRaid`.  All child devices
     ///             must be present.
     /// * `h`:      Handle to the Tokio reactor that will be used to service
     ///             this vdev.
     #[cfg(not(test))]
-    pub fn open<P>(uuid: Uuid, paths: Vec<P>, handle: Handle)
-        -> Box<Future<Item=(Self, LabelReader), Error=Error>>
+    pub fn open_all<P>(paths: Vec<P>, handle: Handle)
+        -> Box<Future<Item=Vec<(Self, LabelReader)>, Error=Error>>
         where P: AsRef<Path> + 'static {
 
         Box::new(
-            VdevRaid::open(uuid, paths, handle).map(|(vdev_raid, reader)| {
-                (Cluster::new(vdev_raid), reader)
+            VdevRaid::open_all(paths, handle).map(|v| {
+                v.into_iter().map(|(vdev_raid, reader)| {
+                    (Cluster::new(vdev_raid), reader)
+                }).collect::<Vec<_>>()
             })
         )
     }

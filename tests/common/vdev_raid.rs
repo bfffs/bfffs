@@ -528,10 +528,10 @@ test_suite! {
         }
     });
 
-    // Testing VdevRaid::open with golden labels is too hard, because we need to
-    // store separate golden labels for each VdevLeaf.  Instead, we'll just
-    // check that we can open-after-write
-    test open(raid()) {
+    // Testing VdevRaid::open_all with golden labels is too hard, because we
+    // need to store separate golden labels for each VdevLeaf.  Instead, we'll
+    // just check that we can open-after-write
+    test open_all(raid()) {
         let (old_raid, _tempdir, paths) = raid.val;
         let uuid = old_raid.uuid();
         current_thread::block_on_all(future::lazy(|| {
@@ -540,8 +540,8 @@ test_suite! {
         })).unwrap();
         drop(old_raid);
         let vdev_raid = current_thread::block_on_all(future::lazy(|| {
-            VdevRaid::open(uuid, paths, Handle::default())
-        })).unwrap().0;
+            VdevRaid::open_all(paths, Handle::default())
+        })).unwrap().pop().unwrap().0;
         assert_eq!(uuid, vdev_raid.uuid());
     }
     

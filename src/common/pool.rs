@@ -6,7 +6,11 @@ use common::cluster;
 use common::label::*;
 use futures::{Future, future};
 use nix::Error;
+#[cfg(not(test))]
+use nix::errno;
 use std::cell::RefCell;
+#[cfg(not(test))]
+use std::collections::BTreeMap;
 #[cfg(not(test))]
 use std::path::Path;
 #[cfg(not(test))]
@@ -140,7 +144,8 @@ impl<'a> Pool {
 
     #[cfg(not(test))]
     pub fn create(name: String, clusters: Vec<Cluster>) -> Self {
-        Pool::new(name, clusters.into_iter().map(|c| c.0).collect::<Vec<_>>())
+        Pool::new(name, Uuid::new_v4(),
+                  clusters.into_iter().map(|c| c.0).collect::<Vec<_>>())
     }
 
     /// Mark `length` LBAs beginning at LBA `lba` on cluster `cluster` as
@@ -159,7 +164,7 @@ impl<'a> Pool {
     /// Construct a new `Pool` from some already constructed
     /// [`Cluster`](struct.Cluster.html)s
     #[cfg(any(not(test), feature = "mocks"))]
-    fn new(name: String, clusters: Vec<ClusterLike>) -> Self {
+    fn new(name: String, uuid: Uuid, clusters: Vec<ClusterLike>) -> Self {
         let size: Vec<_> = clusters.iter()
             .map(|cluster| cluster.size())
             .collect();
@@ -174,10 +179,68 @@ impl<'a> Pool {
             queue_depth,
             size
         });
-        // TODO: get uuid from label
-        let uuid = Uuid::new_v4();
         Pool{name, clusters, stats, uuid}
     }
+
+    /// Return the `Pool`'s name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Open an existing `Pool` by name
+    ///
+    /// Returns a new `Pool` object
+    ///
+    /// * `name`:   Name of the desired `Pool`
+    /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
+    ///             must be present.
+    /// * `h`:      Handle to the Tokio reactor that will be used to service
+    ///             this `Pool`.
+    #[cfg(not(test))]
+    pub fn open<P>(name: String, paths: Vec<P>, handle: Handle)
+        -> Box<Future<Item=Self, Error=Error>>
+        where P: AsRef<Path> + 'static {
+         // Outline:
+         // 1) Discover all `Cluster`s.
+         // 2) Search among the `Cluster`s for one that has a `Pool` label
+         //    matching `name`.
+         // 3) Construct a `Pool` with all required `Cluster`s.
+         // 4) `drop` any unwanted `Cluster`s.
+
+        Box::new(cluster::Cluster::open_all(paths, handle).and_then(|v| {
+            let mut label = None;
+            let mut all_clusters = v.into_iter()
+                                    .map(|(cluster, mut label_reader)| {
+                if label.is_none() {
+                    let l: Label = label_reader.deserialize().unwrap();
+                    if l.name == name {
+                        label = Some(l);
+                    }
+                }
+                (cluster.uuid(), cluster)
+            }).collect::<BTreeMap<Uuid, cluster::Cluster>>();
+
+            match label {
+                Some(label) => {
+                    let num_clusters = label.children.len();
+                    let mut clusters = Vec::with_capacity(num_clusters);
+                    for uuid in label.children {
+                        match all_clusters.remove(&uuid) {
+                            Some(cluster) => clusters.push(cluster),
+                            None => break
+                        }
+                    }
+                    if clusters.len() == num_clusters {
+                        Ok(Pool::new(name, label.uuid, clusters))
+                    } else {
+                        Err(Error::Sys(errno::Errno::ENOENT))
+                    }
+                },
+                None => Err(Error::Sys(errno::Errno::ENOENT))
+            }
+        }))
+    }
+
 
     /// Asynchronously read from the pool
     pub fn read(&'a self, buf: IoVecMut, cluster: ClusterT,
@@ -200,6 +263,11 @@ impl<'a> Pool {
                 .collect::<Vec<_>>()
             ).map(|_| ())
         )
+    }
+
+    /// Return the `Pool`'s UUID.
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
     }
 
     /// Write a buffer to the pool
@@ -286,7 +354,8 @@ mod pool {
             .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
         );
 
-        let pool = Pool::new("foo".to_string(), vec![Box::new(cluster)]);
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
+                             vec![Box::new(cluster)]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();

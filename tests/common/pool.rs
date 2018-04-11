@@ -58,6 +58,24 @@ test_suite! {
         }
     });
 
+    // Testing VdevRaid::open with golden labels is too hard, because we need to
+    // store separate golden labels for each VdevLeaf.  Instead, we'll just
+    // check that we can open-after-write
+    test open_all(objects()) {
+        let (old_pool, _tempdir, paths) = objects.val;
+        let name = old_pool.name().to_string();
+        let uuid = old_pool.uuid();
+        current_thread::block_on_all(future::lazy(|| {
+            old_pool.write_label()
+        })).unwrap();
+        drop(old_pool);
+        let pool = current_thread::block_on_all(future::lazy(|| {
+            Pool::open(name.clone(), paths, Handle::default())
+        })).unwrap();
+        assert_eq!(name, pool.name());
+        assert_eq!(uuid, pool.uuid());
+    }
+
     test write_label(objects()) {
         current_thread::block_on_all(future::lazy(|| {
             objects.val.0.write_label()

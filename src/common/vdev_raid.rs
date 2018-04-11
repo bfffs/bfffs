@@ -13,10 +13,10 @@ use common::null_raid::*;
 use common::prime_s::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
+#[cfg(not(test))]
+use itertools::Itertools;
 use itertools::multizip;
 use nix::Error;
-#[cfg(not(test))]
-use nix::errno;
 use std::cell::RefCell;
 use std::{cmp, mem, ptr};
 use std::collections::BTreeMap;
@@ -330,19 +330,18 @@ impl VdevRaid {
                    uuid, zero_region, handle }
     }
 
-    /// Open an existing `VdevRaid`
+    /// Open all existing `VdevRaid`s found in `paths`.
     ///
-    /// Returns both a new `VdevRaid` object, and a `LabelReader` that may be
-    /// used to construct other vdevs stacked on top of this one.
+    /// Returns a vector of new `VdevRaid` objects and `LabelReader`s that may
+    /// be used to construct other vdevs stacked on top of these.
     ///
-    /// * `uuid`:   UUID of the desired `VdevRaid`
-    /// * `paths`:  Pathnames to search for the `VdevRaid`.  All child devices
+    /// * `paths`:  Pathnames to search for the `VdevRaid`s.  All child devices
     ///             must be present.
     /// * `h`:      Handle to the Tokio reactor that will be used to service
     ///             this vdev.
     #[cfg(not(test))]
-    pub fn open<P>(uuid: Uuid, paths: Vec<P>, handle: Handle)
-        -> Box<Future<Item=(Self, LabelReader), Error=Error>>
+    pub fn open_all<P>(paths: Vec<P>, handle: Handle)
+        -> Box<Future<Item=Vec<(Self, LabelReader)>, Error=Error>>
         where P: AsRef<Path> + 'static {
 
         let handle2 = handle.clone();
@@ -354,35 +353,38 @@ impl VdevRaid {
             let mut all_blockdevs = blockdevs.into_iter().map(|(bd, reader)| {
                 (bd.uuid(), (bd, Some(reader)))
             }).collect::<BTreeMap<Uuid, (VdevBlock, Option<LabelReader>)>>();
-            let (rlabel, label_reader) = all_blockdevs.iter_mut().map(|(_, v)| {
+
+            let all_raid_labels = all_blockdevs.iter_mut().map(|(_, v)| {
                 let mut label_reader = v.1.take().unwrap();
                 let label: Label = label_reader.deserialize().unwrap();
                 (label, label_reader)
-            }).filter(|&(ref label, _)| label.uuid == uuid)
-            .nth(0).unwrap();
+            }).unique_by(|v| v.0.uuid)
+            .collect::<Vec<_>>();
 
-            let mut blockdevs = Vec::with_capacity(rlabel.children.len());
-            let num_disks = rlabel.children.len() as i16;
-            for child_uuid in rlabel.children {
-                match all_blockdevs.remove(&child_uuid) {
-                    Some(bd) => blockdevs.push(bd.0),
-                    None => break,
+            Ok(all_raid_labels.into_iter().filter_map(|(rlabel, label_reader)| {
+                let mut blockdevs = Vec::with_capacity(rlabel.children.len());
+                let num_disks = rlabel.children.len() as i16;
+                for child_uuid in rlabel.children {
+                    match all_blockdevs.remove(&child_uuid) {
+                        Some(bd) => blockdevs.push(bd.0),
+                        None => break,
+                    }
                 }
-            }
-            if blockdevs.len() == num_disks as usize {
-                Ok((VdevRaid::new(rlabel.chunksize,
-                                  num_disks,
-                                  rlabel.disks_per_stripe,
-                                  rlabel.redundancy,
-                                  uuid,
-                                  rlabel.layout_algorithm,
-                                  blockdevs.into_boxed_slice(),
-                                  handle2),
-                   label_reader))
-            } else {
-                // Some block devices weren't found
-                Err(Error::Sys(errno::Errno::ENOENT))
-            }
+                if blockdevs.len() == num_disks as usize {
+                    Some((VdevRaid::new(rlabel.chunksize,
+                                      num_disks,
+                                      rlabel.disks_per_stripe,
+                                      rlabel.redundancy,
+                                      rlabel.uuid,
+                                      rlabel.layout_algorithm,
+                                      blockdevs.into_boxed_slice(),
+                                      handle2.clone()),
+                       label_reader))
+                } else {
+                    // Some block devices weren't found
+                    None
+                }
+            }).collect::<Vec<_>>())
         }))
     }
 
