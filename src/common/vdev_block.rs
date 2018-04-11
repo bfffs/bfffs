@@ -18,6 +18,7 @@ use tokio::reactor::Handle;
 use uuid::Uuid;
 
 use common::*;
+use common::label::*;
 use common::vdev::*;
 #[cfg(not(test))]
 use sys::vdev_file::*;
@@ -39,7 +40,7 @@ enum Cmd {
     EraseZone(LbaT),
     // The extra LBA is the zone's starting LBA
     FinishZone(LbaT),
-    WriteLabel,
+    WriteLabel(LabelWriter),
     SyncAll,
 }
 
@@ -55,7 +56,7 @@ impl Cmd {
             Cmd::WritevAt(_) => 4,
             Cmd::EraseZone(_) => 5,
             Cmd::FinishZone(_) => 6,
-            Cmd::WriteLabel => 7,
+            Cmd::WriteLabel(_) => 7,
             Cmd::SyncAll => 8,
         }
     }
@@ -175,8 +176,9 @@ impl BlockOp {
         BlockOp { lba, cmd: Cmd::WriteAt(buf), sender}
     }
 
-    pub fn write_label(sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba: 0, cmd: Cmd::WriteLabel, sender}
+    pub fn write_label(labeller: LabelWriter,
+                       sender: oneshot::Sender<()>) -> BlockOp {
+        BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), sender}
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT,
@@ -324,7 +326,7 @@ impl Inner {
             Cmd::EraseZone(start) => self.leaf.erase_zone(start),
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
             Cmd::OpenZone => self.leaf.open_zone(lba),
-            Cmd::WriteLabel => self.leaf.write_label(),
+            Cmd::WriteLabel(labeller) => self.leaf.write_label(labeller),
             Cmd::SyncAll => self.leaf.sync_all(),
         };
         (block_op.sender, fut)
@@ -561,15 +563,18 @@ impl VdevBlock {
 
     /// Open an existing `VdevBlock`
     ///
+    /// Returns both a new `VdevBlock` object, and a `LabelReader` that may be
+    /// used to construct other vdevs stacked on top of this one.
+    ///
     /// * `path`    Pathname for the backing file.  It may be a device node.
     /// * `h`       Handle to the Tokio reactor that will be used to service
     ///             this vdev.
     #[cfg(not(test))]
     pub fn open<P: AsRef<Path>>(path: P, h: Handle)
-        -> Box<Future<Item=Self, Error=nix::Error>> {
+        -> Box<Future<Item=(Self, LabelReader), Error=nix::Error>> {
         Box::new(
-            VdevLeaf::open(path, h.clone()).map(|leaf| {
-                VdevBlock::new(leaf, h)
+            VdevLeaf::open(path, h.clone()).map(|(leaf, label_reader)| {
+                (VdevBlock::new(leaf, h), label_reader)
             })
         )
     }
@@ -619,9 +624,9 @@ impl VdevBlock {
         Box::new(self.new_fut(block_op, receiver))
     }
 
-    pub fn write_label(&self) -> Box<VdevFut> {
+    pub fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut> {
         let (sender, receiver) = oneshot::channel::<()>();
-        let block_op = BlockOp::write_label(sender);
+        let block_op = BlockOp::write_label(labeller, sender);
         Box::new(self.new_fut(block_op, receiver))
     }
 
@@ -721,7 +726,7 @@ test_suite! {
             fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
             fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
             fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-            fn write_label(&self) -> Box<VdevFut>;
+            fn write_label(&self, label_writer: LabelWriter) -> Box<VdevFut>;
             fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
         }
     }

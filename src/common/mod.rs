@@ -8,6 +8,7 @@ pub mod declust;
 pub mod dva;
 pub mod prime_s;
 pub mod raid;
+pub mod label;
 pub mod pool;
 mod sgcursor;
 pub mod vdev;

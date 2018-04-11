@@ -1,5 +1,6 @@
 // vim: tw=80
 use common::*;
+use common::label::*;
 use common::vdev::*;
 
 /// The public interface for all leaf Vdevs.  This is a low level thing.  Leaf
@@ -52,8 +53,11 @@ pub trait VdevLeafApi : Vdev {
     /// Return the number of bytes actually written.
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
 
-    /// Asynchronously write this Vdev's label
-    fn write_label(&self) -> Box<VdevFut>;
+    /// Asynchronously write this Vdev's label.
+    ///
+    /// `label_writer` should already contain the serialized labels of every
+    /// vdev stacked on top of this one.
+    fn write_label(&self, label_writer: LabelWriter) -> Box<VdevFut>;
 
     /// The asynchronous scatter/gather write function.
     ///

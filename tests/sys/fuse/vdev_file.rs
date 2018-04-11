@@ -169,6 +169,7 @@ test_suite! {
     name persistence;
 
     use arkfs::common::vdev::*;
+    use arkfs::common::label::*;
     use arkfs::sys::vdev_file::*;
     use arkfs::common::vdev_leaf::*;
     use futures::{future, Future};
@@ -181,23 +182,18 @@ test_suite! {
     use tokio::reactor::Handle;
     use uuid::Uuid;
 
-    const GOLDEN: [u8; 89] = [
+    const GOLDEN: [u8; 73] = [
         // First 16 bytes are file magic
         0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64,
-        0x65, 0x76, 0x46, 0x69, 0x6c, 0x65, 0x00, 0x00,
-        // The rest is a serialized VdevFile::Label object
-        0xa2, 0x68, 0x63, 0x68, 0x65, 0x63, 0x6b, 0x73,
-        0x75, 0x6d, 0x88,
+        0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         // These 8 bytes are a checksum
-                          0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00,
-        // This begins the serialized VdevFile::LabelData object
-                          0x64, 0x64, 0x61, 0x74, 0x61,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // The rest is a serialized VdevFile::Label object
         0xa3, 0x64, 0x75, 0x75, 0x69, 0x64, 0x50,
         // These 16 bytes are a UUID
-                                                  0xec,
-        0xb8, 0x9f, 0x37, 0x72, 0xeb, 0x4c, 0xf2, 0xa7,
-        0xd5, 0x95, 0x05, 0xd2, 0xa0, 0x51, 0x44,
+                                                  0xc8,
+        0xad, 0xdb, 0xd6, 0x9d, 0xe2, 0x4e, 0x93, 0xbf,
+        0x3b, 0x81, 0x23, 0x44, 0xd3, 0xba, 0xaf,
         // This is the rest of the LabelData
                                                   0x6d,
         0x6c, 0x62, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72,
@@ -221,7 +217,7 @@ test_suite! {
     // Open the golden master label
     test open(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "ecb89f37-72eb-4cf2-a7d5-9505d2a05144").unwrap();
+            "c8addbd6-9de2-4e93-bf3b-812344d3baaf").unwrap();
         {
             let mut f = std::fs::OpenOptions::new()
                 .write(true)
@@ -230,7 +226,7 @@ test_suite! {
         }
         t!(current_thread::block_on_all(future::lazy(|| {
             VdevFile::open(fixture.val.0, Handle::current())
-                .and_then(|vdev| {
+                .and_then(|(vdev, _label_reader)| {
                     assert_eq!(vdev.size(), 16_384);
                     assert_eq!(vdev.uuid(), golden_uuid);
                     Ok(())
@@ -244,7 +240,8 @@ test_suite! {
         let vdev = VdevFile::create(fixture.val.0.clone(),
                                         Handle::current()).unwrap();
         t!(current_thread::block_on_all(future::lazy(|| {
-            vdev.write_label()
+            let label_writer = LabelWriter::new();
+            vdev.write_label(label_writer)
         })));
 
         let mut f = std::fs::File::open(fixture.val.0).unwrap();
@@ -252,8 +249,8 @@ test_suite! {
         f.read_exact(&mut v).unwrap();
         // Compare against the golden master, skipping the checksum and UUID
         // fields
-        assert_eq!(&v[0..27], &GOLDEN[0..27]);
-        assert_eq!(&v[35..47], &GOLDEN[35..47]);
-        assert_eq!(&v[63..GOLDEN.len()], &GOLDEN[63..GOLDEN.len()]);
+        assert_eq!(&v[0..16], &GOLDEN[0..16]);
+        assert_eq!(&v[24..31], &GOLDEN[24..31]);
+        assert_eq!(&v[47..GOLDEN.len()], &GOLDEN[47..GOLDEN.len()]);
     }
 }

@@ -1,39 +1,27 @@
 // vim: tw=80
 
 use common::*;
+use common::label::*;
 use common::vdev::*;
 use common::vdev_leaf::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use nix;
-use serde;
-use serde_cbor;
 use std::borrow::{Borrow, BorrowMut};
 use std::io;
-use std::io::Write;
 use std::path::Path;
 use tokio::reactor::Handle;
 use tokio_file::File;
 use uuid::Uuid;
 
-/// The file magic is "ArkFS VdevFile\0\0"
-const MAGIC: [u8; 16] = [0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64,
-                         0x65, 0x76, 0x46, 0x69, 0x6c, 0x65, 0x00, 0x00];
-
 #[derive(Serialize, Deserialize, Debug)]
-struct LabelData {
+struct Label {
     /// Vdev UUID, fixed at format time
     uuid:           Uuid,
     /// Number of LBAs per simulated zone
     lbas_per_zone:  LbaT,
     /// Number of LBAs that were present at format time
     lbas:           LbaT
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Label {
-    checksum:   [u8; 8],
-    data:       LabelData
 }
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`
@@ -157,33 +145,27 @@ impl VdevLeafApi for VdevFile {
         self.write_at_unchecked(container, lba)
     }
 
-    fn write_label(&self) -> Box<VdevFut> {
-        let label_size = VdevFile::LABEL_LBAS as usize * BYTES_PER_LBA;
-        let mut buf = Vec::with_capacity(label_size);
+    fn write_label(&self, mut label_writer: LabelWriter) -> Box<VdevFut> {
         let label = Label {
-            checksum: [0, 0, 0, 0, 0, 0, 0, 0], //TODO
-            data: LabelData {
-                uuid: self.uuid,
-                lbas_per_zone: VdevFile::LBAS_PER_ZONE,
-                lbas: self.size
-            }
+            uuid: self.uuid,
+            lbas_per_zone: VdevFile::LBAS_PER_ZONE,
+            lbas: self.size
         };
-        buf.write_all(&MAGIC).unwrap();
-        // ser::to_writer_packed would be more compact, but we're committed to
-        // burning an LBA anyway
-        serde_cbor::ser::to_writer(&mut buf, &label).unwrap();
-        buf.resize(label_size, 0);
-        self.write_at_unchecked(Box::new(buf), 0)
+        let dbs = label_writer.serialize(label).unwrap();
+        let (sglist, keeper) = label_writer.into_sglist();
+        Box::new(self.writev_at(sglist, 0).then(move |r| {
+            let _ = dbs;
+            let _ = keeper;
+            r
+        }))
     }
 
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
-        assert!(lba >= VdevFile::LABEL_LBAS, "Don't overwrite the label!");
         let off = lba as i64 * (BYTES_PER_LBA as i64);
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
         }).collect();
         Box::new(self.file.writev_at(containers, off).unwrap().map(|result| {
-            // We must drain the iterator to free the AioCb resources
             result.into_iter().map(|_| ()).count();
             ()
         }))
@@ -209,11 +191,14 @@ impl VdevFile {
 
     /// Open an existing `VdevFile`
     ///
+    /// Returns both a new `VdevFile` object, and a `LabelReader` that may be
+    /// used to construct other vdevs stacked on top of this one.
+    ///
     /// * `path`    Pathname for the file.  It may be a device node.
     /// * `h`       Handle to the Tokio reactor that will be used to service
     ///             this vdev.
     pub fn open<P: AsRef<Path>>(path: P, h: Handle)
-        -> Box<Future<Item=Self, Error=nix::Error>> {
+        -> Box<Future<Item=(Self, LabelReader), Error=nix::Error>> {
 
         let f = File::open(path, h.clone()).unwrap();
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
@@ -225,25 +210,20 @@ impl VdevFile {
         Box::new(f.read_at(container, 0).unwrap()
             .and_then(move |aio_result| {
                 drop(aio_result);   // release reference on dbs
-                let db = dbs.try().unwrap();
-                if &db[0..16] != MAGIC {
-                    Err(nix::Error::Sys(nix::errno::Errno::EINVAL))
-                } else {
-                    // TODO: verify checksum
-                    let mut deserializer = serde_cbor::Deserializer::from_slice(
-                        &db[16..]);
-                    let label: Label = serde::Deserialize::deserialize(
-                        &mut deserializer).unwrap();
-                    assert!(size >= label.data.lbas,
+                LabelReader::from_dbs(dbs).and_then(|mut label_reader| {
+                    let label: Label = label_reader.deserialize().unwrap();
+                    assert!(size >= label.lbas,
                                "Vdev has shrunk since creation");
-                    Ok(VdevFile {
+                    let vdev = VdevFile {
                         file: f,
                         handle: h,
-                        size: label.data.lbas,
-                        uuid: label.data.uuid
-                    })
-                }
-            }))
+                        size: label.lbas,
+                        uuid: label.uuid
+                    };
+                    Ok((vdev, label_reader))
+                })
+            })
+        )
     }
 
     fn write_at_unchecked(&self, buf: Box<Borrow<[u8]>>,

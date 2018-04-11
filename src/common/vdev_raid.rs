@@ -1,6 +1,7 @@
 // vim: tw=80
 
 use common::*;
+use common::label::*;
 use common::vdev::*;
 #[cfg(not(test))]
 use common::vdev_block::*;
@@ -14,13 +15,9 @@ use itertools::multizip;
 use nix::Error;
 #[cfg(not(test))]
 use nix::errno;
-#[cfg(not(test))]
-use serde;
-use serde_cbor;
 use std::cell::RefCell;
 use std::{cmp, mem, ptr};
 use std::collections::BTreeMap;
-use std::io::Write;
 #[cfg(not(test))]
 use std::path::Path;
 use tokio::reactor::Handle;
@@ -35,7 +32,7 @@ pub trait VdevBlockTrait : Vdev {
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-    fn write_label(&self) -> Box<VdevFut>;
+    fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut>;
 }
 #[cfg(test)]
@@ -138,7 +135,7 @@ impl StripeBuffer {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct LabelData {
+struct Label {
     /// Vdev UUID, fixed at format time
     uuid:               Uuid,
     chunksize:          LbaT,
@@ -146,12 +143,6 @@ struct LabelData {
     redundancy:         i16,
     layout_algorithm:   LayoutAlgorithm,
     children:           Vec<Uuid>
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Label {
-    checksum:   [u8; 8],
-    data:       LabelData
 }
 
 /// `VdevRaid`: Virtual Device for the RAID transform
@@ -243,14 +234,6 @@ macro_rules! issue_1stripe_ops {
 }
 
 impl VdevRaid {
-    /// LBAs reserved for the RAID label, on each VdevBlock
-    // With 233 or more devices, the label will spill over onto two LBAs
-    const LABEL_LBAS: LbaT = 2;
-
-    /// The file magic is "ArkFS VdevRaid\0\0"
-    const MAGIC: [u8; 16] = [0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64,
-                             0x65, 0x76, 0x52, 0x61, 0x69, 0x64, 0x00, 0x00];
-
     /// Create a new VdevRaid from unused files or devices
     ///
     /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
@@ -341,66 +324,45 @@ impl VdevRaid {
         -> Box<Future<Item=Self, Error=Error>>
         where P: AsRef<Path> + 'static {
 
-        const LABEL_SIZE: usize = VdevRaid::LABEL_LBAS as usize * BYTES_PER_LBA;
         let handle2 = handle.clone();
         // TODO: error handling for devices that don't exist or have no VdevFile
         // label
         Box::new(future::join_all(paths.into_iter().map(move |path| {
             VdevBlock::open(path, handle.clone())
-        })).map(|blockdevs| {
-            blockdevs.into_iter().map(|bd: VdevBlock| {
-                (bd.uuid(), bd)
-            }).collect::<BTreeMap<Uuid, VdevBlock>>()
-        }).and_then(|all_blockdevs: BTreeMap<Uuid, VdevBlock>| {
-            let read_futs = all_blockdevs.iter().map(|(_, ref bd)| {
-                let dbs = DivBufShared::from(vec![0u8; LABEL_SIZE]);
-                bd.read_at(dbs.try_mut().unwrap(), 1).map(move |aio_result| {
-                    drop(aio_result);  // Release reference to DivBufShared
-                    let db = dbs.try().unwrap();
-                    if &db[0..16] != VdevRaid::MAGIC {
-                        None
-                    } else {
-                        // TODO: verify checksum
-                        let mut des = serde_cbor::Deserializer::from_slice(
-                            &db[16..]);
-                        let label: Label = serde::Deserialize::deserialize(
-                            &mut des).unwrap();
-                        Some(label)
-                    }
-                })
-            }).collect::<Vec<_>>();
-            future::join_all(read_futs)
-                .map(move |labels| (all_blockdevs, labels))
-        }).and_then(move |(mut all_blockdevs, labels)| {
-            let label = labels.into_iter().filter(|l| {
-                l.is_some()
-            }).map(|l| l.unwrap()).filter(|l| {
-                l.data.uuid == uuid
-            }).nth(0).unwrap();
-            let mut blockdevs = Vec::with_capacity(label.data.children.len());
-            let num_disks = label.data.children.len() as i16;
-            for child_uuid in label.data.children {
+        })).and_then(move |blockdevs| {
+            let mut all_blockdevs = blockdevs.into_iter().map(|(bd, reader)| {
+                (bd.uuid(), (bd, reader))
+            }).collect::<BTreeMap<Uuid, (VdevBlock, LabelReader)>>();
+            let raid_label = all_blockdevs.iter_mut().map(|(_, v)| {
+                let label: Label = v.1.deserialize().unwrap();
+                label
+            }).filter(|label| label.uuid == uuid)
+            .nth(0).unwrap();
+
+            let mut blockdevs = Vec::with_capacity(raid_label.children.len());
+            let num_disks = raid_label.children.len() as i16;
+            for child_uuid in raid_label.children {
                 match all_blockdevs.remove(&child_uuid) {
-                    Some(bd) => blockdevs.push(bd),
+                    Some(bd) => blockdevs.push(bd.0),
                     None => break,
                 }
             }
             if blockdevs.len() == num_disks as usize {
-                Ok(VdevRaid::new(label.data.chunksize,
+                Ok(VdevRaid::new(raid_label.chunksize,
                                  num_disks,
-                                 label.data.disks_per_stripe,
-                                 label.data.redundancy,
+                                 raid_label.disks_per_stripe,
+                                 raid_label.redundancy,
                                  uuid,
-                                 label.data.layout_algorithm,
+                                 raid_label.layout_algorithm,
                                  blockdevs.into_boxed_slice(),
                                  handle2))
-
             } else {
                 // Some block devices weren't found
                 Err(Error::Sys(errno::Errno::ENOENT))
             }
         }))
     }
+
     /// Asynchronously erase a zone on a RAID device
     ///
     /// # Parameters
@@ -880,31 +842,20 @@ impl VdevRaid {
 
     /// Asynchronously write this Vdev's label to all component devices
     pub fn write_label(&self) -> Box<VdevFut> {
-        let label_size = VdevRaid::LABEL_LBAS as usize * BYTES_PER_LBA;
-        let dbs = DivBufShared::with_capacity(label_size);
-        let mut dbm = dbs.try_mut().unwrap();
+        let mut labeller = LabelWriter::new();
         let children_uuids = self.blockdevs.iter().map(|bd| bd.uuid())
             .collect::<Vec<_>>();
         let label = Label {
-            checksum: [0, 0, 0, 0, 0, 0, 0, 0], //TODO
-            data: LabelData {
-                uuid: self.uuid,
-                chunksize: self.chunksize,
-                disks_per_stripe: self.locator.stripesize(),
-                redundancy: self.locator.protection(),
-                layout_algorithm: self.layout_algorithm,
-                children: children_uuids
-            }
+            uuid: self.uuid,
+            chunksize: self.chunksize,
+            disks_per_stripe: self.locator.stripesize(),
+            redundancy: self.locator.protection(),
+            layout_algorithm: self.layout_algorithm,
+            children: children_uuids
         };
-        dbm.write_all(&VdevRaid::MAGIC).unwrap();
-        // ser::to_writer_packed would be more compact, but we're committed to
-        // burning an LBA anyway
-        serde_cbor::ser::to_writer(&mut dbm, &label).unwrap();
-        dbm.try_resize(label_size, 0).unwrap();
-        drop(dbm);
+        let dbs = labeller.serialize(label);
         let futs = self.blockdevs.iter().map(|bd| {
-            // TODO: prevent user code from writing LBA 1
-            bd.write_label().join(bd.write_at(dbs.try().unwrap(), 1))
+            bd.write_label(labeller.clone())
         }).collect::<Vec<_>>();
         Box::new(future::join_all(futs).map(move |_| {
             let _ = dbs;    // needs to live this long
@@ -1276,7 +1227,7 @@ mock!{
         fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-        fn write_label(&self) -> Box<VdevFut>;
+        fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
         fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
     }
 }
