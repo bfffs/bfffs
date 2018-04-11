@@ -8,6 +8,8 @@ use common::vdev_block::*;
 use common::raid::*;
 use common::declust::*;
 #[cfg(any(not(test), feature = "mocks"))]
+use common::null_raid::*;
+#[cfg(any(not(test), feature = "mocks"))]
 use common::prime_s::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
@@ -47,6 +49,8 @@ pub type VdevBlockLike = VdevBlock;
 /// encode or decode parity.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum LayoutAlgorithm {
+    /// The trivial, nonredundant placement algorithm
+    NullRaid,
     /// A good declustered algorithm for any prime number of disks
     PrimeS,
 }
@@ -234,6 +238,18 @@ macro_rules! issue_1stripe_ops {
 }
 
 impl VdevRaid {
+    /// Choose the best declustering layout for the requirements given.
+    #[cfg(not(test))]
+    fn choose_layout(num_disks: i16, _disks_per_stripe: i16,
+                     _redundancy: i16) -> LayoutAlgorithm {
+
+        if num_disks == 1 {
+            LayoutAlgorithm::NullRaid
+        } else {
+            LayoutAlgorithm::PrimeS
+        }
+    }
+
     /// Create a new VdevRaid from unused files or devices
     ///
     /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
@@ -247,7 +263,6 @@ impl VdevRaid {
     /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
     ///                         disks may fail before the array becomes
     ///                         inoperable.
-    /// * `layout_algorithm`:   The RAID layout algorithm to use.
     /// * `paths`:              Slice of pathnames of files and/or devices
     /// * `handle`:             Handle to the Tokio reactor that will be used to
     ///                         service this vdev.
@@ -256,15 +271,16 @@ impl VdevRaid {
                                   num_disks: i16,
                                   disks_per_stripe: i16,
                                   redundancy: i16,
-                                  layout_algorithm: LayoutAlgorithm,
                                   paths: &[P],
                                   handle: Handle) -> Self {
+        let layout_algo = VdevRaid::choose_layout(num_disks, disks_per_stripe,
+                                                  redundancy);
         let uuid = Uuid::new_v4();
         let blockdevs = paths.iter().map(|path| {
             VdevBlock::create(path, handle.clone()).unwrap()
         }).collect::<Vec<_>>();
         VdevRaid::new(chunksize, num_disks, disks_per_stripe, redundancy, uuid,
-                      layout_algorithm, blockdevs.into_boxed_slice(), handle)
+                      layout_algo, blockdevs.into_boxed_slice(), handle)
     }
 
     #[cfg(any(not(test), feature = "mocks"))]
@@ -278,10 +294,12 @@ impl VdevRaid {
            handle: Handle) -> Self {
 
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
-        let locator = Box::new(match layout_algorithm {
-            LayoutAlgorithm::PrimeS =>
-                PrimeS::new(num_disks, disks_per_stripe, redundancy)
-        });
+        let locator: Box<Locator> = match layout_algorithm {
+            LayoutAlgorithm::NullRaid => Box::new(
+                NullRaid::new(num_disks, disks_per_stripe, redundancy)),
+            LayoutAlgorithm::PrimeS => Box::new(
+                PrimeS::new(num_disks, disks_per_stripe, redundancy))
+        };
         assert_eq!(blockdevs.len(), locator.clustsize() as usize,
             "mismatched cluster size");
         for i in 1..blockdevs.len() {

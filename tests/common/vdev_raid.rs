@@ -26,7 +26,8 @@ test_suite! {
               (VdevRaid, TempDir, Vec<String>) {
 
         params {
-            vec![(3, 3, 1, 2),      // Smallest possible configuration
+            vec![(1, 1, 0, 1),      // NullRaid configuration
+                 (3, 3, 1, 2),      // Smallest possible PRIMES configuration
                  (5, 4, 1, 2),      // Smallest PRIMES declustered configuration
                  (5, 5, 2, 2),      // Smallest double-parity configuration
                  (7, 4, 1, 2),      // Smallest non-ideal PRIME-S configuration
@@ -45,8 +46,7 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let mut vdev_raid = VdevRaid::create(*self.chunksize,
-                *self.n, *self.k, *self.f, LayoutAlgorithm::PrimeS, &paths,
-                Handle::default());
+                *self.n, *self.k, *self.f, &paths, Handle::default());
             current_thread::block_on_all(
                 vdev_raid.open_zone(0)
             ).expect("open_zone");
@@ -522,8 +522,8 @@ test_suite! {
                 t!(file.set_len(len));
                 fname
             }).collect::<Vec<_>>();
-            let mut vdev_raid = VdevRaid::create(2, num_disks, 3, 1,
-                LayoutAlgorithm::PrimeS, &paths, Handle::default());
+            let mut vdev_raid = VdevRaid::create(2, num_disks, 3, 1, &paths,
+                                                 Handle::default());
             (vdev_raid, tempdir, paths)
         }
     });

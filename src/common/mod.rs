@@ -6,6 +6,7 @@ use std::ops::{Add, Div, Sub};
 pub mod cluster;
 pub mod declust;
 pub mod dva;
+pub mod null_raid;
 pub mod prime_s;
 pub mod raid;
 pub mod label;
