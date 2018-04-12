@@ -504,14 +504,7 @@ impl VdevRaid {
                     // write pointer violation on SMR disks.
                     let zero_lbas = first_usable_disk_lba - first_disk_lba;
                     let zero_len = zero_lbas as usize * BYTES_PER_LBA;
-                    let zero_region_len = ZERO_REGION.len();
-                    let zero_bufs = div_roundup(zero_len, zero_region_len);
-                    let mut sglist = SGList::new();
-                    for _ in 0..(zero_bufs - 1) {
-                        sglist.push(ZERO_REGION.try().unwrap())
-                    }
-                    sglist.push(ZERO_REGION.try().unwrap().slice_to(
-                            zero_len - (zero_bufs - 1) * zero_region_len));
+                    let sglist = zero_sglist(zero_len);
                     blockdev.writev_at(sglist, first_disk_lba)
                 } else {
                     Box::new(future::ok::<(), Error>(()))

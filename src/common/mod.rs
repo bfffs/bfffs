@@ -62,6 +62,19 @@ lazy_static! {
         DivBufShared::from(vec![0u8; BYTES_PER_LBA]);
 }
 
+/// Create an SGList full of zeros, with the requested total length
+fn zero_sglist(len: usize) -> SGList {
+    let zero_region_len = ZERO_REGION.len();
+    let zero_bufs = div_roundup(len, zero_region_len);
+    let mut sglist = SGList::new();
+    for _ in 0..(zero_bufs - 1) {
+        sglist.push(ZERO_REGION.try().unwrap())
+    }
+    sglist.push(ZERO_REGION.try().unwrap().slice_to(
+            len - (zero_bufs - 1) * zero_region_len));
+    sglist
+}
+
 /// "Private" trait; only exists to ensure that div_roundup will fail to compile
 /// when used with signed numbers.  It would be nice to use a negative trait
 /// bound like "+ !Neg", but Rust doesn't support negative trait bounds.

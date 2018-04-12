@@ -133,13 +133,7 @@ impl LabelWriter {
         sglist.extend(contents);
         let len = MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN + contents_len;
         let padlen = LABEL_SIZE - len;
-        let zero_region_len = ZERO_REGION.len();
-        let zero_bufs = div_roundup(padlen, zero_region_len);
-        for _ in 0..(zero_bufs - 1) {
-            sglist.push(ZERO_REGION.try().unwrap());
-        }
-        sglist.push(ZERO_REGION.try().unwrap().slice_to(
-                    padlen - (zero_bufs - 1) * zero_region_len));
+        sglist.append(&mut zero_sglist(padlen));
         (sglist, vec![header_dbs])
     }
 }
