@@ -14,6 +14,7 @@ fixedbitset = "0.1.8"
 futures = "0.1.14"
 itertools = "0.7"
 isa-l = { path = "isa-l" }
+lazy_static = "1.0"
 metrohash = "1.0"
 # mockers should be a dev dependency, but can't because of issue 1596
 # https://github.com/rust-lang/cargo/issues/1596

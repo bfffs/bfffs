@@ -115,6 +115,22 @@ impl StripeBuffer {
         self.lba + self.len()
     }
 
+    /// Fill the `StripeBuffer` with zeros and return the number of LBAs worth
+    /// of padding.
+    pub fn pad(&mut self) -> LbaT {
+        let pad_lbas = self.stripe_lbas - self.len();
+        let padlen = pad_lbas as usize * BYTES_PER_LBA;
+        let zero_region_len = ZERO_REGION.len();
+        let zero_bufs = div_roundup(padlen, zero_region_len);
+        for _ in 0..(zero_bufs - 1) {
+            self.fill(ZERO_REGION.try().unwrap());
+        }
+        self.fill(ZERO_REGION.try().unwrap().slice_to(
+                padlen - (zero_bufs - 1) * zero_region_len));
+        debug_assert!(self.is_full());
+        pad_lbas
+    }
+
     /// Get a reference to the data contained by the `StripeBuffer`
     ///
     /// This can be used to read out the currently buffered data
@@ -187,12 +203,6 @@ pub struct VdevRaid {
     stripe_buffers: RefCell<BTreeMap<ZoneT, StripeBuffer>>,
 
     uuid: Uuid,
-
-    /// A convenient buffer prepopulated with zeros with a lifetime as long as
-    /// the `VdevRaid`.
-    // It would be nice to share this between multiple `VdevRaid`s, but how
-    // would you calculate the maximum size?
-    zero_region: DivBufShared
 }
 
 /// Convenience macro for `VdevRaid` I/O methods
@@ -312,11 +322,6 @@ impl VdevRaid {
                        blockdevs[i].zone_limits(0));
         }
 
-        let f = codec.protection();
-        let m = (codec.stripesize() - f) as LbaT;
-        let stripesize = (m * chunksize) as usize * BYTES_PER_LBA;
-        let zero_region = DivBufShared::from(vec![0u8; stripesize]);
-
         // NB: the optimum queue depth should actually be a little higher for
         // healthy reads than for writes or degraded reads.  This calculation
         // computes the optimum for writes and degraded reads.
@@ -327,7 +332,7 @@ impl VdevRaid {
         VdevRaid { chunksize, codec, locator, blockdevs, layout_algorithm,
                    optimum_queue_depth,
                    stripe_buffers: RefCell::new(BTreeMap::new()),
-                   uuid, zero_region, handle }
+                   uuid, handle }
     }
 
     /// Open all existing `VdevRaid`s found in `paths`.
@@ -415,11 +420,7 @@ impl VdevRaid {
         {
             let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
             if ! sb.is_empty() {
-                let pad_lbas = (sb.stripe_lbas - sb.len()) as usize;
-                let padsize = pad_lbas * BYTES_PER_LBA;
-                let db = self.zero_region.try().unwrap().slice_to(padsize);
-                sb.fill(db);
-                debug_assert!(sb.is_full());
+                sb.pad();
                 let lba = sb.lba();
                 let sgl = sb.pop();
                 futs.push(self.writev_at_one(&sgl, lba));
@@ -460,11 +461,7 @@ impl VdevRaid {
                     //Nothing to do!
                     (0, Box::new(future::ok::<(), Error>(())))
                 } else {
-                    let pad_lbas = sb.stripe_lbas - sb.len();
-                    let padsize = pad_lbas as usize * BYTES_PER_LBA;
-                    let db = self.zero_region.try().unwrap().slice_to(padsize);
-                    sb.fill(db);
-                    debug_assert!(sb.is_full());
+                    let pad_lbas = sb.pad();
                     let lba = sb.lba();
                     let sgl = sb.pop();
                     (pad_lbas, self.writev_at_one(&sgl, lba))
@@ -507,8 +504,15 @@ impl VdevRaid {
                     // write pointer violation on SMR disks.
                     let zero_lbas = first_usable_disk_lba - first_disk_lba;
                     let zero_len = zero_lbas as usize * BYTES_PER_LBA;
-                    let db = self.zero_region.try().unwrap().slice_to(zero_len);
-                    blockdev.write_at(db, first_disk_lba)
+                    let zero_region_len = ZERO_REGION.len();
+                    let zero_bufs = div_roundup(zero_len, zero_region_len);
+                    let mut sglist = SGList::new();
+                    for _ in 0..(zero_bufs - 1) {
+                        sglist.push(ZERO_REGION.try().unwrap())
+                    }
+                    sglist.push(ZERO_REGION.try().unwrap().slice_to(
+                            zero_len - (zero_bufs - 1) * zero_region_len));
+                    blockdev.writev_at(sglist, first_disk_lba)
                 } else {
                     Box::new(future::ok::<(), Error>(()))
                 };
@@ -1152,6 +1156,22 @@ fn stripe_buffer_one_iovec() {
     assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
 }
 
+// Pad a StripeBuffer that is larger than the ZERO_REGION
+#[test]
+fn stripe_buffer_pad() {
+    let zero_region_lbas = (ZERO_REGION.len() / BYTES_PER_LBA) as LbaT;
+    let stripesize = 2 * zero_region_lbas + 1;
+    let mut sb = StripeBuffer::new(99, stripesize);
+    let dbs = DivBufShared::from(vec![0; BYTES_PER_LBA]);
+    let db = dbs.try().unwrap();
+    assert!(sb.fill(db).is_empty());
+    assert!(sb.pad() == stripesize - 1);
+    let sglist = sb.pop();
+    assert_eq!(sglist.len(), 3);
+    assert_eq!(sglist.iter().map(|v| v.len()).sum::<usize>(),
+               stripesize as usize * BYTES_PER_LBA);
+}
+
 #[test]
 fn stripe_buffer_reset() {
     let mut sb = StripeBuffer::new(99, 6);
@@ -1588,7 +1608,7 @@ fn write_at_and_sync_all() {
     s.expect(bd0.writev_at_call(check!(|buf: &SGList| {
         // The first segment is user data
         &buf[0][..] == &vec![1u8; BYTES_PER_LBA][..] &&
-        // The second segment is zero-fill from flush_zone
+        // Later segments are zero-fill from flush_zone
         &buf[1][..] == &vec![0u8; BYTES_PER_LBA][..]
     }), 60_000)
         .and_return( Box::new( future::ok::<(), Error>(())))
@@ -1597,7 +1617,8 @@ fn write_at_and_sync_all() {
     let bd1 = bd();
     // This write is from the zero-fill
     s.expect(bd1.writev_at_call(check!(|buf: &SGList| {
-        &buf[0][..] == &vec![0u8; 2 * BYTES_PER_LBA][..]
+        &buf[0][..] == &vec![0u8; BYTES_PER_LBA][..] &&
+        &buf[1][..] == &vec![0u8; BYTES_PER_LBA][..]
     }), 60_000)
         .and_return( Box::new( future::ok::<(), Error>(())))
     );
@@ -1654,8 +1675,9 @@ fn open_zone_zero_fill_wasted_chunks() {
             );
             s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
                      .times(..));
-            s.expect(bd.write_at_call(check!(|buf: &IoVec| {
-                buf.len() == 3 * BYTES_PER_LBA
+            s.expect(bd.writev_at_call(check!(|sglist: &SGList| {
+                let len = sglist.iter().map(|b| b.len()).sum::<usize>();
+                len == 3 * BYTES_PER_LBA
             }), 32)
                 .and_return( Box::new( future::ok::<(), Error>(())))
             );
@@ -1703,9 +1725,10 @@ fn open_zone_zero_fill_wasted_stripes() {
             s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
                      .times(..));
             if gap_chunks > 0 {
-                s.expect(bd.write_at_call(check!(move |buf: &IoVec| {
+                s.expect(bd.writev_at_call(check!(move |sglist: &SGList| {
                     let gap_lbas = gap_chunks * CHUNKSIZE; 
-                    buf.len() == gap_lbas as usize * BYTES_PER_LBA
+                    let len = sglist.iter().map(|b| b.len()).sum::<usize>();
+                    len == gap_lbas as usize * BYTES_PER_LBA
                 }), 32)
                     .and_return( Box::new( future::ok::<(), Error>(())))
                 );

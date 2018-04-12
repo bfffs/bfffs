@@ -133,9 +133,13 @@ impl LabelWriter {
         sglist.extend(contents);
         let len = MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN + contents_len;
         let padlen = LABEL_SIZE - len;
-        // TODO: use a global zero region for the pad
-        let pad_dbs = DivBufShared::from(vec![0u8; padlen]);
-        sglist.push(pad_dbs.try().unwrap().slice_to(padlen));
-        (sglist, vec![header_dbs, pad_dbs])
+        let zero_region_len = ZERO_REGION.len();
+        let zero_bufs = div_roundup(padlen, zero_region_len);
+        for _ in 0..(zero_bufs - 1) {
+            sglist.push(ZERO_REGION.try().unwrap());
+        }
+        sglist.push(ZERO_REGION.try().unwrap().slice_to(
+                    padlen - (zero_bufs - 1) * zero_region_len));
+        (sglist, vec![header_dbs])
     }
 }

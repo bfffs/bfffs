@@ -70,7 +70,6 @@ impl<'a> From<&'a SGList> for SGCursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use divbuf::*;
     const MAX: usize = usize::max_value();
 
     #[test]

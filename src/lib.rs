@@ -10,6 +10,8 @@ extern crate futures;
 #[cfg(feature = "mocks")] extern crate galvanic_test;
 extern crate itertools;
 extern crate isa_l;
+#[macro_use]
+extern crate lazy_static;
 extern crate metrohash;
 #[cfg(test)]
 #[macro_use]

@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use divbuf::{DivBuf, DivBufMut};
+use divbuf::{DivBuf, DivBufMut, DivBufShared};
 use std::hash::Hasher;
 use std::ops::{Add, Div, Sub};
 
@@ -50,6 +50,17 @@ pub const BYTES_PER_LBA: usize = 4096;
 /// allocated.  Several small files can have their fragments packed into a
 /// single LBA.
 pub const BYTES_PER_FRAGMENT: usize = 256;
+
+lazy_static! {
+    /// A read-only buffer of zeros, useful for padding.
+    ///
+    /// The length is pretty arbitrary.  Code should be able to cope with a
+    /// smaller-than-desired `ZERO_REGION`.  A smaller size will have less
+    /// impact on the CPU cache.  A larger size will consume fewer CPU cycles
+    /// manipulating sglists.
+    static ref ZERO_REGION: DivBufShared =
+        DivBufShared::from(vec![0u8; BYTES_PER_LBA]);
+}
 
 /// "Private" trait; only exists to ensure that div_roundup will fail to compile
 /// when used with signed numbers.  It would be nice to use a negative trait
