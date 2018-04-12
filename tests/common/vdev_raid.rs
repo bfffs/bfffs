@@ -477,9 +477,9 @@ test_suite! {
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
 
-    const GOLDEN_VDEV_RAID_LABEL: [u8; 184] = [
+    const GOLDEN_VDEV_RAID_LABEL: [u8; 183] = [
         // Past the VdevFile::Label, we have a VdevRaid::Label
-              0x00, 0xa6, 0x64, 0x75, 0x75, 0x69, 0x64,// @..duuid
+                    0xa6, 0x64, 0x75, 0x75, 0x69, 0x64,// @..duuid
         0x50,
         // This is the VdevRaid's UUID
               0xb5, 0xb3, 0x52, 0x6b, 0x3a, 0xd5, 0x47,// P..Rk:.G
@@ -553,14 +553,14 @@ test_suite! {
         for path in raid.val.2 {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
-            f.seek(SeekFrom::Start(0x49)).unwrap();   // Skip the VdevLeaf label
+            f.seek(SeekFrom::Start(82)).unwrap();   // Skip the VdevLeaf label
             f.read_exact(&mut v).unwrap();
             // Compare against the golden master, skipping the checksum and UUID
             // fields
-            assert_eq!(&v[0..8], &GOLDEN_VDEV_RAID_LABEL[0..8]);
-            assert_eq!(&v[24..98], &GOLDEN_VDEV_RAID_LABEL[24..98]);
+            assert_eq!(&v[0..7], &GOLDEN_VDEV_RAID_LABEL[0..7]);
+            assert_eq!(&v[23..97], &GOLDEN_VDEV_RAID_LABEL[23..97]);
             // Rest of the buffer should be zero-filled
-            assert!(v[184..].iter().all(|&x| x == 0));
+            assert!(v[183..].iter().all(|&x| x == 0));
         }
     }
 }

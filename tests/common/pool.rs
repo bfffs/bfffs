@@ -83,7 +83,7 @@ test_suite! {
         for path in objects.val.2 {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
-            f.seek(SeekFrom::Start(0xbf)).unwrap();   // Skip leaf & raid labels
+            f.seek(SeekFrom::Start(0xc7)).unwrap();   // Skip leaf & raid labels
             f.read_exact(&mut v).unwrap();
             // Compare against the golden master, skipping the checksum and UUID
             // fields

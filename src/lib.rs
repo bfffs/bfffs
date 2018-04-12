@@ -1,6 +1,7 @@
 #![cfg_attr(feature = "mocks", feature(plugin))]
 #![cfg_attr(feature = "mocks", plugin(mockers_macros))]
 
+extern crate byteorder;
 extern crate divbuf;
 extern crate fixedbitset;
 extern crate futures;
@@ -9,6 +10,7 @@ extern crate futures;
 #[cfg(feature = "mocks")] extern crate galvanic_test;
 extern crate itertools;
 extern crate isa_l;
+extern crate metrohash;
 #[cfg(test)]
 #[macro_use]
 #[cfg(feature = "mocks")] extern crate mockers;

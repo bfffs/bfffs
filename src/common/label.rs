@@ -1,18 +1,30 @@
 // vim: tw=80
 
+use byteorder::{BigEndian, ByteOrder};
 use common::*;
 use divbuf::DivBufShared;
+use metrohash::MetroHash64;
 use nix::{Error, errno};
 use serde::{Deserialize, Serialize};
 use serde_cbor;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::io::{Seek, SeekFrom};
 
-const CHECKSUM_LEN: usize = 8;
-const MAGIC_LEN: usize = 16;
+/*
+ * On-disk Label Format:
+ * Magic:       16 bytes
+ * Checksum:    8 bytes     MetroHash64.  Covers all of Length and Contents.
+ * Length:      8 bytes     Length of Contents in bytes
+ * Contents:    variable    3 CBOR-encoded structs
+ * Pad:         variable    0-padding fills the remainder, up to 4 LBAs
+ */
 /// The file magic is "ArkFS Vdev\0\0\0\0\0\0"
 const MAGIC: [u8; MAGIC_LEN] = [0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64,
                                 0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+const MAGIC_LEN: usize = 16;
+const CHECKSUM_LEN: usize = 8;
+const LENGTH_LEN: usize = 8;
 // Actual label size is about 17 bytes for each RAID member plus 17 bytes for
 // each Cluster, plus a couple hundred bytes more.
 pub const LABEL_LBAS: LbaT = 4;
@@ -35,18 +47,37 @@ impl<'de> LabelReader {
 
     /// Construct a `LabelReader` using the raw buffer read from disk
     pub fn from_dbs(buffer: DivBufShared) -> Result<Self, Error> {
-        // TODO: verify checksum
         let db = buffer.try().unwrap();
-        if &MAGIC[..] == &db[0..MAGIC_LEN] {
-            let mut cursor = io::Cursor::new(db);
-            // Seek past magic and checksum
-            let seek_len = (MAGIC_LEN + CHECKSUM_LEN) as u64;
-            cursor.seek(SeekFrom::Start(seek_len)).expect("IoVec too short");
-            let deserializer = serde_cbor::Deserializer::from_reader(cursor);
-            Ok(LabelReader { _dbs: buffer, deserializer })
-        } else {
-            Err(Error::Sys(errno::Errno::EINVAL))
+        if db.len() < MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN {
+            return Err(Error::Sys(errno::Errno::EINVAL));
         }
+        if &MAGIC[..] != &db[0..MAGIC_LEN] {
+            return Err(Error::Sys(errno::Errno::EINVAL));
+        }
+
+        let checksum = BigEndian::read_u64(
+            &db[MAGIC_LEN..MAGIC_LEN + CHECKSUM_LEN]);
+        let length_start = MAGIC_LEN + CHECKSUM_LEN;
+        let contents_start = length_start + LENGTH_LEN;
+        let contents_len = BigEndian::read_u64(
+            &db[length_start .. contents_start]);
+        let mut hasher = MetroHash64::new();
+        {
+            let contents = &db[contents_start ..
+                               contents_start + contents_len as usize];
+            contents_len.to_be().hash(&mut hasher);
+            hasher.write(contents);
+        }
+        if checksum != hasher.finish() {
+            return Err(Error::Sys(errno::Errno::EINVAL));
+        }
+
+        let mut cursor = io::Cursor::new(db);
+        // Seek past header
+        cursor.seek(SeekFrom::Start(contents_start as u64))
+            .expect("IoVec too short");
+        let deserializer = serde_cbor::Deserializer::from_reader(cursor);
+        Ok(LabelReader { _dbs: buffer, deserializer })
     }
 }
 
@@ -84,17 +115,27 @@ impl LabelWriter {
     /// must outlive it.
     pub fn into_sglist(self) -> (SGList, Vec<DivBufShared>) {
         let mut sglist: SGList = Vec::with_capacity(self.buffers.len() + 2);
-        let magic = DivBufShared::from(Vec::from(&MAGIC[..]));
-        sglist.push(magic.try().unwrap());
-        let checksum = DivBufShared::from(vec![0u8; CHECKSUM_LEN]);
-        // TODO: calculate checksum correctly
-        sglist.push(checksum.try().unwrap());
-        sglist.extend(self.buffers.into_iter().rev());
-        let len = sglist.iter().fold(0, |acc, b| acc + b.len());
+        let header_len = MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN;
+        let header_dbs = DivBufShared::with_capacity(header_len);
+        let mut header = header_dbs.try_mut().unwrap();
+        header.extend(&MAGIC[..]);
+        let contents = self.buffers.into_iter().rev().collect::<Vec<_>>();
+        let contents_len: usize = contents.iter().map(|x| x.len()).sum();
+        let mut hasher = MetroHash64::new();
+        (contents_len as u64).to_be().hash(&mut hasher);
+        hash_sglist(&contents, &mut hasher);
+        header.try_resize(MAGIC_LEN + CHECKSUM_LEN, 0).unwrap();
+        BigEndian::write_u64(&mut header[MAGIC_LEN..], hasher.finish());
+        header.try_resize(MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN, 0).unwrap();
+        let length_start = MAGIC_LEN + CHECKSUM_LEN;
+        BigEndian::write_u64(&mut header[length_start..], contents_len as u64);
+        sglist.push(header.freeze());
+        sglist.extend(contents);
+        let len = MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN + contents_len;
         let padlen = LABEL_SIZE - len;
         // TODO: use a global zero region for the pad
-        let pad = DivBufShared::from(vec![0u8; padlen]);
-        sglist.push(pad.try().unwrap().slice_to(padlen));
-        (sglist, vec![magic, checksum, pad])
+        let pad_dbs = DivBufShared::from(vec![0u8; padlen]);
+        sglist.push(pad_dbs.try().unwrap().slice_to(padlen));
+        (sglist, vec![header_dbs, pad_dbs])
     }
 }
