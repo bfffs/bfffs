@@ -4,6 +4,7 @@ use divbuf::{DivBuf, DivBufMut, DivBufShared};
 use std::hash::Hasher;
 use std::ops::{Add, Div, Sub};
 
+pub mod cache;
 pub mod cluster;
 pub mod declust;
 pub mod dva;
