@@ -5,11 +5,12 @@ use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 
 
+/// Key types used by `Cache`
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Key {
     /// Immutable Record ID.
     Rid(u64),
-    /// Data Physical Address.
+    /// Data Physical Address, as returned by `Pool::write`.
     Dpa(ClusterT, LbaT),
 }
 
@@ -22,29 +23,49 @@ struct LruEntry {
     mru: Option<Key>,
 }
 
+/// Basic read-only block cache.
+///
+/// Caches on-disk blocks by either their address (cluster and LBA pair), or
+/// their Record ID.  The cache is read-only because any attempt to change a
+/// block would also require changing either its address or record ID.
 pub struct Cache {
     /// Capacity of the `Cache` in bytes, not number of entries
-    _capacity: usize,
+    capacity: usize,
     /// Pointer to the least recently used entry
     lru: Option<Key>,
     /// Pointer to the most recently used entry
     mru: Option<Key>,
     /// Current memory consumption of all cache entries, excluding overhead
     size: usize,
+    /// Block storage.
     store: HashMap<Key, LruEntry, BuildHasherDefault<MetroHash64>>,
 }
 
 impl Cache {
+    fn expire(&mut self) {
+        let mut key = self.lru;
+        loop {
+            assert!(key.is_some(), "Can't find an entry to expire");
+            let v = self.store.get_mut(&key.unwrap()).unwrap();
+            let dbm = v.buf.try_mut();
+            if dbm.is_err() {
+                // buffer is still referenced.  Skip it
+                key = v.mru;
+                continue;
+            } else {
+                break;
+            }
+        }
+        self.remove(&key.unwrap());
+    }
+
+    /// Get a read-only reference to a cached block.
+    ///
+    /// The block will be marked as the most recently used.
     pub fn get(&mut self, key: &Key) -> Option<DivBuf> {
         if self.mru == Some(*key) {
             Some(self.store.get(key).unwrap().buf.try().unwrap())
         } else {
-                //self.remove(key).map(|dbs| {
-                    //let db = dbs.try().unwrap();
-                    //self.insert(*key, dbs);
-                    //db
-                //})
-            //}
             let mru = self.mru;
             let mut v_mru = None;
             let mut v_lru = None;
@@ -75,7 +96,13 @@ impl Cache {
         }
     }
 
+    /// Add a new block to the cache.
+    ///
+    /// The block will be marked as the most recently used.
     pub fn insert(&mut self, key: Key, buf: DivBufShared) {
+        while self.size + buf.len() > self.capacity {
+            self.expire();
+        }
         self.size += buf.len();
         let entry = LruEntry { buf, mru: None, lru: self.mru};
         assert!(self.store.insert(key, entry).is_none());
@@ -91,6 +118,10 @@ impl Cache {
         }
     }
 
+    /// Remove a block from the cache.
+    ///
+    /// Unlike `get`, the block will be returned in a writable form, if it was
+    /// present at all.
     pub fn remove(&mut self, key: &Key) -> Option<DivBufShared> {
         self.store.remove(key).map(|v| {
             self.size -= v.buf.len();
@@ -110,13 +141,18 @@ impl Cache {
         })
     }
 
+    /// Get the current memory consumption of the cache, in bytes.
+    ///
+    /// Only the cached blocks themselves are included, not the overhead of
+    /// managing them.
     pub fn size(&self) -> usize {
         self.size
     }
 
+    /// Create a new cache with the given capacity, in bytes.
     pub fn with_capacity(capacity: usize) -> Self {
         let store = HashMap::with_hasher(MetroBuildHasher::default());
-        Cache{_capacity: capacity, lru: None, mru: None, size: 0, store}
+        Cache{capacity, lru: None, mru: None, size: 0, store}
     }
 }
 
@@ -176,6 +212,59 @@ fn test_get_middle() {
         assert_eq!(v.lru, Some(key1));
         assert_eq!(v.mru, Some(key2));
     }
+}
+
+/// Don't expire a referenced entry, even if it's the LRU
+#[test]
+fn test_expire_referenced() {
+    let mut cache = Cache::with_capacity(100);
+    let key1 = Key::Rid(1);
+    let key2 = Key::Rid(2);
+    let key3 = Key::Rid(3);
+    let dbs = DivBufShared::from(vec![0u8; 13]);
+    cache.insert(key1, dbs);
+    let _ref1 = cache.get(&key1);
+    let dbs = DivBufShared::from(vec![0u8; 17]);
+    cache.insert(key2, dbs);
+    let dbs = DivBufShared::from(vec![0u8; 83]);
+    cache.insert(key3, dbs);
+
+    assert_eq!(cache.size(), 96);
+    assert!(cache.get(&key2).is_none());
+}
+
+/// On insertion, old entries should be expired to prevent overflow
+#[test]
+fn test_expire_one() {
+    let mut cache = Cache::with_capacity(100);
+    let key1 = Key::Rid(1);
+    let key2 = Key::Rid(2);
+    let dbs = DivBufShared::from(vec![0u8; 53]);
+    cache.insert(key1, dbs);
+    let dbs = DivBufShared::from(vec![0u8; 57]);
+    cache.insert(key2, dbs);
+
+    assert_eq!(cache.size(), 57);
+    assert!(cache.get(&key1).is_none());
+}
+
+/// expire multiple entries if necessary
+#[test]
+fn test_expire_two() {
+    let mut cache = Cache::with_capacity(100);
+    let key1 = Key::Rid(1);
+    let key2 = Key::Rid(2);
+    let key3 = Key::Rid(3);
+    let dbs = DivBufShared::from(vec![0u8; 41]);
+    cache.insert(key1, dbs);
+    let dbs = DivBufShared::from(vec![0u8; 43]);
+    cache.insert(key2, dbs);
+    let dbs = DivBufShared::from(vec![0u8; 61]);
+    cache.insert(key3, dbs);
+
+    assert_eq!(cache.size(), 61);
+    assert!(cache.get(&key1).is_none());
+    assert!(cache.get(&key2).is_none());
 }
 
 /// Get the most recently used entry
