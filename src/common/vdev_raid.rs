@@ -289,13 +289,12 @@ impl VdevRaid {
         let blockdevs = paths.iter().map(|path| {
             VdevBlock::create(path, handle.clone()).unwrap()
         }).collect::<Vec<_>>();
-        VdevRaid::new(chunksize, num_disks, disks_per_stripe, redundancy, uuid,
+        VdevRaid::new(chunksize, disks_per_stripe, redundancy, uuid,
                       layout_algo, blockdevs.into_boxed_slice(), handle)
     }
 
     #[cfg(any(not(test), feature = "mocks"))]
     fn new(chunksize: LbaT,
-           num_disks: i16,  //TODO: remove this redundant parameter
            disks_per_stripe: i16,
            redundancy: i16,
            uuid: Uuid,
@@ -303,6 +302,7 @@ impl VdevRaid {
            blockdevs: Box<[VdevBlockLike]>,
            handle: Handle) -> Self {
 
+        let num_disks = blockdevs.len() as i16;
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
         let locator: Box<Locator> = match layout_algorithm {
             LayoutAlgorithm::NullRaid => Box::new(
@@ -310,8 +310,6 @@ impl VdevRaid {
             LayoutAlgorithm::PrimeS => Box::new(
                 PrimeS::new(num_disks, disks_per_stripe, redundancy))
         };
-        assert_eq!(blockdevs.len(), locator.clustsize() as usize,
-            "mismatched cluster size");
         for i in 1..blockdevs.len() {
             // All blockdevs must be the same size
             assert_eq!(blockdevs[0].size(), blockdevs[i].size());
@@ -377,7 +375,6 @@ impl VdevRaid {
                 }
                 if blockdevs.len() == num_disks as usize {
                     Some((VdevRaid::new(rlabel.chunksize,
-                                      num_disks,
                                       rlabel.disks_per_stripe,
                                       rlabel.redundancy,
                                       rlabel.uuid,
@@ -1269,18 +1266,6 @@ mock!{
     }
 }
 
-#[test]
-#[should_panic(expected="mismatched cluster size")]
-fn vdev_raid_mismatched_clustsize() {
-        let n = 7;
-        let k = 4;
-        let f = 1;
-
-        let blockdevs = Vec::<Box<VdevBlockTrait>>::new();
-        VdevRaid::new(16, n, k, f, Uuid::new_v4(), LayoutAlgorithm::PrimeS,
-                      blockdevs.into_boxed_slice(), Handle::default());
-}
-
 test_suite! {
     // Test basic layout properties
     name basic;
@@ -1323,7 +1308,7 @@ test_suite! {
                 blockdevs.push(mock);
             }
 
-            let vdev_raid = VdevRaid::new(*self.chunksize, *self.n, *self.k,
+            let vdev_raid = VdevRaid::new(*self.chunksize, *self.k,
                                           *self.f, Uuid::new_v4(),
                                           LayoutAlgorithm::PrimeS,
                                           blockdevs.into_boxed_slice(),
@@ -1435,7 +1420,6 @@ test_suite! {
 // real VdevBlocks.  Functional testing will verify the data.
 #[test]
 fn read_at_one_stripe() {
-        let n = 3;
         let k = 3;
         let f = 1;
         const CHUNKSIZE : LbaT = 2;
@@ -1485,7 +1469,7 @@ fn read_at_one_stripe() {
         );
         blockdevs.push(m2);
 
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice(),
@@ -1501,7 +1485,6 @@ fn read_at_one_stripe() {
 // real VdevBlocks.  Functional testing will verify the data.
 #[test]
 fn write_at_one_stripe() {
-        let n = 3;
         let k = 3;
         let f = 1;
         const CHUNKSIZE : LbaT = 2;
@@ -1559,7 +1542,7 @@ fn write_at_one_stripe() {
         );
         blockdevs.push(m2);
 
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice(),
@@ -1573,7 +1556,6 @@ fn write_at_one_stripe() {
 // Partially written stripes should be flushed by flush_zone
 #[test]
 fn write_at_and_sync_all() {
-    let n = 3;
     let k = 3;
     let f = 1;
     const CHUNKSIZE: LbaT = 2;
@@ -1630,7 +1612,7 @@ fn write_at_and_sync_all() {
     blockdevs.push(bd1);
     blockdevs.push(bd2);
 
-    let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice(),
@@ -1647,7 +1629,6 @@ fn write_at_and_sync_all() {
 // Use highly unrealistic disks with 32 LBAs per zone
 #[test]
 fn open_zone_zero_fill_wasted_chunks() {
-        let n = 5;
         let k = 5;
         let f = 1;
         const CHUNKSIZE : LbaT = 5;
@@ -1683,7 +1664,7 @@ fn open_zone_zero_fill_wasted_chunks() {
         blockdevs.push(bd());    //disk 3
         blockdevs.push(bd());    //disk 4
 
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice(),
@@ -1696,7 +1677,6 @@ fn open_zone_zero_fill_wasted_chunks() {
 // Use highly unrealistic disks with 32 LBAs per zone
 #[test]
 fn open_zone_zero_fill_wasted_stripes() {
-        let n = 7;
         let k = 5;
         let f = 1;
         const CHUNKSIZE : LbaT = 1;
@@ -1740,7 +1720,7 @@ fn open_zone_zero_fill_wasted_stripes() {
         blockdevs.push(bd(1));  //disk 5
         blockdevs.push(bd(0));  //disk 6
 
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, n, k, f,
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice(),
