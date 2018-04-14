@@ -80,12 +80,6 @@ impl OpenZone {
 // * Find a zone by Zone ID, to rebuild it
 // * Find all zones modified in a certain txg range
 struct FreeSpaceMap {
-    /// `Vec` of all zones in the Vdev.  Any zones past the end of the `Vec` are
-    /// implicitly Empty.  Any zones whose index is present in `empty_zones` are
-    /// also Empty.  Any zones whose index is also present in `open_zones` are
-    /// implicitly open.  All other zones are Closed.
-    zones: Vec<Zone>,
-
     /// Stores the set of empty zones with id less than zones.len().  All zones
     /// with id greater than or equal to zones.len() are implicitly empty
     empty_zones: BTreeSet<ZoneT>,
@@ -95,6 +89,12 @@ struct FreeSpaceMap {
 
     /// Total number of zones in the vdev
     total_zones: ZoneT,
+
+    /// `Vec` of all zones in the Vdev.  Any zones past the end of the `Vec` are
+    /// implicitly Empty.  Any zones whose index is present in `empty_zones` are
+    /// also Empty.  Any zones whose index is also present in `open_zones` are
+    /// implicitly open.  All other zones are Closed.
+    zones: Vec<Zone>,
 }
 
 impl FreeSpaceMap {
@@ -230,9 +230,61 @@ impl FreeSpaceMap {
         }
     }
 
+    /// Open a FreeSpaceMap from a deserialized label.  The vdev is necessary
+    /// too, to find zone information.
+    #[cfg(any(not(test), feature = "mocks"))]
+    pub fn open(label: Label, vdev: &VdevRaidLike) -> Self {
+        let total_zones = label.allocated_blocks.len() as ZoneT;
+        let mut fsm = FreeSpaceMap::new(total_zones);
+        assert_eq!(total_zones, label.freed_blocks.len() as ZoneT);
+        let freed_iter = label.freed_blocks.into_iter();
+        let allocated_iter = label.allocated_blocks.into_iter();
+        for v in allocated_iter.zip(freed_iter).enumerate() {
+            let zid = v.0 as ZoneT;
+            let allocated = (v.1).0;
+            let freed = (v.1).1;
+            if allocated > 0 {
+                let zl = vdev.zone_limits(zid);
+                fsm.open_zone(zid, zl.0, zl.1, 0).unwrap();
+                if allocated == u32::max_value() {
+                    fsm.finish_zone(zid);
+                } else if allocated > 0 {
+                    assert_eq!(fsm.try_allocate(allocated.into()).0.unwrap().0,
+                               zid);
+                }
+            }
+            if freed > 0 {
+                fsm.free(zid, freed.into());
+            }
+        }
+        fsm
+    }
+
     /// Return an iterator over the zone IDs of all open zones
     pub fn open_zone_ids(&self) -> Keys<ZoneT, OpenZone> {
         self.open_zones.keys()
+    }
+
+    /// Serialize this `FreeSpaceMap` into a `Label`.
+    pub fn serialize(&self) -> Label {
+        let allocated_blocks = (0..self.total_zones).map(|z| {
+            if self.is_empty(z) {
+                0
+            } else {
+                match self.open_zones.get(&z) {
+                    Some(oz) => oz.allocated_blocks,
+                    None => u32::max_value()
+                }
+            }
+        }).collect::<Vec<_>>();
+        let freed_blocks =  (0..self.total_zones).map(|z| {
+            if self.is_empty(z) {
+                0
+            } else {
+                self.zones[z as usize].freed_blocks
+            }
+        }).collect::<Vec<_>>();
+        Label{allocated_blocks, freed_blocks}
     }
 
     /// Try to allocate `space` worth of space in any open zone.  If no open
@@ -275,9 +327,16 @@ impl FreeSpaceMap {
     }
 }
 
-/// Placeholder Label for future `Cluster` information.
+/// Persists information necessary to recreate the `FreeSpaceMap`.
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
+    /// An array of the number of blocks that have been allocated in each Zone.
+    /// If zero, then the zone is empty.  If `u32::max_value()`, then the zone
+    /// is full.
+    allocated_blocks: Vec<u32>,
+
+    /// An array of the number of blocks that have been freed in each Zone.
+    freed_blocks: Vec<u32>,
 }
 
 /// A `Cluster` is ArkFS's equivalent of ZFS's top-level Vdev.  It is the
@@ -325,8 +384,11 @@ impl<'a> Cluster {
                                   redundancy: i16,
                                   paths: &[P],
                                   handle: Handle) -> Self {
-        Cluster::new(VdevRaid::create(chunksize, num_disks, disks_per_stripe,
-                                      redundancy, paths, handle))
+        let vdev = VdevRaid::create(chunksize, num_disks, disks_per_stripe,
+                                    redundancy, paths, handle);
+        let total_zones = vdev.zones();
+        let fsm = FreeSpaceMap::new(total_zones);
+        Cluster::new(fsm, vdev)
     }
 
     /// Delete the underlying storage for a Zone.
@@ -359,8 +421,8 @@ impl<'a> Cluster {
     /// Construct a new `Cluster` from an already constructed
     /// [`VdevRaid`](struct.VdevRaid.html)
     #[cfg(any(not(test), feature = "mocks"))]
-    fn new(vdev: VdevRaidLike) -> Self {
-        Cluster{fsm: RefCell::new(FreeSpaceMap::new(vdev.zones())), vdev}
+    fn new(fsm: FreeSpaceMap, vdev: VdevRaidLike) -> Self {
+        Cluster{fsm: RefCell::new(fsm), vdev}
     }
 
     /// Open all existing `Cluster`s fuond in `paths`.
@@ -380,8 +442,9 @@ impl<'a> Cluster {
         Box::new(
             VdevRaid::open_all(paths, handle).map(|v| {
                 v.into_iter().map(|(vdev_raid, mut reader)| {
-                    let _l: Label = reader.deserialize().unwrap();
-                    (Cluster::new(vdev_raid), reader)
+                    let l: Label = reader.deserialize().unwrap();
+                    let fsm = FreeSpaceMap::open(l, &vdev_raid);
+                    (Cluster::new(fsm, vdev_raid), reader)
                 }).collect::<Vec<_>>()
             })
         )
@@ -473,7 +536,7 @@ impl<'a> Cluster {
 
     /// Asynchronously write this Vdev's label to all component devices
     pub fn write_label(&self, mut labeller: LabelWriter) -> Box<VdevFut> {
-        let label = Label{};
+        let label = self.fsm.borrow().serialize();
         let dbs = labeller.serialize(label);
         Box::new(self.vdev.write_label(labeller).map(move |_| {
             let _ = dbs;    // needs to live this long
@@ -526,7 +589,9 @@ mod cluster {
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.lba2zone_call(900).and_return_clone(Some(0)).times(..));
         s.expect(vr.lba2zone_call(1099).and_return_clone(Some(1)).times(..));
-        let cluster = Cluster::new(Box::new(vr));
+        s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
         cluster.free(900, 200);
     }
 
@@ -537,8 +602,42 @@ mod cluster {
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.lba2zone_call(1000).and_return_clone(None).times(..));
-        let cluster = Cluster::new(Box::new(vr));
+        s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
         cluster.free(1000, 10);
+    }
+
+    // FreeSpaceMap::open with the following conditions:
+    // A full zone with some freed blocks
+    // An empty zone before the maximum open or full zone
+    // An open zone with some freed blocks
+    // A trailing empty zone
+    #[test]
+    fn freespacemap_open() {
+        let s = Scenario::new();
+        let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.zones_call().and_return_clone(4).times(..));
+        s.expect(vr.zone_limits_call(0).and_return_clone((4, 96)).times(..));
+        s.expect(vr.zone_limits_call(1).and_return_clone((104, 196)).times(..));
+        s.expect(vr.zone_limits_call(2).and_return_clone((204, 296)).times(..));
+        s.expect(vr.zone_limits_call(3).and_return_clone((304, 396)).times(..));
+        let label = Label {
+            allocated_blocks: vec![u32::max_value(), 0, 77, 0],
+            freed_blocks: vec![22, 0, 33, 0]
+        };
+        let mock_vr: Box<VdevRaidTrait> = Box::new(vr);
+        let fsm = FreeSpaceMap::open(label, &mock_vr);
+        assert_eq!(fsm.zones.len(), 3);
+        assert_eq!(fsm.zones[0].freed_blocks, 22);
+        assert_eq!(fsm.zones[0].total_blocks, 92);
+        assert!(fsm.is_empty(1));
+        assert_eq!(fsm.zones[2].freed_blocks, 33);
+        assert_eq!(fsm.zones[2].total_blocks, 92);
+        let oz = fsm.open_zones.get(&2).unwrap();
+        assert_eq!(oz.start, 204);
+        assert_eq!(oz.allocated_blocks, 77);
+        assert!(fsm.is_empty(3));
     }
 
     // Cluster.sync_all should flush all open VdevRaid zones, then sync_all the
@@ -561,7 +660,8 @@ mod cluster {
                  .and_return((5, Box::new(future::ok::<(), Error>(())))));
         s.expect(vr.sync_all_call()
                  .and_return(Box::new(future::ok::<(), Error>(()))));
-        let cluster = Cluster::new(Box::new(vr));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
@@ -580,7 +680,8 @@ mod cluster {
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1)).times(..));
-        let cluster = Cluster::new(Box::new(vr));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
          let result = current_thread::block_on_all(future::lazy(|| {
@@ -595,7 +696,9 @@ mod cluster {
         let vr = s.create_mock::<MockVdevRaid>();
         // What a useless disk ...
         s.expect(vr.zones_call().and_return_clone(0).times(..));
-        let cluster = Cluster::new(Box::new(vr));
+        s.expect(vr.zone_limits_call(0).and_return_clone((0, 0)).times(..));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let result = cluster.write(dbs.try().unwrap());
@@ -616,7 +719,8 @@ mod cluster {
             0,  // Zone
             0   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
-        let cluster = Cluster::new(Box::new(vr));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
@@ -647,7 +751,8 @@ mod cluster {
             0,  // Zone
             1   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
-        let cluster = Cluster::new(Box::new(vr));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
@@ -690,7 +795,8 @@ mod cluster {
             1,  // Zone
             3   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
-        let cluster = Cluster::new(Box::new(vr));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs.try().unwrap();
@@ -966,6 +1072,31 @@ mod free_space_map {
         fsm.open_zone(zid, 0, 1000, 0).unwrap();
         fsm.finish_zone(zid);
         fsm.open_zone(zid, 0, 1000, 0).unwrap();
+    }
+
+    // FreeSpaceMap::serialize with the following conditions:
+    // A full zone with some freed blocks
+    // An empty zone before the maximum open or full zone
+    // An open zone with some freed blocks
+    // A trailing empty zone
+    #[test]
+    fn serialize() {
+        let mut fsm = FreeSpaceMap::new(4);
+        fsm.open_zone(0, 4, 96, 88).unwrap();
+        fsm.finish_zone(0);
+        fsm.free(0, 22);
+        fsm.open_zone(2, 204, 296, 77).unwrap();
+        fsm.free(2, 33);
+
+        let label = fsm.serialize();
+        assert_eq!(label.allocated_blocks[0], u32::max_value());
+        assert_eq!(label.allocated_blocks[1], 0);
+        assert_eq!(label.allocated_blocks[2], 77);
+        assert_eq!(label.allocated_blocks[3], 0);
+        assert_eq!(label.freed_blocks[0], 22);
+        assert_eq!(label.freed_blocks[1], 0);
+        assert_eq!(label.freed_blocks[2], 33);
+        assert_eq!(label.freed_blocks[3], 0);
     }
 
     #[test]
