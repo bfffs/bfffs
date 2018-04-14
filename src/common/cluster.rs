@@ -275,6 +275,11 @@ impl FreeSpaceMap {
     }
 }
 
+/// Placeholder Label for future `Cluster` information.
+#[derive(Serialize, Deserialize, Debug)]
+struct Label {
+}
+
 /// A `Cluster` is ArkFS's equivalent of ZFS's top-level Vdev.  It is the
 /// highest level `Vdev` that has its own LBA space.
 pub struct Cluster {
@@ -374,7 +379,8 @@ impl<'a> Cluster {
 
         Box::new(
             VdevRaid::open_all(paths, handle).map(|v| {
-                v.into_iter().map(|(vdev_raid, reader)| {
+                v.into_iter().map(|(vdev_raid, mut reader)| {
+                    let _l: Label = reader.deserialize().unwrap();
                     (Cluster::new(vdev_raid), reader)
                 }).collect::<Vec<_>>()
             })
@@ -466,8 +472,12 @@ impl<'a> Cluster {
     }
 
     /// Asynchronously write this Vdev's label to all component devices
-    pub fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut> {
-        self.vdev.write_label(labeller)
+    pub fn write_label(&self, mut labeller: LabelWriter) -> Box<VdevFut> {
+        let label = Label{};
+        let dbs = labeller.serialize(label);
+        Box::new(self.vdev.write_label(labeller).map(move |_| {
+            let _ = dbs;    // needs to live this long
+        }))
     }
 }
 
