@@ -156,7 +156,7 @@ impl<'a> Pool {
     // Before deleting the underlying storage, ArkFS should double-check that
     // nothing is using it.  That requires using the AllocationTable, which is
     // above the layer of the Pool.
-    pub fn free(&mut self, cluster: ClusterT, lba: LbaT, length: LbaT) {
+    pub fn free(&self, cluster: ClusterT, lba: LbaT, length: LbaT) {
         self.stats.borrow_mut().allocated_space[cluster as usize] -= length;
         self.clusters[cluster as usize].free(lba, length)
     }
