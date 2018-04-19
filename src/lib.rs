@@ -5,6 +5,7 @@ extern crate byteorder;
 extern crate divbuf;
 extern crate fixedbitset;
 extern crate futures;
+extern crate futures_locks;
 #[cfg(test)]
 #[macro_use]
 #[cfg(feature = "mocks")] extern crate galvanic_test;
