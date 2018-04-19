@@ -541,15 +541,29 @@ impl VdevRaid {
             end_lba >= stripe_buffer.unwrap().lba() {
 
             // We need to service part of the read from the StripeBuffer
-            let direct_len = (stripe_buffer.unwrap().lba() - lba) as usize *
-                             BYTES_PER_LBA;
+            let mut cursor = SGCursor::from(stripe_buffer.unwrap().peek());
+            let direct_len = if stripe_buffer.unwrap().lba() > lba {
+                let direct_len = (stripe_buffer.unwrap().lba() - lba) as usize *
+                                 BYTES_PER_LBA;
+                direct_len
+            } else {
+                // Seek to the LBA of interest
+                let mut skipped = 0;
+                let to_skip = (lba - stripe_buffer.unwrap().lba()) as usize *
+                    BYTES_PER_LBA;
+                while skipped < to_skip {
+                    let iovec = cursor.next(to_skip - skipped);
+                    skipped += iovec.unwrap().len();
+                }
+                0
+            };
             let mut sb_buf = buf.split_off(direct_len);
             // Copy from StripeBuffer into sb_buf
-            for iovec in stripe_buffer.unwrap().peek() {
+            while sb_buf.len() > 0 {
+                let iovec = cursor.next(sb_buf.len()).expect(
+                    "Read beyond the stripe buffer into unallocated space");
                 sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
             }
-            assert!(sb_buf.is_empty(),
-                "Read beyond the stripe buffer into unallocated space");
             if direct_len == 0 {
                 // Read was fully serviced by StripeBuffer.  No need to go to
                 // disks.

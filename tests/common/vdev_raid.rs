@@ -129,6 +129,25 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
+    // read_at should work when directed at the middle of the stripe buffer
+    test read_partial_at_middle_of_stripe(raid((3, 3, 1, 16))) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let mut wbuf = dbsw.try().unwrap().slice_to(2 * BYTES_PER_LBA);
+        let _ = wbuf.split_off(2 * BYTES_PER_LBA);
+        {
+            let mut rbuf = dbsr.try_mut().unwrap();
+            let rbuf_begin = rbuf.split_to(BYTES_PER_LBA);
+            let rbuf_middle = rbuf.split_to(BYTES_PER_LBA);
+            write_read0(raid.val.0, vec![wbuf.clone()],
+                        vec![rbuf_begin, rbuf_middle]);
+        }
+        assert_eq!(&wbuf[..],
+                   &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA],
+                   "{:#?}\n{:#?}", &wbuf[..],
+                   &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA]);
+    }
+
     // Read a stripe in several pieces, from disk
     test read_parts_of_stripe(raid((7, 7, 1, 16))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
@@ -399,7 +418,6 @@ test_suite! {
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try().unwrap()[0..BYTES_PER_LBA]);
     }
-
 
     #[should_panic]
     // Writing to an explicitly closed a zone fails
