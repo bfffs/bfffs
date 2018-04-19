@@ -53,6 +53,22 @@ pub const BYTES_PER_LBA: usize = 4096;
 /// single LBA.
 pub const BYTES_PER_FRAGMENT: usize = 256;
 
+/// Physical Block Address.
+///
+/// Locates a block of storage within a pool.  A block is the smallest amount of
+/// data that can be transferred to/from a disk.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PBA {
+    pub cluster: ClusterT,
+    pub lba: LbaT
+}
+
+impl PBA {
+    fn new(cluster: ClusterT, lba: LbaT) -> Self {
+        PBA {cluster, lba}
+    }
+}
+
 lazy_static! {
     /// A read-only buffer of zeros, useful for padding.
     ///

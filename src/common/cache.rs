@@ -10,8 +10,8 @@ use std::hash::BuildHasherDefault;
 pub enum Key {
     /// Immutable Record ID.
     Rid(u64),
-    /// Data Physical Address, as returned by `Pool::write`.
-    Dpa(ClusterT, LbaT),
+    /// Physical Block Address, as returned by `Pool::write`.
+    PBA(PBA),
 }
 
 struct LruEntry {

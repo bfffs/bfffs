@@ -148,17 +148,17 @@ impl<'a> Pool {
                   clusters.into_iter().map(|c| c.0).collect::<Vec<_>>())
     }
 
-    /// Mark `length` LBAs beginning at LBA `lba` on cluster `cluster` as
-    /// unused, but do not delete them from the underlying storage.
+    /// Mark `length` LBAs beginning at PBA `pba` as unused, but do not delete
+    /// them from the underlying storage.
     ///
     /// Freeing data in increments other than it was written is unsupported.
     /// In particular, it is not allowed to delete across zone boundaries.
     // Before deleting the underlying storage, ArkFS should double-check that
     // nothing is using it.  That requires using the AllocationTable, which is
     // above the layer of the Pool.
-    pub fn free(&self, cluster: ClusterT, lba: LbaT, length: LbaT) {
-        self.stats.borrow_mut().allocated_space[cluster as usize] -= length;
-        self.clusters[cluster as usize].free(lba, length)
+    pub fn free(&self, pba: PBA, length: LbaT) {
+        self.stats.borrow_mut().allocated_space[pba.cluster as usize] -= length;
+        self.clusters[pba.cluster as usize].free(pba.lba, length)
     }
 
     /// Construct a new `Pool` from some already constructed
@@ -243,12 +243,12 @@ impl<'a> Pool {
 
 
     /// Asynchronously read from the pool
-    pub fn read(&'a self, buf: IoVecMut, cluster: ClusterT,
-                lba: LbaT) -> Box<PoolFut<'a>> {
+    pub fn read(&'a self, buf: IoVecMut, pba: PBA) -> Box<PoolFut<'a>> {
         let mut stats = self.stats.borrow_mut();
-        stats.queue_depth[cluster as usize] += 1;
-        Box::new(self.clusters[cluster as usize].read(buf, lba).then(move |r| {
-            stats.queue_depth[cluster as usize] -= 1;
+        stats.queue_depth[pba.cluster as usize] += 1;
+        Box::new(self.clusters[pba.cluster as usize].read(buf, pba.lba)
+                 .then(move |r| {
+            stats.queue_depth[pba.cluster as usize] -= 1;
             r
         }))
     }
@@ -274,10 +274,11 @@ impl<'a> Pool {
     ///
     /// # Returns
     ///
-    /// The Cluster and LBA where the data will be written, and a `Future` for
-    /// the operation in progress.
-    pub fn write(&'a self, buf: IoVec) -> Result<(ClusterT, LbaT,
-                                                  Box<PoolFut<'a>>), Error> {
+    /// The `PBA` where the data will be written, and a `Future` for the
+    /// operation in progress.
+    pub fn write(&'a self, buf: IoVec)
+        -> Result<(PBA, Box<PoolFut<'a>>), Error> {
+
         let cluster = self.stats.borrow().choose_cluster();
         let mut stats = self.stats.borrow_mut();
         stats.queue_depth[cluster as usize] += 1;
@@ -289,7 +290,7 @@ impl<'a> Pool {
                     stats.queue_depth[cluster as usize] -= 1;
                     r
                 }));
-                (cluster, lba, fut)
+                (PBA::new(cluster, lba), fut)
             })
     }
 
@@ -360,10 +361,10 @@ mod pool {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
         let result = current_thread::block_on_all(future::lazy(|| {
-            let (cluster, lba, fut) = pool.write(db0).expect("write failed early");
-            fut.map(move |_| (cluster, lba))
+            let (pba, fut) = pool.write(db0).expect("write failed early");
+            fut.map(move |_| pba)
         }));
-        assert_eq!(result.unwrap(), (0, 0));
+        assert_eq!(result.unwrap(), PBA::new(0, 0));
     }
 }
 

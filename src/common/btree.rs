@@ -33,7 +33,7 @@ enum BTreePtr<K: Copy + Ord, V: Copy> {
     /// Dirty btree nodes live only in RAM, not on disk or in cache
     Mem(Box<Node<K, V>>),
     /// Direct Block Pointers point directly to a disk location
-    _DBP(ClusterT, LbaT),
+    _PBA(PBA),
     /// Indirect Block Pointers point to the Block Indirection Table
     _IBP(u64)
 }
