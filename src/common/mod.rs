@@ -7,6 +7,7 @@ use std::ops::{Add, Div, Sub};
 pub mod btree;
 pub mod cache;
 pub mod cluster;
+pub mod ddml;
 pub mod declust;
 pub mod dva;
 pub mod null_raid;

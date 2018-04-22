@@ -120,7 +120,7 @@ impl Cache {
 
     /// Remove a block from the cache.
     ///
-    /// Unlike `get`, the block will be returned in a writable form, if it was
+    /// Unlike `get`, the block will be returned in an owned form, if it was
     /// present at all.
     pub fn remove(&mut self, key: &Key) -> Option<DivBufShared> {
         self.store.remove(key).map(|v| {
