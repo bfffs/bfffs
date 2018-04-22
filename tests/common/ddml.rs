@@ -32,7 +32,7 @@ test_suite! {
                                          Handle::default())
                 ]
             );
-            DDML::new(pool)
+            DDML::create(pool)
         }
     });
 
