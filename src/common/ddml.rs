@@ -110,6 +110,7 @@ impl<'a> DDML {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
     }
 
+    #[cfg(any(not(test), feature = "mocks"))]
     fn new(pool: PoolLike, cache: CacheLike) -> Self {
         DDML{pool: pool, cache: Mutex::new(cache)}
     }
