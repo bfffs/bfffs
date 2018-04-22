@@ -17,6 +17,7 @@ use std::sync::Mutex;
 const CACHE_SIZE: usize = 1_000_000_000;
 
 /// Compression mode in use
+#[derive(Clone, Copy, Debug)]
 pub enum Compression {
     None,
     // TODO: add more types
@@ -26,6 +27,7 @@ pub enum Compression {
 ///
 /// A Record is a local unit of data on disk.  It may be larger or smaller than
 /// a Block, but Records are always read/written in their entirety.
+#[derive(Clone, Copy, Debug)]
 pub struct DRP {
     /// Physical Block Address.  The record's location on disk.
     pba: PBA,
@@ -51,13 +53,13 @@ pub struct DDML {
 
 impl<'a> DDML {
     /// Delete the record from the cache, and free its storage space.
-    pub fn delete(&self, drp: DRP) {
+    pub fn delete(&self, drp: &DRP) {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
         self.pool.free(drp.pba, drp.csize as LbaT);
     }
 
     /// If the given record is present in the cache, evict it.
-    pub fn evict(&self, drp: DRP) {
+    pub fn evict(&self, drp: &DRP) {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
     }
 
@@ -67,19 +69,20 @@ impl<'a> DDML {
     }
 
     /// Read a record and return a shared reference
-    pub fn get(&'a self, drp: DRP)
+    pub fn get(&'a self, drp: &DRP)
         -> Box<Future<Item=DivBuf, Error=Error> + 'a> {
 
-        self.cache.lock().unwrap().get(&Key::PBA(drp.pba)).map(|db| {
+        let pba = drp.pba;
+        self.cache.lock().unwrap().get(&Key::PBA(pba)).map(|db| {
             let r : Box<Future<Item=DivBuf, Error=Error>> =
             Box::new(future::ok::<DivBuf, Error>(db));
             r
         }).unwrap_or_else(|| {
             let dbs = DivBufShared::from(vec![0u8; drp.csize as usize]);
             Box::new(
-                self.pool.read(dbs.try_mut().unwrap(), drp.pba).map(move |_| {
+                self.pool.read(dbs.try_mut().unwrap(), pba).map(move |_| {
                     let db = dbs.try().unwrap();
-                    self.cache.lock().unwrap().insert(Key::PBA(drp.pba), dbs);
+                    self.cache.lock().unwrap().insert(Key::PBA(pba), dbs);
                     db
                 })
             )
@@ -87,18 +90,20 @@ impl<'a> DDML {
     }
 
     /// Read a record and return ownership of it.
-    pub fn pop(&'a self, drp: DRP)
+    pub fn pop(&'a self, drp: &DRP)
         -> Box<Future<Item=DivBufShared, Error=Error> + 'a> {
 
-        self.cache.lock().unwrap().remove(&Key::PBA(drp.pba)).map(|dbs| {
+        let pba = drp.pba;
+        let csize = drp.csize;
+        self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|dbs| {
             let r : Box<Future<Item=DivBufShared, Error=Error>> =
             Box::new(future::ok::<DivBufShared, Error>(dbs));
             r
         }).unwrap_or_else(|| {
-            let dbs = DivBufShared::from(vec![0u8; drp.csize as usize]);
+            let dbs = DivBufShared::from(vec![0u8; csize as usize]);
             Box::new(
-                self.pool.read(dbs.try_mut().unwrap(), drp.pba).map(move |_| {
-                    self.pool.free(drp.pba, drp.csize as LbaT);
+                self.pool.read(dbs.try_mut().unwrap(), pba).map(move |_| {
+                    self.pool.free(pba, csize as LbaT);
                     dbs
                 })
             )
