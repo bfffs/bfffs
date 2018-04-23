@@ -113,15 +113,31 @@ pub fn div_roundup<T>(dividend: T, divisor: T) -> T
 
 }
 
-/// hash an `SGList`.
+/// Checksum an `IoVec`
+///
+/// See also [`checksum_sglist`](fn.checksum_sglist.html) for an explanation of
+/// why this function is necessary.
+pub fn checksum_iovec<T: AsRef<[u8]>, H: Hasher>(iovec: &T, hasher: &mut H) {
+    hasher.write(iovec.as_ref());
+}
+
+/// Checksum an `SGList`.
 ///
 /// Unfortunately, hashing a slice is not the same thing as hashing that slice's
-/// contents.  Nor is `Vec::hash` for a `Vec` of `Vec`s equivalent to
-/// `Vec::hash` for a flat `Vec` with the same contents.
+/// contents.  The former includes the length of the hash.  That is deliberate
+/// so that, for example, the tuples `([0, 1], [2, 3])` and `([0], [1, 2, 3])`
+/// have different hashes.  That property is desirable for example when storing
+/// tuples in a hash table.  But for our purposes, we *want* such tuples to
+/// compare the same so that a record will have the same hash whether it's
+/// written as a single `iovec` or an `SGList`.
 ///
 /// Ideally we would just `impl Hash for SGList`, but that's not allowed on type
 /// aliases.
-pub fn hash_sglist<T: AsRef<[u8]>, H: Hasher>(sglist: &Vec<T>, hasher: &mut H) {
+///
+/// See Also [Rust issue 5237](https://github.com/rust-lang/rust/issues/5257)
+pub fn checksum_sglist<T, H>(sglist: &[T], hasher: &mut H)
+    where T: AsRef<[u8]>, H: Hasher {
+
     for buf in sglist {
         let s: &[u8] = buf.as_ref();
         hasher.write(s);
@@ -136,7 +152,7 @@ fn test_div_roundup() {
 }
 
 #[cfg(test)]
-macro_rules! test_hash_sglist_helper {
+macro_rules! test_checksum_sglist_helper {
     ( $klass:ident) => {
         let together = vec![0u8, 1, 2, 3, 4, 5];
         let apart = vec![vec![0u8, 1], vec![2u8, 3], vec![4u8, 5]];
@@ -144,7 +160,7 @@ macro_rules! test_hash_sglist_helper {
         let mut apart_hasher = $klass::new();
         let mut single_hasher = $klass::new();
         together_hasher.write(&together[..]);
-        hash_sglist(&apart, &mut apart_hasher);
+        checksum_sglist(&apart, &mut apart_hasher);
         single_hasher.write_u8(0);
         single_hasher.write_u8(1);
         single_hasher.write_u8(2);
@@ -156,15 +172,15 @@ macro_rules! test_hash_sglist_helper {
 }
 
 #[test]
-fn test_hash_sglist_default_hasher() {
+fn test_checksum_sglist_default_hasher() {
     use std::collections::hash_map::DefaultHasher;
 
-    test_hash_sglist_helper!(DefaultHasher);
+    test_checksum_sglist_helper!(DefaultHasher);
 }
 
 #[test]
-fn test_hash_sglist_metrohash64() {
+fn test_checksum_sglist_metrohash64() {
     use metrohash::MetroHash64;
 
-    test_hash_sglist_helper!(MetroHash64);
+    test_checksum_sglist_helper!(MetroHash64);
 }

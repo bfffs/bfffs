@@ -9,7 +9,7 @@ mocks = ["mockers", "mockers_macros"]
 
 [dependencies]
 byteorder = "1.0"
-divbuf = { git = "https://github.com/asomers/divbuf", rev = "0ca406c" }
+divbuf = { git = "https://github.com/asomers/divbuf", rev = "02e3430" }
 fixedbitset = "0.1.8"
 futures = "0.1.14"
 futures-locks = { git = "https://github.com/asomers/futures-locks", rev = "60ddabf" }

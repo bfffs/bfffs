@@ -10,7 +10,8 @@ use common::cache::*;
 use common::pool::*;
 use futures::{Future, future};
 use metrohash::MetroHash64;
-use nix::Error;
+use nix::{Error, errno};
+use std::hash::Hasher;
 use std::sync::Mutex;
 #[cfg(test)]
 use uuid::Uuid;
@@ -68,11 +69,11 @@ pub struct DRP {
     /// Compression algorithm in use
     _compression: Compression,
     /// Logical size.  Uncompressed size of the record
-    _lsize: u32,
+    lsize: u32,
     /// Compressed size.
     csize: u32,
     /// Checksum of the compressed record.
-    _checksum: u64
+    checksum: u64
 }
 
 impl DRP {
@@ -119,15 +120,16 @@ impl<'a> DDML {
     pub fn get(&'a self, drp: &DRP)
         -> Box<Future<Item=DivBuf, Error=Error> + 'a> {
 
+        // Outline:
+        // 1) Fetch from cache, or
         let pba = drp.pba;
         self.cache.lock().unwrap().get(&Key::PBA(pba)).map(|db| {
             let r : Box<Future<Item=DivBuf, Error=Error>> =
             Box::new(future::ok::<DivBuf, Error>(db));
             r
         }).unwrap_or_else(|| {
-            let dbs = DivBufShared::from(vec![0u8; drp.csize as usize]);
             Box::new(
-                self.pool.read(dbs.try_mut().unwrap(), pba).map(move |_| {
+                self.read(*drp).map(move |dbs| {
                     let db = dbs.try().unwrap();
                     self.cache.lock().unwrap().insert(Key::PBA(pba), dbs);
                     db
@@ -140,18 +142,16 @@ impl<'a> DDML {
     pub fn pop(&'a self, drp: &DRP)
         -> Box<Future<Item=DivBufShared, Error=Error> + 'a> {
 
-        let pba = drp.pba;
-        let csize = drp.csize;
         let lbas = drp.asize();
+        let pba = drp.pba;
         self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|dbs| {
             self.pool.free(pba, lbas);
             let r : Box<Future<Item=DivBufShared, Error=Error>> =
             Box::new(future::ok::<DivBufShared, Error>(dbs));
             r
         }).unwrap_or_else(|| {
-            let dbs = DivBufShared::from(vec![0u8; csize as usize]);
             Box::new(
-                self.pool.read(dbs.try_mut().unwrap(), pba).map(move |_| {
+                self.read(*drp).map(move |dbs| {
                     self.pool.free(pba, lbas);
                     dbs
                 })
@@ -163,30 +163,61 @@ impl<'a> DDML {
     pub fn put(&'a self, buf: DivBufShared, _compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error> + 'a>) {
         // Outline:
-        // 1) Compress
-        // 2) Hash
-        // 3) Cache
-        // 4) Write
+        // 1) Cache
+        // 2) Compress
+        // 3) Hash
+        // 4) Pad
+        // 5) Write
 
         let db = buf.try().unwrap();
         assert!(db.len() < u32::max_value() as usize,
             "Record exceeds maximum allowable length");
-        let _lsize = db.len() as u32;
+        let lsize = db.len() as u32;
         // TODO: compress buffer
-        let csize = _lsize;
+        let csize = lsize;
         let mut hasher = MetroHash64::new();
-        hasher.write(&db[..]);
-        let _checksum = hasher.finish();
+        checksum_iovec(&db, &mut hasher);
+        let checksum = hasher.finish();
         let (pba, fut) = self.pool.write(db).unwrap();
         self.cache.lock().unwrap().insert(Key::PBA(pba), buf);
         let drp = DRP {
             pba,
             _compression,
-            _lsize,
+            lsize,
             csize,
-            _checksum
+            checksum
         };
         (drp, fut)
+    }
+
+    /// Read a record from disk
+    fn read(&'a self, drp: DRP)
+        -> Box<Future<Item=DivBufShared, Error=Error> + 'a> {
+
+        // Outline
+        // 1) Read
+        // 2) Truncate
+        // 3) Verify checksum
+        // 4) Decompress
+        let len = drp.asize() as usize * BYTES_PER_LBA;
+        let dbs = DivBufShared::from(vec![0u8; len]);
+        Box::new(
+            self.pool.read(dbs.try_mut().unwrap(), drp.pba).and_then(move |_| {
+                let mut dbm = dbs.try_mut().unwrap();
+                // TODO: test short records
+                dbm.try_truncate(drp.csize as usize).unwrap();
+                let db = dbm.freeze();
+                let mut hasher = MetroHash64::new();
+                checksum_iovec(&db, &mut hasher);
+                let checksum = hasher.finish();
+                if checksum == drp.checksum {
+                    Ok(dbs)
+                } else {
+                    // TODO: create a dedicated ECKSUM error type
+                    Err(Error::Sys(errno::Errno::EIO))
+                }
+            })
+        )
     }
 }
 
@@ -232,8 +263,8 @@ mod t {
     #[test]
     fn delete_hot() {
         let pba = PBA::new(7, 42);
-        let drp = DRP{pba, _compression: Compression::None, _lsize: 4096,
-                      csize: 4096, _checksum: 0};
+        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+                      csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let s = Scenario::new();
@@ -253,8 +284,8 @@ mod t {
     #[test]
     fn get_hot() {
         let pba = PBA::new(7, 42);
-        let drp = DRP{pba, _compression: Compression::None, _lsize: 4096,
-                      csize: 4096, _checksum: 0};
+        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+                      csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let s = Scenario::new();
@@ -273,8 +304,8 @@ mod t {
     #[test]
     fn get_cold() {
         let pba = PBA::new(7, 42);
-        let drp = DRP{pba, _compression: Compression::None, _lsize: 4096,
-                      csize: 4096, _checksum: 0};
+        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+                      csize: 1, checksum: 0xe7f15966a3d61f8};
         let pba2 = pba.clone();
         let owned_by_cache = Rc::new(RefCell::new(Vec::<DivBufShared>::new()));
         let owned_by_cache2 = owned_by_cache.clone();
@@ -285,8 +316,9 @@ mod t {
         seq.expect(cache.get_call(check!(move |key: &&Key| {
             **key == Key::PBA(pba2)
         })).and_return(None));
-        seq.expect(pool.read_call(ANY, pba)
-                   .and_return(Box::new(future::ok::<(), Error>(()))));
+        seq.expect(pool.read_call(check!(|dbm: &DivBufMut| {
+            dbm.len() == 4096
+        }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
         seq.expect(cache.insert_call(Key::PBA(pba), ANY)
                    .and_call(move |_, dbs| {
                        owned_by_cache2.borrow_mut().push(dbs);
@@ -300,10 +332,35 @@ mod t {
     }
 
     #[test]
+    fn get_ecksum() {
+        let pba = PBA::new(7, 42);
+        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+                      csize: 1, checksum: 0xdeadbeefdeadbeef};
+        let pba2 = pba.clone();
+        let s = Scenario::new();
+        let mut seq = Sequence::new();
+        let cache = s.create_mock::<MockCache>();
+        let pool = s.create_mock::<MockPool>();
+        seq.expect(cache.get_call(check!(move |key: &&Key| {
+            **key == Key::PBA(pba2)
+        })).and_return(None));
+        seq.expect(pool.read_call(check!(|dbm: &DivBufMut| {
+            dbm.len() == 4096
+        }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
+        s.expect(seq);
+
+        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let err = current_thread::block_on_all(future::lazy(|| {
+            ddml.get(&drp)
+        })).unwrap_err();
+        assert_eq!(err, Error::Sys(errno::Errno::EIO));
+    }
+
+    #[test]
     fn pop_hot() {
         let pba = PBA::new(7, 42);
-        let drp = DRP{pba, _compression: Compression::None, _lsize: 4096,
-                      csize: 4096, _checksum: 0};
+        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+                      csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let s = Scenario::new();
         let mut seq = Sequence::new();
@@ -323,8 +380,8 @@ mod t {
     fn pop_cold() {
         let pba = PBA::new(7, 42);
         let pba2 = pba.clone();
-        let drp = DRP{pba, _compression: Compression::None, _lsize: 4096,
-                      csize: 4096, _checksum: 0};
+        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+                      csize: 1, checksum: 0xe7f15966a3d61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
         let cache = s.create_mock::<MockCache>();
@@ -344,6 +401,30 @@ mod t {
     }
 
     #[test]
+    fn pop_ecksum() {
+        let pba = PBA::new(7, 42);
+        let pba2 = pba.clone();
+        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+                      csize: 1, checksum: 0xdeadbeefdeadbeef};
+        let s = Scenario::new();
+        let mut seq = Sequence::new();
+        let cache = s.create_mock::<MockCache>();
+        let pool = s.create_mock::<MockPool>();
+        seq.expect(cache.remove_call(check!(move |key: &&Key| {
+            **key == Key::PBA(pba2)
+        })).and_return(None));
+        seq.expect(pool.read_call(ANY, pba)
+                   .and_return(Box::new(future::ok::<(), Error>(()))));
+        s.expect(seq);
+
+        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let err = current_thread::block_on_all(future::lazy(|| {
+            ddml.pop(&drp)
+        })).unwrap_err();
+        assert_eq!(err, Error::Sys(errno::Errno::EIO));
+    }
+
+    #[test]
     fn put() {
         let s = Scenario::new();
         let cache = s.create_mock::<MockCache>();
@@ -359,6 +440,6 @@ mod t {
         let (drp, _) = ddml.put(dbs, Compression::None);
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
-        assert_eq!(drp._lsize, 4096);
+        assert_eq!(drp.lsize, 4096);
     }
 }

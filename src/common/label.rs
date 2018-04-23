@@ -123,7 +123,7 @@ impl LabelWriter {
         let contents_len: usize = contents.iter().map(|x| x.len()).sum();
         let mut hasher = MetroHash64::new();
         (contents_len as u64).to_be().hash(&mut hasher);
-        hash_sglist(&contents, &mut hasher);
+        checksum_sglist(&contents, &mut hasher);
         header.try_resize(MAGIC_LEN + CHECKSUM_LEN, 0).unwrap();
         BigEndian::write_u64(&mut header[MAGIC_LEN..], hasher.finish());
         header.try_resize(MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN, 0).unwrap();
