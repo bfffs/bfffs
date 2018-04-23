@@ -521,7 +521,7 @@ impl<'a> Cluster {
                         Some((zone_id, lba, oz_fut))
                     },
                     Err(_) => None,
-                    Ok(None) => unreachable!("Tried a 0-length write?"),
+                    Ok(None) => panic!("Tried a 0-length write?"),
                 }
             })
         }).map(|(zone_id, lba, oz_fut)| {

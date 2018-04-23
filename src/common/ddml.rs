@@ -178,8 +178,23 @@ impl<'a> DDML {
         let mut hasher = MetroHash64::new();
         checksum_iovec(&db, &mut hasher);
         let checksum = hasher.finish();
-        let (pba, fut) = self.pool.write(db).unwrap();
-        self.cache.lock().unwrap().insert(Key::PBA(pba), buf);
+
+        // Pad
+        let asize = div_roundup(csize as usize, BYTES_PER_LBA);
+        let db = if asize * BYTES_PER_LBA != csize as usize {
+            let mut dbm = db.try_mut().unwrap();
+            dbm.try_resize(asize * BYTES_PER_LBA, 0).unwrap();
+            dbm.freeze()
+        } else {
+            db
+        };
+
+        let (pba, wfut) = self.pool.write(db).unwrap();
+        let fut = Box::new(wfut.map(move |r| {
+            buf.try_mut().unwrap().try_truncate(csize as usize).unwrap();
+            self.cache.lock().unwrap().insert(Key::PBA(pba), buf);
+            r
+        }));
         let drp = DRP {
             pba,
             _compression,
@@ -204,7 +219,6 @@ impl<'a> DDML {
         Box::new(
             self.pool.read(dbs.try_mut().unwrap(), drp.pba).and_then(move |_| {
                 let mut dbm = dbs.try_mut().unwrap();
-                // TODO: test short records
                 dbm.try_truncate(drp.csize as usize).unwrap();
                 let db = dbm.freeze();
                 let mut hasher = MetroHash64::new();
@@ -437,9 +451,10 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, _) = ddml.put(dbs, Compression::None);
+        let (drp, fut) = ddml.put(dbs, Compression::None);
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
+        current_thread::block_on_all(fut).unwrap();
     }
 }
