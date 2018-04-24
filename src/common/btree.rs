@@ -49,17 +49,17 @@ struct BTreeIntElem<K: Copy + Ord, V: Copy> {
 }
 
 impl<'a, K: Copy + Ord + 'static, V: Copy + 'static> BTreeIntElem<K, V> {
-    fn lookup(&'a self, parent_guard: RwLockReadGuard<()>,
+    fn lookup(&'a self, parent_node_guard: RwLockReadGuard<()>,
                   k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
         Box::new(self.lock.read()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-            .and_then(move |child_guard| {
+            .and_then(move |self_elem_guard| {
                 let child = unsafe{ self.ptr.get().as_mut()}.unwrap();
                 // Drop the parent guard after locking the child.  This
                 // implements deadlock-free lock coupling.
-                drop(parent_guard);
+                drop(parent_node_guard);
                 match *child {
-                    BTreePtr::Mem(ref node) => node.lookup(child_guard, k),
+                    BTreePtr::Mem(ref node) => node.lookup(self_elem_guard, k),
                     _ => unimplemented!()
                 }
             })
@@ -78,7 +78,7 @@ struct IntNode<K: Copy + Ord, V: Copy> {
 }
 
 impl<'a, K: Copy + Ord + 'static, V: Copy + 'static> IntNode<K, V> {
-    fn lookup(&'a self, parent_guard: RwLockReadGuard<()>,
+    fn lookup(&'a self, parent_elem_guard: RwLockReadGuard<()>,
                   k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
         // Find the greatest key among children that is less than or equal to k
         let child_idx = self.children.iter()
@@ -87,8 +87,8 @@ impl<'a, K: Copy + Ord + 'static, V: Copy + 'static> IntNode<K, V> {
             .nth(0)
             .map_or(self.children.len() - 1,
                     |(idx, _)| idx - 1);
-        let child = &self.children[child_idx];
-        child.lookup(parent_guard, k)
+        let child_elem = &self.children[child_idx];
+        child_elem.lookup(parent_elem_guard, k)
     }
 }
 
@@ -98,7 +98,7 @@ struct LeafNode<K: Copy + Ord, V: Copy> {
 }
 
 impl<K: Copy + Ord, V: Copy + 'static> LeafNode<K, V> {
-    fn lookup(&self, _parent_guard: RwLockReadGuard<()>,
+    fn lookup(&self, _parent_elem_guard: RwLockReadGuard<()>,
                   k: K) -> Box<Future<Item=V, Error=Error>> {
         Box::new(self.items.iter().filter(|c| c.key == k )
             .nth(0)
@@ -115,11 +115,11 @@ enum Node<K: Copy + Ord, V: Copy> {
 }
 
 impl<'a, K: Copy + Ord + 'static, V: Copy + 'static> Node<K, V> {
-    fn lookup(&'a self, self_guard: RwLockReadGuard<()>,
+    fn lookup(&'a self, parent_elem_guard: RwLockReadGuard<()>,
                   k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
         match *self {
-            Node::_Int(ref int) => int.lookup(self_guard, k),
-            Node::Leaf(ref leaf) => leaf.lookup(self_guard, k)
+            Node::_Int(ref int) => int.lookup(parent_elem_guard, k),
+            Node::Leaf(ref leaf) => leaf.lookup(parent_elem_guard, k)
         }
     }
 }
