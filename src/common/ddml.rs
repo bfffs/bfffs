@@ -5,6 +5,7 @@
 /// disk, and hash operations.  A Direct Record is a record that can never be
 /// duplicated, either through snapshots, clones, or deduplication.
 
+use blosc;
 use common::*;
 use common::cache::*;
 use common::pool::*;
@@ -52,10 +53,45 @@ pub type PoolLike = Pool;
 const CACHE_SIZE: usize = 1_000_000_000;
 
 /// Compression mode in use
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Compression {
-    None,
-    // TODO: add more types
+    None = 0,
+    /// Maximum Compression ratio for unstructured buffers
+    ZstdL9NoShuffle = 1,
+}
+
+impl Compression {
+    fn compress(&self, input: &IoVec) -> Option<DivBufShared> {
+        match *self {
+            Compression::None  => {
+                None
+            },
+            Compression::ZstdL9NoShuffle => {
+                let ctx = blosc::Context::new()
+                    .clevel(blosc::Clevel::L9)
+                    .compressor(blosc::Compressor::Zstd).unwrap();
+                let buffer = ctx.compress(&input[..]);
+                let v: Vec<u8> = buffer.into();
+                Some(DivBufShared::from(v))
+            }
+        }
+    }
+
+    fn decompress(&self, input: &IoVec) -> Option<DivBufShared> {
+        match *self {
+            Compression::None  => {
+                None
+            },
+            Compression::ZstdL9NoShuffle => {
+                let v = unsafe {
+                    // Sadly, decompressing with Blosc is unsafe until
+                    // https://github.com/Blosc/c-blosc/issues/229 gets fixed
+                    blosc::decompress_bytes(input)
+                }.unwrap();
+                Some(DivBufShared::from(v))
+            }
+        }
+    }
 }
 
 /// Direct Record Pointer.  A persistable pointer to a record on disk.
@@ -67,7 +103,7 @@ pub struct DRP {
     /// Physical Block Address.  The record's location on disk.
     pba: PBA,
     /// Compression algorithm in use
-    _compression: Compression,
+    compression: Compression,
     /// Logical size.  Uncompressed size of the record
     lsize: u32,
     /// Compressed size.
@@ -160,48 +196,61 @@ impl<'a> DDML {
     }
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer
-    pub fn put(&'a self, buf: DivBufShared, _compression: Compression)
+    pub fn put(&'a self, uncompressed: DivBufShared, compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error> + 'a>) {
         // Outline:
-        // 1) Cache
-        // 2) Compress
-        // 3) Hash
-        // 4) Pad
-        // 5) Write
+        // 1) Compress
+        // 2) Checksum
+        // 3) Pad
+        // 4) Write
+        // 5) Cache
 
-        let db = buf.try().unwrap();
+        let db = uncompressed.try().unwrap();
         assert!(db.len() < u32::max_value() as usize,
             "Record exceeds maximum allowable length");
         let lsize = db.len() as u32;
-        // TODO: compress buffer
-        let csize = lsize;
+
+        // Compress
+        let compressed_dbs = compression.compress(&db);
+        let compressed_db = match &compressed_dbs {
+            &Some(ref dbs) => {
+                dbs.try().unwrap()
+            },
+            &None => {
+                db
+            }
+        };
+        let csize = compressed_db.len() as u32;
+
+        // Checksum
         let mut hasher = MetroHash64::new();
-        checksum_iovec(&db, &mut hasher);
+        checksum_iovec(&compressed_db, &mut hasher);
         let checksum = hasher.finish();
 
         // Pad
         let asize = div_roundup(csize as usize, BYTES_PER_LBA);
-        let db = if asize * BYTES_PER_LBA != csize as usize {
-            let mut dbm = db.try_mut().unwrap();
+        let compressed_db = if asize * BYTES_PER_LBA != csize as usize {
+            let mut dbm = compressed_db.try_mut().unwrap();
             dbm.try_resize(asize * BYTES_PER_LBA, 0).unwrap();
             dbm.freeze()
         } else {
-            db
+            compressed_db
         };
 
-        let (pba, wfut) = self.pool.write(db).unwrap();
+        // Write
+        let (pba, wfut) = self.pool.write(compressed_db).unwrap();
         let fut = Box::new(wfut.map(move |r| {
-            buf.try_mut().unwrap().try_truncate(csize as usize).unwrap();
-            self.cache.lock().unwrap().insert(Key::PBA(pba), buf);
+            if compression == Compression::None {
+                uncompressed.try_mut().unwrap()
+                    .try_truncate(csize as usize).unwrap();
+            } else {
+                let _ = compressed_dbs;
+            }
+            //Cache
+            self.cache.lock().unwrap().insert(Key::PBA(pba), uncompressed);
             r
         }));
-        let drp = DRP {
-            pba,
-            _compression,
-            lsize,
-            csize,
-            checksum
-        };
+        let drp = DRP { pba, compression, lsize, csize, checksum };
         (drp, fut)
     }
 
@@ -217,15 +266,24 @@ impl<'a> DDML {
         let len = drp.asize() as usize * BYTES_PER_LBA;
         let dbs = DivBufShared::from(vec![0u8; len]);
         Box::new(
+            // Read
             self.pool.read(dbs.try_mut().unwrap(), drp.pba).and_then(move |_| {
+                //Truncate
                 let mut dbm = dbs.try_mut().unwrap();
                 dbm.try_truncate(drp.csize as usize).unwrap();
                 let db = dbm.freeze();
+
+                // Verify checksum
                 let mut hasher = MetroHash64::new();
                 checksum_iovec(&db, &mut hasher);
                 let checksum = hasher.finish();
                 if checksum == drp.checksum {
-                    Ok(dbs)
+                    // Decompress
+                    let db = dbs.try().unwrap();
+                    Ok(match drp.compression.decompress(&db) {
+                        Some(decompressed) => decompressed,
+                        None => dbs
+                    })
                 } else {
                     // TODO: create a dedicated ECKSUM error type
                     Err(Error::Sys(errno::Errno::EIO))
@@ -277,7 +335,7 @@ mod t {
     #[test]
     fn delete_hot() {
         let pba = PBA::new(7, 42);
-        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -298,7 +356,7 @@ mod t {
     #[test]
     fn get_hot() {
         let pba = PBA::new(7, 42);
-        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -318,7 +376,7 @@ mod t {
     #[test]
     fn get_cold() {
         let pba = PBA::new(7, 42);
-        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xe7f15966a3d61f8};
         let pba2 = pba.clone();
         let owned_by_cache = Rc::new(RefCell::new(Vec::<DivBufShared>::new()));
@@ -348,7 +406,7 @@ mod t {
     #[test]
     fn get_ecksum() {
         let pba = PBA::new(7, 42);
-        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xdeadbeefdeadbeef};
         let pba2 = pba.clone();
         let s = Scenario::new();
@@ -373,7 +431,7 @@ mod t {
     #[test]
     fn pop_hot() {
         let pba = PBA::new(7, 42);
-        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let s = Scenario::new();
@@ -394,7 +452,7 @@ mod t {
     fn pop_cold() {
         let pba = PBA::new(7, 42);
         let pba2 = pba.clone();
-        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xe7f15966a3d61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
@@ -418,7 +476,7 @@ mod t {
     fn pop_ecksum() {
         let pba = PBA::new(7, 42);
         let pba2 = pba.clone();
-        let drp = DRP{pba, _compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xdeadbeefdeadbeef};
         let s = Scenario::new();
         let mut seq = Sequence::new();

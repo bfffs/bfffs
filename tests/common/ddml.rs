@@ -15,6 +15,8 @@ test_suite! {
     use divbuf::DivBufShared;
     use futures::{Future, future};
     use std::fs;
+    use std::io::Read;
+    use std::path::Path;
     use tempdir::TempDir;
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
@@ -57,6 +59,41 @@ test_suite! {
                 ddml.get(&drp)
             }).map(|db| {
                 assert_eq!(&db[..], &vec![42u8; 4096][..]);
+            })
+        })).unwrap();
+    }
+
+    // Round trip some compressible data.  Use the contents of vdev_raid.rs, a
+    // moderately large and compressible file
+    test compressible(objects) {
+        let ddml: DDML = objects.val;
+        let filename = Path::new(file!())
+            .parent().unwrap()
+            .parent().unwrap()
+            .parent().unwrap()
+            .join("src/common/vdev_raid.rs");
+        let mut file = t!(fs::File::open(&filename));
+        let mut vdev_raid_contents = Vec::new();
+        file.read_to_end(&mut vdev_raid_contents).unwrap();
+        let dbs = DivBufShared::from(vdev_raid_contents.clone());
+        let (drp, fut) = ddml.put(dbs, Compression::ZstdL9NoShuffle);
+        current_thread::block_on_all(future::lazy(|| {
+            let ddml2 = &ddml;
+            let drp2 = &drp;
+            fut.and_then(move |_| {
+                ddml2.get(drp2)
+            }).map(|db| {
+                assert_eq!(&db[..], &vdev_raid_contents[..]);
+            }).and_then(|_| {
+                ddml.pop(&drp)
+            }).map(|dbs| {
+                assert_eq!(&dbs.try().unwrap()[..], &vdev_raid_contents[..]);
+            }).and_then(|_| {
+                // Even though the record has been removed from cache, it should
+                // still be on disk
+                ddml.get(&drp)
+            }).map(|db| {
+                assert_eq!(&db[..], &vdev_raid_contents[..]);
             })
         })).unwrap();
     }

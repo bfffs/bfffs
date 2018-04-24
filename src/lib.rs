@@ -1,6 +1,7 @@
 #![cfg_attr(feature = "mocks", feature(plugin))]
 #![cfg_attr(feature = "mocks", plugin(mockers_macros))]
 
+extern crate blosc;
 extern crate byteorder;
 extern crate divbuf;
 extern crate fixedbitset;
