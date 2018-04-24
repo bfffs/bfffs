@@ -80,13 +80,11 @@ struct IntNode<K: Copy + Ord, V: Copy> {
 impl<'a, K: Copy + Ord + 'static, V: Copy + 'static> IntNode<K, V> {
     fn lookup(&'a self, parent_elem_guard: RwLockReadGuard<()>,
                   k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
-        // Find the greatest key among children that is less than or equal to k
-        let child_idx = self.children.iter()
-            .enumerate()
-            .filter(|&(_, c)| c.key > k )
-            .nth(0)
-            .map_or(self.children.len() - 1,
-                    |(idx, _)| idx - 1);
+        // Find the rightmost child whose key is less than or equal to k
+        let child_idx = self.children
+            .binary_search_by_key(&k, |ref child| child.key)
+            .map_err(|k| k - 1)
+            .unwrap();
         let child_elem = &self.children[child_idx];
         child_elem.lookup(parent_elem_guard, k)
     }
@@ -100,11 +98,11 @@ struct LeafNode<K: Copy + Ord, V: Copy> {
 impl<K: Copy + Ord, V: Copy + 'static> LeafNode<K, V> {
     fn lookup(&self, _parent_elem_guard: RwLockReadGuard<()>,
                   k: K) -> Box<Future<Item=V, Error=Error>> {
-        Box::new(self.items.iter().filter(|c| c.key == k )
-            .nth(0)
-            .map(|elem| elem.value)
-            .ok_or(Error::Sys(errno::Errno::ENOENT))
-            .into_future()
+        Box::new(
+            self.items.binary_search_by_key(&k, |ref elem| elem.key)
+                .map(|idx| self.items[idx].value)
+                .map_err(|_| Error::Sys(errno::Errno::ENOENT))
+                .into_future()
         )
     }
 }
