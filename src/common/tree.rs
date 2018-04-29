@@ -76,6 +76,14 @@ struct IntData<K: Copy + Ord, V: Copy> {
 }
 
 impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> IntData<K, V> {
+    fn position(&self, k: &K) -> usize {
+        // Find rightmost child whose key is less than or equal to k
+        self.children
+            .binary_search_by_key(k, |ref child| child.key)
+            .map_err(|k| k - 1)
+            .unwrap()
+    }
+
     fn split(&mut self) -> (K, IntData<K, V>) {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
@@ -92,6 +100,14 @@ enum NodeData<K: Copy + Ord, V: Copy> {
 }
 
 impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> NodeData<K, V> {
+    fn as_int_mut(&mut self) -> Option<&mut IntData<K, V>> {
+        if let &mut NodeData::Int(ref mut data) = self {
+            Some(data)
+        } else {
+            None
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
             &NodeData::Leaf(ref data) => data.items.len(),
@@ -191,22 +207,19 @@ impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
                   mut child_data: RwLockWriteGuard<NodeData<K, V>>, k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
-        if let NodeData::Int(ref mut parent_data) = *parent {
-            // First, split the node, if necessary
-            if child_data.should_split(self.max_fanout) {
-                let (new_key, new_child) = child_data.split();
-                let new_node = Node{data: RwLock::new(new_child)};
-                let new_elem = IntElem{key: new_key,
-                                       ptr: TreePtr::Mem(Box::new(new_node))};
-                parent_data.children.insert(child_idx + 1, new_elem);
-            }
-            drop(parent_data);
-
-            // Now insert the value into the child
-            self.insert_no_split(child_data, k, v)
-        } else {
-            panic!("Leaves can't have children")
+        let parent_int_data = parent.as_int_mut().unwrap();
+        // First, split the node, if necessary
+        if child_data.should_split(self.max_fanout) {
+            let (new_key, new_child) = child_data.split();
+            let new_node = Node{data: RwLock::new(new_child)};
+            let new_elem = IntElem{key: new_key,
+                                   ptr: TreePtr::Mem(Box::new(new_node))};
+            parent_int_data.children.insert(child_idx + 1, new_elem);
         }
+        drop(parent_int_data);
+
+        // Now insert the value into the child
+        self.insert_no_split(child_data, k, v)
     }
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
@@ -234,9 +247,7 @@ impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
                 key: K::min_value(),
                 ptr: TreePtr::Mem(Box::new(old_root))
             };
-            if let NodeData::Int(ref mut data) = *root_data {
-                data.children.insert(0, old_elem);
-            }
+            root_data.as_int_mut().unwrap().children.insert(0, old_elem);
         }
 
         self.insert_no_split(root_data, k, v)
@@ -252,11 +263,7 @@ impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
                 return Box::new(Ok(data.insert(k, v)).into_future())
             },
             NodeData::Int(ref data) => {
-                // Find rightmost child whose key is less than or equal to k
-                let child_idx = data.children
-                    .binary_search_by_key(&k, |ref child| child.key)
-                    .map_err(|k| k - 1)
-                    .unwrap();
+                let child_idx = data.position(&k);
                 let fut = match data.children[child_idx].ptr {
                     TreePtr::Mem(ref node) => node.write()
                         .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
@@ -289,12 +296,7 @@ impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
                 return Box::new(data.lookup(k).into_future())
             },
             NodeData::Int(ref data) => {
-                // Find the rightmost child whose key is less than or equal to k
-                let child_idx = data.children
-                    .binary_search_by_key(&k, |ref child| child.key)
-                    .map_err(|k| k - 1)
-                    .unwrap();
-                let child_elem = &data.children[child_idx];
+                let child_elem = &data.children[data.position(&k)];
                 match child_elem.ptr {
                     TreePtr::Mem(ref node) => node.read()
                         .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
