@@ -11,6 +11,7 @@ use futures::Future;
 use futures_locks::*;
 use nix::{Error, errno};
 use std::collections::BTreeMap;
+use std::fmt::Debug;
 use std::mem;
 use std::ops::DerefMut;
 
@@ -25,7 +26,16 @@ impl MinValue for u32 {
     }
 }
 
-enum TreePtr<K: Copy + Ord, V: Copy> {
+pub trait Key: Copy + Debug + Ord + MinValue {}
+
+impl<T> Key for T where T: Copy + Debug + Ord + MinValue {}
+
+pub trait Value: Copy + Debug {}
+
+impl<T> Value for T where T: Copy + Debug {}
+
+#[derive(Debug)]
+enum TreePtr<K: Key, V: Value> {
     /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
     /// RAM-resident, we don't need to store their checksums or lsizes.
     Mem(Box<Node<K, V>>),
@@ -35,11 +45,12 @@ enum TreePtr<K: Copy + Ord, V: Copy> {
     _IRP(u64)
 }
 
-struct LeafData<K: Copy  + Ord, V: Copy> {
+#[derive(Debug)]
+struct LeafData<K: Key, V: Value> {
     items: BTreeMap<K, V>
 }
 
-impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> LeafData<K, V> {
+impl<K: Key, V: Value> LeafData<K, V> {
     fn split(&mut self) -> (K, LeafData<K, V>) {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
@@ -51,7 +62,7 @@ impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> LeafData<K, V> {
     }
 }
 
-impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> LeafData<K, V> {
+impl<K: Key, V: Value> LeafData<K, V> {
     fn insert(&mut self, k: K, v: V) -> Option<V> {
         self.items.insert(k, v)
     }
@@ -63,19 +74,21 @@ impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> LeafData<K, V> {
     }
 }
 
-struct IntElem<K: Copy + Ord, V: Copy> {
+#[derive(Debug)]
+struct IntElem<K: Key, V: Value> {
     key: K,
     ptr: TreePtr<K, V>
 }
 
-struct IntData<K: Copy + Ord, V: Copy> {
+#[derive(Debug)]
+struct IntData<K: Key, V: Value> {
     /// position in the tree.  Leaves have rank 0, `IntNodes` with Leaf children
     /// have rank 1, etc.  The root has the highest rank.
     rank: u8,
     children: Vec<IntElem<K, V>>
 }
 
-impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> IntData<K, V> {
+impl<K: Key, V: Value> IntData<K, V> {
     fn position(&self, k: &K) -> usize {
         // Find rightmost child whose key is less than or equal to k
         self.children
@@ -93,12 +106,13 @@ impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> IntData<K, V> {
     }
 }
 
-enum NodeData<K: Copy + Ord, V: Copy> {
+#[derive(Debug)]
+enum NodeData<K: Key, V: Value> {
     Leaf(LeafData<K, V>),
     Int(IntData<K, V>)
 }
 
-impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> NodeData<K, V> {
+impl<K: Key, V: Value> NodeData<K, V> {
     fn as_int_mut(&mut self) -> Option<&mut IntData<K, V>> {
         if let &mut NodeData::Int(ref mut data) = self {
             Some(data)
@@ -145,11 +159,12 @@ impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> NodeData<K, V> {
     }
 }
 
-struct Node<K: Copy + Ord, V: Copy> {
+#[derive(Debug)]
+struct Node<K: Key, V: Value> {
     data: RwLock<NodeData<K, V>>
 }
 
-impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Node<K, V> {
+impl<K: Key, V: Value> Node<K, V> {
     fn read(&self) -> RwLockReadFut<NodeData<K, V>> {
         self.data.read()
     }
@@ -165,7 +180,8 @@ impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Node<K, V> {
 ///
 /// *`K`:   Key type.  Must be ordered and copyable; should be compact
 /// *`V`:   Value type in the leaves.
-pub struct Tree<K: Copy + Ord, V: Copy> {
+#[derive(Debug)]
+pub struct Tree<K: Key, V: Value> {
     /// Minimum node fanout.  Smaller nodes will be merged, or will steal
     /// children from their neighbors.
     _min_fanout: usize,
@@ -178,7 +194,7 @@ pub struct Tree<K: Copy + Ord, V: Copy> {
     root: Node<K, V>
 }
 
-impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
+impl<'a, K: Key, V: Value> Tree<K, V> {
     pub fn create() -> Self {
         Tree{
             _min_fanout: 4,      // BetrFS's value
