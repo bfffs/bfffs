@@ -45,6 +45,17 @@ enum TreePtr<K: Key, V: Value> {
     _IRP(u64)
 }
 
+impl<K: Key, V: Value> TreePtr<K, V> {
+    #[cfg(test)]
+    fn as_mem(&mut self) -> Option<&mut Box<Node<K, V>>> {
+        if let &mut TreePtr::Mem(ref mut ptr) = self {
+            Some(ptr)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug)]
 struct LeafData<K: Key, V: Value> {
     items: BTreeMap<K, V>
@@ -231,19 +242,20 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                   mut child_data: RwLockWriteGuard<NodeData<K, V>>, k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
-        let parent_int_data = parent.as_int_mut().unwrap();
         // First, split the node, if necessary
         if child_data.should_split(self.max_fanout) {
             let (new_key, new_child) = child_data.split();
             let new_node = Node{data: RwLock::new(new_child)};
             let new_elem = IntElem{key: new_key,
                                    ptr: TreePtr::Mem(Box::new(new_node))};
-            parent_int_data.children.insert(child_idx + 1, new_elem);
+            parent.as_int_mut().unwrap()
+                .children.insert(child_idx + 1, new_elem);
+            // Reinsert into the parent, which will choose the correct child
+            self.insert_no_split(parent, k, v)
+        } else {
+            drop(parent);
+            self.insert_no_split(child_data, k, v)
         }
-        drop(parent_int_data);
-
-        // Now insert the value into the child
-        self.insert_no_split(child_data, k, v)
     }
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
@@ -362,9 +374,34 @@ fn one_elem() {
     assert_eq!(r, Ok(0.0));
 }
 
+/// A Tree with enough elements to split an internal node
+#[test]
+fn three_levels() {
+    let mut tree: Tree<u32, f32> = Tree::create();
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..129).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    assert!(tree.root.data.get_mut().unwrap().as_int_mut().is_some());
+    let r2 = current_thread::block_on_all(tree.insert(129, 129.0));
+    assert!(r2.is_ok());
+    assert!(tree.root.data.get_mut().unwrap()
+                          .as_int_mut().unwrap()
+                          .children[0].ptr.as_mem().unwrap()
+                          .data.get_mut().unwrap()
+                          .as_int_mut().is_some());
+    for i in 0..129 {
+        assert_eq!(current_thread::block_on_all(tree.lookup(i)), Ok(i as f32));
+    }
+}
+
 /// A Tree with enough elements to split the root node
 #[test]
-fn root_split() {
+fn two_levels() {
     let mut tree: Tree<u32, f32> = Tree::create();
     let r1 = current_thread::block_on_all(future::lazy(|| {
         let tree1 = &tree;
