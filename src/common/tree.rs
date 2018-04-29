@@ -80,8 +80,7 @@ impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> IntData<K, V> {
         // Find rightmost child whose key is less than or equal to k
         self.children
             .binary_search_by_key(k, |ref child| child.key)
-            .map_err(|k| k - 1)
-            .unwrap()
+            .unwrap_or_else(|k| k - 1)
     }
 
     fn split(&mut self) -> (K, IntData<K, V>) {
@@ -102,6 +101,15 @@ enum NodeData<K: Copy + Ord, V: Copy> {
 impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> NodeData<K, V> {
     fn as_int_mut(&mut self) -> Option<&mut IntData<K, V>> {
         if let &mut NodeData::Int(ref mut data) = self {
+            Some(data)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(test)]
+    fn as_leaf_mut(&mut self) -> Option<&mut LeafData<K, V>> {
+        if let &mut NodeData::Leaf(ref mut data) = self {
             Some(data)
         } else {
             None
@@ -310,4 +318,50 @@ impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
             .and_then(move |next_node| self.lookup_node(next_node, k))
         )
     }
+}
+
+#[cfg(test)]
+mod t {
+
+use super::*;
+use futures::future;
+use tokio::executor::current_thread;
+
+/// An empty tree
+#[test]
+fn empty() {
+    let tree: Tree<u32, f32> = Tree::create();
+    let r = current_thread::block_on_all(tree.lookup(0));
+    assert_eq!(r, Err(Error::Sys(errno::Errno::ENOENT)))
+}
+
+/// A tree with one element
+#[test]
+fn one_elem() {
+    let tree: Tree<u32, f32> = Tree::create();
+    let r = current_thread::block_on_all(future::lazy(|| {
+        tree.insert(0, 0.0)
+            .and_then(|_| tree.lookup(0))
+    }));
+    assert_eq!(r, Ok(0.0));
+}
+
+/// A Tree with enough elements to split the root node
+#[test]
+fn root_split() {
+    let mut tree: Tree<u32, f32> = Tree::create();
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..16).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    assert!(tree.root.data.get_mut().unwrap().as_leaf_mut().is_some());
+    let r2 = current_thread::block_on_all(tree.insert(16, 16.0));
+    assert!(r2.is_ok());
+    assert!(tree.root.data.get_mut().unwrap().as_int_mut().is_some());
+}
+
 }
