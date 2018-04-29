@@ -13,7 +13,7 @@ byteorder = "1.0"
 divbuf = { git = "https://github.com/asomers/divbuf", rev = "02e3430" }
 fixedbitset = "0.1.8"
 futures = "0.1.14"
-futures-locks = { git = "https://github.com/asomers/futures-locks", rev = "60ddabf" }
+futures-locks = { git = "https://github.com/asomers/futures-locks", rev = "4296546" }
 itertools = "0.7"
 isa-l = { path = "isa-l" }
 lazy_static = "1.0"
