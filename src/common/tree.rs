@@ -5,18 +5,14 @@
 //! [^CowBtrees]: Rodeh, Ohad. "B-trees, shadowing, and clones." ACM Transactions on Storage (TOS) 3.4 (2008): 2.
 
 use common::*;
+use common::ddml::DRP;
 use futures::future::IntoFuture;
 use futures::Future;
-use futures_locks::{RwLock, RwLockReadGuard};
+use futures_locks::*;
 use nix::{Error, errno};
-use std::cell::UnsafeCell;
+use std::collections::BTreeMap;
 use std::mem;
-
-/// ArkFS uses the standard 64-bit checksum size for noncryptographic purposes.
-const CHECKSUM_LEN: usize = 8;
-/// Dirty nodes don't get checksummed until they're written to disk.  In the
-/// meantime, their checksum field is blank.
-const UNCHECKSUMMED: [u8; CHECKSUM_LEN] = [0, 0, 0, 0, 0, 0, 0, 0];
+use std::ops::DerefMut;
 
 /// Anything that has a min_value method.  Too bad libstd doesn't define this.
 pub trait MinValue {
@@ -29,96 +25,113 @@ impl MinValue for u32 {
     }
 }
 
-enum BTreePtr<K: Copy + Ord, V: Copy> {
-    /// Dirty btree nodes live only in RAM, not on disk or in cache
+enum TreePtr<K: Copy + Ord, V: Copy> {
+    /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
+    /// RAM-resident, we don't need to store their checksums or lsizes.
     Mem(Box<Node<K, V>>),
-    /// Direct Block Pointers point directly to a disk location
-    _PBA(PBA),
-    /// Indirect Block Pointers point to the Block Indirection Table
-    _IBP(u64)
+    /// Direct Recird Pointers point directly to a disk location
+    _DRP(DRP),
+    /// Indirect Record Pointers point to the Record Indirection Table
+    _IRP(u64)
 }
 
-struct BTreeIntElem<K: Copy + Ord, V: Copy> {
-    _checksum: [u8; CHECKSUM_LEN],
+struct LeafData<K: Copy  + Ord, V: Copy> {
+    items: BTreeMap<K, V>
+}
+
+impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> LeafData<K, V> {
+    fn split(&mut self) -> (K, LeafData<K, V>) {
+        // Split the node in two.  Make the left node larger, on the assumption
+        // that we're more likely to insert into the right node than the left
+        // one.
+        let half = div_roundup(self.items.len(), 2);
+        let cutoff = *self.items.keys().nth(half).unwrap();
+        let new_items = self.items.split_off(&cutoff);
+        (cutoff, LeafData{items: new_items})
+    }
+}
+
+impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> LeafData<K, V> {
+    fn insert(&mut self, k: K, v: V) -> Option<V> {
+        self.items.insert(k, v)
+    }
+
+    fn lookup(&self, k: K) -> Result<V, Error> {
+        self.items.get(&k)
+            .cloned()
+            .ok_or(Error::Sys(errno::Errno::ENOENT))
+    }
+}
+
+struct IntElem<K: Copy + Ord, V: Copy> {
     key: K,
-    /// lock is really protecting `ptr`.  However, Rust's borrow checker won't
-    /// allow us to drop the lock while retaining any reference to the child,
-    /// even though we can safely do so using lock-coupling.
-    lock: RwLock<()>,
-    ptr: UnsafeCell<BTreePtr<K, V>>
+    ptr: TreePtr<K, V>
 }
 
-impl<'a, K: Copy + Ord + 'static, V: Copy + 'static> BTreeIntElem<K, V> {
-    fn lookup(&'a self, parent_node_guard: RwLockReadGuard<()>,
-                  k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
-        Box::new(self.lock.read()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-            .and_then(move |self_elem_guard| {
-                let child = unsafe{ self.ptr.get().as_mut()}.unwrap();
-                // Drop the parent guard after locking the child.  This
-                // implements deadlock-free lock coupling.
-                drop(parent_node_guard);
-                match *child {
-                    BTreePtr::Mem(ref node) => node.lookup(self_elem_guard, k),
-                    _ => unimplemented!()
-                }
-            })
-        )
+struct IntData<K: Copy + Ord, V: Copy> {
+    /// position in the tree.  Leaves have rank 0, `IntNodes` with Leaf children
+    /// have rank 1, etc.  The root has the highest rank.
+    rank: u8,
+    children: Vec<IntElem<K, V>>
+}
+
+impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> IntData<K, V> {
+    fn split(&mut self) -> (K, IntData<K, V>) {
+        // Split the node in two.  Make the left node larger, on the assumption
+        // that we're more likely to insert into the right node than the left
+        // one.
+        let cutoff = div_roundup(self.children.len(), 2);
+        let new_children = self.children.split_off(cutoff);
+        (new_children[0].key, IntData{rank: self.rank, children: new_children})
     }
 }
 
-struct BTreeLeafElem<K: Copy + Ord, V: Copy> {
-    key: K,
-    value: V
+enum NodeData<K: Copy + Ord, V: Copy> {
+    Leaf(LeafData<K, V>),
+    Int(IntData<K, V>)
 }
 
-/// COW B+-Tree interior node, in-memory version
-struct IntNode<K: Copy + Ord, V: Copy> {
-    children: Vec<BTreeIntElem<K, V>>
-}
-
-impl<'a, K: Copy + Ord + 'static, V: Copy + 'static> IntNode<K, V> {
-    fn lookup(&'a self, parent_elem_guard: RwLockReadGuard<()>,
-                  k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
-        // Find the rightmost child whose key is less than or equal to k
-        let child_idx = self.children
-            .binary_search_by_key(&k, |ref child| child.key)
-            .map_err(|k| k - 1)
-            .unwrap();
-        let child_elem = &self.children[child_idx];
-        child_elem.lookup(parent_elem_guard, k)
-    }
-}
-
-/// COW B+-Tree leaf node, in-memory representation
-struct LeafNode<K: Copy + Ord, V: Copy> {
-    items: Vec<BTreeLeafElem<K, V>>
-}
-
-impl<K: Copy + Ord, V: Copy + 'static> LeafNode<K, V> {
-    fn lookup(&self, _parent_elem_guard: RwLockReadGuard<()>,
-                  k: K) -> Box<Future<Item=V, Error=Error>> {
-        Box::new(
-            self.items.binary_search_by_key(&k, |ref elem| elem.key)
-                .map(|idx| self.items[idx].value)
-                .map_err(|_| Error::Sys(errno::Errno::ENOENT))
-                .into_future()
-        )
-    }
-}
-
-enum Node<K: Copy + Ord, V: Copy> {
-    _Int(IntNode<K, V>),
-    Leaf(LeafNode<K, V>)
-}
-
-impl<'a, K: Copy + Ord + 'static, V: Copy + 'static> Node<K, V> {
-    fn lookup(&'a self, parent_elem_guard: RwLockReadGuard<()>,
-                  k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
-        match *self {
-            Node::_Int(ref int) => int.lookup(parent_elem_guard, k),
-            Node::Leaf(ref leaf) => leaf.lookup(parent_elem_guard, k)
+impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> NodeData<K, V> {
+    fn len(&self) -> usize {
+        match self {
+            &NodeData::Leaf(ref data) => data.items.len(),
+            &NodeData::Int(ref data) => data.children.len()
         }
+    }
+
+    fn should_split(&self, max_fanout: usize) -> bool {
+        let len = self.len();
+        debug_assert!(len <= max_fanout,
+                      "Overfull nodes shouldn't be possible");
+        len >= max_fanout
+    }
+
+    fn split(&mut self) -> (K, NodeData<K, V>) {
+        match *self {
+            NodeData::Leaf(ref mut data) => {
+                let (k, new_data) = data.split();
+                (k, NodeData::Leaf(new_data))
+            },
+            NodeData::Int(ref mut data) => {
+                let (k, new_data) = data.split();
+                (k, NodeData::Int(new_data))
+            },
+
+        }
+    }
+}
+
+struct Node<K: Copy + Ord, V: Copy> {
+    data: RwLock<NodeData<K, V>>
+}
+
+impl<K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Node<K, V> {
+    fn read(&self) -> RwLockReadFut<NodeData<K, V>> {
+        self.data.read()
+    }
+
+    fn write(&self) -> RwLockWriteFut<NodeData<K, V>> {
+        self.data.write()
     }
 }
 
@@ -128,85 +141,187 @@ impl<'a, K: Copy + Ord + 'static, V: Copy + 'static> Node<K, V> {
 ///
 /// *`K`:   Key type.  Must be ordered and copyable; should be compact
 /// *`V`:   Value type in the leaves.
-pub struct BTree<K: Copy + Ord, V: Copy> {
-    /// Fanout parameter.  Every node except the root must contain [b, 2*b+1]
-    /// entries.  The root may contain [0, 2b+1] entries.
-    _b: usize,
-    lock: RwLock<()>,
-    root: UnsafeCell<BTreeIntElem<K, V>>
+pub struct Tree<K: Copy + Ord, V: Copy> {
+    /// Minimum node fanout.  Smaller nodes will be merged, or will steal
+    /// children from their neighbors.
+    _min_fanout: usize,
+    /// Maximum node fanout.  Larger nodes will be split.
+    max_fanout: usize,
+    /// Maximum node size in bytes.  Larger nodes will be split or their message
+    /// buffers flushed
+    _max_size: usize,
+    /// Root node
+    root: Node<K, V>
 }
 
-impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> BTree<K, V> {
+impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
     pub fn create() -> Self {
-        // Choose b such that interior nodes can fit within one LBA
-        // Assume 2 bytes of overhead for storing the number of keys, and 1 for
-        // storing the type of node
-        //
-        // TODO: increase b by considering the on-disk size of K and P, which
-        // may be less than the in-memory size.
-        // TODO: increase by by considering on-disk compression.
-        const OVERHEAD: usize = 3;
-        let _b = (BYTES_PER_LBA - OVERHEAD) /
-            (CHECKSUM_LEN + mem::size_of::<K>() + mem::size_of::<BTreePtr<K, V>>());
-        let items: Vec<BTreeLeafElem<K, V>> = Vec::with_capacity(2 * _b + 1);
-        let root_node: Box<Node<K, V>> = Box::new(Node::Leaf(LeafNode{items}));
-        let rootelem = BTreeIntElem::<K, V> {
-            _checksum: UNCHECKSUMMED,
-            key: K::min_value(),
-            lock: RwLock::new(()),
-            ptr: UnsafeCell::new(BTreePtr::Mem(root_node))
-        };
-        BTree {_b, lock: RwLock::new(()), root: UnsafeCell::new(rootelem)}
-    }
-
-    pub fn delete() -> Self {
-        unimplemented!();
-    }
-
-    pub fn insert(&self, _k: K, _v: V) {
-        unimplemented!();
-    }
-
-    pub fn lookup(&'a self, k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
-        Box::new(self.lock.read()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-            .and_then(move |guard| {
-                let root = unsafe{ self.root.get().as_ref() }.unwrap();
-                root.lookup(guard, k)
+        Tree{
+            _min_fanout: 4,      // BetrFS's value
+            max_fanout: 16,     // BetrFS's value
+            _max_size: 1<<22,    // 4MB: BetrFS's value
+            root: Node {
+                data: RwLock::new(NodeData::Leaf(
+                    LeafData{
+                        items: BTreeMap::new()
+                    }
+                ))
             }
-        ))
+        }
     }
 
-    pub fn remove(&self, _k: K) -> Box<Future<Item=Option<V>, Error=Error>> {
-        unimplemented!();
+    /// Insert value `v` into the tree at key `k`, returning the previous value
+    /// for that key, if any.
+    pub fn insert(&'a self, k: K, v: V)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+
+        Box::new(
+            self.root.write()
+                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                .and_then(move |root_data| {
+                    self.insert_locked(root_data, k, v)
+            })
+        )
     }
-}
 
-#[cfg(test)]
-mod t {
+    /// Insert value `v` into an internal node.  The internal node and its
+    /// relevant child must both be already locked.
+    fn insert_int(&'a self, mut parent: RwLockWriteGuard<NodeData<K, V>>,
+                  child_idx: usize,
+                  mut child_data: RwLockWriteGuard<NodeData<K, V>>, k: K, v: V)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
-use super::*;
-use tokio::executor::current_thread;
+        if let NodeData::Int(ref mut parent_data) = *parent {
+            // First, split the node, if necessary
+            if child_data.should_split(self.max_fanout) {
+                let (new_key, new_child) = child_data.split();
+                let new_node = Node{data: RwLock::new(new_child)};
+                let new_elem = IntElem{key: new_key,
+                                       ptr: TreePtr::Mem(Box::new(new_node))};
+                parent_data.children.insert(child_idx + 1, new_elem);
+            }
+            drop(parent_data);
 
-/// Test lookup through an artificially constructed BTree with internal nodes
-#[test]
-fn test_lookup() {
-    let mut btree = BTree::<u32, u32>::create();
-    let leaf = Box::new(Node::Leaf({
-        LeafNode{items: vec![BTreeLeafElem{key: 5, value: 55}]}
-    }));
-    let intnode = Box::new(Node::_Int(IntNode{
-        children: vec![BTreeIntElem{_checksum: UNCHECKSUMMED,
-                                    key: 5,
-                                    lock: RwLock::new(()),
-                                    ptr: UnsafeCell::new(BTreePtr::Mem(leaf))}]}));
-    btree.root = UnsafeCell::new(
-        BTreeIntElem{_checksum: UNCHECKSUMMED,
-                     key: 5,
-                     lock: RwLock::new(()),
-                     ptr: UnsafeCell::new(BTreePtr::Mem(intnode))});
-    let v = current_thread::block_on_all(btree.lookup(5)).unwrap();
-    assert_eq!(v, 55);
-}
+            // Now insert the value into the child
+            let (grandchild_idx, grandchild_fut) = match *child_data {
+                NodeData::Leaf(ref mut data) => {
+                    return Box::new(Ok(data.insert(k, v)).into_future())
+                },
+                NodeData::Int(ref data) => {
+                    // Find rightmost child whose key is less than or equal to k
+                    let grandchild_idx = data.children
+                        .binary_search_by_key(&k, |ref child| child.key)
+                        .map_err(|k| k - 1)
+                        .unwrap();
+                    let fut = match data.children[grandchild_idx].ptr {
+                        TreePtr::Mem(ref node) => node.write()
+                            .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
+                        _ => unimplemented!()
+                    };
+                    (grandchild_idx, fut)
+                }
+            };
+            Box::new(
+                grandchild_fut.and_then(move |grandchild_data| {
+                    self.insert_int(child_data, grandchild_idx,
+                                    grandchild_data, k, v)
+                })
+            )
+        } else {
+            panic!("Leaves can't have children")
+        }
+    }
 
+    /// Helper for `insert`.  Handles insertion once the tree is locked
+    fn insert_locked(&'a self, mut root_data: RwLockWriteGuard<NodeData<K, V>>,
+                     k: K, v: V)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+
+        // First, split the root node, if necessary
+        if root_data.should_split(self.max_fanout) {
+            let (new_key, new_child) = root_data.split();
+            let new_node = Node{data: RwLock::new(new_child)};
+            let new_elem = IntElem{key: new_key,
+                                   ptr: TreePtr::Mem(Box::new(new_node))};
+            let new_root_data = NodeData::Int(
+                IntData {
+                    children: vec![new_elem],
+                    rank: 100 //TODO calculate correctly
+                }
+            );
+            let old_root_data = mem::replace(root_data.deref_mut(), new_root_data);
+            let old_root = Node{
+                data: RwLock::new(old_root_data)
+            };
+            let old_elem = IntElem{
+                key: K::min_value(),
+                ptr: TreePtr::Mem(Box::new(old_root))
+            };
+            if let NodeData::Int(ref mut data) = *root_data {
+                data.children.insert(0, old_elem);
+            }
+        }
+
+        let (child_idx, child_fut) = match *root_data {
+            NodeData::Leaf(ref mut data) => {
+                // TODO: split the leaf, if necessary
+                return Box::new(Ok(data.insert(k, v)).into_future())
+            },
+            NodeData::Int(ref data) => {
+                // Find rightmost child whose key is less than or equal to k
+                let child_idx = data.children
+                    .binary_search_by_key(&k, |ref child| child.key)
+                    .map_err(|k| k - 1)
+                    .unwrap();
+                let fut = match data.children[child_idx].ptr {
+                    TreePtr::Mem(ref node) => node.write()
+                        .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
+                    _ => unimplemented!()
+                };
+                (child_idx, fut)
+            }
+        };
+        Box::new(child_fut.and_then(move |child_data| {
+                self.insert_int(root_data, child_idx, child_data, k, v)
+            })
+        )
+    }
+
+    /// Lookup the value of key `k`.  Return an error if no value is present.
+    pub fn lookup(&'a self, k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
+        Box::new(
+            self.root.read()
+                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                .and_then(move |root_data| self.lookup_node(root_data, k))
+        )
+    }
+
+    /// Lookup the value of key `k` in a node, which must already be locked.
+    fn lookup_node(&'a self, node_data: RwLockReadGuard<NodeData<K, V>>, k: K)
+        -> Box<Future<Item=V, Error=Error> + 'a> {
+
+        let next_node_fut = match *node_data {
+            NodeData::Leaf(ref data) => {
+                return Box::new(data.lookup(k).into_future())
+            },
+            NodeData::Int(ref data) => {
+                // Find the rightmost child whose key is less than or equal to k
+                let child_idx = data.children
+                    .binary_search_by_key(&k, |ref child| child.key)
+                    .map_err(|k| k - 1)
+                    .unwrap();
+                let child_elem = &data.children[child_idx];
+                match child_elem.ptr {
+                    TreePtr::Mem(ref node) => node.read()
+                        .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
+                    _ => unimplemented!()
+                }
+            }
+        };
+        drop(node_data);
+        Box::new(
+            next_node_fut
+            .and_then(move |next_node| self.lookup_node(next_node, k))
+        )
+    }
 }
