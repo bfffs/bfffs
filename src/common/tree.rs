@@ -203,30 +203,7 @@ impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
             drop(parent_data);
 
             // Now insert the value into the child
-            let (grandchild_idx, grandchild_fut) = match *child_data {
-                NodeData::Leaf(ref mut data) => {
-                    return Box::new(Ok(data.insert(k, v)).into_future())
-                },
-                NodeData::Int(ref data) => {
-                    // Find rightmost child whose key is less than or equal to k
-                    let grandchild_idx = data.children
-                        .binary_search_by_key(&k, |ref child| child.key)
-                        .map_err(|k| k - 1)
-                        .unwrap();
-                    let fut = match data.children[grandchild_idx].ptr {
-                        TreePtr::Mem(ref node) => node.write()
-                            .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
-                        _ => unimplemented!()
-                    };
-                    (grandchild_idx, fut)
-                }
-            };
-            Box::new(
-                grandchild_fut.and_then(move |grandchild_data| {
-                    self.insert_int(child_data, grandchild_idx,
-                                    grandchild_data, k, v)
-                })
-            )
+            self.insert_no_split(child_data, k, v)
         } else {
             panic!("Leaves can't have children")
         }
@@ -262,9 +239,16 @@ impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
             }
         }
 
-        let (child_idx, child_fut) = match *root_data {
+        self.insert_no_split(root_data, k, v)
+    }
+
+    fn insert_no_split(&'a self,
+                       mut node_data: RwLockWriteGuard<NodeData<K, V>>,
+                       k: K, v: V)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+
+        let (child_idx, child_fut) = match *node_data {
             NodeData::Leaf(ref mut data) => {
-                // TODO: split the leaf, if necessary
                 return Box::new(Ok(data.insert(k, v)).into_future())
             },
             NodeData::Int(ref data) => {
@@ -282,7 +266,7 @@ impl<'a, K: Copy + MinValue + Ord + 'static, V: Copy + 'static> Tree<K, V> {
             }
         };
         Box::new(child_fut.and_then(move |child_data| {
-                self.insert_int(root_data, child_idx, child_data, k, v)
+                self.insert_int(node_data, child_idx, child_data, k, v)
             })
         )
     }
