@@ -26,13 +26,13 @@ impl MinValue for u32 {
     }
 }
 
-pub trait Key: Copy + Debug + Ord + MinValue {}
+pub trait Key: Copy + Debug + Ord + MinValue + 'static {}
 
-impl<T> Key for T where T: Copy + Debug + Ord + MinValue {}
+impl<T> Key for T where T: Copy + Debug + Ord + MinValue + 'static {}
 
-pub trait Value: Copy + Debug {}
+pub trait Value: Copy + Debug + 'static {}
 
-impl<T> Value for T where T: Copy + Debug {}
+impl<T> Value for T where T: Copy + Debug + 'static {}
 
 #[derive(Debug)]
 enum TreePtr<K: Key, V: Value> {
@@ -89,6 +89,28 @@ impl<K: Key, V: Value> LeafData<K, V> {
 struct IntElem<K: Key, V: Value> {
     key: K,
     ptr: TreePtr<K, V>
+}
+
+impl<K: Key, V: Value> IntElem<K, V> {
+    fn read(&self) -> Box<Future<Item=RwLockReadGuard<NodeData<K, V>>, Error=Error>> {
+        Box::new(
+            match self.ptr {
+                TreePtr::Mem(ref node) => node.data.read()
+                    .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
+                _ => unimplemented!()
+            }
+        )
+    }
+
+    fn write(&self) -> Box<Future<Item=RwLockWriteGuard<NodeData<K, V>>, Error=Error>> {
+        Box::new(
+            match self.ptr {
+                TreePtr::Mem(ref node) => node.data.write()
+                    .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
+                _ => unimplemented!()
+            }
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -175,16 +197,6 @@ struct Node<K: Key, V: Value> {
     data: RwLock<NodeData<K, V>>
 }
 
-impl<K: Key, V: Value> Node<K, V> {
-    fn read(&self) -> RwLockReadFut<NodeData<K, V>> {
-        self.data.read()
-    }
-
-    fn write(&self) -> RwLockWriteFut<NodeData<K, V>> {
-        self.data.write()
-    }
-}
-
 /// In-memory representation of a COW B+-Tree
 ///
 /// # Generic Parameters
@@ -227,7 +239,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.root.write()
+            self.root.data.write()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root_data| {
                     self.insert_locked(root_data, k, v)
@@ -300,11 +312,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             NodeData::Int(ref data) => {
                 let child_idx = data.position(&k);
-                let fut = match data.children[child_idx].ptr {
-                    TreePtr::Mem(ref node) => node.write()
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
-                    _ => unimplemented!()
-                };
+                let fut = data.children[child_idx].write();
                 (child_idx, fut)
             }
         };
@@ -317,7 +325,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Lookup the value of key `k`.  Return an error if no value is present.
     pub fn lookup(&'a self, k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
         Box::new(
-            self.root.read()
+            self.root.data.read()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root_data| self.lookup_node(root_data, k))
         )
@@ -333,11 +341,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             NodeData::Int(ref data) => {
                 let child_elem = &data.children[data.position(&k)];
-                match child_elem.ptr {
-                    TreePtr::Mem(ref node) => node.read()
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
-                    _ => unimplemented!()
-                }
+                child_elem.read()
             }
         };
         drop(node_data);
