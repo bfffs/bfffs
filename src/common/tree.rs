@@ -109,6 +109,10 @@ impl<K: Key, V: Value> LeafNode<K, V> {
             .cloned()
             .ok_or(Error::Sys(errno::Errno::ENOENT))
     }
+
+    fn remove(&mut self, k: K) -> Option<V> {
+        self.items.remove(&k)
+    }
 }
 
 /// Guard that holds the Node lock object for reading
@@ -206,7 +210,6 @@ impl<K: Key, V: Value> Node<K, V> {
         }
     }
 
-    #[cfg(test)]
     fn as_leaf_mut(&mut self) -> Option<&mut LeafNode<K, V>> {
         if let &mut Node::Leaf(ref mut leaf) = self {
             Some(leaf)
@@ -215,6 +218,12 @@ impl<K: Key, V: Value> Node<K, V> {
         }
     }
 
+    /// Can this child be merged with `other` without violating constraints?
+    fn can_merge(&self, other: &Node<K, V>, max_fanout: usize) -> bool {
+        self.len() + other.len() <= max_fanout
+    }
+
+    /// Number of children or items in this `Node`
     fn len(&self) -> usize {
         match self {
             &Node::Leaf(ref leaf) => leaf.items.len(),
@@ -222,6 +231,15 @@ impl<K: Key, V: Value> Node<K, V> {
         }
     }
 
+    /// Should this node be fixed because it's too small?
+    fn should_fix(&self, min_fanout: usize) -> bool {
+        let len = self.len();
+        debug_assert!(len >= min_fanout,
+                      "Underfull nodes shouldn't be possible");
+        len <= min_fanout
+    }
+
+    /// Should this node be split because it's too big?
     fn should_split(&self, max_fanout: usize) -> bool {
         let len = self.len();
         debug_assert!(len <= max_fanout,
@@ -242,6 +260,57 @@ impl<K: Key, V: Value> Node<K, V> {
 
         }
     }
+
+    /// Merge all of `other`'s data into `self`.  Afterwards, `other` may be
+    /// deleted.
+    fn merge(&mut self, other: &mut Node<K, V>) {
+        match *self {
+            Node::Int(ref mut int) =>
+                int.children.append(&mut other.as_int_mut().unwrap().children),
+            Node::Leaf(ref mut leaf) =>
+                leaf.items.append(&mut other.as_leaf_mut().unwrap().items),
+        }
+    }
+
+    /// Take `other`'s highest keys and merge them into ourself
+    fn take_high_keys(&mut self, other: &mut Node<K, V>) {
+        let keys_to_share = (other.len() - self.len()) / 2;
+        match *self {
+            Node::Int(ref mut int) => {
+                let other_children = &mut other.as_int_mut().unwrap().children;
+                let mut other_right_half =
+                    other_children.split_off(keys_to_share);
+                int.children.splice(0..0, other_right_half.into_iter());
+            },
+            Node::Leaf(ref mut leaf) => {
+                let other_items = &mut other.as_leaf_mut().unwrap().items;
+                let cutoff = *other_items.keys().nth(keys_to_share).unwrap();
+                let mut other_right_half = other_items.split_off(&cutoff);
+                leaf.items.append(&mut other_right_half);
+            }
+        }
+    }
+
+    /// Take `other`'s lowest keys and merge them into ourself
+    fn take_low_keys(&mut self, other: &mut Node<K, V>) {
+        let keys_to_share = (other.len() - self.len()) / 2;
+        match *self {
+            Node::Int(ref mut int) => {
+                let other_children = &mut other.as_int_mut().unwrap().children;
+                let other_left_half = other_children.drain(0..keys_to_share);
+                let nchildren = int.children.len();
+                int.children.splice(nchildren.., other_left_half);
+            },
+            Node::Leaf(ref mut leaf) => {
+                let other_items = &mut other.as_leaf_mut().unwrap().items;
+                let cutoff = *other_items.keys().nth(keys_to_share).unwrap();
+                let other_right_half = other_items.split_off(&cutoff);
+                let mut other_left_half =
+                    mem::replace(other_items, other_right_half);
+                leaf.items.append(&mut other_left_half);
+            }
+        }
+    }
 }
 
 /// In-memory representation of a COW B+-Tree
@@ -254,7 +323,7 @@ impl<K: Key, V: Value> Node<K, V> {
 pub struct Tree<K: Key, V: Value> {
     /// Minimum node fanout.  Smaller nodes will be merged, or will steal
     /// children from their neighbors.
-    _min_fanout: usize,
+    min_fanout: usize,
     /// Maximum node fanout.  Larger nodes will be split.
     max_fanout: usize,
     /// Maximum node size in bytes.  Larger nodes will be split or their message
@@ -267,9 +336,9 @@ pub struct Tree<K: Key, V: Value> {
 impl<'a, K: Key, V: Value> Tree<K, V> {
     pub fn create() -> Self {
         Tree{
-            _min_fanout: 4,      // BetrFS's value
+            min_fanout: 4,      // BetrFS's value
             max_fanout: 16,     // BetrFS's value
-            _max_size: 1<<22,    // 4MB: BetrFS's value
+            _max_size: 1<<22,   // 4MB: BetrFS's value
             root: TreePtr::Mem(
                 RwLock::new(
                     Box::new(
@@ -394,6 +463,102 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             .and_then(move |next_node| self.lookup_node(next_node, k))
         )
     }
+
+    /// Remove and return the value at key `k`, if any.
+    pub fn remove(&'a self, k: K)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+
+        Box::new(
+            self.root.write()
+                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                .and_then(move |root| {
+                    self.remove_locked(root, k)
+            })
+        )
+    }
+
+    /// Remove key `k` from an internal node.  The internal node and its
+    /// relevant child must both be already locked.
+    fn remove_int(&'a self, mut parent: TreeWriteGuard<K, V>,
+                  child_idx: usize, mut child: TreeWriteGuard<K, V>, k: K)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+
+        // First, fix the node, if necessary
+        if child.should_fix(self.min_fanout) {
+            // Outline:
+            // First, try to merge with the right sibling
+            // Then, try to steal keys from the right sibling
+            // Then, try to merge with the left sibling
+            // Then, try to steal keys from the left sibling
+            let nchildren = parent.as_int_mut().unwrap().children.len();
+            let (fut, right) = if child_idx < nchildren - 1 {
+                (parent.as_int_mut().unwrap().children[child_idx + 1].write(),
+                 true)
+            } else {
+                (parent.as_int_mut().unwrap().children[child_idx - 1].write(),
+                 false)
+            };
+            Box::new(
+                fut.map(move |mut sibling| {
+                    if right {
+                        if child.can_merge(&sibling, self.max_fanout) {
+                            child.merge(&mut sibling);
+                            parent.as_int_mut().unwrap()
+                                .children.remove(child_idx + 1);
+                        } else {
+                            child.take_low_keys(&mut sibling);
+                        }
+                    } else {
+                        if sibling.can_merge(&child, self.max_fanout) {
+                            sibling.merge(&mut child);
+                            parent.as_int_mut().unwrap()
+                                .children.remove(child_idx);
+                        } else {
+                            child.take_high_keys(&mut sibling);
+                        }
+                    };
+                    parent
+                }).and_then(move |parent| self.remove_no_fix(parent, k))
+            )
+        } else {
+            drop(parent);
+            self.remove_no_fix(child, k)
+        }
+    }
+
+    /// Helper for `remove`.  Handles removal once the tree is locked
+    fn remove_locked(&'a self, root: TreeWriteGuard<K, V>, k: K)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+
+        // First, fix the root node, if necessary
+        if root.len() == 1 {
+            // TODO: reduce tree height
+            unimplemented!()
+        }
+
+        self.remove_no_fix(root, k)
+    }
+
+    /// Remove key `k` from a node, but don't try to fixup the node.
+    fn remove_no_fix(&'a self, mut node: TreeWriteGuard<K, V>, k: K)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+
+        let (child_idx, child_fut) = match *node {
+            Node::Leaf(ref mut leaf) => {
+                return Box::new(Ok(leaf.remove(k)).into_future())
+            },
+            Node::Int(ref int) => {
+                let child_idx = int.position(&k);
+                let fut = int.children[child_idx].write();
+                (child_idx, fut)
+            }
+        };
+        Box::new(child_fut.and_then(move |child| {
+                self.remove_int(node, child_idx, child, k)
+            })
+        )
+    }
+
 }
 
 #[cfg(test)]
@@ -470,6 +635,10 @@ fn two_levels() {
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
             .as_int_mut().is_some());
+    let r = current_thread::block_on_all(tree.remove(0));
+    assert_eq!(r, Ok(Some(0.0)));
+    let r = current_thread::block_on_all(tree.remove(0));
+    assert_eq!(r, Ok(None));
 }
 
 }
