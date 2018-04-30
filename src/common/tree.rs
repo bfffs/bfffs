@@ -13,7 +13,7 @@ use nix::{Error, errno};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::mem;
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 
 /// Anything that has a min_value method.  Too bad libstd doesn't define this.
 pub trait MinValue {
@@ -38,21 +38,47 @@ impl<T> Value for T where T: Copy + Debug + 'static {}
 enum TreePtr<K: Key, V: Value> {
     /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
     /// RAM-resident, we don't need to store their checksums or lsizes.
-    Mem(Box<Node<K, V>>),
-    /// Direct Recird Pointers point directly to a disk location
-    _DRP(DRP),
+    Mem(RwLock<Box<Node<K, V>>>),
+    /// Direct Record Pointers point directly to a disk location
+    _DRP(RwLock<DRP>),
     /// Indirect Record Pointers point to the Record Indirection Table
-    _IRP(u64)
+    _IRP(RwLock<u64>)
 }
 
 impl<K: Key, V: Value> TreePtr<K, V> {
     #[cfg(test)]
-    fn as_mem(&mut self) -> Option<&mut Box<Node<K, V>>> {
+    fn as_mem(&mut self) -> Option<&mut RwLock<Box<Node<K, V>>>> {
         if let &mut TreePtr::Mem(ref mut ptr) = self {
             Some(ptr)
         } else {
             None
         }
+    }
+
+    fn read(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
+        Box::new(
+            match self {
+                &TreePtr::Mem(ref lock) => {
+                    lock.read()
+                        .map(|guard| TreeReadGuard::Mem(guard))
+                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                },
+                _ => unimplemented!()
+            }
+        )
+    }
+
+    fn write(&self) -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> {
+        Box::new(
+            match self {
+                &TreePtr::Mem(ref lock) => {
+                    lock.write()
+                        .map(|guard| TreeWriteGuard::Mem(guard))
+                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                },
+                _ => unimplemented!()
+            }
+        )
     }
 }
 
@@ -85,6 +111,44 @@ impl<K: Key, V: Value> LeafData<K, V> {
     }
 }
 
+enum TreeReadGuard<K: Key, V: Value> {
+    Mem(RwLockReadGuard<Box<Node<K, V>>>),
+    //data: &'a NodeData<K, V>,
+    //guard: RwLockReadGuard<TreePtr<K, V>>
+}
+
+impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
+    type Target = NodeData<K, V>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            &TreeReadGuard::Mem(ref guard) => &(**guard).data,
+        }
+    }
+}
+
+enum TreeWriteGuard<K: Key, V: Value> {
+    Mem(RwLockWriteGuard<Box<Node<K, V>>>),
+}
+
+impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
+    type Target = NodeData<K, V>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            &TreeWriteGuard::Mem(ref guard) => &(**guard).data,
+        }
+    }
+}
+
+impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            &mut TreeWriteGuard::Mem(ref mut guard) => &mut(**guard).data,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct IntElem<K: Key, V: Value> {
     key: K,
@@ -92,24 +156,34 @@ struct IntElem<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> IntElem<K, V> {
-    fn read(&self) -> Box<Future<Item=RwLockReadGuard<NodeData<K, V>>, Error=Error>> {
-        Box::new(
-            match self.ptr {
-                TreePtr::Mem(ref node) => node.data.read()
-                    .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
-                _ => unimplemented!()
-            }
-        )
+    fn read(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
+        self.ptr.read()
+            //self.ptr.read()
+                //.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                //.map(|guard| {
+                //match guard.ptr {
+                    //TreePtr::Mem(ref node) => {
+                        //TreeReadGuard{data: &node.data, guard: guard}
+                    //},
+                    //_ => unimplemented!()
+                //}
+            //})
+        //)
     }
 
-    fn write(&self) -> Box<Future<Item=RwLockWriteGuard<NodeData<K, V>>, Error=Error>> {
-        Box::new(
-            match self.ptr {
-                TreePtr::Mem(ref node) => node.data.write()
-                    .map_err(|_| Error::Sys(errno::Errno::EPIPE)),
-                _ => unimplemented!()
-            }
-        )
+    fn write(&self) -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> {
+        self.ptr.write()
+
+        //Box::new(
+            //self.ptr.write()
+                //.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                //.map(|ptr| {
+                //match ptr {
+                    //TreePtr::Mem(ref node) => node.data,
+                    //_ => unimplemented!()
+                //}
+            //})
+        //)
     }
 }
 
@@ -194,7 +268,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
 
 #[derive(Debug)]
 struct Node<K: Key, V: Value> {
-    data: RwLock<NodeData<K, V>>
+    data: NodeData<K, V>
 }
 
 /// In-memory representation of a COW B+-Tree
@@ -214,7 +288,7 @@ pub struct Tree<K: Key, V: Value> {
     /// buffers flushed
     _max_size: usize,
     /// Root node
-    root: Node<K, V>
+    root: TreePtr<K, V>
 }
 
 impl<'a, K: Key, V: Value> Tree<K, V> {
@@ -223,13 +297,19 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             _min_fanout: 4,      // BetrFS's value
             max_fanout: 16,     // BetrFS's value
             _max_size: 1<<22,    // 4MB: BetrFS's value
-            root: Node {
-                data: RwLock::new(NodeData::Leaf(
-                    LeafData{
-                        items: BTreeMap::new()
-                    }
-                ))
-            }
+            root: TreePtr::Mem(
+                RwLock::new(
+                    Box::new(
+                        Node {
+                            data: NodeData::Leaf(
+                                LeafData{
+                                    items: BTreeMap::new()
+                                }
+                            )
+                        }
+                    )
+                )
+            )
         }
     }
 
@@ -239,7 +319,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.root.data.write()
+            self.root.write()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root_data| {
                     self.insert_locked(root_data, k, v)
@@ -249,17 +329,17 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Insert value `v` into an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn insert_int(&'a self, mut parent: RwLockWriteGuard<NodeData<K, V>>,
+    fn insert_int(&'a self, mut parent: TreeWriteGuard<K, V>,
                   child_idx: usize,
-                  mut child_data: RwLockWriteGuard<NodeData<K, V>>, k: K, v: V)
+                  mut child_data: TreeWriteGuard<K, V>, k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the node, if necessary
         if child_data.should_split(self.max_fanout) {
             let (new_key, new_child) = child_data.split();
-            let new_node = Node{data: RwLock::new(new_child)};
-            let new_elem = IntElem{key: new_key,
-                                   ptr: TreePtr::Mem(Box::new(new_node))};
+            let new_node = Node{data: new_child};
+            let new_ptr = TreePtr::Mem(RwLock::new(Box::new(new_node)));
+            let new_elem = IntElem{key: new_key, ptr: new_ptr};
             parent.as_int_mut().unwrap()
                 .children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
@@ -271,16 +351,16 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
-    fn insert_locked(&'a self, mut root_data: RwLockWriteGuard<NodeData<K, V>>,
+    fn insert_locked(&'a self, mut root_data: TreeWriteGuard<K, V>,
                      k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the root node, if necessary
         if root_data.should_split(self.max_fanout) {
             let (new_key, new_child) = root_data.split();
-            let new_node = Node{data: RwLock::new(new_child)};
-            let new_elem = IntElem{key: new_key,
-                                   ptr: TreePtr::Mem(Box::new(new_node))};
+            let new_node = Node{data: new_child};
+            let new_ptr = TreePtr::Mem(RwLock::new(Box::new(new_node)));
+            let new_elem = IntElem{key: new_key, ptr: new_ptr};
             let new_root_data = NodeData::Int(
                 IntData {
                     children: vec![new_elem],
@@ -289,12 +369,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             );
             let old_root_data = mem::replace(root_data.deref_mut(), new_root_data);
             let old_root = Node{
-                data: RwLock::new(old_root_data)
+                data: old_root_data
             };
-            let old_elem = IntElem{
-                key: K::min_value(),
-                ptr: TreePtr::Mem(Box::new(old_root))
-            };
+            let old_ptr = TreePtr::Mem(RwLock::new(Box::new(old_root)));
+            let old_elem = IntElem{ key: K::min_value(), ptr: old_ptr };
             root_data.as_int_mut().unwrap().children.insert(0, old_elem);
         }
 
@@ -302,7 +380,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     fn insert_no_split(&'a self,
-                       mut node_data: RwLockWriteGuard<NodeData<K, V>>,
+                       mut node_data: TreeWriteGuard<K, V>,
                        k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
@@ -325,14 +403,14 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Lookup the value of key `k`.  Return an error if no value is present.
     pub fn lookup(&'a self, k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
         Box::new(
-            self.root.data.read()
+            self.root.read()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root_data| self.lookup_node(root_data, k))
         )
     }
 
     /// Lookup the value of key `k` in a node, which must already be locked.
-    fn lookup_node(&'a self, node_data: RwLockReadGuard<NodeData<K, V>>, k: K)
+    fn lookup_node(&'a self, node_data: TreeReadGuard<K, V>, k: K)
         -> Box<Future<Item=V, Error=Error> + 'a> {
 
         let next_node_fut = match *node_data {
@@ -390,14 +468,17 @@ fn three_levels() {
         future::join_all(inserts)
     }));
     assert!(r1.is_ok());
-    assert!(tree.root.data.get_mut().unwrap().as_int_mut().is_some());
+    assert!(tree.root.as_mem().unwrap()
+            .get_mut().unwrap()
+            .data.as_int_mut().is_some());
     let r2 = current_thread::block_on_all(tree.insert(129, 129.0));
     assert!(r2.is_ok());
-    assert!(tree.root.data.get_mut().unwrap()
-                          .as_int_mut().unwrap()
-                          .children[0].ptr.as_mem().unwrap()
-                          .data.get_mut().unwrap()
-                          .as_int_mut().is_some());
+    assert!(tree.root.as_mem().unwrap()
+            .get_mut().unwrap()
+            .data.as_int_mut().unwrap()
+            .children[0].ptr.as_mem().unwrap()
+            .get_mut().unwrap()
+            .data.as_int_mut().is_some());
     for i in 0..129 {
         assert_eq!(current_thread::block_on_all(tree.lookup(i)), Ok(i as f32));
     }
@@ -415,10 +496,14 @@ fn two_levels() {
         future::join_all(inserts)
     }));
     assert!(r1.is_ok());
-    assert!(tree.root.data.get_mut().unwrap().as_leaf_mut().is_some());
+    assert!(tree.root.as_mem().unwrap()
+            .get_mut().unwrap()
+            .data.as_leaf_mut().is_some());
     let r2 = current_thread::block_on_all(tree.insert(16, 16.0));
     assert!(r2.is_ok());
-    assert!(tree.root.data.get_mut().unwrap().as_int_mut().is_some());
+    assert!(tree.root.as_mem().unwrap()
+            .get_mut().unwrap()
+            .data.as_int_mut().is_some());
 }
 
 }
