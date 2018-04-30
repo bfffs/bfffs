@@ -335,22 +335,10 @@ pub struct Tree<K: Key, V: Value> {
 
 impl<'a, K: Key, V: Value> Tree<K, V> {
     pub fn create() -> Self {
-        Tree{
-            min_fanout: 4,      // BetrFS's value
-            max_fanout: 16,     // BetrFS's value
-            _max_size: 1<<22,   // 4MB: BetrFS's value
-            root: TreePtr::Mem(
-                RwLock::new(
-                    Box::new(
-                        Node::Leaf(
-                            LeafNode{
-                                items: BTreeMap::new()
-                            }
-                        )
-                    )
-                )
-            )
-        }
+        Tree::new(4,        // BetrFS's min fanout
+                  16,       // BetrFS's max fanout
+                  1<<22,    // BetrFS's max size
+        )
     }
 
     /// Insert value `v` into the tree at key `k`, returning the previous value
@@ -462,6 +450,24 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             next_node_fut
             .and_then(move |next_node| self.lookup_node(next_node, k))
         )
+    }
+
+    fn new(min_fanout: usize, max_fanout: usize, max_size: usize) -> Self {
+        Tree{
+            min_fanout, max_fanout,
+            _max_size: max_size,
+            root: TreePtr::Mem(
+                RwLock::new(
+                    Box::new(
+                        Node::Leaf(
+                            LeafNode{
+                                items: BTreeMap::new()
+                            }
+                        )
+                    )
+                )
+            )
+        }
     }
 
     /// Remove and return the value at key `k`, if any.
@@ -590,10 +596,10 @@ fn one_elem() {
 /// A Tree with enough elements to split an internal node
 #[test]
 fn three_levels() {
-    let mut tree: Tree<u32, f32> = Tree::create();
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
     let r1 = current_thread::block_on_all(future::lazy(|| {
         let tree1 = &tree;
-        let inserts = (0..129).map(|k| {
+        let inserts = (0..15).map(|k| {
             tree1.insert(k, k as f32)
         }).collect::<Vec<_>>();
         future::join_all(inserts)
@@ -602,7 +608,7 @@ fn three_levels() {
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
             .as_int_mut().is_some());
-    let r2 = current_thread::block_on_all(tree.insert(129, 129.0));
+    let r2 = current_thread::block_on_all(tree.insert(15, 15.0));
     assert!(r2.is_ok());
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
@@ -610,7 +616,7 @@ fn three_levels() {
             .children[0].ptr.as_mem().unwrap()
             .get_mut().unwrap()
             .as_int_mut().is_some());
-    for i in 0..129 {
+    for i in 0..15 {
         assert_eq!(current_thread::block_on_all(tree.lookup(i)), Ok(i as f32));
     }
 }
@@ -618,10 +624,10 @@ fn three_levels() {
 /// A Tree with enough elements to split the root node
 #[test]
 fn two_levels() {
-    let mut tree: Tree<u32, f32> = Tree::create();
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
     let r1 = current_thread::block_on_all(future::lazy(|| {
         let tree1 = &tree;
-        let inserts = (0..16).map(|k| {
+        let inserts = (0..5).map(|k| {
             tree1.insert(k, k as f32)
         }).collect::<Vec<_>>();
         future::join_all(inserts)
@@ -630,7 +636,7 @@ fn two_levels() {
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
             .as_leaf_mut().is_some());
-    let r2 = current_thread::block_on_all(tree.insert(16, 16.0));
+    let r2 = current_thread::block_on_all(tree.insert(5, 5.0));
     assert!(r2.is_ok());
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
