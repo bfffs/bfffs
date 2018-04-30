@@ -83,23 +83,23 @@ impl<K: Key, V: Value> TreePtr<K, V> {
 }
 
 #[derive(Debug)]
-struct LeafData<K: Key, V: Value> {
+struct LeafNode<K: Key, V: Value> {
     items: BTreeMap<K, V>
 }
 
-impl<K: Key, V: Value> LeafData<K, V> {
-    fn split(&mut self) -> (K, LeafData<K, V>) {
+impl<K: Key, V: Value> LeafNode<K, V> {
+    fn split(&mut self) -> (K, LeafNode<K, V>) {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
         // one.
         let half = div_roundup(self.items.len(), 2);
         let cutoff = *self.items.keys().nth(half).unwrap();
         let new_items = self.items.split_off(&cutoff);
-        (cutoff, LeafData{items: new_items})
+        (cutoff, LeafNode{items: new_items})
     }
 }
 
-impl<K: Key, V: Value> LeafData<K, V> {
+impl<K: Key, V: Value> LeafNode<K, V> {
     fn insert(&mut self, k: K, v: V) -> Option<V> {
         self.items.insert(k, v)
     }
@@ -111,32 +111,32 @@ impl<K: Key, V: Value> LeafData<K, V> {
     }
 }
 
+/// Guard that holds the Node lock object for reading
 enum TreeReadGuard<K: Key, V: Value> {
     Mem(RwLockReadGuard<Box<Node<K, V>>>),
-    //data: &'a NodeData<K, V>,
-    //guard: RwLockReadGuard<TreePtr<K, V>>
 }
 
 impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
-    type Target = NodeData<K, V>;
+    type Target = Node<K, V>;
 
     fn deref(&self) -> &Self::Target {
         match self {
-            &TreeReadGuard::Mem(ref guard) => &(**guard).data,
+            &TreeReadGuard::Mem(ref guard) => &**guard,
         }
     }
 }
 
+/// Guard that holds the Node lock object for writing
 enum TreeWriteGuard<K: Key, V: Value> {
     Mem(RwLockWriteGuard<Box<Node<K, V>>>),
 }
 
 impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
-    type Target = NodeData<K, V>;
+    type Target = Node<K, V>;
 
     fn deref(&self) -> &Self::Target {
         match self {
-            &TreeWriteGuard::Mem(ref guard) => &(**guard).data,
+            &TreeWriteGuard::Mem(ref guard) => &**guard,
         }
     }
 }
@@ -144,7 +144,7 @@ impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
 impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            &mut TreeWriteGuard::Mem(ref mut guard) => &mut(**guard).data,
+            &mut TreeWriteGuard::Mem(ref mut guard) => &mut **guard,
         }
     }
 }
@@ -158,44 +158,22 @@ struct IntElem<K: Key, V: Value> {
 impl<K: Key, V: Value> IntElem<K, V> {
     fn read(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
         self.ptr.read()
-            //self.ptr.read()
-                //.map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                //.map(|guard| {
-                //match guard.ptr {
-                    //TreePtr::Mem(ref node) => {
-                        //TreeReadGuard{data: &node.data, guard: guard}
-                    //},
-                    //_ => unimplemented!()
-                //}
-            //})
-        //)
     }
 
     fn write(&self) -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> {
         self.ptr.write()
-
-        //Box::new(
-            //self.ptr.write()
-                //.map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                //.map(|ptr| {
-                //match ptr {
-                    //TreePtr::Mem(ref node) => node.data,
-                    //_ => unimplemented!()
-                //}
-            //})
-        //)
     }
 }
 
 #[derive(Debug)]
-struct IntData<K: Key, V: Value> {
+struct IntNode<K: Key, V: Value> {
     /// position in the tree.  Leaves have rank 0, `IntNodes` with Leaf children
     /// have rank 1, etc.  The root has the highest rank.
     rank: u8,
     children: Vec<IntElem<K, V>>
 }
 
-impl<K: Key, V: Value> IntData<K, V> {
+impl<K: Key, V: Value> IntNode<K, V> {
     fn position(&self, k: &K) -> usize {
         // Find rightmost child whose key is less than or equal to k
         self.children
@@ -203,35 +181,35 @@ impl<K: Key, V: Value> IntData<K, V> {
             .unwrap_or_else(|k| k - 1)
     }
 
-    fn split(&mut self) -> (K, IntData<K, V>) {
+    fn split(&mut self) -> (K, IntNode<K, V>) {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
         // one.
         let cutoff = div_roundup(self.children.len(), 2);
         let new_children = self.children.split_off(cutoff);
-        (new_children[0].key, IntData{rank: self.rank, children: new_children})
+        (new_children[0].key, IntNode{rank: self.rank, children: new_children})
     }
 }
 
 #[derive(Debug)]
-enum NodeData<K: Key, V: Value> {
-    Leaf(LeafData<K, V>),
-    Int(IntData<K, V>)
+enum Node<K: Key, V: Value> {
+    Leaf(LeafNode<K, V>),
+    Int(IntNode<K, V>)
 }
 
-impl<K: Key, V: Value> NodeData<K, V> {
-    fn as_int_mut(&mut self) -> Option<&mut IntData<K, V>> {
-        if let &mut NodeData::Int(ref mut data) = self {
-            Some(data)
+impl<K: Key, V: Value> Node<K, V> {
+    fn as_int_mut(&mut self) -> Option<&mut IntNode<K, V>> {
+        if let &mut Node::Int(ref mut int) = self {
+            Some(int)
         } else {
             None
         }
     }
 
     #[cfg(test)]
-    fn as_leaf_mut(&mut self) -> Option<&mut LeafData<K, V>> {
-        if let &mut NodeData::Leaf(ref mut data) = self {
-            Some(data)
+    fn as_leaf_mut(&mut self) -> Option<&mut LeafNode<K, V>> {
+        if let &mut Node::Leaf(ref mut leaf) = self {
+            Some(leaf)
         } else {
             None
         }
@@ -239,8 +217,8 @@ impl<K: Key, V: Value> NodeData<K, V> {
 
     fn len(&self) -> usize {
         match self {
-            &NodeData::Leaf(ref data) => data.items.len(),
-            &NodeData::Int(ref data) => data.children.len()
+            &Node::Leaf(ref leaf) => leaf.items.len(),
+            &Node::Int(ref int) => int.children.len()
         }
     }
 
@@ -251,24 +229,19 @@ impl<K: Key, V: Value> NodeData<K, V> {
         len >= max_fanout
     }
 
-    fn split(&mut self) -> (K, NodeData<K, V>) {
+    fn split(&mut self) -> (K, Node<K, V>) {
         match *self {
-            NodeData::Leaf(ref mut data) => {
-                let (k, new_data) = data.split();
-                (k, NodeData::Leaf(new_data))
+            Node::Leaf(ref mut leaf) => {
+                let (k, new_leaf) = leaf.split();
+                (k, Node::Leaf(new_leaf))
             },
-            NodeData::Int(ref mut data) => {
-                let (k, new_data) = data.split();
-                (k, NodeData::Int(new_data))
+            Node::Int(ref mut int) => {
+                let (k, new_int) = int.split();
+                (k, Node::Int(new_int))
             },
 
         }
     }
-}
-
-#[derive(Debug)]
-struct Node<K: Key, V: Value> {
-    data: NodeData<K, V>
 }
 
 /// In-memory representation of a COW B+-Tree
@@ -300,13 +273,11 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             root: TreePtr::Mem(
                 RwLock::new(
                     Box::new(
-                        Node {
-                            data: NodeData::Leaf(
-                                LeafData{
-                                    items: BTreeMap::new()
-                                }
-                            )
-                        }
+                        Node::Leaf(
+                            LeafNode{
+                                items: BTreeMap::new()
+                            }
+                        )
                     )
                 )
             )
@@ -321,8 +292,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         Box::new(
             self.root.write()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                .and_then(move |root_data| {
-                    self.insert_locked(root_data, k, v)
+                .and_then(move |root| {
+                    self.insert_locked(root, k, v)
             })
         )
     }
@@ -331,13 +302,12 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// relevant child must both be already locked.
     fn insert_int(&'a self, mut parent: TreeWriteGuard<K, V>,
                   child_idx: usize,
-                  mut child_data: TreeWriteGuard<K, V>, k: K, v: V)
+                  mut child: TreeWriteGuard<K, V>, k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the node, if necessary
-        if child_data.should_split(self.max_fanout) {
-            let (new_key, new_child) = child_data.split();
-            let new_node = Node{data: new_child};
+        if child.should_split(self.max_fanout) {
+            let (new_key, new_node) = child.split();
             let new_ptr = TreePtr::Mem(RwLock::new(Box::new(new_node)));
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
             parent.as_int_mut().unwrap()
@@ -346,56 +316,52 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             self.insert_no_split(parent, k, v)
         } else {
             drop(parent);
-            self.insert_no_split(child_data, k, v)
+            self.insert_no_split(child, k, v)
         }
     }
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
-    fn insert_locked(&'a self, mut root_data: TreeWriteGuard<K, V>,
+    fn insert_locked(&'a self, mut root: TreeWriteGuard<K, V>,
                      k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the root node, if necessary
-        if root_data.should_split(self.max_fanout) {
-            let (new_key, new_child) = root_data.split();
-            let new_node = Node{data: new_child};
+        if root.should_split(self.max_fanout) {
+            let (new_key, new_node) = root.split();
             let new_ptr = TreePtr::Mem(RwLock::new(Box::new(new_node)));
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
-            let new_root_data = NodeData::Int(
-                IntData {
+            let new_root = Node::Int(
+                IntNode {
                     children: vec![new_elem],
                     rank: 100 //TODO calculate correctly
                 }
             );
-            let old_root_data = mem::replace(root_data.deref_mut(), new_root_data);
-            let old_root = Node{
-                data: old_root_data
-            };
+            let old_root = mem::replace(root.deref_mut(), new_root);
             let old_ptr = TreePtr::Mem(RwLock::new(Box::new(old_root)));
             let old_elem = IntElem{ key: K::min_value(), ptr: old_ptr };
-            root_data.as_int_mut().unwrap().children.insert(0, old_elem);
+            root.as_int_mut().unwrap().children.insert(0, old_elem);
         }
 
-        self.insert_no_split(root_data, k, v)
+        self.insert_no_split(root, k, v)
     }
 
     fn insert_no_split(&'a self,
-                       mut node_data: TreeWriteGuard<K, V>,
+                       mut node: TreeWriteGuard<K, V>,
                        k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
-        let (child_idx, child_fut) = match *node_data {
-            NodeData::Leaf(ref mut data) => {
-                return Box::new(Ok(data.insert(k, v)).into_future())
+        let (child_idx, child_fut) = match *node {
+            Node::Leaf(ref mut leaf) => {
+                return Box::new(Ok(leaf.insert(k, v)).into_future())
             },
-            NodeData::Int(ref data) => {
-                let child_idx = data.position(&k);
-                let fut = data.children[child_idx].write();
+            Node::Int(ref int) => {
+                let child_idx = int.position(&k);
+                let fut = int.children[child_idx].write();
                 (child_idx, fut)
             }
         };
-        Box::new(child_fut.and_then(move |child_data| {
-                self.insert_int(node_data, child_idx, child_data, k, v)
+        Box::new(child_fut.and_then(move |child| {
+                self.insert_int(node, child_idx, child, k, v)
             })
         )
     }
@@ -405,24 +371,24 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         Box::new(
             self.root.read()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                .and_then(move |root_data| self.lookup_node(root_data, k))
+                .and_then(move |root| self.lookup_node(root, k))
         )
     }
 
     /// Lookup the value of key `k` in a node, which must already be locked.
-    fn lookup_node(&'a self, node_data: TreeReadGuard<K, V>, k: K)
+    fn lookup_node(&'a self, node: TreeReadGuard<K, V>, k: K)
         -> Box<Future<Item=V, Error=Error> + 'a> {
 
-        let next_node_fut = match *node_data {
-            NodeData::Leaf(ref data) => {
-                return Box::new(data.lookup(k).into_future())
+        let next_node_fut = match *node {
+            Node::Leaf(ref leaf) => {
+                return Box::new(leaf.lookup(k).into_future())
             },
-            NodeData::Int(ref data) => {
-                let child_elem = &data.children[data.position(&k)];
+            Node::Int(ref int) => {
+                let child_elem = &int.children[int.position(&k)];
                 child_elem.read()
             }
         };
-        drop(node_data);
+        drop(node);
         Box::new(
             next_node_fut
             .and_then(move |next_node| self.lookup_node(next_node, k))
@@ -470,15 +436,15 @@ fn three_levels() {
     assert!(r1.is_ok());
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
-            .data.as_int_mut().is_some());
+            .as_int_mut().is_some());
     let r2 = current_thread::block_on_all(tree.insert(129, 129.0));
     assert!(r2.is_ok());
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
-            .data.as_int_mut().unwrap()
+            .as_int_mut().unwrap()
             .children[0].ptr.as_mem().unwrap()
             .get_mut().unwrap()
-            .data.as_int_mut().is_some());
+            .as_int_mut().is_some());
     for i in 0..129 {
         assert_eq!(current_thread::block_on_all(tree.lookup(i)), Ok(i as f32));
     }
@@ -498,12 +464,12 @@ fn two_levels() {
     assert!(r1.is_ok());
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
-            .data.as_leaf_mut().is_some());
+            .as_leaf_mut().is_some());
     let r2 = current_thread::block_on_all(tree.insert(16, 16.0));
     assert!(r2.is_ok());
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
-            .data.as_int_mut().is_some());
+            .as_int_mut().is_some());
 }
 
 }
