@@ -574,28 +574,70 @@ use super::*;
 use futures::future;
 use tokio::executor::current_thread;
 
-/// An empty tree
 #[test]
-fn empty() {
-    let tree: Tree<u32, f32> = Tree::create();
-    let r = current_thread::block_on_all(tree.lookup(0));
-    assert_eq!(r, Err(Error::Sys(errno::Errno::ENOENT)))
-}
-
-/// A tree with one element
-#[test]
-fn one_elem() {
+fn insert() {
     let tree: Tree<u32, f32> = Tree::create();
     let r = current_thread::block_on_all(future::lazy(|| {
         tree.insert(0, 0.0)
-            .and_then(|_| tree.lookup(0))
     }));
-    assert_eq!(r, Ok(0.0));
+    assert_eq!(r, Ok(None));
 }
 
-/// A Tree with enough elements to split an internal node
 #[test]
-fn three_levels() {
+fn insert_dup() {
+    let tree: Tree<u32, f32> = Tree::create();
+    let r = current_thread::block_on_all(future::lazy(|| {
+        tree.insert(0, 0.0)
+            .and_then(|_| tree.insert(0, 100.0))
+    }));
+    assert_eq!(r, Ok(Some(0.0)));
+}
+
+/// Insert a key that splits a non-root interior node
+#[test]
+fn insert_split_int() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..24).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 2);
+    let r2 = current_thread::block_on_all(tree.insert(24, 24.0));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 3);
+}
+
+/// Insert a key that splits a non-root leaf node
+#[test]
+fn insert_split_leaf() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..6).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 2);
+    let r2 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (6..9).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 3);
+}
+
+/// Insert a key that splits the root IntNode
+#[test]
+fn insert_split_root_int() {
     let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
     let r1 = current_thread::block_on_all(future::lazy(|| {
         let tree1 = &tree;
@@ -621,9 +663,9 @@ fn three_levels() {
     }
 }
 
-/// A Tree with enough elements to split the root node
+/// Insert a key that splits the root leaf node
 #[test]
-fn two_levels() {
+fn insert_split_root_leaf() {
     let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
     let r1 = current_thread::block_on_all(future::lazy(|| {
         let tree1 = &tree;
@@ -641,10 +683,23 @@ fn two_levels() {
     assert!(tree.root.as_mem().unwrap()
             .get_mut().unwrap()
             .as_int_mut().is_some());
-    let r = current_thread::block_on_all(tree.remove(0));
-    assert_eq!(r, Ok(Some(0.0)));
-    let r = current_thread::block_on_all(tree.remove(0));
-    assert_eq!(r, Ok(None));
+}
+
+#[test]
+fn lookup() {
+    let tree: Tree<u32, f32> = Tree::create();
+    let r = current_thread::block_on_all(future::lazy(|| {
+        tree.insert(0, 0.0)
+            .and_then(|_| tree.lookup(0))
+    }));
+    assert_eq!(r, Ok(0.0));
+}
+
+#[test]
+fn lookup_nonexistent() {
+    let tree: Tree<u32, f32> = Tree::create();
+    let r = current_thread::block_on_all(tree.lookup(0));
+    assert_eq!(r, Err(Error::Sys(errno::Errno::ENOENT)))
 }
 
 }
