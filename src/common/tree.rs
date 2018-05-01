@@ -535,13 +535,26 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Helper for `remove`.  Handles removal once the tree is locked
-    fn remove_locked(&'a self, root: TreeWriteGuard<K, V>, k: K)
+    fn remove_locked(&'a self, mut root: TreeWriteGuard<K, V>, k: K)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, fix the root node, if necessary
-        if root.len() == 1 {
-            // TODO: reduce tree height
-            unimplemented!()
+        let new_root = if let Node::Int(ref mut int) = *root {
+            if int.children.len() == 1 {
+                // Merge root node with its child
+                let child = int.children.pop().unwrap();
+                Some(match child.ptr {
+                    TreePtr::Mem(lock) => *lock.try_unwrap().unwrap(),
+                    _ => unimplemented!()
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if new_root.is_some() {
+            mem::replace(root.deref_mut(), new_root.unwrap());
         }
 
         self.remove_no_fix(root, k)
@@ -702,6 +715,16 @@ fn lookup_nonexistent() {
     let tree: Tree<u32, f32> = Tree::create();
     let r = current_thread::block_on_all(tree.lookup(0));
     assert_eq!(r, Err(Error::Sys(errno::Errno::ENOENT)))
+}
+
+#[test]
+fn remove_last_key() {
+    let tree: Tree<u32, f32> = Tree::create();
+    let r = current_thread::block_on_all(future::lazy(|| {
+        tree.insert(0, 0.0)
+            .and_then(|_| tree.remove(0))
+    }));
+    assert_eq!(r, Ok(Some(0.0)));
 }
 
 #[test]
