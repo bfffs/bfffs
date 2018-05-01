@@ -278,13 +278,15 @@ impl<K: Key, V: Value> Node<K, V> {
         match *self {
             Node::Int(ref mut int) => {
                 let other_children = &mut other.as_int_mut().unwrap().children;
+                let cutoff_idx = other_children.len() - keys_to_share;
                 let mut other_right_half =
-                    other_children.split_off(keys_to_share);
+                    other_children.split_off(cutoff_idx);
                 int.children.splice(0..0, other_right_half.into_iter());
             },
             Node::Leaf(ref mut leaf) => {
                 let other_items = &mut other.as_leaf_mut().unwrap().items;
-                let cutoff = *other_items.keys().nth(keys_to_share).unwrap();
+                let cutoff_idx = other_items.len() - keys_to_share;
+                let cutoff = *other_items.keys().nth(cutoff_idx).unwrap();
                 let mut other_right_half = other_items.split_off(&cutoff);
                 leaf.items.append(&mut other_right_half);
             }
@@ -700,6 +702,235 @@ fn lookup_nonexistent() {
     let tree: Tree<u32, f32> = Tree::create();
     let r = current_thread::block_on_all(tree.lookup(0));
     assert_eq!(r, Err(Error::Sys(errno::Errno::ENOENT)))
+}
+
+#[test]
+fn remove_from_leaf() {
+    let tree: Tree<u32, f32> = Tree::create();
+    let r = current_thread::block_on_all(future::lazy(|| {
+        tree.insert(0, 0.0)
+            .and_then(|_| tree.insert(1, 1.0))
+            .and_then(|_| tree.insert(2, 2.0))
+            .and_then(|_| tree.remove(1))
+    }));
+    assert_eq!(r, Ok(Some(1.0)));
+}
+
+#[test]
+fn remove_and_merge_int_left() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..25).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 3);
+    let r2 = current_thread::block_on_all(tree.remove(24));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 2);
+}
+
+#[test]
+fn remove_and_merge_int_right() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..25).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 3);
+    let r2 = current_thread::block_on_all(future::lazy(|| {
+        tree.remove(0)
+            .and_then(|_| tree.remove(1))
+            .and_then(|_| tree.remove(2))
+            .and_then(|_| tree.remove(3))
+    }));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 2);
+}
+
+#[test]
+fn remove_and_merge_leaf_left() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..9).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    let r2 = current_thread::block_on_all(future::lazy(|| {
+        tree.remove(7)
+            .and_then(|_| tree.remove(8))
+    }));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 2);
+}
+
+#[test]
+fn remove_and_merge_leaf_right() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..9).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    let r2 = current_thread::block_on_all(future::lazy(|| {
+        tree.remove(5)
+            .and_then(|_| tree.remove(4))
+    }));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 2);
+}
+
+#[test]
+fn remove_and_steal_int_left() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+            16, 17, 18, 19, 20, 24, 25, 26, 27, 21, 22, 23].iter().map(|k| {
+            tree1.insert(*k, *k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    let r2 = current_thread::block_on_all(tree.remove(26));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_int_mut().unwrap()
+               .children[1].ptr.as_mem().unwrap()
+               .get_mut().unwrap()
+               .len(), 3);
+    assert_eq!(tree.root.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_int_mut().unwrap()
+               .children[2].ptr.as_mem().unwrap()
+               .get_mut().unwrap()
+               .len(), 3);
+}
+
+#[test]
+fn remove_and_steal_int_right() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..24).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    let r2 = current_thread::block_on_all(future::lazy(|| {
+        tree.remove(0)
+            .and_then(|_| tree.remove(1))
+            .and_then(|_| tree.remove(2))
+    }));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_int_mut().unwrap()
+               .children[1].ptr.as_mem().unwrap()
+               .get_mut().unwrap()
+               .len(), 4);
+    assert_eq!(tree.root.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_int_mut().unwrap()
+               .children[0].ptr.as_mem().unwrap()
+               .get_mut().unwrap()
+               .len(), 3);
+}
+
+#[test]
+fn remove_and_steal_leaf_left() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = [0, 1, 2, 5, 6, 7, 3, 4].iter().map(|k| {
+            tree1.insert(*k, *k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    let r2 = current_thread::block_on_all(future::lazy(|| {
+        tree.remove(7)
+            .and_then(|_| tree.remove(6))
+    }));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_int_mut().unwrap()
+               .children[0].ptr.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_leaf_mut().unwrap()
+               .items.keys().cloned().collect::<Vec<_>>(),
+               vec![0, 1, 2, 3]);
+    assert_eq!(tree.root.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_int_mut().unwrap()
+               .children[1].ptr.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_leaf_mut().unwrap()
+               .items.keys().cloned().collect::<Vec<_>>(),
+               vec![4, 5]);
+}
+
+#[test]
+fn remove_and_steal_leaf_right() {
+    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let r1 = current_thread::block_on_all(future::lazy(|| {
+        let tree1 = &tree;
+        let inserts = (0..11).map(|k| {
+            tree1.insert(k, k as f32)
+        }).collect::<Vec<_>>();
+        future::join_all(inserts)
+    }));
+    assert!(r1.is_ok());
+    let r2 = current_thread::block_on_all(future::lazy(|| {
+        tree.remove(5)
+            .and_then(|_| tree.remove(4))
+    }));
+    assert!(r2.is_ok());
+    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 3);
+    assert_eq!(tree.root.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_int_mut().unwrap()
+               .children[1].ptr.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_leaf_mut().unwrap()
+               .items.keys().cloned().collect::<Vec<_>>(),
+               vec![3, 6]);
+    assert_eq!(tree.root.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_int_mut().unwrap()
+               .children[2].ptr.as_mem().unwrap()
+               .get_mut().unwrap()
+               .as_leaf_mut().unwrap()
+               .items.keys().cloned().collect::<Vec<_>>(),
+               vec![7, 8, 9, 10]);
+}
+
+#[test]
+fn remove_nonexistent() {
+    let tree: Tree<u32, f32> = Tree::create();
+    let r = current_thread::block_on_all(future::lazy(|| {
+        tree.insert(0, 0.0)
+            .and_then(|_| tree.insert(1, 1.0))
+            .and_then(|_| tree.insert(2, 2.0))
+            .and_then(|_| tree.remove(3))
+    }));
+    assert_eq!(r, Ok(None));
 }
 
 }
