@@ -301,6 +301,13 @@ impl<K: Key, V: Value> Node<K, V> {
         self.len() + other.len() <= max_fanout
     }
 
+    fn key(&self) -> K {
+        match self {
+            &Node::Leaf(ref leaf) => *leaf.items.keys().nth(0).unwrap(),
+            &Node::Int(ref int) => int.children[0].key,
+        }
+    }
+
     /// Number of children or items in this `Node`
     fn len(&self) -> usize {
         match self {
@@ -356,13 +363,15 @@ impl<K: Key, V: Value> Node<K, V> {
         match *self {
             Node::Int(ref mut int) => {
                 let other_children = &mut other.as_int_mut().unwrap().children;
+                let cutoff_idx = other_children.len() - keys_to_share;
                 let mut other_right_half =
-                    other_children.split_off(keys_to_share);
+                    other_children.split_off(cutoff_idx);
                 int.children.splice(0..0, other_right_half.into_iter());
             },
             Node::Leaf(ref mut leaf) => {
                 let other_items = &mut other.as_leaf_mut().unwrap().items;
-                let cutoff = *other_items.keys().nth(keys_to_share).unwrap();
+                let cutoff_idx = other_items.len() - keys_to_share;
+                let cutoff = *other_items.keys().nth(cutoff_idx).unwrap();
                 let mut other_right_half = other_items.split_off(&cutoff);
                 leaf.items.append(&mut other_right_half);
             }
@@ -597,6 +606,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                                 .children.remove(child_idx + 1);
                         } else {
                             child.take_low_keys(&mut sibling);
+                            parent.as_int_mut().unwrap().children[child_idx+1]
+                                .key = sibling.key();
                         }
                     } else {
                         if sibling.can_merge(&child, self.max_fanout) {
@@ -605,6 +616,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                                 .children.remove(child_idx);
                         } else {
                             child.take_high_keys(&mut sibling);
+                            parent.as_int_mut().unwrap().children[child_idx]
+                                .key = child.key();
                         }
                     };
                     parent
@@ -617,13 +630,26 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Helper for `remove`.  Handles removal once the tree is locked
-    fn remove_locked(&'a self, root: TreeWriteGuard<K, V>, k: K)
+    fn remove_locked(&'a self, mut root: TreeWriteGuard<K, V>, k: K)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, fix the root node, if necessary
-        if root.len() == 1 {
-            // TODO: reduce tree height
-            unimplemented!()
+        let new_root = if let Node::Int(ref mut int) = *root {
+            if int.children.len() == 1 {
+                // Merge root node with its child
+                let child = int.children.pop().unwrap();
+                Some(match child.ptr {
+                    TreePtr::Mem(lock) => *lock.try_unwrap().unwrap(),
+                    _ => unimplemented!()
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if new_root.is_some() {
+            mem::replace(root.deref_mut(), new_root.unwrap());
         }
 
         self.remove_no_fix(root, k)
@@ -669,9 +695,7 @@ use futures::future;
 #[test]
 fn insert() {
     let tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
-    let r = current_thread::block_on_all(future::lazy(|| {
-        tree.insert(0, 0.0)
-    }));
+    let r = current_thread::block_on_all(tree.insert(0, 0.0));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -1158,6 +1182,1048 @@ fn lookup_nonexistent() {
     let tree: Tree<u32, f32> = Tree::create();
     let r = current_thread::block_on_all(tree.lookup(0));
     assert_eq!(r, Err(Error::Sys(errno::Errno::ENOENT)))
+}
+
+#[test]
+fn remove_last_key() {
+    let tree = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Leaf:
+      items:
+        0: 0.0
+"#);
+    let r = current_thread::block_on_all(tree.remove(0));
+    assert_eq!(r, Ok(Some(0.0)));
+    assert_eq!(format!("{}", tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Leaf:
+      items: {}"#);
+}
+
+#[test]
+fn remove_from_leaf() {
+    let tree = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Leaf:
+      items:
+        0: 0.0
+        1: 1.0
+        2: 2.0
+"#);
+    let r = current_thread::block_on_all(tree.remove(1));
+    assert_eq!(r, Ok(Some(1.0)));
+    assert_eq!(format!("{}", tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Leaf:
+      items:
+        0: 0.0
+        2: 2.0"#);
+}
+
+#[test]
+fn remove_and_merge_int_left() {
+    let tree: Tree<u32, f32> = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                  - key: 3
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            3: 3.0
+                            4: 4.0
+                  - key: 6
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            6: 6.0
+                            7: 7.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+        - key: 18
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 18
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            18: 18.0
+                            19: 19.0
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0
+                            23: 23.0"#);
+    let r2 = current_thread::block_on_all(tree.remove(23));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                  - key: 3
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            3: 3.0
+                            4: 4.0
+                  - key: 6
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            6: 6.0
+                            7: 7.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+                  - key: 18
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            18: 18.0
+                            19: 19.0
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0"#);
+}
+
+#[test]
+fn remove_and_merge_int_right() {
+    let tree: Tree<u32, f32> = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                  - key: 2
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            2: 2.0
+                            3: 3.0
+                            4: 4.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+        - key: 18
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 18
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            18: 18.0
+                            19: 19.0
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0"#);
+    let r2 = current_thread::block_on_all(tree.remove(4));
+    assert!(r2.is_ok());
+    println!("{}", &tree);
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                  - key: 2
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            2: 2.0
+                            3: 3.0
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+        - key: 18
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 18
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            18: 18.0
+                            19: 19.0
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0"#);
+}
+
+#[test]
+fn remove_and_merge_leaf_left() {
+    let tree: Tree<u32, f32> = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  4: 4.0
+        - key: 5
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  5: 5.0
+                  7: 7.0
+"#);
+    let r2 = current_thread::block_on_all(tree.remove(7));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  4: 4.0
+                  5: 5.0"#);
+}
+
+#[test]
+fn remove_and_merge_leaf_right() {
+    let tree: Tree<u32, f32> = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  4: 4.0
+        - key: 5
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  5: 5.0
+                  6: 6.0
+                  7: 7.0
+"#);
+    let r2 = current_thread::block_on_all(tree.remove(4));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  5: 5.0
+                  6: 6.0
+                  7: 7.0"#);
+}
+
+#[test]
+fn remove_and_steal_int_left() {
+    let tree: Tree<u32, f32> = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                  - key: 2
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            2: 2.0
+                            3: 3.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+                  - key: 17
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            17: 17.0
+                            18: 18.0
+                  - key: 19
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            19: 19.0
+                            20: 20.0
+        - key: 21
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0
+                  - key: 24
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            24: 24.0
+                            25: 25.0
+                            26: 26.0"#);
+    let r2 = current_thread::block_on_all(tree.remove(26));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                  - key: 2
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            2: 2.0
+                            3: 3.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+                  - key: 17
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            17: 17.0
+                            18: 18.0
+        - key: 19
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 19
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            19: 19.0
+                            20: 20.0
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0
+                  - key: 24
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            24: 24.0
+                            25: 25.0"#);
+}
+
+#[test]
+fn remove_and_steal_int_right() {
+    let tree: Tree<u32, f32> = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                  - key: 2
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            2: 2.0
+                            3: 3.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                            14: 14.0
+        - key: 15
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+                  - key: 17
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            17: 17.0
+                            18: 18.0
+                  - key: 19
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            19: 19.0
+                            20: 20.0
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0
+                  - key: 24
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            24: 24.0
+                            26: 26.0"#);
+    let r2 = current_thread::block_on_all(tree.remove(14));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                  - key: 2
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            2: 2.0
+                            3: 3.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+        - key: 17
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 17
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            17: 17.0
+                            18: 18.0
+                  - key: 19
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            19: 19.0
+                            20: 20.0
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0
+                  - key: 24
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            24: 24.0
+                            26: 26.0"#);
+}
+
+#[test]
+fn remove_and_steal_leaf_left() {
+    let tree: Tree<u32, f32> = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+        - key: 2
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  2: 2.0
+                  3: 3.0
+                  4: 4.0
+                  5: 5.0
+                  6: 6.0
+        - key: 8
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  8: 8.0
+                  9: 9.0
+"#);
+    let r2 = current_thread::block_on_all(tree.remove(8));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+        - key: 2
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  2: 2.0
+                  3: 3.0
+                  4: 4.0
+                  5: 5.0
+        - key: 6
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  6: 6.0
+                  9: 9.0"#);
+}
+
+#[test]
+fn remove_and_steal_leaf_right() {
+    let tree: Tree<u32, f32> = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  4: 4.0
+        - key: 5
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  5: 5.0
+                  6: 6.0
+                  7: 7.0
+                  8: 8.0
+                  9: 9.0
+"#);
+    let r2 = current_thread::block_on_all(tree.remove(4));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  5: 5.0
+        - key: 6
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  6: 6.0
+                  7: 7.0
+                  8: 8.0
+                  9: 9.0"#);
+}
+
+#[test]
+fn remove_nonexistent() {
+    let tree: Tree<u32, f32> = Tree::create();
+    let r = current_thread::block_on_all(tree.remove(3));
+    assert_eq!(r, Ok(None));
 }
 
 }
