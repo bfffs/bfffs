@@ -35,7 +35,7 @@ pub trait Value: Copy + Debug + 'static {}
 impl<T> Value for T where T: Copy + Debug + 'static {}
 
 #[derive(Debug)]
-enum TreePtr<K: Key, V: Value> {
+enum TreePtr<K, V> {
     /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
     /// RAM-resident, we don't need to store their checksums or lsizes.
     Mem(RwLock<Box<Node<K, V>>>),
@@ -83,7 +83,7 @@ impl<K: Key, V: Value> TreePtr<K, V> {
 }
 
 #[derive(Debug)]
-struct LeafNode<K: Key, V: Value> {
+struct LeafNode<K, V> {
     items: BTreeMap<K, V>
 }
 
@@ -116,7 +116,7 @@ impl<K: Key, V: Value> LeafNode<K, V> {
 }
 
 /// Guard that holds the Node lock object for reading
-enum TreeReadGuard<K: Key, V: Value> {
+enum TreeReadGuard<K, V> {
     Mem(RwLockReadGuard<Box<Node<K, V>>>),
 }
 
@@ -131,7 +131,7 @@ impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
 }
 
 /// Guard that holds the Node lock object for writing
-enum TreeWriteGuard<K: Key, V: Value> {
+enum TreeWriteGuard<K, V> {
     Mem(RwLockWriteGuard<Box<Node<K, V>>>),
 }
 
@@ -154,7 +154,7 @@ impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
 }
 
 #[derive(Debug)]
-struct IntElem<K: Key, V: Value> {
+struct IntElem<K, V> {
     key: K,
     ptr: TreePtr<K, V>
 }
@@ -170,7 +170,7 @@ impl<K: Key, V: Value> IntElem<K, V> {
 }
 
 #[derive(Debug)]
-struct IntNode<K: Key, V: Value> {
+struct IntNode<K, V> {
     /// position in the tree.  Leaves have rank 0, `IntNodes` with Leaf children
     /// have rank 1, etc.  The root has the highest rank.
     rank: u8,
@@ -196,7 +196,7 @@ impl<K: Key, V: Value> IntNode<K, V> {
 }
 
 #[derive(Debug)]
-enum Node<K: Key, V: Value> {
+enum Node<K, V> {
     Leaf(LeafNode<K, V>),
     Int(IntNode<K, V>)
 }
@@ -320,7 +320,7 @@ impl<K: Key, V: Value> Node<K, V> {
 /// *`K`:   Key type.  Must be ordered and copyable; should be compact
 /// *`V`:   Value type in the leaves.
 #[derive(Debug)]
-pub struct Tree<K: Key, V: Value> {
+pub struct Tree<K, V> {
     /// Minimum node fanout.  Smaller nodes will be merged, or will steal
     /// children from their neighbors.
     min_fanout: usize,
