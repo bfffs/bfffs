@@ -5,7 +5,7 @@
 //! [^CowBtrees]: Rodeh, Ohad. "B-trees, shadowing, and clones." ACM Transactions on Storage (TOS) 3.4 (2008): 2.
 
 use common::*;
-use common::ddml::DRP;
+use common::ddml::*;
 use futures::future::IntoFuture;
 use futures::Future;
 use futures_locks::*;
@@ -68,6 +68,22 @@ mod atomic_usize_serializer {
         s.serialize_u64(x.load(Ordering::Relaxed) as u64)
     }
 }
+
+#[cfg(test)]
+/// Only exists so mockers can replace DDML
+pub trait DDMLTrait {
+    fn delete(&self, drp: &DRP);
+    fn evict(&self, drp: &DRP);
+    fn get(&self, drp: &DRP) -> Box<Future<Item=DivBuf, Error=Error>>;
+    fn pop(&self, drp: &DRP) -> Box<Future<Item=DivBufShared, Error=Error>>;
+    fn put(&self, uncompressed: DivBufShared, compression: Compression)
+        -> (DRP, Box<Future<Item=(), Error=Error>>);
+}
+#[cfg(test)]
+pub type DDMLLike = Box<DDMLTrait>;
+#[cfg(not(test))]
+#[doc(hidden)]
+pub type DDMLLike = DDML;
 
 /// Anything that has a min_value method.  Too bad libstd doesn't define this.
 pub trait MinValue {
@@ -449,15 +465,9 @@ impl<K: Key, V: Value> Node<K, V> {
     }
 }
 
-/// In-memory representation of a COW B+-Tree
-///
-/// # Generic Parameters
-///
-/// *`K`:   Key type.  Must be ordered and copyable; should be compact
-/// *`V`:   Value type in the leaves.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
-pub struct Tree<K: Key, V: Value> {
+struct Inner<K: Key, V: Value> {
     /// Tree height.  1 if the Tree consists of a single Leaf node.
     // Use atomics so it can be modified from an immutable reference.  Accesses
     // should be very rare, so performance is not a concern.
@@ -475,17 +485,31 @@ pub struct Tree<K: Key, V: Value> {
     root: TreePtr<K, V>
 }
 
+/// In-memory representation of a COW B+-Tree
+///
+/// # Generic Parameters
+///
+/// *`K`:   Key type.  Must be ordered and copyable; should be compact
+/// *`V`:   Value type in the leaves.
+pub struct Tree<K: Key, V: Value> {
+    _ddml: DDMLLike,
+    i: Inner<K, V>
+}
+
 impl<'a, K: Key, V: Value> Tree<K, V> {
-    pub fn create() -> Self {
-        Tree::new(4,        // BetrFS's min fanout
+    #[cfg(not(test))]
+    pub fn create(ddml: DDML) -> Self {
+        Tree::new(ddml,
+                  4,        // BetrFS's min fanout
                   16,       // BetrFS's max fanout
                   1<<22,    // BetrFS's max size
         )
     }
 
     #[cfg(test)]
-    pub fn from_str(s: &str) -> Self {
-        serde_yaml::from_str(s).unwrap()
+    pub fn from_str(ddml: DDMLLike, s: &str) -> Self {
+        let i: Inner<K, V> = serde_yaml::from_str(s).unwrap();
+        Tree{_ddml: ddml, i}
     }
 
     /// Insert value `v` into the tree at key `k`, returning the previous value
@@ -494,7 +518,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.root.xlock()
+            self.i.root.xlock()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root| {
                     self.insert_locked(root, k, v)
@@ -510,7 +534,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the node, if necessary
-        if child.should_split(self.max_fanout) {
+        if child.should_split(self.i.max_fanout) {
             let (new_key, new_node) = child.split();
             let new_ptr = TreePtr::Mem(RwLock::new(Box::new(new_node)));
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
@@ -530,7 +554,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the root node, if necessary
-        if root.should_split(self.max_fanout) {
+        if root.should_split(self.i.max_fanout) {
             let (new_key, new_node) = root.split();
             let new_ptr = TreePtr::Mem(RwLock::new(Box::new(new_node)));
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
@@ -543,7 +567,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             let old_ptr = TreePtr::Mem(RwLock::new(Box::new(old_root)));
             let old_elem = IntElem{ key: K::min_value(), ptr: old_ptr };
             root.as_int_mut().unwrap().children.insert(0, old_elem);
-            self.height.fetch_add(1, Ordering::Relaxed);
+            self.i.height.fetch_add(1, Ordering::Relaxed);
         }
 
         self.insert_no_split(root, k, v)
@@ -573,7 +597,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Lookup the value of key `k`.  Return an error if no value is present.
     pub fn lookup(&'a self, k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
         Box::new(
-            self.root.rlock()
+            self.i.root.rlock()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root| self.lookup_node(root, k))
         )
@@ -599,8 +623,11 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         )
     }
 
-    fn new(min_fanout: usize, max_fanout: usize, max_size: usize) -> Self {
-        Tree{
+    #[cfg(any(not(test), feature = "mocks"))]
+    fn new(ddml: DDMLLike, min_fanout: usize, max_fanout: usize,
+           max_size: usize) -> Self
+    {
+        let i: Inner<K, V> = Inner {
             height: AtomicUsize::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
@@ -615,7 +642,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                     )
                 )
             )
-        }
+        };
+        Tree{ _ddml: ddml, i }
     }
 
     /// Remove and return the value at key `k`, if any.
@@ -623,7 +651,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.root.xlock()
+            self.i.root.xlock()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root| {
                     self.remove_locked(root, k)
@@ -638,7 +666,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, fix the node, if necessary
-        if child.should_fix(self.min_fanout) {
+        if child.should_fix(self.i.min_fanout) {
             // Outline:
             // First, try to merge with the right sibling
             // Then, try to steal keys from the right sibling
@@ -655,7 +683,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             Box::new(
                 fut.map(move |mut sibling| {
                     if right {
-                        if child.can_merge(&sibling, self.max_fanout) {
+                        if child.can_merge(&sibling, self.i.max_fanout) {
                             child.merge(&mut sibling);
                             parent.as_int_mut().unwrap()
                                 .children.remove(child_idx + 1);
@@ -665,7 +693,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                                 .key = sibling.key();
                         }
                     } else {
-                        if sibling.can_merge(&child, self.max_fanout) {
+                        if sibling.can_merge(&child, self.i.max_fanout) {
                             sibling.merge(&mut child);
                             parent.as_int_mut().unwrap()
                                 .children.remove(child_idx);
@@ -705,7 +733,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         };
         if new_root.is_some() {
             mem::replace(root.deref_mut(), new_root.unwrap());
-            self.height.fetch_sub(1, Ordering::Relaxed);
+            self.i.height.fetch_sub(1, Ordering::Relaxed);
         }
 
         self.remove_no_fix(root, k)
@@ -736,21 +764,37 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 #[cfg(test)]
 impl<K: Key, V: Value> Display for Tree<K, V> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.write_str(&serde_yaml::to_string(self).unwrap())
+        f.write_str(&serde_yaml::to_string(&self.i).unwrap())
     }
 }
 
 
 
 #[cfg(test)]
+#[cfg(feature = "mocks")]
 mod t {
 
 use super::*;
 use futures::future;
+use mockers::Scenario;
+
+mock!{
+    MockDDML,
+    self,
+    trait DDMLTrait {
+        fn delete(&self, drp: &DRP);
+        fn evict(&self, drp: &DRP);
+        fn get(&self, drp: &DRP) -> Box<Future<Item=DivBuf, Error=Error>>;
+        fn pop(&self, drp: &DRP) -> Box<Future<Item=DivBufShared, Error=Error>>;
+        fn put(&self, uncompressed: DivBufShared, compression: Compression)
+            -> (DRP, Box<Future<Item=(), Error=Error>>);
+    }
+}
 
 #[test]
 fn insert() {
-    let tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.insert(0, 0.0));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
@@ -768,7 +812,8 @@ root:
 
 #[test]
 fn insert_dup() {
-    let tree = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -798,7 +843,8 @@ root:
 /// Insert a key that splits a non-root interior node
 #[test]
 fn insert_split_int() {
-    let tree = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -979,7 +1025,8 @@ root:
 /// Insert a key that splits a non-root leaf node
 #[test]
 fn insert_split_leaf() {
-    let tree = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -1049,7 +1096,8 @@ root:
 /// Insert a key that splits the root IntNode
 #[test]
 fn insert_split_root_int() {
-    let tree = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -1168,7 +1216,8 @@ root:
 /// Insert a key that splits the root leaf node
 #[test]
 fn insert_split_root_leaf() {
-    let tree = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -1216,7 +1265,8 @@ root:
 
 #[test]
 fn lookup() {
-    let tree: Tree<u32, f32> = Tree::create();
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(future::lazy(|| {
         tree.insert(0, 0.0)
             .and_then(|_| tree.lookup(0))
@@ -1226,14 +1276,16 @@ fn lookup() {
 
 #[test]
 fn lookup_nonexistent() {
-    let tree: Tree<u32, f32> = Tree::create();
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.lookup(0));
     assert_eq!(r, Err(Error::Sys(errno::Errno::ENOENT)))
 }
 
 #[test]
 fn remove_last_key() {
-    let tree = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -1261,7 +1313,8 @@ root:
 
 #[test]
 fn remove_from_leaf() {
-    let tree = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -1293,7 +1346,8 @@ root:
 
 #[test]
 fn remove_and_merge_int_left() {
-    let tree: Tree<u32, f32> = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -1457,7 +1511,8 @@ root:
 
 #[test]
 fn remove_and_merge_int_right() {
-    let tree: Tree<u32, f32> = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -1608,7 +1663,8 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_left() {
-    let tree: Tree<u32, f32> = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -1671,7 +1727,8 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_right() {
-    let tree: Tree<u32, f32> = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -1736,7 +1793,8 @@ root:
 
 #[test]
 fn remove_and_steal_int_left() {
-    let tree: Tree<u32, f32> = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -1919,7 +1977,8 @@ root:
 
 #[test]
 fn remove_and_steal_int_right() {
-    let tree: Tree<u32, f32> = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -2102,7 +2161,8 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_left() {
-    let tree: Tree<u32, f32> = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -2176,7 +2236,8 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_right() {
-    let tree: Tree<u32, f32> = Tree::from_str(r#"
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -2250,7 +2311,8 @@ root:
 
 #[test]
 fn remove_nonexistent() {
-    let tree: Tree<u32, f32> = Tree::create();
+    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.remove(3));
     assert_eq!(r, Ok(None));
 }
