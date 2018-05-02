@@ -26,6 +26,8 @@ extern crate serde;
 extern crate serde_cbor;
 #[macro_use]
 extern crate serde_derive;
+#[cfg(test)]
+extern crate serde_yaml;
 extern crate tokio;
 extern crate tokio_file;
 extern crate uuid;

@@ -39,6 +39,7 @@ galvanic-test = "0.1.3"
 itertools = "0.7.1"
 permutohedron = "0.2"
 rand = "0.3"
+serde_yaml = "0.7"
 tempdir = "0.3"
 
 [profile.bench]

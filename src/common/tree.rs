@@ -10,10 +10,18 @@ use futures::future::IntoFuture;
 use futures::Future;
 use futures_locks::*;
 use nix::{Error, errno};
+use serde::{Serialize, Serializer};
+use serde::de::{self, Deserialize, Deserializer, DeserializeOwned, Visitor,
+                MapAccess};
+#[cfg(test)] use serde_yaml;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+#[cfg(test)] use std::fmt::{Display, Formatter};
+use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
+use std::fmt;
+use tokio::executor::current_thread;
 
 /// Anything that has a min_value method.  Too bad libstd doesn't define this.
 pub trait MinValue {
@@ -26,16 +34,20 @@ impl MinValue for u32 {
     }
 }
 
-pub trait Key: Copy + Debug + Ord + MinValue + 'static {}
+pub trait Key: Copy + Debug + DeserializeOwned + Ord + MinValue + Serialize
+    + 'static {}
 
-impl<T> Key for T where T: Copy + Debug + Ord + MinValue + 'static {}
+impl<T> Key for T
+where T: Copy + Debug + DeserializeOwned + Ord + MinValue + Serialize
+    + 'static {}
 
-pub trait Value: Copy + Debug + 'static {}
+pub trait Value: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 
-impl<T> Value for T where T: Copy + Debug + 'static {}
+impl<T> Value for T
+where T: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 
 #[derive(Debug)]
-enum TreePtr<K, V> {
+enum TreePtr<K: Key, V: Value> {
     /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
     /// RAM-resident, we don't need to store their checksums or lsizes.
     Mem(RwLock<Box<Node<K, V>>>),
@@ -45,16 +57,12 @@ enum TreePtr<K, V> {
     _IRP(RwLock<u64>)
 }
 
-impl<K: Key, V: Value> TreePtr<K, V> {
-    #[cfg(test)]
-    fn as_mem(&mut self) -> Option<&mut RwLock<Box<Node<K, V>>>> {
-        if let &mut TreePtr::Mem(ref mut ptr) = self {
-            Some(ptr)
-        } else {
-            None
-        }
-    }
+#[derive(Serialize, Debug)]
+enum SerializableTreePtr<'a, K: Key, V: Value> {
+    Mem(&'a Node<K, V>),
+}
 
+impl<K: Key, V: Value> TreePtr<K, V> {
     fn read(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
         Box::new(
             match self {
@@ -82,8 +90,75 @@ impl<K: Key, V: Value> TreePtr<K, V> {
     }
 }
 
-#[derive(Debug)]
-struct LeafNode<K, V> {
+impl<'de, K: Key, V: Value> Deserialize<'de> for TreePtr<K, V> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: Deserializer<'de> {
+
+        #[derive(Deserialize)]
+        #[serde(field_identifier)]
+        enum Field { Mem };
+
+        struct TreePtrVisitor<K: Key, V: Value> {
+            _k: PhantomData<K>,
+            _v: PhantomData<V>
+        }
+
+        impl<'de, K: Key, V: Value> Visitor<'de> for TreePtrVisitor<K, V> {
+            type Value = TreePtr<K, V>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("enum TreePtr")
+            }
+
+            fn visit_map<Q>(self, mut map: Q) -> Result<TreePtr<K, V>, Q::Error>
+                where Q: MapAccess<'de>
+            {
+                let mut ptr = None;
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Mem => {
+                            if ptr.is_some() {
+                                return Err(de::Error::duplicate_field("mem"));
+                            }
+                            ptr = Some(
+                                TreePtr::Mem(
+                                    RwLock::new(
+                                        Box::new(map.next_value()?
+                                        )
+                                    )
+                                )
+                            );
+                        }
+                    }
+                }
+                ptr.ok_or(de::Error::missing_field("mem"))
+            }
+        }
+
+        const FIELDS: &'static [&'static str] = &["Mem"];
+        let visitor = TreePtrVisitor{_k: PhantomData, _v: PhantomData};
+        deserializer.deserialize_struct("Mem", FIELDS, visitor)
+    }
+}
+
+impl<K: Key, V: Value> Serialize for TreePtr<K, V> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer {
+
+        match self {
+            &TreePtr::Mem(ref lock) => {
+                let guard = current_thread::block_on_all(lock.read()).unwrap();
+                let t = SerializableTreePtr::Mem(&*guard);
+                t.serialize(serializer)
+            },
+            _ => unimplemented!()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(bound(deserialize = "K: DeserializeOwned, V: DeserializeOwned"))]
+struct LeafNode<K: Key, V> {
     items: BTreeMap<K, V>
 }
 
@@ -116,7 +191,7 @@ impl<K: Key, V: Value> LeafNode<K, V> {
 }
 
 /// Guard that holds the Node lock object for reading
-enum TreeReadGuard<K, V> {
+enum TreeReadGuard<K: Key, V: Value> {
     Mem(RwLockReadGuard<Box<Node<K, V>>>),
 }
 
@@ -131,7 +206,7 @@ impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
 }
 
 /// Guard that holds the Node lock object for writing
-enum TreeWriteGuard<K, V> {
+enum TreeWriteGuard<K: Key, V: Value> {
     Mem(RwLockWriteGuard<Box<Node<K, V>>>),
 }
 
@@ -153,8 +228,9 @@ impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
     }
 }
 
-#[derive(Debug)]
-struct IntElem<K, V> {
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(bound(deserialize = "K: DeserializeOwned"))]
+struct IntElem<K: Key + DeserializeOwned, V: Value> {
     key: K,
     ptr: TreePtr<K, V>
 }
@@ -169,8 +245,9 @@ impl<K: Key, V: Value> IntElem<K, V> {
     }
 }
 
-#[derive(Debug)]
-struct IntNode<K, V> {
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(bound(deserialize = "K: DeserializeOwned"))]
+struct IntNode<K: Key, V: Value> {
     /// position in the tree.  Leaves have rank 0, `IntNodes` with Leaf children
     /// have rank 1, etc.  The root has the highest rank.
     rank: u8,
@@ -195,8 +272,9 @@ impl<K: Key, V: Value> IntNode<K, V> {
     }
 }
 
-#[derive(Debug)]
-enum Node<K, V> {
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(bound(deserialize = "K: DeserializeOwned"))]
+enum Node<K: Key, V: Value> {
     Leaf(LeafNode<K, V>),
     Int(IntNode<K, V>)
 }
@@ -319,8 +397,9 @@ impl<K: Key, V: Value> Node<K, V> {
 ///
 /// *`K`:   Key type.  Must be ordered and copyable; should be compact
 /// *`V`:   Value type in the leaves.
-#[derive(Debug)]
-pub struct Tree<K, V> {
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(bound(deserialize = "K: DeserializeOwned"))]
+pub struct Tree<K: Key, V: Value> {
     /// Minimum node fanout.  Smaller nodes will be merged, or will steal
     /// children from their neighbors.
     min_fanout: usize,
@@ -339,6 +418,11 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                   16,       // BetrFS's max fanout
                   1<<22,    // BetrFS's max size
         )
+    }
+
+    #[cfg(test)]
+    pub fn from_str(s: &str) -> Self {
+        serde_yaml::from_str(s).unwrap()
     }
 
     /// Insert value `v` into the tree at key `k`, returning the previous value
@@ -568,121 +652,495 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 }
 
 #[cfg(test)]
+impl<K: Key, V: Value> Display for Tree<K, V> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.write_str(&serde_yaml::to_string(self).unwrap())
+    }
+}
+
+
+
+#[cfg(test)]
 mod t {
 
 use super::*;
 use futures::future;
-use tokio::executor::current_thread;
 
 #[test]
 fn insert() {
-    let tree: Tree<u32, f32> = Tree::create();
+    let tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
     let r = current_thread::block_on_all(future::lazy(|| {
         tree.insert(0, 0.0)
     }));
     assert_eq!(r, Ok(None));
+    assert_eq!(format!("{}", tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Leaf:
+      items:
+        0: 0.0"#);
 }
 
 #[test]
 fn insert_dup() {
-    let tree: Tree<u32, f32> = Tree::create();
-    let r = current_thread::block_on_all(future::lazy(|| {
-        tree.insert(0, 0.0)
-            .and_then(|_| tree.insert(0, 100.0))
-    }));
+    let tree = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Leaf:
+      items:
+        0: 0.0
+"#);
+    let r = current_thread::block_on_all(tree.insert(0, 100.0));
     assert_eq!(r, Ok(Some(0.0)));
+    assert_eq!(format!("{}", tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Leaf:
+      items:
+        0: 100.0"#);
 }
 
 /// Insert a key that splits a non-root interior node
 #[test]
 fn insert_split_int() {
-    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
-    let r1 = current_thread::block_on_all(future::lazy(|| {
-        let tree1 = &tree;
-        let inserts = (0..24).map(|k| {
-            tree1.insert(k, k as f32)
-        }).collect::<Vec<_>>();
-        future::join_all(inserts)
-    }));
-    assert!(r1.is_ok());
-    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 2);
+    let tree = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                            2: 2.0
+                  - key: 3
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            3: 3.0
+                            4: 4.0
+                            5: 5.0
+                  - key: 6
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            6: 6.0
+                            7: 7.0
+                            8: 8.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                            11: 11.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                            14: 14.0
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+                            17: 17.0
+                  - key: 18
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            18: 18.0
+                            19: 19.0
+                            20: 20.0
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0
+                            23: 23.0"#);
     let r2 = current_thread::block_on_all(tree.insert(24, 24.0));
     assert!(r2.is_ok());
-    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 3);
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                            2: 2.0
+                  - key: 3
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            3: 3.0
+                            4: 4.0
+                            5: 5.0
+                  - key: 6
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            6: 6.0
+                            7: 7.0
+                            8: 8.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                            11: 11.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                            14: 14.0
+                  - key: 15
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            15: 15.0
+                            16: 16.0
+                            17: 17.0
+        - key: 18
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 18
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            18: 18.0
+                            19: 19.0
+                            20: 20.0
+                  - key: 21
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            21: 21.0
+                            22: 22.0
+                            23: 23.0
+                            24: 24.0"#);
 }
 
 /// Insert a key that splits a non-root leaf node
 #[test]
 fn insert_split_leaf() {
-    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
-    let r1 = current_thread::block_on_all(future::lazy(|| {
-        let tree1 = &tree;
-        let inserts = (0..6).map(|k| {
-            tree1.insert(k, k as f32)
-        }).collect::<Vec<_>>();
-        future::join_all(inserts)
-    }));
-    assert!(r1.is_ok());
-    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 2);
-    let r2 = current_thread::block_on_all(future::lazy(|| {
-        let tree1 = &tree;
-        let inserts = (6..9).map(|k| {
-            tree1.insert(k, k as f32)
-        }).collect::<Vec<_>>();
-        future::join_all(inserts)
-    }));
+    let tree = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+                  2: 2.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  4: 4.0
+                  5: 5.0
+                  6: 6.0
+                  7: 7.0
+"#);
+    let r2 = current_thread::block_on_all(tree.insert(8, 8.0));
     assert!(r2.is_ok());
-    assert_eq!(tree.root.as_mem().unwrap().get_mut().unwrap().len(), 3);
+    assert_eq!(format!("{}", tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+                  2: 2.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  4: 4.0
+                  5: 5.0
+        - key: 6
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  6: 6.0
+                  7: 7.0
+                  8: 8.0"#);
 }
 
 /// Insert a key that splits the root IntNode
 #[test]
 fn insert_split_root_int() {
-    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
-    let r1 = current_thread::block_on_all(future::lazy(|| {
-        let tree1 = &tree;
-        let inserts = (0..15).map(|k| {
-            tree1.insert(k, k as f32)
-        }).collect::<Vec<_>>();
-        future::join_all(inserts)
-    }));
-    assert!(r1.is_ok());
-    assert!(tree.root.as_mem().unwrap()
-            .get_mut().unwrap()
-            .as_int_mut().is_some());
+    let tree = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+                  2: 2.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  4: 4.0
+                  5: 5.0
+        - key: 6
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  6: 6.0
+                  7: 7.0
+                  8: 8.0
+        - key: 9
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  9: 9.0
+                  10: 10.0
+                  11: 11.0
+        - key: 12
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  12: 12.0
+                  13: 13.0
+                  14: 14.0
+"#);
     let r2 = current_thread::block_on_all(tree.insert(15, 15.0));
     assert!(r2.is_ok());
-    assert!(tree.root.as_mem().unwrap()
-            .get_mut().unwrap()
-            .as_int_mut().unwrap()
-            .children[0].ptr.as_mem().unwrap()
-            .get_mut().unwrap()
-            .as_int_mut().is_some());
-    for i in 0..15 {
-        assert_eq!(current_thread::block_on_all(tree.lookup(i)), Ok(i as f32));
-    }
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 0
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            0: 0.0
+                            1: 1.0
+                            2: 2.0
+                  - key: 3
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            3: 3.0
+                            4: 4.0
+                            5: 5.0
+                  - key: 6
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            6: 6.0
+                            7: 7.0
+                            8: 8.0
+        - key: 9
+          ptr:
+            Mem:
+              Int:
+                rank: 100
+                children:
+                  - key: 9
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            9: 9.0
+                            10: 10.0
+                            11: 11.0
+                  - key: 12
+                    ptr:
+                      Mem:
+                        Leaf:
+                          items:
+                            12: 12.0
+                            13: 13.0
+                            14: 14.0
+                            15: 15.0"#);
 }
 
 /// Insert a key that splits the root leaf node
 #[test]
 fn insert_split_root_leaf() {
-    let mut tree: Tree<u32, f32> = Tree::new(2, 5, 1<<22);
-    let r1 = current_thread::block_on_all(future::lazy(|| {
-        let tree1 = &tree;
-        let inserts = (0..5).map(|k| {
-            tree1.insert(k, k as f32)
-        }).collect::<Vec<_>>();
-        future::join_all(inserts)
-    }));
-    assert!(r1.is_ok());
-    assert!(tree.root.as_mem().unwrap()
-            .get_mut().unwrap()
-            .as_leaf_mut().is_some());
+    let tree = Tree::from_str(r#"
+---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+                  2: 2.0
+                  3: 3.0
+                  4: 4.0
+"#);
     let r2 = current_thread::block_on_all(tree.insert(5, 5.0));
     assert!(r2.is_ok());
-    assert!(tree.root.as_mem().unwrap()
-            .get_mut().unwrap()
-            .as_int_mut().is_some());
+    assert_eq!(format!("{}", &tree),
+r#"---
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  Mem:
+    Int:
+      rank: 100
+      children:
+        - key: 0
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  0: 0.0
+                  1: 1.0
+                  2: 2.0
+        - key: 3
+          ptr:
+            Mem:
+              Leaf:
+                items:
+                  3: 3.0
+                  4: 4.0
+                  5: 5.0"#);
 }
 
 #[test]
