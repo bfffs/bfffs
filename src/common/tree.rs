@@ -15,13 +15,59 @@ use serde::de::{self, Deserialize, Deserializer, DeserializeOwned, Visitor,
                 MapAccess};
 #[cfg(test)] use serde_yaml;
 use std::collections::BTreeMap;
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 #[cfg(test)] use std::fmt::{Display, Formatter};
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
-use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::executor::current_thread;
+
+mod atomic_usize_serializer {
+    use super::*;
+
+    pub fn deserialize<'de, D>(d: D) -> Result<AtomicUsize, D::Error>
+        where D: Deserializer<'de>
+    {
+        struct UsizeVisitor;
+
+        impl<'de> Visitor<'de> for UsizeVisitor {
+            type Value = usize;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("an integer between -2^31 and 2^31")
+            }
+
+            fn visit_u8<E>(self, value: u8) -> Result<usize, E>
+                where E: de::Error
+            {
+                Ok(value as usize)
+            }
+            fn visit_u16<E>(self, value: u16) -> Result<usize, E>
+                where E: de::Error
+            {
+                Ok(value as usize)
+            }
+            fn visit_u32<E>(self, value: u32) -> Result<usize, E>
+                where E: de::Error
+            {
+                Ok(value as usize)
+            }
+            fn visit_u64<E>(self, value: u64) -> Result<usize, E>
+                where E: de::Error
+            {
+                Ok(value as usize)
+            }
+        }
+        d.deserialize_u64(UsizeVisitor).map(|x| AtomicUsize::new(x as usize))
+    }
+
+    pub fn serialize<S>(x: &AtomicUsize, s: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        s.serialize_u64(x.load(Ordering::Relaxed) as u64)
+    }
+}
 
 /// Anything that has a min_value method.  Too bad libstd doesn't define this.
 pub trait MinValue {
@@ -252,9 +298,6 @@ impl<K: Key, V: Value> IntElem<K, V> {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 struct IntNode<K: Key, V: Value> {
-    /// position in the tree.  Leaves have rank 0, `IntNodes` with Leaf children
-    /// have rank 1, etc.  The root has the highest rank.
-    rank: u8,
     children: Vec<IntElem<K, V>>
 }
 
@@ -272,7 +315,7 @@ impl<K: Key, V: Value> IntNode<K, V> {
         // one.
         let cutoff = div_roundup(self.children.len(), 2);
         let new_children = self.children.split_off(cutoff);
-        (new_children[0].key, IntNode{rank: self.rank, children: new_children})
+        (new_children[0].key, IntNode{children: new_children})
     }
 }
 
@@ -415,6 +458,11 @@ impl<K: Key, V: Value> Node<K, V> {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 pub struct Tree<K: Key, V: Value> {
+    /// Tree height.  1 if the Tree consists of a single Leaf node.
+    // Use atomics so it can be modified from an immutable reference.  Accesses
+    // should be very rare, so performance is not a concern.
+    #[serde(with = "atomic_usize_serializer")]
+    height: AtomicUsize,
     /// Minimum node fanout.  Smaller nodes will be merged, or will steal
     /// children from their neighbors.
     min_fanout: usize,
@@ -488,14 +536,14 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
             let new_root = Node::Int(
                 IntNode {
-                    children: vec![new_elem],
-                    rank: 100 //TODO calculate correctly
+                    children: vec![new_elem]
                 }
             );
             let old_root = mem::replace(root.deref_mut(), new_root);
             let old_ptr = TreePtr::Mem(RwLock::new(Box::new(old_root)));
             let old_elem = IntElem{ key: K::min_value(), ptr: old_ptr };
             root.as_int_mut().unwrap().children.insert(0, old_elem);
+            self.height.fetch_add(1, Ordering::Relaxed);
         }
 
         self.insert_no_split(root, k, v)
@@ -553,6 +601,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     fn new(min_fanout: usize, max_fanout: usize, max_size: usize) -> Self {
         Tree{
+            height: AtomicUsize::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
             root: TreePtr::Mem(
@@ -656,6 +705,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         };
         if new_root.is_some() {
             mem::replace(root.deref_mut(), new_root.unwrap());
+            self.height.fetch_sub(1, Ordering::Relaxed);
         }
 
         self.remove_no_fix(root, k)
@@ -705,6 +755,7 @@ fn insert() {
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
+height: 1
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -719,6 +770,7 @@ root:
 fn insert_dup() {
     let tree = Tree::from_str(r#"
 ---
+height: 1
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -732,6 +784,7 @@ root:
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
+height: 1
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -747,19 +800,18 @@ root:
 fn insert_split_int() {
     let tree = Tree::from_str(r#"
 ---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -789,7 +841,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -835,19 +886,18 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -877,7 +927,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -907,7 +956,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 18
                     ptr:
@@ -933,13 +981,13 @@ root:
 fn insert_split_leaf() {
     let tree = Tree::from_str(r#"
 ---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -964,13 +1012,13 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", tree),
 r#"---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -1003,13 +1051,13 @@ root:
 fn insert_split_root_int() {
     let tree = Tree::from_str(r#"
 ---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -1056,19 +1104,18 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -1098,7 +1145,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -1124,36 +1170,31 @@ root:
 fn insert_split_root_leaf() {
     let tree = Tree::from_str(r#"
 ---
+height: 1
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
-    Int:
-      rank: 100
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-                  2: 2.0
-                  3: 3.0
-                  4: 4.0
+    Leaf:
+      items:
+        0: 0.0
+        1: 1.0
+        2: 2.0
+        3: 3.0
+        4: 4.0
 "#);
     let r2 = current_thread::block_on_all(tree.insert(5, 5.0));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -1194,6 +1235,7 @@ fn lookup_nonexistent() {
 fn remove_last_key() {
     let tree = Tree::from_str(r#"
 ---
+height: 1
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -1207,6 +1249,7 @@ root:
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
+height: 1
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -1220,6 +1263,7 @@ root:
 fn remove_from_leaf() {
     let tree = Tree::from_str(r#"
 ---
+height: 1
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -1235,6 +1279,7 @@ root:
     assert_eq!(r, Ok(Some(1.0)));
     assert_eq!(format!("{}", tree),
 r#"---
+height: 1
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -1250,19 +1295,18 @@ root:
 fn remove_and_merge_int_left() {
     let tree: Tree<u32, f32> = Tree::from_str(r#"
 ---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -1289,7 +1333,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -1316,7 +1359,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 18
                     ptr:
@@ -1337,19 +1379,18 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -1376,7 +1417,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -1419,19 +1459,18 @@ root:
 fn remove_and_merge_int_right() {
     let tree: Tree<u32, f32> = Tree::from_str(r#"
 ---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -1452,7 +1491,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -1479,7 +1517,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 18
                     ptr:
@@ -1500,19 +1537,18 @@ root:
     println!("{}", &tree);
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -1553,7 +1589,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 18
                     ptr:
@@ -1575,13 +1610,13 @@ root:
 fn remove_and_merge_leaf_left() {
     let tree: Tree<u32, f32> = Tree::from_str(r#"
 ---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -1609,13 +1644,13 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -1638,13 +1673,13 @@ root:
 fn remove_and_merge_leaf_right() {
     let tree: Tree<u32, f32> = Tree::from_str(r#"
 ---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -1673,13 +1708,13 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -1703,19 +1738,18 @@ root:
 fn remove_and_steal_int_left() {
     let tree: Tree<u32, f32> = Tree::from_str(r#"
 ---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -1735,7 +1769,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -1776,7 +1809,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 21
                     ptr:
@@ -1797,19 +1829,18 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -1829,7 +1860,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -1863,7 +1893,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 19
                     ptr:
@@ -1892,19 +1921,18 @@ root:
 fn remove_and_steal_int_right() {
     let tree: Tree<u32, f32> = Tree::from_str(r#"
 ---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -1924,7 +1952,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -1945,7 +1972,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 15
                     ptr:
@@ -1986,19 +2012,18 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 0
                     ptr:
@@ -2018,7 +2043,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 9
                     ptr:
@@ -2045,7 +2069,6 @@ root:
           ptr:
             Mem:
               Int:
-                rank: 100
                 children:
                   - key: 17
                     ptr:
@@ -2081,13 +2104,13 @@ root:
 fn remove_and_steal_leaf_left() {
     let tree: Tree<u32, f32> = Tree::from_str(r#"
 ---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -2118,13 +2141,13 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -2155,13 +2178,13 @@ root:
 fn remove_and_steal_leaf_right() {
     let tree: Tree<u32, f32> = Tree::from_str(r#"
 ---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
@@ -2192,13 +2215,13 @@ root:
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
   Mem:
     Int:
-      rank: 100
       children:
         - key: 0
           ptr:
