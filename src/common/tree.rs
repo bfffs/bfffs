@@ -63,7 +63,8 @@ enum SerializableTreePtr<'a, K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> TreePtr<K, V> {
-    fn read(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
+    /// Lock the `TreePtr` in shared mode "read lock"
+    fn rlock(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
         Box::new(
             match self {
                 &TreePtr::Mem(ref lock) => {
@@ -76,7 +77,8 @@ impl<K: Key, V: Value> TreePtr<K, V> {
         )
     }
 
-    fn write(&self) -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> {
+    /// Lock the `TreePtr` in exclusive mode
+    fn xlock(&self) -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> {
         Box::new(
             match self {
                 &TreePtr::Mem(ref lock) => {
@@ -236,12 +238,14 @@ struct IntElem<K: Key + DeserializeOwned, V: Value> {
 }
 
 impl<K: Key, V: Value> IntElem<K, V> {
-    fn read(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
-        self.ptr.read()
+    /// Lock the element in shared mode "read lock"
+    fn rlock(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
+        self.ptr.rlock()
     }
 
-    fn write(&self) -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> {
-        self.ptr.write()
+    /// Lock the element in exclusive mode
+    fn xlock(&self) -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> {
+        self.ptr.xlock()
     }
 }
 
@@ -442,7 +446,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.root.write()
+            self.root.xlock()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root| {
                     self.insert_locked(root, k, v)
@@ -508,7 +512,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             Node::Int(ref int) => {
                 let child_idx = int.position(&k);
-                let fut = int.children[child_idx].write();
+                let fut = int.children[child_idx].xlock();
                 (child_idx, fut)
             }
         };
@@ -521,7 +525,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Lookup the value of key `k`.  Return an error if no value is present.
     pub fn lookup(&'a self, k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
         Box::new(
-            self.root.read()
+            self.root.rlock()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root| self.lookup_node(root, k))
         )
@@ -537,7 +541,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             Node::Int(ref int) => {
                 let child_elem = &int.children[int.position(&k)];
-                child_elem.read()
+                child_elem.rlock()
             }
         };
         drop(node);
@@ -570,7 +574,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.root.write()
+            self.root.xlock()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root| {
                     self.remove_locked(root, k)
@@ -593,10 +597,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             // Then, try to steal keys from the left sibling
             let nchildren = parent.as_int_mut().unwrap().children.len();
             let (fut, right) = if child_idx < nchildren - 1 {
-                (parent.as_int_mut().unwrap().children[child_idx + 1].write(),
+                (parent.as_int_mut().unwrap().children[child_idx + 1].xlock(),
                  true)
             } else {
-                (parent.as_int_mut().unwrap().children[child_idx - 1].write(),
+                (parent.as_int_mut().unwrap().children[child_idx - 1].xlock(),
                  false)
             };
             Box::new(
@@ -667,7 +671,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             Node::Int(ref int) => {
                 let child_idx = int.position(&k);
-                let fut = int.children[child_idx].write();
+                let fut = int.children[child_idx].xlock();
                 (child_idx, fut)
             }
         };
