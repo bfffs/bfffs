@@ -301,6 +301,8 @@ impl<K: Key, V: Value> Node<K, V> {
         self.len() + other.len() <= max_fanout
     }
 
+    /// Return this `Node`s lower bound key, suitable for use in its parent's
+    /// `children` array.
     fn key(&self) -> K {
         match self {
             &Node::Leaf(ref leaf) => *leaf.items.keys().nth(0).unwrap(),
