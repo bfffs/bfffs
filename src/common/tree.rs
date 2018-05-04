@@ -12,8 +12,7 @@ use futures::Future;
 use futures_locks::*;
 use nix::{Error, errno};
 use serde::{Serialize, Serializer};
-use serde::de::{self, Deserialize, Deserializer, DeserializeOwned, Visitor,
-                MapAccess};
+use serde::de::{self, Deserializer, DeserializeOwned, Visitor, MapAccess};
 #[cfg(test)] use serde_yaml;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -112,56 +111,73 @@ pub trait Value: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 impl<T> Value for T
 where T: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(bound(deserialize = "K: DeserializeOwned, V: DeserializeOwned"))]
 enum TreePtr<K: Key, V: Value> {
     /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
     /// RAM-resident, we don't need to store their checksums or lsizes.
-    Mem(RwLock<Box<Node<K, V>>>),
+    Mem(Box<Node<K, V>>),
     /// Direct Record Pointers point directly to a disk location
-    DRP(RwLock<DRP>),
+    #[serde(skip_deserializing)]  // TODO: serialize DRPs
+    #[serde(skip_serializing)]  // TODO: serialize DRPs
+    DRP(DRP),
     /// Indirect Record Pointers point to the Record Indirection Table
-    _IRP(RwLock<u64>)
-}
-
-#[derive(Serialize, Debug)]
-enum SerializableTreePtr<'a, K: Key, V: Value> {
-    Mem(&'a Node<K, V>),
+    _IRP(u64)
 }
 
 impl<K: Key, V: Value> TreePtr<K, V> {
-    /// Lock the `TreePtr` in shared mode "read lock"
-    fn rlock(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
-        Box::new(
-            match self {
-                &TreePtr::Mem(ref lock) => {
-                    lock.read()
-                        .map(|guard| TreeReadGuard::Mem(guard))
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                },
-                _ => unimplemented!()
-            }
-        )
+    fn as_drp(&self) -> Option<&DRP> {
+        if let &TreePtr::DRP(ref drp) = self {
+            Some(drp)
+        } else {
+            None
+        }
     }
 
-    /// Lock the `TreePtr` in exclusive mode
-    fn xlock(&self) -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> {
-        Box::new(
-            match self {
-                &TreePtr::Mem(ref lock) => {
-                    lock.write()
-                        .map(|guard| TreeWriteGuard::Mem(guard))
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                },
-                _ => unimplemented!()
-            }
-        )
+    fn as_mem(&self) -> Option<&Node<K, V>> {
+        if let &TreePtr::Mem(ref mem) = self {
+            Some(mem)
+        } else {
+            None
+        }
+    }
+
+    fn as_mem_mut(&mut self) -> Option<&mut Node<K, V>> {
+        if let &mut TreePtr::Mem(ref mut mem) = self {
+            Some(mem)
+        } else {
+            None
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.is_mem()
+    }
+
+    fn is_drp(&self) -> bool {
+        if let &TreePtr::DRP(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_mem(&self) -> bool {
+        if let &TreePtr::Mem(_) = self {
+            true
+        } else {
+            false
+        }
     }
 }
 
-impl<'de, K: Key, V: Value> Deserialize<'de> for TreePtr<K, V> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer<'de> {
+mod treeptr_serializer {
+    use super::*;
 
+    pub(super) fn deserialize<'de, D, K, V>(deserializer: D)
+        -> Result<RwLock<TreePtr<K, V>>, D::Error>
+        where D: Deserializer<'de>, K: Key, V: Value
+    {
         #[derive(Deserialize)]
         #[serde(field_identifier)]
         enum Field { Mem };
@@ -172,13 +188,14 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for TreePtr<K, V> {
         }
 
         impl<'de, K: Key, V: Value> Visitor<'de> for TreePtrVisitor<K, V> {
-            type Value = TreePtr<K, V>;
+            type Value = RwLock<TreePtr<K, V>>;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("enum TreePtr")
             }
 
-            fn visit_map<Q>(self, mut map: Q) -> Result<TreePtr<K, V>, Q::Error>
+            fn visit_map<Q>(self, mut map: Q)
+                -> Result<RwLock<TreePtr<K, V>>, Q::Error>
                 where Q: MapAccess<'de>
             {
                 let mut ptr = None;
@@ -189,8 +206,8 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for TreePtr<K, V> {
                                 return Err(de::Error::duplicate_field("mem"));
                             }
                             ptr = Some(
-                                TreePtr::Mem(
-                                    RwLock::new(
+                                RwLock::new(
+                                    TreePtr::Mem(
                                         Box::new(map.next_value()?
                                         )
                                     )
@@ -207,20 +224,13 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for TreePtr<K, V> {
         let visitor = TreePtrVisitor{_k: PhantomData, _v: PhantomData};
         deserializer.deserialize_struct("Mem", FIELDS, visitor)
     }
-}
 
-impl<K: Key, V: Value> Serialize for TreePtr<K, V> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer {
+    pub(super) fn serialize<S, K, V>(lock: &RwLock<TreePtr<K, V>>,
+                                     serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer, K: Key, V: Value {
 
-        match self {
-            &TreePtr::Mem(ref lock) => {
-                let guard = current_thread::block_on_all(lock.read()).unwrap();
-                let t = SerializableTreePtr::Mem(&*guard);
-                t.serialize(serializer)
-            },
-            _ => unimplemented!()
-        }
+        let guard = current_thread::block_on_all(lock.read()).unwrap();
+        (*guard).serialize(serializer)
     }
 }
 
@@ -260,7 +270,8 @@ impl<K: Key, V: Value> LeafNode<K, V> {
 
 /// Guard that holds the Node lock object for reading
 enum TreeReadGuard<K: Key, V: Value> {
-    Mem(RwLockReadGuard<Box<Node<K, V>>>),
+    Mem(RwLockReadGuard<TreePtr<K, V>>),
+    _DRP(RwLockReadGuard<TreePtr<K, V>>, Node<K, V>)
 }
 
 impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
@@ -268,14 +279,16 @@ impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            &TreeReadGuard::Mem(ref guard) => &**guard,
+            &TreeReadGuard::Mem(ref guard) => guard.as_mem().unwrap(),
+            _ => unimplemented!()
         }
     }
 }
 
 /// Guard that holds the Node lock object for writing
 enum TreeWriteGuard<K: Key, V: Value> {
-    Mem(RwLockWriteGuard<Box<Node<K, V>>>),
+    Mem(RwLockWriteGuard<TreePtr<K, V>>),
+    _DRP(RwLockReadGuard<TreePtr<K, V>>, Node<K, V>)
 }
 
 impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
@@ -283,7 +296,8 @@ impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            &TreeWriteGuard::Mem(ref guard) => &**guard,
+            &TreeWriteGuard::Mem(ref guard) => guard.as_mem().unwrap(),
+            _ => unimplemented!()
         }
     }
 }
@@ -291,7 +305,9 @@ impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
 impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            &mut TreeWriteGuard::Mem(ref mut guard) => &mut **guard,
+            &mut TreeWriteGuard::Mem(ref mut guard) =>
+                guard.as_mem_mut().unwrap(),
+            _ => unimplemented!()
         }
     }
 }
@@ -300,29 +316,68 @@ impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 struct IntElem<K: Key + DeserializeOwned, V: Value> {
     key: K,
-    ptr: TreePtr<K, V>
+    #[serde(with = "treeptr_serializer")]
+    ptr: RwLock<TreePtr<K, V>>
 }
 
-impl<K: Key, V: Value> IntElem<K, V> {
+impl<'a, K: Key, V: Value> IntElem<K, V> {
     /// Is the child node dirty?  That is, does it differ from the on-disk
     /// version?
-    fn is_dirty(&self) -> bool {
-        if let TreePtr::Mem(_) = self.ptr {
-            true
-        } else {
-            false
-        }
+    fn is_dirty(&mut self) -> bool {
+        self.ptr.get_mut().unwrap().is_dirty()
     }
 
-    /// Lock the element in shared mode "read lock"
-    fn rlock(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
-        self.ptr.rlock()
+    fn rlock(&self, ddml: &'a DDMLLike)
+        -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error> + 'a>
+    {
+        let gfut = self.ptr.read()
+        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        .and_then(move |g| {
+            if g.is_mem() {
+                let fut: Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> =
+                    Box::new(future::ok(TreeReadGuard::Mem(g)));
+                fut
+            } else if g.is_drp() {
+                let fut: Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> =
+                Box::new(
+                ddml.get(&g.as_drp().unwrap())
+                    .map(|_db| {
+                        // TODO: deserialize the Node
+                        unimplemented!()
+                    }));
+                fut
+            } else {
+                unimplemented!()
+            }
+        });
+        Box::new(gfut)
     }
 
-    /// Lock the element in exclusive mode
-    fn xlock(&self) -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> {
-        self.ptr.xlock()
-    }
+    fn xlock(&self, ddml: &'a DDMLLike)
+        -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error> + 'a>
+    {
+        let gfut = self.ptr.write()
+        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        .and_then(move |g| {
+            if g.is_mem() {
+                let fut: Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> =
+                    Box::new(future::ok(TreeWriteGuard::Mem(g)));
+                fut
+            } else if g.is_drp() {
+                let fut: Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> =
+                Box::new(
+                ddml.get(&g.as_drp().unwrap())
+                    .map(|_db| {
+                        // TODO: deserialize the Node
+                        unimplemented!()
+                    }));
+                fut
+            } else {
+                unimplemented!()
+            }
+        });
+        Box::new(gfut)
+     }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -504,7 +559,7 @@ struct Inner<K: Key, V: Value> {
     /// buffers flushed
     _max_size: usize,
     /// Root node
-    root: TreePtr<K, V>
+    root: IntElem<K, V>
 }
 
 /// In-memory representation of a COW B+-Tree
@@ -540,7 +595,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.i.root.xlock()
+            self.i.root.xlock(&self.ddml)
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root| {
                     self.insert_locked(root, k, v)
@@ -556,9 +611,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the node, if necessary
-        if child.should_split(self.i.max_fanout) {
+        if (*child).should_split(self.i.max_fanout) {
             let (new_key, new_node) = child.split();
-            let new_ptr = TreePtr::Mem(RwLock::new(Box::new(new_node)));
+            let new_ptr = RwLock::new(TreePtr::Mem(Box::new(new_node)));
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
             parent.as_int_mut().unwrap()
                 .children.insert(child_idx + 1, new_elem);
@@ -571,14 +626,13 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
-    fn insert_locked(&'a self, mut root: TreeWriteGuard<K, V>,
-                     k: K, v: V)
+    fn insert_locked(&'a self, mut root: TreeWriteGuard<K, V>, k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the root node, if necessary
         if root.should_split(self.i.max_fanout) {
             let (new_key, new_node) = root.split();
-            let new_ptr = TreePtr::Mem(RwLock::new(Box::new(new_node)));
+            let new_ptr = RwLock::new(TreePtr::Mem(Box::new(new_node)));
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
             let new_root = Node::Int(
                 IntNode {
@@ -586,7 +640,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 }
             );
             let old_root = mem::replace(root.deref_mut(), new_root);
-            let old_ptr = TreePtr::Mem(RwLock::new(Box::new(old_root)));
+            let old_ptr = RwLock::new(TreePtr::Mem(Box::new(old_root)));
             let old_elem = IntElem{ key: K::min_value(), ptr: old_ptr };
             root.as_int_mut().unwrap().children.insert(0, old_elem);
             self.i.height.fetch_add(1, Ordering::Relaxed);
@@ -595,9 +649,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         self.insert_no_split(root, k, v)
     }
 
-    fn insert_no_split(&'a self,
-                       mut node: TreeWriteGuard<K, V>,
-                       k: K, v: V)
+    fn insert_no_split(&'a self, mut node: TreeWriteGuard<K, V>, k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         let (child_idx, child_fut) = match *node {
@@ -606,7 +658,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             Node::Int(ref int) => {
                 let child_idx = int.position(&k);
-                let fut = int.children[child_idx].xlock();
+                let fut = int.children[child_idx].xlock(&self.ddml);
                 (child_idx, fut)
             }
         };
@@ -619,7 +671,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Lookup the value of key `k`.  Return an error if no value is present.
     pub fn lookup(&'a self, k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
         Box::new(
-            self.i.root.rlock()
+            self.i.root.rlock(&self.ddml)
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root| self.lookup_node(root, k))
         )
@@ -635,7 +687,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             Node::Int(ref int) => {
                 let child_elem = &int.children[int.position(&k)];
-                child_elem.rlock()
+                child_elem.rlock(&self.ddml)
             }
         };
         drop(node);
@@ -653,17 +705,20 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             height: AtomicUsize::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
-            root: TreePtr::Mem(
-                RwLock::new(
-                    Box::new(
-                        Node::Leaf(
-                            LeafNode{
-                                items: BTreeMap::new()
-                            }
+            root: IntElem{
+                key: K::min_value(),
+                ptr: RwLock::new(
+                    TreePtr::Mem(
+                        Box::new(
+                            Node::Leaf(
+                                LeafNode{
+                                    items: BTreeMap::new()
+                                }
+                            )
                         )
                     )
                 )
-            )
+            }
         };
         Tree{ ddml, i }
     }
@@ -673,7 +728,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.i.root.xlock()
+            self.i.root.xlock(&self.ddml)
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 .and_then(move |root| {
                     self.remove_locked(root, k)
@@ -696,10 +751,12 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             // Then, try to steal keys from the left sibling
             let nchildren = parent.as_int().unwrap().children.len();
             let (fut, right) = if child_idx < nchildren - 1 {
-                (parent.as_int_mut().unwrap().children[child_idx + 1].xlock(),
+                (parent.as_int_mut().unwrap().children[child_idx + 1]
+                 .xlock(&self.ddml),
                  true)
             } else {
-                (parent.as_int_mut().unwrap().children[child_idx - 1].xlock(),
+                (parent.as_int_mut().unwrap().children[child_idx - 1]
+                 .xlock(&self.ddml),
                  false)
             };
             Box::new(
@@ -743,8 +800,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             if int.children.len() == 1 {
                 // Merge root node with its child
                 let child = int.children.pop().unwrap();
-                Some(match child.ptr {
-                    TreePtr::Mem(lock) => *lock.try_unwrap().unwrap(),
+                Some(match child.ptr.try_unwrap().unwrap() {
+                    TreePtr::Mem(node) => node,
                     _ => unimplemented!()
                 })
             } else {
@@ -754,7 +811,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             None
         };
         if new_root.is_some() {
-            mem::replace(root.deref_mut(), new_root.unwrap());
+            mem::replace(root.deref_mut(), *new_root.unwrap());
             self.i.height.fetch_sub(1, Ordering::Relaxed);
         }
 
@@ -771,7 +828,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             Node::Int(ref int) => {
                 let child_idx = int.position(&k);
-                let fut = int.children[child_idx].xlock();
+                let fut = int.children[child_idx].xlock(&self.ddml);
                 (child_idx, fut)
             }
         };
@@ -784,10 +841,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Sync all records written so far to stable storage.
     pub fn sync_all(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
         Box::new(
-            self.i.root.xlock().and_then(move |root| {
+            self.i.root.xlock(&self.ddml).and_then(move |root| {
                 // TODO: figure out what to do with the DRP
                 self.write_node(root)
-            }).and_then(move |drp| {
+            }).and_then(move |_drp| {
                 self.ddml.sync_all()
             })
         )
@@ -816,15 +873,17 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         let nchildren = rnode.borrow().as_int().unwrap().children.len();
         let children_fut = (0..nchildren)
         .filter_map(move |idx| {
-            if rnode.borrow().as_int().unwrap().children[idx].is_dirty() {
+            if rnode.borrow_mut().as_int_mut().unwrap()
+                .children[idx].is_dirty()
+            {
                 let rnode3 = rnode.clone();
                 Some(
                     rnode.borrow_mut().as_int_mut().unwrap().children[idx]
-                    .xlock()
+                    .xlock(&self.ddml)
                     .and_then(move |guard| self.write_node(guard))
                     .map(move |drp| {
                         rnode3.borrow_mut().as_int_mut().unwrap().children[idx]
-                            .ptr = TreePtr::DRP(RwLock::new(drp));
+                            .ptr = RwLock::new(TreePtr::DRP(drp));
                     })
                 )
             } else {
@@ -888,10 +947,12 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Leaf:
-      items:
-        0: 0.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0"#);
 }
 
 #[test]
@@ -904,10 +965,12 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Leaf:
-      items:
-        0: 0.0
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
 "#);
     let r = current_thread::block_on_all(tree.insert(0, 100.0));
     assert_eq!(r, Ok(Some(0.0)));
@@ -918,10 +981,12 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Leaf:
-      items:
-        0: 100.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 100.0"#);
 }
 
 /// Insert a key that splits a non-root interior node
@@ -935,83 +1000,85 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                            2: 2.0
-                  - key: 3
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            3: 3.0
-                            4: 4.0
-                            5: 5.0
-                  - key: 6
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            6: 6.0
-                            7: 7.0
-                            8: 8.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                            11: 11.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                            14: 14.0
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-                            17: 17.0
-                  - key: 18
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            18: 18.0
-                            19: 19.0
-                            20: 20.0
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0
-                            23: 23.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                              2: 2.0
+                    - key: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+                              5: 5.0
+                    - key: 6
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              6: 6.0
+                              7: 7.0
+                              8: 8.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                              11: 11.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                              14: 14.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                              17: 17.0
+                    - key: 18
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              18: 18.0
+                              19: 19.0
+                              20: 20.0
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0
+                              23: 23.0"#);
     let r2 = current_thread::block_on_all(tree.insert(24, 24.0));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1021,89 +1088,91 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                            2: 2.0
-                  - key: 3
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            3: 3.0
-                            4: 4.0
-                            5: 5.0
-                  - key: 6
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            6: 6.0
-                            7: 7.0
-                            8: 8.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                            11: 11.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                            14: 14.0
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-                            17: 17.0
-        - key: 18
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 18
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            18: 18.0
-                            19: 19.0
-                            20: 20.0
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0
-                            23: 23.0
-                            24: 24.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                              2: 2.0
+                    - key: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+                              5: 5.0
+                    - key: 6
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              6: 6.0
+                              7: 7.0
+                              8: 8.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                              11: 11.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                              14: 14.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                              17: 17.0
+          - key: 18
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 18
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              18: 18.0
+                              19: 19.0
+                              20: 20.0
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0
+                              23: 23.0
+                              24: 24.0"#);
 }
 
 /// Insert a key that splits a non-root leaf node
@@ -1117,27 +1186,29 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-                  2: 2.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  4: 4.0
-                  5: 5.0
-                  6: 6.0
-                  7: 7.0
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+                    2: 2.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
 "#);
     let r2 = current_thread::block_on_all(tree.insert(8, 8.0));
     assert!(r2.is_ok());
@@ -1148,33 +1219,35 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-                  2: 2.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  4: 4.0
-                  5: 5.0
-        - key: 6
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  6: 6.0
-                  7: 7.0
-                  8: 8.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+                    2: 2.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+                    5: 5.0
+          - key: 6
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    6: 6.0
+                    7: 7.0
+                    8: 8.0"#);
 }
 
 /// Insert a key that splits the root IntNode
@@ -1188,49 +1261,51 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-                  2: 2.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  4: 4.0
-                  5: 5.0
-        - key: 6
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  6: 6.0
-                  7: 7.0
-                  8: 8.0
-        - key: 9
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  9: 9.0
-                  10: 10.0
-                  11: 11.0
-        - key: 12
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  12: 12.0
-                  13: 13.0
-                  14: 14.0
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+                    2: 2.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+                    5: 5.0
+          - key: 6
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    6: 6.0
+                    7: 7.0
+                    8: 8.0
+          - key: 9
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    9: 9.0
+                    10: 10.0
+                    11: 11.0
+          - key: 12
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    12: 12.0
+                    13: 13.0
+                    14: 14.0
 "#);
     let r2 = current_thread::block_on_all(tree.insert(15, 15.0));
     assert!(r2.is_ok());
@@ -1241,60 +1316,62 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                            2: 2.0
-                  - key: 3
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            3: 3.0
-                            4: 4.0
-                            5: 5.0
-                  - key: 6
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            6: 6.0
-                            7: 7.0
-                            8: 8.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                            11: 11.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                            14: 14.0
-                            15: 15.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                              2: 2.0
+                    - key: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+                              5: 5.0
+                    - key: 6
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              6: 6.0
+                              7: 7.0
+                              8: 8.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                              11: 11.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                              14: 14.0
+                              15: 15.0"#);
 }
 
 /// Insert a key that splits the root leaf node
@@ -1308,14 +1385,16 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Leaf:
-      items:
-        0: 0.0
-        1: 1.0
-        2: 2.0
-        3: 3.0
-        4: 4.0
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
+          1: 1.0
+          2: 2.0
+          3: 3.0
+          4: 4.0
 "#);
     let r2 = current_thread::block_on_all(tree.insert(5, 5.0));
     assert!(r2.is_ok());
@@ -1326,25 +1405,27 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-                  2: 2.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  4: 4.0
-                  5: 5.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+                    2: 2.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+                    5: 5.0"#);
 }
 
 #[test]
@@ -1376,10 +1457,12 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Leaf:
-      items:
-        0: 0.0
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
 "#);
     let r = current_thread::block_on_all(tree.remove(0));
     assert_eq!(r, Ok(Some(0.0)));
@@ -1390,9 +1473,11 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Leaf:
-      items: {}"#);
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items: {}"#);
 }
 
 #[test]
@@ -1405,12 +1490,14 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Leaf:
-      items:
-        0: 0.0
-        1: 1.0
-        2: 2.0
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
+          1: 1.0
+          2: 2.0
 "#);
     let r = current_thread::block_on_all(tree.remove(1));
     assert_eq!(r, Ok(Some(1.0)));
@@ -1421,11 +1508,13 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Leaf:
-      items:
-        0: 0.0
-        2: 2.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
+          2: 2.0"#);
 }
 
 #[test]
@@ -1438,81 +1527,83 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                  - key: 3
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            3: 3.0
-                            4: 4.0
-                  - key: 6
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            6: 6.0
-                            7: 7.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-        - key: 18
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 18
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            18: 18.0
-                            19: 19.0
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0
-                            23: 23.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                    - key: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+                    - key: 6
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              6: 6.0
+                              7: 7.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+          - key: 18
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 18
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              18: 18.0
+                              19: 19.0
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0
+                              23: 23.0"#);
     let r2 = current_thread::block_on_all(tree.remove(23));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1522,75 +1613,77 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                  - key: 3
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            3: 3.0
-                            4: 4.0
-                  - key: 6
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            6: 6.0
-                            7: 7.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-                  - key: 18
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            18: 18.0
-                            19: 19.0
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                    - key: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+                    - key: 6
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              6: 6.0
+                              7: 7.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                    - key: 18
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              18: 18.0
+                              19: 19.0
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0"#);
 }
 
 #[test]
@@ -1603,74 +1696,76 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                  - key: 2
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            2: 2.0
-                            3: 3.0
-                            4: 4.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-        - key: 18
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 18
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            18: 18.0
-                            19: 19.0
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                    - key: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              2: 2.0
+                              3: 3.0
+                              4: 4.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+          - key: 18
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 18
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              18: 18.0
+                              19: 19.0
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0"#);
     let r2 = current_thread::block_on_all(tree.remove(4));
     assert!(r2.is_ok());
     println!("{}", &tree);
@@ -1681,68 +1776,70 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                  - key: 2
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            2: 2.0
-                            3: 3.0
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-        - key: 18
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 18
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            18: 18.0
-                            19: 19.0
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                    - key: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              2: 2.0
+                              3: 3.0
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+          - key: 18
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 18
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              18: 18.0
+                              19: 19.0
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0"#);
 }
 
 #[test]
@@ -1755,30 +1852,32 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  4: 4.0
-        - key: 5
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  5: 5.0
-                  7: 7.0
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+          - key: 5
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5: 5.0
+                    7: 7.0
 "#);
     let r2 = current_thread::block_on_all(tree.remove(7));
     assert!(r2.is_ok());
@@ -1789,24 +1888,26 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  4: 4.0
-                  5: 5.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+                    5: 5.0"#);
 }
 
 #[test]
@@ -1819,31 +1920,33 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  4: 4.0
-        - key: 5
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  5: 5.0
-                  6: 6.0
-                  7: 7.0
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+          - key: 5
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
 "#);
     let r2 = current_thread::block_on_all(tree.remove(4));
     assert!(r2.is_ok());
@@ -1854,25 +1957,27 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  5: 5.0
-                  6: 6.0
-                  7: 7.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0"#);
 }
 
 #[test]
@@ -1885,88 +1990,90 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                  - key: 2
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            2: 2.0
-                            3: 3.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-                  - key: 17
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            17: 17.0
-                            18: 18.0
-                  - key: 19
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            19: 19.0
-                            20: 20.0
-        - key: 21
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0
-                  - key: 24
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            24: 24.0
-                            25: 25.0
-                            26: 26.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                    - key: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              2: 2.0
+                              3: 3.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                    - key: 17
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              17: 17.0
+                              18: 18.0
+                    - key: 19
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              19: 19.0
+                              20: 20.0
+          - key: 21
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0
+                    - key: 24
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              24: 24.0
+                              25: 25.0
+                              26: 26.0"#);
     let r2 = current_thread::block_on_all(tree.remove(26));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1976,87 +2083,89 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                  - key: 2
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            2: 2.0
-                            3: 3.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-                  - key: 17
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            17: 17.0
-                            18: 18.0
-        - key: 19
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 19
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            19: 19.0
-                            20: 20.0
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0
-                  - key: 24
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            24: 24.0
-                            25: 25.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                    - key: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              2: 2.0
+                              3: 3.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                    - key: 17
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              17: 17.0
+                              18: 18.0
+          - key: 19
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 19
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              19: 19.0
+                              20: 20.0
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0
+                    - key: 24
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              24: 24.0
+                              25: 25.0"#);
 }
 
 #[test]
@@ -2069,88 +2178,90 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                  - key: 2
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            2: 2.0
-                            3: 3.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                            14: 14.0
-        - key: 15
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-                  - key: 17
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            17: 17.0
-                            18: 18.0
-                  - key: 19
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            19: 19.0
-                            20: 20.0
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0
-                  - key: 24
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            24: 24.0
-                            26: 26.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                    - key: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              2: 2.0
+                              3: 3.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                              14: 14.0
+          - key: 15
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                    - key: 17
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              17: 17.0
+                              18: 18.0
+                    - key: 19
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              19: 19.0
+                              20: 20.0
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0
+                    - key: 24
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              24: 24.0
+                              26: 26.0"#);
     let r2 = current_thread::block_on_all(tree.remove(14));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -2160,87 +2271,89 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 0
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            0: 0.0
-                            1: 1.0
-                  - key: 2
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            2: 2.0
-                            3: 3.0
-        - key: 9
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 9
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            9: 9.0
-                            10: 10.0
-                  - key: 12
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            12: 12.0
-                            13: 13.0
-                  - key: 15
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            15: 15.0
-                            16: 16.0
-        - key: 17
-          ptr:
-            Mem:
-              Int:
-                children:
-                  - key: 17
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            17: 17.0
-                            18: 18.0
-                  - key: 19
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            19: 19.0
-                            20: 20.0
-                  - key: 21
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            21: 21.0
-                            22: 22.0
-                  - key: 24
-                    ptr:
-                      Mem:
-                        Leaf:
-                          items:
-                            24: 24.0
-                            26: 26.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                    - key: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              2: 2.0
+                              3: 3.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+          - key: 17
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 17
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              17: 17.0
+                              18: 18.0
+                    - key: 19
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              19: 19.0
+                              20: 20.0
+                    - key: 21
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              21: 21.0
+                              22: 22.0
+                    - key: 24
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              24: 24.0
+                              26: 26.0"#);
 }
 
 #[test]
@@ -2253,33 +2366,35 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-        - key: 2
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  2: 2.0
-                  3: 3.0
-                  4: 4.0
-                  5: 5.0
-                  6: 6.0
-        - key: 8
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  8: 8.0
-                  9: 9.0
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 2
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    2: 2.0
+                    3: 3.0
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0
+          - key: 8
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    8: 8.0
+                    9: 9.0
 "#);
     let r2 = current_thread::block_on_all(tree.remove(8));
     assert!(r2.is_ok());
@@ -2290,32 +2405,34 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-        - key: 2
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  2: 2.0
-                  3: 3.0
-                  4: 4.0
-                  5: 5.0
-        - key: 6
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  6: 6.0
-                  9: 9.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 2
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    2: 2.0
+                    3: 3.0
+                    4: 4.0
+                    5: 5.0
+          - key: 6
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    6: 6.0
+                    9: 9.0"#);
 }
 
 #[test]
@@ -2328,33 +2445,35 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  4: 4.0
-        - key: 5
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  5: 5.0
-                  6: 6.0
-                  7: 7.0
-                  8: 8.0
-                  9: 9.0
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+          - key: 5
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
+                    8: 8.0
+                    9: 9.0
 "#);
     let r2 = current_thread::block_on_all(tree.remove(4));
     assert!(r2.is_ok());
@@ -2365,32 +2484,34 @@ min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
 root:
-  Mem:
-    Int:
-      children:
-        - key: 0
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  0: 0.0
-                  1: 1.0
-        - key: 3
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  3: 3.0
-                  5: 5.0
-        - key: 6
-          ptr:
-            Mem:
-              Leaf:
-                items:
-                  6: 6.0
-                  7: 7.0
-                  8: 8.0
-                  9: 9.0"#);
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    5: 5.0
+          - key: 6
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    6: 6.0
+                    7: 7.0
+                    8: 8.0
+                    9: 9.0"#);
 }
 
 #[test]
