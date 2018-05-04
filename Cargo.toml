@@ -8,6 +8,7 @@ authors = ["Alan Somers <asomers@gmail.com>"]
 mocks = ["mockers", "mockers_macros"]
 
 [dependencies]
+bincode = "1.0"
 blosc = { git = "https://github.com/asomers/blosc-rs.git", rev = "f7cb7c4" }
 byteorder = "1.0"
 divbuf = { git = "https://github.com/asomers/divbuf", rev = "02e3430" }

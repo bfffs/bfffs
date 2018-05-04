@@ -4,9 +4,10 @@
 //!
 //! [^CowBtrees]: Rodeh, Ohad. "B-trees, shadowing, and clones." ACM Transactions on Storage (TOS) 3.4 (2008): 2.
 
+use bincode;
 use common::*;
 use common::ddml::*;
-use futures::future::IntoFuture;
+use futures::future::{self, IntoFuture};
 use futures::Future;
 use futures_locks::*;
 use nix::{Error, errno};
@@ -14,11 +15,13 @@ use serde::{Serialize, Serializer};
 use serde::de::{self, Deserialize, Deserializer, DeserializeOwned, Visitor,
                 MapAccess};
 #[cfg(test)] use serde_yaml;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
 #[cfg(test)] use std::fmt::{Display, Formatter};
 use std::marker::PhantomData;
 use std::mem;
+use std::rc::Rc;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::executor::current_thread;
@@ -78,6 +81,7 @@ pub trait DDMLTrait {
     fn pop(&self, drp: &DRP) -> Box<Future<Item=DivBufShared, Error=Error>>;
     fn put(&self, uncompressed: DivBufShared, compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error>>);
+    fn sync_all(&self) -> Box<Future<Item=(), Error=Error>>;
 }
 #[cfg(test)]
 pub type DDMLLike = Box<DDMLTrait>;
@@ -114,7 +118,7 @@ enum TreePtr<K: Key, V: Value> {
     /// RAM-resident, we don't need to store their checksums or lsizes.
     Mem(RwLock<Box<Node<K, V>>>),
     /// Direct Record Pointers point directly to a disk location
-    _DRP(RwLock<DRP>),
+    DRP(RwLock<DRP>),
     /// Indirect Record Pointers point to the Record Indirection Table
     _IRP(RwLock<u64>)
 }
@@ -300,6 +304,16 @@ struct IntElem<K: Key + DeserializeOwned, V: Value> {
 }
 
 impl<K: Key, V: Value> IntElem<K, V> {
+    /// Is the child node dirty?  That is, does it differ from the on-disk
+    /// version?
+    fn is_dirty(&self) -> bool {
+        if let TreePtr::Mem(_) = self.ptr {
+            true
+        } else {
+            false
+        }
+    }
+
     /// Lock the element in shared mode "read lock"
     fn rlock(&self) -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> {
         self.ptr.rlock()
@@ -343,6 +357,14 @@ enum Node<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> Node<K, V> {
+    fn as_int(&self) -> Option<&IntNode<K, V>> {
+        if let &Node::Int(ref int) = self {
+            Some(int)
+        } else {
+            None
+        }
+    }
+
     fn as_int_mut(&mut self) -> Option<&mut IntNode<K, V>> {
         if let &mut Node::Int(ref mut int) = self {
             Some(int)
@@ -492,7 +514,7 @@ struct Inner<K: Key, V: Value> {
 /// *`K`:   Key type.  Must be ordered and copyable; should be compact
 /// *`V`:   Value type in the leaves.
 pub struct Tree<K: Key, V: Value> {
-    _ddml: DDMLLike,
+    ddml: DDMLLike,
     i: Inner<K, V>
 }
 
@@ -509,7 +531,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     #[cfg(test)]
     pub fn from_str(ddml: DDMLLike, s: &str) -> Self {
         let i: Inner<K, V> = serde_yaml::from_str(s).unwrap();
-        Tree{_ddml: ddml, i}
+        Tree{ddml, i}
     }
 
     /// Insert value `v` into the tree at key `k`, returning the previous value
@@ -643,7 +665,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 )
             )
         };
-        Tree{ _ddml: ddml, i }
+        Tree{ ddml, i }
     }
 
     /// Remove and return the value at key `k`, if any.
@@ -672,7 +694,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             // Then, try to steal keys from the right sibling
             // Then, try to merge with the left sibling
             // Then, try to steal keys from the left sibling
-            let nchildren = parent.as_int_mut().unwrap().children.len();
+            let nchildren = parent.as_int().unwrap().children.len();
             let (fut, right) = if child_idx < nchildren - 1 {
                 (parent.as_int_mut().unwrap().children[child_idx + 1].xlock(),
                  true)
@@ -759,6 +781,67 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         )
     }
 
+    /// Sync all records written so far to stable storage.
+    pub fn sync_all(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
+        Box::new(
+            self.i.root.xlock().and_then(move |root| {
+                // TODO: figure out what to do with the DRP
+                self.write_node(root)
+            }).and_then(move |drp| {
+                self.ddml.sync_all()
+            })
+        )
+    }
+
+    fn write_leaf(&'a self, node: &LeafNode<K, V>)
+        -> Box<Future<Item=DRP, Error=Error> + 'a>
+    {
+        let buf = DivBufShared::from(bincode::serialize(&node.items).unwrap());
+        let (drp, fut) = self.ddml.put(buf, Compression::None);
+        Box::new(fut.map(move |_| drp))
+    }
+
+    fn write_node(&'a self, node: TreeWriteGuard<K, V>)
+        -> Box<Future<Item=DRP, Error=Error> + 'a>
+    {
+        if let Node::Leaf(ref leaf) = *node {
+            return self.write_leaf(leaf);
+        }
+        // Rust's borrow checker doesn't understand that children_fut will
+        // complete before its continuation will run, so it won't let node be
+        // borrowed in both places.  So we'll have to use RefCell to allow
+        // dynamic borrowing and Rc to allow moving into both closures.
+        let rnode = Rc::new(RefCell::new(node));
+        let rnode2 = rnode.clone();
+        let nchildren = rnode.borrow().as_int().unwrap().children.len();
+        let children_fut = (0..nchildren)
+        .filter_map(move |idx| {
+            if rnode.borrow().as_int().unwrap().children[idx].is_dirty() {
+                let rnode3 = rnode.clone();
+                Some(
+                    rnode.borrow_mut().as_int_mut().unwrap().children[idx]
+                    .xlock()
+                    .and_then(move |guard| self.write_node(guard))
+                    .map(move |drp| {
+                        rnode3.borrow_mut().as_int_mut().unwrap().children[idx]
+                            .ptr = TreePtr::DRP(RwLock::new(drp));
+                    })
+                )
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+        Box::new(
+            future::join_all(children_fut)
+            .and_then(move |_| {
+                let buf = DivBufShared::from(bincode::serialize(
+                        &rnode2.borrow().as_int().unwrap().children).unwrap());
+                let (drp, fut) = self.ddml.put(buf, Compression::None);
+                fut.map(move |_| drp)
+            })
+        )
+    }
 }
 
 #[cfg(test)]
@@ -788,6 +871,7 @@ mock!{
         fn pop(&self, drp: &DRP) -> Box<Future<Item=DivBufShared, Error=Error>>;
         fn put(&self, uncompressed: DivBufShared, compression: Compression)
             -> (DRP, Box<Future<Item=(), Error=Error>>);
+        fn sync_all(&self) -> Box<Future<Item=(), Error=Error>>;
     }
 }
 
