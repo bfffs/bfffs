@@ -269,7 +269,7 @@ impl<K: Key, V: Value> LeafNode<K, V> {
 /// Guard that holds the Node lock object for reading
 enum TreeReadGuard<K: Key, V: Value> {
     Mem(RwLockReadGuard<TreePtr<K, V>>),
-    _DRP(RwLockReadGuard<TreePtr<K, V>>, Node<K, V>)
+    DRP(RwLockReadGuard<TreePtr<K, V>>, Node<K, V>)
 }
 
 impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
@@ -278,7 +278,7 @@ impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
     fn deref(&self) -> &Self::Target {
         match self {
             &TreeReadGuard::Mem(ref guard) => guard.as_mem().unwrap(),
-            _ => unimplemented!()
+            &TreeReadGuard::DRP(ref _guard, ref node) => node,
         }
     }
 }
@@ -286,7 +286,7 @@ impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
 /// Guard that holds the Node lock object for writing
 enum TreeWriteGuard<K: Key, V: Value> {
     Mem(RwLockWriteGuard<TreePtr<K, V>>),
-    _DRP(RwLockReadGuard<TreePtr<K, V>>, Node<K, V>)
+    DRP(RwLockWriteGuard<TreePtr<K, V>>, Node<K, V>)
 }
 
 impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
@@ -295,7 +295,7 @@ impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
     fn deref(&self) -> &Self::Target {
         match self {
             &TreeWriteGuard::Mem(ref guard) => guard.as_mem().unwrap(),
-            _ => unimplemented!()
+            &TreeWriteGuard::DRP(ref _guard, ref node) => node,
         }
     }
 }
@@ -305,7 +305,7 @@ impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
         match self {
             &mut TreeWriteGuard::Mem(ref mut guard) =>
                 guard.as_mem_mut().unwrap(),
-            _ => unimplemented!()
+            &mut TreeWriteGuard::DRP(ref _guard, ref mut node) => node,
         }
     }
 }
@@ -339,9 +339,10 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
                 let fut: Box<Future<Item=TreeReadGuard<K, V>, Error=Error>> =
                 Box::new(
                 ddml.get(&g.as_drp().unwrap())
-                    .map(|_db| {
-                        // TODO: deserialize the Node
-                        unimplemented!()
+                    .map(|db| {
+                        let node: Node<K, V> =
+                            bincode::deserialize(&db[..]).unwrap();
+                        TreeReadGuard::DRP(g, node)
                     }));
                 fut
             } else {
@@ -365,9 +366,10 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
                 let fut: Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>> =
                 Box::new(
                 ddml.get(&g.as_drp().unwrap())
-                    .map(|_db| {
-                        // TODO: deserialize the Node
-                        unimplemented!()
+                    .map(|db| {
+                        let node: Node<K, V> =
+                            bincode::deserialize(&db[..]).unwrap();
+                        TreeWriteGuard::DRP(g, node)
                     }));
                 fut
             } else {
@@ -848,10 +850,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         )
     }
 
-    fn write_leaf(&'a self, node: &LeafNode<K, V>)
+    fn write_leaf(&'a self, node: &Node<K, V>)
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
-        let buf = DivBufShared::from(bincode::serialize(&node.items).unwrap());
+        let buf = DivBufShared::from(bincode::serialize(&node).unwrap());
         let (drp, fut) = self.ddml.put(buf, Compression::None);
         Box::new(fut.map(move |_| drp))
     }
@@ -859,8 +861,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     fn write_node(&'a self, node: TreeWriteGuard<K, V>)
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
-        if let Node::Leaf(ref leaf) = *node {
-            return self.write_leaf(leaf);
+        if let Node::Leaf(_) = *node {
+            return self.write_leaf(&*node);
         }
         // Rust's borrow checker doesn't understand that children_fut will
         // complete before its continuation will run, so it won't let node be
@@ -892,8 +894,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         Box::new(
             future::join_all(children_fut)
             .and_then(move |_| {
-                let buf = DivBufShared::from(bincode::serialize(
-                        &rnode2.borrow().as_int().unwrap().children).unwrap());
+                let n: &Node<K, V> = &*rnode2.borrow();
+                let buf = DivBufShared::from(bincode::serialize(n).unwrap());
                 let (drp, fut) = self.ddml.put(buf, Compression::None);
                 fut.map(move |_| drp)
             })
@@ -916,6 +918,7 @@ mod t {
 
 use super::*;
 use futures::future;
+use mockers::matchers::ANY;
 use mockers::Scenario;
 
 mock!{
@@ -2518,6 +2521,46 @@ fn remove_nonexistent() {
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.remove(3));
     assert_eq!(r, Ok(None));
+}
+
+#[test]
+fn write_leaf() {
+    let s = Scenario::new();
+    let ddml = Box::new(s.create_mock::<MockDDML>());
+    let drp = DRP::default();
+    let serialized = vec![0u8, 0, 0, 0, // enum variant 0 for LeafNode
+        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
+        0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
+        1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
+        99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
+    ];
+    s.expect(ddml.put_call(
+            check!(move |arg: &DivBufShared| {
+                &arg.try().unwrap()[..] == &serialized[..]
+            }),
+            ANY)
+        .and_return((drp, Box::new(future::ok::<(), Error>(())))));
+    s.expect(ddml.sync_all_call()
+             .and_return(Box::new(future::ok::<(), Error>(()))));
+    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 100
+          1: 200
+          99: 50000
+"#);
+
+    let r = current_thread::block_on_all(tree.sync_all());
+    assert!(r.is_ok());
 }
 
 }
