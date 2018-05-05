@@ -58,11 +58,11 @@ pub const BYTES_PER_FRAGMENT: usize = 256;
 ///
 /// Locates a block of storage within a pool.  A block is the smallest amount of
 /// data that can be transferred to/from a disk.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, Ord,
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, Hash, Ord,
          PartialEq, PartialOrd)]
 pub struct PBA {
-    pub cluster: ClusterT,
-    pub lba: LbaT
+    cluster: ClusterT,
+    lba: LbaT
 }
 
 impl PBA {

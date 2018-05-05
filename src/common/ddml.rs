@@ -94,11 +94,17 @@ impl Compression {
     }
 }
 
+impl Default for Compression {
+    fn default() -> Compression {
+        Compression::None
+    }
+}
+
 /// Direct Record Pointer.  A persistable pointer to a record on disk.
 ///
 /// A Record is a local unit of data on disk.  It may be larger or smaller than
 /// a Block, but Records are always read/written in their entirety.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 pub struct DRP {
     /// Physical Block Address.  The record's location on disk.
     pba: PBA,
@@ -339,7 +345,7 @@ mod t {
 
     #[test]
     fn delete_hot() {
-        let pba = PBA::new(7, 42);
+        let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
@@ -360,7 +366,7 @@ mod t {
 
     #[test]
     fn get_hot() {
-        let pba = PBA::new(7, 42);
+        let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
@@ -380,7 +386,7 @@ mod t {
 
     #[test]
     fn get_cold() {
-        let pba = PBA::new(7, 42);
+        let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xe7f15966a3d61f8};
         let pba2 = pba.clone();
@@ -410,7 +416,7 @@ mod t {
 
     #[test]
     fn get_ecksum() {
-        let pba = PBA::new(7, 42);
+        let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xdeadbeefdeadbeef};
         let pba2 = pba.clone();
@@ -435,7 +441,7 @@ mod t {
 
     #[test]
     fn pop_hot() {
-        let pba = PBA::new(7, 42);
+        let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
@@ -455,7 +461,7 @@ mod t {
 
     #[test]
     fn pop_cold() {
-        let pba = PBA::new(7, 42);
+        let pba = PBA::default();
         let pba2 = pba.clone();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xe7f15966a3d61f8};
@@ -479,7 +485,7 @@ mod t {
 
     #[test]
     fn pop_ecksum() {
-        let pba = PBA::new(7, 42);
+        let pba = PBA::default();
         let pba2 = pba.clone();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xdeadbeefdeadbeef};
@@ -505,7 +511,7 @@ mod t {
     fn put() {
         let s = Scenario::new();
         let cache = s.create_mock::<MockCache>();
-        let pba = PBA::new(7, 42);
+        let pba = PBA::default();
         s.expect(cache.insert_call(Key::PBA(pba), ANY).and_return(()));
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.write_call(ANY)
