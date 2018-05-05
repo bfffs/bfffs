@@ -118,8 +118,6 @@ enum TreePtr<K: Key, V: Value> {
     /// RAM-resident, we don't need to store their checksums or lsizes.
     Mem(Box<Node<K, V>>),
     /// Direct Record Pointers point directly to a disk location
-    #[serde(skip_deserializing)]  // TODO: serialize DRPs
-    #[serde(skip_serializing)]  // TODO: serialize DRPs
     DRP(DRP),
     /// Indirect Record Pointers point to the Record Indirection Table
     _IRP(u64)

@@ -53,7 +53,7 @@ pub type PoolLike = Pool;
 const CACHE_SIZE: usize = 1_000_000_000;
 
 /// Compression mode in use
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub enum Compression {
     None = 0,
     /// Maximum Compression ratio for unstructured buffers
@@ -98,7 +98,7 @@ impl Compression {
 ///
 /// A Record is a local unit of data on disk.  It may be larger or smaller than
 /// a Block, but Records are always read/written in their entirety.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct DRP {
     /// Physical Block Address.  The record's location on disk.
     pba: PBA,
