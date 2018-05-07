@@ -178,7 +178,7 @@ mod treeptr_serializer {
     {
         #[derive(Deserialize)]
         #[serde(field_identifier)]
-        enum Field { Mem };
+        enum Field { Mem, DRP };
 
         struct TreePtrVisitor<K: Key, V: Value> {
             _k: PhantomData<K>,
@@ -201,7 +201,7 @@ mod treeptr_serializer {
                     match key {
                         Field::Mem => {
                             if ptr.is_some() {
-                                return Err(de::Error::duplicate_field("mem"));
+                                return Err(de::Error::duplicate_field("Mem"));
                             }
                             ptr = Some(
                                 RwLock::new(
@@ -209,6 +209,16 @@ mod treeptr_serializer {
                                         Box::new(map.next_value()?
                                         )
                                     )
+                                )
+                            );
+                        }
+                        Field::DRP => {
+                            if ptr.is_some() {
+                                return Err(de::Error::duplicate_field("DRP"));
+                            }
+                            ptr = Some(
+                                RwLock::new(
+                                    TreePtr::DRP( map.next_value()?)
                                 )
                             );
                         }
@@ -2521,6 +2531,64 @@ fn remove_nonexistent() {
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.remove(3));
     assert_eq!(r, Ok(None));
+}
+
+#[test]
+#[ignore] // broken until IntNodes can be serialized without taking locks
+fn write_int() {
+    let s = Scenario::new();
+    let ddml = Box::new(s.create_mock::<MockDDML>());
+    let drp = DRP::default();
+    let serialized = vec![0u8, 0, 0, 0, // enum variant 0 for LeafNode
+        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
+        0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
+        1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
+        99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
+    ];
+    s.expect(ddml.put_call(
+            check!(move |arg: &DivBufShared| {
+                &arg.try().unwrap()[..] == &serialized[..]
+            }),
+            ANY)
+        .and_return((drp, Box::new(future::ok::<(), Error>(())))));
+    s.expect(ddml.sync_all_call()
+             .and_return(Box::new(future::ok::<(), Error>(()))));
+    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              DRP:
+                pba:
+                  cluster: 0
+                  lba: 0
+                compression: None
+                lsize: 40000
+                csize: 4000
+                checksum: 0xdeadbeef
+          - key: 256
+            ptr:
+              DRP:
+                pba:
+                  cluster: 0
+                  lba: 256
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 0x1a7ebabe
+"#);
+
+    let r = current_thread::block_on_all(tree.sync_all());
+    assert!(r.is_ok());
 }
 
 #[test]
