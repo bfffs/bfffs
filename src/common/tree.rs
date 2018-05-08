@@ -2446,16 +2446,28 @@ fn remove_nonexistent() {
 }
 
 #[test]
-#[ignore] // broken until IntNodes can be serialized without taking locks
 fn write_int() {
     let s = Scenario::new();
     let ddml = Box::new(s.create_mock::<MockDDML>());
     let drp = DRP::default();
-    let serialized = vec![0u8, 0, 0, 0, // enum variant 0 for LeafNode
-        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
-        0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
-        1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
-        99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
+    let serialized = vec![1u8, 0, 0, 0, // enum variant 0 for IntNode
+        2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
+           0, 0, 0, 0,              // K=0
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+               0, 0,                // Cluster 0
+               0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
+           0, 0, 0, 0,              // enum variant 0 for Compression::None
+           0x40, 0x9c, 0, 0,        // lsize=40000
+           0x40, 0x9c, 0, 0,         // csize=40000
+           0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
+           0, 1, 0, 0,              // K=256
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+               0, 0,                // Cluster 0
+               0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
+           1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
+           0x80, 0x3e, 0, 0,        // lsize=16000
+           0x40, 0x1f, 0, 0,        // csize=8000
+           0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
     ];
     s.expect(ddml.put_call(
             check!(move |arg: &DivBufShared| {
@@ -2485,7 +2497,7 @@ root:
                   lba: 0
                 compression: None
                 lsize: 40000
-                csize: 4000
+                csize: 40000
                 checksum: 0xdeadbeef
           - key: 256
             ptr:
@@ -2493,7 +2505,7 @@ root:
                 pba:
                   cluster: 0
                   lba: 256
-                compression: None
+                compression: ZstdL9NoShuffle
                 lsize: 16000
                 csize: 8000
                 checksum: 0x1a7ebabe
