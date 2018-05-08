@@ -12,13 +12,13 @@ use futures::Future;
 use futures_locks::*;
 use nix::{Error, errno};
 use serde::{Serialize, Serializer};
-use serde::de::{self, Deserializer, DeserializeOwned, Visitor, MapAccess};
+use serde::de::{Deserializer, DeserializeOwned};
 #[cfg(test)] use serde_yaml;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::fmt::{self, Debug};
+#[cfg(test)] use std::fmt;
+use std::fmt::Debug;
 #[cfg(test)] use std::fmt::{Display, Formatter};
-use std::marker::PhantomData;
 use std::mem;
 use std::rc::Rc;
 use std::ops::{Deref, DerefMut};
@@ -27,41 +27,13 @@ use tokio::executor::current_thread;
 
 mod atomic_usize_serializer {
     use super::*;
+    use serde::Deserialize;
 
     pub fn deserialize<'de, D>(d: D) -> Result<AtomicUsize, D::Error>
         where D: Deserializer<'de>
     {
-        struct UsizeVisitor;
-
-        impl<'de> Visitor<'de> for UsizeVisitor {
-            type Value = usize;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("an integer between -2^31 and 2^31")
-            }
-
-            fn visit_u8<E>(self, value: u8) -> Result<usize, E>
-                where E: de::Error
-            {
-                Ok(value as usize)
-            }
-            fn visit_u16<E>(self, value: u16) -> Result<usize, E>
-                where E: de::Error
-            {
-                Ok(value as usize)
-            }
-            fn visit_u32<E>(self, value: u32) -> Result<usize, E>
-                where E: de::Error
-            {
-                Ok(value as usize)
-            }
-            fn visit_u64<E>(self, value: u64) -> Result<usize, E>
-                where E: de::Error
-            {
-                Ok(value as usize)
-            }
-        }
-        d.deserialize_u64(UsizeVisitor).map(|x| AtomicUsize::new(x as usize))
+        usize::deserialize(d)
+            .map(|u| AtomicUsize::new(u))
     }
 
     pub fn serialize<S>(x: &AtomicUsize, s: S) -> Result<S::Ok, S::Error>
@@ -171,66 +143,14 @@ impl<K: Key, V: Value> TreePtr<K, V> {
 
 mod treeptr_serializer {
     use super::*;
+    use serde::Deserialize;
 
     pub(super) fn deserialize<'de, D, K, V>(deserializer: D)
         -> Result<RwLock<TreePtr<K, V>>, D::Error>
         where D: Deserializer<'de>, K: Key, V: Value
     {
-        #[derive(Deserialize)]
-        #[serde(field_identifier)]
-        enum Field { Mem, DRP };
-
-        struct TreePtrVisitor<K: Key, V: Value> {
-            _k: PhantomData<K>,
-            _v: PhantomData<V>
-        }
-
-        impl<'de, K: Key, V: Value> Visitor<'de> for TreePtrVisitor<K, V> {
-            type Value = RwLock<TreePtr<K, V>>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("enum TreePtr")
-            }
-
-            fn visit_map<Q>(self, mut map: Q)
-                -> Result<RwLock<TreePtr<K, V>>, Q::Error>
-                where Q: MapAccess<'de>
-            {
-                let mut ptr = None;
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Mem => {
-                            if ptr.is_some() {
-                                return Err(de::Error::duplicate_field("Mem"));
-                            }
-                            ptr = Some(
-                                RwLock::new(
-                                    TreePtr::Mem(
-                                        Box::new(map.next_value()?
-                                        )
-                                    )
-                                )
-                            );
-                        }
-                        Field::DRP => {
-                            if ptr.is_some() {
-                                return Err(de::Error::duplicate_field("DRP"));
-                            }
-                            ptr = Some(
-                                RwLock::new(
-                                    TreePtr::DRP( map.next_value()?)
-                                )
-                            );
-                        }
-                    }
-                }
-                ptr.ok_or(de::Error::missing_field("mem"))
-            }
-        }
-
-        const FIELDS: &'static [&'static str] = &["Mem"];
-        let visitor = TreePtrVisitor{_k: PhantomData, _v: PhantomData};
-        deserializer.deserialize_struct("Mem", FIELDS, visitor)
+        TreePtr::deserialize(deserializer)
+            .map(|ptr| RwLock::new(ptr))
     }
 
     pub(super) fn serialize<S, K, V>(lock: &RwLock<TreePtr<K, V>>,
