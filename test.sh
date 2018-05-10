@@ -11,4 +11,4 @@ cargo +nightly test --all-features
 rustup run nightly cargo bench
 
 # It should also work on stable
-cargo +nightly test -j1
+cargo test -j1
