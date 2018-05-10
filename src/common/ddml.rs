@@ -20,9 +20,9 @@ use uuid::Uuid;
 #[cfg(test)]
 /// Only exists so mockers can replace Cache
 pub trait CacheTrait {
-    fn get(&mut self, key: &Key) -> Option<DivBuf>;
-    fn insert(&mut self, key: Key, buf: DivBufShared);
-    fn remove(&mut self, key: &Key) -> Option<DivBufShared>;
+    fn get(&mut self, key: &Key) -> Option<Box<CacheRef>>;
+    fn insert(&mut self, key: Key, buf: Box<Cacheable>);
+    fn remove(&mut self, key: &Key) -> Option<Box<Cacheable>>;
     fn size(&self) -> usize;
 }
 #[cfg(test)]
@@ -164,16 +164,19 @@ impl<'a> DDML {
 
         // Outline:
         // 1) Fetch from cache, or
+        // 2) Read from disk, then insert into cache
         let pba = drp.pba;
-        self.cache.lock().unwrap().get(&Key::PBA(pba)).map(|db| {
+        self.cache.lock().unwrap().get(&Key::PBA(pba)).map(|cacheref| {
+            let db = cacheref.downcast::<DivBuf>().unwrap();
             let r : Box<Future<Item=DivBuf, Error=Error>> =
-            Box::new(future::ok::<DivBuf, Error>(db));
+            Box::new(future::ok::<DivBuf, Error>(*db));
             r
         }).unwrap_or_else(|| {
             Box::new(
                 self.read(*drp).map(move |dbs| {
                     let db = dbs.try().unwrap();
-                    self.cache.lock().unwrap().insert(Key::PBA(pba), dbs);
+                    self.cache.lock().unwrap().insert(Key::PBA(pba),
+                                                      Box::new(dbs));
                     db
                 })
             )
@@ -186,10 +189,11 @@ impl<'a> DDML {
 
         let lbas = drp.asize();
         let pba = drp.pba;
-        self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|dbs| {
+        self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|cacheable| {
+            let dbs = cacheable.downcast::<DivBufShared>().ok().unwrap();
             self.pool.free(pba, lbas);
             let r : Box<Future<Item=DivBufShared, Error=Error>> =
-            Box::new(future::ok::<DivBufShared, Error>(dbs));
+            Box::new(future::ok::<DivBufShared, Error>(*dbs));
             r
         }).unwrap_or_else(|| {
             Box::new(
@@ -253,7 +257,8 @@ impl<'a> DDML {
                 let _ = compressed_dbs;
             }
             //Cache
-            self.cache.lock().unwrap().insert(Key::PBA(pba), uncompressed);
+            self.cache.lock().unwrap().insert(Key::PBA(pba),
+                                              Box::new(uncompressed));
             r
         }));
         let drp = DRP { pba, compression, lsize, csize, checksum };
@@ -321,9 +326,9 @@ mod t {
         MockCache,
         self,
         trait CacheTrait {
-            fn get(&mut self, key: &Key) -> Option<DivBuf>;
-            fn insert(&mut self, key: Key, buf: DivBufShared);
-            fn remove(&mut self, key: &Key) -> Option<DivBufShared>;
+            fn get(&mut self, key: &Key) -> Option<Box<CacheRef>>;
+            fn insert(&mut self, key: Key, buf: Box<Cacheable>);
+            fn remove(&mut self, key: &Key) -> Option<Box<Cacheable>>;
             fn size(&self) -> usize;
         }
     }
@@ -349,7 +354,7 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let dbs = Box::new(DivBufShared::from(vec![0u8; 4096]));
         let s = Scenario::new();
         let mut seq = Sequence::new();
         let cache = s.create_mock::<MockCache>();
@@ -371,13 +376,14 @@ mod t {
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let db: Box<CacheRef> = Box::new(dbs.try().unwrap());
         let s = Scenario::new();
         let mut seq = Sequence::new();
         let cache = s.create_mock::<MockCache>();
         let pool = s.create_mock::<MockPool>();
         seq.expect(cache.get_call(check!(move |key: &&Key| {
             **key == Key::PBA(pba2)
-        })).and_return(Some(dbs.try().unwrap())));
+        })).and_return(Some(db)));
         s.expect(seq);
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
@@ -390,7 +396,7 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xe7f15966a3d61f8};
         let pba2 = pba.clone();
-        let owned_by_cache = Rc::new(RefCell::new(Vec::<DivBufShared>::new()));
+        let owned_by_cache = Rc::new(RefCell::new(Vec::<Box<Cacheable>>::new()));
         let owned_by_cache2 = owned_by_cache.clone();
         let s = Scenario::new();
         let mut seq = Sequence::new();
@@ -451,7 +457,7 @@ mod t {
         let pool = s.create_mock::<MockPool>();
         seq.expect(cache.remove_call(check!(move |key: &&Key| {
             **key == Key::PBA(pba2)
-        })).and_return(Some(DivBufShared::from(vec![0u8; 4096]))));
+        })).and_return(Some(Box::new(DivBufShared::from(vec![0u8; 4096])))));
         seq.expect(pool.free_call(pba, 1).and_return(()));
         s.expect(seq);
 

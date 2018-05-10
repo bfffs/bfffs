@@ -5,6 +5,8 @@ extern crate bincode;
 extern crate blosc;
 extern crate byteorder;
 extern crate divbuf;
+#[macro_use]
+extern crate downcast;
 extern crate fixedbitset;
 extern crate futures;
 extern crate futures_locks;

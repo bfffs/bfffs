@@ -1,7 +1,9 @@
 // vim: tw=80
 use common::*;
+use downcast::Any;
 use metrohash::{MetroBuildHasher, MetroHash64};
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::hash::BuildHasherDefault;
 
 
@@ -14,8 +16,48 @@ pub enum Key {
     PBA(PBA),
 }
 
+/// Types that implement `Cacheable` may be stored in the cache
+pub trait Cacheable: Any + Debug {
+    /// How much space does this object use in the Cache?
+    fn len(&self) -> usize;
+
+    /// Return a read-only handle to this object.
+    ///
+    /// As long as this handle is alive, the object will not be evicted from
+    /// cache.
+    fn make_ref(&self) -> Box<CacheRef>;
+
+    /// Can this cache entry be expired?
+    ///
+    /// The cache must be locked between calling `safe_to_expire` and `expire`
+    fn safe_to_expire(&self) -> bool;
+}
+
+downcast!(Cacheable);
+
+/// Types that implement `CacheRef` are read-only handles to cached objects.
+pub trait CacheRef: Any {}
+
+downcast!(CacheRef);
+
+impl Cacheable for DivBufShared {
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn make_ref(&self) -> Box<CacheRef> {
+        Box::new(self.try().unwrap())
+    }
+
+    fn safe_to_expire(&self) -> bool {
+        self.try_mut().is_ok()
+    }
+}
+
+impl CacheRef for DivBuf { }
+
 struct LruEntry {
-    buf: DivBufShared,
+    buf: Box<Cacheable>,
     // TODO: switch from Keys to pointers for faster, albeit unsafe, access
     /// Pointer to the next less recently used entry
     lru: Option<Key>,
@@ -47,13 +89,11 @@ impl Cache {
         loop {
             assert!(key.is_some(), "Can't find an entry to expire");
             let v = self.store.get_mut(&key.unwrap()).unwrap();
-            let dbm = v.buf.try_mut();
-            if dbm.is_err() {
-                // buffer is still referenced.  Skip it
+            if v.buf.safe_to_expire() {
+                break;
+            } else {
                 key = v.mru;
                 continue;
-            } else {
-                break;
             }
         }
         self.remove(&key.unwrap());
@@ -62,9 +102,9 @@ impl Cache {
     /// Get a read-only reference to a cached block.
     ///
     /// The block will be marked as the most recently used.
-    pub fn get(&mut self, key: &Key) -> Option<DivBuf> {
+    pub fn get(&mut self, key: &Key) -> Option<Box<CacheRef>> {
         if self.mru == Some(*key) {
-            Some(self.store.get(key).unwrap().buf.try().unwrap())
+            Some(self.store.get(key).unwrap().buf.make_ref())
         } else {
             let mru = self.mru;
             let mut v_mru = None;
@@ -74,8 +114,8 @@ impl Cache {
                 v_lru = v.lru;
                 v.mru = None;
                 v.lru = mru;
-                v.buf.try().unwrap()
-            }).map(|buf| {
+                v.buf.make_ref()
+            }).map(|cacheref| {
                 if v_mru.is_some() {
                     self.store.get_mut(&v_mru.unwrap()).unwrap().lru = v_lru;
                 } else {
@@ -91,7 +131,7 @@ impl Cache {
                     self.store.get_mut(&mru.unwrap()).unwrap().mru = Some(*key);
                 }
                 self.mru = Some(*key);
-                buf
+                cacheref
             })
         }
     }
@@ -99,7 +139,7 @@ impl Cache {
     /// Add a new block to the cache.
     ///
     /// The block will be marked as the most recently used.
-    pub fn insert(&mut self, key: Key, buf: DivBufShared) {
+    pub fn insert(&mut self, key: Key, buf: Box<Cacheable>) {
         while self.size + buf.len() > self.capacity {
             self.expire();
         }
@@ -122,7 +162,7 @@ impl Cache {
     ///
     /// Unlike `get`, the block will be returned in an owned form, if it was
     /// present at all.
-    pub fn remove(&mut self, key: &Key) -> Option<DivBufShared> {
+    pub fn remove(&mut self, key: &Key) -> Option<Box<Cacheable>> {
         self.store.remove(key).map(|v| {
             self.size -= v.buf.len();
             if v.mru.is_some() {
@@ -162,12 +202,12 @@ fn test_get_lru() {
     let mut cache = Cache::with_capacity(100);
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
-    let dbs = DivBufShared::from(vec![0u8; 5]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 7]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
-    assert_eq!(cache.get(&key1).unwrap().len(), 5);
+    assert_eq!(cache.get(&key1).unwrap().downcast::<DivBuf>().unwrap().len(), 5);
     assert_eq!(cache.mru, Some(key1));
     assert_eq!(cache.lru, Some(key2));
     {
@@ -189,14 +229,14 @@ fn test_get_middle() {
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
     let key3 = Key::Rid(3);
-    let dbs = DivBufShared::from(vec![0u8; 5]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 7]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 11]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 11]));
     cache.insert(key3, dbs);
 
-    assert_eq!(cache.get(&key2).unwrap().len(), 7);
+    assert_eq!(cache.get(&key2).unwrap().downcast::<DivBuf>().unwrap().len(), 7);
     assert_eq!(cache.mru, Some(key2));
     assert_eq!(cache.lru, Some(key1));
     {
@@ -221,12 +261,12 @@ fn test_expire_referenced() {
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
     let key3 = Key::Rid(3);
-    let dbs = DivBufShared::from(vec![0u8; 13]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 13]));
     cache.insert(key1, dbs);
     let _ref1 = cache.get(&key1);
-    let dbs = DivBufShared::from(vec![0u8; 17]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 17]));
     cache.insert(key2, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 83]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 83]));
     cache.insert(key3, dbs);
 
     assert_eq!(cache.size(), 96);
@@ -239,9 +279,9 @@ fn test_expire_one() {
     let mut cache = Cache::with_capacity(100);
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
-    let dbs = DivBufShared::from(vec![0u8; 53]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 53]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 57]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 57]));
     cache.insert(key2, dbs);
 
     assert_eq!(cache.size(), 57);
@@ -255,11 +295,11 @@ fn test_expire_two() {
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
     let key3 = Key::Rid(3);
-    let dbs = DivBufShared::from(vec![0u8; 41]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 41]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 43]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 43]));
     cache.insert(key2, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 61]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 61]));
     cache.insert(key3, dbs);
 
     assert_eq!(cache.size(), 61);
@@ -273,12 +313,12 @@ fn test_get_mru() {
     let mut cache = Cache::with_capacity(100);
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
-    let dbs = DivBufShared::from(vec![0u8; 5]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 7]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
-    assert_eq!(cache.get(&key2).unwrap().len(), 7);
+    assert_eq!(cache.get(&key2).unwrap().downcast::<DivBuf>().unwrap().len(), 7);
     assert_eq!(cache.lru, Some(key1));
     assert_eq!(cache.mru, Some(key2));
     {
@@ -297,17 +337,17 @@ fn test_get_multiple() {
     let mut cache = Cache::with_capacity(100);
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
-    let dbs = DivBufShared::from(vec![0u8; 5]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 7]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
-    let ref1 = cache.get(&key1).unwrap();
+    let ref1 = cache.get(&key1).unwrap().downcast::<DivBuf>().unwrap();
     {
         // Move key2 to the MRU position
         let _ = cache.get(&key2).unwrap();
     }
-    let ref2 = cache.get(&key1).unwrap();
+    let ref2 = cache.get(&key1).unwrap().downcast::<DivBuf>().unwrap();
     assert_eq!(ref1.len(), 5);
     assert_eq!(ref2.len(), 5);
 }
@@ -325,8 +365,8 @@ fn test_get_nonexistent() {
 #[should_panic]
 fn test_insert_dup() {
     let mut cache = Cache::with_capacity(100);
-    let dbs1 = DivBufShared::from(vec![0u8; 6]);
-    let dbs2 = DivBufShared::from(vec![0u8; 11]);
+    let dbs1 = Box::new(DivBufShared::from(vec![0u8; 6]));
+    let dbs2 = Box::new(DivBufShared::from(vec![0u8; 11]));
     let key = Key::Rid(0);
     cache.insert(key, dbs1);
     cache.insert(key, dbs2);
@@ -336,7 +376,7 @@ fn test_insert_dup() {
 #[test]
 fn test_insert_empty() {
     let mut cache = Cache::with_capacity(100);
-    let dbs = DivBufShared::from(vec![0u8; 6]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 6]));
     let key = Key::Rid(0);
     cache.insert(key, dbs);
     assert_eq!(cache.size(), 6);
@@ -347,7 +387,7 @@ fn test_insert_empty() {
         assert!(v.lru.is_none());
         assert!(v.mru.is_none());
     }
-    assert_eq!(cache.get(&key).unwrap().len(), 6);
+    assert_eq!(cache.get(&key).unwrap().downcast::<DivBuf>().unwrap().len(), 6);
 }
 
 /// Insert into a cache that already has 1 item.
@@ -356,9 +396,9 @@ fn test_insert_one() {
     let mut cache = Cache::with_capacity(100);
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
-    let dbs = DivBufShared::from(vec![0u8; 5]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 7]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
     assert_eq!(cache.size(), 12);
     assert_eq!(cache.lru, Some(key1));
@@ -368,7 +408,7 @@ fn test_insert_one() {
         assert_eq!(v.lru, Some(key1));
         assert!(v.mru.is_none());
     }
-    assert_eq!(cache.get(&key2).unwrap().len(), 7);
+    assert_eq!(cache.get(&key2).unwrap().downcast::<DivBuf>().unwrap().len(), 7);
 }
 
 /// Remove a nonexistent key.  Unlike inserting a dup, this is not an error
@@ -383,7 +423,7 @@ fn test_remove_nonexistent() {
 #[test]
 fn test_remove_last() {
     let mut cache = Cache::with_capacity(100);
-    let dbs = DivBufShared::from(vec![0u8; 6]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 6]));
     let key = Key::Rid(0);
     cache.insert(key, dbs);
     assert_eq!(cache.remove(&key).unwrap().len(), 6);
@@ -399,9 +439,9 @@ fn test_remove_lru() {
     let mut cache = Cache::with_capacity(100);
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
-    let dbs = DivBufShared::from(vec![0u8; 5]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 7]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
     assert_eq!(cache.remove(&key1).unwrap().len(), 5);
@@ -421,11 +461,11 @@ fn test_remove_middle() {
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
     let key3 = Key::Rid(3);
-    let dbs = DivBufShared::from(vec![0u8; 5]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 7]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 11]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 11]));
     cache.insert(key3, dbs);
 
     assert_eq!(cache.remove(&key2).unwrap().len(), 7);
@@ -449,9 +489,9 @@ fn test_remove_mru() {
     let mut cache = Cache::with_capacity(100);
     let key1 = Key::Rid(1);
     let key2 = Key::Rid(2);
-    let dbs = DivBufShared::from(vec![0u8; 5]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
     cache.insert(key1, dbs);
-    let dbs = DivBufShared::from(vec![0u8; 7]);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
     assert_eq!(cache.remove(&key2).unwrap().len(), 7);
