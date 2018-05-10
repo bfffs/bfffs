@@ -18,6 +18,9 @@ pub enum Key {
 
 /// Types that implement `Cacheable` may be stored in the cache
 pub trait Cacheable: Any + Debug {
+    /// Deserialize a buffer into Self.  Will panic if deserialization fails.
+    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized;
+
     /// How much space does this object use in the Cache?
     fn len(&self) -> usize;
 
@@ -31,16 +34,35 @@ pub trait Cacheable: Any + Debug {
     ///
     /// The cache must be locked between calling `safe_to_expire` and `expire`
     fn safe_to_expire(&self) -> bool;
+
+    /// Serialize to a `DivBuf`.  If serialization was a zero-copy operation,
+    /// then the second return value will be `None`.  Otherwise, the second
+    /// value will be the owner of the first.
+    fn serialize(&self) -> (DivBuf, Option<DivBufShared>);
+
+    /// Truncate this `Cacheable` down to the given size.
+    ///
+    /// This is mainly useful to correct padding that had to be added before
+    /// writing to disk.
+    fn truncate(&self, len: usize);
 }
 
 downcast!(Cacheable);
 
 /// Types that implement `CacheRef` are read-only handles to cached objects.
-pub trait CacheRef: Any {}
+pub trait CacheRef: Any {
+    /// Deserialize a buffer into the kind of `Cacheable` that's associated with
+    /// this `CacheRef`.  Will panic if deserialization fails.
+    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized;
+}
 
 downcast!(CacheRef);
 
 impl Cacheable for DivBufShared {
+    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized {
+        Box::new(dbs)
+    }
+
     fn len(&self) -> usize {
         self.len()
     }
@@ -52,9 +74,21 @@ impl Cacheable for DivBufShared {
     fn safe_to_expire(&self) -> bool {
         self.try_mut().is_ok()
     }
+
+    fn serialize(&self) -> (DivBuf, Option<DivBufShared>) {
+        (self.try().unwrap(), None)
+    }
+
+    fn truncate(&self, len: usize) {
+        self.try_mut().unwrap().try_truncate(len).unwrap();
+    }
 }
 
-impl CacheRef for DivBuf { }
+impl CacheRef for DivBuf {
+    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized {
+        Box::new(dbs)
+    }
+}
 
 struct LruEntry {
     buf: Box<Cacheable>,

@@ -17,6 +17,8 @@ use std::sync::Mutex;
 #[cfg(test)]
 use uuid::Uuid;
 
+pub use common::cache::{Cacheable, CacheRef};
+
 #[cfg(test)]
 /// Only exists so mockers can replace Cache
 pub trait CacheTrait {
@@ -159,75 +161,78 @@ impl<'a> DDML {
     }
 
     /// Read a record and return a shared reference
-    pub fn get(&'a self, drp: &DRP)
-        -> Box<Future<Item=DivBuf, Error=Error> + 'a> {
+    pub fn get<T: CacheRef>(&'a self, drp: &DRP)
+        -> Box<Future<Item=Box<T>, Error=Error> + 'a> {
 
         // Outline:
         // 1) Fetch from cache, or
         // 2) Read from disk, then insert into cache
         let pba = drp.pba;
         self.cache.lock().unwrap().get(&Key::PBA(pba)).map(|cacheref| {
-            let db = cacheref.downcast::<DivBuf>().unwrap();
-            let r : Box<Future<Item=DivBuf, Error=Error>> =
-            Box::new(future::ok::<DivBuf, Error>(*db));
+            let t = cacheref.downcast::<T>().unwrap();
+            let r : Box<Future<Item=Box<T>, Error=Error>> =
+            Box::new(future::ok::<Box<T>, Error>(t));
             r
         }).unwrap_or_else(|| {
             Box::new(
                 self.read(*drp).map(move |dbs| {
-                    let db = dbs.try().unwrap();
-                    self.cache.lock().unwrap().insert(Key::PBA(pba),
-                                                      Box::new(dbs));
-                    db
+                    let cacheable = T::deserialize(dbs);
+                    let r = cacheable.make_ref();
+                    self.cache.lock().unwrap().insert(Key::PBA(pba), cacheable);
+                    r.downcast::<T>().unwrap()
                 })
             )
         })
     }
 
     /// Read a record and return ownership of it.
-    pub fn pop(&'a self, drp: &DRP)
-        -> Box<Future<Item=DivBufShared, Error=Error> + 'a> {
+    pub fn pop<T: Cacheable>(&'a self, drp: &DRP)
+        -> Box<Future<Item=Box<T>, Error=Error> + 'a> {
 
         let lbas = drp.asize();
         let pba = drp.pba;
         self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|cacheable| {
-            let dbs = cacheable.downcast::<DivBufShared>().ok().unwrap();
             self.pool.free(pba, lbas);
-            let r : Box<Future<Item=DivBufShared, Error=Error>> =
-            Box::new(future::ok::<DivBufShared, Error>(*dbs));
+            let t = cacheable.downcast::<T>().unwrap();
+            let r : Box<Future<Item=Box<T>, Error=Error>> =
+            Box::new(future::ok::<Box<T>, Error>(t));
             r
         }).unwrap_or_else(|| {
             Box::new(
                 self.read(*drp).map(move |dbs| {
                     self.pool.free(pba, lbas);
-                    dbs
+                    T::deserialize(dbs).downcast::<T>().unwrap()
                 })
             )
         })
     }
 
-    /// Write a record to disk and cache.  Return its Direct Record Pointer
-    pub fn put(&'a self, uncompressed: DivBufShared, compression: Compression)
+    /// Write a record to disk and cache.  Return its Direct Record Pointer.
+    pub fn put<T: Cacheable>(&'a self, cacheable: Box<T>,
+                             compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error> + 'a>) {
         // Outline:
-        // 1) Compress
-        // 2) Checksum
-        // 3) Pad
-        // 4) Write
-        // 5) Cache
+        // 1) Serialize
+        // 2) Compress
+        // 3) Checksum
+        // 4) Pad
+        // 5) Write
+        // 6) Cache
 
-        let db = uncompressed.try().unwrap();
-        assert!(db.len() < u32::max_value() as usize,
+        // Serialize
+        let (serialized, keeper) = cacheable.serialize();
+        assert!(serialized.len() < u32::max_value() as usize,
             "Record exceeds maximum allowable length");
-        let lsize = db.len() as u32;
+        let lsize = serialized.len() as u32;
 
         // Compress
-        let compressed_dbs = compression.compress(&db);
+        let compressed_dbs = compression.compress(&serialized);
         let compressed_db = match &compressed_dbs {
             &Some(ref dbs) => {
                 dbs.try().unwrap()
             },
             &None => {
-                db
+                serialized
             }
         };
         let csize = compressed_db.len() as u32;
@@ -251,14 +256,15 @@ impl<'a> DDML {
         let (pba, wfut) = self.pool.write(compressed_db).unwrap();
         let fut = Box::new(wfut.map(move |r| {
             if compression == Compression::None {
-                uncompressed.try_mut().unwrap()
-                    .try_truncate(csize as usize).unwrap();
+                // Truncate uncompressed DivBufShareds.  We padded them in the
+                // previous step
+                cacheable.truncate(csize as usize);
             } else {
                 let _ = compressed_dbs;
             }
+            let _ = keeper;
             //Cache
-            self.cache.lock().unwrap().insert(Key::PBA(pba),
-                                              Box::new(uncompressed));
+            self.cache.lock().unwrap().insert(Key::PBA(pba), cacheable);
             r
         }));
         let drp = DRP { pba, compression, lsize, csize, checksum };
@@ -387,7 +393,7 @@ mod t {
         s.expect(seq);
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
-        ddml.get(&drp);
+        ddml.get::<DivBuf>(&drp);
     }
 
     #[test]
@@ -416,7 +422,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
         current_thread::block_on_all(future::lazy(|| {
-            ddml.get(&drp)
+            ddml.get::<DivBuf>(&drp)
         })).unwrap();
     }
 
@@ -440,7 +446,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
         let err = current_thread::block_on_all(future::lazy(|| {
-            ddml.get(&drp)
+            ddml.get::<DivBuf>(&drp)
         })).unwrap_err();
         assert_eq!(err, Error::Sys(errno::Errno::EIO));
     }
@@ -462,7 +468,7 @@ mod t {
         s.expect(seq);
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
-        ddml.pop(&drp);
+        ddml.pop::<DivBufShared>(&drp);
     }
 
     #[test]
@@ -485,7 +491,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
         current_thread::block_on_all(future::lazy(|| {
-            ddml.pop(&drp)
+            ddml.pop::<DivBufShared>(&drp)
         })).unwrap();
     }
 
@@ -508,7 +514,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
         let err = current_thread::block_on_all(future::lazy(|| {
-            ddml.pop(&drp)
+            ddml.pop::<DivBufShared>(&drp)
         })).unwrap_err();
         assert_eq!(err, Error::Sys(errno::Errno::EIO));
     }
@@ -526,7 +532,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put(dbs, Compression::None);
+        let (drp, fut) = ddml.put(Box::new(dbs), Compression::None);
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);

@@ -47,9 +47,12 @@ mod atomic_usize_serializer {
 pub trait DDMLTrait {
     fn delete(&self, drp: &DRP);
     fn evict(&self, drp: &DRP);
-    fn get(&self, drp: &DRP) -> Box<Future<Item=DivBuf, Error=Error>>;
-    fn pop(&self, drp: &DRP) -> Box<Future<Item=DivBufShared, Error=Error>>;
-    fn put(&self, uncompressed: DivBufShared, compression: Compression)
+    // XXX In test mode, get, pop, and put must be non-parameterized because
+    // Mockers doesn't yet support parameterized methods
+    // https://github.com/kriomant/mockers/issues/27
+    fn get(&self, drp: &DRP) -> Box<Future<Item=Box<DivBuf>, Error=Error>>;
+    fn pop(&self, drp: &DRP) -> Box<Future<Item=Box<DivBufShared>, Error=Error>>;
+    fn put(&self, uncompressed: Box<Cacheable>, compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error>>);
     fn sync_all(&self) -> Box<Future<Item=(), Error=Error>>;
 }
@@ -239,7 +242,7 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
             TreePtr::DRP(ref drp) => {
                 Box::new(
                     ddml.get(drp)
-                        .and_then(|db| {
+                        .and_then(|db: Box<DivBuf>| {
                             let node_data: NodeData<K, V> =
                                 bincode::deserialize(&db[..]).unwrap();
                             // TODO: cache the deserialized NodeData
@@ -272,7 +275,7 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
             TreePtr::DRP(ref drp) => {
                 Box::new(
                     ddml.get(drp)
-                        .and_then(|db| {
+                        .and_then(|db: Box<DivBuf>| {
                             let node_data: NodeData<K, V> =
                                 bincode::deserialize(&db[..]).unwrap();
                             // TODO: cache the deserialized NodeData
@@ -776,7 +779,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
         let buf = DivBufShared::from(bincode::serialize(&node).unwrap());
-        let (drp, fut) = self.ddml.put(buf, Compression::None);
+        let (drp, fut) = self.ddml.put(Box::new(buf), Compression::None);
         Box::new(fut.map(move |_| drp))
     }
 
@@ -818,7 +821,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             .and_then(move |_| {
                 let n: &NodeData<K, V> = &*rnode2.borrow();
                 let buf = DivBufShared::from(bincode::serialize(n).unwrap());
-                let (drp, fut) = self.ddml.put(buf, Compression::None);
+                let (drp, fut) = self.ddml.put(Box::new(buf), Compression::None);
                 fut.map(move |_| drp)
             })
         )
@@ -850,9 +853,9 @@ mock!{
     trait DDMLTrait {
         fn delete(&self, drp: &DRP);
         fn evict(&self, drp: &DRP);
-        fn get(&self, drp: &DRP) -> Box<Future<Item=DivBuf, Error=Error>>;
-        fn pop(&self, drp: &DRP) -> Box<Future<Item=DivBufShared, Error=Error>>;
-        fn put(&self, uncompressed: DivBufShared, compression: Compression)
+        fn get(&self, drp: &DRP) -> Box<Future<Item=Box<DivBuf>, Error=Error>>;
+        fn pop(&self, drp: &DRP) -> Box<Future<Item=Box<DivBufShared>, Error=Error>>;
+        fn put(&self, uncompressed: Box<Cacheable>, compression: Compression)
             -> (DRP, Box<Future<Item=(), Error=Error>>);
         fn sync_all(&self) -> Box<Future<Item=(), Error=Error>>;
     }
@@ -2470,8 +2473,9 @@ fn write_int() {
            0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
     ];
     s.expect(ddml.put_call(
-            check!(move |arg: &DivBufShared| {
-                &arg.try().unwrap()[..] == &serialized[..]
+            check!(move |arg: &Box<Cacheable>| {
+                let dbs = arg.downcast_ref::<DivBufShared>().unwrap();
+                &dbs.try().unwrap()[..] == &serialized[..]
             }),
             ANY)
         .and_return((drp, Box::new(future::ok::<(), Error>(())))));
@@ -2527,8 +2531,9 @@ fn write_leaf() {
         99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
     ];
     s.expect(ddml.put_call(
-            check!(move |arg: &DivBufShared| {
-                &arg.try().unwrap()[..] == &serialized[..]
+            check!(move |arg: &Box<Cacheable>| {
+                let dbs = arg.downcast_ref::<DivBufShared>().unwrap();
+                &dbs.try().unwrap()[..] == &serialized[..]
             }),
             ANY)
         .and_return((drp, Box::new(future::ok::<(), Error>(())))));
