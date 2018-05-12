@@ -1,9 +1,11 @@
 // vim: tw=80
 mod ffi;
 
-use std::io::{Error, ErrorKind};
-use std::os::raw::*;
-use std::result::Result;
+use std::{
+    io::{Error, ErrorKind},
+    os::raw::*,
+    result::Result
+};
 
 pub fn version() -> u32 {
     ffi::ISAL_MAJOR_VERSION * 0x10000 +

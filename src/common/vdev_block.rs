@@ -1,28 +1,26 @@
 // vim: tw=80
 
-use futures::{Async, Future, Poll};
-use futures::sync::oneshot;
+use futures::{Async, Future, Poll, sync::oneshot};
 use nix;
-use std::cell::RefCell;
-use std::cmp::{Ord, Ordering, PartialOrd};
-use std::collections::BinaryHeap;
-use std::collections::VecDeque;
+use std::{
+    cell::RefCell,
+    cmp::{Ord, Ordering, PartialOrd},
+    collections::BinaryHeap,
+    collections::VecDeque,
+    mem,
+    rc::{Rc, Weak},
+    ops,
+    thread,
+    time,
+};
 #[cfg(not(test))]
-use std::io;
-use std::{mem, ops, thread, time};
-#[cfg(not(test))]
-use std::path::Path;
-use std::rc::{Rc, Weak};
-use tokio::executor::current_thread;
-use tokio::reactor::Handle;
+use std::{io, path::Path};
+use tokio::{executor::current_thread, reactor::Handle};
 use uuid::Uuid;
 
-use common::*;
-use common::label::*;
-use common::vdev::*;
+use common::{*, label::*, vdev::*, vdev_leaf::*};
 #[cfg(not(test))]
 use sys::vdev_file::*;
-use common::vdev_leaf::*;
 
 #[cfg(test)]
 pub type VdevLeaf = Box<VdevLeafApi>;

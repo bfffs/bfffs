@@ -10,16 +10,12 @@ macro_rules! t {
 test_suite! {
     name ddml;
 
-    use arkfs::common::ddml::*;
-    use arkfs::common::pool::*;
+    use arkfs::common::{ddml::*, pool::*};
     use divbuf::{DivBuf, DivBufShared};
     use futures::{Future, future};
-    use std::fs;
-    use std::io::Read;
-    use std::path::Path;
+    use std::{fs, io::Read, path::Path};
     use tempdir::TempDir;
-    use tokio::executor::current_thread;
-    use tokio::reactor::Handle;
+    use tokio::{executor::current_thread, reactor::Handle};
 
     fixture!( objects() -> DDML {
         setup(&mut self) {

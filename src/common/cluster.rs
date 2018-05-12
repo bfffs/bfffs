@@ -1,19 +1,15 @@
 // vim: tw=80
 
-use common::*;
-use common::label::*;
-use common::vdev::{Vdev, VdevFut};
-#[cfg(not(test))]
-use common::vdev_raid::*;
+use common::{*, label::*, vdev::{Vdev, VdevFut}};
+#[cfg(not(test))] use common::vdev_raid::*;
 use futures::{Future, future};
 use nix::{Error, errno};
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
-use std::collections::btree_map::Keys;
-#[cfg(not(test))]
-use std::path::Path;
-#[cfg(not(test))]
-use tokio::reactor::Handle;
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet, btree_map::Keys},
+};
+#[cfg(not(test))] use std::path::Path;
+#[cfg(not(test))] use tokio::reactor::Handle;
 use uuid::Uuid;
 
 pub type ClusterFut<'a> = Future<Item = (), Error = Error> + 'a;

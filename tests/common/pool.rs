@@ -12,11 +12,9 @@ test_suite! {
 
     use arkfs::common::pool::*;
     use futures::future;
-    use std::fs;
-    use std::io::{Read, Seek, SeekFrom};
+    use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;
-    use tokio::executor::current_thread;
-    use tokio::reactor::Handle;
+    use tokio::{executor::current_thread, reactor::Handle};
 
     const GOLDEN_POOL_LABEL: [u8; 81] = [
         // Past the VdevRaid::Label, we have a VdevRaid::Label

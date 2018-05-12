@@ -1,8 +1,7 @@
 // vim: tw=80
 
 use divbuf::{DivBuf, DivBufMut, DivBufShared};
-use std::hash::Hasher;
-use std::ops::{Add, Div, Sub};
+use std::{hash::Hasher, ops::{Add, Div, Sub}};
 
 pub mod tree;
 pub mod cache;

@@ -2,9 +2,7 @@
 use common::*;
 use downcast::Any;
 use metrohash::{MetroBuildHasher, MetroHash64};
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::BuildHasherDefault;
+use std::{collections::HashMap, fmt::Debug, hash::BuildHasherDefault};
 
 
 /// Key types used by `Cache`

@@ -1,15 +1,10 @@
 // vim: tw=80
 
-use common::*;
-use common::label::*;
-use common::vdev::*;
-use common::vdev_leaf::*;
+use common::{*, label::*, vdev::*, vdev_leaf::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use nix;
-use std::borrow::{Borrow, BorrowMut};
-use std::io;
-use std::path::Path;
+use std::{ borrow::{Borrow, BorrowMut}, io, path::Path };
 use tokio::reactor::Handle;
 use tokio_file::File;
 use uuid::Uuid;

@@ -7,9 +7,7 @@ use metrohash::MetroHash64;
 use nix::{Error, errno};
 use serde::{Deserialize, Serialize};
 use serde_cbor;
-use std::hash::{Hash, Hasher};
-use std::io;
-use std::io::{Seek, SeekFrom};
+use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
 
 /*
  * On-disk Label Format:

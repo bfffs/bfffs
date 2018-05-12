@@ -9,14 +9,12 @@ test_suite! {
     // These tests use a real VdevLeaf object
     name vdev_block;
 
-    use arkfs::common::vdev::*;
-    use arkfs::common::vdev_block::*;
+    use arkfs::common::{vdev::*, vdev_block::*};
     use divbuf::DivBufShared;
     use futures::future;
     use std::fs;
     use tempdir::TempDir;
-    use tokio::executor::current_thread;
-    use tokio::reactor::Handle;
+    use tokio::{executor::current_thread, reactor::Handle};
 
     fixture!( vdev() -> (VdevBlock, TempDir) {
         setup(&mut self) {

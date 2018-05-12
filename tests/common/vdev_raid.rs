@@ -11,16 +11,13 @@ test_suite! {
     // These tests use real VdevBlock and VdevLeaf objects
     name vdev_raid;
 
-    use arkfs::common::*;
-    use arkfs::common::vdev_raid::*;
-    use arkfs::common::vdev::Vdev;
+    use arkfs::{common::*, common::vdev_raid::*, common::vdev::Vdev};
     use divbuf::DivBufShared;
     use futures::{Future, future};
     use rand::{Rng, thread_rng};
     use std::fs;
     use tempdir::TempDir;
-    use tokio::executor::current_thread;
-    use tokio::reactor::Handle;
+    use tokio::{executor::current_thread, reactor::Handle};
 
     fixture!( raid(n: i16, k: i16, f: i16, chunksize: LbaT) ->
               (VdevRaid, TempDir, Vec<String>) {
@@ -485,15 +482,11 @@ test_suite! {
 test_suite! {
     name persistence;
 
-    use arkfs::common::label::*;
-    use arkfs::common::vdev_raid::*;
-    use arkfs::common::vdev::Vdev;
+    use arkfs::common::{label::*, vdev_raid::*, vdev::Vdev};
     use futures::future;
-    use std::fs;
-    use std::io::{Read, Seek, SeekFrom};
+    use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;
-    use tokio::executor::current_thread;
-    use tokio::reactor::Handle;
+    use tokio::{executor::current_thread, reactor::Handle};
 
     const GOLDEN_VDEV_RAID_LABEL: [u8; 183] = [
         // Past the VdevFile::Label, we have a VdevRaid::Label

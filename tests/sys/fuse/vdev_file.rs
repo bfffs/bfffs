@@ -8,18 +8,23 @@ macro_rules! t {
 test_suite! {
     name basic;
 
-    use arkfs::common::vdev::*;
-    use arkfs::common::vdev_leaf::*;
-    use arkfs::sys::vdev_file::*;
-    use futures::{future, Future};
-    use std::fs;
-    use std::io::{Read, Seek, SeekFrom, Write};
-    use std::ops::Deref;
-    use std::path::PathBuf;
+    use arkfs::{
+        common::{
+            vdev::*,
+            vdev_leaf::*
+        },
+        sys::vdev_file::*
+    };
     use divbuf::DivBufShared;
+    use futures::{future, Future};
+    use std::{
+        fs,
+        io::{Read, Seek, SeekFrom, Write},
+        ops::Deref,
+        path::PathBuf,
+    };
     use tempdir::TempDir;
-    use tokio::executor::current_thread;
-    use tokio::reactor::Handle;
+    use tokio::{executor::current_thread, reactor::Handle};
 
     fixture!( vdev() -> (VdevFile, PathBuf, TempDir) {
         setup(&mut self) {
@@ -169,18 +174,23 @@ test_suite! {
 test_suite! {
     name persistence;
 
-    use arkfs::common::vdev::*;
-    use arkfs::common::label::*;
-    use arkfs::sys::vdev_file::*;
-    use arkfs::common::vdev_leaf::*;
+    use arkfs::{
+        common::{
+            label::*,
+            vdev::*,
+            vdev_leaf::*
+        },
+        sys::vdev_file::*
+    };
     use futures::{future, Future};
-    use std::fs;
-    use std::io::{Read, Write};
-    use std::path::PathBuf;
+    use std::{
+        fs,
+        io::{Read, Write},
+        path::PathBuf
+    };
     use std;
     use tempdir::TempDir;
-    use tokio::executor::current_thread;
-    use tokio::reactor::Handle;
+    use tokio::{executor::current_thread, reactor::Handle};
     use uuid::Uuid;
 
     const GOLDEN: [u8; 82] = [

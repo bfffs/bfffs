@@ -1,27 +1,18 @@
 // vim: tw=80
 
-use common::*;
-use common::label::*;
-use common::vdev::*;
-#[cfg(not(test))]
-use common::vdev_block::*;
-use common::raid::*;
-use common::declust::*;
+use common::{*, declust::*, label::*, vdev::*, raid::*};
+#[cfg(not(test))] use common::vdev_block::*;
 #[cfg(any(not(test), feature = "mocks"))]
-use common::null_raid::*;
-#[cfg(any(not(test), feature = "mocks"))]
-use common::prime_s::*;
+use common::{null_raid::*, prime_s::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
 #[cfg(not(test))]
 use itertools::Itertools;
 use itertools::multizip;
 use nix::Error;
-use std::cell::RefCell;
-use std::{cmp, mem, ptr};
+use std::{cell::RefCell, cmp, mem, ptr};
 use std::collections::BTreeMap;
-#[cfg(not(test))]
-use std::path::Path;
+#[cfg(not(test))] use std::path::Path;
 use tokio::reactor::Handle;
 use uuid::Uuid;
 

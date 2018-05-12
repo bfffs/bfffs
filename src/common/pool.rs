@@ -1,20 +1,13 @@
 // vim: tw=80
 
-use common::*;
-#[cfg(not(test))]
-use common::cluster;
-use common::label::*;
+use common::{*, label::*};
+#[cfg(not(test))] use common::cluster;
 use futures::{Future, future};
 use nix::Error;
-#[cfg(not(test))]
-use nix::errno;
+#[cfg(not(test))] use nix::errno;
 use std::cell::RefCell;
-#[cfg(not(test))]
-use std::collections::BTreeMap;
-#[cfg(not(test))]
-use std::path::Path;
-#[cfg(not(test))]
-use tokio::reactor::Handle;
+#[cfg(not(test))] use std::{collections::BTreeMap, path::Path};
+#[cfg(not(test))] use tokio::reactor::Handle;
 use uuid::Uuid;
 
 pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;

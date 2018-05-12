@@ -7,22 +7,21 @@
 use bincode;
 use common::*;
 use common::ddml::*;
-use futures::future::{self, IntoFuture};
-use futures::Future;
+use futures::{Future, future, future::IntoFuture};
 use futures_locks::*;
 use nix::{Error, errno};
-use serde::{Serialize, Serializer};
-use serde::de::{Deserializer, DeserializeOwned};
+use serde::{Serialize, Serializer, de::{Deserializer, DeserializeOwned}};
 #[cfg(test)] use serde_yaml;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-#[cfg(test)] use std::fmt;
-use std::fmt::Debug;
-#[cfg(test)] use std::fmt::{Display, Formatter};
-use std::mem;
-use std::rc::Rc;
-use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)] use std::fmt::{self, Display, Formatter};
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    fmt::Debug,
+    mem,
+    rc::Rc,
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicUsize, Ordering}
+};
 
 mod atomic_usize_serializer {
     use super::*;

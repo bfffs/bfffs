@@ -1,7 +1,5 @@
 // vim: tw=80
-use common::*;
-use common::label::*;
-use common::vdev::*;
+use common::{*, label::*, vdev::*};
 
 /// The public interface for all leaf Vdevs.  This is a low level thing.  Leaf
 /// vdevs are typically files or disks, and this trait is their minimum common

@@ -6,16 +6,12 @@
 /// duplicated, either through snapshots, clones, or deduplication.
 
 use blosc;
-use common::*;
-use common::cache::*;
-use common::pool::*;
+use common::{*, cache::*, pool::*};
 use futures::{Future, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
-use std::hash::Hasher;
-use std::sync::Mutex;
-#[cfg(test)]
-use uuid::Uuid;
+use std::{hash::Hasher, sync::Mutex};
+#[cfg(test)] use uuid::Uuid;
 
 pub use common::cache::{Cacheable, CacheRef};
 

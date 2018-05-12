@@ -3,8 +3,7 @@
 extern crate arkfs;
 extern crate test;
 
-use arkfs::common::declust::*;
-use arkfs::common::prime_s::*;
+use arkfs::common::{declust::*, prime_s::*};
 use test::Bencher;
 
 /// Benchmark the speed of `PrimeS::id2loc` using a largeish layout
