@@ -122,12 +122,12 @@ impl VdevLeafApi for VdevFile {
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecMutContainer(buf));
-        let off = lba as i64 * (BYTES_PER_LBA as i64);
+        let off = lba * (BYTES_PER_LBA as u64);
         Box::new(self.file.read_at(container, off).unwrap().map(|_| ()))
     }
 
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
-        let off = lba as i64 * (BYTES_PER_LBA as i64);
+        let off = lba * (BYTES_PER_LBA as u64);
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecMutContainer(iovec)) as Box<BorrowMut<[u8]>>
         }).collect();
@@ -160,7 +160,7 @@ impl VdevLeafApi for VdevFile {
     }
 
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
-        let off = lba as i64 * (BYTES_PER_LBA as i64);
+        let off = lba * (BYTES_PER_LBA as u64);
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
         }).collect();
@@ -225,7 +225,7 @@ impl VdevFile {
 
     fn write_at_unchecked(&self, buf: Box<Borrow<[u8]>>,
                           lba: LbaT) -> Box<VdevFut> {
-        let off = lba as i64 * (BYTES_PER_LBA as i64);
+        let off = lba * (BYTES_PER_LBA as u64);
         Box::new(self.file.write_at(buf, off).unwrap().map(|_| ()))
     }
 }

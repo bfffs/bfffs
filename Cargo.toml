@@ -32,8 +32,8 @@ nix = { git = "https://github.com/nix-rust/nix", rev = "31e901b" }
 serde = "1.0"
 serde_cbor = "0.8"
 serde_derive = "1.0"
-tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "4e2ed55" }
-tokio = "0.1.4"
+tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "db0e43f" }
+tokio = "0.1.5"
 uuid = { version = "0.6", features = ["serde", "v4"]}
 
 [dev-dependencies]
