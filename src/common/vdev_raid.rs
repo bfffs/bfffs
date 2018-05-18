@@ -1078,6 +1078,7 @@ impl Vdev for VdevRaid {
 }
 
 
+// LCOV_EXCL_START
 #[test]
 fn test_min_max() {
     let empty: Vec<u8> = Vec::with_capacity(0);
@@ -1733,3 +1734,4 @@ fn open_zone_zero_fill_wasted_stripes() {
         vdev_raid.open_zone(1);
 }
 }
+// LCOV_EXCL_START

@@ -545,6 +545,7 @@ impl Iterator for PrimeSIterData {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,3 +646,4 @@ mod tests {
         }
     }
 }
+// LCOV_EXCL_STOP

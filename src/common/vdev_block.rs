@@ -687,6 +687,7 @@ impl Vdev for VdevBlock {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(feature = "mocks")]
 #[cfg(test)]
 test_suite! {
@@ -1247,3 +1248,4 @@ test_suite! {
         })).unwrap();
     }
 }
+// LCOV_EXCL_STOP

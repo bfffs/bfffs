@@ -307,6 +307,7 @@ impl<'a> Pool {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
 
@@ -415,3 +416,4 @@ mod stats {
     }
 }
 }
+// LCOV_EXCL_STOP

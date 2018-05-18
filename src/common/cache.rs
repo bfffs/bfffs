@@ -229,6 +229,7 @@ impl Cache {
 }
 
 /// Get the least recently used entry
+// LCOV_EXCL_START
 #[test]
 fn test_get_lru() {
     let mut cache = Cache::with_capacity(100);
@@ -535,3 +536,4 @@ fn test_remove_mru() {
         assert!(v.mru.is_none());
     }
 }
+// LCOV_EXCL_STOP

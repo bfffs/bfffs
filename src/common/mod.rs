@@ -144,6 +144,7 @@ pub fn checksum_sglist<T, H>(sglist: &[T], hasher: &mut H)
     }
 }
 
+// LCOV_EXCL_START
 #[test]
 fn test_div_roundup() {
     assert_eq!(div_roundup(5u8, 2u8), 3u8);
@@ -184,3 +185,4 @@ fn test_checksum_sglist_metrohash64() {
 
     test_checksum_sglist_helper!(MetroHash64);
 }
+// LCOV_EXCL_STOP

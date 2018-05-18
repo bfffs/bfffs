@@ -540,6 +540,7 @@ impl<'a> Cluster {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
 
@@ -1146,3 +1147,4 @@ mod free_space_map {
 
 }
 }
+// LCOV_EXCL_STOP

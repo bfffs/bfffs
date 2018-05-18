@@ -73,6 +73,7 @@ impl SubAssign<i64> for Dva {
 }
 
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,3 +105,4 @@ mod tests {
         let _ = x - (11 * BYTES_PER_FRAGMENT) as i64;
     }
 }
+// LCOV_EXCL_STOP

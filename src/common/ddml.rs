@@ -311,6 +311,7 @@ impl<'a> DDML {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 #[cfg(feature = "mocks")]
 mod t {
@@ -535,3 +536,4 @@ mod t {
         current_thread::block_on_all(fut).unwrap();
     }
 }
+// LCOV_EXCL_STOP

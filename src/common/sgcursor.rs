@@ -67,6 +67,7 @@ impl<'a> From<&'a SGList> for SGCursor<'a> {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,3 +127,4 @@ mod tests {
         }
     }
 }
+// LCOV_EXCL_STOP

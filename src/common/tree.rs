@@ -836,6 +836,7 @@ impl<K: Key, V: Value> Display for Tree<K, V> {
 
 
 
+// LCOV_EXCL_START
 #[cfg(test)]
 #[cfg(feature = "mocks")]
 mod t {
@@ -2560,3 +2561,4 @@ root:
 }
 
 }
+// LCOV_EXCL_STOP
