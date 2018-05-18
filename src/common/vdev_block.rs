@@ -463,7 +463,7 @@ impl VdevBlock {
         let block_op = BlockOp::erase_zone(start, end, sender);
 
         // Sanity check LBAs
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         {
             let inner = self.inner.borrow();
             let limits = inner.leaf.zone_limits(
@@ -486,12 +486,13 @@ impl VdevBlock {
         let block_op = BlockOp::finish_zone(start, end, sender);
 
         // Sanity check LBAs
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         {
             let inner = self.inner.borrow();
             let limits = inner.leaf.zone_limits(
                 inner.leaf.lba2zone(start).unwrap());
-            // The LBA must be the end of a zone
+            // The LBA must be the end of a zone to ensure that the operation
+            // will be sorted correctly
             debug_assert_eq!(start, limits.0);
             debug_assert_eq!(end, limits.1 - 1);
         }
@@ -517,7 +518,7 @@ impl VdevBlock {
         let block_op = BlockOp::open_zone(start, sender);
 
         // Sanity check LBA
-        #[cfg(test)]
+        #[cfg(debug_assertions)]
         {
             let inner = self.inner.borrow();
             let limits = inner.leaf.zone_limits(
