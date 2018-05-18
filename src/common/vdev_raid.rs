@@ -323,7 +323,7 @@ impl VdevRaid {
         VdevRaid { chunksize, codec, locator, blockdevs, layout_algorithm,
                    optimum_queue_depth,
                    stripe_buffers: RefCell::new(BTreeMap::new()),
-                   uuid, handle }
+                   uuid, handle }   // LCOV_EXCL_LINE   kcov false negative
     }
 
     /// Open all existing `VdevRaid`s found in `paths`.
@@ -414,7 +414,7 @@ impl VdevRaid {
                 let lba = sb.lba();
                 let sgl = sb.pop();
                 futs.push(self.writev_at_one(&sgl, lba));
-            }
+            }   // LCOV_EXCL_LINE   kcov false negative
             let (start, end) = self.blockdevs[0].zone_limits(zone);
             futs.extend(
                 Box::new(
@@ -613,12 +613,12 @@ impl VdevRaid {
                 let col = buf.split_to(chunk0size);
                 let disk_lba = loc.offset * self.chunksize + lbas_into_chunk;
                 (col, disk_lba)
-            } else {
+            } else {    // LCOV_EXCL_LINE   kcov false negative
                 let chunklen = cmp::min(buf.len(), col_len);
                 let col = buf.split_to(chunklen);
                 let disk_lba = loc.offset * self.chunksize;
                 (col, disk_lba)
-            };
+            };  // LCOV_EXCL_LINE   kcov false negative
             let disk = loc.disk as usize;
             if start_lbas[disk as usize] == SENTINEL {
                 // First chunk assigned to this disk
@@ -638,7 +638,7 @@ impl VdevRaid {
 
         futs.extend(multizip((self.blockdevs.iter(),
                               sglists.into_iter(),
-                              start_lbas.into_iter()))
+                              start_lbas.into_iter()))  // LCOV_EXCL_LINE   kcov false neg
             .filter(|&(_, _, lba)| lba != SENTINEL)
             .map(|(blockdev, sglist, lba)| blockdev.readv_at(sglist, lba)));
         let fut = future::join_all(futs);
@@ -811,9 +811,10 @@ impl VdevRaid {
             sglists[loc.disk as usize].push(col);
         }
 
-        let futs : Vec<Box<VdevFut>> = multizip((self.blockdevs.iter(),
-                                                      sglists.into_iter(),
-                                                      start_lbas.into_iter()))
+        let bi = self.blockdevs.iter();
+        let sgi = sglists.into_iter();
+        let li = start_lbas.into_iter();
+        let futs : Vec<Box<VdevFut>> = multizip((bi, sgi, li))
             .filter(|&(_, _, lba)| lba != SENTINEL)
             .map(|(blockdev, sglist, lba)| blockdev.writev_at(sglist, lba))
             .collect();
