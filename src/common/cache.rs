@@ -148,11 +148,7 @@ impl Cache {
                 v.lru = mru;
                 v.buf.make_ref()
             }).map(|cacheref| {
-                if v_mru.is_some() {
-                    self.store.get_mut(&v_mru.unwrap()).unwrap().lru = v_lru;
-                } else {
-                    debug_assert_eq!(self.mru, Some(*key));
-                }
+                self.store.get_mut(&v_mru.unwrap()).unwrap().lru = v_lru;
                 if v_lru.is_some() {
                     self.store.get_mut(&v_lru.unwrap()).unwrap().mru = v_mru;
                 } else {
