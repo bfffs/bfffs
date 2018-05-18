@@ -9,6 +9,7 @@ use tokio::reactor::Handle;
 use tokio_file::File;
 use uuid::Uuid;
 
+// LCOV_EXCL_START
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
     /// Vdev UUID, fixed at format time
@@ -18,12 +19,14 @@ struct Label {
     /// Number of LBAs that were present at format time
     lbas:           LbaT
 }
+// LCOV_EXCL_STOP
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`
 ///
 /// This is used by the FUSE implementation of ArkFS.  It works with both
 /// regular files and device files
 ///
+// LCOV_EXCL_START
 #[derive(Debug)]
 pub struct VdevFile {
     file:   File,
@@ -31,6 +34,7 @@ pub struct VdevFile {
     size:   LbaT,
     uuid:   Uuid
 }
+// LCOV_EXCL_STOP
 
 /// Tokio-File requires boxed `DivBufs`, but the upper layers of ArkFS don't.
 /// Take care of the mismatch here, by wrapping `DivBuf` in a new struct

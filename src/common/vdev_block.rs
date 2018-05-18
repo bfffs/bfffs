@@ -27,6 +27,7 @@ pub type VdevLeaf = Box<VdevLeafApi>;
 #[cfg(not(test))]
 pub type VdevLeaf = VdevFile;
 
+// LCOV_EXCL_START
 #[derive(Debug)]
 enum Cmd {
     OpenZone,
@@ -41,6 +42,7 @@ enum Cmd {
     WriteLabel(LabelWriter),
     SyncAll,
 }
+// LCOV_EXCL_STOP
 
 impl Cmd {
     // Oh, this would be so much easier if only `std::mem::Discriminant`

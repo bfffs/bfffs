@@ -6,9 +6,11 @@
 
 use common::declust::*;
 
+// LCOV_EXCL_START
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NullRaid {
 }
+// LCOV_EXCL_STOP
 
 impl NullRaid {
     /// Create a new NullRaid Locator

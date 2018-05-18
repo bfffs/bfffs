@@ -46,6 +46,7 @@ struct Zone {
     pub total_blocks: u32
 }
 
+// LCOV_EXCL_START
 #[derive(Clone, Copy, Debug)]
 struct OpenZone {
     /// First LBA of the `Zone`.  It may never change while the `Zone` is open
@@ -54,6 +55,7 @@ struct OpenZone {
     /// Number of LBAs that have been allocated within this `Zone` so far.
     pub allocated_blocks: u32,
 }
+// LCOV_EXCL_STOP
 
 impl OpenZone {
     /// Returns the next LBA within this `Zone` that should be allocated
@@ -324,6 +326,7 @@ impl FreeSpaceMap {
 }
 
 /// Persists information necessary to recreate the `FreeSpaceMap`.
+// LCOV_EXCL_START
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
     /// An array of the number of blocks that have been allocated in each Zone.
@@ -334,6 +337,7 @@ struct Label {
     /// An array of the number of blocks that have been freed in each Zone.
     freed_blocks: Vec<u32>,
 }
+// LCOV_EXCL_STOP
 
 /// A `Cluster` is ArkFS's equivalent of ZFS's top-level Vdev.  It is the
 /// highest level `Vdev` that has its own LBA space.

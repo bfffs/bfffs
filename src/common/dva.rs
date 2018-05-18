@@ -4,6 +4,7 @@ use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 /// Data Virtual Address for ArkFS.  Each DVA uniquely identifies the physical
 /// location of a record.
+// LCOV_EXCL_START
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Dva {
     /// Cluster id.  Analogous to a ZFS top-level vdev
@@ -15,6 +16,7 @@ pub struct Dva {
 	///Like an LBA, but denominated in fragments instead of blocks
 	lfa : u64,
 }
+// LCOV_EXCL_STOP
 
 impl<T: Into<i64>> Add<T> for Dva {
     type Output = Dva;

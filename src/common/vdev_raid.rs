@@ -145,6 +145,7 @@ impl StripeBuffer {
     }
 }
 
+// LCOV_EXCL_START
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
     /// Vdev UUID, fixed at format time
@@ -155,6 +156,7 @@ struct Label {
     layout_algorithm:   LayoutAlgorithm,
     children:           Vec<Uuid>
 }
+// LCOV_EXCL_STOP
 
 /// `VdevRaid`: Virtual Device for the RAID transform
 ///

@@ -38,6 +38,7 @@ pub type ClusterLike = cluster::Cluster;
 #[cfg(not(test))]
 pub struct Cluster(cluster::Cluster);
 
+// LCOV_EXCL_START
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
     /// Human-readable name
@@ -49,6 +50,7 @@ struct Label {
     /// `UUID`s of all component `VdevRaid`s
     children:           Vec<Uuid>
 }
+// LCOV_EXCL_STOP
 
 struct Stats {
     /// The queue depth of each `Cluster`, including both commands that have
