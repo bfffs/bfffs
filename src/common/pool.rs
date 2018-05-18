@@ -338,6 +338,28 @@ mod pool {
     }
 
     #[test]
+    fn sync_all() {
+        let s = Scenario::new();
+        let cluster = || {
+            let c = s.create_mock::<MockCluster>();
+            s.expect(c.optimum_queue_depth_call()
+                     .and_return_clone(10)
+                     .times(..));
+            s.expect(c.size_call().and_return_clone(32768000).times(..));
+            s.expect(c.sync_all_call()
+                .and_return(Box::new(future::ok::<(), Error>(())))
+            );
+            c
+        };
+
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
+                             vec![Box::new(cluster()),
+                                  Box::new(cluster())]);
+
+        assert!(current_thread::block_on_all(pool.sync_all()).is_ok());
+    }
+
+    #[test]
     fn write() {
         let s = Scenario::new();
         let cluster = s.create_mock::<MockCluster>();
