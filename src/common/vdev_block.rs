@@ -264,7 +264,10 @@ impl Inner {
         // again.
     }
 
-    /// Immediately issue one I/O future
+    /// Immediately issue one I/O future.
+    ///
+    /// Returns a delayed operation, if there were insufficient resources to
+    /// immediately issue the future.
     fn issue_fut(&mut self, sender: oneshot::Sender<()>, mut fut: Box<VdevFut>)
         -> Option<(oneshot::Sender<()>, Box<VdevFut>)> {
 
@@ -773,24 +776,32 @@ test_suite! {
     test issueing_eagain(mocks) {
         let scenario = mocks.val.0;
         let s_handle = scenario.handle();
+        let s_handle2 = scenario.handle();
         let leaf = mocks.val.1;
         let mut seq0 = Sequence::new();
 
-        let (sender, receiver) = oneshot::channel::<()>();
-        let e = nix::Error::from(nix::errno::Errno::EPIPE);
-        let fut0 = receiver.map_err(move |_| e);
-        // The first operation succeeds.  When it does, that will cause the
-        // second to be reissued
-        seq0.expect(leaf.read_at_call(ANY, 1).and_return(Box::new(fut0)));
-        seq0.expect(leaf.read_at_call(ANY, 2)
+        // The first operation succeeds asynchronously.  When it does, that will
+        // cause the second to be reissued.
+        seq0.expect(leaf.read_at_call(ANY, 1)
             .and_call( move |_, _| {
                 let mut seq1 = Sequence::new();
                 let fut = s_handle.create_mock::<MockVdevFut<(), nix::Error>>();
                 seq1.expect(fut.poll_call()
+                    .and_return(Ok(Async::NotReady)));
+                seq1.expect(fut.poll_call().and_return(Ok(Async::Ready(()))));
+                s_handle.expect(seq1);
+                Box::new(fut)
+            }));
+
+        seq0.expect(leaf.read_at_call(ANY, 2)
+            .and_call( move |_, _| {
+                let mut seq1 = Sequence::new();
+                let fut = s_handle2.create_mock::<MockVdevFut<(), nix::Error>>();
+                seq1.expect(fut.poll_call()
                     .and_return(
                         Err(nix::Error::Sys(nix::errno::Errno::EAGAIN))));
                 seq1.expect(fut.poll_call().and_return(Ok(Async::Ready(()))));
-                s_handle.expect(seq1);
+                s_handle2.expect(seq1);
                 Box::new(fut)
             }));
         scenario.expect(seq0);
@@ -802,15 +813,14 @@ test_suite! {
         current_thread::block_on_all(future::lazy(|| {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
-            sender.send(()).expect("send");
             f0.join(f1)
         })).expect("test eagain");
     }
 
-    // Issueing an operation fails with EAGAIN, when the queue depth is 0.  This
+    // Issueing an operation fails with EAGAIN, when the queue depth is 1.  This
     // can happen if the per-process or per-system AIO limits are monopolized by
     // other reactors.  In this case, we need a timer to wake us up.
-    test issueing_eagain_queue_depth_0(mocks) {
+    test issueing_eagain_queue_depth_1(mocks) {
         let scenario = mocks.val.0;
         let s_handle = scenario.handle();
         let leaf = mocks.val.1;
@@ -834,7 +844,7 @@ test_suite! {
         let vdev = VdevBlock::new(leaf, Handle::current());
         current_thread::block_on_all(future::lazy(|| {
             vdev.read_at(rbuf, 1)
-        })).expect("test eagain_queue_depth_0");
+        })).expect("test eagain_queue_depth_1");
     }
 
     test basic_erase_zone(mocks) {
