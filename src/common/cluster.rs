@@ -392,7 +392,7 @@ impl<'a> Cluster {
     }
 
     /// Delete the underlying storage for a Zone.
-    pub fn erase_zone(&mut self, zone: ZoneT) -> Box<ClusterFut<'static>> {
+    pub fn erase_zone(&self, zone: ZoneT) -> Box<ClusterFut<'static>> {
         self.fsm.borrow_mut().erase_zone(zone);
         self.vdev.erase_zone(zone)
     }
@@ -552,7 +552,7 @@ mod t {
 mod cluster {
     use super::super::*;
     use divbuf::DivBufShared;
-    use mockers::Scenario;
+    use mockers::{Scenario, matchers};
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
 
@@ -580,6 +580,76 @@ mod cluster {
                         lba: LbaT) -> Box<VdevFut>;
             fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
         }
+    }
+
+    #[test]
+    fn erase_zone() {
+        let s = Scenario::new();
+        let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.lba2zone_call(1).and_return_clone(Some(0)).times(..));
+        s.expect(vr.zone_limits_call(0).and_return_clone((1, 2)).times(..));
+        s.expect(vr.zone_limits_call(1).and_return_clone((2, 200)).times(..));
+        s.expect(vr.zones_call().and_return_clone(32768).times(..));
+        s.expect(vr.open_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(matchers::ANY, 0, matchers::ANY)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.finish_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.open_zone_call(1)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(matchers::ANY, 1, matchers::ANY)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.erase_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
+
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let db0 = dbs.try().unwrap();
+        let db1 = db0.clone();
+        current_thread::block_on_all(future::lazy(|| {
+            let (lba, fut1) = cluster.write(db0).expect("write failed early");
+            // Write a 2nd time so the first zone will get closed
+            fut1.and_then(|_| {
+                let (_, fut2) = cluster.write(db1).expect("write failed early");
+                fut2
+            }).map(move|_| lba)
+                .and_then(|lba| {
+                cluster.free(lba, 1);
+                cluster.erase_zone(0)
+            })
+        })).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Can't erase an open zone")]
+    fn erase_zone_open() {
+        let s = Scenario::new();
+        let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.lba2zone_call(1).and_return_clone(Some(0)).times(..));
+        s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
+        s.expect(vr.zones_call().and_return_clone(32768).times(..));
+        s.expect(vr.open_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(matchers::ANY, 0, matchers::ANY)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.erase_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
+
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let db0 = dbs.try().unwrap();
+        current_thread::block_on_all(future::lazy(|| {
+            let (lba, fut) = cluster.write(db0).expect("write failed early");
+            fut.map(move |_| lba)
+                .and_then(|lba| {
+                cluster.free(lba, 1);
+                cluster.erase_zone(0)
+            })
+        })).unwrap();
     }
 
     #[test]
