@@ -59,7 +59,7 @@ impl Cmd {
             Cmd::WriteLabel(_) => 7,
             Cmd::SyncAll => 8,
         }
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 }
 
 impl Eq for Cmd {
@@ -284,7 +284,7 @@ impl Inner {
                 // Out of resources to issue this future.  Delay it
                 return Some((sender, fut));
             },
-            Err(e) => panic!("got error {:?}", e),
+            Err(e) => panic!("Unhandled error {:?}", e),
             Ok(r) => {
                 match r {
                     Async::NotReady => {
@@ -368,7 +368,7 @@ impl Inner {
                 }
             }
             Some(op)
-        } else {
+        } else {    // LCOV_EXCL_LINE   kcov false negative
             // Ran out of operations everywhere.  Prepare to idle
             None
         }
@@ -511,7 +511,7 @@ impl VdevBlock {
             block_op: Some(block_op),
             inner: self.inner.clone(),
             receiver
-        }
+        }   // LCOV_EXCL_LINE   kcov false negative
     }
 
     /// Asynchronously open a zone on a block device
@@ -556,7 +556,7 @@ impl VdevBlock {
             ahead: BinaryHeap::new(),
             behind: BinaryHeap::new(),
             weakself: Weak::new()
-        }));
+        }));    // LCOV_EXCL_LINE   kcov false negative
         inner.borrow_mut().weakself = Rc::downgrade(&inner);
         VdevBlock {
             inner,
@@ -682,15 +682,15 @@ impl Vdev for VdevBlock {
 
     fn uuid(&self) -> Uuid {
         self.inner.borrow().leaf.uuid()
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         self.inner.borrow().leaf.zone_limits(zone)
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 
     fn zones(&self) -> ZoneT {
         self.inner.borrow().leaf.zones()
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 }
 
 // LCOV_EXCL_START
