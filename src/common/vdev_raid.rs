@@ -986,6 +986,14 @@ impl Vdev for VdevRaid {
     }
 
     fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
+        #[cfg(debug_assertions)]
+        // Don't flush zones ourselves; the Cluster layer must be in charge of
+        // that, so it can update the spacemap.
+        {
+            for sb in self.stripe_buffers.borrow().values() {
+                assert!(sb.is_empty(), "Must call flush_zone before sync_all");
+            }
+        }
         Box::new(
             future::join_all(
                 self.blockdevs.iter()
@@ -1489,6 +1497,95 @@ fn read_at_one_stripe() {
         vdev_raid.read_at(rbuf, 131072);
 }
 
+#[test]
+fn sync_all() {
+    let k = 3;
+    let f = 1;
+    const CHUNKSIZE: LbaT = 2;
+    let zl0 = (1, 60_000);
+
+    let s = Scenario::new();
+    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+
+    let bd = || {
+        let bd = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
+        s.expect(bd.sync_all_call()
+                 .and_return(Box::new(future::ok::<(), Error>(())))
+        );
+        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
+        bd
+    };
+
+    let bd0 = bd();
+    let bd1 = bd();
+    let bd2 = bd();
+
+    blockdevs.push(bd0);
+    blockdevs.push(bd1);
+    blockdevs.push(bd2);
+
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                  Uuid::new_v4(),
+                                  LayoutAlgorithm::PrimeS,
+                                  blockdevs.into_boxed_slice(),
+                                  Handle::default());
+    vdev_raid.sync_all();
+}
+
+// It's illegal to sync a VdevRaid without flushing its zones first
+#[test]
+#[should_panic(expected = "Must call flush_zone before sync_all")]
+fn sync_all_unflushed() {
+    let k = 3;
+    let f = 1;
+    const CHUNKSIZE: LbaT = 2;
+    let zl0 = (1, 60_000);
+    let zl1 = (60_000, 120_000);
+
+    let s = Scenario::new();
+    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+
+    let bd = || {
+        let bd = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
+        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
+        s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
+        s.expect(bd.open_zone_call(60_000).and_return(
+                Box::new(future::ok::<(), Error>(()))));
+        s.expect(bd.sync_all_call()
+                 .and_return(Box::new(future::ok::<(), Error>(())))
+        );
+        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
+        bd
+    };
+
+    let bd0 = bd();
+    let bd1 = bd();
+    let bd2 = bd();
+
+    blockdevs.push(bd0);
+    blockdevs.push(bd1);
+    blockdevs.push(bd2);
+
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                  Uuid::new_v4(),
+                                  LayoutAlgorithm::PrimeS,
+                                  blockdevs.into_boxed_slice(),
+                                  Handle::default());
+
+    vdev_raid.open_zone(1);
+    let dbs = DivBufShared::from(vec![1u8; 4096]);
+    let wbuf = dbs.try().unwrap();
+    vdev_raid.write_at(wbuf, 1, 120_000);
+    // Don't flush zone 1 before syncing.  Syncing should panic
+    vdev_raid.sync_all();
+}
+
 // Use mock VdevBlock objects to test that RAID writes hit the right LBAs from
 // the individual disks.  Ignore the actual data values, since we don't have
 // real VdevBlocks.  Functional testing will verify the data.
@@ -1564,7 +1661,7 @@ fn write_at_one_stripe() {
 
 // Partially written stripes should be flushed by flush_zone
 #[test]
-fn write_at_and_sync_all() {
+fn write_at_and_flush_zone() {
     let k = 3;
     let f = 1;
     const CHUNKSIZE: LbaT = 2;
