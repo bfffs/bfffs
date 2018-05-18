@@ -837,6 +837,48 @@ test_suite! {
         })).expect("test eagain_queue_depth_0");
     }
 
+    test basic_erase_zone(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
+        let mut seq = Sequence::new();
+        seq.expect(leaf.erase_zone_call(1)
+                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+        scenario.expect(seq);
+
+        let vdev = VdevBlock::new(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.erase_zone(1, (1 << 16) - 1)
+        })).unwrap();
+    }
+
+    test basic_finish_zone(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
+        let mut seq = Sequence::new();
+        seq.expect(leaf.finish_zone_call(1)
+                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+        scenario.expect(seq);
+
+        let vdev = VdevBlock::new(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.finish_zone(1, (1 << 16) - 1)
+        })).unwrap();
+    }
+
+    test basic_open_zone(mocks) {
+        let scenario = mocks.val.0;
+        let leaf = mocks.val.1;
+        let mut seq = Sequence::new();
+        seq.expect(leaf.open_zone_call(1)
+                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+        scenario.expect(seq);
+
+        let vdev = VdevBlock::new(leaf, Handle::current());
+        current_thread::block_on_all(future::lazy(|| {
+            vdev.open_zone(1)
+        })).unwrap();
+    }
+
     // basic reading works
     test basic_read_at(mocks) {
         let scenario = mocks.val.0;
