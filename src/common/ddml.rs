@@ -343,7 +343,7 @@ mod t {
             fn free(&self, pba: PBA, length: LbaT);
             fn name(&self) -> &str;
             fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut<'static>>;
-            fn sync_all(&self) -> Box<PoolFut>;
+            fn sync_all(&self) -> Box<PoolFut<'static>>;
             fn uuid(&self) -> Uuid;
             fn write(&self, buf: IoVec)
                 -> Result<(PBA, Box<PoolFut<'static>>), Error>;
@@ -370,6 +370,25 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
         ddml.delete(&drp);
+    }
+
+    #[test]
+    fn evict() {
+        let pba = PBA::default();
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+                      csize: 4096, checksum: 0};
+        let pba2 = pba.clone();
+        let s = Scenario::new();
+        let mut seq = Sequence::new();
+        let cache = s.create_mock::<MockCache>();
+        let pool = s.create_mock::<MockPool>();
+        seq.expect(cache.remove_call(check!(move |key: &&Key| {
+            **key == Key::PBA(pba2)
+        })).and_return(None));
+        s.expect(seq);
+
+        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        ddml.evict(&drp);
     }
 
     #[test]
@@ -534,6 +553,19 @@ mod t {
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
         current_thread::block_on_all(fut).unwrap();
+    }
+
+    #[test]
+    fn sync_all() {
+        let s = Scenario::new();
+        let cache = s.create_mock::<MockCache>();
+        let pool = s.create_mock::<MockPool>();
+        s.expect(pool.sync_all_call()
+            .and_return(Box::new(future::ok::<(), Error>(())))
+        );
+
+        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        assert!(current_thread::block_on_all(ddml.sync_all()).is_ok());
     }
 }
 // LCOV_EXCL_STOP
