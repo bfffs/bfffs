@@ -608,14 +608,6 @@ impl VdevBlock {
         Box::new(self.new_fut(block_op, receiver))
     }
 
-    /// Asynchronously sync the underlying device, ensuring that all data
-    /// reaches stable storage
-    pub fn sync_all(&self) -> Box<VdevFut> {
-        let (sender, receiver) = oneshot::channel::<()>();
-        let block_op = BlockOp::sync_all(sender);
-        Box::new(self.new_fut(block_op, receiver))
-    }
-
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns nothing on success, and on error on failure
@@ -673,11 +665,12 @@ impl Vdev for VdevBlock {
         self.size
     }
 
-    fn sync_all(&self) -> Box<Future<Item = (), Error = nix::Error>> {
+    /// Asynchronously sync the underlying device, ensuring that all data
+    /// reaches stable storage
+    fn sync_all(&self) -> Box<VdevFut> {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::sync_all(sender);
-        self.inner.borrow_mut().sched_and_issue(block_op);
-        Box::new(receiver.map_err(|_| nix::Error::from(nix::errno::Errno::EPIPE)))
+        Box::new(self.new_fut(block_op, receiver))
     }
 
     fn uuid(&self) -> Uuid {
