@@ -373,6 +373,16 @@ test_suite! {
                               *raid.params.k, *raid.params.f, 1);
     }
 
+    // Erasing an open zone should fail
+    #[should_panic]
+    test zone_erase_open(raid((3, 3, 1, 2))) {
+        let zone = 1;
+        current_thread::block_on_all( future::lazy(|| {
+            raid.val.0.open_zone(zone)
+            .and_then(|_| raid.val.0.erase_zone(0))
+        })).expect("zone_erase_open");
+    }
+
     test zone_read_closed(raid((3, 3, 1, 2))) {
         let zone = 0;
         let zl = raid.val.0.zone_limits(zone);
@@ -418,7 +428,7 @@ test_suite! {
 
     #[should_panic]
     // Writing to an explicitly closed a zone fails
-    test zone_close(raid((3, 3, 1, 2))) {
+    test zone_write_explicitly_closed(raid((3, 3, 1, 2))) {
         let zone = 1;
         let (start, _) = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
@@ -436,7 +446,7 @@ test_suite! {
 
     #[should_panic]
     // Writing to a closed zone should fail
-    test zone_write_closed(raid((3, 3, 1, 2))) {
+    test zone_write_implicitly_closed(raid((3, 3, 1, 2))) {
         let zone = 1;
         let (start, _) = raid.val.0.zone_limits(zone);
         let dbsw = DivBufShared::from(vec![0;4096]);

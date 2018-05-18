@@ -392,7 +392,7 @@ impl VdevRaid {
             "Tried to erase an open zone");
         let (start, end) = self.blockdevs[0].zone_limits(zone);
         let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
-            blockdev.erase_zone(start, end)
+            blockdev.erase_zone(start, end - 1)
         }).collect();
         Box::new(future::join_all(futs).map(|_| ()))
     }
@@ -1631,6 +1631,49 @@ fn write_at_and_sync_all() {
     let wbuf = dbs.try().unwrap();
     vdev_raid.write_at(wbuf, 1, 120_000);
     vdev_raid.flush_zone(1);
+}
+
+// Erase a zone.  VdevRaid doesn't care whether it still has allocated data;
+// that's Cluster's job.  And VdevRaid doesn't care whether the zone is closed
+// or empty; that's the VdevLeaf's job.
+#[test]
+fn erase_zone() {
+    let k = 3;
+    let f = 1;
+    const CHUNKSIZE: LbaT = 2;
+    let zl0 = (1, 60_000);
+    let zl1 = (60_000, 120_000);
+
+    let s = Scenario::new();
+    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+
+    let bd = || {
+        let bd = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
+        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
+        s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
+        s.expect(bd.erase_zone_call(1, 59_999)
+                 .and_return(Box::new(future::ok::<(), Error>(())))
+        );
+        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
+        bd
+    };
+
+    let bd0 = bd();
+    let bd1 = bd();
+    let bd2 = bd();
+    blockdevs.push(bd0);
+    blockdevs.push(bd1);
+    blockdevs.push(bd2);
+
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                  Uuid::new_v4(),
+                                  LayoutAlgorithm::PrimeS,
+                                  blockdevs.into_boxed_slice(),
+                                  Handle::default());
+    vdev_raid.erase_zone(0);
 }
 
 // Open a zone that has wasted leading space due to a chunksize misaligned with
