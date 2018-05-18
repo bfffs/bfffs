@@ -418,7 +418,7 @@ impl VdevRaid {
                 Box::new(
                     self.blockdevs.iter()
                     .map(|blockdev| {
-                        blockdev.finish_zone(start, end)
+                        blockdev.finish_zone(start, end - 1)
                     })
                 )
             );
