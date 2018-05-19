@@ -104,7 +104,7 @@ impl LabelWriter {
             self.buffers.push(dbs.try().unwrap());
             dbs
         })
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Consume the `LabelWriter` and return an `SGList` suitable for writing to
     /// the first sector of a disk.
