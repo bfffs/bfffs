@@ -66,32 +66,33 @@ impl DDMLMock {
         self.e.was_called::<*const DRP, ()>("evict", drp as *const DRP)
     }
 
-    pub fn get(&self, drp: &DRP) -> Box<Future<Item=Box<DivBuf>, Error=Error>> {
+    pub fn get<T: CacheRef>(&self, drp: &DRP)
+        -> Box<Future<Item=Box<T>, Error=Error>> {
         self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<DivBuf>, Error=Error>>>
+            Box<Future<Item=Box<T>, Error=Error>>>
             ("get", drp as *const DRP)
     }
 
-    pub fn pop(&self, drp: &DRP)
-        -> Box<Future<Item=Box<DivBufShared>, Error=Error>>
+    pub fn pop<T: Cacheable>(&self, drp: &DRP)
+        -> Box<Future<Item=Box<T>, Error=Error>>
     {
         self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<DivBufShared>, Error=Error>>>
-            ("get", drp as *const DRP)
+            Box<Future<Item=Box<T>, Error=Error>>>
+            ("pop", drp as *const DRP)
     }
 
-    pub fn put(&self, uncompressed: Box<Cacheable>, compression: Compression)
+    pub fn put<T: Cacheable>(&self, cacheable: Box<T>, compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error>>)
     {
-        self.e.was_called_returning::<(Box<Cacheable>, Compression),
+        self.e.was_called_returning::<(Box<T>, Compression),
                                       (DRP, Box<Future<Item=(), Error=Error>>)>
-            ("put", (uncompressed, compression))
+            ("put", (cacheable, compression))
     }
 
-    pub fn expect_put(&mut self) -> Method<(Box<Cacheable>, Compression),
+    pub fn expect_put<T: Cacheable>(&mut self) -> Method<(Box<T>, Compression),
         (DRP, Box<Future<Item=(), Error=Error>>)>
     {
-        self.e.expect::<(Box<Cacheable>, Compression),
+        self.e.expect::<(Box<T>, Compression),
                         (DRP, Box<Future<Item=(), Error=Error>>)>
             ("put")
     }
@@ -831,7 +832,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
         let buf = DivBufShared::from(bincode::serialize(&node).unwrap());
-        let (drp, fut) = self.ddml.put(Box::new(buf), Compression::None);
+        let (drp, fut) = self.ddml.put::<DivBufShared>(Box::new(buf), Compression::None);
         Box::new(fut.map(move |_| drp))
     }
 
@@ -2508,10 +2509,10 @@ fn write_int() {
            0x40, 0x1f, 0, 0,        // csize=8000
            0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
     ];
-    ddml.expect_put()
+    ddml.expect_put::<DivBufShared>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Box<Cacheable>, _)| {
-            let dbs = arg.downcast_ref::<DivBufShared>().unwrap();
+        .with(passes(move |&(ref arg, _): &(Box<DivBufShared>, _)| {
+            let dbs = arg;
             &dbs.try().unwrap()[..] == &serialized[..]
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
@@ -2566,10 +2567,10 @@ fn write_leaf() {
         1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
         99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
     ];
-    ddml.expect_put()
+    ddml.expect_put::<DivBufShared>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Box<Cacheable>, _)| {
-            let dbs = arg.downcast_ref::<DivBufShared>().unwrap();
+        .with(passes(move |&(ref arg, _): &(Box<DivBufShared>, _)| {
+            let dbs = arg;
             &dbs.try().unwrap()[..] == &serialized[..]
         })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
     ddml.expect_sync_all()
