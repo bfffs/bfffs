@@ -31,6 +31,7 @@ extern crate serde_cbor;
 extern crate serde_derive;
 #[cfg(test)]
 extern crate serde_yaml;
+#[cfg(test)] extern crate simulacrum;
 extern crate tokio;
 extern crate tokio_file;
 extern crate uuid;

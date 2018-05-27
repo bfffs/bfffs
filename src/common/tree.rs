@@ -42,13 +42,14 @@ mod atomic_usize_serializer {
 }
 
 #[cfg(test)]
-/// Only exists so mockers can replace DDML
+/// Only exists so simulacrum can replace DDML
 pub trait DDMLTrait {
     fn delete(&self, drp: &DRP);
     fn evict(&self, drp: &DRP);
     // XXX In test mode, get, pop, and put must be non-parameterized because
     // Mockers doesn't yet support parameterized methods
     // https://github.com/kriomant/mockers/issues/27
+    // TODO: reparameterize them
     fn get(&self, drp: &DRP) -> Box<Future<Item=Box<DivBuf>, Error=Error>>;
     fn pop(&self, drp: &DRP) -> Box<Future<Item=Box<DivBufShared>, Error=Error>>;
     fn put(&self, uncompressed: Box<Cacheable>, compression: Compression)
@@ -843,27 +844,30 @@ mod t {
 
 use super::*;
 use futures::future;
-use mockers::matchers::ANY;
-use mockers::Scenario;
+use simulacrum::*;
 use tokio::executor::current_thread;
 
-mock!{
-    MockDDML,
-    self,
-    trait DDMLTrait {
-        fn delete(&self, drp: &DRP);
-        fn evict(&self, drp: &DRP);
-        fn get(&self, drp: &DRP) -> Box<Future<Item=Box<DivBuf>, Error=Error>>;
-        fn pop(&self, drp: &DRP) -> Box<Future<Item=Box<DivBufShared>, Error=Error>>;
-        fn put(&self, uncompressed: Box<Cacheable>, compression: Compression)
-            -> (DRP, Box<Future<Item=(), Error=Error>>);
-        fn sync_all(&self) -> Box<Future<Item=(), Error=Error>>;
+create_mock!{
+    impl DDMLTrait for DDMLTraitMock (self) {
+        expect_delete("delete"):
+            fn delete(&self, drp: &DRP);
+        expect_evict("evict"):
+            fn evict(&self, drp: &DRP);
+        expect_get("get"):
+            fn get(&self, drp: &DRP) -> Box<Future<Item=Box<DivBuf>, Error=Error>>;
+        expect_pop("pop"):
+            fn pop(&self, drp: &DRP) -> Box<Future<Item=Box<DivBufShared>, Error=Error>>;
+        expect_put("put"):
+            fn put(&self, uncompressed: Box<Cacheable>, compression: Compression)
+                -> (DRP, Box<Future<Item=(), Error=Error>>);
+        expect_sync_all("sync_all"):
+            fn sync_all(&self) -> Box<Future<Item=(), Error=Error>>;
     }
 }
 
 #[test]
 fn insert() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.insert(0, 0.0));
     assert_eq!(r, Ok(None));
@@ -884,7 +888,7 @@ root:
 
 #[test]
 fn insert_dup() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -919,7 +923,7 @@ root:
 /// Insert a key that splits a non-root interior node
 #[test]
 fn insert_split_int() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -1105,7 +1109,7 @@ root:
 /// Insert a key that splits a non-root leaf node
 #[test]
 fn insert_split_leaf() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -1180,7 +1184,7 @@ root:
 /// Insert a key that splits the root IntNode
 #[test]
 fn insert_split_root_int() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -1304,7 +1308,7 @@ root:
 /// Insert a key that splits the root leaf node
 #[test]
 fn insert_split_root_leaf() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -1357,7 +1361,7 @@ root:
 
 #[test]
 fn lookup() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(future::lazy(|| {
         tree.insert(0, 0.0)
@@ -1368,7 +1372,7 @@ fn lookup() {
 
 #[test]
 fn lookup_nonexistent() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.lookup(0));
     assert_eq!(r, Err(Error::Sys(errno::Errno::ENOENT)))
@@ -1376,7 +1380,7 @@ fn lookup_nonexistent() {
 
 #[test]
 fn remove_last_key() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -1409,7 +1413,7 @@ root:
 
 #[test]
 fn remove_from_leaf() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -1446,7 +1450,7 @@ root:
 
 #[test]
 fn remove_and_merge_int_left() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -1615,7 +1619,7 @@ root:
 
 #[test]
 fn remove_and_merge_int_right() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -1770,7 +1774,7 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_left() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -1838,7 +1842,7 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_right() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -1908,7 +1912,7 @@ root:
 
 #[test]
 fn remove_and_steal_int_left() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -2096,7 +2100,7 @@ root:
 
 #[test]
 fn remove_and_steal_int_right() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -2284,7 +2288,7 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_left() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -2363,7 +2367,7 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_right() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -2442,7 +2446,7 @@ root:
 
 #[test]
 fn remove_nonexistent() {
-    let ddml = Box::new(Scenario::new().create_mock::<MockDDML>());
+    let ddml = Box::new(DDMLTraitMock::new());
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.remove(3));
     assert_eq!(r, Ok(None));
@@ -2450,8 +2454,7 @@ fn remove_nonexistent() {
 
 #[test]
 fn write_int() {
-    let s = Scenario::new();
-    let ddml = Box::new(s.create_mock::<MockDDML>());
+    let mut ddml = Box::new(DDMLTraitMock::new());
     let drp = DRP::default();
     let serialized = vec![1u8, 0, 0, 0, // enum variant 0 for IntNode
         2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
@@ -2472,15 +2475,16 @@ fn write_int() {
            0x40, 0x1f, 0, 0,        // csize=8000
            0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
     ];
-    s.expect(ddml.put_call(
-            check!(move |arg: &Box<Cacheable>| {
-                let dbs = arg.downcast_ref::<DivBufShared>().unwrap();
-                &dbs.try().unwrap()[..] == &serialized[..]
-            }),
-            ANY)
-        .and_return((drp, Box::new(future::ok::<(), Error>(())))));
-    s.expect(ddml.sync_all_call()
-             .and_return(Box::new(future::ok::<(), Error>(()))));
+    ddml.expect_put()
+        .called_once()
+        .with(passes(move |&(ref arg, _): &(Box<Cacheable>, _)| {
+            let dbs = arg.downcast_ref::<DivBufShared>().unwrap();
+            &dbs.try().unwrap()[..] == &serialized[..]
+        }))
+        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+    ddml.expect_sync_all()
+        .called_once()
+        .returning(|_| Box::new(future::ok::<(), Error>(())));
     let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -2521,8 +2525,7 @@ root:
 
 #[test]
 fn write_leaf() {
-    let s = Scenario::new();
-    let ddml = Box::new(s.create_mock::<MockDDML>());
+    let mut ddml = Box::new(DDMLTraitMock::new());
     let drp = DRP::default();
     let serialized = vec![0u8, 0, 0, 0, // enum variant 0 for LeafNode
         3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
@@ -2530,15 +2533,15 @@ fn write_leaf() {
         1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
         99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
     ];
-    s.expect(ddml.put_call(
-            check!(move |arg: &Box<Cacheable>| {
-                let dbs = arg.downcast_ref::<DivBufShared>().unwrap();
-                &dbs.try().unwrap()[..] == &serialized[..]
-            }),
-            ANY)
-        .and_return((drp, Box::new(future::ok::<(), Error>(())))));
-    s.expect(ddml.sync_all_call()
-             .and_return(Box::new(future::ok::<(), Error>(()))));
+    ddml.expect_put()
+        .called_once()
+        .with(passes(move |&(ref arg, _): &(Box<Cacheable>, _)| {
+            let dbs = arg.downcast_ref::<DivBufShared>().unwrap();
+            &dbs.try().unwrap()[..] == &serialized[..]
+        })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+    ddml.expect_sync_all()
+        .called_once()
+        .returning(|_| Box::new(future::ok::<(), Error>(())));
     let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1

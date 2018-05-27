@@ -42,6 +42,7 @@ itertools = "0.7.1"
 permutohedron = "0.2"
 rand = "0.3"
 serde_yaml = "0.7"
+simulacrum = { version = "=0.3.0" }
 tempdir = "0.3"
 
 [profile.bench]
