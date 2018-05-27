@@ -672,7 +672,6 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         )
     }
 
-    #[cfg(any(not(test), feature = "mocks"))]
     fn new(ddml: DDMLLike, min_fanout: usize, max_fanout: usize,
            max_size: usize) -> Self
     {
@@ -892,7 +891,6 @@ impl<K: Key, V: Value> Display for Tree<K, V> {
 
 // LCOV_EXCL_START
 #[cfg(test)]
-#[cfg(feature = "mocks")]
 mod t {
 
 use super::*;
