@@ -73,6 +73,13 @@ impl DDMLMock {
             ("get", drp as *const DRP)
     }
 
+    pub fn expect_get<T: CacheRef>(&mut self) -> Method<*const DRP,
+        Box<Future<Item=Box<T>, Error=Error>>>
+    {
+        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
+            ("get")
+    }
+
     pub fn pop<T: Cacheable>(&self, drp: &DRP)
         -> Box<Future<Item=Box<T>, Error=Error>>
     {
@@ -890,8 +897,9 @@ impl<K: Key, V: Value> Display for Tree<K, V> {
 
 
 // LCOV_EXCL_START
+/// Tests regarding in-memory manipulation of Trees
 #[cfg(test)]
-mod t {
+mod in_mem {
 
 use super::*;
 use futures::future;
@@ -2482,6 +2490,115 @@ fn remove_nonexistent() {
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.remove(3));
     assert_eq!(r, Ok(None));
+}
+
+}
+
+#[cfg(test)]
+/// Tests regarding disk I/O for Trees
+mod io {
+
+use super::*;
+use futures::future;
+use tokio::executor::current_thread;
+
+#[test]
+/// Read an IntNode.  The public API doesn't provide any way to read an IntNode
+/// without also reading its children, so we'll test this through the private
+/// IntElem::rlock API.
+fn read_int() {
+    let serialized = vec![ 1u8, 0, 0, 0, // enum variant 0 for IntNode
+        2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
+           0, 0, 0, 0,              // K=0
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+               0, 0,                // Cluster 0
+               0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
+           0, 0, 0, 0,              // enum variant 0 for Compression::None
+           0x40, 0x9c, 0, 0,        // lsize=40000
+           0x40, 0x9c, 0, 0,         // csize=40000
+           0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
+           0, 1, 0, 0,              // K=256
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+               0, 0,                // Cluster 0
+               0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
+           1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
+           0x80, 0x3e, 0, 0,        // lsize=16000
+           0x40, 0x1f, 0, 0,        // csize=8000
+           0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
+    ];
+    let dbs = DivBufShared::from(serialized);
+    let db = dbs.try().unwrap();
+    let mut ddml = DDMLMock::new();
+    ddml.expect_get::<DivBuf>()
+        .called_once()
+        .returning(move |_| {
+            // XXX simulacrum can't return a uniquely owned object in an
+            // expectation, so we must clone db here.
+            // https://github.com/pcsm/simulacrum/issues/52
+            let res = Box::new(db.clone());
+            Box::new(future::ok::<Box<DivBuf>, Error>(res))
+        });
+
+    let elem:IntElem<u32, u32> = IntElem {
+        key: 0,
+        ptr: TreePtr::DRP(DRP::default())
+    };
+    let r = current_thread::block_on_all(future::lazy(|| {
+        elem.rlock(&ddml).map(|node| {
+            let int_data = (*node).as_int().unwrap();
+            assert_eq!(int_data.children.len(), 2);
+            // Validate DRPs as well as possible using their public API
+            assert_eq!(int_data.children[0].key, 0);
+            assert!(!int_data.children[0].ptr.is_mem());
+            assert_eq!(int_data.children[1].key, 256);
+            assert!(!int_data.children[1].ptr.is_mem());
+        })
+    }));
+    assert!(r.is_ok());
+}
+
+#[test]
+fn read_leaf() {
+    let mut ddml = DDMLMock::new();
+    let serialized = vec![
+        0u8, 0, 0, 0,               // enum variant 0 for LeafNode
+        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
+        0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
+        1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
+        99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
+    ];
+    let dbs = DivBufShared::from(serialized);
+    let db = dbs.try().unwrap();
+    ddml.expect_get::<DivBuf>()
+        .called_once()
+        .returning(move |_| {
+            // XXX simulacrum can't return a uniquely owned object in an
+            // expectation, so we must clone db here.
+            // https://github.com/pcsm/simulacrum/issues/52
+            let res = Box::new(db.clone());
+            Box::new(future::ok::<Box<DivBuf>, Error>(res))
+        });
+    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    DRP:
+      pba:
+        cluster: 0
+        lba: 0
+      compression: None
+      lsize: 36
+      csize: 36
+      checksum: 0
+"#);
+
+    let r = current_thread::block_on_all(tree.lookup(1));
+    assert_eq!(Ok(200), r);
 }
 
 #[test]
