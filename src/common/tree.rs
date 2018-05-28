@@ -288,6 +288,18 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
         self.ptr.is_dirty()
     }
 
+    fn read(&self, ddml: &'a DDMLLike, drp: &DRP) -> Box<Future<Item=Node<K, V>, Error=Error> + 'a> {
+        Box::new(
+            ddml.get(drp)
+                .map(|db: Box<DivBuf>| {
+                    let node_data: NodeData<K, V> =
+                        bincode::deserialize(&db[..]).unwrap();
+                    // TODO: cache the deserialized NodeData
+                    Node(RwLock::new(node_data))
+                })
+        )
+    }
+
     fn rlock(&self, ddml: &'a DDMLLike)
         -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error> + 'a>
     {
@@ -301,19 +313,14 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
             },
             TreePtr::DRP(ref drp) => {
                 Box::new(
-                    ddml.get(drp)
-                        .and_then(|db: Box<DivBuf>| {
-                            let node_data: NodeData<K, V> =
-                                bincode::deserialize(&db[..]).unwrap();
-                            // TODO: cache the deserialized NodeData
-                            let node = Node(RwLock::new(node_data));
-                            node.0.read()
-                                .map(move |guard| {
-                                    TreeReadGuard::DRP(guard, node)
-                                })
-                                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                        })
-                    )
+                    self.read(ddml, drp).and_then(|node| {
+                        node.0.read()
+                            .map(move |guard| {
+                                TreeReadGuard::DRP(guard, node)
+                            })
+                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    })
+                )
             },
             _ => {
                 unimplemented!()
@@ -334,19 +341,14 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
             },
             TreePtr::DRP(ref drp) => {
                 Box::new(
-                    ddml.get(drp)
-                        .and_then(|db: Box<DivBuf>| {
-                            let node_data: NodeData<K, V> =
-                                bincode::deserialize(&db[..]).unwrap();
-                            // TODO: cache the deserialized NodeData
-                            let node = Node(RwLock::new(node_data));
-                            node.0.write()
-                                .map(move |guard| {
-                                    TreeWriteGuard::DRP(guard, node)
-                                })
-                                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                        })
-                    )
+                    self.read(ddml, drp).and_then(|node| {
+                        node.0.write()
+                            .map(move |guard| {
+                                TreeWriteGuard::DRP(guard, node)
+                            })
+                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    })
+                )
             },
             _ => {
                 unimplemented!()
