@@ -10,7 +10,9 @@ use common::ddml::*;
 use futures::{Future, future, future::IntoFuture};
 use futures_locks::*;
 use nix::{Error, errno};
-use serde::{Serialize, Serializer, de::{Deserializer, DeserializeOwned}};
+use serde::{Serialize, de::DeserializeOwned};
+#[cfg(test)]
+use serde::{Serializer, de::Deserializer};
 #[cfg(test)] use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
 #[cfg(test)] use simulacrum::*;
@@ -24,6 +26,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering}
 };
 
+#[cfg(test)]
 mod atomic_usize_serializer {
     use super::*;
     use serde::Deserialize;
@@ -165,6 +168,15 @@ enum TreePtr<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> TreePtr<K, V> {
+    #[cfg(test)]
+    fn as_drp(&self) -> Option<&DRP> {
+        if let TreePtr::DRP(ref drp) = self {
+            Some(drp)
+        } else {
+            None
+        }
+    }
+
     fn into_node(self) -> Result<Box<Node<K, V>>, TreePtr<K, V>> {
         if let TreePtr::Mem(node) = self {
             Ok(node)
@@ -534,13 +546,37 @@ impl<K: Key, V: Value> NodeData<K, V> {
 #[derive(Debug)]
 struct Node<K: Key, V: Value> (RwLock<NodeData<K, V>>);
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(bound(deserialize = "K: DeserializeOwned"))]
+#[cfg(test)]
+mod tree_root_serializer {
+    use super::*;
+    use serde::Deserialize;
+    use tokio::executor::current_thread;
+
+    pub(super) fn deserialize<'de, D, K, V>(d: D)
+        -> Result<RwLock<IntElem<K, V>>, D::Error>
+        where D: Deserializer<'de>, K: Key, V: Value
+    {
+        IntElem::deserialize(d)
+            .map(|int_elem| RwLock::new(int_elem))
+    }
+
+    pub(super) fn serialize<K, S, V>(x: &RwLock<IntElem<K, V>>, s: S)
+        -> Result<S::Ok, S::Error>
+        where K: Key, S: Serializer, V: Value
+    {
+        let guard = current_thread::block_on_all(x.read()).unwrap();
+        (*guard).serialize(s)
+    }
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(Deserialize, Serialize))]
+#[cfg_attr(test, serde(bound(deserialize = "K: DeserializeOwned")))]
 struct Inner<K: Key, V: Value> {
     /// Tree height.  1 if the Tree consists of a single Leaf node.
     // Use atomics so it can be modified from an immutable reference.  Accesses
     // should be very rare, so performance is not a concern.
-    #[serde(with = "atomic_usize_serializer")]
+    #[cfg_attr(test, serde(with = "atomic_usize_serializer"))]
     height: AtomicUsize,
     /// Minimum node fanout.  Smaller nodes will be merged, or will steal
     /// children from their neighbors.
@@ -551,8 +587,8 @@ struct Inner<K: Key, V: Value> {
     /// buffers flushed
     _max_size: usize,
     /// Root node
-    // TODO: needs RwLock?
-    root: IntElem<K, V>
+    #[cfg_attr(test, serde(with = "tree_root_serializer"))]
+    root: RwLock<IntElem<K, V>>
 }
 
 /// In-memory representation of a COW B+-Tree
@@ -588,11 +624,15 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.i.root.xlock(&self.ddml)
+            self.i.root.read()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                .and_then(move |root| {
-                    self.insert_locked(root, k, v)
-            })
+                .and_then(move |guard| {
+                    guard.xlock(&self.ddml)
+                         .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                         .and_then(move |guard| {
+                             self.insert_locked(guard, k, v)
+                         })
+                })
         )
     }
 
@@ -667,9 +707,12 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Lookup the value of key `k`.  Return an error if no value is present.
     pub fn lookup(&'a self, k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
         Box::new(
-            self.i.root.rlock(&self.ddml)
+            self.i.root.read()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                .and_then(move |root| self.lookup_node(root, k))
+                .and_then(move |guard| {
+                    guard.rlock(&self.ddml)
+                         .and_then(move |guard| self.lookup_node(guard, k))
+                })
         )
     }
 
@@ -700,23 +743,25 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             height: AtomicUsize::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
-            root: IntElem{
-                key: K::min_value(),
-                ptr:
-                    TreePtr::Mem(
-                        Box::new(
-                            Node(
-                                RwLock::new(
-                                    NodeData::Leaf(
-                                        LeafData{
-                                            items: BTreeMap::new()
-                                        }
+            root: RwLock::new(
+                IntElem{
+                    key: K::min_value(),
+                    ptr:
+                        TreePtr::Mem(
+                            Box::new(
+                                Node(
+                                    RwLock::new(
+                                        NodeData::Leaf(
+                                            LeafData{
+                                                items: BTreeMap::new()
+                                            }
+                                        )
                                     )
                                 )
                             )
                         )
-                    )
-            }
+                }
+            )
         };
         Tree{ ddml, i }
     }
@@ -726,10 +771,14 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         Box::new(
-            self.i.root.xlock(&self.ddml)
+            self.i.root.read()
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                .and_then(move |root| {
-                    self.remove_locked(root, k)
+                .and_then(move |guard| {
+                    guard.xlock(&self.ddml)
+                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                        .and_then(move |guard| {
+                            self.remove_locked(guard, k)
+                        })
             })
         )
     }
@@ -837,24 +886,29 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Sync all records written so far to stable storage.
-    pub fn sync_all(&'a mut self) -> Box<Future<Item=(), Error=Error> + 'a> {
-        if self.i.root.ptr.is_dirty() {
-            // If the root is dirty, then we have ownership over it.  But
-            // another fiber may still have a lock on it.  We must acquire then
-            // release the lock to ensure that we have the sole reference.
-            // TODO: acquire and release lock
-            let ptr = mem::replace(&mut self.i.root.ptr, TreePtr::None);
-            let immutable_self: &'a Tree<K, V> = self;
-            Box::new(
-                self.write_node(ptr.into_node().unwrap())
-                    .and_then(move |_| {
-                        // TODO: figure out what to do with the DRP
-                        immutable_self.ddml.sync_all()
-                    })
-            )
-        } else {
-            Box::new(future::ok::<(), Error>(()))
-        }
+    pub fn sync_all(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
+        Box::new( self.i.root.write()
+            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                  .and_then(move |mut root_guard| {
+            if root_guard.ptr.is_dirty() {
+                // If the root is dirty, then we have ownership over it.  But
+                // another fiber may still have a lock on it.  We must acquire
+                // then release the lock to ensure that we have the sole
+                // reference.
+                // TODO: acquire and release lock
+                let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
+                let fut: Box<Future<Item=(), Error=Error>> = Box::new(
+                    self.write_node(ptr.into_node().unwrap())
+                        .and_then(move |drp| {
+                            root_guard.ptr = TreePtr::DRP(drp);
+                            self.ddml.sync_all()
+                        })
+                );
+                fut
+            } else {
+                Box::new(future::ok::<(), Error>(()))
+            }
+        }))
     }
 
     fn write_leaf(&'a self, node: &NodeData<K, V>)
@@ -2702,6 +2756,7 @@ root:
 
     let r = current_thread::block_on_all(tree.sync_all());
     assert!(r.is_ok());
+    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp().unwrap(), drp);
 }
 
 #[test]
@@ -2742,6 +2797,7 @@ root:
 
     let r = current_thread::block_on_all(tree.sync_all());
     assert!(r.is_ok());
+    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp().unwrap(), drp);
 }
 
 }
