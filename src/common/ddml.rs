@@ -10,6 +10,7 @@ use common::{*, cache::*, pool::*};
 use futures::{Future, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
+#[cfg(test)] use rand::{self, Rng};
 use std::{hash::Hasher, sync::Mutex};
 #[cfg(test)] use uuid::Uuid;
 
@@ -120,6 +121,23 @@ impl DRP {
     /// Return the storage space actually allocated for this record
     fn asize(&self) -> LbaT {
         div_roundup(self.csize as usize, BYTES_PER_LBA) as LbaT
+    }
+
+    /// Get an otherwise random DRP with a specific lsize and compression.
+    /// Useful for testing purposes.
+    #[cfg(test)]
+    pub fn random(compression: Compression, lsize: usize) -> DRP {
+        let mut rng = rand::thread_rng();
+        DRP {
+            pba: PBA {
+                cluster: rng.gen(),
+                lba: rng.gen()
+            },
+            compression,
+            lsize: lsize as u32,
+            csize: rng.gen_range(0, lsize as u32),
+            checksum: rng.gen()
+        }
     }
 }
 

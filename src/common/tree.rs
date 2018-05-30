@@ -170,7 +170,7 @@ enum TreePtr<K: Key, V: Value> {
 impl<K: Key, V: Value> TreePtr<K, V> {
     #[cfg(test)]
     fn as_drp(&self) -> Option<&DRP> {
-        if let TreePtr::DRP(ref drp) = self {
+        if let &TreePtr::DRP(ref drp) = self {
             Some(drp)
         } else {
             None
@@ -2612,11 +2612,14 @@ fn read_int() {
            0x40, 0x1f, 0, 0,        // csize=8000
            0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
     ];
+    let drp = DRP::random(Compression::None, serialized.len());
+    let drp2 = drp.clone();
     let dbs = DivBufShared::from(serialized);
     let db = dbs.try().unwrap();
     let mut ddml = DDMLMock::new();
     ddml.expect_get::<DivBuf>()
         .called_once()
+        .with(passes(move |arg: & *const DRP| unsafe {**arg == drp} ))
         .returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must clone db here.
@@ -2625,9 +2628,9 @@ fn read_int() {
             Box::new(future::ok::<Box<DivBuf>, Error>(res))
         });
 
-    let elem:IntElem<u32, u32> = IntElem {
+    let elem: IntElem<u32, u32> = IntElem {
         key: 0,
-        ptr: TreePtr::DRP(DRP::default())
+        ptr: TreePtr::DRP(drp2)
     };
     let r = current_thread::block_on_all(future::lazy(|| {
         elem.rlock(&ddml).map(|node| {
@@ -2690,7 +2693,6 @@ root:
 #[test]
 fn write_int() {
     let mut ddml = DDMLMock::new();
-    let drp = DRP::default();
     let serialized = vec![1u8, 0, 0, 0, // enum variant 0 for IntNode
         2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
            0, 0, 0, 0,              // K=0
@@ -2710,6 +2712,7 @@ fn write_int() {
            0x40, 0x1f, 0, 0,        // csize=8000
            0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
     ];
+    let drp = DRP::random(Compression::None, serialized.len());
     ddml.expect_put::<DivBufShared>()
         .called_once()
         .with(passes(move |&(ref arg, _): &(Box<DivBufShared>, _)| {
@@ -2762,13 +2765,13 @@ root:
 #[test]
 fn write_leaf() {
     let mut ddml = DDMLMock::new();
-    let drp = DRP::default();
     let serialized = vec![0u8, 0, 0, 0, // enum variant 0 for LeafNode
         3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
         0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
         1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
         99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
     ];
+    let drp = DRP::random(Compression::None, serialized.len());
     ddml.expect_put::<DivBufShared>()
         .called_once()
         .with(passes(move |&(ref arg, _): &(Box<DivBufShared>, _)| {

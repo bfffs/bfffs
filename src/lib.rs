@@ -25,6 +25,8 @@ extern crate modulo;
 #[cfg(test)]
 extern crate permutohedron;
 extern crate nix;
+#[cfg(test)]
+extern crate rand;
 extern crate serde;
 extern crate serde_cbor;
 #[macro_use]
