@@ -889,19 +889,21 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                   .and_then(move |mut root_guard| {
             if root_guard.ptr.is_dirty() {
                 // If the root is dirty, then we have ownership over it.  But
-                // another fiber may still have a lock on it.  We must acquire
+                // another task may still have a lock on it.  We must acquire
                 // then release the lock to ensure that we have the sole
                 // reference.
-                // TODO: acquire and release lock
-                let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
-                let fut: Box<Future<Item=(), Error=Error>> = Box::new(
-                    self.write_node(ptr.into_node().unwrap())
-                        .and_then(move |drp| {
-                            root_guard.ptr = TreePtr::DRP(drp);
-                            self.ddml.sync_all()
-                        })
-                );
-                fut
+                let fut = root_guard.xlock(&self.ddml).and_then(move |guard| {
+                    drop(guard);
+                    let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
+                    Box::new(
+                        self.write_node(ptr.into_node().unwrap())
+                            .and_then(move |drp| {
+                                root_guard.ptr = TreePtr::DRP(drp);
+                                self.ddml.sync_all()
+                            })
+                    )
+                });
+                Box::new(fut) as Box<Future<Item=(), Error=Error>>
             } else {
                 Box::new(future::ok::<(), Error>(()))
             }
@@ -919,40 +921,48 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     fn write_node(&'a self, node: Box<Node<K, V>>)
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
-        let node_data = node.0.try_unwrap().unwrap();
-        if let NodeData::Leaf(_) = node_data {
-            return self.write_leaf(&node_data);
+        let ndata = node.0.try_unwrap().unwrap();
+        if let NodeData::Leaf(_) = ndata {
+            return self.write_leaf(&ndata);
         }
 
         // Rust's borrow checker doesn't understand that children_fut will
-        // complete before its continuation will run, so it won't let node be
-        // borrowed in both places.  So we'll have to use RefCell to allow
+        // complete before its continuation will run, so it won't let ndata
+        // be borrowed in both places.  So we'll have to use RefCell to allow
         // dynamic borrowing and Rc to allow moving into both closures.
-        let rnode_data = Rc::new(RefCell::new(node_data));
-        let rnode_data2 = rnode_data.clone();
-        let nchildren = rnode_data.borrow().as_int().unwrap().children.len();
+        let rndata = Rc::new(RefCell::new(ndata));
+        let rndata2 = rndata.clone();
+        let nchildren = rndata.borrow().as_int().unwrap().children.len();
         let children_fut = (0..nchildren)
         .filter_map(move |idx| {
-            let rnode_data3 = rnode_data.clone();
-            if rnode_data.borrow_mut()
-                         .as_int_mut().unwrap()
-                         .children[idx].is_dirty()
+            let rndata3 = rndata.clone();
+            if rndata.borrow_mut()
+                     .as_int_mut().unwrap()
+                     .children[idx].is_dirty()
             {
                 // If the child is dirty, then we have ownership over it.  We
-                // need to lock it, then release the lock, then we'll know that
+                // need to lock it, then release the lock.  Then we'll know that
                 // we have exclusive access to it, and we can move it into the
                 // Cache.
-                // TODO: acquire and release lock
-                let ptr = mem::replace(&mut rnode_data.borrow_mut()
-                                                      .as_int_mut().unwrap()
-                                                      .children[idx].ptr,
-                                       TreePtr::None);
-                Some(self.write_node(ptr.into_node().unwrap())
-                    .map(move |drp| {
-                        rnode_data3.borrow_mut()
+                let fut = rndata.borrow_mut()
+                                .as_int_mut().unwrap()
+                                .children[idx]
+                                .xlock(&self.ddml)
+                                .and_then(move |guard| {
+                    drop(guard);
+
+                    let ptr = mem::replace(&mut rndata3.borrow_mut()
+                                                       .as_int_mut().unwrap()
+                                                       .children[idx].ptr,
+                                           TreePtr::None);
+                    self.write_node(ptr.into_node().unwrap())
+                        .map(move |drp| {
+                            rndata3.borrow_mut()
                                    .as_int_mut().unwrap()
                                    .children[idx].ptr = TreePtr::DRP(drp);
-                    }))
+                        })
+                });
+                Some(fut)
             } else {
                 None
             }
@@ -961,7 +971,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         Box::new(
             future::join_all(children_fut)
             .and_then(move |_| {
-                let n: &NodeData<K, V> = &*rnode_data2.borrow();
+                let n: &NodeData<K, V> = &*rndata2.borrow();
                 let buf = DivBufShared::from(bincode::serialize(n).unwrap());
                 let (drp, fut) = self.ddml.put(Box::new(buf), Compression::None);
                 fut.map(move |_| drp)
