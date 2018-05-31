@@ -10,9 +10,7 @@ use common::ddml::*;
 use futures::{Future, future, future::IntoFuture};
 use futures_locks::*;
 use nix::{Error, errno};
-use serde::{Serialize, de::DeserializeOwned};
-#[cfg(test)]
-use serde::{Serializer, de::Deserializer};
+use serde::{Serialize, Serializer, de::{Deserializer, DeserializeOwned}};
 #[cfg(test)] use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
 #[cfg(test)] use simulacrum::*;
@@ -26,7 +24,6 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering}
 };
 
-#[cfg(test)]
 mod atomic_usize_serializer {
     use super::*;
     use serde::Deserialize;
@@ -546,11 +543,9 @@ impl<K: Key, V: Value> NodeData<K, V> {
 #[derive(Debug)]
 struct Node<K: Key, V: Value> (RwLock<NodeData<K, V>>);
 
-#[cfg(test)]
 mod tree_root_serializer {
     use super::*;
-    use serde::Deserialize;
-    use tokio::executor::current_thread;
+    use serde::{Deserialize, ser::Error};
 
     pub(super) fn deserialize<'de, D, K, V>(d: D)
         -> Result<RwLock<IntElem<K, V>>, D::Error>
@@ -564,19 +559,21 @@ mod tree_root_serializer {
         -> Result<S::Ok, S::Error>
         where K: Key, S: Serializer, V: Value
     {
-        let guard = current_thread::block_on_all(x.read()).unwrap();
-        (*guard).serialize(s)
+        match x.try_read() {
+            Ok(guard) => (*guard).serialize(s),
+            Err(_) => Err(S::Error::custom("EAGAIN"))
+        }
     }
 }
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(Deserialize, Serialize))]
-#[cfg_attr(test, serde(bound(deserialize = "K: DeserializeOwned")))]
+#[derive(Deserialize, Serialize)]
+#[serde(bound(deserialize = "K: DeserializeOwned"))]
 struct Inner<K: Key, V: Value> {
     /// Tree height.  1 if the Tree consists of a single Leaf node.
     // Use atomics so it can be modified from an immutable reference.  Accesses
     // should be very rare, so performance is not a concern.
-    #[cfg_attr(test, serde(with = "atomic_usize_serializer"))]
+    #[serde(with = "atomic_usize_serializer")]
     height: AtomicUsize,
     /// Minimum node fanout.  Smaller nodes will be merged, or will steal
     /// children from their neighbors.
@@ -587,7 +584,7 @@ struct Inner<K: Key, V: Value> {
     /// buffers flushed
     _max_size: usize,
     /// Root node
-    #[cfg_attr(test, serde(with = "tree_root_serializer"))]
+    #[serde(with = "tree_root_serializer")]
     root: RwLock<IntElem<K, V>>
 }
 
