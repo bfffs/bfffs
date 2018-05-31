@@ -222,8 +222,7 @@ impl<'a> DDML {
     }
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
-    pub fn put<T: Cacheable>(&'a self, cacheable: Box<T>,
-                             compression: Compression)
+    pub fn put<T: Cacheable>(&'a self, cacheable: T, compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error> + 'a>) {
         // Outline:
         // 1) Serialize
@@ -278,7 +277,8 @@ impl<'a> DDML {
             }
             let _ = keeper;
             //Cache
-            self.cache.lock().unwrap().insert(Key::PBA(pba), cacheable);
+            self.cache.lock().unwrap().insert(Key::PBA(pba),
+                                              Box::new(cacheable));
             r
         }));
         let drp = DRP { pba, compression, lsize, csize, checksum };
@@ -566,7 +566,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Box::new(cache));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put(Box::new(dbs), Compression::None);
+        let (drp, fut) = ddml.put(dbs, Compression::None);
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);

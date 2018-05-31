@@ -88,18 +88,18 @@ impl DDMLMock {
             ("pop", drp as *const DRP)
     }
 
-    pub fn put<T: Cacheable>(&self, cacheable: Box<T>, compression: Compression)
+    pub fn put<T: Cacheable>(&self, cacheable: T, compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error>>)
     {
-        self.e.was_called_returning::<(Box<T>, Compression),
+        self.e.was_called_returning::<(T, Compression),
                                       (DRP, Box<Future<Item=(), Error=Error>>)>
             ("put", (cacheable, compression))
     }
 
-    pub fn expect_put<T: Cacheable>(&mut self) -> Method<(Box<T>, Compression),
+    pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression),
         (DRP, Box<Future<Item=(), Error=Error>>)>
     {
-        self.e.expect::<(Box<T>, Compression),
+        self.e.expect::<(T, Compression),
                         (DRP, Box<Future<Item=(), Error=Error>>)>
             ("put")
     }
@@ -914,7 +914,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
         let buf = DivBufShared::from(bincode::serialize(&node).unwrap());
-        let (drp, fut) = self.ddml.put(Box::new(buf), Compression::None);
+        let (drp, fut) = self.ddml.put(buf, Compression::None);
         Box::new(fut.map(move |_| drp))
     }
 
@@ -973,7 +973,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             .and_then(move |_| {
                 let n: &NodeData<K, V> = &*rndata2.borrow();
                 let buf = DivBufShared::from(bincode::serialize(n).unwrap());
-                let (drp, fut) = self.ddml.put(Box::new(buf), Compression::None);
+                let (drp, fut) = self.ddml.put(buf, Compression::None);
                 fut.map(move |_| drp)
             })
         )
@@ -2722,7 +2722,7 @@ fn write_int() {
     let drp = DRP::random(Compression::None, serialized.len());
     ddml.expect_put::<DivBufShared>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Box<DivBufShared>, _)| {
+        .with(passes(move |&(ref arg, _): &(DivBufShared, _)| {
             let dbs = arg;
             &dbs.try().unwrap()[..] == &serialized[..]
         }))
@@ -2781,7 +2781,7 @@ fn write_leaf() {
     let drp = DRP::random(Compression::None, serialized.len());
     ddml.expect_put::<DivBufShared>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Box<DivBufShared>, _)| {
+        .with(passes(move |&(ref arg, _): &(DivBufShared, _)| {
             let dbs = arg;
             &dbs.try().unwrap()[..] == &serialized[..]
         })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
