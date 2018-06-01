@@ -17,7 +17,7 @@ pub enum Key {
 /// Types that implement `Cacheable` may be stored in the cache
 pub trait Cacheable: Any + Debug {
     /// Deserialize a buffer into Self.  Will panic if deserialization fails.
-    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized;
+    fn deserialize(dbs: DivBufShared) -> Self where Self: Sized;
 
     /// How much space does this object use in the Cache?
     fn len(&self) -> usize;
@@ -57,8 +57,8 @@ pub trait CacheRef: Any {
 downcast!(CacheRef);
 
 impl Cacheable for DivBufShared {
-    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized {
-        Box::new(dbs)
+    fn deserialize(dbs: DivBufShared) -> Self where Self: Sized {
+        dbs
     }
 
     fn len(&self) -> usize {
@@ -134,9 +134,9 @@ impl Cache {
     /// Get a read-only reference to a cached block.
     ///
     /// The block will be marked as the most recently used.
-    pub fn get(&mut self, key: &Key) -> Option<Box<CacheRef>> {
+    pub fn get<T: CacheRef>(&mut self, key: &Key) -> Option<Box<T>> {
         if self.mru == Some(*key) {
-            Some(self.store.get(key).unwrap().buf.make_ref())
+            Some(self.store.get(key).unwrap().buf.make_ref().downcast::<T>().unwrap())
         } else {
             let mru = self.mru;
             let mut v_mru = None;
@@ -146,7 +146,7 @@ impl Cache {
                 v_lru = v.lru;
                 v.mru = None;
                 v.lru = mru;
-                v.buf.make_ref()
+                v.buf.make_ref().downcast::<T>().unwrap()
             }).map(|cacheref| {
                 self.store.get_mut(&v_mru.unwrap()).unwrap().lru = v_lru;
                 if v_lru.is_some() {
@@ -236,7 +236,7 @@ fn test_get_lru() {
     let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
-    assert_eq!(cache.get(&key1).unwrap().downcast::<DivBuf>().unwrap().len(), 5);
+    assert_eq!(cache.get::<DivBuf>(&key1).unwrap().len(), 5);
     assert_eq!(cache.mru, Some(key1));
     assert_eq!(cache.lru, Some(key2));
     {
@@ -265,7 +265,7 @@ fn test_get_middle() {
     let dbs = Box::new(DivBufShared::from(vec![0u8; 11]));
     cache.insert(key3, dbs);
 
-    assert_eq!(cache.get(&key2).unwrap().downcast::<DivBuf>().unwrap().len(), 7);
+    assert_eq!(cache.get::<DivBuf>(&key2).unwrap().len(), 7);
     assert_eq!(cache.mru, Some(key2));
     assert_eq!(cache.lru, Some(key1));
     {
@@ -292,14 +292,14 @@ fn test_expire_referenced() {
     let key3 = Key::Rid(3);
     let dbs = Box::new(DivBufShared::from(vec![0u8; 13]));
     cache.insert(key1, dbs);
-    let _ref1 = cache.get(&key1);
+    let _ref1 = cache.get::<DivBuf>(&key1);
     let dbs = Box::new(DivBufShared::from(vec![0u8; 17]));
     cache.insert(key2, dbs);
     let dbs = Box::new(DivBufShared::from(vec![0u8; 83]));
     cache.insert(key3, dbs);
 
     assert_eq!(cache.size(), 96);
-    assert!(cache.get(&key2).is_none());
+    assert!(cache.get::<DivBuf>(&key2).is_none());
 }
 
 /// On insertion, old entries should be expired to prevent overflow
@@ -314,7 +314,7 @@ fn test_expire_one() {
     cache.insert(key2, dbs);
 
     assert_eq!(cache.size(), 57);
-    assert!(cache.get(&key1).is_none());
+    assert!(cache.get::<DivBuf>(&key1).is_none());
 }
 
 /// expire multiple entries if necessary
@@ -332,8 +332,8 @@ fn test_expire_two() {
     cache.insert(key3, dbs);
 
     assert_eq!(cache.size(), 61);
-    assert!(cache.get(&key1).is_none());
-    assert!(cache.get(&key2).is_none());
+    assert!(cache.get::<DivBuf>(&key1).is_none());
+    assert!(cache.get::<DivBuf>(&key2).is_none());
 }
 
 /// Get the most recently used entry
@@ -347,7 +347,7 @@ fn test_get_mru() {
     let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
-    assert_eq!(cache.get(&key2).unwrap().downcast::<DivBuf>().unwrap().len(), 7);
+    assert_eq!(cache.get::<DivBuf>(&key2).unwrap().len(), 7);
     assert_eq!(cache.lru, Some(key1));
     assert_eq!(cache.mru, Some(key2));
     {
@@ -371,12 +371,12 @@ fn test_get_multiple() {
     let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
-    let ref1 = cache.get(&key1).unwrap().downcast::<DivBuf>().unwrap();
+    let ref1 = cache.get::<DivBuf>(&key1).unwrap();
     {
         // Move key2 to the MRU position
-        let _ = cache.get(&key2).unwrap();
+        let _ = cache.get::<DivBuf>(&key2).unwrap();
     }
-    let ref2 = cache.get(&key1).unwrap().downcast::<DivBuf>().unwrap();
+    let ref2 = cache.get::<DivBuf>(&key1).unwrap();
     assert_eq!(ref1.len(), 5);
     assert_eq!(ref2.len(), 5);
 }
@@ -386,7 +386,7 @@ fn test_get_multiple() {
 fn test_get_nonexistent() {
     let mut cache = Cache::with_capacity(100);
     let key = Key::Rid(0);
-    assert!(cache.get(&key).is_none());
+    assert!(cache.get::<DivBuf>(&key).is_none());
 }
 
 /// Insert a duplicate value
@@ -416,7 +416,7 @@ fn test_insert_empty() {
         assert!(v.lru.is_none());
         assert!(v.mru.is_none());
     }
-    assert_eq!(cache.get(&key).unwrap().downcast::<DivBuf>().unwrap().len(), 6);
+    assert_eq!(cache.get::<DivBuf>(&key).unwrap().len(), 6);
 }
 
 /// Insert into a cache that already has 1 item.
@@ -437,7 +437,7 @@ fn test_insert_one() {
         assert_eq!(v.lru, Some(key1));
         assert!(v.mru.is_none());
     }
-    assert_eq!(cache.get(&key2).unwrap().downcast::<DivBuf>().unwrap().len(), 7);
+    assert_eq!(cache.get::<DivBuf>(&key2).unwrap().len(), 7);
 }
 
 /// Remove a nonexistent key.  Unlike inserting a dup, this is not an error

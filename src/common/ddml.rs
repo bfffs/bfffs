@@ -29,13 +29,13 @@ impl CacheMock {
         }
     }
 
-    pub fn get(&mut self, key: &Key) -> Option<Box<CacheRef>> {
-        self.e.was_called_returning::<*const Key, Option<Box<CacheRef>>>
+    pub fn get<T: CacheRef>(&mut self, key: &Key) -> Option<Box<T>> {
+        self.e.was_called_returning::<*const Key, Option<Box<T>>>
             ("get", key as *const Key)
     }
 
-    pub fn expect_get(&mut self) -> Method<*const Key, Option<Box<CacheRef>>> {
-        self.e.expect::<*const Key, Option<Box<CacheRef>>>("get")
+    pub fn expect_get<T: CacheRef>(&mut self) -> Method<*const Key, Option<Box<T>>> {
+        self.e.expect::<*const Key, Option<Box<T>>>("get")
     }
 
     pub fn insert(&mut self, key: Key, buf: Box<Cacheable>) {
@@ -221,8 +221,7 @@ impl<'a> DDML {
         // 1) Fetch from cache, or
         // 2) Read from disk, then insert into cache
         let pba = drp.pba;
-        self.cache.lock().unwrap().get(&Key::PBA(pba)).map(|cacheref| {
-            let t = cacheref.downcast::<T>().unwrap();
+        self.cache.lock().unwrap().get::<T>(&Key::PBA(pba)).map(|t| {
             let r : Box<Future<Item=Box<T>, Error=Error>> =
             Box::new(future::ok::<Box<T>, Error>(t));
             r
@@ -254,7 +253,7 @@ impl<'a> DDML {
             Box::new(
                 self.read(*drp).map(move |dbs| {
                     self.pool.free(pba, lbas);
-                    T::deserialize(dbs).downcast::<T>().unwrap()
+                    Box::new(T::deserialize(dbs))
                 })
             )
         })
@@ -476,7 +475,7 @@ mod t {
         let pool = s.create_mock::<MockPool>();
         // Ideally we'd assert that Pool::read gets called in between Cache::get
         // and Cache::insert.  But Simulacrum can't do that.
-        cache.expect_get()
+        cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
                 unsafe {**key == Key::PBA(pba2)}
@@ -507,7 +506,7 @@ mod t {
         let s = Scenario::new();
         let mut cache = CacheMock::new();
         let pool = s.create_mock::<MockPool>();
-        cache.expect_get()
+        cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
                 unsafe {**key == Key::PBA(pba2)}
