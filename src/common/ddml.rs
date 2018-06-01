@@ -12,20 +12,59 @@ use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
 use std::{hash::Hasher, sync::Mutex};
+#[cfg(test)] use simulacrum::*;
 #[cfg(test)] use uuid::Uuid;
 
 pub use common::cache::{Cacheable, CacheRef};
 
 #[cfg(test)]
-/// Only exists so mockers can replace Cache
-pub trait CacheTrait {
-    fn get(&mut self, key: &Key) -> Option<Box<CacheRef>>;
-    fn insert(&mut self, key: Key, buf: Box<Cacheable>);
-    fn remove(&mut self, key: &Key) -> Option<Box<Cacheable>>;
-    fn size(&self) -> usize;
+pub struct CacheMock {
+    e: Expectations,
 }
 #[cfg(test)]
-pub type CacheLike = Box<CacheTrait>;
+impl CacheMock {
+    pub fn new() -> Self {
+        Self {
+            e: Expectations::new()
+        }
+    }
+
+    pub fn get(&mut self, key: &Key) -> Option<Box<CacheRef>> {
+        self.e.was_called_returning::<*const Key, Option<Box<CacheRef>>>
+            ("get", key as *const Key)
+    }
+
+    pub fn expect_get(&mut self) -> Method<*const Key, Option<Box<CacheRef>>> {
+        self.e.expect::<*const Key, Option<Box<CacheRef>>>("get")
+    }
+
+    pub fn insert(&mut self, key: Key, buf: Box<Cacheable>) {
+        self.e.was_called_returning::<(Key, Box<Cacheable>), ()>
+            ("insert", (key, buf))
+    }
+
+    pub fn expect_insert(&mut self) -> Method<(Key, Box<Cacheable>), ()> {
+        self.e.expect::<(Key, Box<Cacheable>), ()>("insert")
+    }
+
+    pub fn remove(&mut self, key: &Key) -> Option<Box<Cacheable>> {
+        self.e.was_called_returning::<*const Key, Option<Box<Cacheable>>>
+            ("remove", key as *const Key)
+    }
+
+    pub fn expect_remove(&mut self)
+        -> Method<*const Key, Option<Box<Cacheable>>>
+    {
+        self.e.expect::<*const Key, Option<Box<Cacheable>>>("remove")
+    }
+
+    pub fn size(&self) -> usize {
+        self.e.was_called_returning::<(), usize>("size", ())
+    }
+}
+
+#[cfg(test)]
+pub type CacheLike = CacheMock;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type CacheLike = Cache;
@@ -339,20 +378,10 @@ mod t {
     use futures::future;
     use mockers::matchers::ANY;
     use mockers::{Scenario, Sequence};
+    use simulacrum::validators::trivial::any;
     use std::cell::RefCell;
     use std::rc::Rc;
     use tokio::executor::current_thread;
-
-    mock!{
-        MockCache,
-        self,
-        trait CacheTrait {
-            fn get(&mut self, key: &Key) -> Option<Box<CacheRef>>;
-            fn insert(&mut self, key: Key, buf: Box<Cacheable>);
-            fn remove(&mut self, key: &Key) -> Option<Box<Cacheable>>;
-            fn size(&self) -> usize;
-        }
-    }
 
     mock!{
         MockPool,
@@ -375,18 +404,21 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
-        let dbs = Box::new(DivBufShared::from(vec![0u8; 4096]));
         let s = Scenario::new();
-        let mut seq = Sequence::new();
-        let cache = s.create_mock::<MockCache>();
+        let mut cache = CacheMock::new();
+        // Ideally, we'd expect that Cache::remove gets called before
+        // Pool::free.  But Simulacrum lacks that ability.
+        cache.expect_remove()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::PBA(pba2)}
+            })).returning(move |_| {
+                Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
+            });
         let pool = s.create_mock::<MockPool>();
-        seq.expect(cache.remove_call(check!(move |key: &&Key| {
-            **key == Key::PBA(pba2)
-        })).and_return(Some(dbs)));
-        seq.expect(pool.free_call(pba, 1).and_return(()));
-        s.expect(seq);
+        s.expect(pool.free_call(pba, 1).and_return(()));
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         ddml.delete(&drp);
     }
 
@@ -397,15 +429,15 @@ mod t {
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let s = Scenario::new();
-        let mut seq = Sequence::new();
-        let cache = s.create_mock::<MockCache>();
+        let mut cache = CacheMock::new();
+        cache.expect_remove()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::PBA(pba2)}
+            })).returning(|_| None);
         let pool = s.create_mock::<MockPool>();
-        seq.expect(cache.remove_call(check!(move |key: &&Key| {
-            **key == Key::PBA(pba2)
-        })).and_return(None));
-        s.expect(seq);
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         ddml.evict(&drp);
     }
 
@@ -416,17 +448,18 @@ mod t {
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db: Box<CacheRef> = Box::new(dbs.try().unwrap());
         let s = Scenario::new();
-        let mut seq = Sequence::new();
-        let cache = s.create_mock::<MockCache>();
+        let mut cache = CacheMock::new();
         let pool = s.create_mock::<MockPool>();
-        seq.expect(cache.get_call(check!(move |key: &&Key| {
-            **key == Key::PBA(pba2)
-        })).and_return(Some(db)));
-        s.expect(seq);
+        cache.expect_get()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::PBA(pba2)}
+            })).returning(move |_| {
+                Some(Box::new(dbs.try().unwrap()))
+            });
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         ddml.get::<DivBuf>(&drp);
     }
 
@@ -439,22 +472,27 @@ mod t {
         let owned_by_cache = Rc::new(RefCell::new(Vec::<Box<Cacheable>>::new()));
         let owned_by_cache2 = owned_by_cache.clone();
         let s = Scenario::new();
-        let mut seq = Sequence::new();
-        let cache = s.create_mock::<MockCache>();
+        let mut cache = CacheMock::new();
         let pool = s.create_mock::<MockPool>();
-        seq.expect(cache.get_call(check!(move |key: &&Key| {
-            **key == Key::PBA(pba2)
-        })).and_return(None));
-        seq.expect(pool.read_call(check!(|dbm: &DivBufMut| {
+        // Ideally we'd assert that Pool::read gets called in between Cache::get
+        // and Cache::insert.  But Simulacrum can't do that.
+        cache.expect_get()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::PBA(pba2)}
+            })).returning(|_| None);
+        s.expect(pool.read_call(check!(|dbm: &DivBufMut| {
             dbm.len() == 4096
         }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
-        seq.expect(cache.insert_call(Key::PBA(pba), ANY)
-                   .and_call(move |_, dbs| {
-                       owned_by_cache2.borrow_mut().push(dbs);
-                   }));
-        s.expect(seq);
+        cache.expect_insert()
+            .called_once()
+            .with(passes(move |args: &(Key, _)| {
+                args.0 == Key::PBA(pba2)
+            })).returning(move |(_, dbs)| {;
+                owned_by_cache2.borrow_mut().push(dbs);
+            });
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         current_thread::block_on_all(future::lazy(|| {
             ddml.get::<DivBuf>(&drp)
         })).unwrap();
@@ -467,18 +505,18 @@ mod t {
                       csize: 1, checksum: 0xdeadbeefdeadbeef};
         let pba2 = pba.clone();
         let s = Scenario::new();
-        let mut seq = Sequence::new();
-        let cache = s.create_mock::<MockCache>();
+        let mut cache = CacheMock::new();
         let pool = s.create_mock::<MockPool>();
-        seq.expect(cache.get_call(check!(move |key: &&Key| {
-            **key == Key::PBA(pba2)
-        })).and_return(None));
-        seq.expect(pool.read_call(check!(|dbm: &DivBufMut| {
+        cache.expect_get()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::PBA(pba2)}
+            })).returning(|_| None);
+        s.expect(pool.read_call(check!(|dbm: &DivBufMut| {
             dbm.len() == 4096
         }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
-        s.expect(seq);
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         let err = current_thread::block_on_all(future::lazy(|| {
             ddml.get::<DivBuf>(&drp)
         })).unwrap_err();
@@ -492,16 +530,18 @@ mod t {
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let s = Scenario::new();
-        let mut seq = Sequence::new();
-        let cache = s.create_mock::<MockCache>();
+        let mut cache = CacheMock::new();
         let pool = s.create_mock::<MockPool>();
-        seq.expect(cache.remove_call(check!(move |key: &&Key| {
-            **key == Key::PBA(pba2)
-        })).and_return(Some(Box::new(DivBufShared::from(vec![0u8; 4096])))));
-        seq.expect(pool.free_call(pba, 1).and_return(()));
-        s.expect(seq);
+        cache.expect_remove()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::PBA(pba2)}
+            })).returning(|_| {
+                Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
+            });
+        s.expect(pool.free_call(pba, 1).and_return(()));
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         ddml.pop::<DivBufShared>(&drp);
     }
 
@@ -513,17 +553,19 @@ mod t {
                       csize: 1, checksum: 0xe7f15966a3d61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
-        let cache = s.create_mock::<MockCache>();
+        let mut cache = CacheMock::new();
         let pool = s.create_mock::<MockPool>();
-        seq.expect(cache.remove_call(check!(move |key: &&Key| {
-            **key == Key::PBA(pba2)
-        })).and_return(None));
+        cache.expect_remove()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::PBA(pba2)}
+            })).returning(|_| None);
         seq.expect(pool.read_call(ANY, pba)
                    .and_return(Box::new(future::ok::<(), Error>(()))));
         seq.expect(pool.free_call(pba, 1).and_return(()));
         s.expect(seq);
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         current_thread::block_on_all(future::lazy(|| {
             ddml.pop::<DivBufShared>(&drp)
         })).unwrap();
@@ -536,17 +578,17 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xdeadbeefdeadbeef};
         let s = Scenario::new();
-        let mut seq = Sequence::new();
-        let cache = s.create_mock::<MockCache>();
+        let mut cache = CacheMock::new();
         let pool = s.create_mock::<MockPool>();
-        seq.expect(cache.remove_call(check!(move |key: &&Key| {
-            **key == Key::PBA(pba2)
-        })).and_return(None));
-        seq.expect(pool.read_call(ANY, pba)
+        cache.expect_remove()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::PBA(pba2)}
+            })).returning(|_| None);
+        s.expect(pool.read_call(ANY, pba)
                    .and_return(Box::new(future::ok::<(), Error>(()))));
-        s.expect(seq);
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         let err = current_thread::block_on_all(future::lazy(|| {
             ddml.pop::<DivBufShared>(&drp)
         })).unwrap_err();
@@ -556,15 +598,18 @@ mod t {
     #[test]
     fn put() {
         let s = Scenario::new();
-        let cache = s.create_mock::<MockCache>();
+        let mut cache = CacheMock::new();
         let pba = PBA::default();
-        s.expect(cache.insert_call(Key::PBA(pba), ANY).and_return(()));
+        cache.expect_insert()
+            .called_once()
+            .with(params!(Key::PBA(pba), any()))
+            .returning(|_| ());
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.write_call(ANY)
             .and_return(Ok((pba, Box::new(future::ok::<(), Error>(())))))
         );
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let (drp, fut) = ddml.put(dbs, Compression::None);
         assert_eq!(drp.pba, pba);
@@ -576,13 +621,13 @@ mod t {
     #[test]
     fn sync_all() {
         let s = Scenario::new();
-        let cache = s.create_mock::<MockCache>();
+        let cache = CacheMock::new();
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.sync_all_call()
             .and_return(Box::new(future::ok::<(), Error>(())))
         );
 
-        let ddml = DDML::new(Box::new(pool), Box::new(cache));
+        let ddml = DDML::new(Box::new(pool), cache);
         assert!(current_thread::block_on_all(ddml.sync_all()).is_ok());
     }
 }

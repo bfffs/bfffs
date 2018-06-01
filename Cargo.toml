@@ -53,3 +53,6 @@ lto = true
 
 [workspace]
 members = ["isa-l"]
+
+[patch.crates-io]
+simulacrum_mock = { git = "https://github.com/asomers/simulacrum/", rev = "4be48c4" }
