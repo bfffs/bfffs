@@ -162,6 +162,14 @@ impl DRP {
         div_roundup(self.csize as usize, BYTES_PER_LBA) as LbaT
     }
 
+    /// Explicitly construct a `DRP`, for testing.  Production code should never
+    /// use this method, because `DRP`s should be opaque to the upper layers.
+    #[cfg(test)]
+    pub fn new(pba: PBA, compression: Compression, lsize: u32, csize: u32,
+               checksum: u64) -> Self {
+        DRP{pba, compression, lsize, csize, checksum}
+    }
+
     /// Get an otherwise random DRP with a specific lsize and compression.
     /// Useful for testing purposes.
     #[cfg(test)]

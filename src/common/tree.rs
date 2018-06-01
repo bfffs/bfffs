@@ -21,7 +21,10 @@ use std::{
     mem,
     rc::Rc,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicUsize, Ordering}
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering}
+    }
 };
 
 mod atomic_usize_serializer {
@@ -255,7 +258,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
 /// Guard that holds the Node lock object for reading
 enum TreeReadGuard<K: Key, V: Value> {
     Mem(RwLockReadGuard<NodeData<K, V>>),
-    DRP(RwLockReadGuard<NodeData<K, V>>, Node<K, V>)
+    DRP(RwLockReadGuard<NodeData<K, V>>, Box<Arc<Node<K, V>>>)
 }
 
 impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
@@ -272,7 +275,7 @@ impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
 /// Guard that holds the Node lock object for writing
 enum TreeWriteGuard<K: Key, V: Value> {
     Mem(RwLockWriteGuard<NodeData<K, V>>),
-    DRP(RwLockWriteGuard<NodeData<K, V>>, Node<K, V>)
+    DRP(RwLockWriteGuard<NodeData<K, V>>, Box<Arc<Node<K, V>>>)
 }
 
 impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
@@ -309,15 +312,11 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
         self.ptr.is_dirty()
     }
 
-    fn read(&self, ddml: &'a DDMLLike, drp: &DRP) -> Box<Future<Item=Node<K, V>, Error=Error> + 'a> {
+    fn read(&self, ddml: &'a DDMLLike, drp: &DRP)
+        -> Box<Future<Item=Box<Arc<Node<K, V>>>, Error=Error> + 'a>
+    {
         Box::new(
             ddml.get(drp)
-                .map(|db: Box<DivBuf>| {
-                    let node_data: NodeData<K, V> =
-                        bincode::deserialize(&db[..]).unwrap();
-                    // TODO: cache the deserialized NodeData
-                    Node(RwLock::new(node_data))
-                })
         )
     }
 
@@ -421,6 +420,15 @@ impl<K: Key, V: Value> NodeData<K, V> {
     fn as_int_mut(&mut self) -> Option<&mut IntData<K, V>> {
         if let &mut NodeData::Int(ref mut int) = self {
             Some(int)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(test)]
+    fn as_leaf(&self) -> Option<&LeafData<K, V>> {
+        if let &NodeData::Leaf(ref leaf) = self {
+            Some(leaf)
         } else {
             None
         }
@@ -537,6 +545,48 @@ impl<K: Key, V: Value> NodeData<K, V> {
                 leaf.items.append(&mut other_left_half);
             }
         }
+    }
+}
+
+impl<K: Key, V: Value> Cacheable for Arc<Node<K, V>> {
+    fn deserialize(dbs: DivBufShared) -> Self where Self: Sized {
+        let db = dbs.try().unwrap();
+        let node_data: NodeData<K, V> = bincode::deserialize(&db[..]).unwrap();
+        Arc::new(Node(RwLock::new(node_data)))
+    }
+
+    fn len(&self) -> usize {
+        mem::size_of_val(self)  // TODO: check that this is reasonable
+    }
+
+    fn make_ref(&self) -> Box<CacheRef> {
+        Box::new(self.clone())
+    }
+
+    fn safe_to_expire(&self) -> bool {
+        true    // The Arc guarantees that we can expire at any time
+    }
+
+    fn serialize(&self) -> (DivBuf, Option<DivBufShared>) {
+        let g = self.0.try_read().expect(
+            "Shouldn't be serializing a Node that's locked for writing");
+        let v = bincode::serialize(&g.deref()).unwrap();
+        let dbs = DivBufShared::from(v);
+        let db = dbs.try().unwrap();
+        (db, Some(dbs))
+    }
+
+    fn truncate(&self, _len: usize) {
+        unimplemented!()
+    }
+}
+
+impl<K: Key, V: Value> CacheRef for Arc<Node<K, V>> {
+    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized {
+        let db = dbs.try().unwrap();
+        let node_data: NodeData<K, V> = bincode::deserialize(&db[..]).unwrap();
+        let node = Arc::new(Node(RwLock::new(node_data)));
+        Box::new(node)
     }
 }
 
@@ -910,28 +960,27 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         }))
     }
 
-    fn write_leaf(&'a self, node: &NodeData<K, V>)
+    fn write_leaf(&'a self, node: Box<Node<K, V>>)
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
-        let buf = DivBufShared::from(bincode::serialize(&node).unwrap());
-        let (drp, fut) = self.ddml.put(buf, Compression::None);
+        let arc: Arc<Node<K, V>> = Arc::new(*node);
+        let (drp, fut) = self.ddml.put(arc, Compression::None);
         Box::new(fut.map(move |_| drp))
     }
 
-    fn write_node(&'a self, node: Box<Node<K, V>>)
+    fn write_node(&'a self, mut node: Box<Node<K, V>>)
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
-        let ndata = node.0.try_unwrap().unwrap();
-        if let NodeData::Leaf(_) = ndata {
-            return self.write_leaf(&ndata);
+        if node.0.get_mut().unwrap().as_leaf_mut().is_some() {
+            return self.write_leaf(node);
         }
+        let ndata = node.0.try_write().unwrap();
 
         // Rust's borrow checker doesn't understand that children_fut will
         // complete before its continuation will run, so it won't let ndata
         // be borrowed in both places.  So we'll have to use RefCell to allow
         // dynamic borrowing and Rc to allow moving into both closures.
         let rndata = Rc::new(RefCell::new(ndata));
-        let rndata2 = rndata.clone();
         let nchildren = rndata.borrow().as_int().unwrap().children.len();
         let children_fut = (0..nchildren)
         .filter_map(move |idx| {
@@ -971,9 +1020,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         Box::new(
             future::join_all(children_fut)
             .and_then(move |_| {
-                let n: &NodeData<K, V> = &*rndata2.borrow();
-                let buf = DivBufShared::from(bincode::serialize(n).unwrap());
-                let (drp, fut) = self.ddml.put(buf, Compression::None);
+                let arc: Arc<Node<K, V>> = Arc::new(*node);
+                let (drp, fut) = self.ddml.put(arc, Compression::None);
                 fut.map(move |_| drp)
             })
         )
@@ -990,6 +1038,122 @@ impl<K: Key, V: Value> Display for Tree<K, V> {
 
 
 // LCOV_EXCL_START
+/// Tests for serialization/deserialization of Nodes
+#[cfg(test)]
+mod serialization {
+
+use super::*;
+
+#[test]
+fn deserialize_int() {
+    let serialized = DivBufShared::from(vec![
+        1u8, 0, 0, 0, // enum variant 0 for IntNode
+        2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
+           0, 0, 0, 0,              // K=0
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+               0, 0,                // Cluster 0
+               0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
+           0, 0, 0, 0,              // enum variant 0 for Compression::None
+           0x40, 0x9c, 0, 0,        // lsize=40000
+           0x40, 0x9c, 0, 0,         // csize=40000
+           0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
+           0, 1, 0, 0,              // K=256
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+               0, 0,                // Cluster 0
+               0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
+           1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
+           0x80, 0x3e, 0, 0,        // lsize=16000
+           0x40, 0x1f, 0, 0,        // csize=8000
+           0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
+    ]);
+    let drp0 = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
+                        0xdeadbeef);
+    let drp1 = DRP::new(PBA::new(0, 256), Compression::ZstdL9NoShuffle,
+                        16000, 8000, 0x1a7ebabe);
+    let node: Arc<Node<u32, u32>> = Cacheable::deserialize(serialized);
+    let guard = node.0.try_read().unwrap();
+    let int_data = guard.deref().as_int().unwrap();
+    assert_eq!(int_data.children.len(), 2);
+    assert_eq!(int_data.children[0].key, 0);
+    assert_eq!(*int_data.children[0].ptr.as_drp().unwrap(), drp0);
+    assert_eq!(int_data.children[1].key, 256);
+    assert_eq!(*int_data.children[1].ptr.as_drp().unwrap(), drp1);
+}
+
+#[test]
+fn deserialize_leaf() {
+    let serialized = DivBufShared::from(vec![
+        0u8, 0, 0, 0, // enum variant 0 for LeafNode
+        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
+            0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
+            1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
+            99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
+        ]);
+    let node: Arc<Node<u32, u32>> = Cacheable::deserialize(serialized);
+    let guard = node.0.try_read().unwrap();
+    let leaf_data = guard.deref().as_leaf().unwrap();
+    assert_eq!(leaf_data.items.len(), 3);
+    assert_eq!(leaf_data.items[&0], 100);
+    assert_eq!(leaf_data.items[&1], 200);
+    assert_eq!(leaf_data.items[&99], 50_000);
+}
+
+#[test]
+fn serialize_int() {
+    let expected = vec![1u8, 0, 0, 0, // enum variant 0 for IntNode
+        2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
+           0, 0, 0, 0,              // K=0
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+               0, 0,                // Cluster 0
+               0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
+           0, 0, 0, 0,              // enum variant 0 for Compression::None
+           0x40, 0x9c, 0, 0,        // lsize=40000
+           0x40, 0x9c, 0, 0,         // csize=40000
+           0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
+           0, 1, 0, 0,              // K=256
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+               0, 0,                // Cluster 0
+               0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
+           1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
+           0x80, 0x3e, 0, 0,        // lsize=16000
+           0x40, 0x1f, 0, 0,        // csize=8000
+           0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
+    ];
+    let drp0 = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
+                        0xdeadbeef);
+    let drp1 = DRP::new(PBA::new(0, 256), Compression::ZstdL9NoShuffle,
+                        16000, 8000, 0x1a7ebabe);
+    let children = vec![
+        IntElem{key: 0u32, ptr: TreePtr::DRP(drp0)},
+        IntElem{key: 256u32, ptr: TreePtr::DRP(drp1)},
+    ];
+    let node_data = NodeData::Int(IntData{children});
+    let node: Node<u32, u32> = Node(RwLock::new(node_data));
+    let (db, _dbs) = Arc::new(node).serialize();
+    assert_eq!(&expected[..], &db[..]);
+    drop(db);
+}
+
+#[test]
+fn serialize_leaf() {
+    let expected = vec![0u8, 0, 0, 0, // enum variant 0 for LeafNode
+        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
+        0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
+        1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
+        99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
+    ];
+    let mut items: BTreeMap<u32, u32> = BTreeMap::new();
+    items.insert(0, 100);
+    items.insert(1, 200);
+    items.insert(99, 50_000);
+    let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let (db, _dbs) = node.serialize();
+    assert_eq!(&expected[..], &db[..]);
+    drop(db);
+}
+
+}
+
 /// Tests regarding in-memory manipulation of Trees
 #[cfg(test)]
 mod in_mem {
@@ -2600,44 +2764,30 @@ use tokio::executor::current_thread;
 /// without also reading its children, so we'll test this through the private
 /// IntElem::rlock API.
 fn read_int() {
-    let serialized = vec![ 1u8, 0, 0, 0, // enum variant 0 for IntNode
-        2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
-           0, 0, 0, 0,              // K=0
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
-               0, 0,                // Cluster 0
-               0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
-           0, 0, 0, 0,              // enum variant 0 for Compression::None
-           0x40, 0x9c, 0, 0,        // lsize=40000
-           0x40, 0x9c, 0, 0,         // csize=40000
-           0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
-           0, 1, 0, 0,              // K=256
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
-               0, 0,                // Cluster 0
-               0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
-           1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
-           0x80, 0x3e, 0, 0,        // lsize=16000
-           0x40, 0x1f, 0, 0,        // csize=8000
-           0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
+    let drp0 = DRP::random(Compression::None, 40000);
+    let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 16000);
+    let children = vec![
+        IntElem{key: 0u32, ptr: TreePtr::DRP(drp0)},
+        IntElem{key: 256u32, ptr: TreePtr::DRP(drp1)},
     ];
-    let drp = DRP::random(Compression::None, serialized.len());
-    let drp2 = drp.clone();
-    let dbs = DivBufShared::from(serialized);
-    let db = dbs.try().unwrap();
+    let node = Arc::new(Node(RwLock::new(NodeData::Int(IntData{children}))));
+    let drpl = DRP::random(Compression::None, 1000);
+    let drpl2 = drpl.clone();
     let mut ddml = DDMLMock::new();
-    ddml.expect_get::<DivBuf>()
+    ddml.expect_get::<Arc<Node<u32, u32>>>()
         .called_once()
-        .with(passes(move |arg: & *const DRP| unsafe {**arg == drp} ))
+        .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must clone db here.
             // https://github.com/pcsm/simulacrum/issues/52
-            let res = Box::new(db.clone());
-            Box::new(future::ok::<Box<DivBuf>, Error>(res))
+            let res = Box::new(node.clone());
+            Box::new(future::ok::<Box<Arc<Node<u32, u32>>>, Error>(res))
         });
 
     let elem: IntElem<u32, u32> = IntElem {
         key: 0,
-        ptr: TreePtr::DRP(drp2)
+        ptr: TreePtr::DRP(drpl2)
     };
     let r = current_thread::block_on_all(future::lazy(|| {
         elem.rlock(&ddml).map(|node| {
@@ -2656,23 +2806,19 @@ fn read_int() {
 #[test]
 fn read_leaf() {
     let mut ddml = DDMLMock::new();
-    let serialized = vec![
-        0u8, 0, 0, 0,               // enum variant 0 for LeafNode
-        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
-        0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
-        1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
-        99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
-    ];
-    let dbs = DivBufShared::from(serialized);
-    let db = dbs.try().unwrap();
-    ddml.expect_get::<DivBuf>()
+    let mut items: BTreeMap<u32, u32> = BTreeMap::new();
+    items.insert(0, 100);
+    items.insert(1, 200);
+    items.insert(99, 50_000);
+    let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    ddml.expect_get::<Arc<Node<u32, u32>>>()
         .called_once()
         .returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must clone db here.
             // https://github.com/pcsm/simulacrum/issues/52
-            let res = Box::new(db.clone());
-            Box::new(future::ok::<Box<DivBuf>, Error>(res))
+            let res = Box::new(node.clone());
+            Box::new(future::ok::<Box<Arc<Node<u32, u32>>>, Error>(res))
         });
     let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -2700,31 +2846,16 @@ root:
 #[test]
 fn write_int() {
     let mut ddml = DDMLMock::new();
-    let serialized = vec![1u8, 0, 0, 0, // enum variant 0 for IntNode
-        2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
-           0, 0, 0, 0,              // K=0
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
-               0, 0,                // Cluster 0
-               0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
-           0, 0, 0, 0,              // enum variant 0 for Compression::None
-           0x40, 0x9c, 0, 0,        // lsize=40000
-           0x40, 0x9c, 0, 0,         // csize=40000
-           0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
-           0, 1, 0, 0,              // K=256
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
-               0, 0,                // Cluster 0
-               0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
-           1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
-           0x80, 0x3e, 0, 0,        // lsize=16000
-           0x40, 0x1f, 0, 0,        // csize=8000
-           0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
-    ];
-    let drp = DRP::random(Compression::None, serialized.len());
-    ddml.expect_put::<DivBufShared>()
+    let drp = DRP::random(Compression::None, 1000);
+    ddml.expect_put::<Arc<Node<u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(DivBufShared, _)| {
-            let dbs = arg;
-            &dbs.try().unwrap()[..] == &serialized[..]
+        .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
+            let node_data = arg.0.try_read().unwrap();
+            let int_data = node_data.as_int().unwrap();
+            int_data.children[0].key == 0 &&
+            !int_data.children[0].ptr.is_mem() &&
+            int_data.children[1].key == 256 &&
+            !int_data.children[1].ptr.is_mem()
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
     ddml.expect_sync_all()
@@ -2772,18 +2903,14 @@ root:
 #[test]
 fn write_leaf() {
     let mut ddml = DDMLMock::new();
-    let serialized = vec![0u8, 0, 0, 0, // enum variant 0 for LeafNode
-        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
-        0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
-        1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
-        99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
-    ];
-    let drp = DRP::random(Compression::None, serialized.len());
-    ddml.expect_put::<DivBufShared>()
+    let drp = DRP::random(Compression::None, 1000);
+    ddml.expect_put::<Arc<Node<u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(DivBufShared, _)| {
-            let dbs = arg;
-            &dbs.try().unwrap()[..] == &serialized[..]
+        .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
+            let node_data = arg.0.try_read().unwrap();
+            let leaf_data = node_data.as_leaf().unwrap();
+            leaf_data.items[&0] == 100 &&
+            leaf_data.items[&1] == 200
         })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
     ddml.expect_sync_all()
         .called_once()
@@ -2802,7 +2929,6 @@ root:
         items:
           0: 100
           1: 200
-          99: 50000
 "#);
 
     let r = current_thread::block_on_all(tree.sync_all());
