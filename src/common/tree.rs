@@ -45,6 +45,7 @@ mod atomic_usize_serializer {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 pub struct DDMLMock {
     e: Expectations
@@ -124,6 +125,7 @@ pub type DDMLLike = DDMLMock;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type DDMLLike = DDML;
+// LCOV_EXCL_STOP
 
 /// Anything that has a min_value method.  Too bad libstd doesn't define this.
 pub trait MinValue {
@@ -198,6 +200,7 @@ impl<K: Key, V: Value> TreePtr<K, V> {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod node_serializer {
     use super::*;
@@ -220,6 +223,7 @@ mod node_serializer {
         (*guard).serialize(serializer)
     }
 }
+// LCOV_EXCL_STOP
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned, V: DeserializeOwned"))]

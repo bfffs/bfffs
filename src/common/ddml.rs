@@ -17,6 +17,7 @@ use std::{hash::Hasher, sync::Mutex};
 
 pub use common::cache::{Cacheable, CacheRef};
 
+// LCOV_EXCL_START
 #[cfg(test)]
 pub struct CacheMock {
     e: Expectations,
@@ -85,6 +86,7 @@ pub type PoolLike = Box<PoolTrait>;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type PoolLike = Pool;
+// LCOV_EXCL_STOP
 
 /// Default cache size.
 #[cfg(not(test))]
@@ -162,6 +164,7 @@ impl DRP {
         div_roundup(self.csize as usize, BYTES_PER_LBA) as LbaT
     }
 
+    // LCOV_EXCL_START
     /// Explicitly construct a `DRP`, for testing.  Production code should never
     /// use this method, because `DRP`s should be opaque to the upper layers.
     #[cfg(test)]
@@ -186,6 +189,7 @@ impl DRP {
             checksum: rng.gen()
         }
     }
+    // LCOV_EXCL_STOP
 }
 
 /// Direct Data Management Layer for a single `Pool`
