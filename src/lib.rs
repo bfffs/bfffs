@@ -1,5 +1,5 @@
 #![cfg_attr(feature = "mocks", feature(plugin))]
-#![cfg_attr(feature = "mocks", plugin(mockers_macros))]
+#![cfg_attr(feature = "mocks", feature(proc_macro))]
 
 extern crate bincode;
 extern crate blosc;
@@ -21,6 +21,7 @@ extern crate metrohash;
 #[cfg(test)]
 #[macro_use]
 #[cfg(feature = "mocks")] extern crate mockers;
+#[cfg(feature = "mocks")] extern crate mockers_derive;
 extern crate modulo;
 #[cfg(test)]
 extern crate permutohedron;

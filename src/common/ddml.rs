@@ -389,6 +389,7 @@ mod t {
     use futures::future;
     use mockers::matchers::ANY;
     use mockers::{Scenario, Sequence};
+    use mockers_derive::mock;
     use simulacrum::validators::trivial::any;
     use std::cell::RefCell;
     use std::rc::Rc;

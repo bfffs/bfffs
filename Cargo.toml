@@ -5,7 +5,7 @@ authors = ["Alan Somers <asomers@gmail.com>"]
 
 [features]
 # Make mockers optional so we can still compile on stable
-mocks = ["mockers", "mockers_macros"]
+mocks = ["mockers", "mockers_derive"]
 
 [dependencies]
 bincode = "1.0"
@@ -22,8 +22,8 @@ lazy_static = "1.0"
 metrohash = "1.0"
 # mockers should be a dev dependency, but can't because of issue 1596
 # https://github.com/rust-lang/cargo/issues/1596
-mockers_macros = { version = "=0.9.4", optional = true }
-mockers = { version = "=0.10.1", optional = true }
+mockers = { version = "=0.11.1", optional = true }
+mockers_derive = { version = "=0.11.1", optional = true }
 # modulo is available in nightly libstd only.  Once it stabilizes, we can
 # remove this crate.
 # https://github.com/rust-lang/rust/issues/49048

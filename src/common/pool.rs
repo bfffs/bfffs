@@ -319,6 +319,7 @@ mod pool {
     use divbuf::DivBufShared;
     use futures::future;
     use mockers::Scenario;
+    use mockers_derive::mock;
     use tokio::executor::current_thread;
 
     mock!{

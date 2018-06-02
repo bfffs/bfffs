@@ -698,6 +698,7 @@ test_suite! {
     use futures::{Poll, future};
     use mockers::{Scenario, Sequence, matchers};
     use mockers::matchers::ANY;
+    use mockers_derive::mock;
     use permutohedron;
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
@@ -736,7 +737,7 @@ test_suite! {
             type Item = ();
             type Error = nix::Error;
             fn poll(&mut self) -> Poll<Item, Error>;
-        },
+        }
     }
 
     fixture!( mocks() -> (Scenario, Box<MockVdevLeaf2>) {

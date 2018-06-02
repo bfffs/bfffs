@@ -1256,6 +1256,7 @@ mod t {
 use super::*;
 use futures::future;
 use mockers::Scenario;
+use mockers_derive::mock;
 
 mock!{
     MockVdevBlock,

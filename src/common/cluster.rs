@@ -553,6 +553,7 @@ mod cluster {
     use super::super::*;
     use divbuf::DivBufShared;
     use mockers::{Scenario, matchers};
+    use mockers_derive::mock;
     use tokio::executor::current_thread;
     use tokio::reactor::Handle;
 
