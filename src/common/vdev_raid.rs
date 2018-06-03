@@ -345,13 +345,14 @@ impl VdevRaid {
     ///             this vdev.
     #[cfg(not(test))]
     pub fn open_all<P>(paths: Vec<P>, handle: Handle)
-        -> Box<Future<Item=Vec<(Self, LabelReader)>, Error=Error>>
-        where P: AsRef<Path> + 'static {
+        -> impl Future<Item=Vec<(Self, LabelReader)>, Error=Error>
+        where P: AsRef<Path> + 'static
+    {
 
         let handle2 = handle.clone();
         // TODO: error handling for devices that don't exist or have no VdevFile
         // label
-        Box::new(future::join_all(paths.into_iter().map(move |path| {
+        future::join_all(paths.into_iter().map(move |path| {
             VdevBlock::open(path, handle.clone())
         })).and_then(move |blockdevs| {
             let mut all_blockdevs = blockdevs.into_iter().map(|(bd, reader)| {
@@ -388,21 +389,23 @@ impl VdevRaid {
                     None
                 }
             }).collect::<Vec<_>>())
-        }))
+        })
     }
 
     /// Asynchronously erase a zone on a RAID device
     ///
     /// # Parameters
     /// - `zone`:    The target zone ID
-    pub fn erase_zone(&self, zone: ZoneT) -> Box<VdevFut> {
+    pub fn erase_zone(&self, zone: ZoneT)
+        -> impl Future<Item=(), Error=Error>
+    {
         assert!(!self.stripe_buffers.borrow().contains_key(&zone),
             "Tried to erase an open zone");
         let (start, end) = self.blockdevs[0].zone_limits(zone);
         let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
             blockdev.erase_zone(start, end - 1)
         }).collect();
-        Box::new(future::join_all(futs).map(|_| ()))
+        future::join_all(futs).map(|_| ())
     }
 
     /// Asynchronously finish a zone on a RAID device
@@ -411,7 +414,8 @@ impl VdevRaid {
     /// - `zone`:    The target zone ID
     // Zero-fill the current StripeBuffer and write it out.  Then drop the
     // StripeBuffer.
-    pub fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut> {
+    pub fn finish_zone(&self, zone: ZoneT) -> impl Future<Item=(), Error=Error>
+    {
         let mut sbs = self.stripe_buffers.borrow_mut();
         let nfuts = self.blockdevs.len() + 1;
         let mut futs: Vec<_> = Vec::with_capacity(nfuts);
@@ -434,7 +438,7 @@ impl VdevRaid {
 
         assert!(sbs.remove(&zone).is_some());
 
-        Box::new(sbfut.join(future::join_all(futs)).map(|_| ()))
+        sbfut.join(future::join_all(futs)).map(|_| ())
     }
 
     /// Asynchronously flush the `StripeBuffer` for the given zone.
@@ -471,7 +475,7 @@ impl VdevRaid {
     /// # Parameters
     /// - `zone`:    The target zone ID
     // Create a new StripeBuffer, and zero fill and leading wasted space
-    pub fn open_zone(&self, zone: ZoneT) -> Box<VdevFut> {
+    pub fn open_zone(&self, zone: ZoneT) -> impl Future<Item=(), Error=Error> {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         let stripe_lbas = m * self.chunksize as LbaT;
@@ -509,7 +513,7 @@ impl VdevRaid {
                 blockdev.open_zone(first_disk_lba).join(zero_fut)
             }).collect();
 
-        Box::new(future::join_all(futs).map(|_| ()))
+        future::join_all(futs).map(|_| ())
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -876,7 +880,9 @@ impl VdevRaid {
     }
 
     /// Asynchronously write this Vdev's label to all component devices
-    pub fn write_label(&self, mut labeller: LabelWriter) -> Box<VdevFut> {
+    pub fn write_label(&self, mut labeller: LabelWriter)
+        -> impl Future<Item=(), Error=Error>
+    {
         let children_uuids = self.blockdevs.iter().map(|bd| bd.uuid())
             .collect::<Vec<_>>();
         let label = Label {
@@ -891,9 +897,9 @@ impl VdevRaid {
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        Box::new(future::join_all(futs).map(move |_| {
+        future::join_all(futs).map(move |_| {
             let _ = dbs;    // needs to live this long
-        }))
+        })
     }
 
     /// Write exactly one stripe, with SGLists.

@@ -357,7 +357,9 @@ impl<'a> Cluster {
         // close it
         nearly_full_zones.iter().map(|&zone_id| {
             self.fsm.borrow_mut().finish_zone(zone_id);
-            self.vdev.finish_zone(zone_id)
+            // XXX this allocation could be removed by inlining close_zones into
+            // Cluster::write
+            Box::new(self.vdev.finish_zone(zone_id)) as Box<VdevFut>
         }).collect::<Vec<_>>()
     }
 
@@ -394,7 +396,7 @@ impl<'a> Cluster {
     /// Delete the underlying storage for a Zone.
     pub fn erase_zone(&self, zone: ZoneT) -> Box<ClusterFut<'static>> {
         self.fsm.borrow_mut().erase_zone(zone);
-        self.vdev.erase_zone(zone)
+        Box::new(self.vdev.erase_zone(zone))
     }
 
     /// Mark `length` LBAs beginning at LBA `lba` as unused, but do not delete
@@ -460,7 +462,7 @@ impl<'a> Cluster {
 
     /// Asynchronously read from the cluster
     pub fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>> {
-        self.vdev.read_at(buf, lba)
+        Box::new(self.vdev.read_at(buf, lba))
     }
 
     /// Return approximately the usable space of the Cluster in LBAs.
@@ -517,7 +519,9 @@ impl<'a> Cluster {
                                                         space);
                 match e {
                     Ok(Some((zone_id, lba))) => {
-                        let oz_fut = self.vdev.open_zone(zone_id);
+                        let oz_fut = Box::new(
+                            self.vdev.open_zone(zone_id)
+                        ) as Box<VdevFut>;
                         Some((zone_id, lba, oz_fut))
                     },
                     Err(_) => None,
