@@ -11,4 +11,4 @@ cargo +nightly-2018-06-01-x86_64-unknown-freebsd test --all-features
 rustup run nightly-2018-06-01-x86_64-unknown-freebsd cargo bench
 
 # It should also work on stable >= 1.26.0
-cargo test -j1
+cargo test
