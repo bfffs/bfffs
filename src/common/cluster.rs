@@ -348,21 +348,21 @@ pub struct Cluster {
     vdev: VdevRaidLike
 }
 
-impl<'a> Cluster {
-    /// Finish any zones that are too full for new allocations
-    // This method defines the policy of when to close nearly full zones
-    fn close_zones(&self, nearly_full_zones: &[ZoneT]) -> Vec<Box<VdevFut>> {
-        // Any zone that had too little space for one allocation will probably
-        // have too little space for the next allocation, too.  Go ahead and
-        // close it
-        nearly_full_zones.iter().map(|&zone_id| {
-            self.fsm.borrow_mut().finish_zone(zone_id);
-            // XXX this allocation could be removed by inlining close_zones into
-            // Cluster::write
-            Box::new(self.vdev.finish_zone(zone_id)) as Box<VdevFut>
+/// Finish any zones that are too full for new allocations.
+///
+/// This defines the policy of when to close nearly full zones.
+// Logically, it's a method of Cluster.  But it needs to be implemented as a
+// macro, because it returns a Vec of an anonymous type
+macro_rules! close_zones{
+    ( $self:ident, $nearly_full_zones:expr) => {
+        $nearly_full_zones.iter().map(|&zone_id| {
+            $self.fsm.borrow_mut().finish_zone(zone_id);
+            $self.vdev.finish_zone(zone_id)
         }).collect::<Vec<_>>()
     }
+}
 
+impl<'a> Cluster {
     /// Create a new `Cluster` from unused files or devices
     ///
     /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
@@ -506,7 +506,7 @@ impl<'a> Cluster {
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
         let (alloc_result, nearly_full_zones) =
             self.fsm.borrow_mut().try_allocate(space);
-        let finish_futs = self.close_zones(&nearly_full_zones);
+        let finish_futs = close_zones!(self, &nearly_full_zones);
         alloc_result.map(|(zone_id, lba)| {
             let oz_fut: Box<ClusterFut<'static>> = Box::new(future::ok::<(),
                                                             Error>(()));
