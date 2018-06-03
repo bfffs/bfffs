@@ -193,8 +193,9 @@ impl<'a> Pool {
     ///             this `Pool`.
     #[cfg(not(test))]
     pub fn open<P>(name: String, paths: Vec<P>, handle: Handle)
-        -> Box<Future<Item=Self, Error=Error>>
-        where P: AsRef<Path> + 'static {
+        -> impl Future<Item=Self, Error=Error>
+        where P: AsRef<Path> + 'static
+    {
          // Outline:
          // 1) Discover all `Cluster`s.
          // 2) Search among the `Cluster`s for one that has a `Pool` label
@@ -202,7 +203,7 @@ impl<'a> Pool {
          // 3) Construct a `Pool` with all required `Cluster`s.
          // 4) `drop` any unwanted `Cluster`s.
 
-        Box::new(cluster::Cluster::open_all(paths, handle).and_then(|v| {
+        cluster::Cluster::open_all(paths, handle).and_then(|v| {
             let mut label = None;
             let mut all_clusters = v.into_iter()
                                     .map(|(cluster, mut label_reader)| {
@@ -233,31 +234,31 @@ impl<'a> Pool {
                 },
                 None => Err(Error::Sys(errno::Errno::ENOENT))
             }
-        }))
+        })
     }
 
 
     /// Asynchronously read from the pool
-    pub fn read(&'a self, buf: IoVecMut, pba: PBA) -> Box<PoolFut<'a>> {
+    pub fn read(&'a self, buf: IoVecMut, pba: PBA)
+        -> impl Future<Item=(), Error=Error> + 'a
+    {
         let mut stats = self.stats.borrow_mut();
         stats.queue_depth[pba.cluster as usize] += 1;
-        Box::new(self.clusters[pba.cluster as usize].read(buf, pba.lba)
+        self.clusters[pba.cluster as usize].read(buf, pba.lba)
                  .then(move |r| {
             stats.queue_depth[pba.cluster as usize] -= 1;
             r
-        }))
+        })
     }
 
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&'a self) -> Box<PoolFut<'a>> {
-        Box::new(
-            future::join_all(
-                self.clusters.iter()
-                .map(|bd| bd.sync_all())
-                .collect::<Vec<_>>()
-            ).map(|_| ())
-        )
+    pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
+        future::join_all(
+            self.clusters.iter()
+            .map(|bd| bd.sync_all())
+            .collect::<Vec<_>>()
+        ).map(|_| ())
     }
 
     /// Return the `Pool`'s UUID.
@@ -290,7 +291,7 @@ impl<'a> Pool {
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
-    pub fn write_label(&self) -> Box<PoolFut> {
+    pub fn write_label(&self) -> impl Future<Item=(), Error=Error> {
         let mut labeller = LabelWriter::new();
         let cluster_uuids = self.clusters.iter().map(|cluster| cluster.uuid())
             .collect::<Vec<_>>();
@@ -303,9 +304,9 @@ impl<'a> Pool {
         let futs = self.clusters.iter().map(|cluster| {
             cluster.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        Box::new(future::join_all(futs).map(move |_| {
+        future::join_all(futs).map(move |_| {
             let _ = dbs;    // needs to live this long
-        }))
+        })
     }
 }
 

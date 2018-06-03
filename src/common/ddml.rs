@@ -375,7 +375,7 @@ impl<'a> DDML {
 
     /// Sync all records written so far to stable storage.
     pub fn sync_all(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
-        self.pool.sync_all()
+        Box::new(self.pool.sync_all())
     }
 }
 
