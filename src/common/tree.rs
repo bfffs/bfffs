@@ -319,9 +319,7 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
     fn read(&self, ddml: &'a DDMLLike, drp: &DRP)
         -> Box<Future<Item=Box<Arc<Node<K, V>>>, Error=Error> + 'a>
     {
-        Box::new(
-            ddml.get(drp)
-        )
+        ddml.get(drp)
     }
 
     fn rlock(&self, ddml: &'a DDMLLike)
@@ -672,19 +670,17 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Insert value `v` into the tree at key `k`, returning the previous value
     /// for that key, if any.
     pub fn insert(&'a self, k: K, v: V)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+        -> impl Future<Item=Option<V>, Error=Error> + 'a {
 
-        Box::new(
-            self.i.root.read()
-                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                .and_then(move |guard| {
-                    guard.xlock(&self.ddml)
-                         .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                         .and_then(move |guard| {
-                             self.insert_locked(guard, k, v)
-                         })
-                })
-        )
+        self.i.root.read()
+            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+            .and_then(move |guard| {
+                guard.xlock(&self.ddml)
+                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                     .and_then(move |guard| {
+                         self.insert_locked(guard, k, v)
+                     })
+            })
     }
 
     /// Insert value `v` into an internal node.  The internal node and its
@@ -756,15 +752,13 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Lookup the value of key `k`.  Return an error if no value is present.
-    pub fn lookup(&'a self, k: K) -> Box<Future<Item=V, Error=Error> + 'a> {
-        Box::new(
-            self.i.root.read()
-                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                .and_then(move |guard| {
-                    guard.rlock(&self.ddml)
-                         .and_then(move |guard| self.lookup_node(guard, k))
-                })
-        )
+    pub fn lookup(&'a self, k: K) -> impl Future<Item=V, Error=Error> + 'a {
+        self.i.root.read()
+            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+            .and_then(move |guard| {
+                guard.rlock(&self.ddml)
+                     .and_then(move |guard| self.lookup_node(guard, k))
+            })
     }
 
     /// Lookup the value of key `k` in a node, which must already be locked.
@@ -819,19 +813,17 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Remove and return the value at key `k`, if any.
     pub fn remove(&'a self, k: K)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
-
-        Box::new(
-            self.i.root.read()
-                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                .and_then(move |guard| {
-                    guard.xlock(&self.ddml)
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                        .and_then(move |guard| {
-                            self.remove_locked(guard, k)
-                        })
-            })
-        )
+        -> impl Future<Item=Option<V>, Error=Error> + 'a
+    {
+        self.i.root.read()
+            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+            .and_then(move |guard| {
+                guard.xlock(&self.ddml)
+                    .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    .and_then(move |guard| {
+                        self.remove_locked(guard, k)
+                    })
+        })
     }
 
     /// Remove key `k` from an internal node.  The internal node and its
@@ -937,8 +929,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Sync all records written so far to stable storage.
-    pub fn sync_all(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
-        Box::new( self.i.root.write()
+    pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
+        self.i.root.write()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                   .and_then(move |mut root_guard| {
             if root_guard.ptr.is_dirty() {
@@ -961,22 +953,22 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             } else {
                 Box::new(future::ok::<(), Error>(()))
             }
-        }))
+        })
     }
 
     fn write_leaf(&'a self, node: Box<Node<K, V>>)
-        -> Box<Future<Item=DRP, Error=Error> + 'a>
+        -> impl Future<Item=DRP, Error=Error> + 'a
     {
         let arc: Arc<Node<K, V>> = Arc::new(*node);
         let (drp, fut) = self.ddml.put(arc, Compression::None);
-        Box::new(fut.map(move |_| drp))
+        fut.map(move |_| drp)
     }
 
     fn write_node(&'a self, mut node: Box<Node<K, V>>)
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
         if node.0.get_mut().unwrap().as_leaf_mut().is_some() {
-            return self.write_leaf(node);
+            return Box::new(self.write_leaf(node));
         }
         let ndata = node.0.try_write().unwrap();
 
