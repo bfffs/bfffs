@@ -336,6 +336,8 @@ impl<'a> DDML {
     }
 
     /// Read a record from disk
+    // XXX This method should return impl Trait instead, but that triggers a
+    // compiler error with Rustc 1.26.1 and 1.28.0-nightly-2018-06-01
     fn read(&'a self, drp: DRP)
         -> Box<Future<Item=DivBufShared, Error=Error> + 'a> {
 
@@ -374,8 +376,8 @@ impl<'a> DDML {
     }
 
     /// Sync all records written so far to stable storage.
-    pub fn sync_all(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
-        Box::new(self.pool.sync_all())
+    pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
+        self.pool.sync_all()
     }
 }
 
