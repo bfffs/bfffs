@@ -1063,7 +1063,7 @@ impl Vdev for VdevRaid {
             // 3,4) Find stripes that cross zones.  Return the innermost that
             // doesn't
             let mut innermost_stripe = None;
-            'stripe_loop: for stripe in min_stripe..max_stripe + 1 {
+            'stripe_loop: for stripe in min_stripe..=max_stripe {
                 let minchunk = ChunkId::Data(stripe * m);
                 let maxchunk = ChunkId::Data((stripe + 1) * m);
                 let chunk_iter = self.locator.iter(minchunk, maxchunk);

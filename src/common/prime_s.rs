@@ -346,7 +346,7 @@ impl PrimeSIter {
         };
         // Start with offset contributions from previous iterations
         let mut o: Vec<i16> = vec![layout.k * cli.z; layout.n as usize];
-        for s in 0..(s_z + 1) {
+        for s in 0..=s_z {
             let end = if s == s_z { b } else { layout.k };
             // Add contributions from other chunks in this iteration
             for b in 0..end {
