@@ -575,12 +575,10 @@ impl VdevBlock {
     ///             this vdev.
     #[cfg(not(test))]
     pub fn open<P: AsRef<Path>>(path: P, h: Handle)
-        -> Box<Future<Item=(Self, LabelReader), Error=nix::Error>> {
-        Box::new(
-            VdevLeaf::open(path, h.clone()).map(|(leaf, label_reader)| {
-                (VdevBlock::new(leaf, h), label_reader)
-            })
-        )
+        -> impl Future<Item=(Self, LabelReader), Error=nix::Error> {
+        VdevLeaf::open(path, h.clone()).map(|(leaf, label_reader)| {
+            (VdevBlock::new(leaf, h), label_reader)
+        })
     }
 
     /// Asynchronously read a contiguous portion of the vdev.

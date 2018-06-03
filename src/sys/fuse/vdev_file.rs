@@ -140,7 +140,7 @@ impl VdevLeafApi for VdevFile {
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         assert!(lba >= LABEL_LBAS, "Don't overwrite the label!");
         let container = Box::new(IoVecContainer(buf));
-        self.write_at_unchecked(container, lba)
+        Box::new(self.write_at_unchecked(container, lba))
     }
 
     fn write_label(&self, mut label_writer: LabelWriter) -> Box<VdevFut> {
@@ -195,7 +195,7 @@ impl VdevFile {
     /// * `h`       Handle to the Tokio reactor that will be used to service
     ///             this vdev.
     pub fn open<P: AsRef<Path>>(path: P, h: Handle)
-        -> Box<Future<Item=(Self, LabelReader), Error=nix::Error>> {
+        -> impl Future<Item=(Self, LabelReader), Error=nix::Error> {
 
         let f = File::open(path, h.clone()).unwrap();
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
@@ -203,28 +203,27 @@ impl VdevFile {
         let dbs = DivBufShared::from(vec![0u8; LABEL_SIZE]);
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
-        Box::new(f.read_at(container, 0).unwrap()
-            .and_then(move |aio_result| {
-                drop(aio_result);   // release reference on dbs
-                LabelReader::from_dbs(dbs).and_then(|mut label_reader| {
-                    let label: Label = label_reader.deserialize().unwrap();
-                    assert!(size >= label.lbas,
-                               "Vdev has shrunk since creation");
-                    let vdev = VdevFile {
-                        file: f,
-                        handle: h,
-                        size: label.lbas,
-                        uuid: label.uuid
-                    };
-                    Ok((vdev, label_reader))
-                })
+        f.read_at(container, 0).unwrap()
+         .and_then(move |aio_result| {
+            drop(aio_result);   // release reference on dbs
+            LabelReader::from_dbs(dbs).and_then(|mut label_reader| {
+                let label: Label = label_reader.deserialize().unwrap();
+                assert!(size >= label.lbas,
+                           "Vdev has shrunk since creation");
+                let vdev = VdevFile {
+                    file: f,
+                    handle: h,
+                    size: label.lbas,
+                    uuid: label.uuid
+                };
+                Ok((vdev, label_reader))
             })
-        )
+        })
     }
 
     fn write_at_unchecked(&self, buf: Box<Borrow<[u8]>>,
-                          lba: LbaT) -> Box<VdevFut> {
+                          lba: LbaT) -> impl Future<Item = (), Error = nix::Error> {
         let off = lba * (BYTES_PER_LBA as u64);
-        Box::new(self.file.write_at(buf, off).unwrap().map(|_| ()))
+        self.file.write_at(buf, off).unwrap().map(|_| ())
     }
 }
