@@ -415,28 +415,26 @@ impl VdevRaid {
         let mut sbs = self.stripe_buffers.borrow_mut();
         let nfuts = self.blockdevs.len() + 1;
         let mut futs: Vec<_> = Vec::with_capacity(nfuts);
-        {
+        let sbfut = {
             let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
             if ! sb.is_empty() {
                 sb.pad();
                 let lba = sb.lba();
                 let sgl = sb.pop();
-                futs.push(self.writev_at_one(&sgl, lba));
-            }   // LCOV_EXCL_LINE   kcov false negative
-            let (start, end) = self.blockdevs[0].zone_limits(zone);
-            futs.extend(
-                self.blockdevs.iter()
-                .map(|blockdev| {
-                    Box::new(
-                        blockdev.finish_zone(start, end - 1)
-                    ) as Box<VdevFut>
-                })
-            );
-        }
+                self.writev_at_one(&sgl, lba)
+            } else {
+                Box::new(future::ok::<(), Error>(()))
+            }
+        };
+        let (start, end) = self.blockdevs[0].zone_limits(zone);
+        futs.extend(
+            self.blockdevs.iter()
+            .map(|blockdev| blockdev.finish_zone(start, end - 1))
+        );
 
         assert!(sbs.remove(&zone).is_some());
 
-        Box::new(future::join_all(futs).map(|_| ()))
+        Box::new(sbfut.join(future::join_all(futs)).map(|_| ()))
     }
 
     /// Asynchronously flush the `StripeBuffer` for the given zone.
