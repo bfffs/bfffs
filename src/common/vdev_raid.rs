@@ -19,6 +19,14 @@ use uuid::Uuid;
 #[cfg(test)]
 /// Only exists so mockers can replace VdevBlock
 pub trait VdevBlockTrait : Vdev {
+    // Note: The return values are Boxed traits instead of impl Traits because:
+    // 1) Mockers can only mock traits, not structs, and traits cannot "impl
+    //    Trait"
+    // 2) Simulacrum use mocked methods' return types as generic method
+    //    parameters, and "impl Trait" is not allowed there.
+    // But this is ok, since a Boxed trait does satisfy "impl Trait".  The only
+    // problem is that the Boxed trait can do a few things that the real "impl
+    // Trait" can't, pack into a container with other Boxed traits.
     fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut>;
     fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut>;
     fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
@@ -406,7 +414,7 @@ impl VdevRaid {
     pub fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut> {
         let mut sbs = self.stripe_buffers.borrow_mut();
         let nfuts = self.blockdevs.len() + 1;
-        let mut futs: Vec<Box<VdevFut>> = Vec::with_capacity(nfuts);
+        let mut futs: Vec<_> = Vec::with_capacity(nfuts);
         {
             let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
             if ! sb.is_empty() {
@@ -417,12 +425,12 @@ impl VdevRaid {
             }   // LCOV_EXCL_LINE   kcov false negative
             let (start, end) = self.blockdevs[0].zone_limits(zone);
             futs.extend(
-                Box::new(
-                    self.blockdevs.iter()
-                    .map(|blockdev| {
+                self.blockdevs.iter()
+                .map(|blockdev| {
+                    Box::new(
                         blockdev.finish_zone(start, end - 1)
-                    })
-                )
+                    ) as Box<VdevFut>
+                })
             );
         }
 
@@ -495,9 +503,9 @@ impl VdevRaid {
                     let zero_lbas = first_usable_disk_lba - first_disk_lba;
                     let zero_len = zero_lbas as usize * BYTES_PER_LBA;
                     let sglist = zero_sglist(zero_len);
-                    blockdev.writev_at(sglist, first_disk_lba)
+                    Box::new(blockdev.writev_at(sglist, first_disk_lba))
                 } else {
-                    Box::new(future::ok::<(), Error>(()))
+                    Box::new(future::ok::<(), Error>(())) as Box<VdevFut>
                 };
 
                 blockdev.open_zone(first_disk_lba).join(zero_fut)
@@ -629,7 +637,9 @@ impl VdevRaid {
                 let new = SGListMut::with_capacity(max_chunks_per_disk - 1);
                 let old = mem::replace(&mut sglists[disk], new);
                 let lba = start_lbas[disk];
-                futs.push(self.blockdevs[disk].readv_at(old, lba));
+                futs.push(Box::new(
+                    self.blockdevs[disk].readv_at(old, lba)
+                ) as Box<VdevFut>);
                 start_lbas[disk] = disk_lba;
             }
             sglists[disk as usize].push(col);
@@ -640,7 +650,7 @@ impl VdevRaid {
                               sglists.into_iter(),
                               start_lbas.into_iter()))  // LCOV_EXCL_LINE   kcov false neg
             .filter(|&(_, _, lba)| lba != SENTINEL)
-            .map(|(blockdev, sglist, lba)| blockdev.readv_at(sglist, lba)));
+            .map(|(blockdev, sglist, lba)| Box::new(blockdev.readv_at(sglist, lba)) as Box<VdevFut>));
         let fut = future::join_all(futs);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
@@ -814,10 +824,10 @@ impl VdevRaid {
         let bi = self.blockdevs.iter();
         let sgi = sglists.into_iter();
         let li = start_lbas.into_iter();
-        let futs : Vec<Box<VdevFut>> = multizip((bi, sgi, li))
+        let futs = multizip((bi, sgi, li))
             .filter(|&(_, _, lba)| lba != SENTINEL)
             .map(|(blockdev, sglist, lba)| blockdev.writev_at(sglist, lba))
-            .collect();
+            .collect::<Vec<_>>();
         let fut = future::join_all(futs);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.

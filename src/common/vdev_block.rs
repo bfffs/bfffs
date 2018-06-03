@@ -461,7 +461,9 @@ impl VdevBlock {
     /// # Parameters
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
-    pub fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut> {
+    pub fn erase_zone(&self, start: LbaT, end: LbaT)
+        -> impl Future<Item=(), Error=nix::Error>
+    {
         // The zone must already be closed, but VdevBlock doesn't keep enough
         // information to assert that
         let (sender, receiver) = oneshot::channel::<()>();
@@ -478,7 +480,7 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        Box::new(self.new_fut(block_op, receiver))
+        self.new_fut(block_op, receiver)
     }
 
     /// Asynchronously finish a zone on a block device
@@ -486,7 +488,9 @@ impl VdevBlock {
     /// # Parameters
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
-    pub fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut> {
+    pub fn finish_zone(&self, start: LbaT, end: LbaT)
+        -> impl Future<Item=(), Error=nix::Error>
+    {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::finish_zone(start, end, sender);
 
@@ -502,7 +506,7 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        Box::new(self.new_fut(block_op, receiver))
+        self.new_fut(block_op, receiver)
     }
 
     fn new_fut(&self, block_op: BlockOp,
@@ -518,7 +522,9 @@ impl VdevBlock {
     ///
     /// # Parameters
     /// - `start`:    The first LBA within the target zone
-    pub fn open_zone(&self, start: LbaT) -> Box<VdevFut> {
+    pub fn open_zone(&self, start: LbaT)
+        -> impl Future<Item=(), Error=nix::Error>
+    {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::open_zone(start, sender);
 
@@ -536,7 +542,7 @@ impl VdevBlock {
                           inner.last_lba < limits.0);
         }
 
-        Box::new(self.new_fut(block_op, receiver))
+        self.new_fut(block_op, receiver)
     }
 
     /// Instantiate a new VdevBlock from an existing VdevLeaf
@@ -584,11 +590,13 @@ impl VdevBlock {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
+    pub fn read_at(&self, buf: IoVecMut, lba: LbaT)
+        -> impl Future<Item=(), Error=nix::Error>
+    {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::read_at(buf, lba, sender);
-        Box::new(self.new_fut(block_op, receiver))
+        self.new_fut(block_op, receiver)
     }
 
     /// The asynchronous scatter/gather read function.
@@ -599,29 +607,35 @@ impl VdevBlock {
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut> {
+    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT)
+        -> impl Future<Item=(), Error=nix::Error>
+    {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
-        Box::new(self.new_fut(block_op, receiver))
+        self.new_fut(block_op, receiver)
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns nothing on success, and on error on failure
-    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+    pub fn write_at(&self, buf: IoVec, lba: LbaT)
+        -> impl Future<Item=(), Error=nix::Error>
+    {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_at(buf, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        Box::new(self.new_fut(block_op, receiver))
+        self.new_fut(block_op, receiver)
     }
 
-    pub fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut> {
+    pub fn write_label(&self, labeller: LabelWriter)
+        -> impl Future<Item=(), Error=nix::Error>
+    {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_label(labeller, sender);
-        Box::new(self.new_fut(block_op, receiver))
+        self.new_fut(block_op, receiver)
     }
 
     /// The asynchronous scatter/gather write function.
@@ -632,13 +646,15 @@ impl VdevBlock {
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA at which to write
-    pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut> {
+    pub fn writev_at(&self, bufs: SGList, lba: LbaT)
+        -> impl Future<Item=(), Error=nix::Error>
+    {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        Box::new(self.new_fut(block_op, receiver))
+        self.new_fut(block_op, receiver)
     }
 }
 
