@@ -394,9 +394,11 @@ impl<'a> Cluster {
     }
 
     /// Delete the underlying storage for a Zone.
-    pub fn erase_zone(&self, zone: ZoneT) -> Box<ClusterFut<'static>> {
+    pub fn erase_zone(&self, zone: ZoneT)
+        -> impl Future<Item=(), Error=Error>
+    {
         self.fsm.borrow_mut().erase_zone(zone);
-        Box::new(self.vdev.erase_zone(zone))
+        self.vdev.erase_zone(zone)
     }
 
     /// Mark `length` LBAs beginning at LBA `lba` as unused, but do not delete
@@ -438,18 +440,16 @@ impl<'a> Cluster {
     ///             this vdev.
     #[cfg(not(test))]
     pub fn open_all<P>(paths: Vec<P>, handle: Handle)
-        -> Box<Future<Item=Vec<(Self, LabelReader)>, Error=Error>>
-        where P: AsRef<Path> + 'static {
-
-        Box::new(
-            VdevRaid::open_all(paths, handle).map(|v| {
-                v.into_iter().map(|(vdev_raid, mut reader)| {
-                    let l: Label = reader.deserialize().unwrap();
-                    let fsm = FreeSpaceMap::open(l, &vdev_raid);
-                    (Cluster::new(fsm, vdev_raid), reader)
-                }).collect::<Vec<_>>()
-            })
-        )
+        -> impl Future<Item=Vec<(Self, LabelReader)>, Error=Error>
+        where P: AsRef<Path> + 'static
+    {
+        VdevRaid::open_all(paths, handle).map(|v| {
+            v.into_iter().map(|(vdev_raid, mut reader)| {
+                let l: Label = reader.deserialize().unwrap();
+                let fsm = FreeSpaceMap::open(l, &vdev_raid);
+                (Cluster::new(fsm, vdev_raid), reader)
+            }).collect::<Vec<_>>()
+        })
     }
 
     /// Returns the "best" number of operations to queue to this `Cluster`.  A
@@ -461,8 +461,10 @@ impl<'a> Cluster {
     }
 
     /// Asynchronously read from the cluster
-    pub fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<ClusterFut<'static>> {
-        Box::new(self.vdev.read_at(buf, lba))
+    pub fn read(&self, buf: IoVecMut, lba: LbaT)
+        -> impl Future<Item=(), Error=Error>
+    {
+        self.vdev.read_at(buf, lba)
     }
 
     /// Return approximately the usable space of the Cluster in LBAs.
@@ -472,7 +474,7 @@ impl<'a> Cluster {
 
     /// Sync the `Cluster`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&'a self) -> Box<ClusterFut<'a>> {
+    pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
         let mut fsm = self.fsm.borrow_mut();
         let zone_ids = fsm.open_zone_ids().cloned().collect::<Vec<_>>();
         let flush_futs = zone_ids.iter().map(|&zone_id| {
@@ -481,7 +483,7 @@ impl<'a> Cluster {
             fut
         }).collect::<Vec<_>>();
         let flush_fut = future::join_all(flush_futs);
-        Box::new(flush_fut.and_then(move |_| self.vdev.sync_all()))
+        flush_fut.and_then(move |_| self.vdev.sync_all())
     }
 
     /// Return the `Cluster`'s UUID.  It's the same as its RAID device's.
@@ -539,12 +541,14 @@ impl<'a> Cluster {
     }
 
     /// Asynchronously write this Vdev's label to all component devices
-    pub fn write_label(&self, mut labeller: LabelWriter) -> Box<VdevFut> {
+    pub fn write_label(&self, mut labeller: LabelWriter)
+        -> impl Future<Item=(), Error=Error>
+    {
         let label = self.fsm.borrow().serialize();
         let dbs = labeller.serialize(label);
-        Box::new(self.vdev.write_label(labeller).map(move |_| {
+        self.vdev.write_label(labeller).map(move |_| {
             let _ = dbs;    // needs to live this long
-        }))
+        })
     }
 }
 
