@@ -172,7 +172,7 @@ enum TreePtr<K: Key, V: Value> {
 impl<K: Key, V: Value> TreePtr<K, V> {
     #[cfg(test)]
     fn as_drp(&self) -> Option<&DRP> {
-        if let &TreePtr::DRP(ref drp) = self {
+        if let TreePtr::DRP(drp) = self {
             Some(drp)
         } else {
             None
@@ -192,7 +192,7 @@ impl<K: Key, V: Value> TreePtr<K, V> {
     }
 
     fn is_mem(&self) -> bool {
-        if let &TreePtr::Mem(_) = self {
+        if let TreePtr::Mem(_) = self {
             true
         } else {
             false
@@ -270,8 +270,8 @@ impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            &TreeReadGuard::Mem(ref guard) => &**guard,
-            &TreeReadGuard::DRP(ref guard, _) => &**guard,
+            TreeReadGuard::Mem(guard) => &**guard,
+            TreeReadGuard::DRP(guard, _) => &**guard,
         }
     }
 }
@@ -287,8 +287,8 @@ impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            &TreeWriteGuard::Mem(ref guard) => &**guard,
-            &TreeWriteGuard::DRP(ref guard, _) => &**guard,
+            TreeWriteGuard::Mem(guard) => &**guard,
+            TreeWriteGuard::DRP(guard, _) => &**guard,
         }
     }
 }
@@ -296,8 +296,8 @@ impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
 impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            &mut TreeWriteGuard::Mem(ref mut guard) => &mut **guard,
-            &mut TreeWriteGuard::DRP(ref mut guard, _) => &mut **guard,
+            TreeWriteGuard::Mem(guard) => &mut **guard,
+            TreeWriteGuard::DRP(guard, _) => &mut **guard,
         }
     }
 }
@@ -389,7 +389,7 @@ impl<K: Key, V: Value> IntData<K, V> {
     fn position(&self, k: &K) -> usize {
         // Find rightmost child whose key is less than or equal to k
         self.children
-            .binary_search_by_key(k, |ref child| child.key)
+            .binary_search_by_key(k, |child| child.key)
             .unwrap_or_else(|k| k - 1)
     }
 
@@ -412,7 +412,7 @@ enum NodeData<K: Key, V: Value> {
 
 impl<K: Key, V: Value> NodeData<K, V> {
     fn as_int(&self) -> Option<&IntData<K, V>> {
-        if let &NodeData::Int(ref int) = self {
+        if let NodeData::Int(int) = self {
             Some(int)
         } else {
             None
@@ -420,7 +420,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
     }
 
     fn as_int_mut(&mut self) -> Option<&mut IntData<K, V>> {
-        if let &mut NodeData::Int(ref mut int) = self {
+        if let NodeData::Int(int) = self {
             Some(int)
         } else {
             None
@@ -429,7 +429,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
 
     #[cfg(test)]
     fn as_leaf(&self) -> Option<&LeafData<K, V>> {
-        if let &NodeData::Leaf(ref leaf) = self {
+        if let NodeData::Leaf(leaf) = self {
             Some(leaf)
         } else {
             None
@@ -437,7 +437,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
     }
 
     fn as_leaf_mut(&mut self) -> Option<&mut LeafData<K, V>> {
-        if let &mut NodeData::Leaf(ref mut leaf) = self {
+        if let NodeData::Leaf(leaf) = self {
             Some(leaf)
         } else {
             None
@@ -453,16 +453,16 @@ impl<K: Key, V: Value> NodeData<K, V> {
     /// parent's `children` array.
     fn key(&self) -> K {
         match self {
-            &NodeData::Leaf(ref leaf) => *leaf.items.keys().nth(0).unwrap(),
-            &NodeData::Int(ref int) => int.children[0].key,
+            NodeData::Leaf(leaf) => *leaf.items.keys().nth(0).unwrap(),
+            NodeData::Int(int) => int.children[0].key,
         }
     }
 
     /// Number of children or items in this `NodeData`
     fn len(&self) -> usize {
         match self {
-            &NodeData::Leaf(ref leaf) => leaf.items.len(),
-            &NodeData::Int(ref int) => int.children.len()
+            NodeData::Leaf(leaf) => leaf.items.len(),
+            NodeData::Int(int) => int.children.len()
         }
     }
 
@@ -483,12 +483,12 @@ impl<K: Key, V: Value> NodeData<K, V> {
     }
 
     fn split(&mut self) -> (K, NodeData<K, V>) {
-        match *self {
-            NodeData::Leaf(ref mut leaf) => {
+        match self {
+            NodeData::Leaf(leaf) => {
                 let (k, new_leaf) = leaf.split();
                 (k, NodeData::Leaf(new_leaf))
             },
-            NodeData::Int(ref mut int) => {
+            NodeData::Int(int) => {
                 let (k, new_int) = int.split();
                 (k, NodeData::Int(new_int))
             },
@@ -499,10 +499,10 @@ impl<K: Key, V: Value> NodeData<K, V> {
     /// Merge all of `other`'s data into `self`.  Afterwards, `other` may be
     /// deleted.
     fn merge(&mut self, other: &mut NodeData<K, V>) {
-        match *self {
-            NodeData::Int(ref mut int) =>
+        match self {
+            NodeData::Int(int) =>
                 int.children.append(&mut other.as_int_mut().unwrap().children),
-            NodeData::Leaf(ref mut leaf) =>
+            NodeData::Leaf(leaf) =>
                 leaf.items.append(&mut other.as_leaf_mut().unwrap().items),
         }
     }
@@ -510,15 +510,15 @@ impl<K: Key, V: Value> NodeData<K, V> {
     /// Take `other`'s highest keys and merge them into ourself
     fn take_high_keys(&mut self, other: &mut NodeData<K, V>) {
         let keys_to_share = (other.len() - self.len()) / 2;
-        match *self {
-            NodeData::Int(ref mut int) => {
+        match self {
+            NodeData::Int(int) => {
                 let other_children = &mut other.as_int_mut().unwrap().children;
                 let cutoff_idx = other_children.len() - keys_to_share;
                 let mut other_right_half =
                     other_children.split_off(cutoff_idx);
                 int.children.splice(0..0, other_right_half.into_iter());
             },
-            NodeData::Leaf(ref mut leaf) => {
+            NodeData::Leaf(leaf) => {
                 let other_items = &mut other.as_leaf_mut().unwrap().items;
                 let cutoff_idx = other_items.len() - keys_to_share;
                 let cutoff = *other_items.keys().nth(cutoff_idx).unwrap();
@@ -531,14 +531,14 @@ impl<K: Key, V: Value> NodeData<K, V> {
     /// Take `other`'s lowest keys and merge them into ourself
     fn take_low_keys(&mut self, other: &mut NodeData<K, V>) {
         let keys_to_share = (other.len() - self.len()) / 2;
-        match *self {
-            NodeData::Int(ref mut int) => {
+        match self {
+            NodeData::Int(int) => {
                 let other_children = &mut other.as_int_mut().unwrap().children;
                 let other_left_half = other_children.drain(0..keys_to_share);
                 let nchildren = int.children.len();
                 int.children.splice(nchildren.., other_left_half);
             },
-            NodeData::Leaf(ref mut leaf) => {
+            NodeData::Leaf(leaf) => {
                 let other_items = &mut other.as_leaf_mut().unwrap().items;
                 let cutoff = *other_items.keys().nth(keys_to_share).unwrap();
                 let other_right_half = other_items.split_off(&cutoff);

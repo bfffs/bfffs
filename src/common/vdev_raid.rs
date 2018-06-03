@@ -811,8 +811,8 @@ impl VdevRaid {
         for (chunk_id, loc) in self.locator.iter(start, end) {
             let col = match chunk_id {
                 ChunkId::Data(_) => buf.split_to(col_len),
-                ChunkId::Parity(_, ref i) =>
-                    parity[*i as usize].split_to(col_len).freeze()
+                ChunkId::Parity(_, i) =>
+                    parity[i as usize].split_to(col_len).freeze()
             };
             let disk_lba = loc.offset * self.chunksize;
             if start_lbas[loc.disk as usize] == SENTINEL {

@@ -291,10 +291,10 @@ impl<'a> DDML {
         // Compress
         let compressed_dbs = compression.compress(&serialized);
         let compressed_db = match &compressed_dbs {
-            &Some(ref dbs) => {
+            Some(dbs) => {
                 dbs.try().unwrap()
             },
-            &None => {
+            None => {
                 serialized
             }
         };

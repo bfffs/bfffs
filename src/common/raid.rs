@@ -290,7 +290,7 @@ mod tests {
                        170,  61, 150,  93, 157, 173, 152, 221, 167,  71,
                         93, 150,  61, 170, 221, 152, 173, 157, 122, 186]),
         ];
-        for ref triple in testpairs.iter() {
+        for triple in testpairs.iter() {
             let m = triple.0;
             let f = triple.1;
             let encmat = &triple.2;
