@@ -315,62 +315,6 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
     fn is_dirty(&mut self) -> bool {
         self.ptr.is_dirty()
     }
-
-    fn rlock(&self, ddml: &'a DDMLLike)
-        -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error> + 'a>
-    {
-        match self.ptr {
-            TreePtr::Mem(ref node) => {
-                Box::new(
-                    node.0.read()
-                        .map(|guard| TreeReadGuard::Mem(guard))
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                )
-            },
-            TreePtr::DRP(ref drp) => {
-                Box::new(
-                    ddml.get::<Arc<Node<K, V>>>(drp).and_then(|node| {
-                        node.0.read()
-                            .map(move |guard| {
-                                TreeReadGuard::DRP(guard, node)
-                            })
-                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                    })
-                )
-            },
-            _ => {
-                unimplemented!()
-            }
-        }
-    }
-
-    fn xlock(&self, ddml: &'a DDMLLike)
-        -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error> + 'a>
-    {
-        match self.ptr {
-            TreePtr::Mem(ref node) => {
-                Box::new(
-                    node.0.write()
-                        .map(|guard| TreeWriteGuard::Mem(guard))
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                )
-            },
-            TreePtr::DRP(ref drp) => {
-                Box::new(
-                    ddml.get::<Arc<Node<K, V>>>(drp).and_then(|node| {
-                        node.0.write()
-                            .map(move |guard| {
-                                TreeWriteGuard::DRP(guard, node)
-                            })
-                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                    })
-                )
-            },
-            _ => {
-                unimplemented!()
-            }
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -669,7 +613,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         self.i.root.read()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
-                guard.xlock(&self.ddml)
+                self.xlock(&guard)
                      .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                      .and_then(move |guard| {
                          self.insert_locked(guard, k, v)
@@ -735,7 +679,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             NodeData::Int(ref int) => {
                 let child_idx = int.position(&k);
-                let fut = int.children[child_idx].xlock(&self.ddml);
+                let fut = self.xlock(&int.children[child_idx]);
                 (child_idx, fut)
             }
         };
@@ -750,7 +694,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         self.i.root.read()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
-                guard.rlock(&self.ddml)
+                self.rlock(&guard)
                      .and_then(move |guard| self.lookup_node(guard, k))
             })
     }
@@ -765,7 +709,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             NodeData::Int(ref int) => {
                 let child_elem = &int.children[int.position(&k)];
-                child_elem.rlock(&self.ddml)
+                self.rlock(&child_elem)
             }
         };
         drop(node);
@@ -812,7 +756,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         self.i.root.read()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
-                guard.xlock(&self.ddml)
+                self.xlock(&guard)
                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                     .and_then(move |guard| {
                         self.remove_locked(guard, k)
@@ -834,14 +778,13 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             // Then, try to merge with the left sibling
             // Then, try to steal keys from the left sibling
             let nchildren = parent.as_int().unwrap().children.len();
-            let (fut, right) = if child_idx < nchildren - 1 {
-                (parent.as_int_mut().unwrap().children[child_idx + 1]
-                 .xlock(&self.ddml),
-                 true)
-            } else {
-                (parent.as_int_mut().unwrap().children[child_idx - 1]
-                 .xlock(&self.ddml),
-                 false)
+            let (fut, right) = {
+                let int_data = parent.as_int_mut().unwrap();
+                if child_idx < nchildren - 1 {
+                    (self.xlock(&int_data.children[child_idx + 1]), true)
+                } else {
+                    (self.xlock(&int_data.children[child_idx - 1]), false)
+                }
             };
             Box::new(
                 fut.map(move |mut sibling| {
@@ -912,7 +855,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             NodeData::Int(ref int) => {
                 let child_idx = int.position(&k);
-                let fut = int.children[child_idx].xlock(&self.ddml);
+                let fut = self.xlock(&int.children[child_idx]);
                 (child_idx, fut)
             }
         };
@@ -932,7 +875,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 // another task may still have a lock on it.  We must acquire
                 // then release the lock to ensure that we have the sole
                 // reference.
-                let fut = root_guard.xlock(&self.ddml).and_then(move |guard| {
+                let fut = self.xlock(&root_guard).and_then(move |guard| {
                     drop(guard);
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
                     Box::new(
@@ -983,11 +926,11 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 // need to lock it, then release the lock.  Then we'll know that
                 // we have exclusive access to it, and we can move it into the
                 // Cache.
-                let fut = rndata.borrow_mut()
-                                .as_int_mut().unwrap()
-                                .children[idx]
-                                .xlock(&self.ddml)
-                                .and_then(move |guard| {
+                let fut = self.xlock(&rndata.borrow_mut()
+                                            .as_int_mut().unwrap()
+                                            .children[idx])
+                              .and_then(move |guard|
+                {
                     drop(guard);
 
                     let ptr = mem::replace(&mut rndata3.borrow_mut()
@@ -1015,6 +958,64 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 fut.map(move |_| drp)
             })
         )
+    }
+
+    /// Lock the provided `IntElem` nonexclusively
+    fn rlock(&'a self, elem: &IntElem<K, V>)
+        -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error> + 'a>
+    {
+        match elem.ptr {
+            TreePtr::Mem(ref node) => {
+                Box::new(
+                    node.0.read()
+                        .map(|guard| TreeReadGuard::Mem(guard))
+                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                )
+            },
+            TreePtr::DRP(ref drp) => {
+                Box::new(
+                    self.ddml.get::<Arc<Node<K, V>>>(drp).and_then(|node| {
+                        node.0.read()
+                            .map(move |guard| {
+                                TreeReadGuard::DRP(guard, node)
+                            })
+                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    })
+                )
+            },
+            _ => {
+                unimplemented!()
+            }
+        }
+    }
+
+    /// Lock the provided `IntElem` exclusively
+    fn xlock(&'a self, elem: &IntElem<K, V>)
+        -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error> + 'a>
+    {
+        match elem.ptr {
+            TreePtr::Mem(ref node) => {
+                Box::new(
+                    node.0.write()
+                        .map(|guard| TreeWriteGuard::Mem(guard))
+                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                )
+            },
+            TreePtr::DRP(ref drp) => {
+                Box::new(
+                    self.ddml.get::<Arc<Node<K, V>>>(drp).and_then(|node| {
+                        node.0.write()
+                            .map(move |guard| {
+                                TreeWriteGuard::DRP(guard, node)
+                            })
+                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    })
+                )
+            },
+            _ => {
+                unimplemented!()
+            }
+        }
     }
 }
 
@@ -2761,8 +2762,7 @@ fn read_int() {
         IntElem{key: 256u32, ptr: TreePtr::DRP(drp1)},
     ];
     let node = Arc::new(Node(RwLock::new(NodeData::Int(IntData{children}))));
-    let drpl = DRP::random(Compression::None, 1000);
-    let drpl2 = drpl.clone();
+    let drpl = DRP::new(PBA{cluster: 1, lba: 2}, Compression::None, 36, 36, 0);
     let mut ddml = DDMLMock::new();
     ddml.expect_get::<Arc<Node<u32, u32>>>()
         .called_once()
@@ -2774,13 +2774,28 @@ fn read_int() {
             let res = Box::new(node.clone());
             Box::new(future::ok::<Box<Arc<Node<u32, u32>>>, Error>(res))
         });
+    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    DRP:
+      pba:
+        cluster: 1
+        lba: 2
+      compression: None
+      lsize: 36
+      csize: 36
+      checksum: 0
+"#);
 
-    let elem: IntElem<u32, u32> = IntElem {
-        key: 0,
-        ptr: TreePtr::DRP(drpl2)
-    };
     let r = current_thread::block_on_all(future::lazy(|| {
-        elem.rlock(&ddml).map(|node| {
+        let root_guard = tree.i.root.try_read().unwrap();
+        tree.rlock(&root_guard).map(|node| {
             let int_data = (*node).as_int().unwrap();
             assert_eq!(int_data.children.len(), 2);
             // Validate DRPs as well as possible using their public API
