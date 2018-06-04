@@ -92,6 +92,13 @@ impl DDMLMock {
             ("pop", drp as *const DRP)
     }
 
+    pub fn expect_pop<T: Cacheable>(&mut self) -> Method<*const DRP,
+        Box<Future<Item=Box<T>, Error=Error>>>
+    {
+        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
+            ("pop")
+    }
+
     pub fn put<T: Cacheable>(&self, cacheable: T, compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error>>)
     {
@@ -170,10 +177,17 @@ enum TreePtr<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> TreePtr<K, V> {
-    #[cfg(test)]
     fn as_drp(&self) -> Option<&DRP> {
         if let TreePtr::DRP(drp) = self {
             Some(drp)
+        } else {
+            None
+        }
+    }
+
+    fn as_mem(&self) -> Option<&Box<Node<K, V>>> {
+        if let TreePtr::Mem(mem) = self {
+            Some(mem)
         } else {
             None
         }
@@ -379,6 +393,14 @@ impl<K: Key, V: Value> NodeData<K, V> {
             Some(leaf)
         } else {
             None
+        }
+    }
+
+    fn is_leaf(&self) -> bool {
+        if let NodeData::Leaf(_) = self {
+            true
+        } else {
+            false
         }
     }
 
@@ -610,13 +632,13 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     pub fn insert(&'a self, k: K, v: V)
         -> impl Future<Item=Option<V>, Error=Error> + 'a {
 
-        self.i.root.read()
+        self.i.root.write()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
-                self.xlock(&guard)
+                self.xlock_root(guard)
                      .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                     .and_then(move |guard| {
-                         self.insert_locked(guard, k, v)
+                     .and_then(move |(_root_guard, child_guard)| {
+                         self.insert_locked(child_guard, k, v)
                      })
             })
     }
@@ -671,22 +693,19 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     fn insert_no_split(&'a self, mut node: TreeWriteGuard<K, V>, k: K, v: V)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
-
-        let (child_idx, child_fut) = match *node {
-            NodeData::Leaf(ref mut leaf) => {
-                return Box::new(Ok(leaf.insert(k, v)).into_future())
-            },
-            NodeData::Int(ref int) => {
-                let child_idx = int.position(&k);
-                let fut = self.xlock(&int.children[child_idx]);
-                (child_idx, fut)
-            }
-        };
-        Box::new(child_fut.and_then(move |child| {
-                self.insert_int(node, child_idx, child, k, v)
-            })
-        )
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+    {
+        if node.is_leaf() {
+            let old_v = node.as_leaf_mut().unwrap().insert(k, v);
+            return Box::new(Ok(old_v).into_future())
+        } else {
+            let child_idx = node.as_int().unwrap().position(&k);
+            let fut = self.xlock(node, child_idx);
+            Box::new(fut.and_then(move |(parent, child)| {
+                    self.insert_int(parent, child_idx, child, k, v)
+                })
+            )
+        }
     }
 
     /// Lookup the value of key `k`.  Return an error if no value is present.
@@ -753,20 +772,20 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     pub fn remove(&'a self, k: K)
         -> impl Future<Item=Option<V>, Error=Error> + 'a
     {
-        self.i.root.read()
+        self.i.root.write()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
-                self.xlock(&guard)
+                self.xlock_root(guard)
                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                    .and_then(move |guard| {
-                        self.remove_locked(guard, k)
+                    .and_then(move |(_root_guard, child_guard)| {
+                        self.remove_locked(child_guard, k)
                     })
         })
     }
 
     /// Remove key `k` from an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn remove_int(&'a self, mut parent: TreeWriteGuard<K, V>,
+    fn remove_int(&'a self, parent: TreeWriteGuard<K, V>,
                   child_idx: usize, mut child: TreeWriteGuard<K, V>, k: K)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
@@ -779,15 +798,14 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             // Then, try to steal keys from the left sibling
             let nchildren = parent.as_int().unwrap().children.len();
             let (fut, right) = {
-                let int_data = parent.as_int_mut().unwrap();
                 if child_idx < nchildren - 1 {
-                    (self.xlock(&int_data.children[child_idx + 1]), true)
+                    (self.xlock(parent, child_idx + 1), true)
                 } else {
-                    (self.xlock(&int_data.children[child_idx - 1]), false)
+                    (self.xlock(parent, child_idx - 1), false)
                 }
             };
             Box::new(
-                fut.map(move |mut sibling| {
+                fut.map(move |(mut parent, mut sibling)| {
                     if right {
                         if child.can_merge(&sibling, self.i.max_fanout) {
                             child.merge(&mut sibling);
@@ -849,34 +867,33 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     fn remove_no_fix(&'a self, mut node: TreeWriteGuard<K, V>, k: K)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
-        let (child_idx, child_fut) = match *node {
-            NodeData::Leaf(ref mut leaf) => {
-                return Box::new(Ok(leaf.remove(k)).into_future())
-            },
-            NodeData::Int(ref int) => {
-                let child_idx = int.position(&k);
-                let fut = self.xlock(&int.children[child_idx]);
-                (child_idx, fut)
-            }
-        };
-        Box::new(child_fut.and_then(move |child| {
-                self.remove_int(node, child_idx, child, k)
-            })
-        )
+        if node.is_leaf() {
+            let old_v = node.as_leaf_mut().unwrap().remove(k);
+            return Box::new(Ok(old_v).into_future());
+        } else {
+            let child_idx = node.as_int().unwrap().position(&k);
+            let fut = self.xlock(node, child_idx);
+            Box::new(fut.and_then(move |(parent, child)| {
+                    self.remove_int(parent, child_idx, child, k)
+                })
+            )
+        }
     }
 
     /// Sync all records written so far to stable storage.
     pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
         self.i.root.write()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                  .and_then(move |mut root_guard| {
+                  .and_then(move |root_guard| {
             if root_guard.ptr.is_dirty() {
                 // If the root is dirty, then we have ownership over it.  But
                 // another task may still have a lock on it.  We must acquire
                 // then release the lock to ensure that we have the sole
                 // reference.
-                let fut = self.xlock(&root_guard).and_then(move |guard| {
-                    drop(guard);
+                let fut = self.xlock_root(root_guard)
+                    .and_then(move |(mut root_guard, child_guard)|
+                {
+                    drop(child_guard);
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
                     Box::new(
                         self.write_node(ptr.into_node().unwrap())
@@ -926,7 +943,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 // need to lock it, then release the lock.  Then we'll know that
                 // we have exclusive access to it, and we can move it into the
                 // Cache.
-                let fut = self.xlock(&rndata.borrow_mut()
+                let fut = self.xlock_dirty(&rndata.borrow_mut()
                                             .as_int_mut().unwrap()
                                             .children[idx])
                               .and_then(move |guard|
@@ -989,32 +1006,83 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         }
     }
 
-    /// Lock the provided `IntElem` exclusively
-    fn xlock(&'a self, elem: &IntElem<K, V>)
-        -> Box<Future<Item=TreeWriteGuard<K, V>, Error=Error> + 'a>
+    /// Lock the indicated `IntElem` exclusively.  If it is not already resident
+    /// in memory, then COW the target node.
+    fn xlock(&'a self, mut guard: TreeWriteGuard<K, V>, child_idx: usize)
+        -> (Box<Future<Item=(TreeWriteGuard<K, V>,
+                             TreeWriteGuard<K, V>), Error=Error> + 'a>)
     {
-        match elem.ptr {
-            TreePtr::Mem(ref node) => {
+        if guard.as_int().unwrap().children[child_idx].ptr.is_mem() {
+            Box::new(
+                self.xlock_dirty(&guard.as_int().unwrap().children[child_idx])
+                    .map(move |child_guard| {
+                          (guard, child_guard)
+                     })
+            )
+        } else {
+            let drp = *guard.as_int().unwrap()
+                            .children[child_idx]
+                            .ptr
+                            .as_drp().unwrap();
                 Box::new(
-                    node.0.write()
-                        .map(|guard| TreeWriteGuard::Mem(guard))
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                )
-            },
-            TreePtr::DRP(ref drp) => {
-                Box::new(
-                    self.ddml.get::<Arc<Node<K, V>>>(drp).and_then(|node| {
-                        node.0.write()
-                            .map(move |guard| {
-                                TreeWriteGuard::DRP(guard, node)
-                            })
-                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    self.ddml.pop::<Arc<Node<K, V>>>(&drp).map(move |arc| {
+                        let child_node = Box::new(Arc::try_unwrap(*arc)
+                            .expect("We should be the Node's only owner"));
+                        let child_guard = {
+                            let elem = &mut guard.as_int_mut().unwrap()
+                                                 .children[child_idx];
+                            elem.ptr = TreePtr::Mem(child_node);
+                            TreeWriteGuard::Mem(
+                                elem.ptr.as_mem().unwrap()
+                                    .0.try_write().unwrap()
+                            )
+                        };
+                        (guard, child_guard)
                     })
                 )
-            },
-            _ => {
-                unimplemented!()
-            }
+        }
+    }
+
+    /// Lock the indicated `IntElem` exclusively, if it is known to be already
+    /// dirty.
+    fn xlock_dirty(&'a self, elem: &IntElem<K, V>)
+        -> (Box<Future<Item=TreeWriteGuard<K, V>, Error=Error> + 'a>)
+    {
+        Box::new(
+            elem.ptr.as_mem()
+                .expect("Mus use Tree::xlock for non-dirty nodes")
+                .0.write()
+                .map(|guard| TreeWriteGuard::Mem(guard))
+                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        )
+    }
+
+    /// Lock the root `IntElem` exclusively.  If it is not already resident in
+    /// memory, then COW it.
+    fn xlock_root(&'a self, mut guard: RwLockWriteGuard<IntElem<K, V>>)
+        -> (Box<Future<Item=(RwLockWriteGuard<IntElem<K, V>>,
+                             TreeWriteGuard<K, V>), Error=Error> + 'a>)
+    {
+        if guard.ptr.is_mem() {
+            Box::new(
+                guard.ptr.as_mem().unwrap().0.write()
+                     .map(move |child_guard| {
+                          (guard, TreeWriteGuard::Mem(child_guard))
+                     }).map_err(|_| Error::Sys(errno::Errno::EPIPE))
+            )
+        } else {
+            let drp = *guard.ptr.as_drp().unwrap();
+            Box::new(
+                self.ddml.pop::<Arc<Node<K, V>>>(&drp).map(move |arc| {
+                    let child_node = Box::new(Arc::try_unwrap(*arc)
+                        .expect("We should be the Node's only owner"));
+                    guard.ptr = TreePtr::Mem(child_node);
+                    let child_guard = TreeWriteGuard::Mem(
+                        guard.ptr.as_mem().unwrap().0.try_write().unwrap()
+                    );
+                    (guard, child_guard)
+                })
+            )
         }
     }
 }
@@ -2749,6 +2817,58 @@ mod io {
 use super::*;
 use futures::future;
 use tokio::executor::current_thread;
+
+/// Insert an item into a Tree that's not dirty
+#[test]
+fn insert() {
+    let mut ddml = DDMLMock::new();
+    let items: BTreeMap<u32, u32> = BTreeMap::new();
+    let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node_holder = RefCell::new(Some(node));
+    ddml.expect_pop::<Arc<Node<u32, u32>>>()
+        .called_once()
+        .returning(move |_| {
+            // XXX simulacrum can't return a uniquely owned object in an
+            // expectation, so we must hack it with RefCell<Option<T>>
+            // https://github.com/pcsm/simulacrum/issues/52
+            let res = Box::new(node_holder.borrow_mut().take().unwrap());
+            Box::new(future::ok::<Box<Arc<Node<u32, u32>>>, Error>(res))
+        });
+    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    DRP:
+      pba:
+        cluster: 0
+        lba: 0
+      compression: None
+      lsize: 36
+      csize: 36
+      checksum: 0
+"#);
+
+    let r = current_thread::block_on_all(tree.insert(0, 0));
+    assert_eq!(r, Ok(None));
+    assert_eq!(format!("{}", tree),
+r#"---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0"#);
+}
 
 #[test]
 /// Read an IntNode.  The public API doesn't provide any way to read an IntNode
