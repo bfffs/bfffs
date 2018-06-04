@@ -316,12 +316,6 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
         self.ptr.is_dirty()
     }
 
-    fn read(&self, ddml: &'a DDMLLike, drp: &DRP)
-        -> Box<Future<Item=Box<Arc<Node<K, V>>>, Error=Error> + 'a>
-    {
-        ddml.get(drp)
-    }
-
     fn rlock(&self, ddml: &'a DDMLLike)
         -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error> + 'a>
     {
@@ -335,7 +329,7 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
             },
             TreePtr::DRP(ref drp) => {
                 Box::new(
-                    self.read(ddml, drp).and_then(|node| {
+                    ddml.get::<Arc<Node<K, V>>>(drp).and_then(|node| {
                         node.0.read()
                             .map(move |guard| {
                                 TreeReadGuard::DRP(guard, node)
@@ -363,7 +357,7 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
             },
             TreePtr::DRP(ref drp) => {
                 Box::new(
-                    self.read(ddml, drp).and_then(|node| {
+                    ddml.get::<Arc<Node<K, V>>>(drp).and_then(|node| {
                         node.0.write()
                             .map(move |guard| {
                                 TreeWriteGuard::DRP(guard, node)
