@@ -532,7 +532,38 @@ impl<K: Key, V: Value> Cacheable for Arc<Node<K, V>> {
     }
 
     fn len(&self) -> usize {
-        mem::size_of_val(self)  // TODO: check that this is reasonable
+        if let Ok(guard) = self.0.try_read() {
+            match guard.deref() {
+                NodeData::Leaf(leaf) => {
+                    // Rust's BTreeMap doesn't have any method to get its memory
+                    // consumption.  But it's dominated by two vecs in each
+                    // leaf, one storing keys and the other storing values.  As
+                    // of 1.26.1, the vecs are of length 11 and have minimum
+                    // size 5.  Each leaf has (on 64-bit arches) and additional
+                    // 12 bytes.  Each internal node has 12 children plus an
+                    // internal leaf node.  If each node on average has an
+                    // occupancy of 8, then an average tree will have n / 8
+                    // total nodes, a height of log(n, 8), and n / 7 internal
+                    // nodes.
+                    //
+                    // So the memory consumption will be roughly as follows,
+                    // assuming 64-bit pointers:
+                    let n = leaf.items.len();
+                    let nodes = n >> 3;
+                    let non_leaves = nodes / 7;
+                    let leaf_memory = 12 * (mem::size_of::<K>() +
+                                            mem::size_of::<V>()) + 12;
+                    let non_leaf_memory = 12 * 8;
+                    leaf_memory * nodes + non_leaf_memory * non_leaves
+                },
+                NodeData::Int(int) => {
+                    // IntData is layed out contiguously in memory
+                    mem::size_of_val(int)
+                }
+            }
+        } else {
+            panic!("There's probably no good reason to call this method on a Node that's locked exclusively, because such a Node can't be in the Cache");
+        }
     }
 
     fn make_ref(&self) -> Box<CacheRef> {
