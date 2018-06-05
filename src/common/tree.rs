@@ -125,6 +125,11 @@ impl DDMLMock {
     {
         self.e.expect::<(), Box<Future<Item=(), Error=Error>>>("sync_all")
     }
+
+    pub fn then(&mut self) -> &mut Self {
+        self.e.then();
+        self
+    }
 }
 
 #[cfg(test)]
@@ -203,6 +208,15 @@ impl<K: Key, V: Value> TreePtr<K, V> {
 
     fn is_dirty(&self) -> bool {
         self.is_mem()
+    }
+
+    #[cfg(test)]
+    fn is_drp(&self) -> bool {
+        if let TreePtr::DRP(_) = self {
+            true
+        } else {
+            false
+        }
     }
 
     fn is_mem(&self) -> bool {
@@ -1727,6 +1741,40 @@ fn lookup() {
 }
 
 #[test]
+fn lookup_deep() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+"#);
+    let r = current_thread::block_on_all(tree.lookup(3));
+    assert_eq!(r, Ok(3.0))
+}
+
+#[test]
 fn lookup_nonexistent() {
     let ddml = DDMLMock::new();
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
@@ -1789,6 +1837,48 @@ root:
     let r = current_thread::block_on_all(tree.remove(1));
     assert_eq!(r, Ok(Some(1.0)));
     assert_eq!(format!("{}", tree),
+r#"---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
+          2: 2.0"#);
+}
+
+#[test]
+fn remove_and_merge_down() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+                    2: 2.0
+"#);
+    let r2 = current_thread::block_on_all(tree.remove(1));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
 r#"---
 height: 1
 min_fanout: 2
@@ -2820,13 +2910,99 @@ use tokio::executor::current_thread;
 
 /// Insert an item into a Tree that's not dirty
 #[test]
-fn insert() {
+fn insert_below_root() {
     let mut ddml = DDMLMock::new();
     let items: BTreeMap<u32, u32> = BTreeMap::new();
     let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     let node_holder = RefCell::new(Some(node));
+    let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
     ddml.expect_pop::<Arc<Node<u32, u32>>>()
         .called_once()
+        .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
+        .returning(move |_| {
+            // XXX simulacrum can't return a uniquely owned object in an
+            // expectation, so we must hack it with RefCell<Option<T>>
+            // https://github.com/pcsm/simulacrum/issues/52
+            let res = Box::new(node_holder.borrow_mut().take().unwrap());
+            Box::new(future::ok::<Box<Arc<Node<u32, u32>>>, Error>(res))
+        });
+    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              DRP:
+                pba:
+                  cluster: 0
+                  lba: 0
+                compression: None
+                lsize: 36
+                csize: 36
+                checksum: 0
+          - key: 256
+            ptr:
+              DRP:
+                pba:
+                  cluster: 0
+                  lba: 256
+                compression: ZstdL9NoShuffle
+                lsize: 16000
+                csize: 8000
+                checksum: 1234567
+"#);
+
+    let r = current_thread::block_on_all(tree.insert(0, 0));
+    assert_eq!(r, Ok(None));
+    assert_eq!(format!("{}", tree),
+r#"---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0
+          - key: 256
+            ptr:
+              DRP:
+                pba:
+                  cluster: 0
+                  lba: 256
+                compression: ZstdL9NoShuffle
+                lsize: 16000
+                csize: 8000
+                checksum: 1234567"#);
+}
+
+/// Insert an item into a Tree that's not dirty
+#[test]
+fn insert_root() {
+    let mut ddml = DDMLMock::new();
+    let items: BTreeMap<u32, u32> = BTreeMap::new();
+    let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node_holder = RefCell::new(Some(node));
+    let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
+    ddml.expect_pop::<Arc<Node<u32, u32>>>()
+        .called_once()
+        .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must hack it with RefCell<Option<T>>
@@ -2968,6 +3144,97 @@ root:
     assert_eq!(Ok(200), r);
 }
 
+// If the tree isn't dirty, then there's nothing to do
+#[test]
+fn write_clean() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    DRP:
+      pba:
+        cluster: 0
+        lba: 0
+      compression: None
+      lsize: 36
+      csize: 36
+      checksum: 0
+"#);
+
+    let r = current_thread::block_on_all(tree.sync_all());
+    assert!(r.is_ok());
+}
+
+/// Sync a Tree with both dirty Int nodes and dirty Leaf nodes
+#[test]
+fn write_deep() {
+    let mut ddml = DDMLMock::new();
+    let drp = DRP::random(Compression::None, 1000);
+    ddml.expect_put::<Arc<Node<u32, u32>>>()
+        .called_once()
+        .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
+            let node_data = arg.0.try_read().unwrap();
+            let leaf_data = node_data.as_leaf().unwrap();
+            leaf_data.items[&0] == 100 &&
+            leaf_data.items[&1] == 200
+        }))
+        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+    ddml.then().expect_put::<Arc<Node<u32, u32>>>()
+        .called_once()
+        .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
+            let node_data = arg.0.try_read().unwrap();
+            let int_data = node_data.as_int().unwrap();
+            int_data.children[0].key == 0 &&
+            int_data.children[0].ptr.is_drp() &&
+            int_data.children[1].key == 256 &&
+            int_data.children[1].ptr.is_drp()
+        }))
+        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+    ddml.expect_sync_all()
+        .called_once()
+        .returning(|_| Box::new(future::ok::<(), Error>(())));
+    let mut tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 100
+                    1: 200
+          - key: 256
+            ptr:
+              DRP:
+                pba:
+                  cluster: 0
+                  lba: 256
+                compression: ZstdL9NoShuffle
+                lsize: 16000
+                csize: 8000
+                checksum: 0x1a7ebabe
+"#);
+
+    let r = current_thread::block_on_all(tree.sync_all());
+    assert!(r.is_ok());
+    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp().unwrap(), drp);
+}
+
 #[test]
 fn write_int() {
     let mut ddml = DDMLMock::new();
@@ -2988,7 +3255,7 @@ fn write_int() {
         .returning(|_| Box::new(future::ok::<(), Error>(())));
     let mut tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
 ---
-height: 1
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
