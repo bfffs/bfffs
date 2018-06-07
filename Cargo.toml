@@ -15,7 +15,7 @@ divbuf = { git = "https://github.com/asomers/divbuf", rev = "02e3430" }
 downcast = "0.8"
 fixedbitset = "0.1.8"
 futures = "0.1.14"
-futures-locks = { git = "https://github.com/asomers/futures-locks", rev = "b9578ce" }
+futures-locks = "0.1.1"
 itertools = "0.7"
 isa-l = { path = "isa-l" }
 lazy_static = "1.0"
