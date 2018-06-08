@@ -15,6 +15,7 @@ use serde::{Serialize, Serializer, de::{Deserializer, DeserializeOwned}};
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
 #[cfg(test)] use simulacrum::*;
 use std::{
+    borrow::Borrow,
     cell::RefCell,
     collections::BTreeMap,
     fmt::Debug,
@@ -276,14 +277,16 @@ impl<K: Key, V: Value> LeafData<K, V> {
         self.items.insert(k, v)
     }
 
-    fn lookup(&self, k: K) -> Result<V, Error> {
-        self.items.get(&k)
-            .cloned()
-            .ok_or(Error::Sys(errno::Errno::ENOENT))
+    fn get<Q>(&self, k: &Q) -> Option<V>
+        where K: Borrow<Q>, Q: Ord
+    {
+        self.items.get(k).cloned()
     }
 
-    fn remove(&mut self, k: K) -> Option<V> {
-        self.items.remove(&k)
+    fn remove<Q>(&mut self, k: &Q) -> Option<V>
+        where K: Borrow<Q>, Q: Ord
+    {
+        self.items.remove(k)
     }
 }
 
@@ -352,10 +355,12 @@ struct IntData<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> IntData<K, V> {
-    fn position(&self, k: &K) -> usize {
+    fn position<Q>(&self, k: &Q) -> usize
+        where K: Borrow<Q>, Q: Ord
+    {
         // Find rightmost child whose key is less than or equal to k
         self.children
-            .binary_search_by_key(k, |child| child.key)
+            .binary_search_by(|child| child.key.borrow().cmp(k))
             .unwrap_or_else(|k| k - 1)
     }
 
@@ -753,33 +758,38 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         }
     }
 
-    /// Lookup the value of key `k`.  Return an error if no value is present.
-    pub fn lookup(&'a self, k: K) -> impl Future<Item=V, Error=Error> + 'a {
+    /// Lookup the value of key `k`.  Return `None` if no value is present.
+    pub fn get<Q>(&'a self, k: &'a Q)
+        -> impl Future<Item=Option<V>, Error=Error> + 'a
+        where K: Borrow<Q>, Q: Ord
+    {
         self.i.root.read()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
                 self.rlock(&guard)
-                     .and_then(move |guard| self.lookup_node(guard, k))
+                     .and_then(move |guard| self.get_node(guard, k))
             })
     }
 
     /// Lookup the value of key `k` in a node, which must already be locked.
-    fn lookup_node(&'a self, node: TreeReadGuard<K, V>, k: K)
-        -> Box<Future<Item=V, Error=Error> + 'a> {
+    fn get_node<Q>(&'a self, node: TreeReadGuard<K, V>, k: &'a Q)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+        where K: Borrow<Q>, Q: Ord
+    {
 
         let next_node_fut = match *node {
             NodeData::Leaf(ref leaf) => {
-                return Box::new(leaf.lookup(k).into_future())
+                return Box::new(Ok(leaf.get(k)).into_future())
             },
             NodeData::Int(ref int) => {
-                let child_elem = &int.children[int.position(&k)];
+                let child_elem = &int.children[int.position(k)];
                 self.rlock(&child_elem)
             }
         };
         drop(node);
         Box::new(
             next_node_fut
-            .and_then(move |next_node| self.lookup_node(next_node, k))
+            .and_then(move |next_node| self.get_node(next_node, k))
         )
     }
 
@@ -814,8 +824,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Remove and return the value at key `k`, if any.
-    pub fn remove(&'a self, k: K)
+    pub fn remove<Q>(&'a self, k: &'a Q)
         -> impl Future<Item=Option<V>, Error=Error> + 'a
+        where K: Borrow<Q>, Q: Ord
     {
         self.i.root.write()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
@@ -830,9 +841,11 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Remove key `k` from an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn remove_int(&'a self, parent: TreeWriteGuard<K, V>,
-                  child_idx: usize, mut child: TreeWriteGuard<K, V>, k: K)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+    fn remove_int<Q>(&'a self, parent: TreeWriteGuard<K, V>,
+                  child_idx: usize, mut child: TreeWriteGuard<K, V>, k: &'a Q)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+        where K: Borrow<Q>, Q: Ord
+    {
 
         // First, fix the node, if necessary
         if child.should_fix(self.i.min_fanout) {
@@ -882,8 +895,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Helper for `remove`.  Handles removal once the tree is locked
-    fn remove_locked(&'a self, mut root: TreeWriteGuard<K, V>, k: K)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+    fn remove_locked<Q>(&'a self, mut root: TreeWriteGuard<K, V>, k: &'a Q)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+        where K: Borrow<Q>, Q: Ord
+    {
 
         // First, fix the root node, if necessary
         let new_root_data = if let NodeData::Int(ref mut int) = *root {
@@ -909,14 +924,16 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Remove key `k` from a node, but don't try to fixup the node.
-    fn remove_no_fix(&'a self, mut node: TreeWriteGuard<K, V>, k: K)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+    fn remove_no_fix<Q>(&'a self, mut node: TreeWriteGuard<K, V>, k: &'a Q)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+        where K: Borrow<Q>, Q: Ord
+    {
 
         if node.is_leaf() {
             let old_v = node.as_leaf_mut().unwrap().remove(k);
             return Box::new(Ok(old_v).into_future());
         } else {
-            let child_idx = node.as_int().unwrap().position(&k);
+            let child_idx = node.as_int().unwrap().position(k);
             let fut = self.xlock(node, child_idx);
             Box::new(fut.and_then(move |(parent, child)| {
                     self.remove_int(parent, child_idx, child, k)
@@ -976,7 +993,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         // be borrowed in both places.  So we'll have to use RefCell to allow
         // dynamic borrowing and Rc to allow moving into both closures.
         let rndata = Rc::new(RefCell::new(ndata));
-        let nchildren = rndata.borrow().as_int().unwrap().children.len();
+        let nchildren = RefCell::borrow(&Rc::borrow(&rndata)).as_int().unwrap().children.len();
         let children_fut = (0..nchildren)
         .filter_map(move |idx| {
             let rndata3 = rndata.clone();
@@ -1761,18 +1778,18 @@ root:
 }
 
 #[test]
-fn lookup() {
+fn get() {
     let ddml = DDMLMock::new();
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(future::lazy(|| {
         tree.insert(0, 0.0)
-            .and_then(|_| tree.lookup(0))
+            .and_then(|_| tree.get(&0))
     }));
-    assert_eq!(r, Ok(0.0));
+    assert_eq!(r, Ok(Some(0.0)));
 }
 
 #[test]
-fn lookup_deep() {
+fn get_deep() {
     let ddml = DDMLMock::new();
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -1801,22 +1818,22 @@ root:
                     3: 3.0
                     4: 4.0
 "#);
-    let r = current_thread::block_on_all(tree.lookup(3));
-    assert_eq!(r, Ok(3.0))
+    let r = current_thread::block_on_all(tree.get(&3));
+    assert_eq!(r, Ok(Some(3.0)))
 }
 
 #[test]
-fn lookup_nonexistent() {
+fn get_nonexistent() {
     let ddml = DDMLMock::new();
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
-    let r = current_thread::block_on_all(tree.lookup(0));
-    assert_eq!(r, Err(Error::Sys(errno::Errno::ENOENT)))
+    let r = current_thread::block_on_all(tree.get(&0));
+    assert_eq!(r, Ok(None))
 }
 
 #[test]
 fn remove_last_key() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -1830,7 +1847,7 @@ root:
         items:
           0: 0.0
 "#);
-    let r = current_thread::block_on_all(tree.remove(0));
+    let r = current_thread::block_on_all(tree.remove(&0));
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -1849,7 +1866,7 @@ root:
 #[test]
 fn remove_from_leaf() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -1865,7 +1882,7 @@ root:
           1: 1.0
           2: 2.0
 "#);
-    let r = current_thread::block_on_all(tree.remove(1));
+    let r = current_thread::block_on_all(tree.remove(&1));
     assert_eq!(r, Ok(Some(1.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -1907,7 +1924,7 @@ root:
                     1: 1.0
                     2: 2.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(1));
+    let r2 = current_thread::block_on_all(tree.remove(&1));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2012,7 +2029,7 @@ root:
                               21: 21.0
                               22: 22.0
                               23: 23.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(23));
+    let r2 = current_thread::block_on_all(tree.remove(&23));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2174,7 +2191,7 @@ root:
                             items:
                               21: 21.0
                               22: 22.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(4));
+    let r2 = current_thread::block_on_all(tree.remove(&4));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2286,7 +2303,7 @@ root:
                     5: 5.0
                     7: 7.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(7));
+    let r2 = current_thread::block_on_all(tree.remove(&7));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2355,7 +2372,7 @@ root:
                     6: 6.0
                     7: 7.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(4));
+    let r2 = current_thread::block_on_all(tree.remove(&4));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2481,7 +2498,7 @@ root:
                               24: 24.0
                               25: 25.0
                               26: 26.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(26));
+    let r2 = current_thread::block_on_all(tree.remove(&26));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2669,7 +2686,7 @@ root:
                             items:
                               24: 24.0
                               26: 26.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(14));
+    let r2 = current_thread::block_on_all(tree.remove(&14));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2803,7 +2820,7 @@ root:
                     8: 8.0
                     9: 9.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(8));
+    let r2 = current_thread::block_on_all(tree.remove(&8));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2882,7 +2899,7 @@ root:
                     8: 8.0
                     9: 9.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(4));
+    let r2 = current_thread::block_on_all(tree.remove(&4));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2925,7 +2942,7 @@ root:
 fn remove_nonexistent() {
     let ddml = DDMLMock::new();
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
-    let r = current_thread::block_on_all(tree.remove(3));
+    let r = current_thread::block_on_all(tree.remove(&3));
     assert_eq!(r, Ok(None));
 }
 
@@ -3171,8 +3188,8 @@ root:
       checksum: 0
 "#);
 
-    let r = current_thread::block_on_all(tree.lookup(1));
-    assert_eq!(Ok(200), r);
+    let r = current_thread::block_on_all(tree.get(&1));
+    assert_eq!(Ok(Some(200)), r);
 }
 
 // If the tree isn't dirty, then there's nothing to do
