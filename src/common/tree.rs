@@ -7,7 +7,7 @@
 use bincode;
 use common::*;
 use common::ddml::*;
-use futures::{Future, future, future::IntoFuture};
+use futures::{Async, Future, future, future::IntoFuture, Poll, stream::Stream};
 use futures_locks::*;
 use nix::{Error, errno};
 use serde::{Serialize, Serializer, de::{Deserializer, DeserializeOwned}};
@@ -17,11 +17,11 @@ use serde::{Serialize, Serializer, de::{Deserializer, DeserializeOwned}};
 use std::{
     borrow::Borrow,
     cell::RefCell,
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fmt::Debug,
     mem,
     rc::Rc,
-    ops::{Deref, DerefMut},
+    ops::{Bound, Deref, DerefMut, RangeBounds},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering}
@@ -283,6 +283,23 @@ impl<K: Key, V: Value> LeafData<K, V> {
         self.items.get(k).cloned()
     }
 
+    fn get_range<R, T>(&self, range: R) -> (VecDeque<(K, V)>, Option<Bound<T>>)
+        where K: Borrow<T>,
+              R: RangeBounds<T>,
+              T: Ord + Clone
+    {
+        let l = self.items.keys().next_back().unwrap();
+        let next_bound = match range.end_bound() {
+            Bound::Included(i) | Bound::Excluded(i) if i <= l.borrow() => None,
+            _ => Some(Bound::Excluded(l.borrow().clone()))
+        };
+        let items = self.items.range(range)
+            .map(|(&k, &v)| (k.clone(), v.clone()))
+            .collect::<VecDeque<(K, V)>>();
+        (items, next_bound)
+    }
+
+
     fn remove<Q>(&mut self, k: &Q) -> Option<V>
         where K: Borrow<Q>, Q: Ord
     {
@@ -355,12 +372,22 @@ struct IntData<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> IntData<K, V> {
+    /// Find index of rightmost child whose key is less than or equal to k
     fn position<Q>(&self, k: &Q) -> usize
         where K: Borrow<Q>, Q: Ord
     {
-        // Find rightmost child whose key is less than or equal to k
         self.children
             .binary_search_by(|child| child.key.borrow().cmp(k))
+            .unwrap_or_else(|k| k - 1)
+    }
+
+    /// Find index of rightmost child whose key is less than k
+    fn xposition<Q>(&self, k: &Q) -> usize
+        where K: Borrow<Q>, Q: Ord
+    {
+        self.children
+            .binary_search_by(|child| child.key.borrow().cmp(k))
+            .map(|i| i + 1)
             .unwrap_or_else(|k| k - 1)
     }
 
@@ -628,6 +655,53 @@ mod tree_root_serializer {
     }
 }
 
+pub struct Range<'tree, K, T, V>
+    where K: Key + Borrow<T>,
+          T: 'tree + Ord + Clone,
+          V: Value
+{
+    /// If Some, then there are more nodes in the Tree to query
+    cursor: Option<Bound<T>>,
+    /// Data that can be returned immediately
+    data: VecDeque<(K, V)>,
+    end: Bound<T>,
+    /// Handle to the tree
+    tree: &'tree Tree<K, V>
+}
+
+impl<'tree, K, T, V> Stream for Range<'tree, K, T, V>
+    where K: Key + Borrow<T>,
+          T: Ord + Clone + 'static,
+          V: Value
+{
+    type Item = (K, V);
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        self.data.pop_front()
+            .map(|x| Ok(Async::Ready(Some(x))))
+            .unwrap_or_else(|| {
+                if self.cursor.is_some() {
+                    let l = self.cursor.take().unwrap();
+                    let r = (l, self.end.clone());
+                    let mut fut = self.tree.get_range(r);
+                    match fut.poll() {
+                        Ok(Async::Ready((v, bound))) => {
+                            self.data = v;
+                            self.cursor = bound;
+                            let first = self.data.pop_front().unwrap();
+                            Ok(Async::Ready(Some(first)))
+                        },
+                        Ok(Async::NotReady) => Ok(Async::NotReady),
+                        Err(e) => Err(e)
+                    }
+                } else {
+                    Ok(Async::Ready(None))
+                }
+            })
+    }
+}
+
 #[derive(Debug)]
 #[derive(Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
@@ -791,6 +865,70 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             next_node_fut
             .and_then(move |next_node| self.get_node(next_node, k))
         )
+    }
+
+    /// Private helper for `Range::poll`.  Returns a subset of the total
+    /// results, consisting of all matching (K,V) pairs within a single Leaf
+    /// Node, plus an optional Bound for the next iteration of the search.  If
+    /// the Bound is `None`, then the search is complete.
+    fn get_range<R, T>(&'a self, range: R)
+        -> impl Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
+                       Error=Error> + 'a
+        where K: Borrow<T>,
+              R: RangeBounds<T> + 'static,
+              T: Ord + Clone + 'static
+    {
+        self.i.root.read()
+            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+            .and_then(move |guard| {
+                self.rlock(&guard)
+                     .and_then(move |guard| self.get_range_node(guard, range))
+            })
+    }
+
+    fn get_range_node<R, T>(&'a self, guard: TreeReadGuard<K, V>, range: R)
+        -> Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
+                      Error=Error> + 'a>
+        where K: Borrow<T>,
+              R: RangeBounds<T> + 'static,
+              T: Ord + Clone + 'static
+    {
+        let next_fut = match *guard {
+            NodeData::Leaf(ref leaf) => {
+                return Box::new(Ok(leaf.get_range(range)).into_future())
+            },
+            NodeData::Int(ref int) => {
+                let child_elem = match range.start_bound() {
+                    Bound::Included(i) => &int.children[int.position(i)],
+                    Bound::Excluded(i) => &int.children[int.xposition(i)],
+                    Bound::Unbounded => &int.children[0]
+                };
+                self.rlock(&child_elem)
+            }
+        };
+        drop(guard);
+        // TODO: handle the case where the child returns no results
+        // TODO: handle case where the next element is not found in the child
+        Box::new(next_fut.and_then(move |next| self.get_range_node(next, range)))
+    }
+
+    /// Lookup a range of (key, value) pairs for keys within the range `range`.
+    pub fn range<R, T>(&'a self, range: R) -> Range<'a, K, T, V>
+        where K: Borrow<T>,
+              R: RangeBounds<T>,
+              T: Ord + Clone
+    {
+        let cursor: Option<Bound<T>> = Some(match range.start_bound() {
+            Bound::Included(&ref b) => Bound::Included(b.clone()),
+            Bound::Excluded(&ref b) => Bound::Excluded(b.clone()),
+            Bound::Unbounded => Bound::Unbounded,
+        });
+        let end: Bound<T> = match range.end_bound() {
+            Bound::Included(&ref e) => Bound::Included(e.clone()),
+            Bound::Excluded(&ref e) => Bound::Excluded(e.clone()),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        Range{cursor, data: VecDeque::new(), end, tree: self}
     }
 
     fn new(ddml: DDMLLike, min_fanout: usize, max_fanout: usize,
@@ -1828,6 +1966,216 @@ fn get_nonexistent() {
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.get(&0));
     assert_eq!(r, Ok(None))
+}
+
+#[test]
+fn range_int() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+                    2: 2.0
+                    3: 3.0
+                    4: 4.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range(0..2)
+            .collect()
+    );
+    assert_eq!(r, Ok(vec![(0, 0.0), (1, 1.0)]));
+}
+
+#[test]
+fn range_leaf() {
+    let ddml = DDMLMock::new();
+    let tree = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
+          1: 1.0
+          2: 2.0
+          3: 3.0
+          4: 4.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range(1..3)
+            .collect()
+    );
+    assert_eq!(r, Ok(vec![(1, 1.0), (2, 2.0)]));
+}
+
+#[test]
+fn range_leaf_exclusive_end() {
+    let ddml = DDMLMock::new();
+    let tree = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
+          1: 1.0
+          2: 2.0
+          3: 3.0
+          4: 4.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range(3..=4)
+            .collect()
+    );
+    assert_eq!(r, Ok(vec![(3, 3.0), (4, 4.0)]));
+}
+
+#[test]
+fn range_nonexistent_between_two_leaves() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5: 5.0
+                    6: 6.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range(2..4)
+            .collect()
+    );
+    assert_eq!(r, Ok(vec![]));
+}
+
+#[test]
+fn range_two_ints() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+          - key: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range(1..10)
+            .collect()
+    );
+    assert_eq!(r, Ok(vec![(1, 1.0), (9, 9.0)]));
+}
+
+#[test]
+fn range_two_leaves() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range(1..4)
+            .collect()
+    );
+    assert_eq!(r, Ok(vec![(1, 1.0), (3, 3.0)]));
 }
 
 #[test]
