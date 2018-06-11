@@ -396,16 +396,6 @@ impl<K: Key, V: Value> IntData<K, V> {
             .unwrap_or_else(|k| k - 1)
     }
 
-    /// Find index of rightmost child whose key is less than k
-    fn xposition<Q>(&self, k: &Q) -> usize
-        where K: Borrow<Q>, Q: Ord
-    {
-        self.children
-            .binary_search_by(|child| child.key.borrow().cmp(k))
-            .map(|i| i + 1)
-            .unwrap_or_else(|k| k - 1)
-    }
-
     fn split(&mut self) -> (K, IntData<K, V>) {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
@@ -944,8 +934,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             },
             NodeData::Int(ref int) => {
                 let child_idx = match range.start_bound() {
-                    Bound::Included(i) => int.position(i),
-                    Bound::Excluded(i) => int.xposition(i),
+                    Bound::Included(i) | Bound::Excluded(i) => int.position(i),
                     Bound::Unbounded => 0
                 };
                 let child_elem = &int.children[child_idx];
@@ -2029,8 +2018,45 @@ fn get_nonexistent() {
     assert_eq!(r, Ok(None))
 }
 
+// Unbounded range lookup
 #[test]
-fn range_int() {
+fn range_full() {
+    let ddml = DDMLMock::new();
+    let tree = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range(..).collect()
+    );
+    assert_eq!(r, Ok(vec![(0, 0.0), (1, 1.0), (3, 3.0), (4, 4.0)]));
+}
+
+#[test]
+fn range_exclusive_start() {
     let ddml = DDMLMock::new();
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -2051,15 +2077,27 @@ root:
                   items:
                     0: 0.0
                     1: 1.0
-                    2: 2.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
                     3: 3.0
                     4: 4.0
 "#);
+    // A query that starts on a leaf
     let r = current_thread::block_on_all(
-        tree.range(0..2)
+        tree.range((Bound::Excluded(0), Bound::Excluded(4)))
             .collect()
     );
-    assert_eq!(r, Ok(vec![(0, 0.0), (1, 1.0)]));
+    assert_eq!(r, Ok(vec![(1, 1.0), (3, 3.0)]));
+
+    // A query that starts between leaves
+    let r = current_thread::block_on_all(
+        tree.range((Bound::Excluded(1), Bound::Excluded(4)))
+            .collect()
+    );
+    assert_eq!(r, Ok(vec![(3, 3.0)]));
 }
 
 #[test]
@@ -2091,7 +2129,7 @@ root:
 }
 
 #[test]
-fn range_leaf_exclusive_end() {
+fn range_leaf_inclusive_end() {
     let ddml = DDMLMock::new();
     let tree = Tree::from_str(ddml, r#"
 ---
