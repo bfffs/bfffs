@@ -183,27 +183,27 @@ enum TreePtr<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> TreePtr<K, V> {
-    fn as_drp(&self) -> Option<&DRP> {
+    fn as_drp(&self) -> &DRP {
         if let TreePtr::DRP(drp) = self {
-            Some(drp)
+            drp
         } else {
-            None
+            panic!("Not a TreePtr::DRP")    // LCOV_EXCL_LINE
         }
     }
 
-    fn as_mem(&self) -> Option<&Box<Node<K, V>>> {
+    fn as_mem(&self) -> &Box<Node<K, V>> {
         if let TreePtr::Mem(mem) = self {
-            Some(mem)
+            mem
         } else {
-            None
+            panic!("Not a TreePtr::Mem")    // LCOV_EXCL_LINE
         }
     }
 
-    fn into_node(self) -> Result<Box<Node<K, V>>, TreePtr<K, V>> {
+    fn into_node(self) -> Box<Node<K, V>> {
         if let TreePtr::Mem(node) = self {
-            Ok(node)
+            node
         } else {
-            Err(self)
+            panic!("Not a TreePtr::Mem")    // LCOV_EXCL_LINE
         }
     }
 
@@ -211,6 +211,7 @@ impl<K: Key, V: Value> TreePtr<K, V> {
         self.is_mem()
     }
 
+// LCOV_EXCL_START  exclude test code
     #[cfg(test)]
     fn is_drp(&self) -> bool {
         if let TreePtr::DRP(_) = self {
@@ -219,6 +220,7 @@ impl<K: Key, V: Value> TreePtr<K, V> {
             false
         }
     }
+// LCOV_EXCL_STOP
 
     fn is_mem(&self) -> bool {
         if let TreePtr::Mem(_) = self {
@@ -423,36 +425,36 @@ impl<K: Key, V: Value> NodeData<K, V> {
         }
     }
 
-    fn as_int(&self) -> Option<&IntData<K, V>> {
+    fn as_int(&self) -> &IntData<K, V> {
         if let NodeData::Int(int) = self {
-            Some(int)
+            int
         } else {
-            None
+            panic!("Not a NodeData::Int")   // LCOV_EXCL_LINE
         }
     }
 
-    fn as_int_mut(&mut self) -> Option<&mut IntData<K, V>> {
+    fn as_int_mut(&mut self) -> &mut IntData<K, V> {
         if let NodeData::Int(int) = self {
-            Some(int)
+            int
         } else {
-            None
+            panic!("Not a NodeData::Int")   // LCOV_EXCL_LINE
         }
     }
 
     #[cfg(test)]
-    fn as_leaf(&self) -> Option<&LeafData<K, V>> {
+    fn as_leaf(&self) -> &LeafData<K, V> {
         if let NodeData::Leaf(leaf) = self {
-            Some(leaf)
+            leaf
         } else {
-            None
+            panic!("Not a NodeData::Leaf")  // LCOV_EXCL_LINE
         }
     }
 
-    fn as_leaf_mut(&mut self) -> Option<&mut LeafData<K, V>> {
+    fn as_leaf_mut(&mut self) -> &mut LeafData<K, V> {
         if let NodeData::Leaf(leaf) = self {
-            Some(leaf)
+            leaf
         } else {
-            None
+            panic!("Not a NodeData::Leaf")  // LCOV_EXCL_LINE
         }
     }
 
@@ -521,9 +523,9 @@ impl<K: Key, V: Value> NodeData<K, V> {
     fn merge(&mut self, other: &mut NodeData<K, V>) {
         match self {
             NodeData::Int(int) =>
-                int.children.append(&mut other.as_int_mut().unwrap().children),
+                int.children.append(&mut other.as_int_mut().children),
             NodeData::Leaf(leaf) =>
-                leaf.items.append(&mut other.as_leaf_mut().unwrap().items),
+                leaf.items.append(&mut other.as_leaf_mut().items),
         }
     }
 
@@ -532,14 +534,14 @@ impl<K: Key, V: Value> NodeData<K, V> {
         let keys_to_share = (other.len() - self.len()) / 2;
         match self {
             NodeData::Int(int) => {
-                let other_children = &mut other.as_int_mut().unwrap().children;
+                let other_children = &mut other.as_int_mut().children;
                 let cutoff_idx = other_children.len() - keys_to_share;
                 let mut other_right_half =
                     other_children.split_off(cutoff_idx);
                 int.children.splice(0..0, other_right_half.into_iter());
             },
             NodeData::Leaf(leaf) => {
-                let other_items = &mut other.as_leaf_mut().unwrap().items;
+                let other_items = &mut other.as_leaf_mut().items;
                 let cutoff_idx = other_items.len() - keys_to_share;
                 let cutoff = *other_items.keys().nth(cutoff_idx).unwrap();
                 let mut other_right_half = other_items.split_off(&cutoff);
@@ -553,13 +555,13 @@ impl<K: Key, V: Value> NodeData<K, V> {
         let keys_to_share = (other.len() - self.len()) / 2;
         match self {
             NodeData::Int(int) => {
-                let other_children = &mut other.as_int_mut().unwrap().children;
+                let other_children = &mut other.as_int_mut().children;
                 let other_left_half = other_children.drain(0..keys_to_share);
                 let nchildren = int.children.len();
                 int.children.splice(nchildren.., other_left_half);
             },
             NodeData::Leaf(leaf) => {
-                let other_items = &mut other.as_leaf_mut().unwrap().items;
+                let other_items = &mut other.as_leaf_mut().items;
                 let cutoff = *other_items.keys().nth(keys_to_share).unwrap();
                 let other_right_half = other_items.split_off(&cutoff);
                 let mut other_left_half =
@@ -793,8 +795,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             let new_node = Node(RwLock::new(new_node_data));
             let new_ptr = TreePtr::Mem(Box::new(new_node));
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
-            parent.as_int_mut().unwrap()
-                .children.insert(child_idx + 1, new_elem);
+            parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
             self.insert_no_split(parent, k, v)
         } else {
@@ -822,7 +823,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             let old_root_node = Node(RwLock::new(old_root_data));
             let old_ptr = TreePtr::Mem(Box::new(old_root_node));
             let old_elem = IntElem{ key: K::min_value(), ptr: old_ptr };
-            root.as_int_mut().unwrap().children.insert(0, old_elem);
+            root.as_int_mut().children.insert(0, old_elem);
             self.i.height.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -833,10 +834,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
     {
         if node.is_leaf() {
-            let old_v = node.as_leaf_mut().unwrap().insert(k, v);
+            let old_v = node.as_leaf_mut().insert(k, v);
             return Box::new(Ok(old_v).into_future())
         } else {
-            let child_idx = node.as_int().unwrap().position(&k);
+            let child_idx = node.as_int().position(&k);
             let fut = self.xlock(node, child_idx);
             Box::new(fut.and_then(move |(parent, child)| {
                     self.insert_int(parent, child_idx, child, k, v)
@@ -1044,7 +1045,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             // Then, try to steal keys from the right sibling
             // Then, try to merge with the left sibling
             // Then, try to steal keys from the left sibling
-            let nchildren = parent.as_int().unwrap().children.len();
+            let nchildren = parent.as_int().children.len();
             let (fut, right) = {
                 if child_idx < nchildren - 1 {
                     (self.xlock(parent, child_idx + 1), true)
@@ -1057,21 +1058,19 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                     if right {
                         if child.can_merge(&sibling, self.i.max_fanout) {
                             child.merge(&mut sibling);
-                            parent.as_int_mut().unwrap()
-                                .children.remove(child_idx + 1);
+                            parent.as_int_mut().children.remove(child_idx + 1);
                         } else {
                             child.take_low_keys(&mut sibling);
-                            parent.as_int_mut().unwrap().children[child_idx+1]
+                            parent.as_int_mut().children[child_idx+1]
                                 .key = sibling.key();
                         }
                     } else {
                         if sibling.can_merge(&child, self.i.max_fanout) {
                             sibling.merge(&mut child);
-                            parent.as_int_mut().unwrap()
-                                .children.remove(child_idx);
+                            parent.as_int_mut().children.remove(child_idx);
                         } else {
                             child.take_high_keys(&mut sibling);
-                            parent.as_int_mut().unwrap().children[child_idx]
+                            parent.as_int_mut().children[child_idx]
                                 .key = child.key();
                         }
                     };
@@ -1120,10 +1119,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     {
 
         if node.is_leaf() {
-            let old_v = node.as_leaf_mut().unwrap().remove(k);
+            let old_v = node.as_leaf_mut().remove(k);
             return Box::new(Ok(old_v).into_future());
         } else {
-            let child_idx = node.as_int().unwrap().position(k);
+            let child_idx = node.as_int().position(k);
             let fut = self.xlock(node, child_idx);
             Box::new(fut.and_then(move |(parent, child)| {
                     self.remove_int(parent, child_idx, child, k)
@@ -1148,7 +1147,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                     drop(child_guard);
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
                     Box::new(
-                        self.write_node(ptr.into_node().unwrap())
+                        self.write_node(ptr.into_node())
                             .and_then(move |drp| {
                                 root_guard.ptr = TreePtr::DRP(drp);
                                 self.ddml.sync_all()
@@ -1173,7 +1172,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     fn write_node(&'a self, mut node: Box<Node<K, V>>)
         -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
-        if node.0.get_mut().unwrap().as_leaf_mut().is_some() {
+        if node.0.get_mut().unwrap().is_leaf() {
             return Box::new(self.write_leaf(node));
         }
         let ndata = node.0.try_write().unwrap();
@@ -1183,12 +1182,12 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         // be borrowed in both places.  So we'll have to use RefCell to allow
         // dynamic borrowing and Rc to allow moving into both closures.
         let rndata = Rc::new(RefCell::new(ndata));
-        let nchildren = RefCell::borrow(&Rc::borrow(&rndata)).as_int().unwrap().children.len();
+        let nchildren = RefCell::borrow(&Rc::borrow(&rndata)).as_int().children.len();
         let children_fut = (0..nchildren)
         .filter_map(move |idx| {
             let rndata3 = rndata.clone();
             if rndata.borrow_mut()
-                     .as_int_mut().unwrap()
+                     .as_int_mut()
                      .children[idx].is_dirty()
             {
                 // If the child is dirty, then we have ownership over it.  We
@@ -1196,20 +1195,20 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 // we have exclusive access to it, and we can move it into the
                 // Cache.
                 let fut = self.xlock_dirty(&rndata.borrow_mut()
-                                            .as_int_mut().unwrap()
+                                            .as_int_mut()
                                             .children[idx])
                               .and_then(move |guard|
                 {
                     drop(guard);
 
                     let ptr = mem::replace(&mut rndata3.borrow_mut()
-                                                       .as_int_mut().unwrap()
+                                                       .as_int_mut()
                                                        .children[idx].ptr,
                                            TreePtr::None);
-                    self.write_node(ptr.into_node().unwrap())
+                    self.write_node(ptr.into_node())
                         .map(move |drp| {
                             rndata3.borrow_mut()
-                                   .as_int_mut().unwrap()
+                                   .as_int_mut()
                                    .children[idx].ptr = TreePtr::DRP(drp);
                         })
                 });
@@ -1264,28 +1263,28 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> (Box<Future<Item=(TreeWriteGuard<K, V>,
                              TreeWriteGuard<K, V>), Error=Error> + 'a>)
     {
-        if guard.as_int().unwrap().children[child_idx].ptr.is_mem() {
+        if guard.as_int().children[child_idx].ptr.is_mem() {
             Box::new(
-                self.xlock_dirty(&guard.as_int().unwrap().children[child_idx])
+                self.xlock_dirty(&guard.as_int().children[child_idx])
                     .map(move |child_guard| {
                           (guard, child_guard)
                      })
             )
         } else {
-            let drp = *guard.as_int().unwrap()
+            let drp = *guard.as_int()
                             .children[child_idx]
                             .ptr
-                            .as_drp().unwrap();
+                            .as_drp();
                 Box::new(
                     self.ddml.pop::<Arc<Node<K, V>>>(&drp).map(move |arc| {
                         let child_node = Box::new(Arc::try_unwrap(*arc)
                             .expect("We should be the Node's only owner"));
                         let child_guard = {
-                            let elem = &mut guard.as_int_mut().unwrap()
+                            let elem = &mut guard.as_int_mut()
                                                  .children[child_idx];
                             elem.ptr = TreePtr::Mem(child_node);
                             TreeWriteGuard::Mem(
-                                elem.ptr.as_mem().unwrap()
+                                elem.ptr.as_mem()
                                     .0.try_write().unwrap()
                             )
                         };
@@ -1300,9 +1299,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     fn xlock_dirty(&'a self, elem: &IntElem<K, V>)
         -> (Box<Future<Item=TreeWriteGuard<K, V>, Error=Error> + 'a>)
     {
+        debug_assert!(elem.ptr.is_mem(),
+            "Must use Tree::xlock for non-dirty nodes");
         Box::new(
             elem.ptr.as_mem()
-                .expect("Mus use Tree::xlock for non-dirty nodes")
                 .0.write()
                 .map(|guard| TreeWriteGuard::Mem(guard))
                 .map_err(|_| Error::Sys(errno::Errno::EPIPE))
@@ -1317,20 +1317,20 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     {
         if guard.ptr.is_mem() {
             Box::new(
-                guard.ptr.as_mem().unwrap().0.write()
+                guard.ptr.as_mem().0.write()
                      .map(move |child_guard| {
                           (guard, TreeWriteGuard::Mem(child_guard))
                      }).map_err(|_| Error::Sys(errno::Errno::EPIPE))
             )
         } else {
-            let drp = *guard.ptr.as_drp().unwrap();
+            let drp = *guard.ptr.as_drp();
             Box::new(
                 self.ddml.pop::<Arc<Node<K, V>>>(&drp).map(move |arc| {
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
                     guard.ptr = TreePtr::Mem(child_node);
                     let child_guard = TreeWriteGuard::Mem(
-                        guard.ptr.as_mem().unwrap().0.try_write().unwrap()
+                        guard.ptr.as_mem().0.try_write().unwrap()
                     );
                     (guard, child_guard)
                 })
@@ -1383,12 +1383,12 @@ fn deserialize_int() {
                         16000, 8000, 0x1a7ebabe);
     let node: Arc<Node<u32, u32>> = Cacheable::deserialize(serialized);
     let guard = node.0.try_read().unwrap();
-    let int_data = guard.deref().as_int().unwrap();
+    let int_data = guard.deref().as_int();
     assert_eq!(int_data.children.len(), 2);
     assert_eq!(int_data.children[0].key, 0);
-    assert_eq!(*int_data.children[0].ptr.as_drp().unwrap(), drp0);
+    assert_eq!(*int_data.children[0].ptr.as_drp(), drp0);
     assert_eq!(int_data.children[1].key, 256);
-    assert_eq!(*int_data.children[1].ptr.as_drp().unwrap(), drp1);
+    assert_eq!(*int_data.children[1].ptr.as_drp(), drp1);
 }
 
 #[test]
@@ -1402,7 +1402,7 @@ fn deserialize_leaf() {
         ]);
     let node: Arc<Node<u32, u32>> = Cacheable::deserialize(serialized);
     let guard = node.0.try_read().unwrap();
-    let leaf_data = guard.deref().as_leaf().unwrap();
+    let leaf_data = guard.deref().as_leaf();
     assert_eq!(leaf_data.items.len(), 3);
     assert_eq!(leaf_data.items[&0], 100);
     assert_eq!(leaf_data.items[&1], 200);
@@ -3626,7 +3626,7 @@ root:
     let r = current_thread::block_on_all(future::lazy(|| {
         let root_guard = tree.i.root.try_read().unwrap();
         tree.rlock(&root_guard).map(|node| {
-            let int_data = (*node).as_int().unwrap();
+            let int_data = (*node).as_int();
             assert_eq!(int_data.children.len(), 2);
             // Validate DRPs as well as possible using their public API
             assert_eq!(int_data.children[0].key, 0);
@@ -3714,7 +3714,7 @@ fn write_deep() {
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
-            let leaf_data = node_data.as_leaf().unwrap();
+            let leaf_data = node_data.as_leaf();
             leaf_data.items[&0] == 100 &&
             leaf_data.items[&1] == 200
         }))
@@ -3723,7 +3723,7 @@ fn write_deep() {
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
-            let int_data = node_data.as_int().unwrap();
+            let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
             int_data.children[0].ptr.is_drp() &&
             int_data.children[1].key == 256 &&
@@ -3766,7 +3766,7 @@ root:
 
     let r = current_thread::block_on_all(tree.sync_all());
     assert!(r.is_ok());
-    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp().unwrap(), drp);
+    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp(), drp);
 }
 
 #[test]
@@ -3777,7 +3777,7 @@ fn write_int() {
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
-            let int_data = node_data.as_int().unwrap();
+            let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
             !int_data.children[0].ptr.is_mem() &&
             int_data.children[1].key == 256 &&
@@ -3823,7 +3823,7 @@ root:
 
     let r = current_thread::block_on_all(tree.sync_all());
     assert!(r.is_ok());
-    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp().unwrap(), drp);
+    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp(), drp);
 }
 
 #[test]
@@ -3834,7 +3834,7 @@ fn write_leaf() {
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
-            let leaf_data = node_data.as_leaf().unwrap();
+            let leaf_data = node_data.as_leaf();
             leaf_data.items[&0] == 100 &&
             leaf_data.items[&1] == 200
         })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
@@ -3859,7 +3859,7 @@ root:
 
     let r = current_thread::block_on_all(tree.sync_all());
     assert!(r.is_ok());
-    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp().unwrap(), drp);
+    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp(), drp);
 }
 
 }
