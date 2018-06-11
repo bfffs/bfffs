@@ -347,7 +347,8 @@ impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
     fn deref(&self) -> &Self::Target {
         match self {
             TreeWriteGuard::Mem(guard) => &**guard,
-            TreeWriteGuard::DRP(guard, _) => &**guard,
+            TreeWriteGuard::DRP(_, _) => unreachable!( // LCOV_EXCL_LINE
+                "Can only write to in-memory Nodes")
         }
     }
 }
@@ -356,7 +357,8 @@ impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             TreeWriteGuard::Mem(guard) => &mut **guard,
-            TreeWriteGuard::DRP(guard, _) => &mut **guard,
+            TreeWriteGuard::DRP(_, _) => unreachable!( // LCOV_EXCL_LINE
+                "Can only write to in-memory Nodes")
         }
     }
 }
@@ -951,7 +953,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 };
                 let child_fut = self.rlock(&child_elem);
                 (child_fut, next_fut)
-            }
+            } // LCOV_EXCL_LINE kcov false negative
         };
         drop(guard);
         Box::new(
@@ -1212,7 +1214,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                         })
                 });
                 Some(fut)
-            } else {
+            } else { // LCOV_EXCL_LINE kcov false negative
                 None
             }
         })
