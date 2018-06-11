@@ -273,6 +273,10 @@ impl<K: Key, V: Value> LeafData<K, V> {
 }
 
 impl<K: Key, V: Value> LeafData<K, V> {
+    fn first_key(&self) -> &K {
+        self.items.keys().nth(0).unwrap()
+    }
+
     fn insert(&mut self, k: K, v: V) -> Option<V> {
         self.items.insert(k, v)
     }
@@ -283,20 +287,27 @@ impl<K: Key, V: Value> LeafData<K, V> {
         self.items.get(k).cloned()
     }
 
-    fn get_range<R, T>(&self, range: R) -> (VecDeque<(K, V)>, Option<Bound<T>>)
+    /// Lookup a range of values from a single Leaf Node.
+    ///
+    /// # Returns
+    ///
+    /// A `VecDeque` of partial results, and a bool.  If the bool is true, then
+    /// there may be more results from other Nodes.  If false, then there will
+    /// be no more results.
+    fn get_range<R, T>(&self, range: R) -> (VecDeque<(K, V)>, bool)
         where K: Borrow<T>,
               R: RangeBounds<T>,
               T: Ord + Clone
     {
         let l = self.items.keys().next_back().unwrap();
-        let next_bound = match range.end_bound() {
-            Bound::Included(i) | Bound::Excluded(i) if i <= l.borrow() => None,
-            _ => Some(Bound::Excluded(l.borrow().clone()))
+        let more = match range.end_bound() {
+            Bound::Included(i) | Bound::Excluded(i) if i <= l.borrow() => false,
+            _ => true
         };
         let items = self.items.range(range)
             .map(|(&k, &v)| (k.clone(), v.clone()))
             .collect::<VecDeque<(K, V)>>();
-        (items, next_bound)
+        (items, more)
     }
 
 
@@ -372,6 +383,10 @@ struct IntData<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> IntData<K, V> {
+    fn first_key(&self) -> &K {
+        &self.children[0].key
+    }
+
     /// Find index of rightmost child whose key is less than or equal to k
     fn position<Q>(&self, k: &Q) -> usize
         where K: Borrow<Q>, Q: Ord
@@ -409,6 +424,13 @@ enum NodeData<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> NodeData<K, V> {
+    fn first_key(&self) -> &K {
+        match self {
+            NodeData::Int(ref int) => int.first_key(),
+            NodeData::Leaf(ref leaf) => leaf.first_key(),
+        }
+    }
+
     fn as_int(&self) -> Option<&IntData<K, V>> {
         if let NodeData::Int(int) = self {
             Some(int)
@@ -689,8 +711,7 @@ impl<'tree, K, T, V> Stream for Range<'tree, K, T, V>
                         Ok(Async::Ready((v, bound))) => {
                             self.data = v;
                             self.cursor = bound;
-                            let first = self.data.pop_front().unwrap();
-                            Ok(Async::Ready(Some(first)))
+                            Ok(Async::Ready(self.data.pop_front()))
                         },
                         Ok(Async::NotReady) => Ok(Async::NotReady),
                         Err(e) => Err(e)
@@ -875,41 +896,81 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> impl Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
                        Error=Error> + 'a
         where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
+              R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static
     {
         self.i.root.read()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
                 self.rlock(&guard)
-                     .and_then(move |guard| self.get_range_node(guard, range))
+                     .and_then(move |g| self.get_range_node(g, None, range))
             })
     }
 
-    fn get_range_node<R, T>(&'a self, guard: TreeReadGuard<K, V>, range: R)
+    /// Range lookup beginning in the node `guard`.  `next_guard`, if present,
+    /// must be the node immediately to the right (and possibly up one or more
+    /// levels) from `guard`.
+    fn get_range_node<R, T>(&'a self, guard: TreeReadGuard<K, V>,
+                            next_guard: Option<TreeReadGuard<K, V>>, range: R)
         -> Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
                       Error=Error> + 'a>
         where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
+              R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static
     {
-        let next_fut = match *guard {
+        let (child_fut, next_fut) = match *guard {
             NodeData::Leaf(ref leaf) => {
-                return Box::new(Ok(leaf.get_range(range)).into_future())
+                let (v, more) = leaf.get_range(range.clone());
+                let ret = if v.is_empty() && more && next_guard.is_some() {
+                    // We must've started the query with a key that's not
+                    // present, and lies between two leaves.  Check the next
+                    // node
+                    self.get_range_node(next_guard.unwrap(), None, range)
+                } else if v.is_empty() {
+                    // The range is truly empty
+                    Box::new(Ok((v, None)).into_future())
+                } else {
+                    let bound = if more && next_guard.is_some() {
+                        Some(Bound::Included(next_guard.unwrap()
+                                                       .first_key()
+                                                       .borrow()
+                                                       .clone()))
+                    } else {
+                        None
+                    };
+                    Box::new(Ok((v, bound)).into_future())
+                };
+                return ret;
             },
             NodeData::Int(ref int) => {
-                let child_elem = match range.start_bound() {
-                    Bound::Included(i) => &int.children[int.position(i)],
-                    Bound::Excluded(i) => &int.children[int.xposition(i)],
-                    Bound::Unbounded => &int.children[0]
+                let child_idx = match range.start_bound() {
+                    Bound::Included(i) => int.position(i),
+                    Bound::Excluded(i) => int.xposition(i),
+                    Bound::Unbounded => 0
                 };
-                self.rlock(&child_elem)
+                let child_elem = &int.children[child_idx];
+                let next_fut = if child_idx < int.children.len() - 1 {
+                    Box::new(
+                        self.rlock(&int.children[child_idx + 1])
+                            .map(|guard| Some(guard))
+                    ) as Box<Future<Item=Option<TreeReadGuard<K, V>>,
+                                    Error=Error>>
+                } else {
+                    Box::new(Ok(next_guard).into_future())
+                        as Box<Future<Item=Option<TreeReadGuard<K, V>>,
+                                      Error=Error>>
+                };
+                let child_fut = self.rlock(&child_elem);
+                (child_fut, next_fut)
             }
         };
         drop(guard);
-        // TODO: handle the case where the child returns no results
-        // TODO: handle case where the next element is not found in the child
-        Box::new(next_fut.and_then(move |next| self.get_range_node(next, range)))
+        Box::new(
+            child_fut.join(next_fut)
+                .and_then(move |(child_guard, next_guard)| {
+                self.get_range_node(child_guard, next_guard, range)
+            })
+        ) as Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>), Error=Error>>
     }
 
     /// Lookup a range of (key, value) pairs for keys within the range `range`.
@@ -2139,6 +2200,43 @@ root:
             .collect()
     );
     assert_eq!(r, Ok(vec![(1, 1.0), (9, 9.0)]));
+}
+
+#[test]
+fn range_starts_between_two_leaves() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range(2..4)
+            .collect()
+    );
+    assert_eq!(r, Ok(vec![(3, 3.0)]));
 }
 
 #[test]
