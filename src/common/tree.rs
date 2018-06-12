@@ -681,8 +681,33 @@ pub struct Range<'tree, K, T, V>
     /// Data that can be returned immediately
     data: VecDeque<(K, V)>,
     end: Bound<T>,
+    last_fut: Option<Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
+                       Error=Error> + 'tree>>,
     /// Handle to the tree
     tree: &'tree Tree<K, V>
+}
+
+impl<'tree, K, T, V> Range<'tree, K, T, V>
+    where K: Key + Borrow<T>,
+          T: Ord + Clone,
+          V: Value
+    {
+
+    fn new<R>(range: R, tree: &'tree Tree<K, V>) -> Range<'tree, K, T, V>
+        where R: RangeBounds<T>
+    {
+        let cursor: Option<Bound<T>> = Some(match range.start_bound() {
+            Bound::Included(&ref b) => Bound::Included(b.clone()),
+            Bound::Excluded(&ref b) => Bound::Excluded(b.clone()),
+            Bound::Unbounded => Bound::Unbounded,
+        });
+        let end: Bound<T> = match range.end_bound() {
+            Bound::Included(&ref e) => Bound::Included(e.clone()),
+            Bound::Excluded(&ref e) => Bound::Excluded(e.clone()),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        Range{cursor, data: VecDeque::new(), end, last_fut: None, tree: tree}
+    }
 }
 
 impl<'tree, K, T, V> Stream for Range<'tree, K, T, V>
@@ -698,16 +723,22 @@ impl<'tree, K, T, V> Stream for Range<'tree, K, T, V>
             .map(|x| Ok(Async::Ready(Some(x))))
             .unwrap_or_else(|| {
                 if self.cursor.is_some() {
-                    let l = self.cursor.take().unwrap();
-                    let r = (l, self.end.clone());
-                    let mut fut = self.tree.get_range(r);
+                    let mut fut = self.last_fut.take().unwrap_or_else(|| {
+                        let l = self.cursor.clone().unwrap();
+                        let r = (l, self.end.clone());
+                        Box::new(self.tree.get_range(r))
+                    });
                     match fut.poll() {
                         Ok(Async::Ready((v, bound))) => {
                             self.data = v;
                             self.cursor = bound;
+                            self.last_fut = None;
                             Ok(Async::Ready(self.data.pop_front()))
                         },
-                        Ok(Async::NotReady) => Ok(Async::NotReady),
+                        Ok(Async::NotReady) => {
+                            self.last_fut = Some(fut);
+                            Ok(Async::NotReady)
+                        },
                         Err(e) => Err(e)
                     }
                 } else {
@@ -971,17 +1002,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
               R: RangeBounds<T>,
               T: Ord + Clone
     {
-        let cursor: Option<Bound<T>> = Some(match range.start_bound() {
-            Bound::Included(&ref b) => Bound::Included(b.clone()),
-            Bound::Excluded(&ref b) => Bound::Excluded(b.clone()),
-            Bound::Unbounded => Bound::Unbounded,
-        });
-        let end: Bound<T> = match range.end_bound() {
-            Bound::Included(&ref e) => Bound::Included(e.clone()),
-            Bound::Excluded(&ref e) => Bound::Excluded(e.clone()),
-            Bound::Unbounded => Bound::Unbounded,
-        };
-        Range{cursor, data: VecDeque::new(), end, tree: self}
+        Range::new(range, self)
     }
 
     fn new(ddml: DDMLLike, min_fanout: usize, max_fanout: usize,
@@ -3440,6 +3461,7 @@ mod io {
 
 use super::*;
 use futures::future;
+use tokio::prelude::task::current;
 use tokio::executor::current_thread;
 
 /// Insert an item into a Tree that's not dirty
@@ -3578,6 +3600,94 @@ root:
       Leaf:
         items:
           0: 0"#);
+}
+
+#[test]
+fn range_leaf() {
+    struct FutureMock {
+        e: Expectations
+    }
+    impl FutureMock {
+        pub fn new() -> Self {
+            Self {
+                e: Expectations::new()
+            }
+        }
+
+        pub fn expect_poll(&mut self)
+            -> Method<(), Poll<Box<Arc<Node<u32, f32>>>, Error>>
+        {
+            self.e.expect::<(), Poll<Box<Arc<Node<u32, f32>>>, Error>>("poll")
+        }
+
+        pub fn then(&mut self) -> &mut Self {
+            self.e.then();
+            self
+        }
+    }
+
+    impl Future for FutureMock {
+        type Item = Box<Arc<Node<u32, f32>>>;
+        type Error = Error;
+
+        fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+            self.e.was_called_returning::<(),
+                Poll<Box<Arc<Node<u32, f32>>>, Error>>("poll", ())
+        }
+    }
+
+    let mut ddml = DDMLMock::new();
+    let mut items: BTreeMap<u32, f32> = BTreeMap::new();
+    items.insert(0, 0.0);
+    items.insert(1, 1.0);
+    items.insert(2, 2.0);
+    items.insert(3, 3.0);
+    items.insert(4, 4.0);
+    let node1 = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    ddml.expect_get::<Arc<Node<u32, f32>>>()
+        .called_once()
+        .returning(move |_| {
+            let mut fut = FutureMock::new();
+            let node2 = node1.clone();
+            fut.expect_poll()
+                .called_once()
+                .returning(|_| {
+                    current().notify();
+                    Ok(Async::NotReady)
+                });
+            FutureMock::then(&mut fut).expect_poll()
+                .called_once()
+                .returning(move |_| {
+                    // XXX simulacrum can't return a uniquely owned object in an
+                    // expectation, so we must clone db here.
+                    // https://github.com/pcsm/simulacrum/issues/52
+                    let res = Box::new(node2.clone());
+                    Ok(Async::Ready(res))
+                });
+            Box::new(fut)
+        });
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    DRP:
+      pba:
+        cluster: 0
+        lba: 0
+      compression: None
+      lsize: 36
+      csize: 36
+      checksum: 0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range(1..3).collect()
+    );
+    assert_eq!(r, Ok(vec![(1, 1.0), (2, 2.0)]));
 }
 
 #[test]
