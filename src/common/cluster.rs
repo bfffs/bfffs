@@ -106,27 +106,15 @@ impl FreeSpaceMap {
         self.empty_zones.insert(zone_id);
         // If this was the last zone, then remove all trailing Empty zones
         if zone_idx == self.zones.len() - 1 {
-            // NB: determining first_empty should be rewritten with
-            // Iterator::rfind once that feature is stable
-            // https://github.com/rust-lang/rust/issues/39480
-            let first_empty: ZoneT;
-            {
-                let mut iter = self.zones.iter().enumerate();
-                loop {
-                    let elem = iter.next_back();
-                    match elem {
-                        Some((i, _)) if self.is_empty(i as ZoneT) => continue,
-                        Some((i, _)) => {
-                            first_empty = i as ZoneT + 1;
-                            break;
-                        },
-                        None => {
-                            first_empty = 0;    // All zones are empty!
-                            break;
-                        }
-                    }
+            let first_empty = {
+                let last_nonempty = (0..self.zones.len())
+                    .rfind(|i| !self.is_empty(*i as ZoneT));
+                if let Some(i) = last_nonempty {
+                    i as ZoneT + 1
+                } else {
+                    0   // All zones are empty!
                 }
-            }
+            };
             self.zones.truncate(first_empty as usize);
             let _going_away = self.empty_zones.split_off(&first_empty);
         }
