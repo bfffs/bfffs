@@ -296,7 +296,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
     /// A `VecDeque` of partial results, and a bool.  If the bool is true, then
     /// there may be more results from other Nodes.  If false, then there will
     /// be no more results.
-    fn get_range<R, T>(&self, range: R) -> (VecDeque<(K, V)>, bool)
+    fn range<R, T>(&self, range: R) -> (VecDeque<(K, V)>, bool)
         where K: Borrow<T>,
               R: RangeBounds<T>,
               T: Ord + Clone
@@ -944,7 +944,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     {
         let (child_fut, next_fut) = match *guard {
             NodeData::Leaf(ref leaf) => {
-                let (v, more) = leaf.get_range(range.clone());
+                let (v, more) = leaf.range(range.clone());
                 let ret = if v.is_empty() && more && next_guard.is_some() {
                     // We must've started the query with a key that's not
                     // present, and lies between two leaves.  Check the next
