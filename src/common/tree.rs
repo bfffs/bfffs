@@ -312,6 +312,21 @@ impl<K: Key, V: Value> LeafData<K, V> {
         (items, more)
     }
 
+    /// Delete all keys within the given range, possibly leaving an empty
+    /// LeafNode.
+    fn range_delete<R, T>(&mut self, range: R)
+        where K: Borrow<T>,
+              R: RangeBounds<T>,
+              T: Ord + Clone
+    {
+        let keys = self.items.range(range)
+            .map(|(k, _)| *k)
+            .collect::<Vec<K>>();
+        for k in keys {
+            self.items.remove(k.borrow());
+        }
+    }
+
 
     fn remove<Q>(&mut self, k: &Q) -> Option<V>
         where K: Borrow<Q>, Q: Ord
@@ -397,6 +412,16 @@ impl<K: Key, V: Value> IntData<K, V> {
     {
         self.children
             .binary_search_by(|child| child.key.borrow().cmp(k))
+            .unwrap_or_else(|k| k - 1)
+    }
+
+    /// Find index of rightmost child whose key is less than k
+    fn xposition<Q>(&self, k: &Q) -> usize
+        where K: Borrow<Q>, Q: Ord
+    {
+        self.children
+            .binary_search_by(|child| child.key.borrow().cmp(k))
+            .map(|i| i + 1)
             .unwrap_or_else(|k| k - 1)
     }
 
@@ -1003,6 +1028,183 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
               T: Ord + Clone
     {
         Range::new(range, self)
+    }
+
+    /// Delete a range of keys
+    pub fn range_delete<R, T>(&'a self, range: R)
+        -> impl Future<Item=(), Error=Error> + 'a
+        where K: Borrow<T>,
+              R: Clone + RangeBounds<T> + 'static,
+              T: Ord + Clone + 'static + Debug
+    {
+        // Outline:
+        // 1) Traverse the tree removing all requested KV-pairs, leaving damaged
+        //    nodes
+        // 2) Traverse the tree again, fixing in-danger nodes from top-down
+        self.i.root.write()
+            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+            .and_then(move |guard| {
+                self.xlock_root(guard)
+                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                     .and_then(move |(root_guard, child_guard)| {
+                         self.range_delete_pass1(child_guard, range, None)
+                             // Keep the whole tree locked during range_delete
+                             .map(|_| drop(root_guard))
+                     })
+            })
+    }
+
+    /// Depth-first traversal deleting keys without reshaping tree
+    /// `ubound` is the first key in the Node immediately to the right of
+    /// this one, unless this is the rightmost Node on its level.
+    fn range_delete_pass1<R, T>(&'a self, mut guard: TreeWriteGuard<K, V>,
+                                range: R, ubound: Option<K>)
+        -> impl Future<Item=(), Error=Error> + 'a
+        where K: Borrow<T>,
+              R: Clone + RangeBounds<T> + 'static,
+              T: Ord + Clone + 'static + Debug
+    {
+        if guard.is_leaf() {
+            guard.as_leaf_mut().range_delete(range);
+            return Box::new(Ok(()).into_future())
+                as Box<Future<Item=(), Error=Error>>;
+        }
+
+        // We must recurse into at most two children (at the limits of the
+        // range), and completely delete 0 or more children (in the middle
+        // of the range)
+        let l = guard.as_int().children.len();
+        let start_idx_bound = match range.start_bound() {
+            Bound::Unbounded => Bound::Included(0),
+            Bound::Included(t) | Bound::Excluded(t)
+                if t < guard.as_int().first_key().borrow() =>
+            {
+                Bound::Included(0)
+            },
+            Bound::Included(t) => {
+                let idx = guard.as_int().position(t);
+                if guard.as_int().children[idx].key.borrow() == t {
+                    // Remove the entire Node
+                    Bound::Included(idx)
+                } else {
+                    // Recurse into the first Node
+                    Bound::Excluded(idx)
+                }
+            },
+            Bound::Excluded(t) => {
+                // Recurse into the first Node
+                let idx = guard.as_int().position(t);
+                Bound::Excluded(idx)
+            },
+        };
+        let end_idx_bound = match range.end_bound() {
+            Bound::Unbounded => Bound::Excluded(l + 1),
+            Bound::Included(t) => {
+                let idx = guard.as_int().position(t);
+                if ubound.is_some() && t >= ubound.unwrap().borrow() {
+                    Bound::Excluded(idx + 1)
+                } else {
+                    Bound::Included(idx)
+                }
+            },
+            Bound::Excluded(t) => {
+                let idx = guard.as_int().xposition(t);
+                if ubound.is_some() && t >= ubound.unwrap().borrow() {
+                    Bound::Excluded(idx + 1)
+                } else if idx < l - 1 &&
+                    guard.as_int().children[idx + 1].key.borrow() == t
+                {
+                    Bound::Excluded(idx + 1)
+                } else {
+                    Bound::Included(idx)
+                }
+            }
+        };
+        let fut: Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>>
+            = match (start_idx_bound, end_idx_bound) {
+            (Bound::Included(_), Bound::Excluded(_)) => {
+                // Don't recurse
+                Box::new(Ok(guard).into_future())
+            },
+            (Bound::Included(_), Bound::Included(j)) => {
+                // Recurse into a Node at the end
+                let ubound = if j < l - 1 {
+                    Some(guard.as_int().children[j + 1].key)
+                } else {
+                    ubound
+                };
+                Box::new(self.xlock(guard, j)
+                    .and_then(move |(parent_guard, child_guard)| {
+                        self.range_delete_pass1(child_guard, range, ubound)
+                            .map(move |_| parent_guard)
+                    }))
+            },
+            (Bound::Excluded(i), Bound::Excluded(_)) => {
+                // Recurse into a Node at the beginning
+                let ubound = if i < l - 1 {
+                    Some(guard.as_int().children[i + 1].key)
+                } else {
+                    ubound
+                };
+                Box::new(self.xlock(guard, i)
+                    .and_then(move |(parent_guard, child_guard)| {
+                        self.range_delete_pass1(child_guard, range, ubound)
+                            .map(move |_| parent_guard)
+                    }))
+            },
+            (Bound::Excluded(i), Bound::Included(j)) if j > i => {
+                // Recurse into a Node at the beginning and end
+                let range2 = range.clone();
+                let ub_l = Some(guard.as_int().children[i + 1].key);
+                let ub_h = if j < l - 1 {
+                    Some(guard.as_int().children[i + 1].key)
+                } else {
+                    ubound
+                };
+                Box::new(self.xlock(guard, i)
+                    .and_then(move |(parent_guard, child_guard)| {
+                        self.range_delete_pass1(child_guard, range, ub_l)
+                            .map(|_| parent_guard)
+                    }).and_then(move |parent_guard| {
+                        self.xlock(parent_guard, j)
+                    }).and_then(move |(parent_guard, child_guard)| {
+                        self.range_delete_pass1(child_guard, range2, ub_h)
+                            .map(|_| parent_guard)
+                    }))
+            },
+            (Bound::Excluded(i), Bound::Included(j)) if j <= i => {
+                // Recurse into a single Node
+                let ubound = if i < l - 1 {
+                    Some(guard.as_int().children[i + 1].key)
+                } else {
+                    ubound
+                };
+                Box::new(self.xlock(guard, i)
+                    .and_then(move |(parent_guard, child_guard)| {
+                        self.range_delete_pass1(child_guard, range, ubound)
+                            .map(move |_| parent_guard)
+                    }))
+            },
+            (Bound::Excluded(_), Bound::Included(_)) => unreachable!(),
+            (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
+        };
+
+        // Finally, remove nodes in the middle
+        Box::new(fut.map(move |mut guard| {
+            let low = match start_idx_bound {
+                Bound::Excluded(i) => i + 1,
+                Bound::Included(i) => i,
+                Bound::Unbounded => unreachable!()
+            };
+            let high = match end_idx_bound {
+                Bound::Excluded(j) => j - 1,
+                Bound::Included(j) => j,
+                Bound::Unbounded => unreachable!()
+            };
+            if high > low {
+                guard.as_int_mut().children.drain(low..high);
+            }
+        }))
     }
 
     fn new(ddml: DDMLLike, min_fanout: usize, max_fanout: usize,
@@ -2039,6 +2241,136 @@ fn get_nonexistent() {
     let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.get(&0));
     assert_eq!(r, Ok(None))
+}
+
+// The range delete example from Figures 13-14 of B-Trees, Shadowing, and
+// Range-operations
+#[test]
+fn range_delete() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1: 1.0
+                              2: 2.0
+                    - key: 5
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              5: 5.0
+                              6: 6.0
+                              7: 7.0
+                    - key: 10
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              10: 10.0
+                              11: 11.0
+          - key: 15
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                    - key: 20
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              25: 25.0
+          - key: 31
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 31
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              31: 31.0
+                              32: 32.0
+                    - key: 37
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              37: 37.0
+                              40: 40.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range_delete(11..=31)
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+          - key: 5
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
+          - key: 10
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    32: 32.0
+          - key: 37
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    37: 37.0
+                    40: 40.0"#);
 }
 
 // Unbounded range lookup
