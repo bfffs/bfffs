@@ -816,7 +816,50 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         )
     }
 
-    #[cfg(test)]
+    /// Fix an Int node in danger of being underfull, returning the parent guard
+    /// back to the caller
+    fn fix_int<Q>(&'a self, parent: TreeWriteGuard<K, V>,
+                  child_idx: usize, mut child: TreeWriteGuard<K, V>)
+        -> impl Future<Item=TreeWriteGuard<K, V>, Error=Error> + 'a
+        where K: Borrow<Q>, Q: Ord
+    {
+        // Outline:
+        // First, try to merge with the right sibling
+        // Then, try to steal keys from the right sibling
+        // Then, try to merge with the left sibling
+        // Then, try to steal keys from the left sibling
+        let nchildren = parent.as_int().children.len();
+        let (fut, right) = {
+            if child_idx < nchildren - 1 {
+                (self.xlock(parent, child_idx + 1), true)
+            } else {
+                (self.xlock(parent, child_idx - 1), false)
+            }
+        };
+        fut.map(move |(mut parent, mut sibling)| {
+            if right {
+                if child.can_merge(&sibling, self.i.max_fanout) {
+                    child.merge(&mut sibling);
+                    parent.as_int_mut().children.remove(child_idx + 1);
+                } else {
+                    child.take_low_keys(&mut sibling);
+                    let sib_idx = child_idx + 1;
+                    parent.as_int_mut().children[sib_idx].key = sibling.key();
+                }
+            } else {
+                if sibling.can_merge(&child, self.i.max_fanout) {
+                    sibling.merge(&mut child);
+                    parent.as_int_mut().children.remove(child_idx);
+                } else {
+                    child.take_high_keys(&mut sibling);
+                    parent.as_int_mut().children[child_idx].key = child.key();
+                }
+            };
+            parent
+        })
+    }
+
+#[cfg(test)]
     pub fn from_str(ddml: DDMLLike, s: &str) -> Self {
         let i: Inner<K, V> = serde_yaml::from_str(s).unwrap();
         Tree{ddml, i}
@@ -1256,49 +1299,16 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Remove key `k` from an internal node.  The internal node and its
     /// relevant child must both be already locked.
     fn remove_int<Q>(&'a self, parent: TreeWriteGuard<K, V>,
-                  child_idx: usize, mut child: TreeWriteGuard<K, V>, k: &'a Q)
+                  child_idx: usize, child: TreeWriteGuard<K, V>, k: &'a Q)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
         where K: Borrow<Q>, Q: Ord
     {
 
         // First, fix the node, if necessary
         if child.should_fix(self.i.min_fanout) {
-            // Outline:
-            // First, try to merge with the right sibling
-            // Then, try to steal keys from the right sibling
-            // Then, try to merge with the left sibling
-            // Then, try to steal keys from the left sibling
-            let nchildren = parent.as_int().children.len();
-            let (fut, right) = {
-                if child_idx < nchildren - 1 {
-                    (self.xlock(parent, child_idx + 1), true)
-                } else {
-                    (self.xlock(parent, child_idx - 1), false)
-                }
-            };
             Box::new(
-                fut.map(move |(mut parent, mut sibling)| {
-                    if right {
-                        if child.can_merge(&sibling, self.i.max_fanout) {
-                            child.merge(&mut sibling);
-                            parent.as_int_mut().children.remove(child_idx + 1);
-                        } else {
-                            child.take_low_keys(&mut sibling);
-                            parent.as_int_mut().children[child_idx+1]
-                                .key = sibling.key();
-                        }
-                    } else {
-                        if sibling.can_merge(&child, self.i.max_fanout) {
-                            sibling.merge(&mut child);
-                            parent.as_int_mut().children.remove(child_idx);
-                        } else {
-                            child.take_high_keys(&mut sibling);
-                            parent.as_int_mut().children[child_idx]
-                                .key = child.key();
-                        }
-                    };
-                    parent
-                }).and_then(move |parent| self.remove_no_fix(parent, k))
+                self.fix_int(parent, child_idx, child)
+                    .and_then(move |parent| self.remove_no_fix(parent, k))
             )
         } else {
             drop(parent);
