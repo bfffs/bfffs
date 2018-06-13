@@ -275,10 +275,6 @@ impl<K: Key, V: Value> LeafData<K, V> {
 }
 
 impl<K: Key, V: Value> LeafData<K, V> {
-    fn first_key(&self) -> &K {
-        self.items.keys().nth(0).unwrap()
-    }
-
     fn insert(&mut self, k: K, v: V) -> Option<V> {
         self.items.insert(k, v)
     }
@@ -402,10 +398,6 @@ struct IntData<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> IntData<K, V> {
-    fn first_key(&self) -> &K {
-        &self.children[0].key
-    }
-
     /// Find index of rightmost child whose key is less than or equal to k
     fn position<Q>(&self, k: &Q) -> usize
         where K: Borrow<Q>, Q: Ord
@@ -443,13 +435,6 @@ enum NodeData<K: Key, V: Value> {
 }
 
 impl<K: Key, V: Value> NodeData<K, V> {
-    fn first_key(&self) -> &K {
-        match self {
-            NodeData::Int(ref int) => int.first_key(),
-            NodeData::Leaf(ref leaf) => leaf.first_key(),
-        }
-    }
-
     fn as_int(&self) -> &IntData<K, V> {
         if let NodeData::Int(int) = self {
             int
@@ -498,10 +483,10 @@ impl<K: Key, V: Value> NodeData<K, V> {
 
     /// Return this `NodeData`s lower bound key, suitable for use in its
     /// parent's `children` array.
-    fn key(&self) -> K {
+    fn key(&self) -> &K {
         match self {
-            NodeData::Leaf(leaf) => *leaf.items.keys().nth(0).unwrap(),
-            NodeData::Int(int) => int.children[0].key,
+            NodeData::Leaf(ref leaf) => leaf.items.keys().nth(0).unwrap(),
+            NodeData::Int(ref int) => &int.children[0].key,
         }
     }
 
@@ -844,7 +829,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 } else {
                     child.take_low_keys(&mut sibling);
                     let sib_idx = child_idx + 1;
-                    parent.as_int_mut().children[sib_idx].key = sibling.key();
+                    parent.as_int_mut().children[sib_idx].key = *sibling.key();
                 }
             } else {
                 if sibling.can_merge(&child, self.i.max_fanout) {
@@ -852,7 +837,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                     parent.as_int_mut().children.remove(child_idx);
                 } else {
                     child.take_high_keys(&mut sibling);
-                    parent.as_int_mut().children[child_idx].key = child.key();
+                    parent.as_int_mut().children[child_idx].key = *child.key();
                 }
             };
             parent
@@ -1024,7 +1009,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 } else {
                     let bound = if more && next_guard.is_some() {
                         Some(Bound::Included(next_guard.unwrap()
-                                                       .first_key()
+                                                       .key()
                                                        .borrow()
                                                        .clone()))
                     } else {
@@ -1120,7 +1105,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         let start_idx_bound = match range.start_bound() {
             Bound::Unbounded => Bound::Included(0),
             Bound::Included(t) | Bound::Excluded(t)
-                if t < guard.as_int().first_key().borrow() =>
+                if t < guard.key().borrow() =>
             {
                 Bound::Included(0)
             },
