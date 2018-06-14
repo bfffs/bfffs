@@ -1089,6 +1089,21 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         ) as Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>), Error=Error>>
     }
 
+    /// Merge the root node with its children, if necessary
+    fn merge_root(&self, root_guard: &mut TreeWriteGuard<K, V>) {
+        if ! root_guard.is_leaf() && root_guard.as_int().children.len() == 1
+        {
+           // Merge root node with its child
+           let child = root_guard.as_int_mut().children.pop().unwrap();
+           let new_root_data = match child.ptr {
+               TreePtr::Mem(n) => n.0.try_unwrap().unwrap(),
+               _ => unimplemented!()
+           };
+           mem::replace(root_guard.deref_mut(), new_root_data);
+           self.i.height.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
     /// Lookup a range of (key, value) pairs for keys within the range `range`.
     pub fn range<R, T>(&'a self, range: R) -> Range<'a, K, T, V>
         where K: Borrow<T>,
@@ -1109,26 +1124,39 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         // 1) Traverse the tree removing all requested KV-pairs, leaving damaged
         //    nodes
         // 2) Traverse the tree again, fixing in-danger nodes from top-down
+        // 3) Collapse the root node, if it has 1 child
         let rangeclone = range.clone();
         self.i.root.write()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
                 self.xlock_root(guard)
                      .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                     .and_then(move |(root_guard, child_guard)| {
-                         self.range_delete_pass1(child_guard, range, None)
-                             .map(|_| root_guard)
+                     .and_then(move |(tree_guard, root_guard)| {
+                         self.range_delete_pass1(root_guard, range, None)
+                             .map(|_| tree_guard)
                      })
             })
             .and_then(move |guard| {
                 self.xlock_root(guard)
-                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                     .and_then(move |(root_guard, child_guard)| {
-                         self.range_delete_pass2(child_guard, rangeclone, None)
-                         // TODO: collapse the root node, if it has 1 child
-                             // Keep the whole tree locked during range_delete
-                             .map(|_| drop(root_guard))
-                     })
+                    .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    .and_then(move |(tree_guard, root_guard)| {
+                        self.range_delete_pass2(root_guard, rangeclone, None)
+                            .map(|_| tree_guard)
+                    })
+            })
+            // Finally, collapse the root node, if it has 1 child.  During
+            // normal remove operations we can't do this, because we drop the
+            // lock on the root node before fixing all of its children.  But the
+            // entire tree stays locked during range_delete, so it's possible to
+            // fix the root node at the end
+            .and_then(move |tree_guard| {
+                self.xlock_root(tree_guard)
+                    .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    .map(move |(tree_guard, mut root_guard)| {
+                        self.merge_root(&mut root_guard);
+                        // Keep the whole tree locked during range_delete
+                        drop(tree_guard)
+                    })
             })
     }
 
@@ -1453,21 +1481,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
         where K: Borrow<Q>, Q: Ord
     {
-
-        // First, fix the root node, if necessary
-        if ! root.is_leaf() {
-            if root.as_int().children.len() == 1 {
-                // Merge root node with its child
-                let child = root.as_int_mut().children.pop().unwrap();
-                let new_root_data = match child.ptr {
-                    TreePtr::Mem(node) => node.0.try_unwrap().unwrap(),
-                    _ => unimplemented!()
-                };
-                mem::replace(root.deref_mut(), new_root_data);
-                self.i.height.fetch_sub(1, Ordering::Relaxed);
-            }
-        }
-
+        self.merge_root(&mut root);
         self.remove_no_fix(root, k)
     }
 
@@ -2389,9 +2403,6 @@ fn get_nonexistent() {
 //    not generally possible to fix a parent's IntElem's key when removing a key
 //    from a child, because it may require holding the locks on more than 2
 //    nodes.
-// c) We don't collapse the root node.  This is legal, because the root node is
-//    allowed to have as few as 0 children.  We only collapse the root node when
-//    removing keys _after_ it already has only 1 child.
 #[test]
 fn range_delete() {
     let ddml = DDMLMock::new();
@@ -2480,7 +2491,7 @@ root:
     println!("{}", format!("{}", &tree));
     assert_eq!(format!("{}", &tree),
 r#"---
-height: 3
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -2493,32 +2504,27 @@ root:
           - key: 1
             ptr:
               Mem:
-                Int:
-                  children:
-                    - key: 1
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              1: 1.0
-                              2: 2.0
-                    - key: 5
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              5: 5.0
-                              6: 6.0
-                              7: 7.0
-                              10: 10.0
-                    - key: 31
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              32: 32.0
-                              37: 37.0
-                              40: 40.0"#);
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+          - key: 5
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
+                    10: 10.0
+          - key: 31
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    32: 32.0
+                    37: 37.0
+                    40: 40.0"#);
 }
 
 // Unbounded range lookup
