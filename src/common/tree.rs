@@ -888,8 +888,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     pub fn insert(&'a self, k: K, v: V)
         -> impl Future<Item=Option<V>, Error=Error> + 'a {
 
-        self.i.root.write()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        self.write()
             .and_then(move |guard| {
                 self.xlock_root(guard)
                      .and_then(move |(_root_guard, child_guard)| {
@@ -967,8 +966,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> impl Future<Item=Option<V>, Error=Error> + 'a
         where K: Borrow<Q>, Q: Ord
     {
-        self.i.root.read()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        self.read()
             .and_then(move |guard| {
                 self.rlock(&guard)
                      .and_then(move |guard| self.get_node(guard, k))
@@ -1008,8 +1006,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static
     {
-        self.i.root.read()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        self.read()
             .and_then(move |guard| {
                 self.rlock(&guard)
                      .and_then(move |g| self.get_range_node(g, None, range))
@@ -1121,8 +1118,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         // 2) Traverse the tree again, fixing in-danger nodes from top-down
         // 3) Collapse the root node, if it has 1 child
         let rangeclone = range.clone();
-        self.i.root.write()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        self.write()
             .and_then(move |guard| {
                 self.xlock_root(guard)
                      .and_then(move |(tree_guard, root_guard)| {
@@ -1433,8 +1429,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> impl Future<Item=Option<V>, Error=Error> + 'a
         where K: Borrow<Q>, Q: Ord
     {
-        self.i.root.write()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        self.write()
             .and_then(move |guard| {
                 self.xlock_root(guard)
                     .and_then(move |(_root_guard, child_guard)| {
@@ -1498,9 +1493,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Sync all records written so far to stable storage.
     pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
-        self.i.root.write()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                  .and_then(move |root_guard| {
+        self.write()
+            .and_then(move |root_guard| {
             if root_guard.ptr.is_dirty() {
                 // If the root is dirty, then we have ownership over it.  But
                 // another task may still have a lock on it.  We must acquire
@@ -1593,6 +1587,13 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         )
     }
 
+    /// Lock the Tree for reading
+    fn read(&'a self) -> impl Future<Item=RwLockReadGuard<IntElem<K, V>>,
+                                     Error=Error> + 'a
+    {
+        self.i.root.read().map_err(|_| Error::Sys(errno::Errno::EPIPE))
+    }
+
     /// Lock the provided `IntElem` nonexclusively
     fn rlock(&'a self, elem: &IntElem<K, V>)
         -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error> + 'a>
@@ -1620,6 +1621,13 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 unimplemented!()
             }
         }
+    }
+
+    /// Lock the Tree for writing
+    fn write(&'a self) -> impl Future<Item=RwLockWriteGuard<IntElem<K, V>>,
+                                      Error=Error> + 'a
+    {
+        self.i.root.write().map_err(|_| Error::Sys(errno::Errno::EPIPE))
     }
 
     /// Lock the indicated `IntElem` exclusively.  If it is not already resident
