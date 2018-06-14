@@ -892,7 +892,6 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
                 self.xlock_root(guard)
-                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                      .and_then(move |(_root_guard, child_guard)| {
                          self.insert_locked(child_guard, k, v)
                      })
@@ -1126,7 +1125,6 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
                 self.xlock_root(guard)
-                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                      .and_then(move |(tree_guard, root_guard)| {
                          self.range_delete_pass1(root_guard, range, None)
                              .map(|_| tree_guard)
@@ -1134,7 +1132,6 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             })
             .and_then(move |guard| {
                 self.xlock_root(guard)
-                    .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                     .and_then(move |(tree_guard, root_guard)| {
                         self.range_delete_pass2(root_guard, rangeclone, None)
                             .map(|_| tree_guard)
@@ -1147,7 +1144,6 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             // fix the root node at the end
             .and_then(move |tree_guard| {
                 self.xlock_root(tree_guard)
-                    .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                     .map(move |(tree_guard, mut root_guard)| {
                         self.merge_root(&mut root_guard);
                         // Keep the whole tree locked during range_delete
@@ -1441,7 +1437,6 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
                 self.xlock_root(guard)
-                    .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                     .and_then(move |(_root_guard, child_guard)| {
                         self.remove_locked(child_guard, k)
                     })
