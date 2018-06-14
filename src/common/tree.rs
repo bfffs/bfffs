@@ -2670,6 +2670,100 @@ root:
                               40: 40.0"#);
 }
 
+// Delete a range that's exclusive on the left and right
+#[test]
+fn range_delete_exc_exc() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+          - key: 4
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
+                    8: 8.0
+          - key: 10
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+                    12: 12.0
+                    13: 13.0
+          - key: 20
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    20: 20.0
+                    21: 21.0
+                    22: 22.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range_delete((Bound::Excluded(4), Bound::Excluded(10)))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+          - key: 4
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    10: 10.0
+                    11: 11.0
+                    12: 12.0
+                    13: 13.0
+          - key: 20
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    20: 20.0
+                    21: 21.0
+                    22: 22.0"#);
+}
+
 // Delete a range that's exclusive on the left and inclusive on the right
 #[test]
 fn range_delete_exc_inc() {
