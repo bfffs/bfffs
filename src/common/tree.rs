@@ -1086,14 +1086,17 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     fn merge_root(&self, root_guard: &mut TreeWriteGuard<K, V>) {
         if ! root_guard.is_leaf() && root_guard.as_int().children.len() == 1
         {
-           // Merge root node with its child
-           let child = root_guard.as_int_mut().children.pop().unwrap();
-           let new_root_data = match child.ptr {
-               TreePtr::Mem(n) => n.0.try_unwrap().unwrap(),
-               _ => unimplemented!()
-           };
-           mem::replace(root_guard.deref_mut(), new_root_data);
-           self.i.height.fetch_sub(1, Ordering::Relaxed);
+            // Merge root node with its child
+            let child = root_guard.as_int_mut().children.pop().unwrap();
+            let new_root_data = match child.ptr {
+                TreePtr::Mem(n) => n.0.try_unwrap().unwrap(),
+                // LCOV_EXCL_START
+                _ => unreachable!(
+                    "Can't merge_root without first dirtying the tree"),
+                //LCOV_EXCL_STOP
+            };
+            mem::replace(root_guard.deref_mut(), new_root_data);
+            self.i.height.fetch_sub(1, Ordering::Relaxed);
         }
     }
 
