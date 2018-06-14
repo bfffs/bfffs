@@ -404,7 +404,7 @@ impl<K: Key, V: Value> IntData<K, V> {
     {
         self.children
             .binary_search_by(|child| child.key.borrow().cmp(k))
-            .unwrap_or_else(|k| k - 1)
+            .unwrap_or_else(|k| if k == 0 {k} else {k - 1})
     }
 
     fn split(&mut self) -> (K, IntData<K, V>) {
