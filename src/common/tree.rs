@@ -834,7 +834,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             };
             (parent, before, after)
         })
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Subroutine of range_delete.  Fixes a node that is in danger of an
     /// underflow.  Returns the node guard, and two ints which are the number of
@@ -860,8 +860,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 (Bound::Excluded(_), Bound::Excluded(_)) => 1,
                 (Bound::Excluded(i), Bound::Included(j)) if j > i => 2,
                 (Bound::Excluded(i), Bound::Included(j)) if j <= i => 1,
+                // LCOV_EXCL_START  kcov false negative
                 (Bound::Excluded(_), Bound::Included(_)) => unreachable!(),
                 (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
+                // LCOV_EXCL_STOP
             };
             let b = self.i.min_fanout;
             if child.as_int().children.len() - cut_grandkids <= b - 1 {
@@ -1146,7 +1148,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                         self.merge_root(&mut root_guard);
                         // Keep the whole tree locked during range_delete
                         drop(tree_guard)
-                    })
+                    })  // LCOV_EXCL_LINE   kcov false negative
             })
     }
 
@@ -1295,8 +1297,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                             .map(move |_| parent_guard)
                     }))
             },
+            // LCOV_EXCL_START  kcov false negative
             (Bound::Excluded(_), Bound::Included(_)) => unreachable!(),
             (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
+            // LCOV_EXCL_STOP
         };
 
         // Finally, remove nodes in the middle
@@ -1304,11 +1308,11 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             let low = match start_idx_bound {
                 Bound::Excluded(i) => i + 1,
                 Bound::Included(i) => i,
-                Bound::Unbounded => unreachable!()
+                Bound::Unbounded => unreachable!()  // LCOV_EXCL_LINE
             };
             let high = match end_idx_bound {
                 Bound::Excluded(j) | Bound::Included(j) => j,
-                Bound::Unbounded => unreachable!()
+                Bound::Unbounded => unreachable!()  // LCOV_EXCL_LINE
             };
             if high > low {
                 guard.as_int_mut().children.drain(low..high);
@@ -1348,8 +1352,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 (Some(i), Some(j)),
             (Bound::Excluded(i), Bound::Included(j)) if j <= i =>
                 (Some(i), None),
+            // LCOV_EXCL_START  kcov false negative
             (Bound::Excluded(_), Bound::Included(_)) => unreachable!(),
             (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
+            // LCOV_EXCL_STOP
         };
         let fixit = move |parent_guard: TreeWriteGuard<K, V>, idx: usize,
                           range: R|
