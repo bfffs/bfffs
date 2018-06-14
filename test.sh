@@ -13,3 +13,7 @@ rustup run nightly-2018-06-01-x86_64-unknown-freebsd cargo bench
 # It should also work on stable >= 1.28.0
 # TODO: reenable stable test when 1.28.0 is available
 # cargo test
+
+# Measure test coverage, too
+which -s kcov && \
+	env CARGO_TARGET_DIR=/localhome/somers/src/rust/arkfs/target_cov cargo +nightly-2018-06-01-x86_64 kcov -v --features mocks -- --include-path="src"
