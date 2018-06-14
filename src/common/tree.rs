@@ -501,8 +501,6 @@ impl<K: Key, V: Value> NodeData<K, V> {
     /// Should this node be fixed because it's too small?
     fn should_fix(&self, min_fanout: usize) -> bool {
         let len = self.len();
-        debug_assert!(len >= min_fanout,
-                      "Underfull nodes shouldn't be possible");
         len <= min_fanout
     }
 
@@ -805,7 +803,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// back to the caller
     fn fix_int<Q>(&'a self, parent: TreeWriteGuard<K, V>,
                   child_idx: usize, mut child: TreeWriteGuard<K, V>)
-        -> impl Future<Item=TreeWriteGuard<K, V>, Error=Error> + 'a
+        -> impl Future<Item=(TreeWriteGuard<K, V>, i8, i8), Error=Error> + 'a
         where K: Borrow<Q>, Q: Ord
     {
         // Outline:
@@ -822,29 +820,71 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             }
         };
         fut.map(move |(mut parent, mut sibling)| {
-            if right {
+            let (before, after) = if right {
                 if child.can_merge(&sibling, self.i.max_fanout) {
                     child.merge(&mut sibling);
                     parent.as_int_mut().children.remove(child_idx + 1);
+                    (0, 1)
                 } else {
                     child.take_low_keys(&mut sibling);
                     let sib_idx = child_idx + 1;
                     parent.as_int_mut().children[sib_idx].key = *sibling.key();
+                    (0, 0)
                 }
             } else {
                 if sibling.can_merge(&child, self.i.max_fanout) {
                     sibling.merge(&mut child);
                     parent.as_int_mut().children.remove(child_idx);
+                    (1, 0)
                 } else {
                     child.take_high_keys(&mut sibling);
                     parent.as_int_mut().children[child_idx].key = *child.key();
+                    (1, 1)
                 }
             };
-            parent
+            (parent, before, after)
         })
     }
 
-#[cfg(test)]
+    /// Subroutine of range_delete.  Fixes a node that is in danger of an
+    /// underflow.  Returns the node guard, and two ints which are the number of
+    /// nodes that were merged before and after the fixed child, respectively.
+    fn fix_if_in_danger<R, T>(&'a self, parent: TreeWriteGuard<K, V>,
+                  child_idx: usize, child: TreeWriteGuard<K, V>, range: R,
+                  ubound: Option<K>)
+        -> Box<Future<Item=(TreeWriteGuard<K, V>, i8, i8), Error=Error> + 'a>
+        where K: Borrow<T>,
+              R: Clone + RangeBounds<T> + 'static,
+              T: Ord + Clone + 'static + Debug
+    {
+        // Is the child underfull?
+        if child.should_fix(self.i.min_fanout) {
+            Box::new(self.fix_int(parent, child_idx, child))
+        } else if !child.is_leaf() {
+            // How many grandchildren are in the cut?
+            let (start_idx_bound, end_idx_bound) = self.range_delete_get_bounds(
+                &child, &range, ubound);
+            let cut_grandkids = match (start_idx_bound, end_idx_bound) {
+                (Bound::Included(_), Bound::Excluded(_)) => 0,
+                (Bound::Included(_), Bound::Included(_)) => 1,
+                (Bound::Excluded(_), Bound::Excluded(_)) => 1,
+                (Bound::Excluded(i), Bound::Included(j)) if j > i => 2,
+                (Bound::Excluded(i), Bound::Included(j)) if j <= i => 1,
+                (Bound::Excluded(_), Bound::Included(_)) => unreachable!(),
+                (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
+            };
+            let b = self.i.min_fanout;
+            if child.as_int().children.len() - cut_grandkids <= b - 1 {
+                Box::new(self.fix_int(parent, child_idx, child))
+            } else {
+                Box::new(Ok((parent, 0, 0)).into_future())
+            }
+        } else {
+            Box::new(Ok((parent, 0, 0)).into_future())
+        }
+    }
+
+    #[cfg(test)]
     pub fn from_str(ddml: DDMLLike, s: &str) -> Self {
         let i: Inner<K, V> = serde_yaml::from_str(s).unwrap();
         Tree{ddml, i}
@@ -1069,6 +1109,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         // 1) Traverse the tree removing all requested KV-pairs, leaving damaged
         //    nodes
         // 2) Traverse the tree again, fixing in-danger nodes from top-down
+        let rangeclone = range.clone();
         self.i.root.write()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |guard| {
@@ -1076,31 +1117,31 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                      .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                      .and_then(move |(root_guard, child_guard)| {
                          self.range_delete_pass1(child_guard, range, None)
+                             .map(|_| root_guard)
+                     })
+            })
+            .and_then(move |guard| {
+                self.xlock_root(guard)
+                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                     .and_then(move |(root_guard, child_guard)| {
+                         self.range_delete_pass2(child_guard, rangeclone, None)
+                         // TODO: collapse the root node, if it has 1 child
                              // Keep the whole tree locked during range_delete
                              .map(|_| drop(root_guard))
                      })
             })
     }
 
-    /// Depth-first traversal deleting keys without reshaping tree
-    /// `ubound` is the first key in the Node immediately to the right of
-    /// this one, unless this is the rightmost Node on its level.
-    fn range_delete_pass1<R, T>(&'a self, mut guard: TreeWriteGuard<K, V>,
-                                range: R, ubound: Option<K>)
-        -> impl Future<Item=(), Error=Error> + 'a
+    /// Subroutine of range_delete.  Returns the bounds, as indices, of the
+    /// affected children of this node.
+    fn range_delete_get_bounds<R, T>(&self, guard: &TreeWriteGuard<K, V>,
+                                     range: &R, ubound: Option<K>)
+        -> (Bound<usize>, Bound<usize>)
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static + Debug
     {
-        if guard.is_leaf() {
-            guard.as_leaf_mut().range_delete(range);
-            return Box::new(Ok(()).into_future())
-                as Box<Future<Item=(), Error=Error>>;
-        }
-
-        // We must recurse into at most two children (at the limits of the
-        // range), and completely delete 0 or more children (in the middle
-        // of the range)
+        debug_assert!(!guard.is_leaf());
         let l = guard.as_int().children.len();
         let start_idx_bound = match range.start_bound() {
             Bound::Unbounded => Bound::Included(0),
@@ -1148,6 +1189,31 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 }
             }
         };
+        (start_idx_bound, end_idx_bound)
+    }
+
+    /// Depth-first traversal deleting keys without reshaping tree
+    /// `ubound` is the first key in the Node immediately to the right of
+    /// this one, unless this is the rightmost Node on its level.
+    fn range_delete_pass1<R, T>(&'a self, mut guard: TreeWriteGuard<K, V>,
+                                range: R, ubound: Option<K>)
+        -> impl Future<Item=(), Error=Error> + 'a
+        where K: Borrow<T>,
+              R: Clone + RangeBounds<T> + 'static,
+              T: Ord + Clone + 'static + Debug
+    {
+        if guard.is_leaf() {
+            guard.as_leaf_mut().range_delete(range);
+            return Box::new(Ok(()).into_future())
+                as Box<Future<Item=(), Error=Error>>;
+        }
+
+        // We must recurse into at most two children (at the limits of the
+        // range), and completely delete 0 or more children (in the middle
+        // of the range)
+        let l = guard.as_int().children.len();
+        let (start_idx_bound, end_idx_bound) = self.range_delete_get_bounds(
+            &guard, &range, ubound);
         let fut: Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>>
             = match (start_idx_bound, end_idx_bound) {
             (Bound::Included(_), Bound::Excluded(_)) => {
@@ -1235,6 +1301,82 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         }))
     }
 
+    /// Depth-first traversal reshaping the tree after some keys were deleted by
+    /// range_delete_pass1.
+    fn range_delete_pass2<R, T>(&'a self, guard: TreeWriteGuard<K, V>,
+                                range: R, ubound: Option<K>)
+        -> Box<Future<Item=(), Error=Error> + 'a>
+        where K: Borrow<T>,
+              R: Clone + RangeBounds<T> + 'static,
+              T: Ord + Clone + 'static + Debug
+    {
+        // Outline:
+        // Traverse the tree just as in range_delete_pass1, but fixup any nodes
+        // that are in danger.  A node is in-danger if it is in the cut and:
+        // a) it has an underflow, or
+        // b) it has b entries and one child in the cut, or
+        // c) it has b + 1 entries and two children in the cut
+        if guard.is_leaf() {
+            // This node was already fixed.  No need to recurse further
+            return Box::new(Ok(()).into_future());
+        }
+
+        let (start_idx_bound, end_idx_bound) = self.range_delete_get_bounds(
+            &guard, &range, ubound);
+        let range2 = range.clone();
+        let range3 = range.clone();
+        let children_to_fix = match (start_idx_bound, end_idx_bound) {
+            (Bound::Included(_), Bound::Excluded(_)) => (None, None),
+            (Bound::Included(_), Bound::Included(j)) => (None, Some(j)),
+            (Bound::Excluded(i), Bound::Excluded(_)) => (Some(i), None),
+            (Bound::Excluded(i), Bound::Included(j)) if j > i =>
+                (Some(i), Some(j)),
+            (Bound::Excluded(i), Bound::Included(j)) if j <= i =>
+                (Some(i), None),
+            (Bound::Excluded(_), Bound::Included(_)) => unreachable!(),
+            (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
+        };
+        let fixit = move |parent_guard: TreeWriteGuard<K, V>, idx: usize,
+                          range: R|
+        {
+            let l = parent_guard.as_int().children.len();
+            let child_ubound = if idx < l - 1 {
+                Some(parent_guard.as_int().children[idx + 1].key)
+            } else {
+                ubound
+            };
+            let range2 = range.clone();
+            Box::new(
+                self.xlock(parent_guard, idx)
+                .and_then(move |(parent_guard, child_guard)| {
+                    self.fix_if_in_danger(parent_guard, idx, child_guard,
+                                          range, child_ubound)
+                }).and_then(move |(parent_guard, merged_before, merged_after)| {
+                    let merged = merged_before + merged_after;
+                    self.xlock(parent_guard, idx - merged_before as usize)
+                        .map(move |(parent, child)| (parent, child, merged))
+                }).and_then(move |(parent_guard, child_guard, merged)| {
+                    self.range_delete_pass2(child_guard, range2, child_ubound)
+                        .map(move |_| (parent_guard, merged))
+                })
+            ) as Box<Future<Item=(TreeWriteGuard<K, V>, i8), Error=Error>>
+        };
+        let fut = match children_to_fix.0 {
+            None => Box::new(Ok((guard, 0i8)).into_future())
+                as Box<Future<Item=(TreeWriteGuard<K, V>, i8), Error=Error>>,
+            Some(idx) => fixit(guard, idx, range2)
+        }
+        .and_then(move |(parent_guard, merged)|
+            match children_to_fix.1 {
+                None => Box::new(Ok((parent_guard, merged)).into_future())
+                    as Box<Future<Item=(TreeWriteGuard<K, V>, i8),
+                                  Error=Error>>,
+                Some(idx) => fixit(parent_guard, idx - merged as usize, range3)
+            }
+        ).map(|_| ());
+        Box::new(fut)
+    }
+
     fn new(ddml: DDMLLike, min_fanout: usize, max_fanout: usize,
            max_size: usize) -> Self
     {
@@ -1288,12 +1430,14 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
         where K: Borrow<Q>, Q: Ord
     {
-
         // First, fix the node, if necessary
         if child.should_fix(self.i.min_fanout) {
             Box::new(
                 self.fix_int(parent, child_idx, child)
-                    .and_then(move |parent| self.remove_no_fix(parent, k))
+                    // TODO: take advantage of merge counts
+                    .and_then(move |(parent, _, _)|
+                        self.remove_no_fix(parent, k)
+                    )
             )
         } else {
             drop(parent);
@@ -2233,7 +2377,18 @@ fn get_nonexistent() {
 }
 
 // The range delete example from Figures 13-14 of B-Trees, Shadowing, and
-// Range-operations
+// Range-operations.  Our result is slightly different than in the paper,
+// however, because in the second pass:
+// a) We fix nodes [10, -] and [-, 32] by merging them with their outer
+//    neighbors rather than themselves (this is legal).
+// b) When removing key 31 from [31, 32], we don't adjust the key in its parent
+//    IntElem.  This is legal because it still obeys the minimum-key-rule.  It's
+//    not generally possible to fix a parent's IntElem's key when removing a key
+//    from a child, because it may require holding the locks on more than 2
+//    nodes.
+// c) We don't collapse the root node.  This is legal, because the root node is
+//    allowed to have as few as 0 children.  We only collapse the root node when
+//    removing keys _after_ it already has only 1 child.
 #[test]
 fn range_delete() {
     let ddml = DDMLMock::new();
@@ -2295,7 +2450,7 @@ root:
                             items:
                               20: 20.0
                               25: 25.0
-          - key: 31
+          - key: 30
             ptr:
               Mem:
                 Int:
@@ -2319,9 +2474,10 @@ root:
         tree.range_delete(11..=31)
     );
     assert!(r.is_ok());
+    println!("{}", format!("{}", &tree));
     assert_eq!(format!("{}", &tree),
 r#"---
-height: 2
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -2334,32 +2490,32 @@ root:
           - key: 1
             ptr:
               Mem:
-                Leaf:
-                  items:
-                    1: 1.0
-                    2: 2.0
-          - key: 5
-            ptr:
-              Mem:
-                Leaf:
-                  items:
-                    5: 5.0
-                    6: 6.0
-                    7: 7.0
-          - key: 10
-            ptr:
-              Mem:
-                Leaf:
-                  items:
-                    10: 10.0
-                    32: 32.0
-          - key: 37
-            ptr:
-              Mem:
-                Leaf:
-                  items:
-                    37: 37.0
-                    40: 40.0"#);
+                Int:
+                  children:
+                    - key: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1: 1.0
+                              2: 2.0
+                    - key: 5
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              5: 5.0
+                              6: 6.0
+                              7: 7.0
+                              10: 10.0
+                    - key: 31
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              32: 32.0
+                              37: 37.0
+                              40: 40.0"#);
 }
 
 // Unbounded range lookup
