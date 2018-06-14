@@ -488,8 +488,8 @@ impl<K: Key, V: Value> NodeData<K, V> {
         }
     }
 
-    /// Should this node be fixed because it's too small?
-    fn should_fix(&self, min_fanout: usize) -> bool {
+    /// Is this node currently underflowing?
+    fn underflow(&self, min_fanout: usize) -> bool {
         let len = self.len();
         len <= min_fanout
     }
@@ -847,8 +847,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static + Debug
     {
-        // Is the child underfull?
-        if child.should_fix(self.i.min_fanout) {
+        // Is the child underfull?  The limit here is b-1, not b as in
+        // Tree::remove, because we've already removed keys
+        if child.underflow(self.i.min_fanout - 1) {
             Box::new(self.fix_int(parent, child_idx, child))
         } else if !child.is_leaf() {
             // How many grandchildren are in the cut?
@@ -1452,7 +1453,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         where K: Borrow<Q>, Q: Ord
     {
         // First, fix the node, if necessary
-        if child.should_fix(self.i.min_fanout) {
+        if child.underflow(self.i.min_fanout) {
             Box::new(
                 self.fix_int(parent, child_idx, child)
                     .and_then(move |(parent, _, _)| {
@@ -2519,6 +2520,156 @@ root:
                     40: 40.0"#);
 }
 
+// After removing keys, one node is in danger because it has too many children
+// in the cut
+#[test]
+fn range_delete_danger() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1: 1.0
+                              2: 2.0
+                    - key: 5
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              5: 5.0
+                              6: 6.0
+                              7: 7.0
+                              8: 8.0
+                              9: 9.0
+          - key: 15
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                    - key: 20
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              25: 25.0
+          - key: 30
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 31
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              31: 31.0
+                              32: 32.0
+                    - key: 37
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              37: 37.0
+                              40: 40.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range_delete(5..6)
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1: 1.0
+                              2: 2.0
+                    - key: 5
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              6: 6.0
+                              7: 7.0
+                              8: 8.0
+                              9: 9.0
+                    - key: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                    - key: 20
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              25: 25.0
+          - key: 30
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 31
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              31: 31.0
+                              32: 32.0
+                    - key: 37
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              37: 37.0
+                              40: 40.0"#);
+}
+
 // Delete a range that's exclusive on the left and inclusive on the right
 #[test]
 fn range_delete_exc_inc() {
@@ -2618,7 +2769,7 @@ fn range_delete_single_node() {
     let ddml = DDMLMock::new();
     let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
 ---
-height: 2
+height: 3
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -2631,28 +2782,33 @@ root:
           - key: 1
             ptr:
               Mem:
-                Leaf:
-                  items:
-                    1: 1.0
-                    2: 2.0
-          - key: 4
-            ptr:
-              Mem:
-                Leaf:
-                  items:
-                    4: 4.0
-                    5: 5.0
-                    6: 6.0
-                    7: 7.0
-                    8: 8.0
-          - key: 10
-            ptr:
-              Mem:
-                Leaf:
-                  items:
-                    10: 10.0
-                    11: 11.0
-                    12: 12.0
+                Int:
+                  children:
+                    - key: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1: 1.0
+                              2: 2.0
+                    - key: 4
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4: 4.0
+                              5: 5.0
+                              6: 6.0
+                              7: 7.0
+                              8: 8.0
+                    - key: 10
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              10: 10.0
+                              11: 11.0
+                              12: 12.0
 "#);
     let r = current_thread::block_on_all(
         tree.range_delete(5..7)
@@ -2768,7 +2924,7 @@ root:
                     6: 6.0"#);
 }
 
-// Delete a range with that passes the right side of an int node, with another
+// Delete a range that passes the right side of an int node, with another
 // int node to its right
 #[test]
 fn range_delete_to_end_of_int_node() {
@@ -2895,6 +3051,11 @@ root:
                               4: 4.0
                               5: 5.0
                               6: 6.0
+                    - key: 7
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
                               7: 7.0
                               8: 8.0
           - key: 15
