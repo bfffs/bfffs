@@ -407,16 +407,6 @@ impl<K: Key, V: Value> IntData<K, V> {
             .unwrap_or_else(|k| k - 1)
     }
 
-    /// Find index of rightmost child whose key is less than k
-    fn xposition<Q>(&self, k: &Q) -> usize
-        where K: Borrow<Q>, Q: Ord
-    {
-        self.children
-            .binary_search_by(|child| child.key.borrow().cmp(k))
-            .map(|i| i + 1)
-            .unwrap_or_else(|k| k - 1)
-    }
-
     fn split(&mut self) -> (K, IntData<K, V>) {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
@@ -1205,13 +1195,11 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 }
             },
             Bound::Excluded(t) => {
-                let idx = guard.as_int().xposition(t);
+                let idx = guard.as_int().position(t);
                 if ubound.is_some() && t >= ubound.unwrap().borrow() {
                     Bound::Excluded(idx + 1)
-                } else if idx < l - 1 &&
-                    guard.as_int().children[idx + 1].key.borrow() == t
-                {
-                    Bound::Excluded(idx + 1)
+                } else if guard.as_int().children[idx].key.borrow() == t {
+                    Bound::Excluded(idx)
                 } else {
                     Bound::Included(idx)
                 }
@@ -1319,8 +1307,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 Bound::Unbounded => unreachable!()
             };
             let high = match end_idx_bound {
-                Bound::Excluded(j) => j - 1,
-                Bound::Included(j) => j,
+                Bound::Excluded(j) | Bound::Included(j) => j,
                 Bound::Unbounded => unreachable!()
             };
             if high > low {
@@ -2488,7 +2475,6 @@ root:
         tree.range_delete(11..=31)
     );
     assert!(r.is_ok());
-    println!("{}", format!("{}", &tree));
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
@@ -2526,6 +2512,245 @@ root:
                     37: 37.0
                     40: 40.0"#);
 }
+
+// Delete a range that's contained within a single LeafNode
+#[test]
+fn range_delete_single_node() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+          - key: 4
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
+                    8: 8.0
+          - key: 10
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+                    12: 12.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range_delete(5..7)
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+          - key: 4
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    7: 7.0
+                    8: 8.0
+          - key: 10
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+                    12: 12.0"#);
+}
+
+// Delete a range that includes a whole Node at the end of the Tree
+#[test]
+fn range_delete_to_end() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+          - key: 4
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
+          - key: 10
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range_delete(7..20)
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+          - key: 4
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0"#);
+}
+
+// Delete a range that includes only whole nodes
+#[test]
+fn range_delete_whole_nodes() {
+    let ddml = DDMLMock::new();
+    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+                    3: 3.0
+          - key: 4
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0
+          - key: 10
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+          - key: 20
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    20: 20.0
+                    21: 21.0
+                    22: 22.0
+"#);
+    let r = current_thread::block_on_all(
+        tree.range_delete(4..20)
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+                    3: 3.0
+          - key: 20
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    20: 20.0
+                    21: 21.0
+                    22: 22.0"#);
+}
+
 
 // Unbounded range lookup
 #[test]
