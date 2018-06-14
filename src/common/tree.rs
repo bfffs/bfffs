@@ -1434,10 +1434,13 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         if child.should_fix(self.i.min_fanout) {
             Box::new(
                 self.fix_int(parent, child_idx, child)
-                    // TODO: take advantage of merge counts
-                    .and_then(move |(parent, _, _)|
-                        self.remove_no_fix(parent, k)
-                    )
+                    .and_then(move |(parent, _, _)| {
+                        let child_idx = parent.as_int().position(k);
+                        self.xlock(parent, child_idx)
+                    }).and_then(move |(parent, child)| {
+                        drop(parent);
+                        self.remove_no_fix(child, k)
+                    })
             )
         } else {
             drop(parent);
