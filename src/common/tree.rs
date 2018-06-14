@@ -1308,23 +1308,17 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     {
 
         // First, fix the root node, if necessary
-        let new_root_data = if let NodeData::Int(ref mut int) = *root {
-            if int.children.len() == 1 {
+        if ! root.is_leaf() {
+            if root.as_int().children.len() == 1 {
                 // Merge root node with its child
-                let child = int.children.pop().unwrap();
-                Some(match child.ptr {
+                let child = root.as_int_mut().children.pop().unwrap();
+                let new_root_data = match child.ptr {
                     TreePtr::Mem(node) => node.0.try_unwrap().unwrap(),
                     _ => unimplemented!()
-                })
-            } else {
-                None
+                };
+                mem::replace(root.deref_mut(), new_root_data);
+                self.i.height.fetch_sub(1, Ordering::Relaxed);
             }
-        } else {
-            None
-        };
-        if new_root_data.is_some() {
-            mem::replace(root.deref_mut(), new_root_data.unwrap());
-            self.i.height.fetch_sub(1, Ordering::Relaxed);
         }
 
         self.remove_no_fix(root, k)
