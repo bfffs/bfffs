@@ -207,7 +207,7 @@ impl<'a> DDML {
     }
 }
 
-impl<'a> DML<'a> for DDML {
+impl DML for DDML {
     type Key = DRP;
 
     fn delete(&self, drp: &DRP) {
@@ -219,7 +219,7 @@ impl<'a> DML<'a> for DDML {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
     }
 
-    fn get<T: CacheRef>(&'a self, drp: &DRP)
+    fn get<'a, T: CacheRef>(&'a self, drp: &DRP)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a> {
 
         // Outline:
@@ -242,7 +242,7 @@ impl<'a> DML<'a> for DDML {
         })
     }
 
-    fn pop<T: Cacheable>(&'a self, drp: &DRP)
+    fn pop<'a, T: Cacheable>(&'a self, drp: &DRP)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a> {
 
         let lbas = drp.asize();
@@ -263,7 +263,7 @@ impl<'a> DML<'a> for DDML {
         })
     }
 
-    fn put<T: Cacheable>(&'a self, cacheable: T, compression: Compression)
+    fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error> + 'a>) {
         // Outline:
         // 1) Serialize
@@ -326,7 +326,7 @@ impl<'a> DML<'a> for DDML {
         (drp, fut)
     }
 
-    fn sync_all(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
+    fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
         Box::new(self.pool.sync_all())
     }
 }

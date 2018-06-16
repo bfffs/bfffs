@@ -58,7 +58,7 @@ impl Default for Compression {
 ///
 /// A DML handles reading and writing records with cacheing.  It also handles
 /// compression and checksumming.
-pub trait DML<'a> {
+pub trait DML {
     type Key;
 
     /// Delete the record from the cache, and free its storage space.
@@ -68,18 +68,18 @@ pub trait DML<'a> {
     fn evict(&self, drp: &Self::Key);
 
     /// Read a record and return a shared reference
-    fn get<T: CacheRef>(&'a self, drp: &Self::Key)
+    fn get<'a, T: CacheRef>(&'a self, drp: &Self::Key)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
 
     /// Read a record and return ownership of it.
-    fn pop<T: Cacheable>(&'a self, drp: &Self::Key)
+    fn pop<'a, T: Cacheable>(&'a self, drp: &Self::Key)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
-    fn put<T: Cacheable>(&'a self, cacheable: T, compression: Compression)
+    fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression)
         -> (Self::Key, Box<Future<Item=(), Error=Error> + 'a>);
 
     /// Sync all records written so far to stable storage.
-    fn sync_all(&'a self) -> Box<Future<Item=(), Error=Error> + 'a>;
+    fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a>;
 }
 
