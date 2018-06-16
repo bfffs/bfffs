@@ -6,7 +6,9 @@
 
 use bincode;
 use common::*;
-use common::ddml::*;
+use common::dml::*;
+#[cfg(test)]
+use common::ddml::DRP;
 use futures::{Async, Future, future, future::IntoFuture, Poll, stream::Stream};
 use futures_locks::*;
 use nix::{Error, errno};
@@ -59,23 +61,8 @@ impl DDMLMock {
         }
     }
 
-    pub fn delete(&self, drp: &DRP) {
-        self.e.was_called::<*const DRP, ()>("delete", drp as *const DRP)
-    }
-
     pub fn expect_delete(&mut self) -> Method<*const DRP, ()> {
         self.e.expect::<*const DRP, ()>("delete")
-    }
-
-    pub fn evict(&self, drp: &DRP) {
-        self.e.was_called::<*const DRP, ()>("evict", drp as *const DRP)
-    }
-
-    pub fn get<T: CacheRef>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error>> {
-        self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<T>, Error=Error>>>
-            ("get", drp as *const DRP)
     }
 
     pub fn expect_get<T: CacheRef>(&mut self) -> Method<*const DRP,
@@ -85,27 +72,11 @@ impl DDMLMock {
             ("get")
     }
 
-    pub fn pop<T: Cacheable>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error>>
-    {
-        self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<T>, Error=Error>>>
-            ("pop", drp as *const DRP)
-    }
-
     pub fn expect_pop<T: Cacheable>(&mut self) -> Method<*const DRP,
         Box<Future<Item=Box<T>, Error=Error>>>
     {
         self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
             ("pop")
-    }
-
-    pub fn put<T: Cacheable>(&self, cacheable: T, compression: Compression)
-        -> (DRP, Box<Future<Item=(), Error=Error>>)
-    {
-        self.e.was_called_returning::<(T, Compression),
-                                      (DRP, Box<Future<Item=(), Error=Error>>)>
-            ("put", (cacheable, compression))
     }
 
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression),
@@ -114,11 +85,6 @@ impl DDMLMock {
         self.e.expect::<(T, Compression),
                         (DRP, Box<Future<Item=(), Error=Error>>)>
             ("put")
-    }
-
-    pub fn sync_all(&self) -> Box<Future<Item=(), Error=Error>> {
-        self.e.was_called_returning::<(), Box<Future<Item=(), Error=Error>>>
-            ("sync_all", ())
     }
 
     pub fn expect_sync_all(&mut self)
@@ -134,10 +100,45 @@ impl DDMLMock {
 }
 
 #[cfg(test)]
-pub type DDMLLike = DDMLMock;
-#[cfg(not(test))]
-#[doc(hidden)]
-pub type DDMLLike = DDML;
+impl DML for DDMLMock {
+    type Addr = DRP;
+
+    fn delete(&self, drp: &DRP) {
+        self.e.was_called::<*const DRP, ()>("delete", drp as *const DRP)
+    }
+
+    fn evict(&self, drp: &DRP) {
+        self.e.was_called::<*const DRP, ()>("evict", drp as *const DRP)
+    }
+
+    fn get<T: CacheRef>(&self, drp: &DRP)
+        -> Box<Future<Item=Box<T>, Error=Error>> {
+        self.e.was_called_returning::<*const DRP,
+            Box<Future<Item=Box<T>, Error=Error>>>
+            ("get", drp as *const DRP)
+    }
+
+    fn pop<T: Cacheable>(&self, drp: &DRP)
+        -> Box<Future<Item=Box<T>, Error=Error>>
+    {
+        self.e.was_called_returning::<*const DRP,
+            Box<Future<Item=Box<T>, Error=Error>>>
+            ("pop", drp as *const DRP)
+    }
+
+    fn put<T: Cacheable>(&self, cacheable: T, compression: Compression)
+        -> (DRP, Box<Future<Item=(), Error=Error>>)
+    {
+        self.e.was_called_returning::<(T, Compression),
+                                      (DRP, Box<Future<Item=(), Error=Error>>)>
+            ("put", (cacheable, compression))
+    }
+
+    fn sync_all(&self) -> Box<Future<Item=(), Error=Error>> {
+        self.e.was_called_returning::<(), Box<Future<Item=(), Error=Error>>>
+            ("sync_all", ())
+    }
+}
 // LCOV_EXCL_STOP
 
 /// Anything that has a min_value method.  Too bad libstd doesn't define this.
@@ -150,6 +151,11 @@ impl MinValue for u32 {
         u32::min_value()
     }
 }
+
+pub trait Addr: Copy + Debug + DeserializeOwned + Serialize + 'static {}
+
+impl<T> Addr for T
+where T: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 
 pub trait Key: Copy + Debug + DeserializeOwned + Ord + MinValue + Serialize
     + 'static {}
@@ -164,34 +170,33 @@ impl<T> Value for T
 where T: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(bound(deserialize = "K: DeserializeOwned, V: DeserializeOwned"))]
-enum TreePtr<K: Key, V: Value> {
+#[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned,
+                             V: DeserializeOwned"))]
+enum TreePtr<A: Addr, K: Key, V: Value> {
     /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
     /// RAM-resident, we don't need to store their checksums or lsizes.
     #[cfg_attr(not(test), serde(skip_serializing))]
     #[cfg_attr(not(test), serde(skip_deserializing))]
     #[cfg_attr(test, serde(with = "node_serializer"))]
-    Mem(Box<Node<K, V>>),
-    /// Direct Record Pointers point directly to a disk location
-    DRP(DRP),
-    /// Indirect Record Pointers point to the Record Indirection Table
-    _IRP(u64),
+    Mem(Box<Node<A, K, V>>),
+    /// DML Addresses point to a disk location
+    Addr(A),
     /// Used temporarily while syncing nodes to disk.  Should never be visible
     /// during a traversal, because the parent's xlock must be held at all times
     /// while the ptr is None.
     None,
 }
 
-impl<K: Key, V: Value> TreePtr<K, V> {
-    fn as_drp(&self) -> &DRP {
-        if let TreePtr::DRP(drp) = self {
-            drp
+impl<A: Addr, K: Key, V: Value> TreePtr<A, K, V> {
+    fn as_addr(&self) -> &A {
+        if let TreePtr::Addr(addr) = self {
+            addr
         } else {
-            panic!("Not a TreePtr::DRP")    // LCOV_EXCL_LINE
+            panic!("Not a TreePtr::A")    // LCOV_EXCL_LINE
         }
     }
 
-    fn as_mem(&self) -> &Box<Node<K, V>> {
+    fn as_mem(&self) -> &Box<Node<A, K, V>> {
         if let TreePtr::Mem(mem) = self {
             mem
         } else {
@@ -199,7 +204,7 @@ impl<K: Key, V: Value> TreePtr<K, V> {
         }
     }
 
-    fn into_node(self) -> Box<Node<K, V>> {
+    fn into_node(self) -> Box<Node<A, K, V>> {
         if let TreePtr::Mem(node) = self {
             node
         } else {
@@ -213,8 +218,8 @@ impl<K: Key, V: Value> TreePtr<K, V> {
 
 // LCOV_EXCL_START  exclude test code
     #[cfg(test)]
-    fn is_drp(&self) -> bool {
-        if let TreePtr::DRP(_) = self {
+    fn is_addr(&self) -> bool {
+        if let TreePtr::Addr(_) = self {
             true
         } else {
             false
@@ -238,17 +243,17 @@ mod node_serializer {
     use serde::Deserialize;
     use tokio::executor::current_thread;
 
-    pub(super) fn deserialize<'de, D, K, V>(deserializer: D)
-        -> Result<Box<Node<K, V>>, D::Error>
-        where D: Deserializer<'de>, K: Key, V: Value
+    pub(super) fn deserialize<'de, A, DE, K, V>(deserializer: DE)
+        -> Result<Box<Node<A, K, V>>, DE::Error>
+        where A: Addr, DE: Deserializer<'de>, K: Key, V: Value
     {
         NodeData::deserialize(deserializer)
             .map(|node_data| Box::new(Node(RwLock::new(node_data))))
     }
 
-    pub(super) fn serialize<S, K, V>(node: &Node<K, V>,
+    pub(super) fn serialize<A, S, K, V>(node: &Node<A, K, V>,
                                      serializer: S) -> Result<S::Ok, S::Error>
-        where S: Serializer, K: Key, V: Value {
+        where A: Addr, S: Serializer, K: Key, V: Value {
 
         let guard = current_thread::block_on_all(node.0.read()).unwrap();
         (*guard).serialize(serializer)
@@ -332,45 +337,45 @@ impl<K: Key, V: Value> LeafData<K, V> {
 }
 
 /// Guard that holds the Node lock object for reading
-enum TreeReadGuard<K: Key, V: Value> {
-    Mem(RwLockReadGuard<NodeData<K, V>>),
-    DRP(RwLockReadGuard<NodeData<K, V>>, Box<Arc<Node<K, V>>>)
+enum TreeReadGuard<A: Addr, K: Key, V: Value> {
+    Mem(RwLockReadGuard<NodeData<A, K, V>>),
+    Addr(RwLockReadGuard<NodeData<A, K, V>>, Box<Arc<Node<A, K, V>>>)
 }
 
-impl<K: Key, V: Value> Deref for TreeReadGuard<K, V> {
-    type Target = NodeData<K, V>;
+impl<A: Addr, K: Key, V: Value> Deref for TreeReadGuard<A, K, V> {
+    type Target = NodeData<A, K, V>;
 
     fn deref(&self) -> &Self::Target {
         match self {
             TreeReadGuard::Mem(guard) => &**guard,
-            TreeReadGuard::DRP(guard, _) => &**guard,
+            TreeReadGuard::Addr(guard, _) => &**guard,
         }
     }
 }
 
 /// Guard that holds the Node lock object for writing
-enum TreeWriteGuard<K: Key, V: Value> {
-    Mem(RwLockWriteGuard<NodeData<K, V>>),
-    DRP(RwLockWriteGuard<NodeData<K, V>>, Box<Arc<Node<K, V>>>)
+enum TreeWriteGuard<A: Addr, K: Key, V: Value> {
+    Mem(RwLockWriteGuard<NodeData<A, K, V>>),
+    Addr(RwLockWriteGuard<NodeData<A, K, V>>, Box<Arc<Node<A, K, V>>>)
 }
 
-impl<K: Key, V: Value> Deref for TreeWriteGuard<K, V> {
-    type Target = NodeData<K, V>;
+impl<A: Addr, K: Key, V: Value> Deref for TreeWriteGuard<A, K, V> {
+    type Target = NodeData<A, K, V>;
 
     fn deref(&self) -> &Self::Target {
         match self {
             TreeWriteGuard::Mem(guard) => &**guard,
-            TreeWriteGuard::DRP(_, _) => unreachable!( // LCOV_EXCL_LINE
+            TreeWriteGuard::Addr(_, _) => unreachable!( // LCOV_EXCL_LINE
                 "Can only write to in-memory Nodes")
         }
     }
 }
 
-impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
+impl<A: Addr, K: Key, V: Value> DerefMut for TreeWriteGuard<A, K, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             TreeWriteGuard::Mem(guard) => &mut **guard,
-            TreeWriteGuard::DRP(_, _) => unreachable!( // LCOV_EXCL_LINE
+            TreeWriteGuard::Addr(_, _) => unreachable!( // LCOV_EXCL_LINE
                 "Can only write to in-memory Nodes")
         }
     }
@@ -378,12 +383,12 @@ impl<K: Key, V: Value> DerefMut for TreeWriteGuard<K, V> {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
-struct IntElem<K: Key + DeserializeOwned, V: Value> {
+struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
     key: K,
-    ptr: TreePtr<K, V>
+    ptr: TreePtr<A, K, V>
 }
 
-impl<'a, K: Key, V: Value> IntElem<K, V> {
+impl<'a, A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     /// Is the child node dirty?  That is, does it differ from the on-disk
     /// version?
     fn is_dirty(&mut self) -> bool {
@@ -392,12 +397,12 @@ impl<'a, K: Key, V: Value> IntElem<K, V> {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(bound(deserialize = "K: DeserializeOwned"))]
-struct IntData<K: Key, V: Value> {
-    children: Vec<IntElem<K, V>>
+#[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned"))]
+struct IntData<A: Addr, K: Key, V: Value> {
+    children: Vec<IntElem<A, K, V>>
 }
 
-impl<K: Key, V: Value> IntData<K, V> {
+impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
     /// Find index of rightmost child whose key is less than or equal to k
     fn position<Q>(&self, k: &Q) -> usize
         where K: Borrow<Q>, Q: Ord
@@ -407,7 +412,7 @@ impl<K: Key, V: Value> IntData<K, V> {
             .unwrap_or_else(|k| if k == 0 {k} else {k - 1})
     }
 
-    fn split(&mut self) -> (K, IntData<K, V>) {
+    fn split(&mut self) -> (K, IntData<A, K, V>) {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
         // one.
@@ -419,13 +424,13 @@ impl<K: Key, V: Value> IntData<K, V> {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
-enum NodeData<K: Key, V: Value> {
+enum NodeData<A: Addr, K: Key, V: Value> {
     Leaf(LeafData<K, V>),
-    Int(IntData<K, V>),
+    Int(IntData<A, K, V>),
 }
 
-impl<K: Key, V: Value> NodeData<K, V> {
-    fn as_int(&self) -> &IntData<K, V> {
+impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
+    fn as_int(&self) -> &IntData<A, K, V> {
         if let NodeData::Int(int) = self {
             int
         } else {
@@ -433,7 +438,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
         }
     }
 
-    fn as_int_mut(&mut self) -> &mut IntData<K, V> {
+    fn as_int_mut(&mut self) -> &mut IntData<A, K, V> {
         if let NodeData::Int(int) = self {
             int
         } else {
@@ -467,7 +472,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
     }
 
     /// Can this child be merged with `other` without violating constraints?
-    fn can_merge(&self, other: &NodeData<K, V>, max_fanout: usize) -> bool {
+    fn can_merge(&self, other: &NodeData<A, K, V>, max_fanout: usize) -> bool {
         self.len() + other.len() <= max_fanout
     }
 
@@ -502,7 +507,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
         len >= max_fanout
     }
 
-    fn split(&mut self) -> (K, NodeData<K, V>) {
+    fn split(&mut self) -> (K, NodeData<A, K, V>) {
         match self {
             NodeData::Leaf(leaf) => {
                 let (k, new_leaf) = leaf.split();
@@ -518,7 +523,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
 
     /// Merge all of `other`'s data into `self`.  Afterwards, `other` may be
     /// deleted.
-    fn merge(&mut self, other: &mut NodeData<K, V>) {
+    fn merge(&mut self, other: &mut NodeData<A, K, V>) {
         match self {
             NodeData::Int(int) =>
                 int.children.append(&mut other.as_int_mut().children),
@@ -528,7 +533,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
     }
 
     /// Take `other`'s highest keys and merge them into ourself
-    fn take_high_keys(&mut self, other: &mut NodeData<K, V>) {
+    fn take_high_keys(&mut self, other: &mut NodeData<A, K, V>) {
         let keys_to_share = (other.len() - self.len()) / 2;
         match self {
             NodeData::Int(int) => {
@@ -549,7 +554,7 @@ impl<K: Key, V: Value> NodeData<K, V> {
     }
 
     /// Take `other`'s lowest keys and merge them into ourself
-    fn take_low_keys(&mut self, other: &mut NodeData<K, V>) {
+    fn take_low_keys(&mut self, other: &mut NodeData<A, K, V>) {
         let keys_to_share = (other.len() - self.len()) / 2;
         match self {
             NodeData::Int(int) => {
@@ -570,10 +575,10 @@ impl<K: Key, V: Value> NodeData<K, V> {
     }
 }
 
-impl<K: Key, V: Value> Cacheable for Arc<Node<K, V>> {
+impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized {
         let db = dbs.try().unwrap();
-        let node_data: NodeData<K, V> = bincode::deserialize(&db[..]).unwrap();
+        let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
         Arc::new(Node(RwLock::new(node_data)))
     }
 
@@ -634,33 +639,33 @@ impl<K: Key, V: Value> Cacheable for Arc<Node<K, V>> {
     }
 }
 
-impl<K: Key, V: Value> CacheRef for Arc<Node<K, V>> {
+impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
     fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized {
         let db = dbs.try().unwrap();
-        let node_data: NodeData<K, V> = bincode::deserialize(&db[..]).unwrap();
+        let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
         let node = Arc::new(Node(RwLock::new(node_data)));
         Box::new(node)
     }
 }
 
 #[derive(Debug)]
-struct Node<K: Key, V: Value> (RwLock<NodeData<K, V>>);
+struct Node<A: Addr, K: Key, V: Value> (RwLock<NodeData<A, K, V>>);
 
 mod tree_root_serializer {
     use super::*;
     use serde::{Deserialize, ser::Error};
 
-    pub(super) fn deserialize<'de, D, K, V>(d: D)
-        -> Result<RwLock<IntElem<K, V>>, D::Error>
-        where D: Deserializer<'de>, K: Key, V: Value
+    pub(super) fn deserialize<'de, A, DE, K, V>(d: DE)
+        -> Result<RwLock<IntElem<A, K, V>>, DE::Error>
+        where A: Addr, DE: Deserializer<'de>, K: Key, V: Value
     {
         IntElem::deserialize(d)
             .map(|int_elem| RwLock::new(int_elem))
     }
 
-    pub(super) fn serialize<K, S, V>(x: &RwLock<IntElem<K, V>>, s: S)
+    pub(super) fn serialize<A, K, S, V>(x: &RwLock<IntElem<A, K, V>>, s: S)
         -> Result<S::Ok, S::Error>
-        where K: Key, S: Serializer, V: Value
+        where A: Addr, K: Key, S: Serializer, V: Value
     {
         match x.try_read() {
             Ok(guard) => (*guard).serialize(s),
@@ -669,9 +674,11 @@ mod tree_root_serializer {
     }
 }
 
-pub struct Range<'tree, K, T, V>
-    where K: Key + Borrow<T>,
-          T: 'tree + Ord + Clone,
+pub struct Range<'tree, A, D, K, T, V>
+    where A: Addr,
+          D: DML<Addr=A> + 'tree,
+          K: Key + Borrow<T>,
+          T: Ord + Clone + 'tree,
           V: Value
 {
     /// If Some, then there are more nodes in the Tree to query
@@ -682,16 +689,19 @@ pub struct Range<'tree, K, T, V>
     last_fut: Option<Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
                        Error=Error> + 'tree>>,
     /// Handle to the tree
-    tree: &'tree Tree<K, V>
+    tree: &'tree Tree<A, D, K, V>
 }
 
-impl<'tree, K, T, V> Range<'tree, K, T, V>
-    where K: Key + Borrow<T>,
+impl<'tree, A, D, K, T, V> Range<'tree, A, D, K, T, V>
+    where A: Addr,
+          D: DML<Addr=A>,
+          K: Key + Borrow<T>,
           T: Ord + Clone,
           V: Value
     {
 
-    fn new<R>(range: R, tree: &'tree Tree<K, V>) -> Range<'tree, K, T, V>
+    fn new<R>(range: R, tree: &'tree Tree<A, D, K, V>)
+        -> Range<'tree, A, D, K, T, V>
         where R: RangeBounds<T>
     {
         let cursor: Option<Bound<T>> = Some(match range.start_bound() {
@@ -708,8 +718,10 @@ impl<'tree, K, T, V> Range<'tree, K, T, V>
     }
 }
 
-impl<'tree, K, T, V> Stream for Range<'tree, K, T, V>
-    where K: Key + Borrow<T>,
+impl<'tree, A, D, K, T, V> Stream for Range<'tree, A, D, K, T, V>
+    where A: Addr,
+          D: DML<Addr=A>,
+          K: Key + Borrow<T>,
           T: Ord + Clone + 'static,
           V: Value
 {
@@ -749,7 +761,7 @@ impl<'tree, K, T, V> Stream for Range<'tree, K, T, V>
 #[derive(Debug)]
 #[derive(Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
-struct Inner<K: Key, V: Value> {
+struct Inner<A: Addr, K: Key, V: Value> {
     /// Tree height.  1 if the Tree consists of a single Leaf node.
     // Use atomics so it can be modified from an immutable reference.  Accesses
     // should be very rare, so performance is not a concern.
@@ -765,7 +777,7 @@ struct Inner<K: Key, V: Value> {
     _max_size: usize,
     /// Root node
     #[serde(with = "tree_root_serializer")]
-    root: RwLock<IntElem<K, V>>
+    root: RwLock<IntElem<A, K, V>>
 }
 
 /// In-memory representation of a COW B+-Tree
@@ -774,15 +786,15 @@ struct Inner<K: Key, V: Value> {
 ///
 /// *`K`:   Key type.  Must be ordered and copyable; should be compact
 /// *`V`:   Value type in the leaves.
-pub struct Tree<K: Key, V: Value> {
-    ddml: DDMLLike,
-    i: Inner<K, V>
+pub struct Tree<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
+    dml: D,
+    i: Inner<A, K, V>
 }
 
-impl<'a, K: Key, V: Value> Tree<K, V> {
+impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     #[cfg(not(test))]
-    pub fn create(ddml: DDML) -> Self {
-        Tree::new(ddml,
+    pub fn create(dml: D) -> Self {
+        Tree::new(dml,
                   4,        // BetrFS's min fanout
                   16,       // BetrFS's max fanout
                   1<<22,    // BetrFS's max size
@@ -791,9 +803,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Fix an Int node in danger of being underfull, returning the parent guard
     /// back to the caller
-    fn fix_int<Q>(&'a self, parent: TreeWriteGuard<K, V>,
-                  child_idx: usize, mut child: TreeWriteGuard<K, V>)
-        -> impl Future<Item=(TreeWriteGuard<K, V>, i8, i8), Error=Error> + 'a
+    fn fix_int<Q>(&'a self, parent: TreeWriteGuard<A, K, V>,
+                  child_idx: usize, mut child: TreeWriteGuard<A, K, V>)
+        -> impl Future<Item=(TreeWriteGuard<A, K, V>, i8, i8), Error=Error> + 'a
         where K: Borrow<Q>, Q: Ord
     {
         // Outline:
@@ -839,10 +851,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Subroutine of range_delete.  Fixes a node that is in danger of an
     /// underflow.  Returns the node guard, and two ints which are the number of
     /// nodes that were merged before and after the fixed child, respectively.
-    fn fix_if_in_danger<R, T>(&'a self, parent: TreeWriteGuard<K, V>,
-                  child_idx: usize, child: TreeWriteGuard<K, V>, range: R,
+    fn fix_if_in_danger<R, T>(&'a self, parent: TreeWriteGuard<A, K, V>,
+                  child_idx: usize, child: TreeWriteGuard<A, K, V>, range: R,
                   ubound: Option<K>)
-        -> Box<Future<Item=(TreeWriteGuard<K, V>, i8, i8), Error=Error> + 'a>
+        -> Box<Future<Item=(TreeWriteGuard<A, K, V>, i8, i8), Error=Error> + 'a>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static + Debug
@@ -878,9 +890,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     #[cfg(test)]
-    pub fn from_str(ddml: DDMLLike, s: &str) -> Self {
-        let i: Inner<K, V> = serde_yaml::from_str(s).unwrap();
-        Tree{ddml, i}
+    pub fn from_str(dml: D, s: &str) -> Self {
+        let i: Inner<A, K, V> = serde_yaml::from_str(s).unwrap();
+        Tree{dml, i}
     }
 
     /// Insert value `v` into the tree at key `k`, returning the previous value
@@ -899,9 +911,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Insert value `v` into an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn insert_int(&'a self, mut parent: TreeWriteGuard<K, V>,
+    fn insert_int(&'a self, mut parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize,
-                  mut child: TreeWriteGuard<K, V>, k: K, v: V)
+                  mut child: TreeWriteGuard<A, K, V>, k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the node, if necessary
@@ -920,7 +932,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
-    fn insert_locked(&'a self, mut root: TreeWriteGuard<K, V>, k: K, v: V)
+    fn insert_locked(&'a self, mut root: TreeWriteGuard<A, K, V>, k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
 
         // First, split the root node, if necessary
@@ -945,7 +957,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         self.insert_no_split(root, k, v)
     }
 
-    fn insert_no_split(&'a self, mut node: TreeWriteGuard<K, V>, k: K, v: V)
+    fn insert_no_split(&'a self, mut node: TreeWriteGuard<A, K, V>, k: K, v: V)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
     {
         if node.is_leaf() {
@@ -974,7 +986,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Lookup the value of key `k` in a node, which must already be locked.
-    fn get_node<Q>(&'a self, node: TreeReadGuard<K, V>, k: &'a Q)
+    fn get_node<Q>(&'a self, node: TreeReadGuard<A, K, V>, k: &'a Q)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
         where K: Borrow<Q>, Q: Ord
     {
@@ -1016,8 +1028,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Range lookup beginning in the node `guard`.  `next_guard`, if present,
     /// must be the node immediately to the right (and possibly up one or more
     /// levels) from `guard`.
-    fn get_range_node<R, T>(&'a self, guard: TreeReadGuard<K, V>,
-                            next_guard: Option<TreeReadGuard<K, V>>, range: R)
+    fn get_range_node<R, T>(&'a self, guard: TreeReadGuard<A, K, V>,
+                            next_guard: Option<TreeReadGuard<A, K, V>>, range: R)
         -> Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
                       Error=Error> + 'a>
         where K: Borrow<T>,
@@ -1058,11 +1070,11 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                     Box::new(
                         self.rlock(&int.children[child_idx + 1])
                             .map(|guard| Some(guard))
-                    ) as Box<Future<Item=Option<TreeReadGuard<K, V>>,
+                    ) as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
                                     Error=Error>>
                 } else {
                     Box::new(Ok(next_guard).into_future())
-                        as Box<Future<Item=Option<TreeReadGuard<K, V>>,
+                        as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
                                       Error=Error>>
                 };
                 let child_fut = self.rlock(&child_elem);
@@ -1079,7 +1091,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Merge the root node with its children, if necessary
-    fn merge_root(&self, root_guard: &mut TreeWriteGuard<K, V>) {
+    fn merge_root(&self, root_guard: &mut TreeWriteGuard<A, K, V>) {
         if ! root_guard.is_leaf() && root_guard.as_int().children.len() == 1
         {
             // Merge root node with its child
@@ -1097,7 +1109,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Lookup a range of (key, value) pairs for keys within the range `range`.
-    pub fn range<R, T>(&'a self, range: R) -> Range<'a, K, T, V>
+    pub fn range<R, T>(&'a self, range: R) -> Range<'a, A, D, K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T>,
               T: Ord + Clone
@@ -1150,7 +1162,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Subroutine of range_delete.  Returns the bounds, as indices, of the
     /// affected children of this node.
-    fn range_delete_get_bounds<R, T>(&self, guard: &TreeWriteGuard<K, V>,
+    fn range_delete_get_bounds<R, T>(&self, guard: &TreeWriteGuard<A, K, V>,
                                      range: &R, ubound: Option<K>)
         -> (Bound<usize>, Bound<usize>)
         where K: Borrow<T>,
@@ -1209,7 +1221,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     /// Depth-first traversal deleting keys without reshaping tree
     /// `ubound` is the first key in the Node immediately to the right of
     /// this one, unless this is the rightmost Node on its level.
-    fn range_delete_pass1<R, T>(&'a self, mut guard: TreeWriteGuard<K, V>,
+    fn range_delete_pass1<R, T>(&'a self, mut guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>)
         -> impl Future<Item=(), Error=Error> + 'a
         where K: Borrow<T>,
@@ -1228,7 +1240,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         let l = guard.as_int().children.len();
         let (start_idx_bound, end_idx_bound) = self.range_delete_get_bounds(
             &guard, &range, ubound);
-        let fut: Box<Future<Item=TreeWriteGuard<K, V>, Error=Error>>
+        let fut: Box<Future<Item=TreeWriteGuard<A, K, V>, Error=Error>>
             = match (start_idx_bound, end_idx_bound) {
             (Bound::Included(_), Bound::Excluded(_)) => {
                 // Don't recurse
@@ -1318,7 +1330,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Depth-first traversal reshaping the tree after some keys were deleted by
     /// range_delete_pass1.
-    fn range_delete_pass2<R, T>(&'a self, guard: TreeWriteGuard<K, V>,
+    fn range_delete_pass2<R, T>(&'a self, guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>)
         -> Box<Future<Item=(), Error=Error> + 'a>
         where K: Borrow<T>,
@@ -1353,7 +1365,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
             (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
             // LCOV_EXCL_STOP
         };
-        let fixit = move |parent_guard: TreeWriteGuard<K, V>, idx: usize,
+        let fixit = move |parent_guard: TreeWriteGuard<A, K, V>, idx: usize,
                           range: R|
         {
             let l = parent_guard.as_int().children.len();
@@ -1376,17 +1388,17 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                     self.range_delete_pass2(child_guard, range2, child_ubound)
                         .map(move |_| (parent_guard, merged))
                 })
-            ) as Box<Future<Item=(TreeWriteGuard<K, V>, i8), Error=Error>>
+            ) as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8), Error=Error>>
         };
         let fut = match children_to_fix.0 {
             None => Box::new(Ok((guard, 0i8)).into_future())
-                as Box<Future<Item=(TreeWriteGuard<K, V>, i8), Error=Error>>,
+                as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8), Error=Error>>,
             Some(idx) => fixit(guard, idx, range2)
         }
         .and_then(move |(parent_guard, merged)|
             match children_to_fix.1 {
                 None => Box::new(Ok((parent_guard, merged)).into_future())
-                    as Box<Future<Item=(TreeWriteGuard<K, V>, i8),
+                    as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8),
                                   Error=Error>>,
                 Some(idx) => fixit(parent_guard, idx - merged as usize, range3)
             }
@@ -1394,10 +1406,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         Box::new(fut)
     }
 
-    fn new(ddml: DDMLLike, min_fanout: usize, max_fanout: usize,
+    fn new(dml: D, min_fanout: usize, max_fanout: usize,
            max_size: usize) -> Self
     {
-        let i: Inner<K, V> = Inner {
+        let i: Inner<A, K, V> = Inner {
             height: AtomicUsize::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
@@ -1421,7 +1433,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                 }
             )
         };
-        Tree{ ddml, i }
+        Tree{ dml, i }
     }
 
     /// Remove and return the value at key `k`, if any.
@@ -1440,8 +1452,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Remove key `k` from an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn remove_int<Q>(&'a self, parent: TreeWriteGuard<K, V>,
-                  child_idx: usize, child: TreeWriteGuard<K, V>, k: &'a Q)
+    fn remove_int<Q>(&'a self, parent: TreeWriteGuard<A, K, V>,
+                  child_idx: usize, child: TreeWriteGuard<A, K, V>, k: &'a Q)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
         where K: Borrow<Q>, Q: Ord
     {
@@ -1464,7 +1476,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Helper for `remove`.  Handles removal once the tree is locked
-    fn remove_locked<Q>(&'a self, mut root: TreeWriteGuard<K, V>, k: &'a Q)
+    fn remove_locked<Q>(&'a self, mut root: TreeWriteGuard<A, K, V>, k: &'a Q)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
         where K: Borrow<Q>, Q: Ord
     {
@@ -1473,7 +1485,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
     }
 
     /// Remove key `k` from a node, but don't try to fixup the node.
-    fn remove_no_fix<Q>(&'a self, mut node: TreeWriteGuard<K, V>, k: &'a Q)
+    fn remove_no_fix<Q>(&'a self, mut node: TreeWriteGuard<A, K, V>, k: &'a Q)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
         where K: Borrow<Q>, Q: Ord
     {
@@ -1507,9 +1519,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
                     Box::new(
                         self.write_node(ptr.into_node())
-                            .and_then(move |drp| {
-                                root_guard.ptr = TreePtr::DRP(drp);
-                                self.ddml.sync_all()
+                            .and_then(move |addr| {
+                                root_guard.ptr = TreePtr::Addr(addr);
+                                self.dml.sync_all()
                             })
                     )
                 });
@@ -1520,16 +1532,16 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         })
     }
 
-    fn write_leaf(&'a self, node: Box<Node<K, V>>)
-        -> impl Future<Item=DRP, Error=Error> + 'a
+    fn write_leaf(&'a self, node: Box<Node<A, K, V>>)
+        -> impl Future<Item=A, Error=Error> + 'a
     {
-        let arc: Arc<Node<K, V>> = Arc::new(*node);
-        let (drp, fut) = self.ddml.put(arc, Compression::None);
-        fut.map(move |_| drp)
+        let arc: Arc<Node<A, K, V>> = Arc::new(*node);
+        let (addr, fut) = self.dml.put(arc, Compression::None);
+        fut.map(move |_| addr)
     }
 
-    fn write_node(&'a self, mut node: Box<Node<K, V>>)
-        -> Box<Future<Item=DRP, Error=Error> + 'a>
+    fn write_node(&'a self, mut node: Box<Node<A, K, V>>)
+        -> Box<Future<Item=D::Addr, Error=Error> + 'a>
     {
         if node.0.get_mut().unwrap().is_leaf() {
             return Box::new(self.write_leaf(node));
@@ -1565,10 +1577,10 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                                                        .children[idx].ptr,
                                            TreePtr::None);
                     self.write_node(ptr.into_node())
-                        .map(move |drp| {
+                        .map(move |addr| {
                             rndata3.borrow_mut()
                                    .as_int_mut()
-                                   .children[idx].ptr = TreePtr::DRP(drp);
+                                   .children[idx].ptr = TreePtr::Addr(addr);
                         })
                 });
                 Some(fut)
@@ -1580,23 +1592,23 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
         Box::new(
             future::join_all(children_fut)
             .and_then(move |_| {
-                let arc: Arc<Node<K, V>> = Arc::new(*node);
-                let (drp, fut) = self.ddml.put(arc, Compression::None);
-                fut.map(move |_| drp)
+                let arc: Arc<Node<A, K, V>> = Arc::new(*node);
+                let (addr, fut) = self.dml.put(arc, Compression::None);
+                fut.map(move |_| addr)
             })
         )
     }
 
     /// Lock the Tree for reading
-    fn read(&'a self) -> impl Future<Item=RwLockReadGuard<IntElem<K, V>>,
+    fn read(&'a self) -> impl Future<Item=RwLockReadGuard<IntElem<A, K, V>>,
                                      Error=Error> + 'a
     {
         self.i.root.read().map_err(|_| Error::Sys(errno::Errno::EPIPE))
     }
 
     /// Lock the provided `IntElem` nonexclusively
-    fn rlock(&'a self, elem: &IntElem<K, V>)
-        -> Box<Future<Item=TreeReadGuard<K, V>, Error=Error> + 'a>
+    fn rlock(&'a self, elem: &IntElem<A, K, V>)
+        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
     {
         match elem.ptr {
             TreePtr::Mem(ref node) => {
@@ -1606,25 +1618,25 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                         .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                 )
             },
-            TreePtr::DRP(ref drp) => {
+            TreePtr::Addr(ref addr) => {
                 Box::new(
-                    self.ddml.get::<Arc<Node<K, V>>>(drp).and_then(|node| {
+                    self.dml.get::<Arc<Node<A, K, V>>>(addr).and_then(|node| {
                         node.0.read()
                             .map(move |guard| {
-                                TreeReadGuard::DRP(guard, node)
+                                TreeReadGuard::Addr(guard, node)
                             })
                             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                     })
                 )
             },
-            _ => {
-                unimplemented!()
-            }
+            // LCOV_EXCL_START
+            TreePtr::None => unreachable!("None is just a temporary value")
+            // LCOV_EXCL_STOP
         }
     }
 
     /// Lock the Tree for writing
-    fn write(&'a self) -> impl Future<Item=RwLockWriteGuard<IntElem<K, V>>,
+    fn write(&'a self) -> impl Future<Item=RwLockWriteGuard<IntElem<A, K, V>>,
                                       Error=Error> + 'a
     {
         self.i.root.write().map_err(|_| Error::Sys(errno::Errno::EPIPE))
@@ -1632,9 +1644,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Lock the indicated `IntElem` exclusively.  If it is not already resident
     /// in memory, then COW the target node.
-    fn xlock(&'a self, mut guard: TreeWriteGuard<K, V>, child_idx: usize)
-        -> (Box<Future<Item=(TreeWriteGuard<K, V>,
-                             TreeWriteGuard<K, V>), Error=Error> + 'a>)
+    fn xlock(&'a self, mut guard: TreeWriteGuard<A, K, V>, child_idx: usize)
+        -> (Box<Future<Item=(TreeWriteGuard<A, K, V>,
+                             TreeWriteGuard<A, K, V>), Error=Error> + 'a>)
     {
         if guard.as_int().children[child_idx].ptr.is_mem() {
             Box::new(
@@ -1644,12 +1656,12 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                      })
             )
         } else {
-            let drp = *guard.as_int()
-                            .children[child_idx]
-                            .ptr
-                            .as_drp();
+            let addr = *guard.as_int()
+                             .children[child_idx]
+                             .ptr
+                             .as_addr();
                 Box::new(
-                    self.ddml.pop::<Arc<Node<K, V>>>(&drp).map(move |arc| {
+                    self.dml.pop::<Arc<Node<A, K, V>>>(&addr).map(move |arc| {
                         let child_node = Box::new(Arc::try_unwrap(*arc)
                             .expect("We should be the Node's only owner"));
                         let child_guard = {
@@ -1669,8 +1681,8 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Lock the indicated `IntElem` exclusively, if it is known to be already
     /// dirty.
-    fn xlock_dirty(&'a self, elem: &IntElem<K, V>)
-        -> (Box<Future<Item=TreeWriteGuard<K, V>, Error=Error> + 'a>)
+    fn xlock_dirty(&'a self, elem: &IntElem<A, K, V>)
+        -> (Box<Future<Item=TreeWriteGuard<A, K, V>, Error=Error> + 'a>)
     {
         debug_assert!(elem.ptr.is_mem(),
             "Must use Tree::xlock for non-dirty nodes");
@@ -1684,9 +1696,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
     /// memory, then COW it.
-    fn xlock_root(&'a self, mut guard: RwLockWriteGuard<IntElem<K, V>>)
-        -> (Box<Future<Item=(RwLockWriteGuard<IntElem<K, V>>,
-                             TreeWriteGuard<K, V>), Error=Error> + 'a>)
+    fn xlock_root(&'a self, mut guard: RwLockWriteGuard<IntElem<A, K, V>>)
+        -> (Box<Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
+                             TreeWriteGuard<A, K, V>), Error=Error> + 'a>)
     {
         if guard.ptr.is_mem() {
             Box::new(
@@ -1696,9 +1708,9 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
                      }).map_err(|_| Error::Sys(errno::Errno::EPIPE))
             )
         } else {
-            let drp = *guard.ptr.as_drp();
+            let addr = *guard.ptr.as_addr();
             Box::new(
-                self.ddml.pop::<Arc<Node<K, V>>>(&drp).map(move |arc| {
+                self.dml.pop::<Arc<Node<A, K, V>>>(&addr).map(move |arc| {
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
                     guard.ptr = TreePtr::Mem(child_node);
@@ -1713,7 +1725,7 @@ impl<'a, K: Key, V: Value> Tree<K, V> {
 }
 
 #[cfg(test)]
-impl<K: Key, V: Value> Display for Tree<K, V> {
+impl<A: Addr, D: DML<Addr=A>, K: Key, V: Value> Display for Tree<A, D, K, V> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.write_str(&serde_yaml::to_string(&self.i).unwrap())
     }
@@ -1734,7 +1746,7 @@ fn deserialize_int() {
         1u8, 0, 0, 0, // enum variant 0 for IntNode
         2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
            0, 0, 0, 0,              // K=0
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
            0, 0, 0, 0,              // enum variant 0 for Compression::None
@@ -1742,7 +1754,7 @@ fn deserialize_int() {
            0x40, 0x9c, 0, 0,         // csize=40000
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
            0, 1, 0, 0,              // K=256
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
            1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
@@ -1754,14 +1766,14 @@ fn deserialize_int() {
                         0xdeadbeef);
     let drp1 = DRP::new(PBA::new(0, 256), Compression::ZstdL9NoShuffle,
                         16000, 8000, 0x1a7ebabe);
-    let node: Arc<Node<u32, u32>> = Cacheable::deserialize(serialized);
+    let node: Arc<Node<DRP, u32, u32>> = Cacheable::deserialize(serialized);
     let guard = node.0.try_read().unwrap();
     let int_data = guard.deref().as_int();
     assert_eq!(int_data.children.len(), 2);
     assert_eq!(int_data.children[0].key, 0);
-    assert_eq!(*int_data.children[0].ptr.as_drp(), drp0);
+    assert_eq!(*int_data.children[0].ptr.as_addr(), drp0);
     assert_eq!(int_data.children[1].key, 256);
-    assert_eq!(*int_data.children[1].ptr.as_drp(), drp1);
+    assert_eq!(*int_data.children[1].ptr.as_addr(), drp1);
 }
 
 #[test]
@@ -1773,7 +1785,7 @@ fn deserialize_leaf() {
             1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
             99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
         ]);
-    let node: Arc<Node<u32, u32>> = Cacheable::deserialize(serialized);
+    let node: Arc<Node<DRP, u32, u32>> = Cacheable::deserialize(serialized);
     let guard = node.0.try_read().unwrap();
     let leaf_data = guard.deref().as_leaf();
     assert_eq!(leaf_data.items.len(), 3);
@@ -1787,7 +1799,7 @@ fn serialize_int() {
     let expected = vec![1u8, 0, 0, 0, // enum variant 0 for IntNode
         2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
            0, 0, 0, 0,              // K=0
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
            0, 0, 0, 0,              // enum variant 0 for Compression::None
@@ -1795,7 +1807,7 @@ fn serialize_int() {
            0x40, 0x9c, 0, 0,         // csize=40000
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
            0, 1, 0, 0,              // K=256
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::DRP
+           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
            1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
@@ -1808,11 +1820,11 @@ fn serialize_int() {
     let drp1 = DRP::new(PBA::new(0, 256), Compression::ZstdL9NoShuffle,
                         16000, 8000, 0x1a7ebabe);
     let children = vec![
-        IntElem{key: 0u32, ptr: TreePtr::DRP(drp0)},
-        IntElem{key: 256u32, ptr: TreePtr::DRP(drp1)},
+        IntElem{key: 0u32, ptr: TreePtr::Addr(drp0)},
+        IntElem{key: 256u32, ptr: TreePtr::Addr(drp1)},
     ];
     let node_data = NodeData::Int(IntData{children});
-    let node: Node<u32, u32> = Node(RwLock::new(node_data));
+    let node: Node<DRP, u32, u32> = Node(RwLock::new(node_data));
     let (db, _dbs) = Arc::new(node).serialize();
     assert_eq!(&expected[..], &db[..]);
     drop(db);
@@ -1830,7 +1842,8 @@ fn serialize_leaf() {
     items.insert(0, 100);
     items.insert(1, 200);
     items.insert(99, 50_000);
-    let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node: Arc<Node<DRP, u32, u32>> =
+        Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     let (db, _dbs) = node.serialize();
     assert_eq!(&expected[..], &db[..]);
     drop(db);
@@ -1849,7 +1862,7 @@ use tokio::executor::current_thread;
 #[test]
 fn insert() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.insert(0, 0.0));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
@@ -2343,7 +2356,7 @@ root:
 #[test]
 fn get() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(future::lazy(|| {
         tree.insert(0, 0.0)
             .and_then(|_| tree.get(&0))
@@ -2354,7 +2367,7 @@ fn get() {
 #[test]
 fn get_deep() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -2388,7 +2401,7 @@ root:
 #[test]
 fn get_nonexistent() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.get(&0));
     assert_eq!(r, Ok(None))
 }
@@ -2406,7 +2419,7 @@ fn get_nonexistent() {
 #[test]
 fn range_delete() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -2531,7 +2544,7 @@ root:
 #[test]
 fn range_delete_danger() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -2680,7 +2693,7 @@ root:
 #[test]
 fn range_delete_exc_exc() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -2774,7 +2787,7 @@ root:
 #[test]
 fn range_delete_exc_inc() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -2867,7 +2880,7 @@ root:
 #[test]
 fn range_delete_single_node() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -2955,7 +2968,7 @@ root:
 #[test]
 fn range_delete_to_end() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -3029,7 +3042,7 @@ root:
 #[test]
 fn range_delete_to_end_of_int_node() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -3198,7 +3211,7 @@ root:
 #[test]
 fn range_delete_whole_nodes() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -3317,7 +3330,7 @@ root:
 #[test]
 fn range_exclusive_start() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -3418,7 +3431,7 @@ root:
 #[test]
 fn range_nonexistent_between_two_leaves() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -3455,7 +3468,7 @@ root:
 #[test]
 fn range_two_ints() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -3502,7 +3515,7 @@ root:
 #[test]
 fn range_starts_between_two_leaves() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -3539,7 +3552,7 @@ root:
 #[test]
 fn range_two_leaves() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -3576,7 +3589,7 @@ root:
 #[test]
 fn remove_last_key() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -3609,7 +3622,7 @@ root:
 #[test]
 fn remove_from_leaf() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -3646,7 +3659,7 @@ root:
 #[test]
 fn remove_and_merge_down() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -3688,7 +3701,7 @@ root:
 #[test]
 fn remove_and_merge_int_left() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -3857,7 +3870,7 @@ root:
 #[test]
 fn remove_and_merge_int_right() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -4012,7 +4025,7 @@ root:
 #[test]
 fn remove_and_merge_leaf_left() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -4080,7 +4093,7 @@ root:
 #[test]
 fn remove_and_merge_leaf_right() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -4150,7 +4163,7 @@ root:
 #[test]
 fn remove_and_steal_int_left() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -4338,7 +4351,7 @@ root:
 #[test]
 fn remove_and_steal_int_right() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -4526,7 +4539,7 @@ root:
 #[test]
 fn remove_and_steal_leaf_left() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -4605,7 +4618,7 @@ root:
 #[test]
 fn remove_and_steal_leaf_right() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -4684,7 +4697,7 @@ root:
 #[test]
 fn remove_nonexistent() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.remove(&3));
     assert_eq!(r, Ok(None));
 }
@@ -4708,7 +4721,7 @@ fn insert_below_root() {
     let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    ddml.expect_pop::<Arc<Node<u32, u32>>>()
+    ddml.expect_pop::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
@@ -4716,9 +4729,9 @@ fn insert_below_root() {
             // expectation, so we must hack it with RefCell<Option<T>>
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
-    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -4732,7 +4745,7 @@ root:
         children:
           - key: 0
             ptr:
-              DRP:
+              Addr:
                 pba:
                   cluster: 0
                   lba: 0
@@ -4742,7 +4755,7 @@ root:
                 checksum: 0
           - key: 256
             ptr:
-              DRP:
+              Addr:
                 pba:
                   cluster: 0
                   lba: 256
@@ -4774,7 +4787,7 @@ root:
                     0: 0
           - key: 256
             ptr:
-              DRP:
+              Addr:
                 pba:
                   cluster: 0
                   lba: 256
@@ -4792,7 +4805,7 @@ fn insert_root() {
     let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    ddml.expect_pop::<Arc<Node<u32, u32>>>()
+    ddml.expect_pop::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
@@ -4800,9 +4813,9 @@ fn insert_root() {
             // expectation, so we must hack it with RefCell<Option<T>>
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
-    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -4811,7 +4824,7 @@ _max_size: 4194304
 root:
   key: 0
   ptr:
-    DRP:
+    Addr:
       pba:
         cluster: 0
         lba: 0
@@ -4851,9 +4864,9 @@ fn range_leaf() {
         }
 
         pub fn expect_poll(&mut self)
-            -> Method<(), Poll<Box<Arc<Node<u32, f32>>>, Error>>
+            -> Method<(), Poll<Box<Arc<Node<DRP, u32, f32>>>, Error>>
         {
-            self.e.expect::<(), Poll<Box<Arc<Node<u32, f32>>>, Error>>("poll")
+            self.e.expect::<(), Poll<Box<Arc<Node<DRP, u32, f32>>>, Error>>("poll")
         }
 
         pub fn then(&mut self) -> &mut Self {
@@ -4863,12 +4876,12 @@ fn range_leaf() {
     }
 
     impl Future for FutureMock {
-        type Item = Box<Arc<Node<u32, f32>>>;
+        type Item = Box<Arc<Node<DRP, u32, f32>>>;
         type Error = Error;
 
         fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
             self.e.was_called_returning::<(),
-                Poll<Box<Arc<Node<u32, f32>>>, Error>>("poll", ())
+                Poll<Box<Arc<Node<DRP, u32, f32>>>, Error>>("poll", ())
         }
     }
 
@@ -4880,7 +4893,7 @@ fn range_leaf() {
     items.insert(3, 3.0);
     items.insert(4, 4.0);
     let node1 = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
-    ddml.expect_get::<Arc<Node<u32, f32>>>()
+    ddml.expect_get::<Arc<Node<DRP, u32, f32>>>()
         .called_once()
         .returning(move |_| {
             let mut fut = FutureMock::new();
@@ -4902,7 +4915,7 @@ fn range_leaf() {
                 });
             Box::new(fut)
         });
-    let tree: Tree<u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -4911,7 +4924,7 @@ _max_size: 4194304
 root:
   key: 0
   ptr:
-    DRP:
+    Addr:
       pba:
         cluster: 0
         lba: 0
@@ -4934,13 +4947,13 @@ fn read_int() {
     let drp0 = DRP::random(Compression::None, 40000);
     let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 16000);
     let children = vec![
-        IntElem{key: 0u32, ptr: TreePtr::DRP(drp0)},
-        IntElem{key: 256u32, ptr: TreePtr::DRP(drp1)},
+        IntElem{key: 0u32, ptr: TreePtr::Addr(drp0)},
+        IntElem{key: 256u32, ptr: TreePtr::Addr(drp1)},
     ];
     let node = Arc::new(Node(RwLock::new(NodeData::Int(IntData{children}))));
     let drpl = DRP::new(PBA{cluster: 1, lba: 2}, Compression::None, 36, 36, 0);
     let mut ddml = DDMLMock::new();
-    ddml.expect_get::<Arc<Node<u32, u32>>>()
+    ddml.expect_get::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
@@ -4948,9 +4961,9 @@ fn read_int() {
             // expectation, so we must clone db here.
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node.clone());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
-    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -4959,7 +4972,7 @@ _max_size: 4194304
 root:
   key: 0
   ptr:
-    DRP:
+    Addr:
       pba:
         cluster: 1
         lba: 2
@@ -4992,16 +5005,16 @@ fn read_leaf() {
     items.insert(1, 200);
     items.insert(99, 50_000);
     let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
-    ddml.expect_get::<Arc<Node<u32, u32>>>()
+    ddml.expect_get::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must clone db here.
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node.clone());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
-    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -5010,7 +5023,7 @@ _max_size: 4194304
 root:
   key: 0
   ptr:
-    DRP:
+    Addr:
       pba:
         cluster: 0
         lba: 0
@@ -5028,7 +5041,7 @@ root:
 #[test]
 fn write_clean() {
     let ddml = DDMLMock::new();
-    let tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -5037,7 +5050,7 @@ _max_size: 4194304
 root:
   key: 0
   ptr:
-    DRP:
+    Addr:
       pba:
         cluster: 0
         lba: 0
@@ -5056,30 +5069,30 @@ root:
 fn write_deep() {
     let mut ddml = DDMLMock::new();
     let drp = DRP::random(Compression::None, 1000);
-    ddml.expect_put::<Arc<Node<u32, u32>>>()
+    ddml.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
+        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
             let leaf_data = node_data.as_leaf();
             leaf_data.items[&0] == 100 &&
             leaf_data.items[&1] == 200
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    ddml.then().expect_put::<Arc<Node<u32, u32>>>()
+    ddml.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
+        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
-            int_data.children[0].ptr.is_drp() &&
+            int_data.children[0].ptr.is_addr() &&
             int_data.children[1].key == 256 &&
-            int_data.children[1].ptr.is_drp()
+            int_data.children[1].ptr.is_addr()
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
     ddml.expect_sync_all()
         .called_once()
         .returning(|_| Box::new(future::ok::<(), Error>(())));
-    let mut tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+    let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -5100,7 +5113,7 @@ root:
                     1: 200
           - key: 256
             ptr:
-              DRP:
+              Addr:
                 pba:
                   cluster: 0
                   lba: 256
@@ -5112,16 +5125,16 @@ root:
 
     let r = current_thread::block_on_all(tree.sync_all());
     assert!(r.is_ok());
-    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp(), drp);
+    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
 
 #[test]
 fn write_int() {
     let mut ddml = DDMLMock::new();
     let drp = DRP::random(Compression::None, 1000);
-    ddml.expect_put::<Arc<Node<u32, u32>>>()
+    ddml.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
+        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
@@ -5133,7 +5146,7 @@ fn write_int() {
     ddml.expect_sync_all()
         .called_once()
         .returning(|_| Box::new(future::ok::<(), Error>(())));
-    let mut tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+    let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -5147,7 +5160,7 @@ root:
         children:
           - key: 0
             ptr:
-              DRP:
+              Addr:
                 pba:
                   cluster: 0
                   lba: 0
@@ -5157,7 +5170,7 @@ root:
                 checksum: 0xdeadbeef
           - key: 256
             ptr:
-              DRP:
+              Addr:
                 pba:
                   cluster: 0
                   lba: 256
@@ -5169,16 +5182,16 @@ root:
 
     let r = current_thread::block_on_all(tree.sync_all());
     assert!(r.is_ok());
-    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp(), drp);
+    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
 
 #[test]
 fn write_leaf() {
     let mut ddml = DDMLMock::new();
     let drp = DRP::random(Compression::None, 1000);
-    ddml.expect_put::<Arc<Node<u32, u32>>>()
+    ddml.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Arc<Node<u32, u32>>, _)| {
+        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
             let leaf_data = node_data.as_leaf();
             leaf_data.items[&0] == 100 &&
@@ -5187,7 +5200,7 @@ fn write_leaf() {
     ddml.expect_sync_all()
         .called_once()
         .returning(|_| Box::new(future::ok::<(), Error>(())));
-    let mut tree: Tree<u32, u32> = Tree::from_str(ddml, r#"
+    let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -5205,7 +5218,7 @@ root:
 
     let r = current_thread::block_on_all(tree.sync_all());
     assert!(r.is_ok());
-    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_drp(), drp);
+    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
 
 }

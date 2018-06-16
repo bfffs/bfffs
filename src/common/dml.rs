@@ -2,9 +2,10 @@
 
 use blosc;
 use common::*;
-use common::cache::{Cacheable, CacheRef};
 use futures::Future;
 use nix::Error;
+
+pub use common::cache::{Cacheable, CacheRef};
 
 /// Compression mode in use
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -59,25 +60,25 @@ impl Default for Compression {
 /// A DML handles reading and writing records with cacheing.  It also handles
 /// compression and checksumming.
 pub trait DML {
-    type Key;
+    type Addr;
 
     /// Delete the record from the cache, and free its storage space.
-    fn delete(&self, drp: &Self::Key);
+    fn delete(&self, drp: &Self::Addr);
 
     /// If the given record is present in the cache, evict it.
-    fn evict(&self, drp: &Self::Key);
+    fn evict(&self, drp: &Self::Addr);
 
     /// Read a record and return a shared reference
-    fn get<'a, T: CacheRef>(&'a self, drp: &Self::Key)
+    fn get<'a, T: CacheRef>(&'a self, drp: &Self::Addr)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
 
     /// Read a record and return ownership of it.
-    fn pop<'a, T: Cacheable>(&'a self, drp: &Self::Key)
+    fn pop<'a, T: Cacheable>(&'a self, drp: &Self::Addr)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression)
-        -> (Self::Key, Box<Future<Item=(), Error=Error> + 'a>);
+        -> (Self::Addr, Box<Future<Item=(), Error=Error> + 'a>);
 
     /// Sync all records written so far to stable storage.
     fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a>;

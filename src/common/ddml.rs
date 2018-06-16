@@ -14,7 +14,6 @@ use std::{hash::Hasher, sync::Mutex};
 #[cfg(test)] use simulacrum::*;
 #[cfg(test)] use uuid::Uuid;
 
-pub use common::cache::{Cacheable, CacheRef};
 pub use common::dml::{Compression, DML};
 
 // LCOV_EXCL_START
@@ -208,7 +207,7 @@ impl<'a> DDML {
 }
 
 impl DML for DDML {
-    type Key = DRP;
+    type Addr = DRP;
 
     fn delete(&self, drp: &DRP) {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
