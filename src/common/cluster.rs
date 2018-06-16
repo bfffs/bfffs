@@ -2,7 +2,7 @@
 
 use common::{*, label::*, vdev::{Vdev, VdevFut}};
 #[cfg(not(test))] use common::vdev_raid::*;
-use futures::{Future, future};
+use futures::{Future, IntoFuture, future};
 use nix::{Error, errno};
 use std::{
     cell::RefCell,
@@ -96,6 +96,16 @@ struct FreeSpaceMap {
 }
 
 impl FreeSpaceMap {
+    /// How many blocks are available to be immediately written?
+    fn available(&self, zone_id: ZoneT) -> LbaT {
+        if let Some(oz) = self.open_zones.get(&zone_id) {
+            let z = &self.zones[zone_id as usize];
+            (z.total_blocks - oz.allocated_blocks) as LbaT
+        } else {
+            0
+        }
+    }
+
     /// Return Zone `zone_id` to an Empty state
     fn erase_zone(&mut self, zone_id: ZoneT) {
         let zone_idx = zone_id as usize;
@@ -134,8 +144,10 @@ impl FreeSpaceMap {
 
     /// Mark the Zone as closed
     fn finish_zone(&mut self, zone_id: ZoneT) {
+        let available = self.available(zone_id) as u32;
         assert!(self.open_zones.remove(&zone_id).is_some(),
             "Can't finish a Zone that isn't open");
+        self.zones[zone_id as usize].freed_blocks += available;
     }
 
     fn free(&mut self, zone_id: ZoneT, length: LbaT) {
@@ -153,6 +165,26 @@ impl FreeSpaceMap {
             assert!(oz.allocated_blocks >= zone.freed_blocks,
                     "Double free detected in an open zone");
         }
+    }
+
+    /// How many blocks are currently allocated and not freed from this zone?
+    fn in_use(&self, zone_id: ZoneT) -> LbaT {
+        if self.is_empty(zone_id) {
+            0
+        } else if let Some(oz) = self.open_zones.get(&zone_id) {
+            let z = &self.zones[zone_id as usize];
+            (oz.allocated_blocks - z.freed_blocks) as LbaT
+        } else /* zone is closed */ {
+            let z = &self.zones[zone_id as usize];
+            (z.total_blocks - z.freed_blocks) as LbaT
+        }
+    }
+
+    /// Is the Zone with the given id closed?
+    fn is_closed(&self, zone_id: ZoneT) -> bool {
+        zone_id < self.zones.len() as ZoneT &&
+            ! self.empty_zones.contains(&zone_id) &&
+            ! self.open_zones.contains_key(&zone_id)
     }
 
     /// Is the Zone with the given id empty?
@@ -240,7 +272,7 @@ impl FreeSpaceMap {
                 }
             }
             if freed > 0 {
-                fsm.free(zid, freed.into());
+                fsm.zones[zid as usize].freed_blocks = freed;
             }
         }
         fsm
@@ -280,7 +312,9 @@ impl FreeSpaceMap {
     ///
     /// The Zone and LBA where the allocation happened, and a vector of Zone IDs
     /// of Zones which has too little space.
-    fn try_allocate(&mut self, space: LbaT) -> (Option<(ZoneT, LbaT)>, Vec<ZoneT>) {
+    fn try_allocate(&mut self, space: LbaT)
+        -> (Option<(ZoneT, LbaT)>, Vec<ZoneT>)
+    {
         let zones = &self.zones;
         let mut nearly_full_zones = Vec::with_capacity(1);
         let result = self.open_zones.iter_mut().find(|&(zone_id, ref oz)| {
@@ -382,22 +416,21 @@ impl<'a> Cluster {
     }
 
     /// Delete the underlying storage for a Zone.
-    pub fn erase_zone(&self, zone: ZoneT)
+    fn erase_zone(&self, zone: ZoneT)
         -> impl Future<Item=(), Error=Error>
     {
         self.fsm.borrow_mut().erase_zone(zone);
         self.vdev.erase_zone(zone)
     }
 
-    /// Mark `length` LBAs beginning at LBA `lba` as unused, but do not delete
+    /// Mark `length` LBAs beginning at LBA `lba` as unused, and possibly delete
     /// them from the underlying storage.
     ///
     /// Deleting data in increments other than it was written is unsupported.
     /// In particular, it is not allowed to delete across zone boundaries.
-    // Before deleting the underlying storage, ArkFS should double-check that
-    // nothing is using it.  That requires using the AllocationTable, which is
-    // above the layer of the Cluster.
-    pub fn free(&self, lba: LbaT, length: LbaT) {
+    pub fn free(&self, lba: LbaT, length: LbaT)
+        -> Box<Future<Item=(), Error=Error>>
+    {
         let start_zone = self.vdev.lba2zone(lba).expect(
             "Can't free from inter-zone padding");
         #[cfg(test)]
@@ -407,7 +440,15 @@ impl<'a> Cluster {
             assert_eq!(start_zone, end_zone,
                 "Can't free across multiple zones");
         }
-        self.fsm.borrow_mut().free(start_zone, length);
+        let mut fsm = self.fsm.borrow_mut();
+        fsm.free(start_zone, length);
+        // Erase the zone if it is fully freed
+        if fsm.is_closed(start_zone) && fsm.in_use(start_zone) == 0 {
+            drop(fsm);
+            Box::new(self.erase_zone(start_zone))
+        } else {
+            Box::new(Ok(()).into_future())
+        }
     }
 
     /// Construct a new `Cluster` from an already constructed
@@ -580,7 +621,7 @@ mod cluster {
     }
 
     #[test]
-    fn erase_zone() {
+    fn free_and_erase_full_zone() {
         let s = Scenario::new();
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.lba2zone_call(1).and_return_clone(Some(0)).times(..));
@@ -614,37 +655,98 @@ mod cluster {
                 fut2
             }).map(move|_| lba)
                 .and_then(|lba| {
-                cluster.free(lba, 1);
-                cluster.erase_zone(0)
+                cluster.free(lba, 1)
             })
         })).unwrap();
     }
 
     #[test]
-    #[should_panic(expected = "Can't erase an open zone")]
-    fn erase_zone_open() {
+    fn free_and_erase_nonfull_zone() {
         let s = Scenario::new();
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.lba2zone_call(1).and_return_clone(Some(0)).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
+        s.expect(vr.zone_limits_call(0).and_return_clone((1, 3)).times(..));
+        s.expect(vr.zone_limits_call(1).and_return_clone((3, 200)).times(..));
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(matchers::ANY, 0, matchers::ANY)
             .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.finish_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.open_zone_call(1)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(matchers::ANY, 1, matchers::ANY)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.erase_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
+
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new(fsm, Box::new(vr));
 
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![0u8; 8192]);
+        let db0 = dbs0.try().unwrap();
+        let db1 = dbs1.try().unwrap();
         current_thread::block_on_all(future::lazy(|| {
-            let (lba, fut) = cluster.write(db0).expect("write failed early");
-            fut.map(move |_| lba)
+            let (lba, fut1) = cluster.write(db0).expect("write failed early");
+            // Write a larger buffer so the first zone will get closed
+            fut1.and_then(|_| {
+                let (_, fut2) = cluster.write(db1).expect("write failed early");
+                fut2
+            }).map(move|_| lba)
                 .and_then(|lba| {
-                cluster.free(lba, 1);
-                cluster.erase_zone(0)
+                cluster.free(lba, 1)
+            })
+        })).unwrap();
+    }
+
+    #[test]
+    fn free_and_dont_erase_zone() {
+        let s = Scenario::new();
+        let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.lba2zone_call(1).and_return_clone(Some(0)).times(..));
+        s.expect(vr.zone_limits_call(0).and_return_clone((1, 3)).times(..));
+        s.expect(vr.zone_limits_call(1).and_return_clone((3, 200)).times(..));
+        s.expect(vr.zones_call().and_return_clone(32768).times(..));
+        s.expect(vr.open_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+
+        // .times can't be used with and_call
+        // https://github.com/kriomant/mockers/issues/32
+        s.expect(vr.write_at_call(matchers::ANY, 0, 1)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(matchers::ANY, 0, 2)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+
+        s.expect(vr.finish_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.open_zone_call(1)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(matchers::ANY, 1, matchers::ANY)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
+
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![0u8; 8192]);
+        let db0 = dbs0.try().unwrap();
+        let db1 = dbs0.try().unwrap();
+        let db2 = dbs1.try().unwrap();
+        current_thread::block_on_all(future::lazy(|| {
+            let (lba, fut1) = cluster.write(db0).expect("write failed early");
+            fut1.and_then(|_| {
+                let (_, fut2) = cluster.write(db1).expect("write failed early");
+                fut2
+            })
+            // Write a larger buffer so the first zone will get closed
+            .and_then(|_| {
+                let (_, fut3) = cluster.write(db2).expect("write failed early");
+                fut3
+            }).map(move|_| lba)
+                .and_then(|lba| {
+                cluster.free(lba, 1)
             })
         })).unwrap();
     }
@@ -905,10 +1007,11 @@ mod free_space_map {
     fn erase_last_zone() {
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(0, 0, 1000, 0).unwrap();
-        fsm.open_zone(1, 1000, 2000, 0).unwrap();
+        fsm.open_zone(1, 1000, 2000, 1).unwrap();
         fsm.finish_zone(1);
         fsm.erase_zone(1);
         assert!(!fsm.is_empty(0));
+        assert_eq!(fsm.in_use(1), 0);
         assert_eq!(fsm.zones.len(), 1);
     }
 
@@ -996,7 +1099,7 @@ mod free_space_map {
     #[should_panic(expected = "Double free")]
     fn free_double_free_from_closed_zone() {
         let zid: ZoneT = 0;
-        let space: LbaT = 1000;
+        let space: LbaT = 10;
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(zid, 0, 1000, space).unwrap();
         fsm.finish_zone(zid);
@@ -1018,11 +1121,13 @@ mod free_space_map {
     #[test]
     fn free_from_closed_zone() {
         let zid: ZoneT = 0;
-        let space: LbaT = 17;
+        let space: LbaT = 1000;
+        let used: LbaT = 17;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, space).unwrap();
+        fsm.open_zone(zid, 0, 1000, used).unwrap();
         fsm.finish_zone(zid);
-        fsm.free(zid, space);
+        assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space - used);
+        fsm.free(zid, used);
         assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space);
     }
 
@@ -1161,7 +1266,7 @@ mod free_space_map {
         assert_eq!(label.allocated_blocks[1], 0);
         assert_eq!(label.allocated_blocks[2], 77);
         assert_eq!(label.allocated_blocks[3], 0);
-        assert_eq!(label.freed_blocks[0], 22);
+        assert_eq!(label.freed_blocks[0], 26);
         assert_eq!(label.freed_blocks[1], 0);
         assert_eq!(label.freed_blocks[2], 33);
         assert_eq!(label.freed_blocks[3], 0);
@@ -1175,7 +1280,9 @@ mod free_space_map {
         let (res, full_zones) = fsm.try_allocate(64);
         assert_eq!(res, Some((zid, 0)));
         assert!(full_zones.is_empty());
+        println!("{:?} {:?}", fsm.zones, fsm.open_zones);
         assert_eq!(fsm.open_zones[&zid].write_pointer(), 64);
+        assert_eq!(fsm.in_use(zid), 64);
     }
 
     #[test]

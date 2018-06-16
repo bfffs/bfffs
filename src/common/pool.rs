@@ -18,8 +18,8 @@ pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 /// than in the non-test version.  This is because mockers doesn't work with
 /// parameterized traits.
 pub trait ClusterTrait {
-    fn erase_zone(&mut self, zone: ZoneT) -> Box<PoolFut<'static>>;
-    fn free(&self, lba: LbaT, length: LbaT);
+    fn free(&self, lba: LbaT, length: LbaT)
+        -> Box<Future<Item=(), Error=Error>>;
     fn optimum_queue_depth(&self) -> u32;
     fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
     fn size(&self) -> LbaT;
@@ -151,7 +151,9 @@ impl<'a> Pool {
     // Before deleting the underlying storage, ArkFS should double-check that
     // nothing is using it.  That requires using the AllocationTable, which is
     // above the layer of the Pool.
-    pub fn free(&self, pba: PBA, length: LbaT) {
+    pub fn free(&self, pba: PBA, length: LbaT)
+        -> impl Future<Item=(), Error=Error>
+    {
         self.stats.borrow_mut().allocated_space[pba.cluster as usize] -= length;
         self.clusters[pba.cluster as usize].free(pba.lba, length)
     }
@@ -327,8 +329,8 @@ mod pool {
         MockCluster,
         self,
         trait ClusterTrait {
-            fn erase_zone(&mut self, zone: ZoneT) -> Box<PoolFut<'static>>;
-            fn free(&self, lba: LbaT, length: LbaT);
+            fn free(&self, lba: LbaT, length: LbaT)
+                -> Box<Future<Item=(), Error=Error>>;
             fn optimum_queue_depth(&self) -> u32;
             fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
             fn size(&self) -> LbaT;
