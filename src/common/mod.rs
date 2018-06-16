@@ -6,6 +6,7 @@ use std::{hash::Hasher, ops::{Add, Div, Sub}};
 pub mod tree;
 pub mod cache;
 pub mod cluster;
+pub mod dml;
 pub mod ddml;
 pub mod declust;
 pub mod dva;

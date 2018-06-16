@@ -5,7 +5,6 @@
 /// disk, and hash operations.  A Direct Record is a record that can never be
 /// duplicated, either through snapshots, clones, or deduplication.
 
-use blosc;
 use common::{*, cache::*, pool::*};
 use futures::{Future, future};
 use metrohash::MetroHash64;
@@ -16,6 +15,7 @@ use std::{hash::Hasher, sync::Mutex};
 #[cfg(test)] use uuid::Uuid;
 
 pub use common::cache::{Cacheable, CacheRef};
+pub use common::dml::{Compression, DML};
 
 // LCOV_EXCL_START
 #[cfg(test)]
@@ -92,54 +92,6 @@ pub type PoolLike = Pool;
 #[cfg(not(test))]
 const CACHE_SIZE: usize = 1_000_000_000;
 
-/// Compression mode in use
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
-pub enum Compression {
-    None = 0,
-    /// Maximum Compression ratio for unstructured buffers
-    ZstdL9NoShuffle = 1,
-}
-
-impl Compression {
-    fn compress(&self, input: &IoVec) -> Option<DivBufShared> {
-        match *self {
-            Compression::None  => {
-                None
-            },
-            Compression::ZstdL9NoShuffle => {
-                let ctx = blosc::Context::new()
-                    .clevel(blosc::Clevel::L9)
-                    .compressor(blosc::Compressor::Zstd).unwrap();
-                let buffer = ctx.compress(&input[..]);
-                let v: Vec<u8> = buffer.into();
-                Some(DivBufShared::from(v))
-            }
-        }
-    }
-
-    fn decompress(&self, input: &IoVec) -> Option<DivBufShared> {
-        match *self {
-            Compression::None  => {
-                None
-            },
-            Compression::ZstdL9NoShuffle => {
-                let v = unsafe {
-                    // Sadly, decompressing with Blosc is unsafe until
-                    // https://github.com/Blosc/c-blosc/issues/229 gets fixed
-                    blosc::decompress_bytes(input)
-                }.unwrap();
-                Some(DivBufShared::from(v))
-            }
-        }
-    }
-}
-
-impl Default for Compression {
-    fn default() -> Compression {
-        Compression::None
-    }
-}
-
 /// Direct Record Pointer.  A persistable pointer to a record on disk.
 ///
 /// A Record is a local unit of data on disk.  It may be larger or smaller than
@@ -209,24 +161,65 @@ impl<'a> DDML {
         DDML::new(pool, Cache::with_capacity(CACHE_SIZE))
     }
 
-    /// Delete the record from the cache, and free its storage space.
-    pub fn delete(&self, drp: &DRP) {
-        self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
-        self.pool.free(drp.pba, drp.asize());
-    }
-
-    /// If the given record is present in the cache, evict it.
-    pub fn evict(&self, drp: &DRP) {
-        self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
-    }
-
     #[cfg(any(not(test), feature = "mocks"))]
     fn new(pool: PoolLike, cache: CacheLike) -> Self {
         DDML{pool: pool, cache: Mutex::new(cache)}
     }
 
-    /// Read a record and return a shared reference
-    pub fn get<T: CacheRef>(&'a self, drp: &DRP)
+    /// Read a record from disk
+    // XXX This method should return impl Trait instead, but that triggers a
+    // compiler error with Rustc 1.26.1 and 1.28.0-nightly-2018-06-01
+    fn read(&'a self, drp: DRP)
+        -> Box<Future<Item=DivBufShared, Error=Error> + 'a> {
+
+        // Outline
+        // 1) Read
+        // 2) Truncate
+        // 3) Verify checksum
+        // 4) Decompress
+        let len = drp.asize() as usize * BYTES_PER_LBA;
+        let dbs = DivBufShared::from(vec![0u8; len]);
+        Box::new(
+            // Read
+            self.pool.read(dbs.try_mut().unwrap(), drp.pba).and_then(move |_| {
+                //Truncate
+                let mut dbm = dbs.try_mut().unwrap();
+                dbm.try_truncate(drp.csize as usize).unwrap();
+                let db = dbm.freeze();
+
+                // Verify checksum
+                let mut hasher = MetroHash64::new();
+                checksum_iovec(&db, &mut hasher);
+                let checksum = hasher.finish();
+                if checksum == drp.checksum {
+                    // Decompress
+                    let db = dbs.try().unwrap();
+                    Ok(match drp.compression.decompress(&db) {
+                        Some(decompressed) => decompressed,
+                        None => dbs
+                    })
+                } else {
+                    // TODO: create a dedicated ECKSUM error type
+                    Err(Error::Sys(errno::Errno::EIO))
+                }
+            })
+        )
+    }
+}
+
+impl<'a> DML<'a> for DDML {
+    type Key = DRP;
+
+    fn delete(&self, drp: &DRP) {
+        self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
+        self.pool.free(drp.pba, drp.asize());
+    }
+
+    fn evict(&self, drp: &DRP) {
+        self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
+    }
+
+    fn get<T: CacheRef>(&'a self, drp: &DRP)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a> {
 
         // Outline:
@@ -249,8 +242,7 @@ impl<'a> DDML {
         })
     }
 
-    /// Read a record and return ownership of it.
-    pub fn pop<T: Cacheable>(&'a self, drp: &DRP)
+    fn pop<T: Cacheable>(&'a self, drp: &DRP)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a> {
 
         let lbas = drp.asize();
@@ -271,8 +263,7 @@ impl<'a> DDML {
         })
     }
 
-    /// Write a record to disk and cache.  Return its Direct Record Pointer.
-    pub fn put<T: Cacheable>(&'a self, cacheable: T, compression: Compression)
+    fn put<T: Cacheable>(&'a self, cacheable: T, compression: Compression)
         -> (DRP, Box<Future<Item=(), Error=Error> + 'a>) {
         // Outline:
         // 1) Serialize
@@ -335,49 +326,8 @@ impl<'a> DDML {
         (drp, fut)
     }
 
-    /// Read a record from disk
-    // XXX This method should return impl Trait instead, but that triggers a
-    // compiler error with Rustc 1.26.1 and 1.28.0-nightly-2018-06-01
-    fn read(&'a self, drp: DRP)
-        -> Box<Future<Item=DivBufShared, Error=Error> + 'a> {
-
-        // Outline
-        // 1) Read
-        // 2) Truncate
-        // 3) Verify checksum
-        // 4) Decompress
-        let len = drp.asize() as usize * BYTES_PER_LBA;
-        let dbs = DivBufShared::from(vec![0u8; len]);
-        Box::new(
-            // Read
-            self.pool.read(dbs.try_mut().unwrap(), drp.pba).and_then(move |_| {
-                //Truncate
-                let mut dbm = dbs.try_mut().unwrap();
-                dbm.try_truncate(drp.csize as usize).unwrap();
-                let db = dbm.freeze();
-
-                // Verify checksum
-                let mut hasher = MetroHash64::new();
-                checksum_iovec(&db, &mut hasher);
-                let checksum = hasher.finish();
-                if checksum == drp.checksum {
-                    // Decompress
-                    let db = dbs.try().unwrap();
-                    Ok(match drp.compression.decompress(&db) {
-                        Some(decompressed) => decompressed,
-                        None => dbs
-                    })
-                } else {
-                    // TODO: create a dedicated ECKSUM error type
-                    Err(Error::Sys(errno::Errno::EIO))
-                }
-            })
-        )
-    }
-
-    /// Sync all records written so far to stable storage.
-    pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
-        self.pool.sync_all()
+    fn sync_all(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
+        Box::new(self.pool.sync_all())
     }
 }
 
