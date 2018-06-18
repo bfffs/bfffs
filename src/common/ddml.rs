@@ -6,7 +6,7 @@
 /// duplicated, either through snapshots, clones, or deduplication.
 
 use common::{*, cache::*, pool::*};
-use futures::{Future, future};
+use futures::{Future, future, stream::Stream};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
@@ -15,6 +15,7 @@ use std::{hash::Hasher, sync::Mutex};
 #[cfg(test)] use uuid::Uuid;
 
 pub use common::dml::{Compression, DML};
+pub use common::pool::ClosedZone;
 
 // LCOV_EXCL_START
 #[cfg(test)]
@@ -73,6 +74,7 @@ pub type CacheLike = Cache;
 /// Only exists so mockers can replace Pool
 pub trait PoolTrait {
     fn free(&self, pba: PBA, length: LbaT);
+    fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>;
     fn name(&self) -> &str;
     fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut>;
     fn sync_all(&self) -> Box<PoolFut>;
@@ -143,6 +145,9 @@ impl DRP {
     // LCOV_EXCL_STOP
 }
 
+/// a Record that can only have a single reference
+pub struct Record(DRP);
+
 /// Direct Data Management Layer for a single `Pool`
 pub struct DDML {
     // Sadly, the Cache needs to be Mutex-protected because updating the LRU
@@ -160,9 +165,25 @@ impl<'a> DDML {
         DDML::new(pool, Cache::with_capacity(CACHE_SIZE))
     }
 
+    pub fn move_record(&self, _record: Record)
+        -> Box<Future<Item=(), Error=Error>>
+    {
+        unimplemented!()
+    }
+
     #[cfg(any(not(test), feature = "mocks"))]
     fn new(pool: PoolLike, cache: CacheLike) -> Self {
         DDML{pool: pool, cache: Mutex::new(cache)}
+    }
+
+    pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
+        self.pool.list_closed_zones()
+    }
+
+    pub fn list_records(&self, _zone: ClosedZone)
+        -> Box<Stream<Item=Record, Error=Error>>
+    {
+        unimplemented!()
     }
 
     /// Read a record from disk
@@ -351,6 +372,7 @@ mod t {
         self,
         trait PoolTrait {
             fn free(&self, pba: PBA, length: LbaT);
+            fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>;
             fn name(&self) -> &str;
             fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut<'static>>;
             fn sync_all(&self) -> Box<PoolFut<'static>>;

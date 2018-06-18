@@ -14,12 +14,13 @@ pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 
 #[cfg(test)]
 /// Only exists so mockers can replace Cluster
-/// XXX note that the signature for `write` has a different lifetime specifier
-/// than in the non-test version.  This is because mockers doesn't work with
-/// parameterized traits.
+/// XXX note that the signatures for some methods have different lifetime
+/// specifiers than in the non-test versions.  This is because mockers doesn't
+/// work with parameterized traits.
 pub trait ClusterTrait {
     fn free(&self, lba: LbaT, length: LbaT)
         -> Box<Future<Item=(), Error=Error>>;
+    fn list_closed_zones(&self) -> Box<Iterator<Item=cluster::ClosedZone>>;
     fn optimum_queue_depth(&self) -> u32;
     fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
     fn size(&self) -> LbaT;
@@ -37,6 +38,22 @@ pub type ClusterLike = cluster::Cluster;
 /// Opaque helper type used for `Pool::create`
 #[cfg(not(test))]
 pub struct Cluster(cluster::Cluster);
+
+/// Public representation of a closed zone
+#[derive(Debug, Eq, PartialEq)]
+pub struct ClosedZone {
+    /// The Zone's Cluster
+    pub cluster: ClusterT,
+
+    /// Zone ID within its Cluster
+    pub zid: ZoneT,
+
+    /// Number of freed blocks in this zone
+    pub freed_blocks: LbaT,
+
+    /// Total number of blocks in this zone
+    pub total_blocks: LbaT
+}
 
 // LCOV_EXCL_START
 #[derive(Serialize, Deserialize, Debug)]
@@ -177,6 +194,21 @@ impl<'a> Pool {
             size
         });
         Pool{name, clusters, stats, uuid}
+    }
+
+    /// List all closed zones in this Pool in no particular order
+    pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
+        self.clusters.iter()
+            .enumerate()
+            .flat_map(|(i, cluster)| {
+                cluster.list_closed_zones()
+                    .map(move |clz| ClosedZone {
+                        cluster: i as ClusterT,
+                        zid: clz.zid,
+                        freed_blocks: clz.freed_blocks,
+                        total_blocks: clz.total_blocks,
+                    })
+            })
     }
 
     /// Return the `Pool`'s name.
@@ -331,6 +363,8 @@ mod pool {
         trait ClusterTrait {
             fn free(&self, lba: LbaT, length: LbaT)
                 -> Box<Future<Item=(), Error=Error>>;
+            fn list_closed_zones(&self)
+                -> Box<Iterator<Item=cluster::ClosedZone>>;
             fn optimum_queue_depth(&self) -> u32;
             fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
             fn size(&self) -> LbaT;
@@ -339,6 +373,42 @@ mod pool {
             fn write(&self, buf: IoVec) -> Result<(LbaT, Box<PoolFut<'static>>), Error>;
             fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut<'static>>;
         }
+    }
+
+    #[test]
+    fn list_closed_zones() {
+        let s = Scenario::new();
+        let cluster = || {
+            let c = s.create_mock::<MockCluster>();
+            s.expect(c.optimum_queue_depth_call()
+                .and_return_clone(10)
+                .times(..));
+            s.expect(c.list_closed_zones_call()
+                .and_return(Box::new(vec![
+                    cluster::ClosedZone {
+                        zid: 1,
+                        freed_blocks: 5,
+                        total_blocks: 10,
+                    },
+                    cluster::ClosedZone {
+                        zid: 3,
+                        freed_blocks: 6,
+                        total_blocks: 10,
+                    },
+                ].into_iter())));
+            s.expect(c.size_call().and_return_clone(32768000).times(..));
+            c
+        };
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
+            vec![Box::new(cluster()), Box::new(cluster())]);
+        let closed_zones = pool.list_closed_zones().collect::<Vec<_>>();
+        let expected = vec![
+            ClosedZone{cluster: 0, zid: 1, freed_blocks: 5, total_blocks: 10},
+            ClosedZone{cluster: 0, zid: 3, freed_blocks: 6, total_blocks: 10},
+            ClosedZone{cluster: 1, zid: 1, freed_blocks: 5, total_blocks: 10},
+            ClosedZone{cluster: 1, zid: 3, freed_blocks: 6, total_blocks: 10},
+        ];
+        assert_eq!(closed_zones, expected);
     }
 
     #[test]

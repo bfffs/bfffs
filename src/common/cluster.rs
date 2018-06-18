@@ -46,6 +46,17 @@ struct Zone {
     pub total_blocks: u32
 }
 
+/// Public representation of a closed zone
+#[derive(Debug, Eq, PartialEq)]
+pub struct ClosedZone {
+    /// Zone ID within this Cluster
+    pub zid: ZoneT,
+    /// Number of freed blocks in this zone
+    pub freed_blocks: LbaT,
+    /// Total number of blocks in this zone
+    pub total_blocks: LbaT
+}
+
 // LCOV_EXCL_START
 #[derive(Clone, Copy, Debug)]
 struct OpenZone {
@@ -95,7 +106,7 @@ struct FreeSpaceMap {
     zones: Vec<Zone>,
 }
 
-impl FreeSpaceMap {
+impl<'a> FreeSpaceMap {
     /// How many blocks are available to be immediately written?
     fn available(&self, zone_id: ZoneT) -> LbaT {
         if let Some(oz) = self.open_zones.get(&zone_id) {
@@ -191,6 +202,28 @@ impl FreeSpaceMap {
     fn is_empty(&self, zone_id: ZoneT) -> bool {
         zone_id >= self.zones.len() as ZoneT ||
             self.empty_zones.contains(&zone_id)
+    }
+
+    /// List all closed zones, in no particular order
+    pub fn find_closed_zone(&'a self, start: ZoneT) -> Option<ClosedZone>
+    {
+        self.zones[(start as usize)..].iter()
+            .enumerate()
+            .filter_map(move |(i, z)| {
+                let zid = start + i as ZoneT;
+                if self.empty_zones.contains(&zid) {
+                    None
+                } else if self.open_zones.contains_key(&zid) {
+                    None
+                } else {
+                    Some(ClosedZone {
+                        zid,
+                        freed_blocks: z.freed_blocks as LbaT,
+                        total_blocks: z.total_blocks as LbaT
+                    })
+                }
+            })
+            .nth(0)
     }
 
     fn new(total_zones: ZoneT) -> Self {
@@ -384,6 +417,29 @@ macro_rules! close_zones{
     }
 }
 
+/// The return type of
+/// [`Cluster::list_closed_zones`](struct.Cluster.html#method.list_closed_zones)
+pub struct ClosedZoneIterator<'a> {
+    cluster: &'a Cluster,
+    cursor: ZoneT,
+}
+
+impl<'a> Iterator for ClosedZoneIterator<'a> {
+    type Item = ClosedZone;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let zone = self.cluster.fsm.borrow().find_closed_zone(self.cursor);
+        if zone.is_some() {
+            self.cursor = zone.as_ref().unwrap().zid + 1;
+        }
+        zone
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.cluster.fsm.borrow().zones.len()))
+    }
+}
+
 impl<'a> Cluster {
     /// Create a new `Cluster` from unused files or devices
     ///
@@ -449,6 +505,12 @@ impl<'a> Cluster {
         } else {
             Box::new(Ok(()).into_future())
         }
+    }
+
+    /// List all closed zones in this Cluster in no particular order
+    // Must return a Vec rather than an Iterator so we can drop the cell::Ref
+    pub fn list_closed_zones(&'a self) -> ClosedZoneIterator<'a>{
+        ClosedZoneIterator{cluster: self, cursor: 0}
     }
 
     /// Construct a new `Cluster` from an already constructed
@@ -810,6 +872,28 @@ mod cluster {
         assert!(fsm.is_empty(3));
     }
 
+    #[test]
+    fn list_closed_zones() {
+        let s = Scenario::new();
+        let vr = s.create_mock::<MockVdevRaid>();
+        let mut fsm = FreeSpaceMap::new(10);
+        fsm.open_zone(0, 0, 1, 0).unwrap();
+        fsm.finish_zone(0);
+        fsm.open_zone(2, 2, 3, 0).unwrap();
+        fsm.open_zone(3, 3, 4, 0).unwrap();
+        fsm.finish_zone(3);
+        fsm.open_zone(4, 4, 5, 0).unwrap();
+        fsm.finish_zone(4);
+        let cluster = Cluster::new(fsm, Box::new(vr));
+        let closed_zones = cluster.list_closed_zones().collect::<Vec<_>>();
+        let expected = vec![
+            ClosedZone{zid: 0, freed_blocks: 1, total_blocks: 1},
+            ClosedZone{zid: 3, freed_blocks: 1, total_blocks: 1},
+            ClosedZone{zid: 4, freed_blocks: 1, total_blocks: 1}
+        ];
+        assert_eq!(closed_zones, expected);
+    }
+
     // Cluster.sync_all should flush all open VdevRaid zones, then sync_all the
     // VdevRaid
     #[test]
@@ -1041,6 +1125,37 @@ mod free_space_map {
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(0, 0, 1000, 0).unwrap();
         fsm.erase_zone(0);
+    }
+
+    // Find the first closed zone starting with a given ZoneT
+    // FSM should look like this:
+    // 0:   closed
+    // 1:   empty
+    // 2:   open
+    // 3:   closed
+    // 4:   closed
+    // ...  empty
+    #[test]
+    fn find_closed_zone() {
+        let mut fsm = FreeSpaceMap::new(10);
+        fsm.open_zone(0, 0, 1, 0).unwrap();
+        fsm.finish_zone(0);
+        fsm.open_zone(2, 2, 3, 0).unwrap();
+        fsm.open_zone(3, 3, 4, 0).unwrap();
+        fsm.finish_zone(3);
+        fsm.open_zone(4, 4, 5, 0).unwrap();
+        fsm.finish_zone(4);
+        assert_eq!(fsm.find_closed_zone(1).unwrap().zid, 3);
+    }
+
+    // find_closed_zone should fail because there are no closed zones
+    #[test]
+    fn find_closed_zone_no_closed_zones() {
+        let mut fsm = FreeSpaceMap::new(10);
+        fsm.open_zone(0, 0, 1, 0).unwrap();
+        fsm.finish_zone(0);
+        fsm.open_zone(2, 2, 3, 0).unwrap();
+        assert!(fsm.find_closed_zone(1).is_none());
     }
 
     #[test]
