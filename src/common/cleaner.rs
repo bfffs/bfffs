@@ -42,7 +42,7 @@ impl<'a> Cleaner {
     fn clean_zone(&'a self, zone: ClosedZone)
         -> impl Future<Item=(), Error=Error> + 'a
     {
-        self.ddml.list_records(zone).for_each(move |record| {
+        self.ddml.list_records(&zone).for_each(move |record| {
             self.ddml.move_record(record)
         })
     }

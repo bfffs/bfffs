@@ -49,12 +49,15 @@ struct Zone {
 /// Public representation of a closed zone
 #[derive(Debug, Eq, PartialEq)]
 pub struct ClosedZone {
-    /// Zone ID within this Cluster
-    pub zid: ZoneT,
+    /// First LBA of the zone
+    pub start: LbaT,
     /// Number of freed blocks in this zone
     pub freed_blocks: LbaT,
     /// Total number of blocks in this zone
-    pub total_blocks: LbaT
+    pub total_blocks: LbaT,
+    /// Zone Id within this Cluster
+    pub zid: ZoneT
+
 }
 
 // LCOV_EXCL_START
@@ -205,7 +208,8 @@ impl<'a> FreeSpaceMap {
     }
 
     /// List all closed zones, in no particular order
-    pub fn find_closed_zone(&'a self, start: ZoneT) -> Option<ClosedZone>
+    pub fn find_closed_zone(&'a self, start: ZoneT)
+        -> Option<ClosedZone>
     {
         self.zones[(start as usize)..].iter()
             .enumerate()
@@ -218,6 +222,7 @@ impl<'a> FreeSpaceMap {
                 } else {
                     Some(ClosedZone {
                         zid,
+                        start: LbaT::max_value(),   // sentinel value
                         freed_blocks: z.freed_blocks as LbaT,
                         total_blocks: z.total_blocks as LbaT
                     })
@@ -428,9 +433,10 @@ impl<'a> Iterator for ClosedZoneIterator<'a> {
     type Item = ClosedZone;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let zone = self.cluster.fsm.borrow().find_closed_zone(self.cursor);
-        if zone.is_some() {
-            self.cursor = zone.as_ref().unwrap().zid + 1;
+        let mut zone = self.cluster.fsm.borrow().find_closed_zone(self.cursor);
+        if let Some(ref mut z) = zone.as_mut() {
+            z.start = self.cluster.vdev.zone_limits(z.zid).0;
+            self.cursor = z.zid + 1;
         }
         zone
     }
@@ -876,6 +882,9 @@ mod cluster {
     fn list_closed_zones() {
         let s = Scenario::new();
         let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.zone_limits_call(0).and_return_clone((0, 1)).times(..));
+        s.expect(vr.zone_limits_call(3).and_return_clone((3, 4)).times(..));
+        s.expect(vr.zone_limits_call(4).and_return_clone((4, 5)).times(..));
         let mut fsm = FreeSpaceMap::new(10);
         fsm.open_zone(0, 0, 1, 0).unwrap();
         fsm.finish_zone(0);
@@ -887,9 +896,9 @@ mod cluster {
         let cluster = Cluster::new(fsm, Box::new(vr));
         let closed_zones = cluster.list_closed_zones().collect::<Vec<_>>();
         let expected = vec![
-            ClosedZone{zid: 0, freed_blocks: 1, total_blocks: 1},
-            ClosedZone{zid: 3, freed_blocks: 1, total_blocks: 1},
-            ClosedZone{zid: 4, freed_blocks: 1, total_blocks: 1}
+            ClosedZone{zid: 0, start: 0, freed_blocks: 1, total_blocks: 1},
+            ClosedZone{zid: 3, start: 3, freed_blocks: 1, total_blocks: 1},
+            ClosedZone{zid: 4, start: 4, freed_blocks: 1, total_blocks: 1}
         ];
         assert_eq!(closed_zones, expected);
     }

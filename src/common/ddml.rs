@@ -180,7 +180,14 @@ impl<'a> DDML {
         self.pool.list_closed_zones()
     }
 
-    pub fn list_records(&self, _zone: ClosedZone)
+    /// Return a list of all active (not delete) Records that have been written
+    /// to this DDML in the given Zone.
+    ///
+    /// This list should be persistent across reboots.
+    // For now, this relies on in-memory data structures that must be rebuilt by
+    // the Tree layer on every mount.  As a future optimization, it could be
+    // moved to be partially resident on-disk.
+    pub fn list_records(&self, _zone: &ClosedZone)
         -> Box<Stream<Item=Record, Error=Error>>
     {
         unimplemented!()

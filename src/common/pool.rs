@@ -45,8 +45,8 @@ pub struct ClosedZone {
     /// The Zone's Cluster
     pub cluster: ClusterT,
 
-    /// Zone ID within its Cluster
-    pub zid: ZoneT,
+    /// First LBA in this zone
+    pub lba: LbaT,
 
     /// Number of freed blocks in this zone
     pub freed_blocks: LbaT,
@@ -204,7 +204,7 @@ impl<'a> Pool {
                 cluster.list_closed_zones()
                     .map(move |clz| ClosedZone {
                         cluster: i as ClusterT,
-                        zid: clz.zid,
+                        lba: clz.start,
                         freed_blocks: clz.freed_blocks,
                         total_blocks: clz.total_blocks,
                     })
@@ -387,11 +387,13 @@ mod pool {
                 .and_return(Box::new(vec![
                     cluster::ClosedZone {
                         zid: 1,
+                        start: 10,
                         freed_blocks: 5,
                         total_blocks: 10,
                     },
                     cluster::ClosedZone {
                         zid: 3,
+                        start: 30,
                         freed_blocks: 6,
                         total_blocks: 10,
                     },
@@ -403,10 +405,10 @@ mod pool {
             vec![Box::new(cluster()), Box::new(cluster())]);
         let closed_zones = pool.list_closed_zones().collect::<Vec<_>>();
         let expected = vec![
-            ClosedZone{cluster: 0, zid: 1, freed_blocks: 5, total_blocks: 10},
-            ClosedZone{cluster: 0, zid: 3, freed_blocks: 6, total_blocks: 10},
-            ClosedZone{cluster: 1, zid: 1, freed_blocks: 5, total_blocks: 10},
-            ClosedZone{cluster: 1, zid: 3, freed_blocks: 6, total_blocks: 10},
+            ClosedZone{cluster: 0, lba: 10, freed_blocks: 5, total_blocks: 10},
+            ClosedZone{cluster: 0, lba: 30, freed_blocks: 6, total_blocks: 10},
+            ClosedZone{cluster: 1, lba: 10, freed_blocks: 5, total_blocks: 10},
+            ClosedZone{cluster: 1, lba: 30, freed_blocks: 6, total_blocks: 10},
         ];
         assert_eq!(closed_zones, expected);
     }
