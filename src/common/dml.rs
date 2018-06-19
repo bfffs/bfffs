@@ -63,17 +63,17 @@ pub trait DML {
     type Addr;
 
     /// Delete the record from the cache, and free its storage space.
-    fn delete(&self, drp: &Self::Addr);
+    fn delete(&self, addr: &Self::Addr);
 
     /// If the given record is present in the cache, evict it.
-    fn evict(&self, drp: &Self::Addr);
+    fn evict(&self, addr: &Self::Addr);
 
     /// Read a record and return a shared reference
-    fn get<'a, T: CacheRef>(&'a self, drp: &Self::Addr)
+    fn get<'a, T: CacheRef>(&'a self, addr: &Self::Addr)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
 
     /// Read a record and return ownership of it.
-    fn pop<'a, T: Cacheable>(&'a self, drp: &Self::Addr)
+    fn pop<'a, T: Cacheable>(&'a self, addr: &Self::Addr)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
