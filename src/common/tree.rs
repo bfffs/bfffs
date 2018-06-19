@@ -787,13 +787,13 @@ struct Inner<A: Addr, K: Key, V: Value> {
 /// *`K`:   Key type.  Must be ordered and copyable; should be compact
 /// *`V`:   Value type in the leaves.
 pub struct Tree<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
-    dml: D,
+    dml: Arc<D>,
     i: Inner<A, K, V>
 }
 
 impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     #[cfg(not(test))]
-    pub fn create(dml: D) -> Self {
+    pub fn create(dml: Arc<D>) -> Self {
         Tree::new(dml,
                   4,        // BetrFS's min fanout
                   16,       // BetrFS's max fanout
@@ -890,7 +890,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     #[cfg(test)]
-    pub fn from_str(dml: D, s: &str) -> Self {
+    pub fn from_str(dml: Arc<D>, s: &str) -> Self {
         let i: Inner<A, K, V> = serde_yaml::from_str(s).unwrap();
         Tree{dml, i}
     }
@@ -1406,7 +1406,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         Box::new(fut)
     }
 
-    fn new(dml: D, min_fanout: usize, max_fanout: usize,
+    fn new(dml: Arc<D>, min_fanout: usize, max_fanout: usize,
            max_size: usize) -> Self
     {
         let i: Inner<A, K, V> = Inner {
@@ -1861,7 +1861,7 @@ use tokio::executor::current_thread;
 
 #[test]
 fn insert() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.insert(0, 0.0));
     assert_eq!(r, Ok(None));
@@ -1882,7 +1882,7 @@ root:
 
 #[test]
 fn insert_dup() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
@@ -1917,7 +1917,7 @@ root:
 /// Insert a key that splits a non-root interior node
 #[test]
 fn insert_split_int() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 3
@@ -2103,7 +2103,7 @@ root:
 /// Insert a key that splits a non-root leaf node
 #[test]
 fn insert_split_leaf() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 2
@@ -2178,7 +2178,7 @@ root:
 /// Insert a key that splits the root IntNode
 #[test]
 fn insert_split_root_int() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 2
@@ -2302,7 +2302,7 @@ root:
 /// Insert a key that splits the root leaf node
 #[test]
 fn insert_split_root_leaf() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
@@ -2355,7 +2355,7 @@ root:
 
 #[test]
 fn get() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(future::lazy(|| {
         tree.insert(0, 0.0)
@@ -2366,7 +2366,7 @@ fn get() {
 
 #[test]
 fn get_deep() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -2400,7 +2400,7 @@ root:
 
 #[test]
 fn get_nonexistent() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.get(&0));
     assert_eq!(r, Ok(None))
@@ -2418,7 +2418,7 @@ fn get_nonexistent() {
 //    nodes.
 #[test]
 fn range_delete() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -2543,7 +2543,7 @@ root:
 // in the cut
 #[test]
 fn range_delete_danger() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -2692,7 +2692,7 @@ root:
 // Delete a range that's exclusive on the left and right
 #[test]
 fn range_delete_exc_exc() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -2786,7 +2786,7 @@ root:
 // Delete a range that's exclusive on the left and inclusive on the right
 #[test]
 fn range_delete_exc_inc() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -2879,7 +2879,7 @@ root:
 // Delete a range that's contained within a single LeafNode
 #[test]
 fn range_delete_single_node() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -2967,7 +2967,7 @@ root:
 // Delete a range that includes a whole Node at the end of the Tree
 #[test]
 fn range_delete_to_end() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -3041,7 +3041,7 @@ root:
 // int node to its right
 #[test]
 fn range_delete_to_end_of_int_node() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -3210,7 +3210,7 @@ root:
 // Delete a range that includes only whole nodes
 #[test]
 fn range_delete_whole_nodes() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -3293,7 +3293,7 @@ root:
 // Unbounded range lookup
 #[test]
 fn range_full() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 2
@@ -3329,7 +3329,7 @@ root:
 
 #[test]
 fn range_exclusive_start() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -3374,7 +3374,7 @@ root:
 
 #[test]
 fn range_leaf() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
@@ -3402,7 +3402,7 @@ root:
 
 #[test]
 fn range_leaf_inclusive_end() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
@@ -3430,7 +3430,7 @@ root:
 
 #[test]
 fn range_nonexistent_between_two_leaves() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -3467,7 +3467,7 @@ root:
 
 #[test]
 fn range_two_ints() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -3514,7 +3514,7 @@ root:
 
 #[test]
 fn range_starts_between_two_leaves() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -3551,7 +3551,7 @@ root:
 
 #[test]
 fn range_two_leaves() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -3588,7 +3588,7 @@ root:
 
 #[test]
 fn remove_last_key() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -3621,7 +3621,7 @@ root:
 
 #[test]
 fn remove_from_leaf() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -3658,7 +3658,7 @@ root:
 
 #[test]
 fn remove_and_merge_down() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -3700,7 +3700,7 @@ root:
 
 #[test]
 fn remove_and_merge_int_left() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -3869,7 +3869,7 @@ root:
 
 #[test]
 fn remove_and_merge_int_right() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -4024,7 +4024,7 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_left() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -4092,7 +4092,7 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_right() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -4162,7 +4162,7 @@ root:
 
 #[test]
 fn remove_and_steal_int_left() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -4350,7 +4350,7 @@ root:
 
 #[test]
 fn remove_and_steal_int_right() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -4538,7 +4538,7 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_left() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -4617,7 +4617,7 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_right() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -4696,7 +4696,7 @@ root:
 
 #[test]
 fn remove_nonexistent() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(tree.remove(&3));
     assert_eq!(r, Ok(None));
@@ -4716,12 +4716,12 @@ use tokio::executor::current_thread;
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_below_root() {
-    let mut ddml = DDMLMock::new();
+    let mut mock = DDMLMock::new();
     let items: BTreeMap<u32, u32> = BTreeMap::new();
     let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    ddml.expect_pop::<Arc<Node<DRP, u32, u32>>>()
+    mock.expect_pop::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
@@ -4731,6 +4731,7 @@ fn insert_below_root() {
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -4800,12 +4801,12 @@ root:
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_root() {
-    let mut ddml = DDMLMock::new();
+    let mut mock = DDMLMock::new();
     let items: BTreeMap<u32, u32> = BTreeMap::new();
     let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    ddml.expect_pop::<Arc<Node<DRP, u32, u32>>>()
+    mock.expect_pop::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
@@ -4815,6 +4816,7 @@ fn insert_root() {
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -4885,7 +4887,7 @@ fn range_leaf() {
         }
     }
 
-    let mut ddml = DDMLMock::new();
+    let mut mock = DDMLMock::new();
     let mut items: BTreeMap<u32, f32> = BTreeMap::new();
     items.insert(0, 0.0);
     items.insert(1, 1.0);
@@ -4893,7 +4895,7 @@ fn range_leaf() {
     items.insert(3, 3.0);
     items.insert(4, 4.0);
     let node1 = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
-    ddml.expect_get::<Arc<Node<DRP, u32, f32>>>()
+    mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
         .called_once()
         .returning(move |_| {
             let mut fut = FutureMock::new();
@@ -4915,6 +4917,7 @@ fn range_leaf() {
                 });
             Box::new(fut)
         });
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -4952,8 +4955,8 @@ fn read_int() {
     ];
     let node = Arc::new(Node(RwLock::new(NodeData::Int(IntData{children}))));
     let drpl = DRP::new(PBA{cluster: 1, lba: 2}, Compression::None, 36, 36, 0);
-    let mut ddml = DDMLMock::new();
-    ddml.expect_get::<Arc<Node<DRP, u32, u32>>>()
+    let mut mock = DDMLMock::new();
+    mock.expect_get::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
@@ -4963,6 +4966,7 @@ fn read_int() {
             let res = Box::new(node.clone());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -4999,13 +5003,13 @@ root:
 
 #[test]
 fn read_leaf() {
-    let mut ddml = DDMLMock::new();
+    let mut mock = DDMLMock::new();
     let mut items: BTreeMap<u32, u32> = BTreeMap::new();
     items.insert(0, 100);
     items.insert(1, 200);
     items.insert(99, 50_000);
     let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
-    ddml.expect_get::<Arc<Node<DRP, u32, u32>>>()
+    mock.expect_get::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
@@ -5014,6 +5018,7 @@ fn read_leaf() {
             let res = Box::new(node.clone());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -5040,7 +5045,7 @@ root:
 // If the tree isn't dirty, then there's nothing to do
 #[test]
 fn write_clean() {
-    let ddml = DDMLMock::new();
+    let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -5067,9 +5072,9 @@ root:
 /// Sync a Tree with both dirty Int nodes and dirty Leaf nodes
 #[test]
 fn write_deep() {
-    let mut ddml = DDMLMock::new();
+    let mut mock = DDMLMock::new();
     let drp = DRP::random(Compression::None, 1000);
-    ddml.expect_put::<Arc<Node<DRP, u32, u32>>>()
+    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
@@ -5078,7 +5083,7 @@ fn write_deep() {
             leaf_data.items[&1] == 200
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    ddml.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
+    mock.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
@@ -5089,9 +5094,10 @@ fn write_deep() {
             int_data.children[1].ptr.is_addr()
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    ddml.expect_sync_all()
+    mock.expect_sync_all()
         .called_once()
         .returning(|_| Box::new(future::ok::<(), Error>(())));
+    let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -5130,9 +5136,9 @@ root:
 
 #[test]
 fn write_int() {
-    let mut ddml = DDMLMock::new();
+    let mut mock = DDMLMock::new();
     let drp = DRP::random(Compression::None, 1000);
-    ddml.expect_put::<Arc<Node<DRP, u32, u32>>>()
+    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
@@ -5143,9 +5149,10 @@ fn write_int() {
             !int_data.children[1].ptr.is_mem()
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    ddml.expect_sync_all()
+    mock.expect_sync_all()
         .called_once()
         .returning(|_| Box::new(future::ok::<(), Error>(())));
+    let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -5187,9 +5194,9 @@ root:
 
 #[test]
 fn write_leaf() {
-    let mut ddml = DDMLMock::new();
+    let mut mock = DDMLMock::new();
     let drp = DRP::random(Compression::None, 1000);
-    ddml.expect_put::<Arc<Node<DRP, u32, u32>>>()
+    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
@@ -5197,9 +5204,10 @@ fn write_leaf() {
             leaf_data.items[&0] == 100 &&
             leaf_data.items[&1] == 200
         })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    ddml.expect_sync_all()
+    mock.expect_sync_all()
         .called_once()
         .returning(|_| Box::new(future::ok::<(), Error>(())));
+    let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
 height: 1
