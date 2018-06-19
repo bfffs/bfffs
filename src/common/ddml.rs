@@ -6,7 +6,7 @@
 /// duplicated, either through snapshots, clones, or deduplication.
 
 use common::{*, cache::*, pool::*};
-use futures::{Future, future, stream::Stream};
+use futures::{Future, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
@@ -145,9 +145,6 @@ impl DRP {
     // LCOV_EXCL_STOP
 }
 
-/// a Record that can only have a single reference
-pub struct Record(DRP);
-
 /// Direct Data Management Layer for a single `Pool`
 pub struct DDML {
     // Sadly, the Cache needs to be Mutex-protected because updating the LRU
@@ -165,12 +162,6 @@ impl<'a> DDML {
         DDML::new(pool, Cache::with_capacity(CACHE_SIZE))
     }
 
-    pub fn move_record(&self, _record: Record)
-        -> Box<Future<Item=(), Error=Error>>
-    {
-        unimplemented!()
-    }
-
     #[cfg(any(not(test), feature = "mocks"))]
     fn new(pool: PoolLike, cache: CacheLike) -> Self {
         DDML{pool: pool, cache: Mutex::new(cache)}
@@ -178,19 +169,6 @@ impl<'a> DDML {
 
     pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
         self.pool.list_closed_zones()
-    }
-
-    /// Return a list of all active (not delete) Records that have been written
-    /// to this DDML in the given Zone.
-    ///
-    /// This list should be persistent across reboots.
-    // For now, this relies on in-memory data structures that must be rebuilt by
-    // the Tree layer on every mount.  As a future optimization, it could be
-    // moved to be partially resident on-disk.
-    pub fn list_records(&self, _zone: &ClosedZone)
-        -> Box<Stream<Item=Record, Error=Error>>
-    {
-        unimplemented!()
     }
 
     /// Read a record from disk

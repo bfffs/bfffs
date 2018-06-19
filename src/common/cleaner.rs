@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use common::ddml::{DDML, ClosedZone};
+use common::idml::{IDML, ClosedZone};
 use futures::{
     Future,
     stream::{self, Stream}
@@ -12,8 +12,7 @@ use nix::Error;
 /// Cleans old Zones by moving their data to empty zones and erasing them.
 pub struct Cleaner {
     /// Handle to the DML.
-    // TODO: use the IDML once that's ready
-    ddml: DDML,
+    idml: IDML,
 
     /// Dirtiness threshold.  Zones with less than this percentage of freed
     /// space will not be cleaned.
@@ -29,7 +28,7 @@ impl<'a> Cleaner {
         //    let offset = 0
         //    while offset < sizeof(zone)
         //        let record = find_record(zone, offset)
-        //        ddml.move(record)
+        //        idml.move(record)
         //        offset += sizeof(record)
         let stream = stream::iter_ok::<_, ()>(self.select_zones());
         stream.map_err(|_| unreachable!())
@@ -42,15 +41,15 @@ impl<'a> Cleaner {
     fn clean_zone(&'a self, zone: ClosedZone)
         -> impl Future<Item=(), Error=Error> + 'a
     {
-        self.ddml.list_records(&zone).for_each(move |record| {
-            self.ddml.move_record(record)
+        self.idml.list_records(&zone).for_each(move |record| {
+            self.idml.move_record(record)
         })
     }
 
     /// Select which zones to clean and return them sorted by cleanliness:
     /// dirtiest zones first.
     fn select_zones(&self) -> Vec<ClosedZone> {
-        let mut zones = self.ddml.list_closed_zones()
+        let mut zones = self.idml.list_closed_zones()
             .filter(|z| {
                 let dirtiness = z.freed_blocks as f32 / z.total_blocks as f32;
                 dirtiness >= self.threshold

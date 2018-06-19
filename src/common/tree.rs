@@ -152,6 +152,12 @@ impl MinValue for u32 {
     }
 }
 
+impl MinValue for PBA {
+    fn min_value() -> Self {
+        PBA::new(ClusterT::min_value(), LbaT::min_value())
+    }
+}
+
 pub trait Addr: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 
 impl<T> Addr for T

@@ -8,6 +8,7 @@ pub mod cache;
 pub mod cleaner;
 pub mod cluster;
 pub mod dml;
+pub mod idml;
 pub mod ddml;
 pub mod declust;
 pub mod dva;
