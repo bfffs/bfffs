@@ -1883,7 +1883,7 @@ root:
 #[test]
 fn insert_dup() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -1918,7 +1918,7 @@ root:
 #[test]
 fn insert_split_int() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -2104,7 +2104,7 @@ root:
 #[test]
 fn insert_split_leaf() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -2179,7 +2179,7 @@ root:
 #[test]
 fn insert_split_root_int() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -2303,7 +2303,7 @@ root:
 #[test]
 fn insert_split_root_leaf() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -3294,7 +3294,7 @@ root:
 #[test]
 fn range_full() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -3375,7 +3375,7 @@ root:
 #[test]
 fn range_leaf() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -3403,7 +3403,7 @@ root:
 #[test]
 fn range_leaf_inclusive_end() {
     let ddml = DDMLMock::new();
-    let tree = Tree::from_str(ddml, r#"
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
 min_fanout: 2
