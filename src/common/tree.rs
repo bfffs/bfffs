@@ -980,9 +980,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     /// Lookup the value of key `k`.  Return `None` if no value is present.
-    pub fn get<Q>(&'a self, k: &'a Q)
-        -> impl Future<Item=Option<V>, Error=Error> + 'a
-        where K: Borrow<Q>, Q: Ord
+    pub fn get(&'a self, k: K) -> impl Future<Item=Option<V>, Error=Error> + 'a
     {
         self.read()
             .and_then(move |guard| {
@@ -992,17 +990,16 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     /// Lookup the value of key `k` in a node, which must already be locked.
-    fn get_node<Q>(&'a self, node: TreeReadGuard<A, K, V>, k: &'a Q)
+    fn get_node(&'a self, node: TreeReadGuard<A, K, V>, k: K)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
-        where K: Borrow<Q>, Q: Ord
     {
 
         let next_node_fut = match *node {
             NodeData::Leaf(ref leaf) => {
-                return Box::new(Ok(leaf.get(k)).into_future())
+                return Box::new(Ok(leaf.get(&k)).into_future())
             },
             NodeData::Int(ref int) => {
-                let child_elem = &int.children[int.position(k)];
+                let child_elem = &int.children[int.position(&k)];
                 self.rlock(&child_elem)
             }
         };
@@ -2365,7 +2362,7 @@ fn get() {
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let r = current_thread::block_on_all(future::lazy(|| {
         tree.insert(0, 0.0)
-            .and_then(|_| tree.get(&0))
+            .and_then(|_| tree.get(0))
     }));
     assert_eq!(r, Ok(Some(0.0)));
 }
@@ -2400,7 +2397,7 @@ root:
                     3: 3.0
                     4: 4.0
 "#);
-    let r = current_thread::block_on_all(tree.get(&3));
+    let r = current_thread::block_on_all(tree.get(3));
     assert_eq!(r, Ok(Some(3.0)))
 }
 
@@ -2408,7 +2405,7 @@ root:
 fn get_nonexistent() {
     let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
-    let r = current_thread::block_on_all(tree.get(&0));
+    let r = current_thread::block_on_all(tree.get(0));
     assert_eq!(r, Ok(None))
 }
 
@@ -5044,7 +5041,7 @@ root:
       checksum: 0
 "#);
 
-    let r = current_thread::block_on_all(tree.get(&1));
+    let r = current_thread::block_on_all(tree.get(1));
     assert_eq!(Ok(Some(200)), r);
 }
 
