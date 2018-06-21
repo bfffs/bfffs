@@ -3,23 +3,23 @@
 use divbuf::{DivBuf, DivBufMut, DivBufShared};
 use std::{hash::Hasher, ops::{Add, Div, Sub}};
 
-pub mod tree;
 pub mod cache;
-#[cfg(test)]
-mod cache_mock;
+#[cfg(test)] mod cache_mock;
 pub mod cleaner;
 pub mod cluster;
-pub mod dml;
-pub mod idml;
 pub mod ddml;
+#[cfg(test)] mod ddml_mock;
 pub mod declust;
+pub mod dml;
 pub mod dva;
+pub mod idml;
+pub mod label;
 pub mod null_raid;
+pub mod pool;
 pub mod prime_s;
 pub mod raid;
-pub mod label;
-pub mod pool;
 mod sgcursor;
+pub mod tree;
 pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_leaf;

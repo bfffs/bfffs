@@ -15,7 +15,6 @@ use nix::{Error, errno};
 use serde::{Serialize, Serializer, de::{Deserializer, DeserializeOwned}};
 #[cfg(test)] use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
-#[cfg(test)] use simulacrum::*;
 use std::{
     borrow::Borrow,
     cell::RefCell,
@@ -48,98 +47,6 @@ mod atomic_usize_serializer {
     }
 }
 
-// LCOV_EXCL_START
-#[cfg(test)]
-pub struct DDMLMock {
-    e: Expectations
-}
-#[cfg(test)]
-impl DDMLMock {
-    pub fn new() -> Self {
-        Self {
-            e: Expectations::new()
-        }
-    }
-
-    pub fn expect_delete(&mut self) -> Method<*const DRP, ()> {
-        self.e.expect::<*const DRP, ()>("delete")
-    }
-
-    pub fn expect_get<T: CacheRef>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<T>, Error=Error>>>
-    {
-        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
-            ("get")
-    }
-
-    pub fn expect_pop<T: Cacheable, R:CacheRef>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<T>, Error=Error>>>
-    {
-        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
-            ("pop")
-    }
-
-    pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression),
-        (DRP, Box<Future<Item=(), Error=Error>>)>
-    {
-        self.e.expect::<(T, Compression),
-                        (DRP, Box<Future<Item=(), Error=Error>>)>
-            ("put")
-    }
-
-    pub fn expect_sync_all(&mut self)
-        -> Method<(), Box<Future<Item=(), Error=Error>>>
-    {
-        self.e.expect::<(), Box<Future<Item=(), Error=Error>>>("sync_all")
-    }
-
-    pub fn then(&mut self) -> &mut Self {
-        self.e.then();
-        self
-    }
-}
-
-#[cfg(test)]
-impl DML for DDMLMock {
-    type Addr = DRP;
-
-    fn delete(&self, drp: &DRP) {
-        self.e.was_called::<*const DRP, ()>("delete", drp as *const DRP)
-    }
-
-    fn evict(&self, drp: &DRP) {
-        self.e.was_called::<*const DRP, ()>("evict", drp as *const DRP)
-    }
-
-    fn get<T: CacheRef>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error>> {
-        self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<T>, Error=Error>>>
-            ("get", drp as *const DRP)
-    }
-
-    fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error>>
-    {
-        self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<T>, Error=Error>>>
-            ("pop", drp as *const DRP)
-    }
-
-    fn put<T: Cacheable>(&self, cacheable: T, compression: Compression)
-        -> (DRP, Box<Future<Item=(), Error=Error>>)
-    {
-        self.e.was_called_returning::<(T, Compression),
-                                      (DRP, Box<Future<Item=(), Error=Error>>)>
-            ("put", (cacheable, compression))
-    }
-
-    fn sync_all(&self) -> Box<Future<Item=(), Error=Error>> {
-        self.e.was_called_returning::<(), Box<Future<Item=(), Error=Error>>>
-            ("sync_all", ())
-    }
-}
-// LCOV_EXCL_STOP
 
 /// Anything that has a min_value method.  Too bad libstd doesn't define this.
 pub trait MinValue {
@@ -1864,6 +1771,7 @@ fn serialize_leaf() {
 mod in_mem {
 
 use super::*;
+use common::ddml_mock::*;
 use futures::future;
 use tokio::runtime::current_thread;
 
@@ -4754,7 +4662,9 @@ fn remove_nonexistent() {
 mod io {
 
 use super::*;
+use common::ddml_mock::*;
 use futures::future;
+use simulacrum::*;
 use tokio::prelude::task::current;
 use tokio::runtime::current_thread;
 
