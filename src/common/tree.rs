@@ -1440,9 +1440,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     /// Remove and return the value at key `k`, if any.
-    pub fn remove<Q>(&'a self, k: &'a Q)
+    pub fn remove(&'a self, k: K)
         -> impl Future<Item=Option<V>, Error=Error> + 'a
-        where K: Borrow<Q>, Q: Ord
     {
         self.write()
             .and_then(move |guard| {
@@ -1455,17 +1454,16 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
 
     /// Remove key `k` from an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn remove_int<Q>(&'a self, parent: TreeWriteGuard<A, K, V>,
-                  child_idx: usize, child: TreeWriteGuard<A, K, V>, k: &'a Q)
+    fn remove_int(&'a self, parent: TreeWriteGuard<A, K, V>,
+                  child_idx: usize, child: TreeWriteGuard<A, K, V>, k: K)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
-        where K: Borrow<Q>, Q: Ord
     {
         // First, fix the node, if necessary
         if child.underflow(self.i.min_fanout) {
             Box::new(
                 self.fix_int(parent, child_idx, child)
                     .and_then(move |(parent, _, _)| {
-                        let child_idx = parent.as_int().position(k);
+                        let child_idx = parent.as_int().position(&k);
                         self.xlock(parent, child_idx)
                     }).and_then(move |(parent, child)| {
                         drop(parent);
@@ -1479,25 +1477,23 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     /// Helper for `remove`.  Handles removal once the tree is locked
-    fn remove_locked<Q>(&'a self, mut root: TreeWriteGuard<A, K, V>, k: &'a Q)
+    fn remove_locked(&'a self, mut root: TreeWriteGuard<A, K, V>, k: K)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
-        where K: Borrow<Q>, Q: Ord
     {
         self.merge_root(&mut root);
         self.remove_no_fix(root, k)
     }
 
     /// Remove key `k` from a node, but don't try to fixup the node.
-    fn remove_no_fix<Q>(&'a self, mut node: TreeWriteGuard<A, K, V>, k: &'a Q)
+    fn remove_no_fix(&'a self, mut node: TreeWriteGuard<A, K, V>, k: K)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
-        where K: Borrow<Q>, Q: Ord
     {
 
         if node.is_leaf() {
-            let old_v = node.as_leaf_mut().remove(k);
+            let old_v = node.as_leaf_mut().remove(&k);
             return Box::new(Ok(old_v).into_future());
         } else {
-            let child_idx = node.as_int().position(k);
+            let child_idx = node.as_int().position(&k);
             let fut = self.xlock(node, child_idx);
             Box::new(fut.and_then(move |(parent, child)| {
                     self.remove_int(parent, child_idx, child, k)
@@ -3606,7 +3602,7 @@ root:
         items:
           0: 0.0
 "#);
-    let r = current_thread::block_on_all(tree.remove(&0));
+    let r = current_thread::block_on_all(tree.remove(0));
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -3641,7 +3637,7 @@ root:
           1: 1.0
           2: 2.0
 "#);
-    let r = current_thread::block_on_all(tree.remove(&1));
+    let r = current_thread::block_on_all(tree.remove(1));
     assert_eq!(r, Ok(Some(1.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -3683,7 +3679,7 @@ root:
                     1: 1.0
                     2: 2.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(&1));
+    let r2 = current_thread::block_on_all(tree.remove(1));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3788,7 +3784,7 @@ root:
                               21: 21.0
                               22: 22.0
                               23: 23.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(&23));
+    let r2 = current_thread::block_on_all(tree.remove(23));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3950,7 +3946,7 @@ root:
                             items:
                               21: 21.0
                               22: 22.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(&4));
+    let r2 = current_thread::block_on_all(tree.remove(4));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4062,7 +4058,7 @@ root:
                     5: 5.0
                     7: 7.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(&7));
+    let r2 = current_thread::block_on_all(tree.remove(7));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4131,7 +4127,7 @@ root:
                     6: 6.0
                     7: 7.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(&4));
+    let r2 = current_thread::block_on_all(tree.remove(4));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4257,7 +4253,7 @@ root:
                               24: 24.0
                               25: 25.0
                               26: 26.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(&26));
+    let r2 = current_thread::block_on_all(tree.remove(26));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4445,7 +4441,7 @@ root:
                             items:
                               24: 24.0
                               26: 26.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(&14));
+    let r2 = current_thread::block_on_all(tree.remove(14));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4579,7 +4575,7 @@ root:
                     8: 8.0
                     9: 9.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(&8));
+    let r2 = current_thread::block_on_all(tree.remove(8));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4658,7 +4654,7 @@ root:
                     8: 8.0
                     9: 9.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(&4));
+    let r2 = current_thread::block_on_all(tree.remove(4));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4701,7 +4697,7 @@ root:
 fn remove_nonexistent() {
     let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
-    let r = current_thread::block_on_all(tree.remove(&3));
+    let r = current_thread::block_on_all(tree.remove(3));
     assert_eq!(r, Ok(None));
 }
 
