@@ -5,6 +5,8 @@ use std::{hash::Hasher, ops::{Add, Div, Sub}};
 
 pub mod tree;
 pub mod cache;
+#[cfg(test)]
+mod cache_mock;
 pub mod cleaner;
 pub mod cluster;
 pub mod dml;

@@ -5,7 +5,11 @@
 /// disk, and hash operations.  A Direct Record is a record that can never be
 /// duplicated, either through snapshots, clones, or deduplication.
 
-use common::{*, cache::*, pool::*};
+use common::{
+    *,
+    cache::{Cacheable, CacheRef, Key},
+    pool::*
+};
 use futures::{Future, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
@@ -20,58 +24,11 @@ use std::{
 pub use common::dml::{Compression, DML};
 pub use common::pool::ClosedZone;
 
+#[cfg(not(test))]
+use common::cache::Cache;
 // LCOV_EXCL_START
 #[cfg(test)]
-pub struct CacheMock {
-    e: Expectations,
-}
-#[cfg(test)]
-impl CacheMock {
-    pub fn new() -> Self {
-        Self {
-            e: Expectations::new()
-        }
-    }
-
-    pub fn get<T: CacheRef>(&mut self, key: &Key) -> Option<Box<T>> {
-        self.e.was_called_returning::<*const Key, Option<Box<T>>>
-            ("get", key as *const Key)
-    }
-
-    pub fn expect_get<T: CacheRef>(&mut self) -> Method<*const Key, Option<Box<T>>> {
-        self.e.expect::<*const Key, Option<Box<T>>>("get")
-    }
-
-    pub fn insert(&mut self, key: Key, buf: Box<Cacheable>) {
-        self.e.was_called_returning::<(Key, Box<Cacheable>), ()>
-            ("insert", (key, buf))
-    }
-
-    pub fn expect_insert(&mut self) -> Method<(Key, Box<Cacheable>), ()> {
-        self.e.expect::<(Key, Box<Cacheable>), ()>("insert")
-    }
-
-    pub fn remove(&mut self, key: &Key) -> Option<Box<Cacheable>> {
-        self.e.was_called_returning::<*const Key, Option<Box<Cacheable>>>
-            ("remove", key as *const Key)
-    }
-
-    pub fn expect_remove(&mut self)
-        -> Method<*const Key, Option<Box<Cacheable>>>
-    {
-        self.e.expect::<*const Key, Option<Box<Cacheable>>>("remove")
-    }
-
-    pub fn size(&self) -> usize {
-        self.e.was_called_returning::<(), usize>("size", ())
-    }
-}
-
-#[cfg(test)]
-pub type CacheLike = CacheMock;
-#[cfg(not(test))]
-#[doc(hidden)]
-pub type CacheLike = Cache;
+use common::cache_mock::CacheMock as Cache;
 
 #[cfg(test)]
 /// Only exists so mockers can replace Pool
@@ -155,12 +112,12 @@ pub struct DDML {
     // list requires exclusive access.  It can be a normal Mutex instead of a
     // futures_lock::Mutex, because we will never need to block while holding
     // this lock.
-    cache: Arc<Mutex<CacheLike>>,
+    cache: Arc<Mutex<Cache>>,
     pool: PoolLike,
 }
 
 impl<'a> DDML {
-    pub fn new(pool: PoolLike, cache: Arc<Mutex<CacheLike>>) -> Self {
+    pub fn new(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
         DDML{pool, cache}
     }
 
@@ -372,7 +329,7 @@ mod t {
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let s = Scenario::new();
-        let mut cache = CacheMock::new();
+        let mut cache = Cache::new();
         // Ideally, we'd expect that Cache::remove gets called before
         // Pool::free.  But Simulacrum lacks that ability.
         cache.expect_remove()
@@ -396,7 +353,7 @@ mod t {
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let s = Scenario::new();
-        let mut cache = CacheMock::new();
+        let mut cache = Cache::new();
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
@@ -416,7 +373,7 @@ mod t {
         let pba2 = pba.clone();
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let s = Scenario::new();
-        let mut cache = CacheMock::new();
+        let mut cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         cache.expect_get()
             .called_once()
@@ -439,7 +396,7 @@ mod t {
         let owned_by_cache = Rc::new(RefCell::new(Vec::<Box<Cacheable>>::new()));
         let owned_by_cache2 = owned_by_cache.clone();
         let s = Scenario::new();
-        let mut cache = CacheMock::new();
+        let mut cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         // Ideally we'd assert that Pool::read gets called in between Cache::get
         // and Cache::insert.  But Simulacrum can't do that.
@@ -472,7 +429,7 @@ mod t {
                       csize: 1, checksum: 0xdeadbeefdeadbeef};
         let pba2 = pba.clone();
         let s = Scenario::new();
-        let mut cache = CacheMock::new();
+        let mut cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         cache.expect_get::<DivBuf>()
             .called_once()
@@ -498,7 +455,7 @@ mod t {
                       csize: 4096, checksum: 0};
         let pba2 = pba.clone();
         let s = Scenario::new();
-        let mut cache = CacheMock::new();
+        let mut cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         cache.expect_remove()
             .called_once()
@@ -521,7 +478,7 @@ mod t {
                       csize: 1, checksum: 0xe7f15966a3d61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
-        let mut cache = CacheMock::new();
+        let mut cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         cache.expect_remove()
             .called_once()
@@ -546,7 +503,7 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xdeadbeefdeadbeef};
         let s = Scenario::new();
-        let mut cache = CacheMock::new();
+        let mut cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         cache.expect_remove()
             .called_once()
@@ -567,7 +524,7 @@ mod t {
     #[test]
     fn put() {
         let s = Scenario::new();
-        let mut cache = CacheMock::new();
+        let mut cache = Cache::new();
         let pba = PBA::default();
         cache.expect_insert()
             .called_once()
@@ -590,7 +547,7 @@ mod t {
     #[test]
     fn sync_all() {
         let s = Scenario::new();
-        let cache = CacheMock::new();
+        let cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.sync_all_call()
             .and_return(Box::new(future::ok::<(), Error>(())))
