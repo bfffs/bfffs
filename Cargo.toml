@@ -34,7 +34,7 @@ serde = "1.0"
 serde_cbor = "0.8"
 serde_derive = "1.0"
 tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "db0e43f" }
-tokio = "0.1.5"
+tokio = "0.1.7"
 uuid = { version = "0.6", features = ["serde", "v4"]}
 
 [dev-dependencies]

@@ -355,7 +355,7 @@ mod pool {
     use futures::future;
     use mockers::Scenario;
     use mockers_derive::mock;
-    use tokio::executor::current_thread;
+    use tokio::runtime::current_thread;
 
     mock!{
         MockCluster,
@@ -432,7 +432,8 @@ mod pool {
                              vec![Box::new(cluster()),
                                   Box::new(cluster())]);
 
-        assert!(current_thread::block_on_all(pool.sync_all()).is_ok());
+        let mut rt = current_thread::Runtime::new().unwrap();
+        assert!(rt.block_on(pool.sync_all()).is_ok());
     }
 
     #[test]
@@ -454,7 +455,8 @@ mod pool {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
-        let result = current_thread::block_on_all(future::lazy(|| {
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let result = rt.block_on(future::lazy(|| {
             let (pba, fut) = pool.write(db0).expect("write failed early");
             fut.map(move |_| pba)
         }));

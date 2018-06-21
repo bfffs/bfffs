@@ -17,7 +17,7 @@ test_suite! {
     use rand::{Rng, thread_rng};
     use std::fs;
     use tempdir::TempDir;
-    use tokio::{executor::current_thread, reactor::Handle};
+    use tokio::{runtime::current_thread, reactor::Handle};
 
     fixture!( raid(n: i16, k: i16, f: i16, chunksize: LbaT) ->
               (VdevRaid, TempDir, Vec<String>) {
@@ -44,7 +44,7 @@ test_suite! {
             }).collect::<Vec<_>>();
             let mut vdev_raid = VdevRaid::create(*self.chunksize,
                 *self.n, *self.k, *self.f, &paths, Handle::default());
-            current_thread::block_on_all(
+            current_thread::Runtime::new().unwrap().block_on(
                 vdev_raid.open_zone(0)
             ).expect("open_zone");
             (vdev_raid, tempdir, paths)
@@ -71,7 +71,7 @@ test_suite! {
                   zone: ZoneT, start_lba: LbaT) {
         let mut write_lba = start_lba;
         let mut read_lba = start_lba;
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             future::join_all( {
                 wbufs.into_iter()
                 .map(|wb| {
@@ -91,7 +91,7 @@ test_suite! {
                     })
                 })
             })
-        })).expect("current_thread::block_on_all");
+        })).expect("current_thread::Runtime::block_on");
     }
 
     fn write_read0(vr: VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>) {
@@ -116,7 +116,7 @@ test_suite! {
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(wbuf.len() / 2);
         let sglist = vec![wbuf_l, wbuf_r];
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vr.writev_at_one(&sglist, zl.0)
                 .then(|write_result| {
                     write_result.expect("writev_at_one");
@@ -377,7 +377,7 @@ test_suite! {
     #[should_panic]
     test zone_erase_open(raid((3, 3, 1, 2))) {
         let zone = 1;
-        current_thread::block_on_all( future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on( future::lazy(|| {
             raid.val.0.open_zone(zone)
             .and_then(|_| raid.val.0.erase_zone(0))
         })).expect("zone_erase_open");
@@ -391,14 +391,14 @@ test_suite! {
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             raid.val.0.write_at(wbuf0, zone, zl.0)
                 .and_then(|_| {
                     raid.val.0.finish_zone(zone)
                 }).and_then(|_| {
                     raid.val.0.read_at(rbuf, zl.0)
                 })
-        })).expect("current_thread::block_on_all");
+        })).expect("current_thread::Runtime::block_on");
         assert_eq!(wbuf1, dbsr.try().unwrap());
     }
 
@@ -413,14 +413,14 @@ test_suite! {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
-            current_thread::block_on_all(future::lazy(|| {
+            current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
                 raid.val.0.write_at(wbuf_short, zone, zl.0)
                     .and_then(|_| {
                         raid.val.0.finish_zone(zone)
                     }).and_then(|_| {
                         raid.val.0.read_at(rbuf_short, zl.0)
                     })
-            })).expect("current_thread::block_on_all");
+            })).expect("current_thread::Runtime::block_on");
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try().unwrap()[0..BYTES_PER_LBA]);
@@ -436,7 +436,7 @@ test_suite! {
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        current_thread::block_on_all(
+        current_thread::Runtime::new().unwrap().block_on(
             raid.val.0.open_zone(zone)
             .and_then(|_| raid.val.0.finish_zone(zone))
         ).expect("open and finish");
@@ -463,7 +463,7 @@ test_suite! {
         let wbuf0 = dbsw.try().unwrap();
         let wbuf1 = dbsw.try().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        current_thread::block_on_all(
+        current_thread::Runtime::new().unwrap().block_on(
             raid.val.0.open_zone(zone)
         ).expect("open_zone");
         write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
@@ -480,7 +480,7 @@ test_suite! {
             let wbuf0 = dbsw.try().unwrap();
             let wbuf1 = dbsw.try().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
-            current_thread::block_on_all(
+            current_thread::Runtime::new().unwrap().block_on(
                 vdev_raid.open_zone(zone)
             ).expect("open_zone");
             write_read(&vdev_raid, vec![wbuf0], vec![rbuf], zone, start);
@@ -496,7 +496,7 @@ test_suite! {
     use futures::future;
     use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;
-    use tokio::{executor::current_thread, reactor::Handle};
+    use tokio::{runtime::current_thread, reactor::Handle};
 
     const GOLDEN_VDEV_RAID_LABEL: [u8; 183] = [
         // Past the VdevFile::Label, we have a VdevRaid::Label
@@ -555,19 +555,20 @@ test_suite! {
     test open_all(raid()) {
         let (old_raid, _tempdir, paths) = raid.val;
         let uuid = old_raid.uuid();
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let label_writer = LabelWriter::new();
             old_raid.write_label(label_writer)
         })).unwrap();
         drop(old_raid);
-        let vdev_raid = current_thread::block_on_all(future::lazy(|| {
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let vdev_raid = rt.block_on(future::lazy(|| {
             VdevRaid::open_all(paths, Handle::default())
         })).unwrap().pop().unwrap().0;
         assert_eq!(uuid, vdev_raid.uuid());
     }
     
     test write_label(raid()) {
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let label_writer = LabelWriter::new();
             raid.val.0.write_label(label_writer)
         })).unwrap();

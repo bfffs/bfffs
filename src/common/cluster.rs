@@ -659,7 +659,7 @@ mod cluster {
     use divbuf::DivBufShared;
     use mockers::{Scenario, matchers};
     use mockers_derive::mock;
-    use tokio::executor::current_thread;
+    use tokio::runtime::current_thread;
     use tokio::reactor::Handle;
 
     mock!{
@@ -715,7 +715,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
         let db1 = db0.clone();
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let (lba, fut1) = cluster.write(db0).expect("write failed early");
             // Write a 2nd time so the first zone will get closed
             fut1.and_then(|_| {
@@ -756,7 +756,7 @@ mod cluster {
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs0.try().unwrap();
         let db1 = dbs1.try().unwrap();
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let (lba, fut1) = cluster.write(db0).expect("write failed early");
             // Write a larger buffer so the first zone will get closed
             fut1.and_then(|_| {
@@ -802,7 +802,7 @@ mod cluster {
         let db0 = dbs0.try().unwrap();
         let db1 = dbs0.try().unwrap();
         let db2 = dbs1.try().unwrap();
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let (lba, fut1) = cluster.write(db0).expect("write failed early");
             fut1.and_then(|_| {
                 let (_, fut2) = cluster.write(db1).expect("write failed early");
@@ -928,7 +928,7 @@ mod cluster {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let (_, fut) = cluster.write(db0).expect("write failed early");
             fut.and_then(|_| cluster.sync_all())
         })).unwrap();
@@ -947,8 +947,9 @@ mod cluster {
         let cluster = Cluster::new(fsm, Box::new(vr));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
-         let result = current_thread::block_on_all(future::lazy(|| {
-           cluster.write(dbs.try().unwrap())
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let result = rt.block_on(future::lazy(|| {
+            cluster.write(dbs.try().unwrap())
         }));
         assert_eq!(result.err().unwrap(), Error::Sys(errno::Errno::ENOSPC));
     }
@@ -987,7 +988,8 @@ mod cluster {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
-        let result = current_thread::block_on_all(future::lazy(|| {
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let result = rt.block_on(future::lazy(|| {
             let (lba, fut) = cluster.write(db0).expect("write failed early");
             fut.map(move |_| lba)
         }));
@@ -1020,7 +1022,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
         let db1 = dbs.try().unwrap();
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let cluster_ref = &cluster;
             let (_, fut0) = cluster.write(db0).expect("Cluster::write");
             fut0.and_then(move |_| {
@@ -1064,7 +1066,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs.try().unwrap();
         let db1 = dbs.try().unwrap();
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let cluster_ref = &cluster;
             let (_, fut0) = cluster.write(db0).expect("Cluster::write");
             fut0.and_then(move |_| {

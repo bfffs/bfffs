@@ -14,7 +14,7 @@ test_suite! {
     use futures::future;
     use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;
-    use tokio::{executor::current_thread, reactor::Handle};
+    use tokio::{runtime::current_thread, reactor::Handle};
 
     const GOLDEN_POOL_LABEL: [u8; 81] = [
         // Past the VdevRaid::Label, we have a VdevRaid::Label
@@ -63,11 +63,12 @@ test_suite! {
         let (old_pool, _tempdir, paths) = objects.val;
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             old_pool.write_label()
         })).unwrap();
         drop(old_pool);
-        let pool = current_thread::block_on_all(future::lazy(|| {
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let pool = rt.block_on(future::lazy(|| {
             Pool::open(name.clone(), paths, Handle::default())
         })).unwrap();
         assert_eq!(name, pool.name());
@@ -75,7 +76,7 @@ test_suite! {
     }
 
     test write_label(objects()) {
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             objects.val.0.write_label()
         })).unwrap();
         for path in objects.val.2 {

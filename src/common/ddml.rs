@@ -355,7 +355,7 @@ mod t {
     use simulacrum::validators::trivial::any;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use tokio::executor::current_thread;
+    use tokio::runtime::current_thread;
 
     mock!{
         MockPool,
@@ -468,7 +468,7 @@ mod t {
             });
 
         let ddml = DDML::new(Box::new(pool), cache);
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             ddml.get::<DivBuf>(&drp)
         })).unwrap();
     }
@@ -492,7 +492,8 @@ mod t {
         }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
 
         let ddml = DDML::new(Box::new(pool), cache);
-        let err = current_thread::block_on_all(future::lazy(|| {
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let err = rt.block_on(future::lazy(|| {
             ddml.get::<DivBuf>(&drp)
         })).unwrap_err();
         assert_eq!(err, Error::Sys(errno::Errno::EIO));
@@ -541,7 +542,7 @@ mod t {
         s.expect(seq);
 
         let ddml = DDML::new(Box::new(pool), cache);
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             ddml.pop::<DivBufShared, DivBuf>(&drp)
         })).unwrap();
     }
@@ -564,7 +565,8 @@ mod t {
                    .and_return(Box::new(future::ok::<(), Error>(()))));
 
         let ddml = DDML::new(Box::new(pool), cache);
-        let err = current_thread::block_on_all(future::lazy(|| {
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let err = rt.block_on(future::lazy(|| {
             ddml.pop::<DivBufShared, DivBuf>(&drp)
         })).unwrap_err();
         assert_eq!(err, Error::Sys(errno::Errno::EIO));
@@ -590,7 +592,7 @@ mod t {
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
-        current_thread::block_on_all(fut).unwrap();
+        current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
     }
 
     #[test]
@@ -603,7 +605,8 @@ mod t {
         );
 
         let ddml = DDML::new(Box::new(pool), cache);
-        assert!(current_thread::block_on_all(ddml.sync_all()).is_ok());
+        let mut rt = current_thread::Runtime::new().unwrap();
+        assert!(rt.block_on(ddml.sync_all()).is_ok());
     }
 }
 // LCOV_EXCL_STOP

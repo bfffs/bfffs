@@ -247,7 +247,7 @@ impl<A: Addr, K: Key, V: Value> TreePtr<A, K, V> {
 mod node_serializer {
     use super::*;
     use serde::Deserialize;
-    use tokio::executor::current_thread;
+    use tokio::runtime::current_thread;
 
     pub(super) fn deserialize<'de, A, DE, K, V>(deserializer: DE)
         -> Result<Box<Node<A, K, V>>, DE::Error>
@@ -261,7 +261,8 @@ mod node_serializer {
                                      serializer: S) -> Result<S::Ok, S::Error>
         where A: Addr, S: Serializer, K: Key, V: Value {
 
-        let guard = current_thread::block_on_all(node.0.read()).unwrap();
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let guard = rt.block_on(node.0.read()).unwrap();
         (*guard).serialize(serializer)
     }
 }
@@ -1864,13 +1865,14 @@ mod in_mem {
 
 use super::*;
 use futures::future;
-use tokio::executor::current_thread;
+use tokio::runtime::current_thread;
 
 #[test]
 fn insert() {
     let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
-    let r = current_thread::block_on_all(tree.insert(0, 0.0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.insert(0, 0.0));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -1904,7 +1906,8 @@ root:
         items:
           0: 0.0
 "#);
-    let r = current_thread::block_on_all(tree.insert(0, 100.0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.insert(0, 100.0));
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -2011,7 +2014,8 @@ root:
                               21: 21.0
                               22: 22.0
                               23: 23.0"#);
-    let r2 = current_thread::block_on_all(tree.insert(24, 24.0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.insert(24, 24.0));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2142,7 +2146,8 @@ root:
                     6: 6.0
                     7: 7.0
 "#);
-    let r2 = current_thread::block_on_all(tree.insert(8, 8.0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.insert(8, 8.0));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", tree),
 r#"---
@@ -2239,7 +2244,8 @@ root:
                     13: 13.0
                     14: 14.0
 "#);
-    let r2 = current_thread::block_on_all(tree.insert(15, 15.0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.insert(15, 15.0));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2328,7 +2334,8 @@ root:
           3: 3.0
           4: 4.0
 "#);
-    let r2 = current_thread::block_on_all(tree.insert(5, 5.0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.insert(5, 5.0));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2364,7 +2371,8 @@ root:
 fn get() {
     let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
-    let r = current_thread::block_on_all(future::lazy(|| {
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(future::lazy(|| {
         tree.insert(0, 0.0)
             .and_then(|_| tree.get(0))
     }));
@@ -2401,7 +2409,8 @@ root:
                     3: 3.0
                     4: 4.0
 "#);
-    let r = current_thread::block_on_all(tree.get(3));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.get(3));
     assert_eq!(r, Ok(Some(3.0)))
 }
 
@@ -2409,7 +2418,8 @@ root:
 fn get_nonexistent() {
     let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
-    let r = current_thread::block_on_all(tree.get(0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.get(0));
     assert_eq!(r, Ok(None))
 }
 
@@ -2504,7 +2514,8 @@ root:
                               37: 37.0
                               40: 40.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range_delete(11..=31)
     );
     assert!(r.is_ok());
@@ -2624,7 +2635,8 @@ root:
                               37: 37.0
                               40: 40.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range_delete(5..6)
     );
     assert!(r.is_ok());
@@ -2747,7 +2759,8 @@ root:
                     21: 21.0
                     22: 22.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range_delete((Bound::Excluded(4), Bound::Excluded(10)))
     );
     assert!(r.is_ok());
@@ -2841,7 +2854,8 @@ root:
                     21: 21.0
                     22: 22.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range_delete((Bound::Excluded(4), Bound::Included(10)))
     );
     assert!(r.is_ok());
@@ -2930,7 +2944,8 @@ root:
                               11: 11.0
                               12: 12.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range_delete(5..7)
     );
     assert!(r.is_ok());
@@ -3011,7 +3026,8 @@ root:
                     10: 10.0
                     11: 11.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range_delete(7..20)
     );
     assert!(r.is_ok());
@@ -3135,7 +3151,8 @@ root:
                               40: 40.0
                               41: 41.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range_delete(10..16)
     );
     assert!(r.is_ok());
@@ -3262,7 +3279,8 @@ root:
                     21: 21.0
                     22: 22.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range_delete(4..20)
     );
     assert!(r.is_ok());
@@ -3328,7 +3346,8 @@ root:
                     3: 3.0
                     4: 4.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range(..).collect()
     );
     assert_eq!(r, Ok(vec![(0, 0.0), (1, 1.0), (3, 3.0), (4, 4.0)]));
@@ -3365,14 +3384,15 @@ root:
                     4: 4.0
 "#);
     // A query that starts on a leaf
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range((Bound::Excluded(0), Bound::Excluded(4)))
             .collect()
     );
     assert_eq!(r, Ok(vec![(1, 1.0), (3, 3.0)]));
 
     // A query that starts between leaves
-    let r = current_thread::block_on_all(
+    let r = rt.block_on(
         tree.range((Bound::Excluded(1), Bound::Excluded(4)))
             .collect()
     );
@@ -3400,7 +3420,8 @@ root:
           3: 3.0
           4: 4.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range(1..3)
             .collect()
     );
@@ -3428,7 +3449,8 @@ root:
           3: 3.0
           4: 4.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range(3..=4)
             .collect()
     );
@@ -3465,7 +3487,8 @@ root:
                     5: 5.0
                     6: 6.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range(2..4)
             .collect()
     );
@@ -3512,7 +3535,8 @@ root:
                               9: 9.0
                               10: 10.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range(1..10)
             .collect()
     );
@@ -3549,7 +3573,8 @@ root:
                     3: 3.0
                     4: 4.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range(2..4)
             .collect()
     );
@@ -3586,7 +3611,8 @@ root:
                     3: 3.0
                     4: 4.0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range(1..4)
             .collect()
     );
@@ -3610,7 +3636,8 @@ root:
         items:
           0: 0.0
 "#);
-    let r = current_thread::block_on_all(tree.remove(0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.remove(0));
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -3645,7 +3672,8 @@ root:
           1: 1.0
           2: 2.0
 "#);
-    let r = current_thread::block_on_all(tree.remove(1));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.remove(1));
     assert_eq!(r, Ok(Some(1.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -3687,7 +3715,8 @@ root:
                     1: 1.0
                     2: 2.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(1));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(1));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3792,7 +3821,8 @@ root:
                               21: 21.0
                               22: 22.0
                               23: 23.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(23));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(23));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3954,7 +3984,8 @@ root:
                             items:
                               21: 21.0
                               22: 22.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(4));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(4));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4066,7 +4097,8 @@ root:
                     5: 5.0
                     7: 7.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(7));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(7));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4135,7 +4167,8 @@ root:
                     6: 6.0
                     7: 7.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(4));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(4));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4261,7 +4294,8 @@ root:
                               24: 24.0
                               25: 25.0
                               26: 26.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(26));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(26));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4449,7 +4483,8 @@ root:
                             items:
                               24: 24.0
                               26: 26.0"#);
-    let r2 = current_thread::block_on_all(tree.remove(14));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(14));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4583,7 +4618,8 @@ root:
                     8: 8.0
                     9: 9.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(8));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(8));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4662,7 +4698,8 @@ root:
                     8: 8.0
                     9: 9.0
 "#);
-    let r2 = current_thread::block_on_all(tree.remove(4));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(4));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -4705,7 +4742,8 @@ root:
 fn remove_nonexistent() {
     let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
-    let r = current_thread::block_on_all(tree.remove(3));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.remove(3));
     assert_eq!(r, Ok(None));
 }
 
@@ -4718,7 +4756,7 @@ mod io {
 use super::*;
 use futures::future;
 use tokio::prelude::task::current;
-use tokio::executor::current_thread;
+use tokio::runtime::current_thread;
 
 /// Insert an item into a Tree that's not dirty
 #[test]
@@ -4773,7 +4811,8 @@ root:
                 checksum: 1234567
 "#);
 
-    let r = current_thread::block_on_all(tree.insert(0, 0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.insert(0, 0));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -4843,7 +4882,8 @@ root:
       checksum: 0
 "#);
 
-    let r = current_thread::block_on_all(tree.insert(0, 0));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.insert(0, 0));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -4943,7 +4983,8 @@ root:
       csize: 36
       checksum: 0
 "#);
-    let r = current_thread::block_on_all(
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
         tree.range(1..3).collect()
     );
     assert_eq!(r, Ok(vec![(1, 1.0), (2, 2.0)]));
@@ -4993,7 +5034,8 @@ root:
       checksum: 0
 "#);
 
-    let r = current_thread::block_on_all(future::lazy(|| {
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(future::lazy(|| {
         let root_guard = tree.i.root.try_read().unwrap();
         tree.rlock(&root_guard).map(|node| {
             let int_data = (*node).as_int();
@@ -5045,7 +5087,8 @@ root:
       checksum: 0
 "#);
 
-    let r = current_thread::block_on_all(tree.get(1));
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.get(1));
     assert_eq!(Ok(Some(200)), r);
 }
 
@@ -5072,7 +5115,8 @@ root:
       checksum: 0
 "#);
 
-    let r = current_thread::block_on_all(tree.sync_all());
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.sync_all());
     assert!(r.is_ok());
 }
 
@@ -5136,7 +5180,8 @@ root:
                 checksum: 0x1a7ebabe
 "#);
 
-    let r = current_thread::block_on_all(tree.sync_all());
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.sync_all());
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
@@ -5194,7 +5239,8 @@ root:
                 checksum: 0x1a7ebabe
 "#);
 
-    let r = current_thread::block_on_all(tree.sync_all());
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.sync_all());
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
@@ -5231,7 +5277,8 @@ root:
           1: 200
 "#);
 
-    let r = current_thread::block_on_all(tree.sync_all());
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.sync_all());
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }

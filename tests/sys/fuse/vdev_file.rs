@@ -24,7 +24,7 @@ test_suite! {
         path::PathBuf,
     };
     use tempdir::TempDir;
-    use tokio::{executor::current_thread, reactor::Handle};
+    use tokio::{runtime::current_thread, reactor::Handle};
 
     fixture!( vdev() -> (VdevFile, PathBuf, TempDir) {
         setup(&mut self) {
@@ -76,7 +76,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevFile::create(path, Handle::current()).unwrap();
-        t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.read_at(rbuf, 4)
         })));
         assert_eq!(dbs.try().unwrap(), wbuf[..]);
@@ -100,7 +100,7 @@ test_suite! {
         let rbuf1 = rbuf0.split_off(1024);
         let rbufs = vec![rbuf0, rbuf1];
         let vdev = VdevFile::create(path, Handle::current()).unwrap();
-        t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.readv_at(rbufs, 4)
         })));
         assert_eq!(dbs.try().unwrap(), wbuf[..]);
@@ -110,7 +110,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
-        t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.val.0.write_at(wbuf.clone(), 4)
         })));
         let mut f = t!(fs::File::open(vdev.val.1));
@@ -130,7 +130,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
-        t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.val.0.write_at(wbuf.clone(), 5)
         })));
         let mut f = t!(fs::File::open(vdev.val.1));
@@ -145,7 +145,7 @@ test_suite! {
         let wbuf1 = wbuf0.split_off(1024);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let mut rbuf = vec![0u8; 4096];
-        t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.val.0.writev_at(wbufs, 4)
         })));
         let mut f = t!(fs::File::open(vdev.val.1));
@@ -161,7 +161,7 @@ test_suite! {
         let wbuf = dbsw.try().unwrap();
         let dbsr = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbsr.try_mut().unwrap();
-        t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vd.write_at(wbuf.clone(), 4)
                 .and_then(|_| {
                     vd.read_at(rbuf, 4)
@@ -190,7 +190,7 @@ test_suite! {
     };
     use std;
     use tempdir::TempDir;
-    use tokio::{executor::current_thread, reactor::Handle};
+    use tokio::{runtime::current_thread, reactor::Handle};
     use uuid::Uuid;
 
     const GOLDEN: [u8; 82] = [
@@ -237,7 +237,7 @@ test_suite! {
                 .open(fixture.val.0.clone()).unwrap();
             f.write_all(&GOLDEN).unwrap();
         }
-        t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             VdevFile::open(fixture.val.0, Handle::current())
                 .and_then(|(vdev, _label_reader)| {
                     assert_eq!(vdev.size(), 16_384);
@@ -252,7 +252,7 @@ test_suite! {
     test write_label(fixture) {
         let vdev = VdevFile::create(fixture.val.0.clone(),
                                         Handle::current()).unwrap();
-        t!(current_thread::block_on_all(future::lazy(|| {
+        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let label_writer = LabelWriter::new();
             vdev.write_label(label_writer)
         })));

@@ -15,7 +15,7 @@ test_suite! {
     use futures::{Future, future};
     use std::{fs, io::Read, path::Path};
     use tempdir::TempDir;
-    use tokio::{executor::current_thread, reactor::Handle};
+    use tokio::{runtime::current_thread, reactor::Handle};
 
     fixture!( objects() -> DDML {
         setup(&mut self) {
@@ -38,7 +38,7 @@ test_suite! {
         let ddml: DDML = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let (drp, fut) = ddml.put(dbs, Compression::None);
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let ddml2 = &ddml;
             let drp2 = &drp;
             fut.and_then(move |_| {
@@ -73,7 +73,7 @@ test_suite! {
         file.read_to_end(&mut vdev_raid_contents).unwrap();
         let dbs = DivBufShared::from(vdev_raid_contents.clone());
         let (drp, fut) = ddml.put(dbs, Compression::ZstdL9NoShuffle);
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let ddml2 = &ddml;
             let drp2 = &drp;
             fut.and_then(move |_| {
@@ -99,7 +99,7 @@ test_suite! {
         let ddml: DDML = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 1024]);
         let (drp, fut) = ddml.put(dbs, Compression::None);
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let ddml2 = &ddml;
             let drp2 = &drp;
             fut.and_then(move |_| {

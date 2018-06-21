@@ -714,7 +714,7 @@ test_suite! {
     use mockers::matchers::ANY;
     use mockers_derive::mock;
     use permutohedron;
-    use tokio::executor::current_thread;
+    use tokio::runtime::current_thread;
     use tokio::reactor::Handle;
 
     mock!{
@@ -818,7 +818,7 @@ test_suite! {
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
             f0.join(f1)
@@ -850,7 +850,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.read_at(rbuf, 1)
         })).expect("test eagain_queue_depth_1");
     }
@@ -864,7 +864,7 @@ test_suite! {
         scenario.expect(seq);
 
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.erase_zone(1, (1 << 16) - 1)
         })).unwrap();
     }
@@ -878,7 +878,7 @@ test_suite! {
         scenario.expect(seq);
 
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.finish_zone(1, (1 << 16) - 1)
         })).unwrap();
     }
@@ -892,7 +892,7 @@ test_suite! {
         scenario.expect(seq);
 
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.open_zone(1)
         })).unwrap();
     }
@@ -909,7 +909,7 @@ test_suite! {
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.read_at(rbuf0, 2)
         })).unwrap();
     }
@@ -926,7 +926,7 @@ test_suite! {
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = vec![dbs0.try_mut().unwrap()];
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.readv_at(rbuf0, 2)
         })).unwrap();
     }
@@ -941,7 +941,7 @@ test_suite! {
         scenario.expect(seq);
 
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.sync_all()
         })).unwrap();
     }
@@ -1209,7 +1209,7 @@ test_suite! {
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
             f0.join(f1)
@@ -1252,7 +1252,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             // First schedule all operations.  There are too many to issue them
             // all immediately
             let unbuf_fut = future::join_all((1..num_ops - 1).rev().map(|i| {
@@ -1291,7 +1291,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.write_at(wbuf, 1)
         })).unwrap();
     }
@@ -1306,7 +1306,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = vec![dbs.try().unwrap()];
         let vdev = VdevBlock::new(leaf, Handle::current());
-        current_thread::block_on_all(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.writev_at(wbuf, 1)
         })).unwrap();
     }
