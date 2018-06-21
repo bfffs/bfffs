@@ -1,6 +1,7 @@
 #![cfg_attr(feature = "mocks", feature(plugin))]
 #![cfg_attr(feature = "mocks", feature(proc_macro))]
 
+extern crate atomic;
 extern crate bincode;
 extern crate blosc;
 extern crate byteorder;

@@ -52,6 +52,10 @@ pub trait CacheRef: Any {
     /// Deserialize a buffer into the kind of `Cacheable` that's associated with
     /// this `CacheRef`.  Will panic if deserialization fails.
     fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized;
+
+    /// Convert this shared `CacheRef` into an owned `Cacheable`, which may or
+    /// may not involve copying
+    fn to_owned(self) -> Box<Cacheable>;
 }
 
 downcast!(CacheRef);
@@ -85,6 +89,10 @@ impl Cacheable for DivBufShared {
 impl CacheRef for DivBuf {
     fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized {
         Box::new(dbs)
+    }
+
+    fn to_owned(self) -> Box<Cacheable> {
+        Box::new(DivBufShared::from(self[..].to_vec()))
     }
 }
 

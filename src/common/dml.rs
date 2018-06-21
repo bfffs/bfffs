@@ -73,7 +73,7 @@ pub trait DML {
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
 
     /// Read a record and return ownership of it.
-    fn pop<'a, T: Cacheable>(&'a self, addr: &Self::Addr)
+    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.

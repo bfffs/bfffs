@@ -8,6 +8,7 @@ authors = ["Alan Somers <asomers@gmail.com>"]
 mocks = ["mockers", "mockers_derive"]
 
 [dependencies]
+atomic = "0.3"
 bincode = "1.0"
 blosc = "0.1"
 byteorder = "1.0"

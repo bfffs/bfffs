@@ -126,6 +126,11 @@ impl DRP {
         DRP{pba, compression, lsize, csize, checksum}
     }
 
+    /// Get the Physical Block Address of the record's start
+    pub fn pba(&self) -> PBA {
+        self.pba
+    }
+
     /// Get an otherwise random DRP with a specific lsize and compression.
     /// Useful for testing purposes.
     #[cfg(test)]
@@ -247,7 +252,7 @@ impl DML for DDML {
         })
     }
 
-    fn pop<'a, T: Cacheable>(&'a self, drp: &DRP)
+    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, drp: &DRP)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a> {
 
         let lbas = drp.asize();
@@ -512,7 +517,7 @@ mod t {
         s.expect(pool.free_call(pba, 1).and_return(()));
 
         let ddml = DDML::new(Box::new(pool), cache);
-        ddml.pop::<DivBufShared>(&drp);
+        ddml.pop::<DivBufShared, DivBuf>(&drp);
     }
 
     #[test]
@@ -537,7 +542,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), cache);
         current_thread::block_on_all(future::lazy(|| {
-            ddml.pop::<DivBufShared>(&drp)
+            ddml.pop::<DivBufShared, DivBuf>(&drp)
         })).unwrap();
     }
 
@@ -560,7 +565,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), cache);
         let err = current_thread::block_on_all(future::lazy(|| {
-            ddml.pop::<DivBufShared>(&drp)
+            ddml.pop::<DivBufShared, DivBuf>(&drp)
         })).unwrap_err();
         assert_eq!(err, Error::Sys(errno::Errno::EIO));
     }

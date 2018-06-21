@@ -46,7 +46,7 @@ test_suite! {
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 4096][..]);
             }).and_then(|_| {
-                ddml.pop(&drp)
+                ddml.pop::<DivBufShared, DivBuf>(&drp)
             }).map(|dbs: Box<DivBufShared>| {
                 assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 4096][..]);
             }).and_then(|_| {
@@ -81,7 +81,7 @@ test_suite! {
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vdev_raid_contents[..]);
             }).and_then(|_| {
-                ddml.pop(&drp)
+                ddml.pop::<DivBufShared, DivBuf>(&drp)
             }).map(|dbs: Box<DivBufShared>| {
                 assert_eq!(&dbs.try().unwrap()[..], &vdev_raid_contents[..]);
             }).and_then(|_| {
@@ -107,7 +107,7 @@ test_suite! {
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 1024][..]);
             }).and_then(|_| {
-                ddml.pop(&drp)
+                ddml.pop::<DivBufShared, DivBuf>(&drp)
             }).map(|dbs: Box<DivBufShared>| {
                 assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 1024][..]);
             }).and_then(|_| {

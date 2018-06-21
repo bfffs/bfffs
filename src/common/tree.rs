@@ -72,7 +72,7 @@ impl DDMLMock {
             ("get")
     }
 
-    pub fn expect_pop<T: Cacheable>(&mut self) -> Method<*const DRP,
+    pub fn expect_pop<T: Cacheable, R:CacheRef>(&mut self) -> Method<*const DRP,
         Box<Future<Item=Box<T>, Error=Error>>>
     {
         self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
@@ -118,7 +118,7 @@ impl DML for DDMLMock {
             ("get", drp as *const DRP)
     }
 
-    fn pop<T: Cacheable>(&self, drp: &DRP)
+    fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
         -> Box<Future<Item=Box<T>, Error=Error>>
     {
         self.e.was_called_returning::<*const DRP,
@@ -651,6 +651,10 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
         let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
         let node = Arc::new(Node(RwLock::new(node_data)));
         Box::new(node)
+    }
+
+    fn to_owned(self) -> Box<Cacheable> {
+        Box::new(self)
     }
 }
 
@@ -1660,7 +1664,9 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                              .ptr
                              .as_addr();
                 Box::new(
-                    self.dml.pop::<Arc<Node<A, K, V>>>(&addr).map(move |arc| {
+                    self.dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
+                        &addr).map(move |arc|
+                    {
                         let child_node = Box::new(Arc::try_unwrap(*arc)
                             .expect("We should be the Node's only owner"));
                         let child_guard = {
@@ -1709,7 +1715,9 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         } else {
             let addr = *guard.ptr.as_addr();
             Box::new(
-                self.dml.pop::<Arc<Node<A, K, V>>>(&addr).map(move |arc| {
+                self.dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
+                    &addr).map(move |arc|
+                {
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
                     guard.ptr = TreePtr::Mem(child_node);
@@ -4720,7 +4728,7 @@ fn insert_below_root() {
     let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    mock.expect_pop::<Arc<Node<DRP, u32, u32>>>()
+    mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
@@ -4805,7 +4813,7 @@ fn insert_root() {
     let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    mock.expect_pop::<Arc<Node<DRP, u32, u32>>>()
+    mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
         .returning(move |_| {
