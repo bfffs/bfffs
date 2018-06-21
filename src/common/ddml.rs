@@ -10,7 +10,10 @@ use futures::{Future, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
-use std::{hash::Hasher, sync::Mutex};
+use std::{
+    hash::Hasher,
+    sync::{Arc, Mutex}
+};
 #[cfg(test)] use simulacrum::*;
 #[cfg(test)] use uuid::Uuid;
 
@@ -156,7 +159,7 @@ pub struct DDML {
     // list requires exclusive access.  It can be a normal Mutex instead of a
     // futures_lock::Mutex, because we will never need to block while holding
     // this lock.
-    cache: Mutex<CacheLike>,
+    cache: Arc<Mutex<CacheLike>>,
     pool: PoolLike,
 }
 
@@ -169,7 +172,7 @@ impl<'a> DDML {
 
     #[cfg(any(not(test), feature = "mocks"))]
     fn new(pool: PoolLike, cache: CacheLike) -> Self {
-        DDML{pool: pool, cache: Mutex::new(cache)}
+        DDML{pool: pool, cache: Arc::new(Mutex::new(cache))}
     }
 
     pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
