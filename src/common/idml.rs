@@ -13,12 +13,12 @@ use common::{
     *,
     dml::*,
     ddml::*,
-    //cache::*,
+    cache::*,
     tree::*
 };
 use futures::{Future, IntoFuture, Stream};
 use nix::{Error, errno};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub use common::ddml::ClosedZone;
 
@@ -51,6 +51,8 @@ pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
 
 /// Indirect Data Management Layer for a single `Pool`
 pub struct IDML {
+    _cache: Arc<Mutex<Cache>>,
+
     ddml: Arc<DDML>,
 
     /// Allocation table.  The reverse of `ridt`.
@@ -68,11 +70,11 @@ pub struct IDML {
 
 impl<'a> IDML {
     #[cfg(not(test))]
-    pub fn create(ddml: Arc<DDML>) -> Self {
+    pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
         let alloct = DTree::<PBA, RID>::create(ddml.clone());
         let next_rid = Atomic::new(0);
         let ridt = DTree::<RID, RidtEntry>::create(ddml.clone());
-        IDML{alloct: alloct, ddml: ddml, next_rid, ridt: ridt}
+        IDML{alloct, _cache: cache, ddml, next_rid, ridt}
     }
 
     pub fn list_closed_zones(&'a self) -> Box<Iterator<Item=ClosedZone> + 'a> {

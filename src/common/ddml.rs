@@ -92,10 +92,6 @@ pub type PoolLike = Box<PoolTrait>;
 pub type PoolLike = Pool;
 // LCOV_EXCL_STOP
 
-/// Default cache size.
-#[cfg(not(test))]
-const CACHE_SIZE: usize = 1_000_000_000;
-
 /// Direct Record Pointer.  A persistable pointer to a record on disk.
 ///
 /// A Record is a local unit of data on disk.  It may be larger or smaller than
@@ -164,15 +160,8 @@ pub struct DDML {
 }
 
 impl<'a> DDML {
-    /// Initialze the `DDML`.
-    #[cfg(not(test))]
-    pub fn create(pool: PoolLike) -> Self {
-        DDML::new(pool, Cache::with_capacity(CACHE_SIZE))
-    }
-
-    #[cfg(any(not(test), feature = "mocks"))]
-    fn new(pool: PoolLike, cache: CacheLike) -> Self {
-        DDML{pool: pool, cache: Arc::new(Mutex::new(cache))}
+    pub fn new(pool: PoolLike, cache: Arc<Mutex<CacheLike>>) -> Self {
+        DDML{pool, cache}
     }
 
     pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
@@ -396,7 +385,7 @@ mod t {
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.free_call(pba, 1).and_return(()));
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         ddml.delete(&drp);
     }
 
@@ -415,7 +404,7 @@ mod t {
             })).returning(|_| None);
         let pool = s.create_mock::<MockPool>();
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         ddml.evict(&drp);
     }
 
@@ -437,7 +426,7 @@ mod t {
                 Some(Box::new(dbs.try().unwrap()))
             });
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         ddml.get::<DivBuf>(&drp);
     }
 
@@ -470,7 +459,7 @@ mod t {
                 owned_by_cache2.borrow_mut().push(dbs);
             });
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             ddml.get::<DivBuf>(&drp)
         })).unwrap();
@@ -494,7 +483,7 @@ mod t {
             dbm.len() == 4096
         }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         let err = rt.block_on(future::lazy(|| {
             ddml.get::<DivBuf>(&drp)
@@ -520,7 +509,7 @@ mod t {
             });
         s.expect(pool.free_call(pba, 1).and_return(()));
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         ddml.pop::<DivBufShared, DivBuf>(&drp);
     }
 
@@ -544,7 +533,7 @@ mod t {
         seq.expect(pool.free_call(pba, 1).and_return(()));
         s.expect(seq);
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             ddml.pop::<DivBufShared, DivBuf>(&drp)
         })).unwrap();
@@ -567,7 +556,7 @@ mod t {
         s.expect(pool.read_call(ANY, pba)
                    .and_return(Box::new(future::ok::<(), Error>(()))));
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         let err = rt.block_on(future::lazy(|| {
             ddml.pop::<DivBufShared, DivBuf>(&drp)
@@ -589,7 +578,7 @@ mod t {
             .and_return(Ok((pba, Box::new(future::ok::<(), Error>(())))))
         );
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let (drp, fut) = ddml.put(dbs, Compression::None);
         assert_eq!(drp.pba, pba);
@@ -607,7 +596,7 @@ mod t {
             .and_return(Box::new(future::ok::<(), Error>(())))
         );
 
-        let ddml = DDML::new(Box::new(pool), cache);
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         assert!(rt.block_on(ddml.sync_all()).is_ok());
     }

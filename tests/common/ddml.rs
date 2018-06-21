@@ -10,10 +10,19 @@ macro_rules! t {
 test_suite! {
     name ddml;
 
-    use arkfs::common::{ddml::*, pool::*};
+    use arkfs::common::{
+        cache::*,
+        ddml::*,
+        pool::*
+    };
     use divbuf::{DivBuf, DivBufShared};
     use futures::{Future, future};
-    use std::{fs, io::Read, path::Path};
+    use std::{
+        fs,
+        io::Read,
+        path::Path,
+        sync::{Arc, Mutex}
+    };
     use tempdir::TempDir;
     use tokio::{runtime::current_thread, reactor::Handle};
 
@@ -30,7 +39,8 @@ test_suite! {
                                          Handle::default())
                 ]
             );
-            DDML::create(pool)
+            let cache = Cache::with_capacity(1_000_000_000);
+            DDML::new(pool, Arc::new(Mutex::new(cache)))
         }
     });
 
