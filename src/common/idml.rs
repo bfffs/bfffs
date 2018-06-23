@@ -68,6 +68,8 @@ pub struct IDML {
     ///
     /// Maps disk addresses back to record IDs.  Used for operations like
     /// garbage collection and defragmentation.
+    // TODO: consider a lazy delete strategy to reduce the amount of tree
+    // activity on pop/delete by deferring alloct removals to the cleaner.
     alloct: DTree<PBA, RID>,
 
     /// Holds the next RID to allocate.  They are never reused.
@@ -123,7 +125,7 @@ impl DML for IDML {
         let fut = self.ridt.get(*rid)
             .and_then(|r| {
                 match r {
-                    None => Err(Error::Sys(errno::Errno::EPIPE)).into_future(),
+                    None => Err(Error::Sys(errno::Errno::ENOENT)).into_future(),
                     Some(entry) => Ok(entry).into_future()
                 }
             }).and_then(move |entry| {
@@ -139,7 +141,7 @@ impl DML for IDML {
         let fut = self.ridt.get(rid.clone())
             .and_then(|r| {
                 match r {
-                    None => Err(Error::Sys(errno::Errno::EPIPE)).into_future(),
+                    None => Err(Error::Sys(errno::Errno::ENOENT)).into_future(),
                     Some(entry) => Ok(entry).into_future()
                 }
             }).and_then(move |mut entry| {
@@ -209,24 +211,80 @@ mod t {
     use futures::future;
     use simulacrum::*;
     use simulacrum::validators::trivial::any;
-    use std::cell::RefCell;
-    use std::rc::Rc;
     use std::sync::Mutex;
     use tokio::runtime::current_thread;
 
     #[test]
     fn delete_last() {
-        unimplemented!()
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let drp2 = drp.clone();
+        let mut cache = Cache::new();
+        cache.expect_remove()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(42)}
+            })).returning(|_| {
+                Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
+            });
+        let mut ddml = DDML::new();
+        ddml.expect_delete()
+            .called_once()
+            .with(passes(move |key: &*const DRP| unsafe {**key == drp}));
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        // Inject the address into the RIDT
+        rt.block_on(idml.ridt.insert(rid.clone(), RidtEntry::new(drp2)))
+            .unwrap();
+
+        idml.delete(&rid);
+        // Now verify the contents of the RIDT and AllocT
+        assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
+        assert!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().is_none());
     }
 
     #[test]
     fn delete_notlast() {
-        unimplemented!()
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let drp2 = drp.clone();
+        let cache = Cache::new();
+        let ddml = DDML::new();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+
+        // Inject the address into the RIDT and AllocT
+        let entry = RidtEntry{drp: drp2, refcount: 2};
+        rt.block_on(idml.ridt.insert(rid.clone(), entry)) .unwrap();
+        rt.block_on(idml.alloct.insert(drp2.pba(), rid.clone())) .unwrap();
+
+        idml.delete(&rid);
+        // Now verify the contents of the RIDT and AllocT
+        let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        assert_eq!(entry2.drp, drp2);
+        assert_eq!(entry2.refcount, 1);
+        assert_eq!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().unwrap(),
+            rid);
     }
 
     #[test]
     fn evict() {
-        unimplemented!()
+        let rid = RID(42);
+        let mut cache = Cache::new();
+        cache.expect_remove()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(42)}
+            })).returning(|_| {
+                Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
+            });
+        let ddml = DDML::new();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+
+        idml.evict(&rid);
     }
 
     #[test]
@@ -252,7 +310,6 @@ mod t {
     #[test]
     fn get_cold() {
         let rid = RID(42);
-        let pba = PBA::default();
         let drp = DRP::random(Compression::None, 4096);
         let drp2 = drp.clone();
         let mut cache = Cache::new();
@@ -273,8 +330,10 @@ mod t {
             });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
         // Inject the address into the RIDT
-        idml.ridt.insert(rid.clone(), RidtEntry::new(drp2));
+        rt.block_on(idml.ridt.insert(rid.clone(), RidtEntry::new(drp2)))
+            .unwrap();
 
         let fut = idml.get::<DivBuf>(&rid);
         current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
@@ -282,22 +341,139 @@ mod t {
 
     #[test]
     fn pop_hot_last() {
-        unimplemented!()
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let drp2 = drp.clone();
+        let mut cache = Cache::new();
+        cache.expect_remove()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(42)}
+            })).returning(|_| {
+                Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
+            });
+        let mut ddml = DDML::new();
+        ddml.expect_delete()
+            .called_once()
+            .with(passes(move |key: &*const DRP| unsafe {**key == drp}));
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        // Inject the address into the RIDT
+        rt.block_on(idml.ridt.insert(rid.clone(), RidtEntry::new(drp2)))
+            .unwrap();
+
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid);
+        rt.block_on(fut).unwrap();
+        // Now verify the contents of the RIDT and AllocT
+        assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
+        assert!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().is_none());
     }
 
     #[test]
-    fn pop_hot_not_last() {
-        unimplemented!()
+    fn pop_hot_notlast() {
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let drp2 = drp.clone();
+        let mut cache = Cache::new();
+        cache.expect_get()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(42)}
+            })).returning(move |_| {
+                Some(Box::new(dbs.try().unwrap()))
+            });
+        let ddml = DDML::new();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        // Inject the address into the RIDT and AllocT
+        let entry = RidtEntry{drp: drp2, refcount: 2};
+        rt.block_on(idml.ridt.insert(rid.clone(), entry)) .unwrap();
+        rt.block_on(idml.alloct.insert(drp2.pba(), rid.clone())) .unwrap();
+
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid);
+        rt.block_on(fut).unwrap();
+        // Now verify the contents of the RIDT and AllocT
+        let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        assert_eq!(entry2.drp, drp2);
+        assert_eq!(entry2.refcount, 1);
+        assert_eq!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().unwrap(),
+            rid);
     }
 
     #[test]
     fn pop_cold_last() {
-        unimplemented!()
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let drp2 = drp.clone();
+        let mut cache = Cache::new();
+        cache.expect_remove()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(42)}
+            })).returning(|_| None );
+        let mut ddml = DDML::new();
+        ddml.expect_pop::<DivBufShared, DivBuf>()
+            .called_once()
+            .with(passes(move |key: &*const DRP| unsafe {**key == drp}))
+            .returning(|_| {
+                let dbs = DivBufShared::from(vec![42u8; 4096]);
+                Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(dbs)))
+            });
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        // Inject the address into the RIDT and AllocT
+        rt.block_on(idml.ridt.insert(rid.clone(), RidtEntry::new(drp2)))
+            .unwrap();
+        rt.block_on(idml.alloct.insert(drp2.pba(), rid.clone())) .unwrap();
+
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid);
+        rt.block_on(fut).unwrap();
+        // Now verify the contents of the RIDT and AllocT
+        assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
+        assert!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().is_none());
     }
 
     #[test]
     fn pop_cold_notlast() {
-        unimplemented!()
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let drp2 = drp.clone();
+        let mut cache = Cache::new();
+        cache.expect_get::<DivBuf>()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(42)}
+            })).returning(|_| None );
+        let mut ddml = DDML::new();
+        ddml.expect_get()
+            .called_once()
+            .with(passes(move |key: &*const DRP| {
+                unsafe {**key == drp}
+            })).returning(move |_| {
+                let db = Box::new(dbs.try().unwrap());
+                Box::new(future::ok::<Box<DivBuf>, Error>(db))
+            });
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        // Inject the address into the RIDT and AllocT
+        let entry = RidtEntry{drp: drp2, refcount: 2};
+        rt.block_on(idml.ridt.insert(rid.clone(), entry)) .unwrap();
+        rt.block_on(idml.alloct.insert(drp2.pba(), rid.clone())) .unwrap();
+
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid);
+        rt.block_on(fut).unwrap();
+        // Now verify the contents of the RIDT and AllocT
+        let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        assert_eq!(entry2.drp, drp2);
+        assert_eq!(entry2.refcount, 1);
+        assert_eq!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().unwrap(),
+            rid);
     }
 
     #[test]
@@ -318,11 +494,19 @@ mod t {
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
 
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let (rid, fut) = idml.put(dbs, Compression::None);
         assert_eq!(rid.0, 0);
-        current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
+        rt.block_on(fut).unwrap();
+
+        // Now verify the contents of the RIDT and AllocT
+        let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        assert_eq!(entry.refcount, 1);
+        assert_eq!(entry.drp, drp);
+        assert_eq!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().unwrap(),
+                   rid);
     }
 
     #[test]
