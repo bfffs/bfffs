@@ -710,7 +710,6 @@ pub struct Tree<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
 }
 
 impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
-    #[cfg(not(test))]
     pub fn create(dml: Arc<D>) -> Self {
         Tree::new(dml,
                   4,        // BetrFS's min fanout

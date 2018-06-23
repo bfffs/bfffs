@@ -12,8 +12,8 @@ use atomic::{Atomic, Ordering};
 use common::{
     *,
     dml::*,
-    ddml::*,
-    cache::*,
+    ddml::DRP,
+    cache::{Cacheable, CacheRef, Key},
     tree::*
 };
 use futures::{Future, IntoFuture, Stream};
@@ -21,6 +21,15 @@ use nix::{Error, errno};
 use std::sync::{Arc, Mutex};
 
 pub use common::ddml::ClosedZone;
+
+#[cfg(not(test))]
+use common::cache::Cache;
+#[cfg(test)]
+use common::cache_mock::CacheMock as Cache;
+#[cfg(not(test))]
+use common::ddml::DDML;
+#[cfg(test)]
+use common::ddml_mock::DDMLMock as DDML;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
          Serialize)]
@@ -69,7 +78,6 @@ pub struct IDML {
 }
 
 impl<'a> IDML {
-    #[cfg(not(test))]
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
         let alloct = DTree::<PBA, RID>::create(ddml.clone());
         let next_rid = Atomic::new(0);
@@ -187,6 +195,138 @@ impl DML for IDML {
 
     fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a>
     {
+        unimplemented!()
+    }
+}
+
+// LCOV_EXCL_START
+#[cfg(test)]
+#[cfg(feature = "mocks")]
+mod t {
+
+    use super::*;
+    use divbuf::DivBufShared;
+    use futures::future;
+    use simulacrum::*;
+    use simulacrum::validators::trivial::any;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Mutex;
+    use tokio::runtime::current_thread;
+
+    #[test]
+    fn delete_last() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn delete_notlast() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn evict() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn get_hot() {
+        let rid = RID(42);
+        let mut cache = Cache::new();
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        cache.expect_get()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(42)}
+            })).returning(move |_| {
+                Some(Box::new(dbs.try().unwrap()))
+            });
+        let ddml = DDML::new();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+
+        let fut = idml.get::<DivBuf>(&rid);
+        current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
+    }
+
+    #[test]
+    fn get_cold() {
+        let rid = RID(42);
+        let pba = PBA::default();
+        let drp = DRP::random(Compression::None, 4096);
+        let drp2 = drp.clone();
+        let mut cache = Cache::new();
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        cache.expect_get::<DivBuf>()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(42)}
+            })).returning(move |_| None);
+        let mut ddml = DDML::new();
+        ddml.expect_get::<DivBuf>()
+            .called_once()
+            .with(passes(move |key: &*const DRP| {
+                unsafe {**key == drp}
+            })).returning(move |_| {
+                let db = Box::new(dbs.try().unwrap());
+                Box::new(future::ok::<Box<DivBuf>, Error>(db))
+            });
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        // Inject the address into the RIDT
+        idml.ridt.insert(rid.clone(), RidtEntry::new(drp2));
+
+        let fut = idml.get::<DivBuf>(&rid);
+        current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
+    }
+
+    #[test]
+    fn pop_hot_last() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn pop_hot_not_last() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn pop_cold_last() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn pop_cold_notlast() {
+        unimplemented!()
+    }
+
+    #[test]
+    fn put() {
+        let mut cache = Cache::new();
+        let mut ddml = DDML::new();
+        let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
+                           0xdeadbeef);
+        cache.expect_insert()
+            .called_once()
+            .with(params!(Key::Rid(0), any()))
+            .returning(|_| ());
+        ddml.expect_put::<DivBufShared>()
+            .called_once()
+            .with(params!(any(), any()))
+            .returning(move |(_, _)|
+                       (drp, Box::new(future::ok::<(), Error>(())))
+            );
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let (rid, fut) = idml.put(dbs, Compression::None);
+        assert_eq!(rid.0, 0);
+        current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
+    }
+
+    #[test]
+    fn sync_all() {
         unimplemented!()
     }
 }
