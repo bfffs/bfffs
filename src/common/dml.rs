@@ -63,7 +63,8 @@ pub trait DML {
     type Addr;
 
     /// Delete the record from the cache, and free its storage space.
-    fn delete(&self, addr: &Self::Addr) -> Box<Future<Item=(), Error=Error>>;
+    fn delete<'a>(&'a self, addr: &Self::Addr)
+        -> Box<Future<Item=(), Error=Error> + 'a>;
 
     /// If the given record is present in the cache, evict it.
     fn evict(&self, addr: &Self::Addr);

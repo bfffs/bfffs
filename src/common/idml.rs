@@ -111,8 +111,38 @@ impl<'a> IDML {
 impl DML for IDML {
     type Addr = RID;
 
-    fn delete(&self, _rid: &Self::Addr) -> Box<Future<Item=(), Error=Error>> {
-        unimplemented!()
+    fn delete<'a>(&'a self, rid: &Self::Addr)
+        -> Box<Future<Item=(), Error=Error> + 'a>
+    {
+        let rid2 = rid.clone();
+        let fut = self.ridt.get(rid.clone())
+            .and_then(|r| {
+                match r {
+                    None => Err(Error::Sys(Errno::ENOENT)).into_future(),
+                    Some(entry) => Ok(entry).into_future()
+                }
+            }).and_then(move |mut entry| {
+                entry.refcount -= 1;
+                if entry.refcount == 0 {
+                    self.cache.lock().unwrap().remove(&Key::Rid(rid2.0));
+                    // TODO: usd ddml.delete_direct
+                    let ddml_fut = self.ddml.delete(&entry.drp);
+                    let alloct_fut = self.alloct.remove(entry.drp.pba());
+                    let ridt_fut = self.ridt.remove(rid2);
+                    Box::new(
+                        ddml_fut.join3(alloct_fut, ridt_fut)
+                             .map(|(_, old_rid, _old_ridt_entry)| {
+                                 assert!(old_rid.is_some());
+                             })
+                     ) as Box<Future<Item=(), Error=Error>>
+                } else {
+                    let ridt_fut = self.ridt.insert(rid2, entry)
+                        .map(|_| ());
+                    Box::new(ridt_fut)
+                    as Box<Future<Item=(), Error=Error>>
+                }
+            });
+        Box::new(fut)
     }
 
     fn evict(&self, rid: &Self::Addr) {
@@ -267,13 +297,15 @@ mod t {
         let mut ddml = DDML::new();
         ddml.expect_delete()
             .called_once()
-            .with(passes(move |key: &*const DRP| unsafe {**key == drp}));
+            .with(passes(move |key: &*const DRP| unsafe {**key == drp}))
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        // Inject the address into the RIDT
+        // Inject the address into the RIDT and AllocT
         rt.block_on(idml.ridt.insert(rid.clone(), RidtEntry::new(drp2)))
             .unwrap();
+        rt.block_on(idml.alloct.insert(drp2.pba(), rid.clone())).unwrap();
 
         rt.block_on(idml.delete(&rid)).unwrap();
         // Now verify the contents of the RIDT and AllocT

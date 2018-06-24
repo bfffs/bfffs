@@ -261,7 +261,7 @@ impl<'a> DDML {
 impl DML for DDML {
     type Addr = DRP;
 
-    fn delete(&self, drp: &DRP) -> Box<Future<Item=(), Error=Error>> {
+    fn delete<'a>(&'a self, drp: &DRP) -> Box<Future<Item=(), Error=Error> +'a>{
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
         self.pool.free(drp.pba, drp.asize());
         Box::new(Ok(()).into_future())
