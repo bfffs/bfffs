@@ -18,7 +18,7 @@ use std::{
     hash::Hasher,
     sync::{Arc, Mutex}
 };
-#[cfg(test)] use simulacrum::*;
+#[cfg(all(test, feature = "mocks"))] use simulacrum::*;
 #[cfg(test)] use uuid::Uuid;
 
 pub use common::dml::{Compression, DML};
