@@ -1413,8 +1413,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         }
     }
 
-    /// Sync all records written so far to stable storage.
-    pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
+    /// Flush all in-memory Nodes to disk.
+    pub fn flush(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
         self.write()
             .and_then(move |root_guard| {
             if root_guard.ptr.is_dirty() {
@@ -1429,9 +1429,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
                     Box::new(
                         self.write_node(ptr.into_node())
-                            .and_then(move |addr| {
+                            .map(move |addr| {
                                 root_guard.ptr = TreePtr::Addr(addr);
-                                self.dml.sync_all()
                             })
                     )
                 });
@@ -5026,7 +5025,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.sync_all());
+    let r = rt.block_on(tree.flush());
     assert!(r.is_ok());
 }
 
@@ -5055,9 +5054,6 @@ fn write_deep() {
             int_data.children[1].ptr.is_addr()
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    mock.expect_sync_all()
-        .called_once()
-        .returning(|_| Box::new(future::ok::<(), Error>(())));
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -5091,7 +5087,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.sync_all());
+    let r = rt.block_on(tree.flush());
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
@@ -5111,9 +5107,6 @@ fn write_int() {
             !int_data.children[1].ptr.is_mem()
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    mock.expect_sync_all()
-        .called_once()
-        .returning(|_| Box::new(future::ok::<(), Error>(())));
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -5150,7 +5143,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.sync_all());
+    let r = rt.block_on(tree.flush());
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
@@ -5167,9 +5160,6 @@ fn write_leaf() {
             leaf_data.items[&0] == 100 &&
             leaf_data.items[&1] == 200
         })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    mock.expect_sync_all()
-        .called_once()
-        .returning(|_| Box::new(future::ok::<(), Error>(())));
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -5188,7 +5178,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.sync_all());
+    let r = rt.block_on(tree.flush());
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
