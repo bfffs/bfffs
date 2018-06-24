@@ -21,10 +21,10 @@ impl DDMLMock {
         self.e.expect::<*const DRP, ()>("delete")
     }
 
-    pub fn expect_get<T: CacheRef>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<T>, Error=Error>>>
+    pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const DRP,
+        Box<Future<Item=Box<R>, Error=Error>>>
     {
-        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
+        self.e.expect::<*const DRP, Box<Future<Item=Box<R>, Error=Error>>>
             ("get")
     }
 
@@ -48,6 +48,21 @@ impl DDMLMock {
     {
         self.e.expect::<(), Box<Future<Item=(), Error=Error>>>("sync_all")
     }
+
+    pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
+        -> Box<Future<Item=Box<T>, Error=Error>> {
+        self.e.was_called_returning::<*const DRP,
+            Box<Future<Item=Box<T>, Error=Error>>>
+            ("get_direct", drp as *const DRP)
+    }
+
+    pub fn expect_get_direct<T: Cacheable>(&mut self) -> Method<*const DRP,
+        Box<Future<Item=Box<T>, Error=Error>>>
+    {
+        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
+            ("get_direct")
+    }
+
 
     pub fn put_direct<T: Cacheable>(&self, cacheable: T,
                                     compression: Compression)
@@ -85,10 +100,10 @@ impl DML for DDMLMock {
         self.e.was_called::<*const DRP, ()>("evict", drp as *const DRP)
     }
 
-    fn get<T: CacheRef>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error>> {
+    fn get<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
+        -> Box<Future<Item=Box<R>, Error=Error>> {
         self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<T>, Error=Error>>>
+            Box<Future<Item=Box<R>, Error=Error>>>
             ("get", drp as *const DRP)
     }
 

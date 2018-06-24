@@ -52,7 +52,7 @@ test_suite! {
             let ddml2 = &ddml;
             let drp2 = &drp;
             fut.and_then(move |_| {
-                ddml2.get(drp2)
+                ddml2.get::<DivBufShared, DivBuf>(drp2)
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 4096][..]);
             }).and_then(|_| {
@@ -62,7 +62,7 @@ test_suite! {
             }).and_then(|_| {
                 // Even though the record has been removed from cache, it should
                 // still be on disk
-                ddml.get(&drp)
+                ddml.get::<DivBufShared, DivBuf>(&drp)
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 4096][..]);
             })
@@ -87,7 +87,7 @@ test_suite! {
             let ddml2 = &ddml;
             let drp2 = &drp;
             fut.and_then(move |_| {
-                ddml2.get(drp2)
+                ddml2.get::<DivBufShared, DivBuf>(drp2)
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vdev_raid_contents[..]);
             }).and_then(|_| {
@@ -97,7 +97,7 @@ test_suite! {
             }).and_then(|_| {
                 // Even though the record has been removed from cache, it should
                 // still be on disk
-                ddml.get(&drp)
+                ddml.get::<DivBufShared, DivBuf>(&drp)
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vdev_raid_contents[..]);
             })
@@ -113,7 +113,7 @@ test_suite! {
             let ddml2 = &ddml;
             let drp2 = &drp;
             fut.and_then(move |_| {
-                ddml2.get(drp2)
+                ddml2.get::<DivBufShared, DivBuf>(drp2)
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 1024][..]);
             }).and_then(|_| {
@@ -123,7 +123,7 @@ test_suite! {
             }).and_then(|_| {
                 // Even though the record has been removed from cache, it should
                 // still be on disk
-                ddml.get(&drp)
+                ddml.get::<DivBufShared, DivBuf>(&drp)
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 1024][..]);
             })

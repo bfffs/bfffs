@@ -16,8 +16,8 @@ use common::{
     cache::{Cacheable, CacheRef, Key},
     tree::*
 };
-use futures::{Future, IntoFuture, Stream};
-use nix::{Error, errno};
+use futures::{Future, IntoFuture, Stream, future};
+use nix::{Error, errno::Errno};
 use std::sync::{Arc, Mutex};
 
 pub use common::ddml::ClosedZone;
@@ -119,19 +119,31 @@ impl DML for IDML {
         self.cache.lock().unwrap().remove(&Key::Rid(rid.0));
     }
 
-    fn get<'a, T: CacheRef>(&'a self, rid: &Self::Addr)
-        -> Box<Future<Item=Box<T>, Error=Error> + 'a>
+    fn get<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr)
+        -> Box<Future<Item=Box<R>, Error=Error> + 'a>
     {
-        let fut = self.ridt.get(*rid)
-            .and_then(|r| {
-                match r {
-                    None => Err(Error::Sys(errno::Errno::ENOENT)).into_future(),
-                    Some(entry) => Ok(entry).into_future()
-                }
-            }).and_then(move |entry| {
-                self.ddml.get(&entry.drp)
-            });
-        Box::new(fut)
+        self.cache.lock().unwrap().get::<R>(&Key::Rid(rid.0)).map(|t| {
+            let r : Box<Future<Item=Box<R>, Error=Error>> =
+            Box::new(future::ok::<Box<R>, Error>(t));
+            r
+        }).unwrap_or_else(|| {
+            let rid2 = rid.clone();
+            let fut = self.ridt.get(*rid)
+                .and_then(|r| {
+                    match r {
+                        None => Err(Error::Sys(Errno::ENOENT)).into_future(),
+                        Some(entry) => Ok(entry).into_future()
+                    }
+                }).and_then(move |entry| {
+                    self.ddml.get_direct(&entry.drp)
+                }).map(move |cacheable: Box<T>| {
+                    let r = cacheable.make_ref();
+                    let key = Key::Rid(rid2.0);
+                    self.cache.lock().unwrap().insert(key, cacheable);
+                    r.downcast::<R>().unwrap()
+                });
+            Box::new(fut)
+        })
     }
 
     fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr)
@@ -141,7 +153,7 @@ impl DML for IDML {
         let fut = self.ridt.get(rid.clone())
             .and_then(|r| {
                 match r {
-                    None => Err(Error::Sys(errno::Errno::ENOENT)).into_future(),
+                    None => Err(Error::Sys(Errno::ENOENT)).into_future(),
                     Some(entry) => Ok(entry).into_future()
                 }
             }).and_then(move |mut entry| {
@@ -158,7 +170,7 @@ impl DML for IDML {
                              })
                      ) as Box<Future<Item=Box<T>, Error=Error>>
                 } else {
-                    let ddml_fut = self.ddml.get::<R>(&entry.drp);
+                    let ddml_fut = self.ddml.get::<T, R>(&entry.drp);
                     let ridt_fut = self.ridt.insert(rid2, entry);
                     Box::new(
                         ddml_fut.join(ridt_fut)
@@ -214,7 +226,11 @@ mod t {
     use futures::future;
     use simulacrum::*;
     use simulacrum::validators::trivial::any;
-    use std::sync::Mutex;
+    use std::{
+        cell::RefCell,
+        rc::Rc,
+        sync::Mutex
+    };
     use tokio::runtime::current_thread;
 
     #[test]
@@ -306,7 +322,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
-        let fut = idml.get::<DivBuf>(&rid);
+        let fut = idml.get::<DivBufShared, DivBuf>(&rid);
         current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
     }
 
@@ -316,20 +332,30 @@ mod t {
         let drp = DRP::random(Compression::None, 4096);
         let drp2 = drp.clone();
         let mut cache = Cache::new();
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let owned_by_cache = Rc::new(
+            RefCell::new(Vec::<Box<Cacheable>>::new())
+        );
+        let owned_by_cache2 = owned_by_cache.clone();
         cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
                 unsafe {**key == Key::Rid(42)}
             })).returning(move |_| None);
+        cache.then().expect_insert()
+            .called_once()
+            .with(passes(move |args: &(Key, _)| {
+                args.0 == Key::Rid(42)
+            })).returning(move |(_, dbs)| {;
+                owned_by_cache2.borrow_mut().push(dbs);
+            });
         let mut ddml = DDML::new();
-        ddml.expect_get::<DivBuf>()
+        ddml.expect_get_direct::<DivBufShared>()
             .called_once()
             .with(passes(move |key: &*const DRP| {
                 unsafe {**key == drp}
             })).returning(move |_| {
-                let db = Box::new(dbs.try().unwrap());
-                Box::new(future::ok::<Box<DivBuf>, Error>(db))
+                let dbs = Box::new(DivBufShared::from(vec![0u8; 4096]));
+                Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
             });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -338,7 +364,7 @@ mod t {
         rt.block_on(idml.ridt.insert(rid.clone(), RidtEntry::new(drp2)))
             .unwrap();
 
-        let fut = idml.get::<DivBuf>(&rid);
+        let fut = idml.get::<DivBufShared, DivBuf>(&rid);
         current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
     }
 

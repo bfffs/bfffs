@@ -69,8 +69,8 @@ pub trait DML {
     fn evict(&self, addr: &Self::Addr);
 
     /// Read a record and return a shared reference
-    fn get<'a, T: CacheRef>(&'a self, addr: &Self::Addr)
-        -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
+    fn get<'a, T: Cacheable, R: CacheRef>(&'a self, addr: &Self::Addr)
+        -> Box<Future<Item=Box<R>, Error=Error> + 'a>;
 
     /// Read a record and return ownership of it.
     fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr)

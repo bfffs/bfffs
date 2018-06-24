@@ -1530,7 +1530,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             },
             TreePtr::Addr(ref addr) => {
                 Box::new(
-                    self.dml.get::<Arc<Node<A, K, V>>>(addr).and_then(|node| {
+                    self.dml.get::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(addr)
+                    .and_then(|node| {
                         node.0.read()
                             .map(move |guard| {
                                 TreeReadGuard::Addr(guard, node)

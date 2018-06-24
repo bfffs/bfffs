@@ -121,6 +121,15 @@ impl<'a> DDML {
         DDML{pool, cache}
     }
 
+    /// Get directly from disk, bypassing cache
+    pub fn get_direct<T: Cacheable>(&'a self, drp: &DRP)
+        -> impl Future<Item=Box<T>, Error=Error> +'a
+    {
+        self.read(*drp).map(move |dbs| {
+            Box::new(T::deserialize(dbs))
+        })
+    }
+
     pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
         self.pool.list_closed_zones()
     }
@@ -228,7 +237,7 @@ impl<'a> DDML {
         (drp, fut)
     }
 
-    // /// Write a buffer bypassing cache.  Return the same buffer
+    /// Write a buffer bypassing cache.  Return the same buffer
     pub fn put_direct<T>(&'a self, cacheable: T, compression: Compression)
         -> (DRP, impl Future<Item=T, Error=Error> + 'a)
         where T:Cacheable
@@ -249,24 +258,24 @@ impl DML for DDML {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
     }
 
-    fn get<'a, T: CacheRef>(&'a self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error> + 'a> {
+    fn get<'a, T: Cacheable, R: CacheRef>(&'a self, drp: &DRP)
+        -> Box<Future<Item=Box<R>, Error=Error> + 'a> {
 
         // Outline:
         // 1) Fetch from cache, or
         // 2) Read from disk, then insert into cache
         let pba = drp.pba;
-        self.cache.lock().unwrap().get::<T>(&Key::PBA(pba)).map(|t| {
-            let r : Box<Future<Item=Box<T>, Error=Error>> =
-            Box::new(future::ok::<Box<T>, Error>(t));
+        self.cache.lock().unwrap().get::<R>(&Key::PBA(pba)).map(|t| {
+            let r : Box<Future<Item=Box<R>, Error=Error>> =
+            Box::new(future::ok::<Box<R>, Error>(t));
             r
         }).unwrap_or_else(|| {
             Box::new(
                 self.read(*drp).map(move |dbs| {
-                    let cacheable = T::deserialize(dbs);
+                    let cacheable = R::deserialize(dbs);
                     let r = cacheable.make_ref();
                     self.cache.lock().unwrap().insert(Key::PBA(pba), cacheable);
-                    r.downcast::<T>().unwrap()
+                    r.downcast::<R>().unwrap()
                 })
             )
         })
@@ -386,6 +395,24 @@ mod t {
     }
 
     #[test]
+    fn get_direct() {
+        let pba = PBA::default();
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+                      csize: 1, checksum: 0xe7f15966a3d61f8};
+        let s = Scenario::new();
+        let cache = Cache::new();
+        let pool = s.create_mock::<MockPool>();
+        s.expect(pool.read_call(check!(|dbm: &DivBufMut| {
+            dbm.len() == 4096
+        }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
+
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+            ddml.get_direct::<DivBufShared>(&drp)
+        })).unwrap();
+    }
+
+    #[test]
     fn get_hot() {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
@@ -404,7 +431,7 @@ mod t {
             });
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
-        ddml.get::<DivBuf>(&drp);
+        ddml.get::<DivBufShared, DivBuf>(&drp);
     }
 
     #[test]
@@ -438,7 +465,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.get::<DivBuf>(&drp)
+            ddml.get::<DivBufShared, DivBuf>(&drp)
         })).unwrap();
     }
 
@@ -463,7 +490,7 @@ mod t {
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         let err = rt.block_on(future::lazy(|| {
-            ddml.get::<DivBuf>(&drp)
+            ddml.get::<DivBufShared, DivBuf>(&drp)
         })).unwrap_err();
         assert_eq!(err, Error::Sys(errno::Errno::EIO));
     }

@@ -44,5 +44,10 @@ impl CacheMock {
     pub fn size(&self) -> usize {
         self.e.was_called_returning::<(), usize>("size", ())
     }
+
+    pub fn then(&mut self) -> &mut Self {
+        self.e.then();
+        self
+    }
 }
 // LCOV_EXCL_STOP
