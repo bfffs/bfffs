@@ -60,7 +60,7 @@ pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
 
 /// Indirect Data Management Layer for a single `Pool`
 pub struct IDML {
-    _cache: Arc<Mutex<Cache>>,
+    cache: Arc<Mutex<Cache>>,
 
     ddml: Arc<DDML>,
 
@@ -84,7 +84,7 @@ impl<'a> IDML {
         let alloct = DTree::<PBA, RID>::create(ddml.clone());
         let next_rid = Atomic::new(0);
         let ridt = DTree::<RID, RidtEntry>::create(ddml.clone());
-        IDML{alloct, _cache: cache, ddml, next_rid, ridt}
+        IDML{alloct, cache, ddml, next_rid, ridt}
     }
 
     pub fn list_closed_zones(&'a self) -> Box<Iterator<Item=ClosedZone> + 'a> {
@@ -115,8 +115,8 @@ impl DML for IDML {
         unimplemented!()
     }
 
-    fn evict(&self, _rid: &Self::Addr) {
-        unimplemented!()
+    fn evict(&self, rid: &Self::Addr) {
+        self.cache.lock().unwrap().remove(&Key::Rid(rid.0));
     }
 
     fn get<'a, T: CacheRef>(&'a self, rid: &Self::Addr)
@@ -176,20 +176,23 @@ impl DML for IDML {
     {
         // Outline:
         // 1) Write to the DDML
-        // 2) Add entry to the RIDT
-        // 3) Add reverse entry to the AllocT
-        let (drp, ddml_fut) = self.ddml.put(cacheable, compression);
+        // 2) Cache
+        // 3) Add entry to the RIDT
+        // 4) Add reverse entry to the AllocT
+        let (drp, ddml_fut) = self.ddml.put_direct(cacheable, compression);
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
         let alloct_fut = self.alloct.insert(drp.pba(), rid.clone());
         let rid_entry = RidtEntry::new(drp);
         let ridt_fut = self.ridt.insert(rid.clone(), rid_entry);
         let fut = Box::new(
             ddml_fut.join3(ridt_fut, alloct_fut)
-                .map(move |(_, old_rid_entry, old_alloc_entry)| {
+                .map(move |(cacheable, old_rid_entry, old_alloc_entry)| {
                     assert!(old_rid_entry.is_none(), "RID was not unique");
                     assert!(old_alloc_entry.is_none(), concat!(
                         "Double allocate without free.  ",
                         "DDML allocator leak detected!"));
+                    self.cache.lock().unwrap().insert(Key::Rid(rid.0),
+                        Box::new(cacheable));
                 })
         );
         (rid, fut)
@@ -486,11 +489,11 @@ mod t {
             .called_once()
             .with(params!(Key::Rid(0), any()))
             .returning(|_| ());
-        ddml.expect_put::<DivBufShared>()
+        ddml.expect_put_direct::<DivBufShared>()
             .called_once()
             .with(params!(any(), any()))
-            .returning(move |(_, _)|
-                       (drp, Box::new(future::ok::<(), Error>(())))
+            .returning(move |(buf, _)|
+                       (drp, Box::new(future::ok::<DivBufShared, Error>(buf)))
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));

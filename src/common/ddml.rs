@@ -576,7 +576,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put(dbs, Compression::None);
+        let (drp, fut) = ddml.put_direct(dbs, Compression::None);
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);

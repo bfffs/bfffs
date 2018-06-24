@@ -49,6 +49,24 @@ impl DDMLMock {
         self.e.expect::<(), Box<Future<Item=(), Error=Error>>>("sync_all")
     }
 
+    pub fn put_direct<T: Cacheable>(&self, cacheable: T,
+                                    compression: Compression)
+        -> (DRP, Box<Future<Item=T, Error=Error>>)
+    {
+        self.e.was_called_returning::<(T, Compression),
+                                      (DRP, Box<Future<Item=T, Error=Error>>)>
+            ("put_direct", (cacheable, compression))
+    }
+
+    pub fn expect_put_direct<T: Cacheable>(&mut self)
+        -> Method<(T, Compression),
+        (DRP, Box<Future<Item=T, Error=Error>>)>
+    {
+        self.e.expect::<(T, Compression),
+                        (DRP, Box<Future<Item=T, Error=Error>>)>
+            ("put_direct")
+    }
+
     pub fn then(&mut self) -> &mut Self {
         self.e.then();
         self
