@@ -64,6 +64,21 @@ impl DDMLMock {
     }
 
 
+    pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
+        -> Box<Future<Item=Box<T>, Error=Error>>
+    {
+        self.e.was_called_returning::<*const DRP,
+            Box<Future<Item=Box<T>, Error=Error>>>
+            ("pop_direct", drp as *const DRP)
+    }
+
+    pub fn expect_pop_direct<T: Cacheable>(&mut self) -> Method<*const DRP,
+        Box<Future<Item=Box<T>, Error=Error>>>
+    {
+        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
+            ("pop_direct")
+    }
+
     pub fn put_direct<T: Cacheable>(&self, cacheable: T,
                                     compression: Compression)
         -> (DRP, Box<Future<Item=T, Error=Error>>)

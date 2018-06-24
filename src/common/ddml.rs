@@ -174,6 +174,18 @@ impl<'a> DDML {
         )
     }
 
+    /// Read a record and return ownership of it, bypassing Cache
+    pub fn pop_direct<T: Cacheable>(&'a self, drp: &DRP)
+        -> impl Future<Item=Box<T>, Error=Error> + 'a
+    {
+        let lbas = drp.asize();
+        let pba = drp.pba;
+        self.read(*drp).map(move |dbs| {
+            self.pool.free(pba, lbas);
+            Box::new(T::deserialize(dbs))
+        })
+    }
+
     /// Does most of the work of DDML::put
     fn put_common<T>(&'a self, cacheable: T, compression: Compression)
         -> (DRP, impl Future<Item=T, Error=Error> + 'a)
@@ -293,10 +305,7 @@ impl DML for DDML {
             r
         }).unwrap_or_else(|| {
             Box::new(
-                self.read(*drp).map(move |dbs| {
-                    self.pool.free(pba, lbas);
-                    Box::new(T::deserialize(dbs))
-                })
+                self.pop_direct::<T>(drp)
             )
         })
     }
@@ -565,6 +574,26 @@ mod t {
             ddml.pop::<DivBufShared, DivBuf>(&drp)
         })).unwrap_err();
         assert_eq!(err, Error::Sys(errno::Errno::EIO));
+    }
+
+    #[test]
+    fn pop_direct() {
+        let pba = PBA::default();
+        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+                      csize: 1, checksum: 0xe7f15966a3d61f8};
+        let s = Scenario::new();
+        let mut seq = Sequence::new();
+        let cache = Cache::new();
+        let pool = s.create_mock::<MockPool>();
+        seq.expect(pool.read_call(ANY, pba)
+                   .and_return(Box::new(future::ok::<(), Error>(()))));
+        seq.expect(pool.free_call(pba, 1).and_return(()));
+        s.expect(seq);
+
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+            ddml.pop_direct::<DivBufShared>(&drp)
+        })).unwrap();
     }
 
     #[test]
