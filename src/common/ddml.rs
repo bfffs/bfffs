@@ -164,6 +164,77 @@ impl<'a> DDML {
             })
         )
     }
+
+    /// Does most of the work of DDML::put
+    fn put_common<T>(&'a self, cacheable: T, compression: Compression)
+        -> (DRP, impl Future<Item=T, Error=Error> + 'a)
+        where T:Cacheable
+    {
+        // Outline:
+        // 1) Serialize
+        // 2) Compress
+        // 3) Checksum
+        // 4) Pad
+        // 5) Write
+        // 6) Cache
+
+        // Serialize
+        let (serialized, keeper) = cacheable.serialize();
+        assert!(serialized.len() < u32::max_value() as usize,
+            "Record exceeds maximum allowable length");
+        let lsize = serialized.len() as u32;
+
+        // Compress
+        let compressed_dbs = compression.compress(&serialized);
+        let compressed_db = match &compressed_dbs {
+            Some(dbs) => {
+                dbs.try().unwrap()
+            },
+            None => {
+                serialized
+            }
+        };
+        let csize = compressed_db.len() as u32;
+
+        // Checksum
+        let mut hasher = MetroHash64::new();
+        checksum_iovec(&compressed_db, &mut hasher);
+        let checksum = hasher.finish();
+
+        // Pad
+        let asize = div_roundup(csize as usize, BYTES_PER_LBA);
+        let compressed_db = if asize * BYTES_PER_LBA != csize as usize {
+            let mut dbm = compressed_db.try_mut().unwrap();
+            dbm.try_resize(asize * BYTES_PER_LBA, 0).unwrap();
+            dbm.freeze()
+        } else {
+            compressed_db
+        };
+
+        // Write
+        let (pba, wfut) = self.pool.write(compressed_db).unwrap();
+        let fut = wfut.map(move |_| {
+            if compression == Compression::None {
+                // Truncate uncompressed DivBufShareds.  We padded them in the
+                // previous step
+                cacheable.truncate(csize as usize);
+            } else {
+                let _ = compressed_dbs;
+            }
+            let _ = keeper;
+            cacheable
+        });
+        let drp = DRP { pba, compression, lsize, csize, checksum };
+        (drp, fut)
+    }
+
+    // /// Write a buffer bypassing cache.  Return the same buffer
+    pub fn put_direct<T>(&'a self, cacheable: T, compression: Compression)
+        -> (DRP, impl Future<Item=T, Error=Error> + 'a)
+        where T:Cacheable
+    {
+        self.put_common(cacheable, compression)
+    }
 }
 
 impl DML for DDML {
@@ -223,66 +294,15 @@ impl DML for DDML {
     }
 
     fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression)
-        -> (DRP, Box<Future<Item=(), Error=Error> + 'a>) {
-        // Outline:
-        // 1) Serialize
-        // 2) Compress
-        // 3) Checksum
-        // 4) Pad
-        // 5) Write
-        // 6) Cache
-
-        // Serialize
-        let (serialized, keeper) = cacheable.serialize();
-        assert!(serialized.len() < u32::max_value() as usize,
-            "Record exceeds maximum allowable length");
-        let lsize = serialized.len() as u32;
-
-        // Compress
-        let compressed_dbs = compression.compress(&serialized);
-        let compressed_db = match &compressed_dbs {
-            Some(dbs) => {
-                dbs.try().unwrap()
-            },
-            None => {
-                serialized
-            }
-        };
-        let csize = compressed_db.len() as u32;
-
-        // Checksum
-        let mut hasher = MetroHash64::new();
-        checksum_iovec(&compressed_db, &mut hasher);
-        let checksum = hasher.finish();
-
-        // Pad
-        let asize = div_roundup(csize as usize, BYTES_PER_LBA);
-        let compressed_db = if asize * BYTES_PER_LBA != csize as usize {
-            let mut dbm = compressed_db.try_mut().unwrap();
-            dbm.try_resize(asize * BYTES_PER_LBA, 0).unwrap();
-            dbm.freeze()
-        } else {
-            compressed_db
-        };
-
-        // Write
-        let (pba, wfut) = self.pool.write(compressed_db).unwrap();
-        let fut = Box::new(wfut.map(move |r| {
-            if compression == Compression::None {
-                // Truncate uncompressed DivBufShareds.  We padded them in the
-                // previous step
-                cacheable.truncate(csize as usize);
-            } else {
-                let _ = compressed_dbs;
-            }
-            let _ = keeper;
-            //Cache
+        -> (DRP, Box<Future<Item=(), Error=Error> + 'a>)
+    {
+        let (drp, fut1) = self.put_common(cacheable, compression);
+        let pba = drp.pba();
+        let fut2 = Box::new(fut1.map(move |cacheable| {
             self.cache.lock().unwrap().insert(Key::PBA(pba),
                                               Box::new(cacheable));
-            r
         }));
-        let drp = DRP { pba, compression, lsize, csize, checksum };
-        (drp, fut)
+        (drp, fut2)
     }
 
     fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
@@ -530,6 +550,25 @@ mod t {
             .called_once()
             .with(params!(Key::PBA(pba), any()))
             .returning(|_| ());
+        let pool = s.create_mock::<MockPool>();
+        s.expect(pool.write_call(ANY)
+            .and_return(Ok((pba, Box::new(future::ok::<(), Error>(())))))
+        );
+
+        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let (drp, fut) = ddml.put(dbs, Compression::None);
+        assert_eq!(drp.pba, pba);
+        assert_eq!(drp.csize, 4096);
+        assert_eq!(drp.lsize, 4096);
+        current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
+    }
+
+    #[test]
+    fn put_direct() {
+        let s = Scenario::new();
+        let cache = Cache::new();
+        let pba = PBA::default();
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.write_call(ANY)
             .and_return(Ok((pba, Box::new(future::ok::<(), Error>(())))))
