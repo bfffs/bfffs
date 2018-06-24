@@ -271,8 +271,7 @@ impl DML for DDML {
             r
         }).unwrap_or_else(|| {
             Box::new(
-                self.read(*drp).map(move |dbs| {
-                    let cacheable = R::deserialize(dbs);
+                self.get_direct(drp).map(move |cacheable: Box<T>| {
                     let r = cacheable.make_ref();
                     self.cache.lock().unwrap().insert(Key::PBA(pba), cacheable);
                     r.downcast::<R>().unwrap()
