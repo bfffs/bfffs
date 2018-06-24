@@ -17,8 +17,12 @@ impl DDMLMock {
         }
     }
 
-    pub fn expect_delete(&mut self) -> Method<*const DRP, ()> {
-        self.e.expect::<*const DRP, ()>("delete")
+    pub fn expect_delete(&mut self) -> Method<*const DRP,
+        Box<Future<Item=(), Error=Error>>>
+    {
+        self.e.expect::<*const DRP,
+            Box<Future<Item=(), Error=Error>>>
+            ("delete")
     }
 
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const DRP,
@@ -107,8 +111,10 @@ impl DDMLMock {
 impl DML for DDMLMock {
     type Addr = DRP;
 
-    fn delete(&self, drp: &DRP) {
-        self.e.was_called::<*const DRP, ()>("delete", drp as *const DRP)
+    fn delete(&self, drp: &DRP) -> Box<Future<Item=(), Error=Error>> {
+        self.e.was_called_returning::<*const DRP,
+            Box<Future<Item=(), Error=Error>>>
+            ("delete", drp as *const DRP)
     }
 
     fn evict(&self, drp: &DRP) {

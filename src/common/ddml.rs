@@ -10,7 +10,7 @@ use common::{
     cache::{Cacheable, CacheRef, Key},
     pool::*
 };
-use futures::{Future, future};
+use futures::{Future, IntoFuture, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
@@ -261,9 +261,10 @@ impl<'a> DDML {
 impl DML for DDML {
     type Addr = DRP;
 
-    fn delete(&self, drp: &DRP) {
+    fn delete(&self, drp: &DRP) -> Box<Future<Item=(), Error=Error>> {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
         self.pool.free(drp.pba, drp.asize());
+        Box::new(Ok(()).into_future())
     }
 
     fn evict(&self, drp: &DRP) {
@@ -380,7 +381,9 @@ mod t {
         s.expect(pool.free_call(pba, 1).and_return(()));
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
-        ddml.delete(&drp);
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+            ddml.delete(&drp)
+        })).unwrap();
     }
 
     #[test]

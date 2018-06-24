@@ -111,7 +111,7 @@ impl<'a> IDML {
 impl DML for IDML {
     type Addr = RID;
 
-    fn delete(&self, _rid: &Self::Addr) {
+    fn delete(&self, _rid: &Self::Addr) -> Box<Future<Item=(), Error=Error>> {
         unimplemented!()
     }
 
@@ -163,10 +163,10 @@ impl DML for IDML {
                         .remove(&Key::Rid(rid2.0));
                     let bfut: Box<Future<Item=Box<T>, Error=Error>> = cacheval
                         .map(|cacheable| {
-                            self.ddml.delete(&entry.drp);
                             let t = cacheable.downcast::<T>().unwrap();
-                            Box::new(future::ok(t))
-                                as Box<Future<Item=Box<T>, Error=Error>>
+                            Box::new(self.ddml.delete(&entry.drp)
+                                              .map(move |_| t)
+                            ) as Box<Future<Item=Box<T>, Error=Error>>
                         }).unwrap_or_else(||{
                             Box::new(self.ddml.pop_direct::<T>(&entry.drp))
                         });
@@ -275,7 +275,7 @@ mod t {
         rt.block_on(idml.ridt.insert(rid.clone(), RidtEntry::new(drp2)))
             .unwrap();
 
-        idml.delete(&rid);
+        rt.block_on(idml.delete(&rid)).unwrap();
         // Now verify the contents of the RIDT and AllocT
         assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
         assert!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().is_none());
@@ -297,7 +297,7 @@ mod t {
         rt.block_on(idml.ridt.insert(rid.clone(), entry)) .unwrap();
         rt.block_on(idml.alloct.insert(drp2.pba(), rid.clone())) .unwrap();
 
-        idml.delete(&rid);
+        rt.block_on(idml.delete(&rid)).unwrap();
         // Now verify the contents of the RIDT and AllocT
         let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry2.drp, drp2);
@@ -402,7 +402,10 @@ mod t {
         let mut ddml = DDML::new();
         ddml.expect_delete()
             .called_once()
-            .with(passes(move |key: &*const DRP| unsafe {**key == drp}));
+            .with(passes(move |key: &*const DRP| unsafe {**key == drp}))
+            .returning(|_| {
+                Box::new(future::ok::<(), Error>(()))
+            });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
