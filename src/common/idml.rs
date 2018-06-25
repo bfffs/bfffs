@@ -260,7 +260,11 @@ impl DML for IDML {
 
     fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a>
     {
-        unimplemented!()
+        Box::new(
+            self.ridt.flush()
+                .join(self.alloct.flush())
+                .and_then(move |(_, _)| self.ddml.sync_all())
+        )
     }
 }
 
@@ -591,8 +595,39 @@ mod t {
                    rid);
     }
 
+    #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test"]
     #[test]
     fn sync_all() {
-        unimplemented!()
+        let rid = RID(42);
+        let cache = Cache::new();
+        let mut ddml = DDML::new();
+        let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
+                           0xdeadbeef);
+        ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
+            .called_any()
+            .with(params!(any(), any()))
+            .returning(move |(_, _)|
+                (DRP::random(Compression::None, 4096),
+                 Box::new(future::ok::<(), Error>(())))
+            );
+        ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
+            .called_any()
+            .with(params!(any(), any()))
+            .returning(move |(_, _)|
+                (DRP::random(Compression::None, 4096),
+                 Box::new(future::ok::<(), Error>(())))
+            );
+        ddml.expect_sync_all()
+            .called_once()
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        // Inject some data into the RIDT and AllocT
+        let entry = RidtEntry{drp: drp, refcount: 2};
+        rt.block_on(idml.ridt.insert(rid.clone(), entry)) .unwrap();
+        rt.block_on(idml.alloct.insert(drp.pba(), rid.clone())) .unwrap();
+
+        rt.block_on(idml.sync_all()).unwrap();
     }
 }

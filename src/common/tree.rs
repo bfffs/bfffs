@@ -566,8 +566,9 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
     }
 }
 
+// Must be visible for the IDML's unit tests
 #[derive(Debug)]
-struct Node<A: Addr, K: Key, V: Value> (RwLock<NodeData<A, K, V>>);
+pub(super) struct Node<A: Addr, K: Key, V: Value> (RwLock<NodeData<A, K, V>>);
 
 mod tree_root_serializer {
     use super::*;
