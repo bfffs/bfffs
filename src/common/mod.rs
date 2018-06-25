@@ -27,15 +27,27 @@ pub mod vdev_raid;
 
 pub use self::sgcursor::SGCursor;
 
+/// LBAs always use 4K LBAs, even if the underlying device supports smaller.
+pub const BYTES_PER_LBA: usize = 4096;
+
+/// A Fragment is the smallest amount of space that can be independently
+/// allocated.  Several small files can have their fragments packed into a
+/// single LBA.
+pub const BYTES_PER_FRAGMENT: usize = 256;
+
+lazy_static! {
+    /// A read-only buffer of zeros, useful for padding.
+    ///
+    /// The length is pretty arbitrary.  Code should be able to cope with a
+    /// smaller-than-desired `ZERO_REGION`.  A smaller size will have less
+    /// impact on the CPU cache.  A larger size will consume fewer CPU cycles
+    /// manipulating sglists.
+    static ref ZERO_REGION: DivBufShared =
+        DivBufShared::from(vec![0u8; BYTES_PER_LBA]);
+}
+
 /// Indexes a `Cluster` within the `Pool`.
 pub type ClusterT = u16;
-
-/// Indexes an LBA.  LBAs are always 4096 bytes
-pub type LbaT = u64;
-
-/// Indexes a `Vdev`'s Zones.  A Zone is the smallest allocation unit that can
-/// be independently erased.
-pub type ZoneT = u32;
 
 /// Our `IoVec`.  Unlike the standard library's, ours is reference-counted so it
 /// can have more than one owner.
@@ -44,19 +56,8 @@ pub type IoVec = DivBuf;
 /// Mutable version of `IoVec`.  Uniquely owned.
 pub type IoVecMut = DivBufMut;
 
-/// Our scatter-gather list.  A slice of reference-counted `IoVec`s.
-pub type SGList = Vec<IoVec>;
-
-/// Mutable version of `SGList`.  Uniquely owned.
-pub type SGListMut = Vec<IoVecMut>;
-
-/// LBAs always use 4K LBAs, even if the underlying device supports smaller.
-pub const BYTES_PER_LBA: usize = 4096;
-
-/// A Fragment is the smallest amount of space that can be independently
-/// allocated.  Several small files can have their fragments packed into a
-/// single LBA.
-pub const BYTES_PER_FRAGMENT: usize = 256;
+/// Indexes an LBA.  LBAs are always 4096 bytes
+pub type LbaT = u64;
 
 /// Physical Block Address.
 ///
@@ -75,30 +76,6 @@ impl PBA {
     }
 }
 
-lazy_static! {
-    /// A read-only buffer of zeros, useful for padding.
-    ///
-    /// The length is pretty arbitrary.  Code should be able to cope with a
-    /// smaller-than-desired `ZERO_REGION`.  A smaller size will have less
-    /// impact on the CPU cache.  A larger size will consume fewer CPU cycles
-    /// manipulating sglists.
-    static ref ZERO_REGION: DivBufShared =
-        DivBufShared::from(vec![0u8; BYTES_PER_LBA]);
-}
-
-/// Create an SGList full of zeros, with the requested total length
-fn zero_sglist(len: usize) -> SGList {
-    let zero_region_len = ZERO_REGION.len();
-    let zero_bufs = div_roundup(len, zero_region_len);
-    let mut sglist = SGList::new();
-    for _ in 0..(zero_bufs - 1) {
-        sglist.push(ZERO_REGION.try().unwrap())
-    }
-    sglist.push(ZERO_REGION.try().unwrap().slice_to(
-            len - (zero_bufs - 1) * zero_region_len));
-    sglist
-}
-
 /// "Private" trait; only exists to ensure that div_roundup will fail to compile
 /// when used with signed numbers.  It would be nice to use a negative trait
 /// bound like "+ !Neg", but Rust doesn't support negative trait bounds.
@@ -110,13 +87,15 @@ impl RoundupAble for u32 {}
 impl RoundupAble for u64 {}
 impl RoundupAble for usize {}
 
-/// Divide two unsigned numbers (usually integers), rounding up.
-pub fn div_roundup<T>(dividend: T, divisor: T) -> T
-    where T: Add<Output=T> + Copy + Div<Output=T> + From<u8> + RoundupAble +
-             Sub<Output=T> {
-    (dividend + divisor - T::from(1u8)) / divisor
+/// Our scatter-gather list.  A slice of reference-counted `IoVec`s.
+pub type SGList = Vec<IoVec>;
 
-}
+/// Mutable version of `SGList`.  Uniquely owned.
+pub type SGListMut = Vec<IoVecMut>;
+
+/// Indexes a `Vdev`'s Zones.  A Zone is the smallest allocation unit that can
+/// be independently erased.
+pub type ZoneT = u32;
 
 /// Checksum an `IoVec`
 ///
@@ -147,6 +126,27 @@ pub fn checksum_sglist<T, H>(sglist: &[T], hasher: &mut H)
         let s: &[u8] = buf.as_ref();
         hasher.write(s);
     }
+}
+
+/// Divide two unsigned numbers (usually integers), rounding up.
+pub fn div_roundup<T>(dividend: T, divisor: T) -> T
+    where T: Add<Output=T> + Copy + Div<Output=T> + From<u8> + RoundupAble +
+             Sub<Output=T> {
+    (dividend + divisor - T::from(1u8)) / divisor
+
+}
+
+/// Create an SGList full of zeros, with the requested total length
+fn zero_sglist(len: usize) -> SGList {
+    let zero_region_len = ZERO_REGION.len();
+    let zero_bufs = div_roundup(len, zero_region_len);
+    let mut sglist = SGList::new();
+    for _ in 0..(zero_bufs - 1) {
+        sglist.push(ZERO_REGION.try().unwrap())
+    }
+    sglist.push(ZERO_REGION.try().unwrap().slice_to(
+            len - (zero_bufs - 1) * zero_region_len));
+    sglist
 }
 
 // LCOV_EXCL_START
