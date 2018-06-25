@@ -4709,7 +4709,7 @@ fn insert_below_root() {
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
-height: 1
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -4746,7 +4746,7 @@ root:
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
-height: 1
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
@@ -4947,7 +4947,7 @@ fn read_int() {
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
-height: 1
+height: 2
 min_fanout: 2
 max_fanout: 5
 _max_size: 4194304
