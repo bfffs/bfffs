@@ -15,6 +15,8 @@ sed '
 # Exclude boring modules
 /"::arkfs"/d
 /"::common"/d
+/"::common::cache_mock"/d
+/"::common::ddml_mock"/d
 /"::common::dva"/d
 /"::common::sgcursor"/d
 /"::common::tree::atomic_usize_serializer"/d
