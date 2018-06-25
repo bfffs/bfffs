@@ -4688,6 +4688,170 @@ use simulacrum::*;
 use tokio::prelude::task::current;
 use tokio::runtime::current_thread;
 
+#[test]
+fn clean_zone() {
+    // On-disk internal node with on-disk children outside the target zone
+    let drpl0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 0, 0, 0);
+    let drpl1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 0, 0, 0);
+    let children0 = vec![
+        IntElem{key: 0u32, ptr: TreePtr::Addr(drpl0)},
+        IntElem{key: 2u32, ptr: TreePtr::Addr(drpl1)},
+    ];
+    let in0 = Arc::new(Node(RwLock::new(
+                NodeData::Int(IntData{children: children0})))
+    );
+    let drpi0 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 0, 0, 0);
+
+    // On-disk internal node with children both in and outside of target zone
+    let drpl2 = DRP::new(PBA{cluster: 0, lba: 3}, Compression::None, 0, 0, 0);
+    let drpl3 = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
+    let children1 = vec![
+        IntElem{key: 4u32, ptr: TreePtr::Addr(drpl2)},
+        IntElem{key: 6u32, ptr: TreePtr::Addr(drpl3)},
+    ];
+    let in1 = Arc::new(Node(RwLock::new(
+                NodeData::Int(IntData{children: children1})))
+    );
+    let drpi1 = DRP::new(PBA{cluster: 0, lba: 4}, Compression::None, 0, 0, 0);
+    let mut items3: BTreeMap<u32, f32> = BTreeMap::new();
+    items3.insert(6, 6.0);
+    items3.insert(7, 7.0);
+    let ln3 = Arc::new(Node(RwLock::new(
+                NodeData::Leaf(LeafData{items: items3})))
+    );
+
+    // On-disk internal node in the target zone, but with children outside
+    let drpl4 = DRP::new(PBA{cluster: 0, lba: 4}, Compression::None, 0, 0, 0);
+    let drpl5 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
+    let children2 = vec![
+        IntElem{key: 8u32, ptr: TreePtr::Addr(drpl4)},
+        IntElem{key: 10u32, ptr: TreePtr::Addr(drpl5)},
+    ];
+    let in2 = Arc::new(Node(RwLock::new(
+                NodeData::Int(IntData{children: children2})))
+    );
+    let drpi2 = DRP::new(PBA{cluster: 0, lba: 101}, Compression::None, 0, 0, 0);
+
+    // On-disk leaf node in the target zone
+    let drpl8 = DRP::new(PBA{cluster: 0, lba: 102}, Compression::None, 0, 0, 0);
+    let mut items8: BTreeMap<u32, f32> = BTreeMap::new();
+    items8.insert(16, 16.0);
+    items8.insert(17, 17.0);
+    let ln8 = Arc::new(Node(RwLock::new(
+                NodeData::Leaf(LeafData{items: items8})))
+    );
+
+    let mut mock = DDMLMock::new();
+    mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
+        .called_any()
+        .with(passes(move |arg: & *const DRP| unsafe {
+            **arg == drpi0 || **arg == drpi1
+        } ))
+        .returning(move |arg: *const DRP| {
+            let res = Box::new( unsafe {
+                if *arg == drpi0 {
+                    in0.clone()
+                }
+                else {
+                    in1.clone()
+                }
+            });
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+        });
+    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
+        .called_any()
+        .with(passes(move |arg: & *const DRP| unsafe {
+            **arg == drpl3 || **arg == drpi2 || **arg == drpl8
+        } ))
+        .returning(move |arg: *const DRP| {
+            let res = Box::new( unsafe {
+                if *arg == drpl3 {
+                    ln3.clone()
+                } else if *arg == drpi2 {
+                    in2.clone()
+                } else {
+                    ln8.clone()
+                }
+            });
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+        });
+    mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
+        .called_times(2)
+        .returning(move |_| {
+            let drp = DRP::random(Compression::None, 1024);
+            (drp, Box::new(future::ok::<(), Error>(())))
+        });
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 2
+                compression: None
+                lsize: 4096
+                csize: 4096
+                checksum: 0
+          - key: 4
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 4
+                compression: None
+                lsize: 4096
+                csize: 4096
+                checksum: 0
+          - key: 6
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 101
+                compression: None
+                lsize: 4096
+                csize: 4096
+                checksum: 0
+          - key: 12
+            ptr:
+              Mem:  # In-memory Int node with a child in the target zone
+                Int:
+                  children:
+                    - key: 12
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              6: 6.0
+                              7: 7.0
+                    - key: 16
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 102
+                          compression: None
+                          lsize: 2048
+                          csize: 2048
+                          checksum: 0
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    rt.block_on(tree.clean_zone(PBA::new(0, 100), 100)).unwrap();
+}
+
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_below_root() {
