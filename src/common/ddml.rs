@@ -73,6 +73,12 @@ impl DRP {
         div_roundup(self.csize as usize, BYTES_PER_LBA) as LbaT
     }
 
+    /// Return the [`Compression`](../dml/enum.Compression.html) function that was used
+    /// to write this record.
+    pub fn compression(&self) -> Compression {
+        self.compression
+    }
+
     // LCOV_EXCL_START
     /// Explicitly construct a `DRP`, for testing.  Production code should never
     /// use this method, because `DRP`s should be opaque to the upper layers.

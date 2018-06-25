@@ -717,6 +717,20 @@ pub struct Tree<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
 }
 
 impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
+    /// Clean `zone` by moving all of its records to other zones.
+    pub fn clean_zone(&self, _start: PBA, _len: LbaT)
+        -> Box<Future<Item=(), Error=Error>>
+    {
+        // Outline:
+        // Walk through the Tree in approximately PBA order.  Rewrite any Nodes
+        // residing in the affected Zone.  Rewrite children before their
+        // parents.
+        // TODO: Store the TXG range of each zone and the TXG range of the
+        // subtree represented by each Node.  Use that information to prune the
+        // number of Nodes that must be walked.
+        unimplemented!()
+    }
+
     pub fn create(dml: Arc<D>) -> Self {
         Tree::new(dml,
                   4,        // BetrFS's min fanout

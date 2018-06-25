@@ -41,9 +41,7 @@ impl<'a> Cleaner {
     fn clean_zone(&'a self, zone: ClosedZone)
         -> impl Future<Item=(), Error=Error> + 'a
     {
-        self.idml.list_records(&zone).for_each(move |record| {
-            self.idml.move_record(record)
-        })
+        self.idml.clean_zone(zone)
     }
 
     /// Select which zones to clean and return them sorted by cleanliness:

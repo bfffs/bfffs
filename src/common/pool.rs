@@ -42,14 +42,11 @@ pub struct Cluster(cluster::Cluster);
 /// Public representation of a closed zone
 #[derive(Debug, Eq, PartialEq)]
 pub struct ClosedZone {
-    /// The Zone's Cluster
-    pub cluster: ClusterT,
-
-    /// First LBA in this zone
-    pub lba: LbaT,
-
     /// Number of freed blocks in this zone
     pub freed_blocks: LbaT,
+
+    /// Physical address of the start of the zone
+    pub pba: PBA,
 
     /// Total number of blocks in this zone
     pub total_blocks: LbaT
@@ -203,9 +200,8 @@ impl<'a> Pool {
             .flat_map(|(i, cluster)| {
                 cluster.list_closed_zones()
                     .map(move |clz| ClosedZone {
-                        cluster: i as ClusterT,
-                        lba: clz.start,
                         freed_blocks: clz.freed_blocks,
+                        pba: PBA::new(i as ClusterT, clz.start),
                         total_blocks: clz.total_blocks,
                     })
             })
@@ -405,10 +401,10 @@ mod pool {
             vec![Box::new(cluster()), Box::new(cluster())]);
         let closed_zones = pool.list_closed_zones().collect::<Vec<_>>();
         let expected = vec![
-            ClosedZone{cluster: 0, lba: 10, freed_blocks: 5, total_blocks: 10},
-            ClosedZone{cluster: 0, lba: 30, freed_blocks: 6, total_blocks: 10},
-            ClosedZone{cluster: 1, lba: 10, freed_blocks: 5, total_blocks: 10},
-            ClosedZone{cluster: 1, lba: 30, freed_blocks: 6, total_blocks: 10},
+            ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5, total_blocks: 10},
+            ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6, total_blocks: 10},
+            ClosedZone{pba: PBA::new(1, 10), freed_blocks: 5, total_blocks: 10},
+            ClosedZone{pba: PBA::new(1, 30), freed_blocks: 6, total_blocks: 10},
         ];
         assert_eq!(closed_zones, expected);
     }

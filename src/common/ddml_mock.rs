@@ -67,6 +67,17 @@ impl DDMLMock {
             ("get_direct")
     }
 
+    pub fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>
+    {
+        self.e.was_called_returning::<(), Box<Iterator<Item=ClosedZone>>>
+            ("list_closed_zones", ())
+    }
+
+    pub fn expect_list_closed_zones(&mut self)
+        -> Method<(), Box<Iterator<Item=ClosedZone>>>
+    {
+        self.e.expect::<(), Box<Iterator<Item=ClosedZone>>>("list_closed_zones")
+    }
 
     pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
         -> Box<Future<Item=Box<T>, Error=Error>>

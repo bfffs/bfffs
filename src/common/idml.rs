@@ -31,9 +31,6 @@ use common::ddml::DDML;
 #[cfg(test)]
 use common::ddml_mock::DDMLMock as DDML;
 
-/// a Record that can only have a single reference
-pub struct DirectRecord(DRP);
-
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct RidtEntry {
     drp: DRP,
@@ -70,6 +67,26 @@ pub struct IDML {
 }
 
 impl<'a> IDML {
+    /// Clean `zone` by moving all of its records to other zones.
+    pub fn clean_zone(&'a self, zone: ClosedZone)
+        -> impl Future<Item=(), Error=Error> + 'a
+    {
+        // Outline:
+        // 1) Lookup the Zone's PBA range in the Allocation Table.  Rewrite each
+        //    record, modifying the RIDT and AllocT for each record
+        // 2) Clean the Allocation table and RIDT themselves.  This must happen
+        //    second, because the first step will reduce the amount of work to
+        //    do in the second.
+        self.list_indirect_records(&zone).for_each(move |record| {
+            self.move_record(record)
+        }).and_then(move |_| {
+            self.ridt.clean_zone(zone.pba, zone.total_blocks)
+                .map(move |_| zone)
+        }).and_then(move |zone| {
+            self.alloct.clean_zone(zone.pba, zone.total_blocks)
+        })
+    }
+
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
         let alloct = DTree::<PBA, RID>::create(ddml.clone());
         let next_rid = Atomic::new(0);
@@ -77,24 +94,44 @@ impl<'a> IDML {
         IDML{alloct, cache, ddml, next_rid, ridt}
     }
 
-    pub fn list_closed_zones(&'a self) -> Box<Iterator<Item=ClosedZone> + 'a> {
-        unimplemented!()
+    pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
+        self.ddml.list_closed_zones()
     }
 
-    /// Return a list of all active (not delete) Records that have been written
-    /// to the IDML in the given Zone.
+    /// Return a list of all active (not deleted) indirect Records that have
+    /// been written to the IDML in the given Zone.
     ///
     /// This list should be persistent across reboots.
-    pub fn list_records(&self, _zone: &ClosedZone)
-        -> Box<Stream<Item=DirectRecord, Error=Error>>
+    fn list_indirect_records(&'a self, zone: &ClosedZone)
+        -> impl Stream<Item=RID, Error=Error> + 'a
     {
-        unimplemented!()
+        // Iterate through the AllocT to get indirect records from the target
+        // zone.
+        let end = PBA::new(zone.pba.cluster, zone.pba.lba + zone.total_blocks);
+        self.alloct.range(zone.pba..end)
+            .map(|(_pba, rid)| rid)
     }
 
-    pub fn move_record(&self, _record: DirectRecord)
-        -> Box<Future<Item=(), Error=Error>>
+    /// Rewrite the given direct Record and update its metadata.
+    fn move_record(&'a self, rid: RID)
+        -> impl Future<Item=(), Error=Error> + 'a
     {
-        unimplemented!()
+        self.ridt.get(rid.clone())
+            .and_then(move |v| {
+                let entry = v.expect(
+                    "Inconsistency in alloct.  Entry not found in RIDT");
+                self.ddml.get_direct::<DivBufShared>(&entry.drp)
+                    .map(move |buf| (entry, buf))
+            }).and_then(move |(mut entry, buf)| {
+                // NB: on a cache miss, this will result in decompressing and
+                // recompressing the record, which is inefficient.
+                let compression = entry.drp.compression();
+                let (drp, buf_fut) = self.ddml.put_direct(*buf, compression);
+                entry.drp = drp;
+                let ridt_fut = self.ridt.insert(rid.clone(), entry);
+                let alloct_fut = self.alloct.insert(drp.pba(), rid);
+                buf_fut.join3(ridt_fut, alloct_fut)
+            }).map(|_| ())
     }
 }
 
@@ -407,6 +444,43 @@ mod t {
 
         let fut = idml.get::<DivBufShared, DivBuf>(&rid);
         current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
+    }
+
+    #[test]
+    fn list_indirect_records() {
+        let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100,
+                            freed_blocks: 50};
+        let cache = Cache::new();
+        let ddml = DDML::new();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+
+        // A record just below the target zone
+        let rid0 = RID(99);
+        let drp0 = DRP::new(PBA::new(0, 99), Compression::None, 4096, 4096, 0);
+        inject_record(&mut rt, &idml, &rid0, &drp0, 1);
+        // A record at the end of the target zone
+        let rid2 = RID(102);
+        let drp2 = DRP::new(PBA::new(0, 199), Compression::None, 4096, 4096, 0);
+        inject_record(&mut rt, &idml, &rid2, &drp2, 1);
+        // A record at the start of the target zone
+        let rid1 = RID(92);
+        let drp1 = DRP::new(PBA::new(0, 100), Compression::None, 4096, 4096, 0);
+        inject_record(&mut rt, &idml, &rid1, &drp1, 1);
+        // A record just past the target zone
+        let rid3 = RID(101);
+        let drp3 = DRP::new(PBA::new(0, 200), Compression::None, 4096, 4096, 0);
+        inject_record(&mut rt, &idml, &rid3, &drp3, 1);
+        // A record in the same LBA range as but different cluster than the
+        // target zone
+        let rid4 = RID(105);
+        let drp4 = DRP::new(PBA::new(1, 150), Compression::None, 4096, 4096, 0);
+        inject_record(&mut rt, &idml, &rid4, &drp4, 1);
+
+        let r = rt.block_on(idml.list_indirect_records(&cz).collect());
+        assert_eq!(r.unwrap(), vec![rid1, rid2]);
+
     }
 
     #[test]
