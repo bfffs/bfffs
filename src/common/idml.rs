@@ -116,12 +116,27 @@ impl<'a> IDML {
     fn move_record(&'a self, rid: RID)
         -> impl Future<Item=(), Error=Error> + 'a
     {
+        // Even if the cache contains the target record, we must also do an RIDT
+        // lookup because we're going to rewrite the RIDT
         self.ridt.get(rid.clone())
             .and_then(move |v| {
                 let entry = v.expect(
                     "Inconsistency in alloct.  Entry not found in RIDT");
-                self.ddml.get_direct::<DivBufShared>(&entry.drp)
-                    .map(move |buf| (entry, buf))
+                self.cache.lock().unwrap().get::<DivBuf>(&Key::Rid(rid))
+                    .map(|t: Box<DivBuf>| {
+                        // XXX: this data copy could probably be removed
+                        let r = (*t).to_owned()
+                            .downcast::<DivBufShared>()
+                            .unwrap();
+                        Box::new(
+                            future::ok::<Box<DivBufShared>, Error>(r)
+                        ) as Box<Future<Item=Box<DivBufShared>, Error=Error>>
+                    })
+                    .unwrap_or_else(|| {
+                        Box::new(
+                            self.ddml.get_direct::<DivBufShared>(&entry.drp)
+                        ) as Box<Future<Item=Box<DivBufShared>, Error=Error>>
+                    }).map(move |buf| (entry, buf))
             }).and_then(move |(mut entry, buf)| {
                 // NB: on a cache miss, this will result in decompressing and
                 // recompressing the record, which is inefficient.
@@ -480,7 +495,90 @@ mod t {
 
         let r = rt.block_on(idml.list_indirect_records(&cz).collect());
         assert_eq!(r.unwrap(), vec![rid1, rid2]);
+    }
 
+    #[test]
+    fn move_indirect_record_cold() {
+        let v = vec![42u8; 4096];
+        let dbs = DivBufShared::from(v.clone());
+        let rid = RID(1);
+        let rid1 = rid.clone();
+        let drp0 = DRP::random(Compression::None, 4096);
+        let drp1 = DRP::random(Compression::None, 4096);
+        let drp2 = drp1.clone();
+        let mut cache = Cache::new();
+        let mut ddml = DDML::new();
+        cache.expect_get::<DivBuf>()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(rid1)}
+            })).returning(move |_| {
+                None
+            });
+        ddml.expect_get_direct()
+            .called_once()
+            .with(passes(move |key: &*const DRP| {
+                unsafe {**key == drp0}
+            })).returning(move |_| {
+                let r = DivBufShared::from(&dbs.try().unwrap()[..]);
+                Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
+            });
+        ddml.expect_put_direct::<DivBufShared>()
+            .called_once()
+            .returning(move |(buf, _)|
+                       (drp1, Box::new(future::ok::<DivBufShared, Error>(buf)))
+            );
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        inject_record(&mut rt, &idml, &rid, &drp0, 1);
+
+        rt.block_on(idml.move_record(rid)).unwrap();
+
+        // Now verify the RIDT and alloct entries
+        let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        assert_eq!(entry.refcount, 1);
+        assert_eq!(entry.drp, drp2);
+        assert_eq!(rt.block_on(idml.alloct.get(drp2.pba())).unwrap().unwrap(),
+                   rid);
+    }
+
+    #[test]
+    fn move_indirect_record_hot() {
+        let v = vec![42u8; 4096];
+        let dbs = DivBufShared::from(v.clone());
+        let rid = RID(1);
+        let rid1 = rid.clone();
+        let drp0 = DRP::random(Compression::None, 4096);
+        let drp1 = DRP::random(Compression::None, 4096);
+        let drp2 = drp1.clone();
+        let mut cache = Cache::new();
+        let mut ddml = DDML::new();
+        cache.expect_get::<DivBuf>()
+            .called_once()
+            .with(passes(move |key: &*const Key| {
+                unsafe {**key == Key::Rid(rid1)}
+            })).returning(move |_| {
+                Some(Box::new(dbs.try().unwrap()))
+            });
+        ddml.expect_put_direct::<DivBufShared>()
+            .called_once()
+            .returning(move |(buf, _)|
+                       (drp1, Box::new(future::ok::<DivBufShared, Error>(buf)))
+            );
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        inject_record(&mut rt, &idml, &rid, &drp0, 1);
+
+        rt.block_on(idml.move_record(rid)).unwrap();
+
+        // Now verify the RIDT and alloct entries
+        let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        assert_eq!(entry.refcount, 1);
+        assert_eq!(entry.drp, drp2);
+        assert_eq!(rt.block_on(idml.alloct.get(drp2.pba())).unwrap().unwrap(),
+                   rid);
     }
 
     #[test]
