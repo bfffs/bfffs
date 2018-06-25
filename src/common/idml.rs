@@ -31,16 +31,6 @@ use common::ddml::DDML;
 #[cfg(test)]
 use common::ddml_mock::DDMLMock as DDML;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
-         Serialize)]
-pub struct RID(u64);
-
-impl MinValue for RID {
-    fn min_value() -> Self {
-        RID(u64::min_value())
-    }
-}
-
 /// a Record that can only have a single reference
 pub struct DirectRecord(DRP);
 
@@ -124,7 +114,7 @@ impl DML for IDML {
             }).and_then(move |mut entry| {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
-                    self.cache.lock().unwrap().remove(&Key::Rid(rid2.0));
+                    self.cache.lock().unwrap().remove(&Key::Rid(rid2));
                     // TODO: usd ddml.delete_direct
                     let ddml_fut = self.ddml.delete(&entry.drp);
                     let alloct_fut = self.alloct.remove(entry.drp.pba());
@@ -146,13 +136,13 @@ impl DML for IDML {
     }
 
     fn evict(&self, rid: &Self::Addr) {
-        self.cache.lock().unwrap().remove(&Key::Rid(rid.0));
+        self.cache.lock().unwrap().remove(&Key::Rid(*rid));
     }
 
     fn get<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr)
         -> Box<Future<Item=Box<R>, Error=Error> + 'a>
     {
-        self.cache.lock().unwrap().get::<R>(&Key::Rid(rid.0)).map(|t| {
+        self.cache.lock().unwrap().get::<R>(&Key::Rid(*rid)).map(|t| {
             let r : Box<Future<Item=Box<R>, Error=Error>> =
             Box::new(future::ok::<Box<R>, Error>(t));
             r
@@ -168,7 +158,7 @@ impl DML for IDML {
                     self.ddml.get_direct(&entry.drp)
                 }).map(move |cacheable: Box<T>| {
                     let r = cacheable.make_ref();
-                    let key = Key::Rid(rid2.0);
+                    let key = Key::Rid(rid2);
                     self.cache.lock().unwrap().insert(key, cacheable);
                     r.downcast::<R>().unwrap()
                 });
@@ -190,7 +180,7 @@ impl DML for IDML {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
                     let cacheval = self.cache.lock().unwrap()
-                        .remove(&Key::Rid(rid2.0));
+                        .remove(&Key::Rid(rid2));
                     let bfut: Box<Future<Item=Box<T>, Error=Error>> = cacheval
                         .map(|cacheable| {
                             let t = cacheable.downcast::<T>().unwrap();
@@ -211,7 +201,7 @@ impl DML for IDML {
                      ) as Box<Future<Item=Box<T>, Error=Error>>
                 } else {
                     let cacheval = self.cache.lock().unwrap()
-                        .get::<R>(&Key::Rid(rid2.0));
+                        .get::<R>(&Key::Rid(rid2));
                     let bfut = cacheval.map(|cacheref: Box<R>|{
                         let t = cacheref.to_owned().downcast::<T>().unwrap();
                         Box::new(future::ok(t))
@@ -251,7 +241,7 @@ impl DML for IDML {
                     assert!(old_alloc_entry.is_none(), concat!(
                         "Double allocate without free.  ",
                         "DDML allocator leak detected!"));
-                    self.cache.lock().unwrap().insert(Key::Rid(rid.0),
+                    self.cache.lock().unwrap().insert(Key::Rid(rid),
                         Box::new(cacheable));
                 })
         );
@@ -294,7 +284,7 @@ mod t {
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(42)}
+                unsafe {**key == Key::Rid(RID(42))}
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
@@ -349,7 +339,7 @@ mod t {
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(42)}
+                unsafe {**key == Key::Rid(RID(42))}
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
@@ -368,7 +358,7 @@ mod t {
         cache.expect_get()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(42)}
+                unsafe {**key == Key::Rid(RID(42))}
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
@@ -393,12 +383,12 @@ mod t {
         cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(42)}
+                unsafe {**key == Key::Rid(RID(42))}
             })).returning(move |_| None);
         cache.then().expect_insert()
             .called_once()
             .with(passes(move |args: &(Key, _)| {
-                args.0 == Key::Rid(42)
+                args.0 == Key::Rid(RID(42))
             })).returning(move |(_, dbs)| {;
                 owned_by_cache2.borrow_mut().push(dbs);
             });
@@ -431,7 +421,7 @@ mod t {
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(42)}
+                unsafe {**key == Key::Rid(RID(42))}
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
@@ -467,7 +457,7 @@ mod t {
         cache.expect_get()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(42)}
+                unsafe {**key == Key::Rid(RID(42))}
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
@@ -499,7 +489,7 @@ mod t {
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(42)}
+                unsafe {**key == Key::Rid(RID(42))}
             })).returning(|_| None );
         let mut ddml = DDML::new();
         ddml.expect_pop_direct::<DivBufShared>()
@@ -533,7 +523,7 @@ mod t {
         cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(42)}
+                unsafe {**key == Key::Rid(RID(42))}
             })).returning(|_| None );
         let mut ddml = DDML::new();
         ddml.expect_get_direct()
@@ -568,9 +558,10 @@ mod t {
         let mut ddml = DDML::new();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdeadbeef);
+        let rid = RID(0);
         cache.expect_insert()
             .called_once()
-            .with(params!(Key::Rid(0), any()))
+            .with(params!(Key::Rid(rid), any()))
             .returning(|_| ());
         ddml.expect_put_direct::<DivBufShared>()
             .called_once()
@@ -583,16 +574,16 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
 
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (rid, fut) = idml.put(dbs, Compression::None);
-        assert_eq!(rid.0, 0);
+        let (actual_rid, fut) = idml.put(dbs, Compression::None);
+        assert_eq!(rid, actual_rid);
         rt.block_on(fut).unwrap();
 
         // Now verify the contents of the RIDT and AllocT
-        let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        let entry = rt.block_on(idml.ridt.get(actual_rid)).unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp);
         assert_eq!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().unwrap(),
-                   rid);
+                   actual_rid);
     }
 
     #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test"]

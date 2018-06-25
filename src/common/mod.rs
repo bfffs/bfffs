@@ -76,6 +76,13 @@ impl PBA {
     }
 }
 
+/// Record ID
+///
+/// Uniquely identifies each indirect record.  Record IDs are never reused.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, PartialOrd, Ord,
+         Serialize)]
+pub struct RID(u64);
+
 /// "Private" trait; only exists to ensure that div_roundup will fail to compile
 /// when used with signed numbers.  It would be nice to use a negative trait
 /// bound like "+ !Neg", but Rust doesn't support negative trait bounds.

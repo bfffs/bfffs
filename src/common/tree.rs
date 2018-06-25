@@ -65,6 +65,12 @@ impl MinValue for PBA {
     }
 }
 
+impl MinValue for RID {
+    fn min_value() -> Self {
+        RID(u64::min_value())
+    }
+}
+
 pub trait Addr: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 
 impl<T> Addr for T
