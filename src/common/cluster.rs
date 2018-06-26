@@ -1406,7 +1406,6 @@ mod free_space_map {
         let (res, full_zones) = fsm.try_allocate(64);
         assert_eq!(res, Some((zid, 0)));
         assert!(full_zones.is_empty());
-        println!("{:?} {:?}", fsm.zones, fsm.open_zones);
         assert_eq!(fsm.open_zones[&zid].write_pointer(), 64);
         assert_eq!(fsm.in_use(zid), 64);
     }
