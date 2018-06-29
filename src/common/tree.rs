@@ -1031,12 +1031,12 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         self.read()
             .and_then(move |guard| {
                 self.rlock(&guard)
-                     .and_then(move |guard| self.get_node(guard, k))
+                     .and_then(move |guard| self.get_r(guard, k))
             })
     }
 
     /// Lookup the value of key `k` in a node, which must already be locked.
-    fn get_node(&'a self, node: TreeReadGuard<A, K, V>, k: K)
+    fn get_r(&'a self, node: TreeReadGuard<A, K, V>, k: K)
         -> Box<Future<Item=Option<V>, Error=Error> + 'a>
     {
 
@@ -1052,7 +1052,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         drop(node);
         Box::new(
             next_node_fut
-            .and_then(move |next_node| self.get_node(next_node, k))
+            .and_then(move |next_node| self.get_r(next_node, k))
         )
     }
 
@@ -1070,14 +1070,14 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         self.read()
             .and_then(move |guard| {
                 self.rlock(&guard)
-                     .and_then(move |g| self.get_range_node(g, None, range))
+                     .and_then(move |g| self.get_range_r(g, None, range))
             })
     }
 
     /// Range lookup beginning in the node `guard`.  `next_guard`, if present,
     /// must be the node immediately to the right (and possibly up one or more
     /// levels) from `guard`.
-    fn get_range_node<R, T>(&'a self, guard: TreeReadGuard<A, K, V>,
+    fn get_range_r<R, T>(&'a self, guard: TreeReadGuard<A, K, V>,
                             next_guard: Option<TreeReadGuard<A, K, V>>, range: R)
         -> Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
                       Error=Error> + 'a>
@@ -1092,7 +1092,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                     // We must've started the query with a key that's not
                     // present, and lies between two leaves.  Check the next
                     // node
-                    self.get_range_node(next_guard.unwrap(), None, range)
+                    self.get_range_r(next_guard.unwrap(), None, range)
                 } else if v.is_empty() {
                     // The range is truly empty
                     Box::new(Ok((v, None)).into_future())
@@ -1134,7 +1134,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         Box::new(
             child_fut.join(next_fut)
                 .and_then(move |(child_guard, next_guard)| {
-                self.get_range_node(child_guard, next_guard, range)
+                self.get_range_r(child_guard, next_guard, range)
             })
         ) as Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>), Error=Error>>
     }
@@ -1563,7 +1563,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                     drop(child_guard);
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
                     Box::new(
-                        self.write_node(ptr.into_node())
+                        self.flush_r(ptr.into_node())
                             .map(move |addr| {
                                 root_guard.ptr = TreePtr::Addr(addr);
                             })
@@ -1584,7 +1584,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         fut.map(move |_| addr)
     }
 
-    fn write_node(&'a self, mut node: Box<Node<A, K, V>>)
+    fn flush_r(&'a self, mut node: Box<Node<A, K, V>>)
         -> Box<Future<Item=D::Addr, Error=Error> + 'a>
     {
         if node.0.get_mut().unwrap().is_leaf() {
@@ -1620,7 +1620,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                                                        .as_int_mut()
                                                        .children[idx].ptr,
                                            TreePtr::None);
-                    self.write_node(ptr.into_node())
+                    self.flush_r(ptr.into_node())
                         .map(move |addr| {
                             rndata3.borrow_mut()
                                    .as_int_mut()
