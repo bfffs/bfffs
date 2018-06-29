@@ -23,7 +23,7 @@ use serde::{Serializer, de::{Deserializer, DeserializeOwned}};
 use std::{
     borrow::Borrow,
     cell::RefCell,
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     fmt::Debug,
     mem,
     rc::Rc,
@@ -947,9 +947,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                             Box::new(
                                 Node::new(
                                     NodeData::Leaf(
-                                        LeafData{
-                                            items: BTreeMap::new()
-                                        }
+                                        LeafData::new()
                                     )
                                 )
                             )
@@ -4365,12 +4363,10 @@ fn clean_zone() {
     ));
     let drpi1 = DRP::new(PBA{cluster: 0, lba: 4}, Compression::None, 0, 0, 0);
 
-    let mut items3: BTreeMap<u32, f32> = BTreeMap::new();
-    items3.insert(6, 6.0);
-    items3.insert(7, 7.0);
-    let mut ln3 = Some(Arc::new(Node::new(
-                NodeData::Leaf(LeafData{items: items3}))
-    ));
+    let mut ld3 = LeafData::new();
+    ld3.insert(6, 6.0);
+    ld3.insert(7, 7.0);
+    let mut ln3 = Some(Arc::new(Node::new(NodeData::Leaf(ld3))));
 
     // On-disk internal node in the target zone, but with children outside
     let drpl4 = DRP::new(PBA{cluster: 0, lba: 5}, Compression::None, 0, 0, 0);
@@ -4392,12 +4388,10 @@ fn clean_zone() {
 
     // On-disk leaf node in the target zone
     let drpl8 = DRP::new(PBA{cluster: 0, lba: 102}, Compression::None, 0, 0, 0);
-    let mut items8: BTreeMap<u32, f32> = BTreeMap::new();
-    items8.insert(16, 16.0);
-    items8.insert(17, 17.0);
-    let mut ln8 = Some(Arc::new(Node::new(
-                NodeData::Leaf(LeafData{items: items8}))
-    ));
+    let mut ld8 = LeafData::new();
+    ld8.insert(16, 16.0);
+    ld8.insert(17, 17.0);
+    let mut ln8 = Some(Arc::new(Node::new(NodeData::Leaf(ld8))));
 
     let mut mock = DDMLMock::new();
     mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
@@ -4525,8 +4519,7 @@ root:
 #[test]
 fn insert_below_root() {
     let mut mock = DDMLMock::new();
-    let items: BTreeMap<u32, u32> = BTreeMap::new();
-    let node = Arc::new(Node::new(NodeData::Leaf(LeafData{items})));
+    let node = Arc::new(Node::new(NodeData::Leaf(LeafData::new())));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
     mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
@@ -4611,8 +4604,7 @@ root:
 #[test]
 fn insert_root() {
     let mut mock = DDMLMock::new();
-    let items: BTreeMap<u32, u32> = BTreeMap::new();
-    let node = Arc::new(Node::new(NodeData::Leaf(LeafData{items})));
+    let node = Arc::new(Node::new(NodeData::Leaf(LeafData::new())));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
     mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
@@ -4698,13 +4690,13 @@ fn range_leaf() {
     }
 
     let mut mock = DDMLMock::new();
-    let mut items: BTreeMap<u32, f32> = BTreeMap::new();
-    items.insert(0, 0.0);
-    items.insert(1, 1.0);
-    items.insert(2, 2.0);
-    items.insert(3, 3.0);
-    items.insert(4, 4.0);
-    let node1 = Arc::new(Node::new(NodeData::Leaf(LeafData{items})));
+    let mut ld1 = LeafData::new();
+    ld1.insert(0, 0.0);
+    ld1.insert(1, 1.0);
+    ld1.insert(2, 2.0);
+    ld1.insert(3, 3.0);
+    ld1.insert(4, 4.0);
+    let node1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
     mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
         .called_once()
         .returning(move |_| {
@@ -4816,11 +4808,11 @@ root:
 #[test]
 fn read_leaf() {
     let mut mock = DDMLMock::new();
-    let mut items: BTreeMap<u32, u32> = BTreeMap::new();
-    items.insert(0, 100);
-    items.insert(1, 200);
-    items.insert(99, 50_000);
-    let node = Arc::new(Node::new(NodeData::Leaf(LeafData{items})));
+    let mut ld = LeafData::new();
+    ld.insert(0, 100);
+    ld.insert(1, 200);
+    ld.insert(99, 50_000);
+    let node = Arc::new(Node::new(NodeData::Leaf(ld)));
     mock.expect_get::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .returning(move |_| {
@@ -4893,8 +4885,8 @@ fn write_deep() {
         .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
             let leaf_data = node_data.as_leaf();
-            leaf_data.items[&0] == 100 &&
-            leaf_data.items[&1] == 200
+            leaf_data.get(&0) == Some(100) &&
+            leaf_data.get(&1) == Some(200)
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
     mock.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
@@ -5011,8 +5003,8 @@ fn write_leaf() {
         .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();
             let leaf_data = node_data.as_leaf();
-            leaf_data.items[&0] == 100 &&
-            leaf_data.items[&1] == 200
+            leaf_data.get(&0) == Some(100) &&
+            leaf_data.get(&1) == Some(200)
         })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"

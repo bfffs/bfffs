@@ -151,7 +151,7 @@ mod node_serializer {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned, V: DeserializeOwned"))]
 pub(super) struct LeafData<K: Key, V> {
-    pub items: BTreeMap<K, V>
+    items: BTreeMap<K, V>
 }
 
 impl<K: Key, V: Value> LeafData<K, V> {
@@ -163,6 +163,10 @@ impl<K: Key, V: Value> LeafData<K, V> {
         where K: Borrow<Q>, Q: Ord
     {
         self.items.get(k).cloned()
+    }
+
+    pub fn new() -> Self {
+        LeafData{items: BTreeMap::new()}
     }
 
     /// Lookup a range of values from a single Leaf Node.
