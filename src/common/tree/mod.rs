@@ -1085,7 +1085,10 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 // Cache.
                 let fut = rndata.borrow_mut()
                                 .as_int_mut()
-                                .children[idx].xlock_dirty()
+                                .children[idx]
+                                .ptr
+                                .as_mem()
+                                .xlock()
                                 .and_then(move |guard|
                 {
                     drop(guard);
@@ -1169,7 +1172,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     {
         if guard.as_int().children[child_idx].ptr.is_mem() {
             Box::new(
-                guard.as_int().children[child_idx].xlock_dirty()
+                guard.as_int().children[child_idx].ptr.as_mem().xlock()
                     .map(move |child_guard| {
                           (guard, child_guard)
                      })

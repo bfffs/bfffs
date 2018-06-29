@@ -284,22 +284,6 @@ impl<'a, A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     pub fn is_dirty(&mut self) -> bool {
         self.ptr.is_dirty()
     }
-
-    /// Lock the indicated `IntElem` exclusively, if it is known to be already
-    /// dirty.
-    pub(super) fn xlock_dirty(&self)
-        -> impl Future<Item=TreeWriteGuard<A, K, V>, Error=Error>
-    {
-        debug_assert!(self.ptr.is_mem(),
-            "Must use Tree::xlock for non-dirty nodes");
-        Box::new(
-            self.ptr.as_mem()
-                .0.write()
-                .map(|guard| TreeWriteGuard::Mem(guard))
-                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-        )
-    }
-
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -570,6 +554,18 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     pub(super) fn new(node_data: NodeData<A, K, V>) -> Self {
         Node(RwLock::new(node_data))
     }
+
+    /// Lock the indicated `Node` exclusively.
+    pub(super) fn xlock(&self)
+        -> impl Future<Item=TreeWriteGuard<A, K, V>, Error=Error>
+    {
+        Box::new(
+            self.0.write()
+                .map(|guard| TreeWriteGuard::Mem(guard))
+                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        )
+    }
+
 }
 
 // LCOV_EXCL_START
