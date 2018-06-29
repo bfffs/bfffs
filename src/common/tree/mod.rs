@@ -508,7 +508,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     {
         self.read()
             .and_then(move |guard| {
-                self.rlock(&guard)
+                guard.rlock(&*self.dml)
                      .and_then(move |guard| self.get_r(guard, k))
             })
     }
@@ -524,7 +524,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             },
             NodeData::Int(ref int) => {
                 let child_elem = &int.children[int.position(&k)];
-                self.rlock(&child_elem)
+                child_elem.rlock(&*self.dml)
             }
         };
         drop(node);
@@ -547,7 +547,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     {
         self.read()
             .and_then(move |guard| {
-                self.rlock(&guard)
+                guard.rlock(&*self.dml)
                      .and_then(move |g| self.get_range_r(g, None, range))
             })
     }
@@ -595,7 +595,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 let child_elem = &int.children[child_idx];
                 let next_fut = if child_idx < int.nchildren() - 1 {
                     Box::new(
-                        self.rlock(&int.children[child_idx + 1])
+                        int.children[child_idx + 1].rlock(&*self.dml)
                             .map(|guard| Some(guard))
                     ) as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
                                     Error=Error>>
@@ -604,7 +604,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                         as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
                                       Error=Error>>
                 };
-                let child_fut = self.rlock(&child_elem);
+                let child_fut = child_elem.rlock(&*self.dml);
                 (child_fut, next_fut)
             } // LCOV_EXCL_LINE kcov false negative
         };
@@ -1127,36 +1127,6 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         self.i.root.read().map_err(|_| Error::Sys(errno::Errno::EPIPE))
     }
 
-    /// Lock the provided `IntElem` nonexclusively
-    fn rlock(&'a self, elem: &IntElem<A, K, V>)
-        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
-    {
-        match elem.ptr {
-            TreePtr::Mem(ref node) => {
-                Box::new(
-                    node.0.read()
-                        .map(|guard| TreeReadGuard::Mem(guard))
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                )
-            },
-            TreePtr::Addr(ref addr) => {
-                Box::new(
-                    self.dml.get::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(addr)
-                    .and_then(|node| {
-                        node.0.read()
-                            .map(move |guard| {
-                                TreeReadGuard::Addr(guard, node)
-                            })
-                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-                    })
-                )
-            },
-            // LCOV_EXCL_START
-            TreePtr::None => unreachable!("None is just a temporary value")
-            // LCOV_EXCL_STOP
-        }
-    }
-
     /// Lock the Tree for writing
     fn write(&'a self) -> impl Future<Item=RwLockWriteGuard<IntElem<A, K, V>>,
                                       Error=Error> + 'a
@@ -1239,7 +1209,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
     {
         self.read()
             .and_then(move |guard| {
-                self.rlock(&guard)
+                guard.rlock(&*self.dml)
                      .and_then(move |guard| {
                          let h = self.i.height.load(Ordering::Relaxed) as u8;
                          self.get_dirty_nodes_r(guard, h - 1, None, key, range)
@@ -1274,7 +1244,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         let next_fut = if idx < guard.as_int().nchildren() - 1 {
             Box::new(
                 // TODO: store the next node's height, too
-                self.rlock(&guard.as_int().children[idx + 1])
+                guard.as_int().children[idx + 1].rlock(&*self.dml)
                     .map(|guard| Some(guard))
             ) as Box<Future<Item=Option<TreeReadGuard<ddml::DRP, K, V>>,
                             Error=Error>>
@@ -1301,7 +1271,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         } else {
             Some(guard.as_int().children[idx + 1].key)
         };
-        let child_fut = self.rlock(&guard.as_int().children[idx]);
+        let child_fut = guard.as_int().children[idx].rlock(&*self.dml);
         drop(guard);
         Box::new(
             child_fut.join(next_fut)
@@ -4720,7 +4690,7 @@ fn read_int() {
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
     let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml.clone(), r#"
 ---
 height: 2
 min_fanout: 2
@@ -4742,7 +4712,7 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(future::lazy(|| {
         let root_guard = tree.i.root.try_read().unwrap();
-        tree.rlock(&root_guard).map(|node| {
+        root_guard.rlock(&*ddml).map(|node| {
             let int_data = (*node).as_int();
             assert_eq!(int_data.nchildren(), 2);
             // Validate DRPs as well as possible using their public API

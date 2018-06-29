@@ -323,11 +323,41 @@ pub(super) struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
     pub ptr: TreePtr<A, K, V>
 }
 
-impl<'a, A: Addr, K: Key, V: Value> IntElem<A, K, V> {
+impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     /// Is the child node dirty?  That is, does it differ from the on-disk
     /// version?
     pub fn is_dirty(&mut self) -> bool {
         self.ptr.is_dirty()
+    }
+
+    /// Lock nonexclusively
+    pub fn rlock<'a, D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: &'a D)
+        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
+    {
+        match self.ptr {
+            TreePtr::Mem(ref node) => {
+                Box::new(
+                    node.0.read()
+                        .map(|guard| TreeReadGuard::Mem(guard))
+                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                )
+            },
+            TreePtr::Addr(ref addr) => {
+                Box::new(
+                    dml.get::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(addr)
+                    .and_then(|node| {
+                        node.0.read()
+                            .map(move |guard| {
+                                TreeReadGuard::Addr(guard, node)
+                            })
+                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    })
+                )
+            },
+            // LCOV_EXCL_START
+            TreePtr::None => unreachable!("None is just a temporary value")
+            // LCOV_EXCL_STOP
+        }
     }
 }
 
