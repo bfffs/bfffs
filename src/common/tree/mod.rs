@@ -184,6 +184,9 @@ struct CleanZonePass1Inner<'tree, D, K, V>
     /// Data that can be returned immediately
     data: VecDeque<NodeId<K>>,
 
+    /// Level of the Tree that this object is meant to clean.  Leaves are 0.
+    echelon: u8,
+
     /// Used when an operation must block
     last_fut: Option<Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
                        Error=Error> + 'tree>>,
@@ -210,13 +213,15 @@ impl<'tree, D, K, V> CleanZonePass1<'tree, D, K, V>
           V: Value
     {
 
-    fn new(range: ops::Range<PBA>, tree: &'tree Tree<ddml::DRP, D, K, V>)
+    fn new(range: ops::Range<PBA>, echelon: u8,
+           tree: &'tree Tree<ddml::DRP, D, K, V>)
         -> CleanZonePass1<'tree, D, K, V>
     {
         let cursor = Some(K::min_value());
         let data = VecDeque::new();
         let last_fut = None;
-        let inner = CleanZonePass1Inner{cursor, data, last_fut, range, tree};
+        let inner = CleanZonePass1Inner{cursor, data, echelon, last_fut, range,
+                                        tree};
         CleanZonePass1{inner: RefCell::new(inner)}
     }
 }
@@ -244,7 +249,8 @@ impl<'tree, D, K, V> Stream for CleanZonePass1<'tree, D, K, V>
                         let mut f = i.last_fut.take().unwrap_or_else(|| {
                             let l = i.cursor.clone().unwrap();
                             let range = i.range.clone();
-                            Box::new(i.tree.get_dirty_nodes(l, range))
+                            let e = i.echelon;
+                            Box::new(i.tree.get_dirty_nodes(l, range, e))
                         });
                         match f.poll() {
                             Ok(Async::Ready((v, bound))) => {
@@ -1190,30 +1196,59 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         // written to a closed zone until after it gets erased and reopened, and
         // that won't happen before we finish cleaning it.
         //
+        // Furthermore, we'll repeat both passes for each level of the tree.
+        // Not because we strictly need to, but because rewriting the lowest
+        // levels first will modify many mid-level nodes, obliviating the need
+        // to rewrite them.  It simplifies the first pass, too.
+        //
         // TODO: Store the TXG range of each zone and the TXG range of the
         // subtree represented by each Node.  Use that information to prune the
         // number of Nodes that must be walked.
-        CleanZonePass1::new(range, self)
-            .collect()
-            .and_then(move |nodes| {
-                stream::iter_ok(nodes.into_iter()).for_each(move |node| {
-                    // TODO: consider attempting to rewrite multiple nodes at
-                    // once, so as not to spend so much time traversing the tree
-                    self.rewrite_node(node)
+        let tree_height = self.i.height.load(Ordering::Relaxed) as u8;
+        stream::iter_ok(0..tree_height).for_each(move|echelon| {
+            CleanZonePass1::new(range.clone(), echelon, self)
+                .collect()
+                .and_then(move |nodes| {
+                    stream::iter_ok(nodes.into_iter()).for_each(move |node| {
+                        // TODO: consider attempting to rewrite multiple nodes
+                        // at once, so as not to spend so much time traversing
+                        // the tree
+                        self.rewrite_node(node)
+                    })
                 })
-            })
+        })
     }
 
-    fn get_dirty_nodes(&'a self, key: K, range: ops::Range<PBA>)
+    fn get_dirty_nodes(&'a self, key: K, range: ops::Range<PBA>, echelon: u8)
         -> impl Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error> + 'a
     {
         self.read()
             .and_then(move |guard| {
-                guard.rlock(&*self.dml)
-                     .and_then(move |guard| {
-                         let h = self.i.height.load(Ordering::Relaxed) as u8;
-                         self.get_dirty_nodes_r(guard, h - 1, None, key, range)
-                     })
+                let h = self.i.height.load(Ordering::Relaxed) as u8;
+                if h == echelon + 1 {
+                    // Clean the tree root
+                    let dirty = if guard.ptr.is_addr() &&
+                        guard.ptr.as_addr().pba() >= range.start &&
+                        guard.ptr.as_addr().pba() < range.end {
+                        let mut v = VecDeque::new();
+                        v.push_back(NodeId{height: echelon, key: guard.key});
+                        v
+                    } else {
+                        VecDeque::new()
+                    };
+                    Box::new(future::ok((dirty, None)))
+                        as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
+                                      Error=Error>>
+                } else {
+                    let fut = guard.rlock(&*self.dml)
+                         .and_then(move |guard| {
+                             self.get_dirty_nodes_r(guard, h - 1, None, key,
+                                                    range, echelon)
+                         });
+                    Box::new(fut)
+                        as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
+                                      Error=Error>>
+                }
             })
     }
 
@@ -1224,10 +1259,10 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
     fn get_dirty_nodes_r(&'a self, guard: TreeReadGuard<ddml::DRP, K, V>,
                          height: u8,
                          next_guard: Option<TreeReadGuard<ddml::DRP, K, V>>,
-                         key: K, range: ops::Range<PBA>)
+                         key: K, range: ops::Range<PBA>, echelon: u8)
         -> Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error> + 'a>
     {
-        if height == 1 {
+        if height == echelon + 1 {
             let nodes = guard.as_int().children.iter().filter_map(|child| {
                 if child.ptr.is_addr() &&
                     child.ptr.as_addr().pba() >= range.start &&
@@ -1253,42 +1288,13 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                 as Box<Future<Item=Option<TreeReadGuard<ddml::DRP, K, V>>,
                               Error=Error>>
         };
-        // TODO: consider searching the tree multiple times, once for each
-        // level, to eliminate this "dirty_self" hack.
-        let dirty_self = if guard.as_int().children[idx].ptr.is_addr() &&
-           guard.as_int().children[idx].ptr.as_addr().pba() >= range.start &&
-           guard.as_int().children[idx].ptr.as_addr().pba() < range.end {
-            Some(NodeId {
-                height: height - 1,
-                key: guard.as_int().children[idx].key
-            })
-        } else {
-            None
-        };
-        let nchildren = guard.as_int().nchildren();
-        let next_sibling_key = if idx == nchildren - 1 {
-            None
-        } else {
-            Some(guard.as_int().children[idx + 1].key)
-        };
         let child_fut = guard.as_int().children[idx].rlock(&*self.dml);
         drop(guard);
         Box::new(
             child_fut.join(next_fut)
                 .and_then(move |(child_guard, next_guard)| {
                 self.get_dirty_nodes_r(child_guard, height - 1, next_guard,
-                                       key, range)
-                    .map(move |(mut nodes, bound)| {
-                        // If this traversal was the last one through this node,
-                        // then optionally add this node to the list
-                        if (bound.is_none() ||
-                              (next_sibling_key.is_some() &&
-                               bound.unwrap() >= next_sibling_key.unwrap())) &&
-                            dirty_self.is_some() {
-                            nodes.push_back(dirty_self.unwrap());
-                        }
-                        (nodes, bound)
-                    })
+                                       key, range, echelon)
             })
         ) as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>>
     }
@@ -1298,13 +1304,34 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         -> impl Future<Item=(), Error=Error> + 'a
     {
         self.write()
-            .and_then(move |guard| {
-                self.xlock_root(guard)
+            .and_then(move |mut guard| {
+            let h = self.i.height.load(Ordering::Relaxed) as u8;
+            if h == node.height + 1 {
+                // Clean the root node
+                if guard.ptr.is_mem() {
+                    // Another thread has already dirtied the root.  Nothing to
+                    // do!
+                    let fut = Box::new(future::ok(()));
+                    return fut as Box<Future<Item=(), Error=Error>>;
+                }
+                let fut = self.dml.pop::<Arc<Node<ddml::DRP, K, V>>,
+                                         Arc<Node<ddml::DRP, K, V>>>(
+                                         guard.ptr.as_addr())
+                    .and_then(move |arc| {
+                        let (addr, fut) = self.dml.put(*arc, Compression::None);
+                        let new = TreePtr::Addr(addr);
+                        guard.ptr = new;
+                        fut
+                    });
+                Box::new(fut) as Box<Future<Item=(), Error=Error>>
+            } else {
+                let fut = self.xlock_root(guard)
                      .and_then(move |(_root_guard, child_guard)| {
-                         let h = self.i.height.load(Ordering::Relaxed) as u8;
                          self.rewrite_node_r(child_guard, h - 1, node)
-                     })
-            })
+                     });
+                Box::new(fut) as Box<Future<Item=(), Error=Error>>
+            }
+        })
     }
 
     fn rewrite_node_r(&'a self, mut guard: TreeWriteGuard<ddml::DRP, K, V>,
@@ -1323,7 +1350,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
             // TODO: bypass the cache for this part
             let fut = self.dml.pop::<Arc<Node<ddml::DRP, K, V>>,
                                      Arc<Node<ddml::DRP, K, V>>>(
-                guard.as_int().children[child_idx].ptr.as_addr())
+                            guard.as_int().children[child_idx].ptr.as_addr())
                 .and_then(move |arc| {
                     #[cfg(debug_assertions)]
                     {
@@ -4241,18 +4268,17 @@ fn remove_nonexistent() {
 }
 
 #[cfg(test)]
-/// Tests regarding disk I/O for Trees
-mod io {
+/// Tests regarding Tree::clean_zone
+mod clean_zone {
 
 use super::*;
 use common::ddml_mock::*;
 use futures::future;
 use simulacrum::*;
-use tokio::prelude::task::current;
 use tokio::runtime::current_thread;
 
 #[test]
-fn clean_zone() {
+fn basic() {
     // On-disk internal node with on-disk children outside the target zone
     let drpl0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 0, 0, 0);
     let drpl1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 0, 0, 0);
@@ -4340,7 +4366,6 @@ fn clean_zone() {
             **arg == drpl3 || **arg == drpi2 || **arg == drpl8 || **arg == drpi1
         } ))
         .returning(move |arg: *const DRP| {
-            //println!("DDMLMock::pop({:?}", unsafe{*arg});
             let res = Box::new( unsafe {
                 if *arg == drpl3 {
                     ln3.take().unwrap()
@@ -4434,6 +4459,88 @@ root:
     let end = PBA::new(0, 200);
     rt.block_on(tree.clean_zone(start..end)).unwrap();
 }
+
+// The Root node lies in the dirty zone
+#[test]
+fn dirty_root() {
+    // On-disk internal root node in the target zone, but with children outside
+    let drpl0 = DRP::new(PBA{cluster: 0, lba: 5}, Compression::None, 0, 0, 0);
+    let drpl1 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
+    // We must make two copies of inr, one for DDMLMock::get and one for ::pop
+    let children = vec![
+        IntElem{key: 8u32, ptr: TreePtr::Addr(drpl0)},
+        IntElem{key: 10u32, ptr: TreePtr::Addr(drpl1)},
+    ];
+    let children_c = vec![
+        IntElem{key: 8u32, ptr: TreePtr::Addr(drpl0)},
+        IntElem{key: 10u32, ptr: TreePtr::Addr(drpl1)},
+    ];
+    let inr = Arc::new(Node::<DRP, u32, f32>::new(
+            NodeData::Int(IntData{children: children})));
+    let mut inr_c = Some(Arc::new(Node::<DRP, u32, f32>::new(
+                NodeData::Int(IntData{children: children_c}))
+    ));
+    let drpir = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
+
+    let mut mock = DDMLMock::new();
+    mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
+        .called_any()
+        .with(passes(move |arg: & *const DRP| unsafe { **arg == drpir } ))
+        .returning(move |_arg: *const DRP| {
+            let res = Box::new(inr.clone());
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+        });
+    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
+        .called_times(1)
+        .with(passes(move |arg: & *const DRP| unsafe { **arg == drpir }))
+        .returning(move |_arg: *const DRP| {
+            let res = Box::new(inr_c.take().unwrap());
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+        });
+    mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
+        .called_times(1)
+        .returning(move |(_cacheable, _compression)| {
+            let drp = DRP::random(Compression::None, 1024);
+            (drp, Box::new(future::ok::<(), Error>(())))
+        });
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  ptr:
+    Addr:
+      pba:
+        cluster: 0
+        lba: 100
+      compression: None
+      lsize: 0
+      csize: 0
+      checksum: 0
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let start = PBA::new(0, 100);
+    let end = PBA::new(0, 200);
+    rt.block_on(tree.clean_zone(start..end)).unwrap();
+}
+
+}
+
+#[cfg(test)]
+/// Tests regarding disk I/O for Trees
+mod io {
+
+use super::*;
+use common::ddml_mock::*;
+use futures::future;
+use simulacrum::*;
+use tokio::prelude::task::current;
+use tokio::runtime::current_thread;
 
 /// Insert an item into a Tree that's not dirty
 #[test]
