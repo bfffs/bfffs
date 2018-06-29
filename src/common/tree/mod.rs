@@ -1083,10 +1083,10 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 // need to lock it, then release the lock.  Then we'll know that
                 // we have exclusive access to it, and we can move it into the
                 // Cache.
-                let fut = self.xlock_dirty(&rndata.borrow_mut()
-                                            .as_int_mut()
-                                            .children[idx])
-                              .and_then(move |guard|
+                let fut = rndata.borrow_mut()
+                                .as_int_mut()
+                                .children[idx].xlock_dirty()
+                                .and_then(move |guard|
                 {
                     drop(guard);
 
@@ -1169,7 +1169,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     {
         if guard.as_int().children[child_idx].ptr.is_mem() {
             Box::new(
-                self.xlock_dirty(&guard.as_int().children[child_idx])
+                guard.as_int().children[child_idx].xlock_dirty()
                     .map(move |child_guard| {
                           (guard, child_guard)
                      })
@@ -1198,19 +1198,6 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                     })
                 )
         }
-    }
-
-    /// Lock the indicated `IntElem` exclusively, if it is known to be already
-    /// dirty.
-    fn xlock_dirty(&'a self, elem: &IntElem<A, K, V>)
-        -> impl Future<Item=TreeWriteGuard<A, K, V>, Error=Error> + 'a
-    {
-        debug_assert!(elem.ptr.is_mem(),
-            "Must use Tree::xlock for non-dirty nodes");
-        elem.ptr.as_mem()
-            .0.write()
-            .map(|guard| TreeWriteGuard::Mem(guard))
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
     }
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in

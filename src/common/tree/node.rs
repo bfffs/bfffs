@@ -4,7 +4,9 @@
 use bincode;
 use common::*;
 use common::dml::*;
+use futures::Future;
 use futures_locks::*;
+use nix::{Error, errno};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     borrow::Borrow,
@@ -282,6 +284,22 @@ impl<'a, A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     pub fn is_dirty(&mut self) -> bool {
         self.ptr.is_dirty()
     }
+
+    /// Lock the indicated `IntElem` exclusively, if it is known to be already
+    /// dirty.
+    pub(super) fn xlock_dirty(&self)
+        -> impl Future<Item=TreeWriteGuard<A, K, V>, Error=Error>
+    {
+        debug_assert!(self.ptr.is_mem(),
+            "Must use Tree::xlock for non-dirty nodes");
+        Box::new(
+            self.ptr.as_mem()
+                .0.write()
+                .map(|guard| TreeWriteGuard::Mem(guard))
+                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        )
+    }
+
 }
 
 #[derive(Debug, Deserialize, Serialize)]
