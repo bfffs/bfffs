@@ -740,7 +740,7 @@ mod t {
                    actual_rid);
     }
 
-    #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test"]
+    #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test https://github.com/pcsm/simulacrum/issues/55"]
     #[test]
     fn sync_all() {
         let rid = RID(42);

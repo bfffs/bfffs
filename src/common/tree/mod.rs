@@ -1336,9 +1336,9 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                 // Another thread has already dirtied this node.  Nothing to do!
                 return Box::new(future::ok(()));
             }
-            // No need to xlock since the target is not dirty and we hold the
-            // parent's lock.  It's sufficient to rlock.
             // TODO: bypass the cache for this part
+            // Need a solution for this issue first:
+            // https://github.com/pcsm/simulacrum/issues/55
             let fut = self.dml.pop::<Arc<Node<ddml::DRP, K, V>>,
                                      Arc<Node<ddml::DRP, K, V>>>(
                             guard.as_int().children[child_idx].ptr.as_addr())
