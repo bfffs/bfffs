@@ -1203,16 +1203,14 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     /// Lock the indicated `IntElem` exclusively, if it is known to be already
     /// dirty.
     fn xlock_dirty(&'a self, elem: &IntElem<A, K, V>)
-        -> (Box<Future<Item=TreeWriteGuard<A, K, V>, Error=Error> + 'a>)
+        -> impl Future<Item=TreeWriteGuard<A, K, V>, Error=Error> + 'a
     {
         debug_assert!(elem.ptr.is_mem(),
             "Must use Tree::xlock for non-dirty nodes");
-        Box::new(
-            elem.ptr.as_mem()
-                .0.write()
-                .map(|guard| TreeWriteGuard::Mem(guard))
-                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-        )
+        elem.ptr.as_mem()
+            .0.write()
+            .map(|guard| TreeWriteGuard::Mem(guard))
+            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
     }
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
