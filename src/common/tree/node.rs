@@ -291,6 +291,11 @@ pub(super) struct IntData<A: Addr, K: Key, V: Value> {
 }
 
 impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
+    /// How many children does this node have?
+    pub fn nchildren(&self) -> usize {
+        self.children.len()
+    }
+
     /// Find index of rightmost child whose key is less than or equal to k
     pub fn position<Q>(&self, k: &Q) -> usize
         where K: Borrow<Q>, Q: Ord
@@ -411,7 +416,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
 
     /// Merge all of `other`'s data into `self`.  Afterwards, `other` may be
     /// deleted.
-    pub fn merge(&mut self, other: &mut NodeData<A, K, V>) {
+    pub fn merge(&mut self, mut other: TreeWriteGuard<A, K, V>) {
         match self {
             NodeData::Int(int) =>
                 int.children.append(&mut other.as_int_mut().children),

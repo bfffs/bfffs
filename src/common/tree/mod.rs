@@ -342,29 +342,30 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         // Then, try to steal keys from the right sibling
         // Then, try to merge with the left sibling
         // Then, try to steal keys from the left sibling
-        let nchildren = parent.as_int().children.len();
-        let (fut, right) = {
+        let nchildren = parent.as_int().nchildren();
+        let (fut, sib_idx, right) = {
             if child_idx < nchildren - 1 {
-                (self.xlock(parent, child_idx + 1), true)
+                let sib_idx = child_idx + 1;
+                (self.xlock(parent, sib_idx), sib_idx, true)
             } else {
-                (self.xlock(parent, child_idx - 1), false)
+                let sib_idx = child_idx - 1;
+                (self.xlock(parent, sib_idx), sib_idx, false)
             }
         };
         fut.map(move |(mut parent, mut sibling)| {
             let (before, after) = if right {
                 if child.can_merge(&sibling, self.i.max_fanout) {
-                    child.merge(&mut sibling);
-                    parent.as_int_mut().children.remove(child_idx + 1);
+                    child.merge(sibling);
+                    parent.as_int_mut().children.remove(sib_idx);
                     (0, 1)
                 } else {
                     child.take_low_keys(&mut sibling);
-                    let sib_idx = child_idx + 1;
                     parent.as_int_mut().children[sib_idx].key = *sibling.key();
                     (0, 0)
                 }
             } else {
                 if sibling.can_merge(&child, self.i.max_fanout) {
-                    sibling.merge(&mut child);
+                    sibling.merge(child);
                     parent.as_int_mut().children.remove(child_idx);
                     (1, 0)
                 } else {
@@ -408,7 +409,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 // LCOV_EXCL_STOP
             };
             let b = self.i.min_fanout;
-            if child.as_int().children.len() - cut_grandkids <= b - 1 {
+            if child.as_int().nchildren() - cut_grandkids <= b - 1 {
                 Box::new(self.fix_int(parent, child_idx, child))
             } else {
                 Box::new(Ok((parent, 0, 0)).into_future())
@@ -592,7 +593,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                     Bound::Unbounded => 0
                 };
                 let child_elem = &int.children[child_idx];
-                let next_fut = if child_idx < int.children.len() - 1 {
+                let next_fut = if child_idx < int.nchildren() - 1 {
                     Box::new(
                         self.rlock(&int.children[child_idx + 1])
                             .map(|guard| Some(guard))
@@ -618,7 +619,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
 
     /// Merge the root node with its children, if necessary
     fn merge_root(&self, root_guard: &mut TreeWriteGuard<A, K, V>) {
-        if ! root_guard.is_leaf() && root_guard.as_int().children.len() == 1
+        if ! root_guard.is_leaf() && root_guard.as_int().nchildren() == 1
         {
             // Merge root node with its child
             let child = root_guard.as_int_mut().children.pop().unwrap();
@@ -696,7 +697,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
               T: Ord + Clone + 'static + Debug
     {
         debug_assert!(!guard.is_leaf());
-        let l = guard.as_int().children.len();
+        let l = guard.as_int().nchildren();
         let start_idx_bound = match range.start_bound() {
             Bound::Unbounded => Bound::Included(0),
             Bound::Included(t) | Bound::Excluded(t)
@@ -763,7 +764,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         // We must recurse into at most two children (at the limits of the
         // range), and completely delete 0 or more children (in the middle
         // of the range)
-        let l = guard.as_int().children.len();
+        let l = guard.as_int().nchildren();
         let (start_idx_bound, end_idx_bound) = self.range_delete_get_bounds(
             &guard, &range, ubound);
         let fut: Box<Future<Item=TreeWriteGuard<A, K, V>, Error=Error>>
@@ -894,7 +895,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         let fixit = move |parent_guard: TreeWriteGuard<A, K, V>, idx: usize,
                           range: R|
         {
-            let l = parent_guard.as_int().children.len();
+            let l = parent_guard.as_int().nchildren();
             let child_ubound = if idx < l - 1 {
                 Some(parent_guard.as_int().children[idx + 1].key)
             } else {
@@ -1070,7 +1071,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         // be borrowed in both places.  So we'll have to use RefCell to allow
         // dynamic borrowing and Rc to allow moving into both closures.
         let rndata = Rc::new(RefCell::new(ndata));
-        let nchildren = RefCell::borrow(&Rc::borrow(&rndata)).as_int().children.len();
+        let nchildren = RefCell::borrow(&Rc::borrow(&rndata)).as_int().nchildren();
         let children_fut = (0..nchildren)
         .filter_map(move |idx| {
             let rndata3 = rndata.clone();
@@ -1321,7 +1322,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
             return Box::new(future::ok((nodes, bound)))
         }
         let idx = guard.as_int().position(&key);
-        let next_fut = if idx < guard.as_int().children.len() - 1 {
+        let next_fut = if idx < guard.as_int().nchildren() - 1 {
             Box::new(
                 // TODO: store the next node's height, too
                 self.rlock(&guard.as_int().children[idx + 1])
@@ -1345,7 +1346,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         } else {
             None
         };
-        let nchildren = guard.as_int().children.len();
+        let nchildren = guard.as_int().nchildren();
         let next_sibling_key = if idx == nchildren - 1 {
             None
         } else {
@@ -4794,7 +4795,7 @@ root:
         let root_guard = tree.i.root.try_read().unwrap();
         tree.rlock(&root_guard).map(|node| {
             let int_data = (*node).as_int();
-            assert_eq!(int_data.children.len(), 2);
+            assert_eq!(int_data.nchildren(), 2);
             // Validate DRPs as well as possible using their public API
             assert_eq!(int_data.children[0].key, 0);
             assert!(!int_data.children[0].ptr.is_mem());
