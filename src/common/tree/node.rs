@@ -155,18 +155,6 @@ pub(super) struct LeafData<K: Key, V> {
 }
 
 impl<K: Key, V: Value> LeafData<K, V> {
-    pub fn split(&mut self) -> (K, LeafData<K, V>) {
-        // Split the node in two.  Make the left node larger, on the assumption
-        // that we're more likely to insert into the right node than the left
-        // one.
-        let half = div_roundup(self.items.len(), 2);
-        let cutoff = *self.items.keys().nth(half).unwrap();
-        let new_items = self.items.split_off(&cutoff);
-        (cutoff, LeafData{items: new_items})
-    }
-}
-
-impl<K: Key, V: Value> LeafData<K, V> {
     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
         self.items.insert(k, v)
     }
@@ -215,11 +203,20 @@ impl<K: Key, V: Value> LeafData<K, V> {
         }
     }
 
-
     pub fn remove<Q>(&mut self, k: &Q) -> Option<V>
         where K: Borrow<Q>, Q: Ord
     {
         self.items.remove(k)
+    }
+
+    pub fn split(&mut self) -> (K, LeafData<K, V>) {
+        // Split the node in two.  Make the left node larger, on the assumption
+        // that we're more likely to insert into the right node than the left
+        // one.
+        let half = div_roundup(self.items.len(), 2);
+        let cutoff = *self.items.keys().nth(half).unwrap();
+        let new_items = self.items.split_off(&cutoff);
+        (cutoff, LeafData{items: new_items})
     }
 }
 
