@@ -542,6 +542,12 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
 pub(in common) struct Node<A, K, V> (pub(super) RwLock<NodeData<A, K, V>>)
     where A: Addr, K: Key, V: Value;
 
+impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
+    pub(super) fn new(node_data: NodeData<A, K, V>) -> Self {
+        Node(RwLock::new(node_data))
+    }
+}
+
 // LCOV_EXCL_START
 /// Tests for serialization/deserialization of Nodes
 #[cfg(test)]

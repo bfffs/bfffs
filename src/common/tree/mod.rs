@@ -448,7 +448,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         // First, split the node, if necessary
         if (*child).should_split(self.i.max_fanout) {
             let (new_key, new_node_data) = child.split();
-            let new_node = Node(RwLock::new(new_node_data));
+            let new_node = Node::new(new_node_data);
             let new_ptr = TreePtr::Mem(Box::new(new_node));
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
@@ -467,7 +467,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         // First, split the root node, if necessary
         if root.should_split(self.i.max_fanout) {
             let (new_key, new_node_data) = root.split();
-            let new_node = Node(RwLock::new(new_node_data));
+            let new_node = Node::new(new_node_data);
             let new_ptr = TreePtr::Mem(Box::new(new_node));
             let new_elem = IntElem{key: new_key, ptr: new_ptr};
             let new_root_data = NodeData::Int(
@@ -476,7 +476,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 }
             );
             let old_root_data = mem::replace(root.deref_mut(), new_root_data);
-            let old_root_node = Node(RwLock::new(old_root_data));
+            let old_root_node = Node::new(old_root_data);
             let old_ptr = TreePtr::Mem(Box::new(old_root_node));
             let old_elem = IntElem{ key: K::min_value(), ptr: old_ptr };
             root.as_int_mut().children.insert(0, old_elem);
@@ -945,13 +945,11 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                     ptr:
                         TreePtr::Mem(
                             Box::new(
-                                Node(
-                                    RwLock::new(
-                                        NodeData::Leaf(
-                                            LeafData{
-                                                items: BTreeMap::new()
-                                            }
-                                        )
+                                Node::new(
+                                    NodeData::Leaf(
+                                        LeafData{
+                                            items: BTreeMap::new()
+                                        }
                                     )
                                 )
                             )
@@ -4344,8 +4342,7 @@ fn clean_zone() {
         IntElem{key: 0u32, ptr: TreePtr::Addr(drpl0)},
         IntElem{key: 2u32, ptr: TreePtr::Addr(drpl1)},
     ];
-    let in0 = Arc::new(Node(RwLock::new(
-                NodeData::Int(IntData{children: children0})))
+    let in0 = Arc::new(Node::new(NodeData::Int(IntData{children: children0}))
     );
     let drpi0 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 0, 0, 0);
 
@@ -4361,19 +4358,18 @@ fn clean_zone() {
         IntElem{key: 4u32, ptr: TreePtr::Addr(drpl2)},
         IntElem{key: 6u32, ptr: TreePtr::Addr(drpl3)},
     ];
-    let in1 = Arc::new(Node(RwLock::new(
-                NodeData::Int(IntData{children: children1})))
+    let in1 = Arc::new(Node::new(NodeData::Int(IntData{children: children1}))
     );
-    let mut in1_c = Some(Arc::new(Node(RwLock::new(
-                NodeData::Int(IntData{children: children1_c})))
+    let mut in1_c = Some(Arc::new(Node::new(
+                NodeData::Int(IntData{children: children1_c}))
     ));
     let drpi1 = DRP::new(PBA{cluster: 0, lba: 4}, Compression::None, 0, 0, 0);
 
     let mut items3: BTreeMap<u32, f32> = BTreeMap::new();
     items3.insert(6, 6.0);
     items3.insert(7, 7.0);
-    let mut ln3 = Some(Arc::new(Node(RwLock::new(
-                NodeData::Leaf(LeafData{items: items3})))
+    let mut ln3 = Some(Arc::new(Node::new(
+                NodeData::Leaf(LeafData{items: items3}))
     ));
 
     // On-disk internal node in the target zone, but with children outside
@@ -4388,10 +4384,9 @@ fn clean_zone() {
         IntElem{key: 8u32, ptr: TreePtr::Addr(drpl4)},
         IntElem{key: 10u32, ptr: TreePtr::Addr(drpl5)},
     ];
-    let in2 = Arc::new(Node(RwLock::new(
-                NodeData::Int(IntData{children: children2}))));
-    let mut in2_c = Some(Arc::new(Node(RwLock::new(
-                NodeData::Int(IntData{children: children2_c})))
+    let in2 = Arc::new(Node::new(NodeData::Int(IntData{children: children2})));
+    let mut in2_c = Some(Arc::new(Node::new(
+                NodeData::Int(IntData{children: children2_c}))
     ));
     let drpi2 = DRP::new(PBA{cluster: 0, lba: 101}, Compression::None, 0, 0, 0);
 
@@ -4400,8 +4395,8 @@ fn clean_zone() {
     let mut items8: BTreeMap<u32, f32> = BTreeMap::new();
     items8.insert(16, 16.0);
     items8.insert(17, 17.0);
-    let mut ln8 = Some(Arc::new(Node(RwLock::new(
-                NodeData::Leaf(LeafData{items: items8})))
+    let mut ln8 = Some(Arc::new(Node::new(
+                NodeData::Leaf(LeafData{items: items8}))
     ));
 
     let mut mock = DDMLMock::new();
@@ -4531,7 +4526,7 @@ root:
 fn insert_below_root() {
     let mut mock = DDMLMock::new();
     let items: BTreeMap<u32, u32> = BTreeMap::new();
-    let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node = Arc::new(Node::new(NodeData::Leaf(LeafData{items})));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
     mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
@@ -4617,7 +4612,7 @@ root:
 fn insert_root() {
     let mut mock = DDMLMock::new();
     let items: BTreeMap<u32, u32> = BTreeMap::new();
-    let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node = Arc::new(Node::new(NodeData::Leaf(LeafData{items})));
     let node_holder = RefCell::new(Some(node));
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
     mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
@@ -4709,7 +4704,7 @@ fn range_leaf() {
     items.insert(2, 2.0);
     items.insert(3, 3.0);
     items.insert(4, 4.0);
-    let node1 = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node1 = Arc::new(Node::new(NodeData::Leaf(LeafData{items})));
     mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
         .called_once()
         .returning(move |_| {
@@ -4769,7 +4764,7 @@ fn read_int() {
         IntElem{key: 0u32, ptr: TreePtr::Addr(drp0)},
         IntElem{key: 256u32, ptr: TreePtr::Addr(drp1)},
     ];
-    let node = Arc::new(Node(RwLock::new(NodeData::Int(IntData{children}))));
+    let node = Arc::new(Node::new(NodeData::Int(IntData{children})));
     let drpl = DRP::new(PBA{cluster: 1, lba: 2}, Compression::None, 36, 36, 0);
     let mut mock = DDMLMock::new();
     mock.expect_get::<Arc<Node<DRP, u32, u32>>>()
@@ -4825,7 +4820,7 @@ fn read_leaf() {
     items.insert(0, 100);
     items.insert(1, 200);
     items.insert(99, 50_000);
-    let node = Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node = Arc::new(Node::new(NodeData::Leaf(LeafData{items})));
     mock.expect_get::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .returning(move |_| {
