@@ -249,6 +249,51 @@ pub(super) enum TreeWriteGuard<A: Addr, K: Key, V: Value> {
     Addr(RwLockWriteGuard<NodeData<A, K, V>>, Box<Arc<Node<A, K, V>>>)
 }
 
+impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
+    /// Lock the indicated child exclusively.  If it is not already resident
+    /// in memory, then COW the target node.  Return both the original guard and
+    /// the child's guard.
+    // Consuming and returning self prevents lifetime checker issues that
+    // interfere with lock coupling.
+    pub fn xlock<'a, D: DML<Addr=A>>(mut self, dml: &'a D, child_idx: usize)
+        -> (Box<Future<Item=(TreeWriteGuard<A, K, V>,
+                             TreeWriteGuard<A, K, V>), Error=Error> + 'a>)
+    {
+        if self.as_int().children[child_idx].ptr.is_mem() {
+            Box::new(
+                self.as_int().children[child_idx].ptr.as_mem().xlock()
+                    .map(move |child_guard| {
+                          (self, child_guard)
+                     })
+            )
+        } else {
+            let addr = *self.as_int()
+                            .children[child_idx]
+                            .ptr
+                            .as_addr();
+                Box::new(
+                    dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr)
+                       .map(move |arc|
+                    {
+                        let child_node = Box::new(Arc::try_unwrap(*arc)
+                            .expect("We should be the Node's only owner"));
+                        let child_guard = {
+                            let elem = &mut self.as_int_mut()
+                                                .children[child_idx];
+                            elem.ptr = TreePtr::Mem(child_node);
+                            TreeWriteGuard::Mem(
+                                elem.ptr.as_mem()
+                                    .0.try_write().unwrap()
+                            )
+                        };
+                        (self, child_guard)
+                    })
+                )
+        }
+    }
+
+}
+
 impl<A: Addr, K: Key, V: Value> Deref for TreeWriteGuard<A, K, V> {
     type Target = NodeData<A, K, V>;
 
