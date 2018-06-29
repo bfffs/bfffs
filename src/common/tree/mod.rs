@@ -1253,12 +1253,12 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
     }
 
     /// Find dirty nodes in `PBA` range `range`, beginning at `key`.
-    /// `next_guard`, if present, must be the node immediately to the right (and
-    /// possibly up one or more levels) from `guard`.  `height` is the tree
-    /// height of `guard`, where leaves are 0.
+    /// `next_key`, if present, must be the key of the node immediately to the
+    /// right (and possibly up one or more levels) from `guard`.  `height` is
+    /// the tree height of `guard`, where leaves are 0.
     fn get_dirty_nodes_r(&'a self, guard: TreeReadGuard<ddml::DRP, K, V>,
                          height: u8,
-                         next_guard: Option<TreeReadGuard<ddml::DRP, K, V>>,
+                         next_key: Option<K>,
                          key: K, range: ops::Range<PBA>, echelon: u8)
         -> Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error> + 'a>
     {
@@ -1272,28 +1272,19 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                     None
                 }
             }).collect::<VecDeque<_>>();
-            let bound = next_guard.map(|g| g.key().clone());
-            return Box::new(future::ok((nodes, bound)))
+            return Box::new(future::ok((nodes, next_key)))
         }
         let idx = guard.as_int().position(&key);
-        let next_fut = if idx < guard.as_int().nchildren() - 1 {
-            Box::new(
-                // TODO: store the next node's height, too
-                guard.as_int().children[idx + 1].rlock(&*self.dml)
-                    .map(|guard| Some(guard))
-            ) as Box<Future<Item=Option<TreeReadGuard<ddml::DRP, K, V>>,
-                            Error=Error>>
+        let next_key = if idx < guard.as_int().nchildren() - 1 {
+            Some(guard.as_int().children[idx + 1].key)
         } else {
-            Box::new(Ok(next_guard).into_future())
-                as Box<Future<Item=Option<TreeReadGuard<ddml::DRP, K, V>>,
-                              Error=Error>>
+            next_key
         };
         let child_fut = guard.as_int().children[idx].rlock(&*self.dml);
         drop(guard);
         Box::new(
-            child_fut.join(next_fut)
-                .and_then(move |(child_guard, next_guard)| {
-                self.get_dirty_nodes_r(child_guard, height - 1, next_guard,
+            child_fut.and_then(move |child_guard| {
+                self.get_dirty_nodes_r(child_guard, height - 1, next_key,
                                        key, range, echelon)
             })
         ) as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>>
