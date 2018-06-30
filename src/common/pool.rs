@@ -62,8 +62,11 @@ struct Label {
     /// Pool UUID, fixed at format time
     uuid:               Uuid,
 
+    /// Last transaction group synced before the label was written
+    txg:                TxgT,
+
     /// `UUID`s of all component `VdevRaid`s
-    children:           Vec<Uuid>
+    children:           Vec<Uuid>,
 }
 // LCOV_EXCL_STOP
 
@@ -121,6 +124,9 @@ pub struct Pool {
 
     stats: RefCell<Stats>,
 
+    /// Current transaction group
+    txg: TxgT,
+
     uuid: Uuid,
 }
 
@@ -154,7 +160,7 @@ impl<'a> Pool {
 
     #[cfg(not(test))]
     pub fn create(name: String, clusters: Vec<Cluster>) -> Self {
-        Pool::new(name, Uuid::new_v4(),
+        Pool::new(name, Uuid::new_v4(), 0,
                   clusters.into_iter().map(|c| c.0).collect::<Vec<_>>())
     }
 
@@ -176,7 +182,9 @@ impl<'a> Pool {
     /// Construct a new `Pool` from some already constructed
     /// [`Cluster`](struct.Cluster.html)s
     #[cfg(any(not(test), feature = "mocks"))]
-    fn new(name: String, uuid: Uuid, clusters: Vec<ClusterLike>) -> Self {
+    fn new(name: String, uuid: Uuid, txg: TxgT, clusters: Vec<ClusterLike>)
+        -> Self
+    {
         let size: Vec<_> = clusters.iter()
             .map(|cluster| cluster.size())
             .collect();
@@ -191,7 +199,7 @@ impl<'a> Pool {
             queue_depth,
             size
         });
-        Pool{name, clusters, stats, uuid}
+        Pool{name, clusters, stats, uuid, txg}
     }
 
     /// List all closed zones in this Pool in no particular order
@@ -258,7 +266,7 @@ impl<'a> Pool {
                         }
                     }
                     if clusters.len() == num_clusters {
-                        Ok(Pool::new(name, label.uuid, clusters))
+                        Ok(Pool::new(name, label.uuid, label.txg, clusters))
                     } else {
                         Err(Error::Sys(errno::Errno::ENOENT))
                     }
@@ -292,6 +300,14 @@ impl<'a> Pool {
         ).map(|_| ())
     }
 
+    /// Complete the current transaction group.
+    ///
+    /// Pool may decide to do nothing, if no action is required.  The caller
+    /// must ensure that all higher-level write caches are flushed.
+    pub fn transact(&self) -> TxgT {
+        unimplemented!()
+    }
+
     /// Return the `Pool`'s UUID.
     pub fn uuid(&self) -> Uuid {
         self.uuid
@@ -310,7 +326,7 @@ impl<'a> Pool {
         let mut stats = self.stats.borrow_mut();
         stats.queue_depth[cluster as usize] += 1;
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
-        self.clusters[cluster as usize].write(buf, 0 /* XXX placeholder */)
+        self.clusters[cluster as usize].write(buf, self.txg)
             .map(|(lba, wfut)| {
                 stats.allocated_space[cluster as usize] += space;
                 let fut: Box<PoolFut> = Box::new(wfut.then(move |r| {
@@ -329,7 +345,8 @@ impl<'a> Pool {
         let label = Label {
             name: self.name.clone(),
             uuid: self.uuid,
-            children: cluster_uuids
+            children: cluster_uuids,
+            txg: self.txg
         };
         let dbs = labeller.serialize(label);
         let futs = self.clusters.iter().map(|cluster| {
@@ -401,7 +418,7 @@ mod pool {
             s.expect(c.size_call().and_return_clone(32768000).times(..));
             c
         };
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), 0,
             vec![Box::new(cluster()), Box::new(cluster())]);
         let closed_zones = pool.list_closed_zones().collect::<Vec<_>>();
         let expected = vec![
@@ -428,7 +445,7 @@ mod pool {
             c
         };
 
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), 0,
                              vec![Box::new(cluster()),
                                   Box::new(cluster())]);
 
@@ -450,7 +467,7 @@ mod pool {
             .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
         );
 
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), 0,
                              vec![Box::new(cluster)]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
