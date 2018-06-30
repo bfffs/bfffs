@@ -59,6 +59,10 @@ pub type IoVecMut = DivBufMut;
 /// Indexes an LBA.  LBAs are always 4096 bytes
 pub type LbaT = u64;
 
+/// Transaction numbers.
+// 32-bits is enough for 1 per second for 100 years
+pub type TxgT = u32;
+
 /// Physical Block Address.
 ///
 /// Locates a block of storage within a pool.  A block is the smallest amount of

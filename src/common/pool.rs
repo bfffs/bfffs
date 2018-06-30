@@ -26,7 +26,8 @@ pub trait ClusterTrait {
     fn size(&self) -> LbaT;
     fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
     fn uuid(&self) -> Uuid;
-    fn write(&self, buf: IoVec) -> Result<(LbaT, Box<PoolFut<'static>>), Error>;
+    fn write(&self, buf: IoVec, txg: TxgT)
+        -> Result<(LbaT, Box<PoolFut<'static>>), Error>;
     fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut<'static>>;
 }
 #[cfg(test)]
@@ -309,7 +310,7 @@ impl<'a> Pool {
         let mut stats = self.stats.borrow_mut();
         stats.queue_depth[cluster as usize] += 1;
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
-        self.clusters[cluster as usize].write(buf)
+        self.clusters[cluster as usize].write(buf, 0 /* XXX placeholder */)
             .map(|(lba, wfut)| {
                 stats.allocated_space[cluster as usize] += space;
                 let fut: Box<PoolFut> = Box::new(wfut.then(move |r| {
@@ -349,7 +350,7 @@ mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
     use futures::future;
-    use mockers::Scenario;
+    use mockers::{Scenario, matchers};
     use mockers_derive::mock;
     use tokio::runtime::current_thread;
 
@@ -366,7 +367,8 @@ mod pool {
             fn size(&self) -> LbaT;
             fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
             fn uuid(&self) -> Uuid;
-            fn write(&self, buf: IoVec) -> Result<(LbaT, Box<PoolFut<'static>>), Error>;
+            fn write(&self, buf: IoVec, txg: TxgT)
+                -> Result<(LbaT, Box<PoolFut<'static>>), Error>;
             fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut<'static>>;
         }
     }
@@ -386,12 +388,14 @@ mod pool {
                         start: 10,
                         freed_blocks: 5,
                         total_blocks: 10,
+                        txgs: 0..1
                     },
                     cluster::ClosedZone {
                         zid: 3,
                         start: 30,
                         freed_blocks: 6,
                         total_blocks: 10,
+                        txgs: 0..1
                     },
                 ].into_iter())));
             s.expect(c.size_call().and_return_clone(32768000).times(..));
@@ -442,7 +446,7 @@ mod pool {
         s.expect(cluster.size_call().and_return_clone(32768000).times(..));
         s.expect(cluster.write_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
-            }))
+            }), matchers::ANY)
             .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
         );
 

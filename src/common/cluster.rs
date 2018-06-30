@@ -3,10 +3,12 @@
 use common::{*, label::*, vdev::{Vdev, VdevFut}};
 #[cfg(not(test))] use common::vdev_raid::*;
 use futures::{Future, IntoFuture, future};
+use itertools::multizip;
 use nix::{Error, errno};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
+    ops::Range
 };
 #[cfg(not(test))] use std::path::Path;
 #[cfg(not(test))] use tokio::reactor::Handle;
@@ -36,14 +38,26 @@ pub type VdevRaidLike = VdevRaid;
 /// A full zone is one which contains data, and may not be written to again
 /// until it has been garbage collected.  An open zone is one which may contain
 /// data, and may be written to.  An Empty zone contains no data.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug)]
 struct Zone {
     /// Number of LBAs that have been freed from this `Zone` since it was
     /// opened.
     pub freed_blocks: u32,
     /// Total number of LBAs in the `Zone`.  It may never change while the
     /// `Zone` is open or full.
-    pub total_blocks: u32
+    pub total_blocks: u32,
+    /// The range of transactions that have been written to this Zone.  The
+    /// start is inclusive, and the end is exclusive
+    ///
+    /// The end is invalid for open zones, and both start and end are invalid
+    /// for empty zones.
+    pub txgs: Range<TxgT>
+}
+
+impl Default for Zone {
+    fn default() -> Self {
+        Zone{freed_blocks: 0, total_blocks: 0, txgs: 0..0}
+    }
 }
 
 /// Public representation of a closed zone
@@ -55,6 +69,8 @@ pub struct ClosedZone {
     pub freed_blocks: LbaT,
     /// Total number of blocks in this zone
     pub total_blocks: LbaT,
+    /// Range of transaction groups included within this Zone
+    pub txgs: Range<TxgT>,
     /// Zone Id within this Cluster
     pub zid: ZoneT
 
@@ -128,6 +144,7 @@ impl<'a> FreeSpaceMap {
         assert!(zone_idx < self.zones.len(),
             "Can't erase an empty zone");
         self.empty_zones.insert(zone_id);
+        self.zones[zone_idx].txgs = 0..0;
         // If this was the last zone, then remove all trailing Empty zones
         if zone_idx == self.zones.len() - 1 {
             let first_empty = {
@@ -156,12 +173,13 @@ impl<'a> FreeSpaceMap {
             })
     }
 
-    /// Mark the Zone as closed
-    fn finish_zone(&mut self, zone_id: ZoneT) {
+    /// Mark the Zone as closed.  `txg` is the current transaction group
+    fn finish_zone(&mut self, zone_id: ZoneT, txg: TxgT) {
         let available = self.available(zone_id) as u32;
         assert!(self.open_zones.remove(&zone_id).is_some(),
             "Can't finish a Zone that isn't open");
         self.zones[zone_id as usize].freed_blocks += available;
+        self.zones[zone_id as usize].txgs.end = txg + 1;
     }
 
     fn free(&mut self, zone_id: ZoneT, length: LbaT) {
@@ -224,7 +242,8 @@ impl<'a> FreeSpaceMap {
                         zid,
                         start: LbaT::max_value(),   // sentinel value
                         freed_blocks: z.freed_blocks as LbaT,
-                        total_blocks: z.total_blocks as LbaT
+                        total_blocks: z.total_blocks as LbaT,
+                        txgs: z.txgs.clone()
                     })
                 }
             })
@@ -250,14 +269,15 @@ impl<'a> FreeSpaceMap {
     /// - `start`:  First LBA inside of the zone
     /// - `end`:    First LBA beyond the zone
     /// - `lbas`:   If nonzero, immediately allocate this much space
+    /// - `txg`:    Current transaction group
     ///
     /// # Returns
     ///
     /// If `lbas` was nonzero, return the zone id and LBA of the newly allocated
     /// space.  If `lbas` was zero, return `None`.  If `lbas` was nonzero and
     /// the requested zone has insufficient space, return ENOSPC.
-    fn open_zone(&mut self, id: ZoneT, start: LbaT, end: LbaT,
-                 lbas: LbaT) -> Result<Option<(ZoneT, LbaT)>, Error> {
+    fn open_zone(&mut self, id: ZoneT, start: LbaT, end: LbaT, lbas: LbaT,
+                 txg: TxgT) -> Result<Option<(ZoneT, LbaT)>, Error> {
         let idx = id as usize;
         let space = end - start;
         assert!(self.is_empty(id), "Can only open empty zones");
@@ -275,6 +295,7 @@ impl<'a> FreeSpaceMap {
         }
         self.zones[idx].total_blocks = space as u32;
         self.zones[idx].freed_blocks = 0;
+        self.zones[idx].txgs = txg..TxgT::max_value();
         let oz = OpenZone{start, allocated_blocks: lbas as u32};
         self.empty_zones.remove(&id);
         assert!(self.open_zones.insert(id, oz).is_none(),
@@ -295,19 +316,22 @@ impl<'a> FreeSpaceMap {
         assert_eq!(total_zones, label.freed_blocks.len() as ZoneT);
         let freed_iter = label.freed_blocks.into_iter();
         let allocated_iter = label.allocated_blocks.into_iter();
-        for v in allocated_iter.zip(freed_iter).enumerate() {
+        let txgs_iter = label.txgs.into_iter();
+        for v in multizip((allocated_iter, freed_iter, txgs_iter)).enumerate() {
             let zid = v.0 as ZoneT;
             let allocated = (v.1).0;
             let freed = (v.1).1;
+            let txgs = (v.1).2;
             if allocated > 0 {
                 let zl = vdev.zone_limits(zid);
-                fsm.open_zone(zid, zl.0, zl.1, 0).unwrap();
+                fsm.open_zone(zid, zl.0, zl.1, 0, txgs.start).unwrap();
                 if allocated == u32::max_value() {
-                    fsm.finish_zone(zid);
+                    fsm.finish_zone(zid, txgs.end - 1);
                 } else if allocated > 0 {
                     assert_eq!(fsm.try_allocate(allocated.into()).0.unwrap().0,
                                zid);
                 }
+                fsm.zones[zid as usize].txgs = txgs;
             }
             if freed > 0 {
                 fsm.zones[zid as usize].freed_blocks = freed;
@@ -340,7 +364,14 @@ impl<'a> FreeSpaceMap {
                 self.zones[z as usize].freed_blocks
             }
         }).collect::<Vec<_>>();
-        Label{allocated_blocks, freed_blocks}
+        let txgs = (0..self.total_zones).map(|z| {
+            if self.is_empty(z) {
+                0..0
+            } else {
+                self.zones[z as usize].txgs.clone()
+            }
+        }).collect::<Vec<_>>();
+        Label{allocated_blocks, freed_blocks, txgs}
     }
 
     /// Try to allocate `space` worth of space in any open zone.  If no open
@@ -349,7 +380,7 @@ impl<'a> FreeSpaceMap {
     /// # Returns
     ///
     /// The Zone and LBA where the allocation happened, and a vector of Zone IDs
-    /// of Zones which has too little space.
+    /// of Zones which have too little space.
     fn try_allocate(&mut self, space: LbaT)
         -> (Option<(ZoneT, LbaT)>, Vec<ZoneT>)
     {
@@ -391,11 +422,14 @@ impl<'a> FreeSpaceMap {
 struct Label {
     /// An array of the number of blocks that have been allocated in each Zone.
     /// If zero, then the zone is empty.  If `u32::max_value()`, then the zone
-    /// is full.
+    /// is closed.
     allocated_blocks: Vec<u32>,
 
     /// An array of the number of blocks that have been freed in each Zone.
     freed_blocks: Vec<u32>,
+
+    /// An array of the transaction group range for each Zone.
+    txgs: Vec<Range<TxgT>>
 }
 // LCOV_EXCL_STOP
 
@@ -414,9 +448,9 @@ pub struct Cluster {
 // Logically, it's a method of Cluster.  But it needs to be implemented as a
 // macro, because it returns a Vec of an anonymous type
 macro_rules! close_zones{
-    ( $self:ident, $nearly_full_zones:expr) => {
+    ( $self:ident, $nearly_full_zones:expr, $txg:expr) => {
         $nearly_full_zones.iter().map(|&zone_id| {
-            $self.fsm.borrow_mut().finish_zone(zone_id);
+            $self.fsm.borrow_mut().finish_zone(zone_id, $txg);
             $self.vdev.finish_zone(zone_id)
         }).collect::<Vec<_>>()
     }
@@ -594,7 +628,7 @@ impl<'a> Cluster {
     ///
     /// The LBA where the data will be written, and a
     /// `Future` for the operation in progress.
-    pub fn write(&'a self, buf: IoVec)
+    pub fn write(&'a self, buf: IoVec, txg: TxgT)
         -> Result<(LbaT, Box<ClusterFut<'a>>), Error> {
         // Outline:
         // 1) Try allocating in an open zone
@@ -605,7 +639,7 @@ impl<'a> Cluster {
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
         let (alloc_result, nearly_full_zones) =
             self.fsm.borrow_mut().try_allocate(space);
-        let finish_futs = close_zones!(self, &nearly_full_zones);
+        let finish_futs = close_zones!(self, &nearly_full_zones, txg);
         alloc_result.map(|(zone_id, lba)| {
             let oz_fut: Box<ClusterFut<'static>> = Box::new(future::ok::<(),
                                                             Error>(()));
@@ -615,7 +649,7 @@ impl<'a> Cluster {
             empty_zone.and_then(|zone_id| {
                 let zl = self.vdev.zone_limits(zone_id);
                 let e = self.fsm.borrow_mut().open_zone(zone_id, zl.0, zl.1,
-                                                        space);
+                                                        space, txg);
                 match e {
                     Ok(Some((zone_id, lba))) => {
                         let oz_fut = Box::new(
@@ -716,10 +750,12 @@ mod cluster {
         let db0 = dbs.try().unwrap();
         let db1 = db0.clone();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let (lba, fut1) = cluster.write(db0).expect("write failed early");
+            let (lba, fut1) = cluster.write(db0, 0)
+                .expect("write failed early");
             // Write a 2nd time so the first zone will get closed
             fut1.and_then(|_| {
-                let (_, fut2) = cluster.write(db1).expect("write failed early");
+                let (_, fut2) = cluster.write(db1, 0)
+                    .expect("write failed early");
                 fut2
             }).map(move|_| lba)
                 .and_then(|lba| {
@@ -757,10 +793,12 @@ mod cluster {
         let db0 = dbs0.try().unwrap();
         let db1 = dbs1.try().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let (lba, fut1) = cluster.write(db0).expect("write failed early");
+            let (lba, fut1) = cluster.write(db0, 0)
+                .expect("write failed early");
             // Write a larger buffer so the first zone will get closed
             fut1.and_then(|_| {
-                let (_, fut2) = cluster.write(db1).expect("write failed early");
+                let (_, fut2) = cluster.write(db1, 0)
+                    .expect("write failed early");
                 fut2
             }).map(move|_| lba)
                 .and_then(|lba| {
@@ -803,14 +841,17 @@ mod cluster {
         let db1 = dbs0.try().unwrap();
         let db2 = dbs1.try().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let (lba, fut1) = cluster.write(db0).expect("write failed early");
+            let (lba, fut1) = cluster.write(db0, 0)
+                .expect("write failed early");
             fut1.and_then(|_| {
-                let (_, fut2) = cluster.write(db1).expect("write failed early");
+                let (_, fut2) = cluster.write(db1, 0)
+                    .expect("write failed early");
                 fut2
             })
             // Write a larger buffer so the first zone will get closed
             .and_then(|_| {
-                let (_, fut3) = cluster.write(db2).expect("write failed early");
+                let (_, fut3) = cluster.write(db2, 0)
+                    .expect("write failed early");
                 fut3
             }).map(move|_| lba)
                 .and_then(|lba| {
@@ -847,7 +888,7 @@ mod cluster {
     }
 
     // FreeSpaceMap::open with the following conditions:
-    // A full zone with some freed blocks
+    // A closed zone with some freed blocks
     // An empty zone before the maximum open or full zone
     // An open zone with some freed blocks
     // A trailing empty zone
@@ -862,16 +903,19 @@ mod cluster {
         s.expect(vr.zone_limits_call(3).and_return_clone((304, 396)).times(..));
         let label = Label {
             allocated_blocks: vec![u32::max_value(), 0, 77, 0],
-            freed_blocks: vec![22, 0, 33, 0]
+            freed_blocks: vec![22, 0, 33, 0],
+            txgs: vec![1..3, 0..0, 2..TxgT::max_value(), 0..0]
         };
         let mock_vr: Box<VdevRaidTrait> = Box::new(vr);
         let fsm = FreeSpaceMap::open(label, &mock_vr);
         assert_eq!(fsm.zones.len(), 3);
         assert_eq!(fsm.zones[0].freed_blocks, 22);
         assert_eq!(fsm.zones[0].total_blocks, 92);
+        assert_eq!(fsm.zones[0].txgs, 1..3);
         assert!(fsm.is_empty(1));
         assert_eq!(fsm.zones[2].freed_blocks, 33);
         assert_eq!(fsm.zones[2].total_blocks, 92);
+        assert_eq!(fsm.zones[2].txgs.start, 2);
         let oz = fsm.open_zones.get(&2).unwrap();
         assert_eq!(oz.start, 204);
         assert_eq!(oz.allocated_blocks, 77);
@@ -886,19 +930,22 @@ mod cluster {
         s.expect(vr.zone_limits_call(3).and_return_clone((3, 4)).times(..));
         s.expect(vr.zone_limits_call(4).and_return_clone((4, 5)).times(..));
         let mut fsm = FreeSpaceMap::new(10);
-        fsm.open_zone(0, 0, 1, 0).unwrap();
-        fsm.finish_zone(0);
-        fsm.open_zone(2, 2, 3, 0).unwrap();
-        fsm.open_zone(3, 3, 4, 0).unwrap();
-        fsm.finish_zone(3);
-        fsm.open_zone(4, 4, 5, 0).unwrap();
-        fsm.finish_zone(4);
+        fsm.open_zone(0, 0, 1, 0, 0).unwrap();
+        fsm.finish_zone(0, 0);
+        fsm.open_zone(2, 2, 3, 0, 0).unwrap();
+        fsm.open_zone(3, 3, 4, 0, 1).unwrap();
+        fsm.finish_zone(3, 3);
+        fsm.open_zone(4, 4, 5, 0, 0).unwrap();
+        fsm.finish_zone(4, 0);
         let cluster = Cluster::new(fsm, Box::new(vr));
         let closed_zones = cluster.list_closed_zones().collect::<Vec<_>>();
         let expected = vec![
-            ClosedZone{zid: 0, start: 0, freed_blocks: 1, total_blocks: 1},
-            ClosedZone{zid: 3, start: 3, freed_blocks: 1, total_blocks: 1},
-            ClosedZone{zid: 4, start: 4, freed_blocks: 1, total_blocks: 1}
+            ClosedZone{zid: 0, start: 0, freed_blocks: 1, total_blocks: 1,
+                       txgs: 0..1},
+            ClosedZone{zid: 3, start: 3, freed_blocks: 1, total_blocks: 1,
+                       txgs: 1..4},
+            ClosedZone{zid: 4, start: 4, freed_blocks: 1, total_blocks: 1,
+                       txgs: 0..1}
         ];
         assert_eq!(closed_zones, expected);
     }
@@ -929,7 +976,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let (_, fut) = cluster.write(db0).expect("write failed early");
+            let (_, fut) = cluster.write(db0, 0).expect("write failed early");
             fut.and_then(|_| cluster.sync_all())
         })).unwrap();
         let fsm = cluster.fsm.borrow();
@@ -949,7 +996,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let mut rt = current_thread::Runtime::new().unwrap();
         let result = rt.block_on(future::lazy(|| {
-            cluster.write(dbs.try().unwrap())
+            cluster.write(dbs.try().unwrap(), 0)
         }));
         assert_eq!(result.err().unwrap(), Error::Sys(errno::Errno::ENOSPC));
     }
@@ -965,7 +1012,7 @@ mod cluster {
         let cluster = Cluster::new(fsm, Box::new(vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let result = cluster.write(dbs.try().unwrap());
+        let result = cluster.write(dbs.try().unwrap(), 0);
         assert_eq!(result.err().unwrap(), Error::Sys(errno::Errno::ENOSPC));
     }
 
@@ -990,7 +1037,7 @@ mod cluster {
         let db0 = dbs.try().unwrap();
         let mut rt = current_thread::Runtime::new().unwrap();
         let result = rt.block_on(future::lazy(|| {
-            let (lba, fut) = cluster.write(db0).expect("write failed early");
+            let (lba, fut) = cluster.write(db0, 0).expect("write failed early");
             fut.map(move |_| lba)
         }));
         assert_eq!(result.unwrap(), 0);
@@ -1024,9 +1071,10 @@ mod cluster {
         let db1 = dbs.try().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let cluster_ref = &cluster;
-            let (_, fut0) = cluster.write(db0).expect("Cluster::write");
+            let (_, fut0) = cluster.write(db0, 0).expect("Cluster::write");
             fut0.and_then(move |_| {
-                let (lba1, fut1) = cluster_ref.write(db1).expect("Cluster::write");
+                let (lba1, fut1) = cluster_ref.write(db1, 0)
+                    .expect("Cluster::write");
                 assert_eq!(lba1, 1);
                 fut1
             })
@@ -1068,9 +1116,10 @@ mod cluster {
         let db1 = dbs.try().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let cluster_ref = &cluster;
-            let (_, fut0) = cluster.write(db0).expect("Cluster::write");
+            let (_, fut0) = cluster.write(db0, 0).expect("Cluster::write");
             fut0.and_then(move |_| {
-                let (lba1, fut1) = cluster_ref.write(db1).expect("Cluster::write");
+                let (lba1, fut1) = cluster_ref.write(db1, 0)
+                    .expect("Cluster::write");
                 assert_eq!(lba1, 3);
                 fut1
             })
@@ -1085,7 +1134,7 @@ mod free_space_map {
     #[test]
     fn erase_closed_zone() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(1, 1000, 2000, 0).unwrap();
+        fsm.open_zone(1, 1000, 2000, 0, 0).unwrap();
         fsm.erase_zone(0);
         assert!(fsm.is_empty(0));
         assert!(!fsm.is_empty(1));
@@ -1101,9 +1150,9 @@ mod free_space_map {
     #[test]
     fn erase_last_zone() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(0, 0, 1000, 0).unwrap();
-        fsm.open_zone(1, 1000, 2000, 1).unwrap();
-        fsm.finish_zone(1);
+        fsm.open_zone(0, 0, 1000, 0, 0).unwrap();
+        fsm.open_zone(1, 1000, 2000, 1, 0).unwrap();
+        fsm.finish_zone(1, 0);
         fsm.erase_zone(1);
         assert!(!fsm.is_empty(0));
         assert_eq!(fsm.in_use(1), 0);
@@ -1113,9 +1162,9 @@ mod free_space_map {
     #[test]
     fn erase_last_zone_with_empties_behind_it() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(0, 0, 1000, 0).unwrap();
-        fsm.open_zone(2, 2000, 3000, 0).unwrap();
-        fsm.finish_zone(2);
+        fsm.open_zone(0, 0, 1000, 0, 0).unwrap();
+        fsm.open_zone(2, 2000, 3000, 0, 0).unwrap();
+        fsm.finish_zone(2, 0);
         fsm.erase_zone(2);
         assert!(!fsm.is_empty(0));
         assert_eq!(fsm.zones.len(), 1);
@@ -1124,8 +1173,8 @@ mod free_space_map {
     #[test]
     fn erase_last_zone_with_all_other_zones_empty() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(2, 2000, 3000, 0).unwrap();
-        fsm.finish_zone(2);
+        fsm.open_zone(2, 2000, 3000, 0, 0).unwrap();
+        fsm.finish_zone(2, 0);
         fsm.erase_zone(2);
         assert_eq!(fsm.zones.len(), 0);
     }
@@ -1134,7 +1183,7 @@ mod free_space_map {
     #[should_panic(expected = "Can't erase an open zone")]
     fn erase_open_zone() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(0, 0, 1000, 0).unwrap();
+        fsm.open_zone(0, 0, 1000, 0, 0).unwrap();
         fsm.erase_zone(0);
     }
 
@@ -1149,13 +1198,13 @@ mod free_space_map {
     #[test]
     fn find_closed_zone() {
         let mut fsm = FreeSpaceMap::new(10);
-        fsm.open_zone(0, 0, 1, 0).unwrap();
-        fsm.finish_zone(0);
-        fsm.open_zone(2, 2, 3, 0).unwrap();
-        fsm.open_zone(3, 3, 4, 0).unwrap();
-        fsm.finish_zone(3);
-        fsm.open_zone(4, 4, 5, 0).unwrap();
-        fsm.finish_zone(4);
+        fsm.open_zone(0, 0, 1, 0, 0).unwrap();
+        fsm.finish_zone(0, 0);
+        fsm.open_zone(2, 2, 3, 0, 0).unwrap();
+        fsm.open_zone(3, 3, 4, 0, 0).unwrap();
+        fsm.finish_zone(3, 0);
+        fsm.open_zone(4, 4, 5, 0, 0).unwrap();
+        fsm.finish_zone(4, 0);
         assert_eq!(fsm.find_closed_zone(1).unwrap().zid, 3);
     }
 
@@ -1163,33 +1212,33 @@ mod free_space_map {
     #[test]
     fn find_closed_zone_no_closed_zones() {
         let mut fsm = FreeSpaceMap::new(10);
-        fsm.open_zone(0, 0, 1, 0).unwrap();
-        fsm.finish_zone(0);
-        fsm.open_zone(2, 2, 3, 0).unwrap();
+        fsm.open_zone(0, 0, 1, 0, 0).unwrap();
+        fsm.finish_zone(0, 0);
+        fsm.open_zone(2, 2, 3, 0, 0).unwrap();
         assert!(fsm.find_closed_zone(1).is_none());
     }
 
     #[test]
     fn find_empty_enospc() {
         let mut fsm = FreeSpaceMap::new(2);
-        fsm.open_zone(0, 0, 1000, 0).unwrap().is_none();
-        fsm.open_zone(1, 1000, 2000, 0).unwrap().is_none();
-        fsm.finish_zone(1);
+        fsm.open_zone(0, 0, 1000, 0, 0).unwrap().is_none();
+        fsm.open_zone(1, 1000, 2000, 0, 0).unwrap().is_none();
+        fsm.finish_zone(1, 0);
         assert_eq!(fsm.find_empty(), None);
     }
 
     #[test]
     fn find_empty_explicit() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(0, 0, 1000, 0).unwrap().is_none();
-        fsm.open_zone(2, 2000, 3000, 0).unwrap().is_none();
+        fsm.open_zone(0, 0, 1000, 0, 0).unwrap().is_none();
+        fsm.open_zone(2, 2000, 3000, 0, 0).unwrap().is_none();
         assert_eq!(fsm.find_empty(), Some(1));
     }
 
     #[test]
     fn find_empty_implicit() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(0, 0, 1000, 0).unwrap().is_none();
+        fsm.open_zone(0, 0, 1000, 0, 0).unwrap().is_none();
         assert_eq!(fsm.find_empty(), Some(1));
     }
 
@@ -1197,10 +1246,11 @@ mod free_space_map {
     fn finish() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, 0).unwrap().is_none();
-        fsm.finish_zone(zid);
+        fsm.open_zone(zid, 0, 1000, 0, 0).unwrap().is_none();
+        fsm.finish_zone(zid, 1);
         assert!(!fsm.open_zones.contains_key(&zid));
         assert!(!fsm.is_empty(zid));
+        assert_eq!(fsm.zones[zid as usize].txgs, 0..2);
     }
 
     #[should_panic(expected = "Can't finish a Zone that isn't open")]
@@ -1209,8 +1259,8 @@ mod free_space_map {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
         // First, open zone 1 so zone 0 will become explicitly empty
-        assert!(fsm.open_zone(1, 1000, 2000, 0).unwrap().is_none());
-        fsm.finish_zone(zid);
+        assert!(fsm.open_zone(1, 1000, 2000, 0, 0).unwrap().is_none());
+        fsm.finish_zone(zid, 0);
     }
 
     #[should_panic(expected = "Can't finish a Zone that isn't open")]
@@ -1218,7 +1268,7 @@ mod free_space_map {
     fn finish_implicitly_empty() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.finish_zone(zid);
+        fsm.finish_zone(zid, 0);
     }
 
     #[test]
@@ -1227,8 +1277,8 @@ mod free_space_map {
         let zid: ZoneT = 0;
         let space: LbaT = 10;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, space).unwrap();
-        fsm.finish_zone(zid);
+        fsm.open_zone(zid, 0, 1000, space, 0).unwrap();
+        fsm.finish_zone(zid, 0);
         fsm.free(zid, space);
         fsm.free(zid, space);
     }
@@ -1239,7 +1289,7 @@ mod free_space_map {
         let zid: ZoneT = 0;
         let space: LbaT = 17;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, space).unwrap();
+        fsm.open_zone(zid, 0, 1000, space, 0).unwrap();
         fsm.free(zid, space);
         fsm.free(zid, space);
     }
@@ -1250,8 +1300,8 @@ mod free_space_map {
         let space: LbaT = 1000;
         let used: LbaT = 17;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, used).unwrap();
-        fsm.finish_zone(zid);
+        fsm.open_zone(zid, 0, 1000, used, 0).unwrap();
+        fsm.finish_zone(zid, 0);
         assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space - used);
         fsm.free(zid, used);
         assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space);
@@ -1264,7 +1314,7 @@ mod free_space_map {
         let space: LbaT = 17;
         let mut fsm = FreeSpaceMap::new(32768);
         // First, open zone 1 so zone 0 will become explicitly empty
-        assert!(fsm.open_zone(1, 1000, 2000, 0).unwrap().is_none());
+        assert!(fsm.open_zone(1, 1000, 2000, 0, 0).unwrap().is_none());
         fsm.free(zid, space);
     }
 
@@ -1282,7 +1332,7 @@ mod free_space_map {
         let zid: ZoneT = 0;
         let space: LbaT = 17;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, space).unwrap();
+        fsm.open_zone(zid, 0, 1000, space, 0).unwrap();
         fsm.free(zid, space);
         assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space);
     }
@@ -1291,10 +1341,11 @@ mod free_space_map {
     fn open() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        assert!(fsm.open_zone(zid, 0, 1000, 0).unwrap().is_none());
+        assert!(fsm.open_zone(zid, 0, 1000, 0, 5).unwrap().is_none());
         assert_eq!(fsm.zones.len(), 1);
         assert_eq!(fsm.zones[zid as usize].total_blocks, 1000);
         assert_eq!(fsm.zones[zid as usize].freed_blocks, 0);
+        assert_eq!(fsm.zones[zid as usize].txgs.start, 5);
         assert_eq!(fsm.open_zones[&zid].start, 0);
         assert_eq!(fsm.open_zones[&zid].write_pointer(), 0);
     }
@@ -1304,7 +1355,8 @@ mod free_space_map {
         let zid: ZoneT = 0;
         let space: LbaT = 17;
         let mut fsm = FreeSpaceMap::new(32768);
-        assert_eq!(fsm.open_zone(zid, 0, 1000, space).unwrap(), Some((zid, 0)));
+        assert_eq!(fsm.open_zone(zid, 0, 1000, space, 0).unwrap(),
+                   Some((zid, 0)));
         assert_eq!(fsm.zones.len(), 1);
         assert_eq!(fsm.zones[zid as usize].total_blocks, 1000);
         assert_eq!(fsm.zones[zid as usize].freed_blocks, 0);
@@ -1318,7 +1370,7 @@ mod free_space_map {
         let zid: ZoneT = 0;
         let space: LbaT = 2000;
         let mut fsm = FreeSpaceMap::new(32768);
-        assert_eq!(fsm.open_zone(zid, 0, 1000, space).unwrap_err(),
+        assert_eq!(fsm.open_zone(zid, 0, 1000, space, 0).unwrap_err(),
             Error::Sys(errno::Errno::ENOSPC));
         assert_eq!(fsm.zones.len(), 0);
     }
@@ -1328,12 +1380,12 @@ mod free_space_map {
         let mut fsm = FreeSpaceMap::new(32768);
 
         // First, open zone 1 so zone 0 will become explicitly empty
-        assert!(fsm.open_zone(1, 1000, 2000, 0).unwrap().is_none());
+        assert!(fsm.open_zone(1, 1000, 2000, 0, 0).unwrap().is_none());
         assert_eq!(fsm.zones.len(), 2);
 
         // Now try to open an explicitly empty zone
         let zid: ZoneT = 0;
-        assert!(fsm.open_zone(zid, 0, 1000, 0).unwrap().is_none());
+        assert!(fsm.open_zone(zid, 0, 1000, 0, 0).unwrap().is_none());
         assert_eq!(fsm.zones.len(), 2);
         assert_eq!(fsm.zones[zid as usize].total_blocks, 1000);
         assert_eq!(fsm.zones[zid as usize].freed_blocks, 0);
@@ -1345,7 +1397,7 @@ mod free_space_map {
     fn open_implicitly_empty() {
         let zid: ZoneT = 1;
         let mut fsm = FreeSpaceMap::new(32768);
-        assert!(fsm.open_zone(zid, 1000, 2000, 0).unwrap().is_none());
+        assert!(fsm.open_zone(zid, 1000, 2000, 0, 0).unwrap().is_none());
         assert_eq!(fsm.zones.len(), 2);
         assert_eq!(fsm.zones[zid as usize].total_blocks, 1000);
         assert_eq!(fsm.zones[zid as usize].freed_blocks, 0);
@@ -1359,8 +1411,8 @@ mod free_space_map {
     fn open_already_open() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, 0).unwrap();
-        fsm.open_zone(zid, 0, 1000, 0).unwrap();
+        fsm.open_zone(zid, 0, 1000, 0, 0).unwrap();
+        fsm.open_zone(zid, 0, 1000, 0, 0).unwrap();
     }
 
     #[test]
@@ -1368,9 +1420,9 @@ mod free_space_map {
     fn open_closed_zone() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, 0).unwrap();
-        fsm.finish_zone(zid);
-        fsm.open_zone(zid, 0, 1000, 0).unwrap();
+        fsm.open_zone(zid, 0, 1000, 0, 0).unwrap();
+        fsm.finish_zone(zid, 0);
+        fsm.open_zone(zid, 0, 1000, 0, 0).unwrap();
     }
 
     // FreeSpaceMap::serialize with the following conditions:
@@ -1381,10 +1433,10 @@ mod free_space_map {
     #[test]
     fn serialize() {
         let mut fsm = FreeSpaceMap::new(4);
-        fsm.open_zone(0, 4, 96, 88).unwrap();
-        fsm.finish_zone(0);
+        fsm.open_zone(0, 4, 96, 88, 1).unwrap();
+        fsm.finish_zone(0, 2);
         fsm.free(0, 22);
-        fsm.open_zone(2, 204, 296, 77).unwrap();
+        fsm.open_zone(2, 204, 296, 77, 2).unwrap();
         fsm.free(2, 33);
 
         let label = fsm.serialize();
@@ -1396,13 +1448,15 @@ mod free_space_map {
         assert_eq!(label.freed_blocks[1], 0);
         assert_eq!(label.freed_blocks[2], 33);
         assert_eq!(label.freed_blocks[3], 0);
+        assert_eq!(label.txgs[0], 1..3);
+        assert_eq!(label.txgs[2].start, 2);
     }
 
     #[test]
     fn try_allocate() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        assert!(fsm.open_zone(zid, 0, 1000, 0).unwrap().is_none());
+        assert!(fsm.open_zone(zid, 0, 1000, 0, 0).unwrap().is_none());
         let (res, full_zones) = fsm.try_allocate(64);
         assert_eq!(res, Some((zid, 0)));
         assert!(full_zones.is_empty());
@@ -1414,7 +1468,7 @@ mod free_space_map {
     fn try_allocate_enospc() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        assert!(fsm.open_zone(zid, 0, 1000, 0).unwrap().is_none());
+        assert!(fsm.open_zone(zid, 0, 1000, 0, 0).unwrap().is_none());
         assert!(fsm.try_allocate(2000).0.is_none());
     }
 
@@ -1423,8 +1477,8 @@ mod free_space_map {
         let zid: ZoneT = 1;
         let mut fsm = FreeSpaceMap::new(32768);
         // Pretend that zone 0 is too small for our allocation, but zone 1 isn't
-        assert!(fsm.open_zone(0, 0, 10, 0).unwrap().is_none());
-        assert!(fsm.open_zone(zid, 10, 1000, 0).unwrap().is_none());
+        assert!(fsm.open_zone(0, 0, 10, 0, 0).unwrap().is_none());
+        assert!(fsm.open_zone(zid, 10, 1000, 0, 0).unwrap().is_none());
         let (res, full_zones) = fsm.try_allocate(64);
         assert_eq!(res, Some((zid, 10)));
         assert_eq!(full_zones, vec![0]);
@@ -1436,8 +1490,8 @@ mod free_space_map {
     fn try_allocate_only_closed_zones() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, 0).unwrap().is_none();
-        fsm.finish_zone(zid);
+        fsm.open_zone(zid, 0, 1000, 0, 0).unwrap().is_none();
+        fsm.finish_zone(zid, 0);
         assert!(fsm.try_allocate(64).0.is_none());
     }
 
