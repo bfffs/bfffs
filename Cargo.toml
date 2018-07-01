@@ -12,7 +12,7 @@ atomic = "0.3"
 bincode = "1.0"
 blosc = "0.1"
 byteorder = "1.0"
-divbuf = { git = "https://github.com/asomers/divbuf", rev = "02e3430" }
+divbuf = "0.2.0"
 downcast = "0.8"
 fixedbitset = "0.1.8"
 futures = "0.1.14"
@@ -29,11 +29,11 @@ mockers_derive = { version = "=0.11.1", optional = true }
 # remove this crate.
 # https://github.com/rust-lang/rust/issues/49048
 modulo = "0.1.2"
-nix = { git = "https://github.com/nix-rust/nix", rev = "31e901b" }
+nix = "0.11.0"
 serde = "1.0"
 serde_cbor = "0.8"
 serde_derive = "1.0"
-tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "db0e43f" }
+tokio-file = "0.3.0"
 tokio = "0.1.7"
 uuid = { version = "0.6", features = ["serde", "v4"]}
 
