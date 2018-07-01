@@ -27,7 +27,7 @@ use std::{
     fmt::Debug,
     mem,
     rc::Rc,
-    ops::{self, Bound, DerefMut, RangeBounds},
+    ops::{Bound, DerefMut, Range, RangeBounds},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering}
@@ -89,7 +89,7 @@ mod tree_root_serializer {
     }
 }
 
-pub struct Range<'tree, A, D, K, T, V>
+pub struct RangeQuery<'tree, A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A> + 'tree,
           K: Key + Borrow<T>,
@@ -107,7 +107,7 @@ pub struct Range<'tree, A, D, K, T, V>
     tree: &'tree Tree<A, D, K, V>
 }
 
-impl<'tree, A, D, K, T, V> Range<'tree, A, D, K, T, V>
+impl<'tree, A, D, K, T, V> RangeQuery<'tree, A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A>,
           K: Key + Borrow<T>,
@@ -116,7 +116,7 @@ impl<'tree, A, D, K, T, V> Range<'tree, A, D, K, T, V>
     {
 
     fn new<R>(range: R, tree: &'tree Tree<A, D, K, V>)
-        -> Range<'tree, A, D, K, T, V>
+        -> RangeQuery<'tree, A, D, K, T, V>
         where R: RangeBounds<T>
     {
         let cursor: Option<Bound<T>> = Some(match range.start_bound() {
@@ -129,11 +129,12 @@ impl<'tree, A, D, K, T, V> Range<'tree, A, D, K, T, V>
             Bound::Excluded(&ref e) => Bound::Excluded(e.clone()),
             Bound::Unbounded => Bound::Unbounded,
         };
-        Range{cursor, data: VecDeque::new(), end, last_fut: None, tree: tree}
+        let data = VecDeque::new();
+        RangeQuery{cursor, data, end, last_fut: None, tree: tree}
     }
 }
 
-impl<'tree, A, D, K, T, V> Stream for Range<'tree, A, D, K, T, V>
+impl<'tree, A, D, K, T, V> Stream for RangeQuery<'tree, A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A>,
           K: Key + Borrow<T>,
@@ -192,7 +193,7 @@ struct CleanZonePass1Inner<'tree, D, K, V>
                        Error=Error> + 'tree>>,
 
     /// Range of addresses to move
-    range: ops::Range<PBA>,
+    range: Range<PBA>,
 
     /// Handle to the tree
     tree: &'tree Tree<ddml::DRP, D, K, V>
@@ -213,7 +214,7 @@ impl<'tree, D, K, V> CleanZonePass1<'tree, D, K, V>
           V: Value
     {
 
-    fn new(range: ops::Range<PBA>, echelon: u8,
+    fn new(range: Range<PBA>, echelon: u8,
            tree: &'tree Tree<ddml::DRP, D, K, V>)
         -> CleanZonePass1<'tree, D, K, V>
     {
@@ -642,12 +643,12 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     /// Lookup a range of (key, value) pairs for keys within the range `range`.
-    pub fn range<R, T>(&'a self, range: R) -> Range<'a, A, D, K, T, V>
+    pub fn range<R, T>(&'a self, range: R) -> RangeQuery<'a, A, D, K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T>,
               T: Ord + Clone
     {
-        Range::new(range, self)
+        RangeQuery::new(range, self)
     }
 
     /// Delete a range of keys
@@ -1182,7 +1183,7 @@ impl<A: Addr, D: DML<Addr=A>, K: Key, V: Value> Display for Tree<A, D, K, V> {
 // These methods are only for direct trees
 impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
     /// Clean `zone` by moving all of its records to other zones.
-    pub fn clean_zone(&'a self, range: ops::Range<PBA>)
+    pub fn clean_zone(&'a self, range: Range<PBA>)
         -> impl Future<Item=(), Error=Error> + 'a
     {
         // We can't rewrite children before their parents while sticking to a
@@ -1219,7 +1220,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         })
     }
 
-    fn get_dirty_nodes(&'a self, key: K, range: ops::Range<PBA>, echelon: u8)
+    fn get_dirty_nodes(&'a self, key: K, range: Range<PBA>, echelon: u8)
         -> impl Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error> + 'a
     {
         self.read()
@@ -1259,7 +1260,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
     fn get_dirty_nodes_r(&'a self, guard: TreeReadGuard<ddml::DRP, K, V>,
                          height: u8,
                          next_key: Option<K>,
-                         key: K, range: ops::Range<PBA>, echelon: u8)
+                         key: K, range: Range<PBA>, echelon: u8)
         -> Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error> + 'a>
     {
         if height == echelon + 1 {
