@@ -125,7 +125,7 @@ pub struct Pool {
     stats: RefCell<Stats>,
 
     /// Current transaction group
-    txg: TxgT,
+    txg: RefCell<TxgT>,
 
     uuid: Uuid,
 }
@@ -199,7 +199,7 @@ impl<'a> Pool {
             queue_depth,
             size
         });
-        Pool{name, clusters, stats, uuid, txg}
+        Pool{name, clusters, stats, uuid, txg: RefCell::new(txg)}
     }
 
     /// List all closed zones in this Pool in no particular order
@@ -304,8 +304,26 @@ impl<'a> Pool {
     ///
     /// Pool may decide to do nothing, if no action is required.  The caller
     /// must ensure that all higher-level write caches are flushed.
-    pub fn transact(&self) -> TxgT {
-        unimplemented!()
+    ///
+    /// # Returns
+    ///
+    /// The identifier of the new transaction group.
+    pub fn transact(&'a self) -> impl Future<Item=TxgT, Error=Error> + 'a {
+        // Outline:
+        // 1) Sync all clusters
+        // 2) Write the label to all clusters
+        // 3) Sync all clusters again
+        // TODO: use two labels, so the pool will be recoverable even if power
+        // is lost while writing a label.
+        self.sync_all()
+            .and_then(move |_| self.write_label())
+            .and_then(move |_| self.sync_all())
+            .map(move |_| {
+                let mut txg = self.txg.borrow_mut();
+                let new_txg = *txg + 1;
+                *txg = new_txg;
+                *txg
+            })
     }
 
     /// Return the `Pool`'s UUID.
@@ -326,7 +344,7 @@ impl<'a> Pool {
         let mut stats = self.stats.borrow_mut();
         stats.queue_depth[cluster as usize] += 1;
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
-        self.clusters[cluster as usize].write(buf, self.txg)
+        self.clusters[cluster as usize].write(buf, *self.txg.borrow())
             .map(|(lba, wfut)| {
                 stats.allocated_space[cluster as usize] += space;
                 let fut: Box<PoolFut> = Box::new(wfut.then(move |r| {
@@ -346,7 +364,7 @@ impl<'a> Pool {
             name: self.name.clone(),
             uuid: self.uuid,
             children: cluster_uuids,
-            txg: self.txg
+            txg: *self.txg.borrow()
         };
         let dbs = labeller.serialize(label);
         let futs = self.clusters.iter().map(|cluster| {
@@ -367,7 +385,7 @@ mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
     use futures::future;
-    use mockers::{Scenario, matchers};
+    use mockers::{Scenario, Sequence, matchers};
     use mockers_derive::mock;
     use tokio::runtime::current_thread;
 
@@ -451,6 +469,43 @@ mod pool {
 
         let mut rt = current_thread::Runtime::new().unwrap();
         assert!(rt.block_on(pool.sync_all()).is_ok());
+    }
+
+    #[test]
+    fn transact() {
+        let s = Scenario::new();
+        let mut seq = Sequence::new();
+        let cluster = s.create_mock::<MockCluster>();
+        s.expect(cluster.optimum_queue_depth_call()
+                 .and_return_clone(10)
+                 .times(..));
+        s.expect(cluster.size_call().and_return_clone(32768000).times(..));
+        s.expect(cluster.uuid_call().and_return_clone(Uuid::new_v4()).times(..));
+        seq.expect(cluster.write_call(matchers::ANY, matchers::ANY)
+            .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
+        );
+        seq.expect(cluster.sync_all_call()
+            .and_return(Box::new(future::ok::<(), Error>(()))));
+        seq.expect(cluster.write_label_call(matchers::ANY)
+            .and_return(Box::new(future::ok::<(), Error>(()))));
+        seq.expect(cluster.sync_all_call()
+            .and_return(Box::new(future::ok::<(), Error>(()))));
+        s.expect(seq);
+
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), 0,
+                             vec![Box::new(cluster)]);
+
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let db0 = dbs.try().unwrap();
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let txg = rt.block_on(future::lazy(|| {
+            let (_pba, fut) = pool.write(db0).expect("write failed early");
+            fut.and_then(|_| {
+                pool.transact()
+            })
+        })).unwrap();
+        assert_eq!(txg, 1);
+        assert_eq!(*pool.txg.borrow(), 1);
     }
 
     #[test]
