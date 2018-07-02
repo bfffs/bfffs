@@ -458,7 +458,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             let (new_key, new_node_data) = child.split();
             let new_node = Node::new(new_node_data);
             let new_ptr = TreePtr::Mem(Box::new(new_node));
-            let new_elem = IntElem{key: new_key, ptr: new_ptr};
+            let new_elem = IntElem::new(new_key, new_ptr);
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
             self.insert_no_split(parent, k, v)
@@ -477,7 +477,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             let (new_key, new_node_data) = root.split();
             let new_node = Node::new(new_node_data);
             let new_ptr = TreePtr::Mem(Box::new(new_node));
-            let new_elem = IntElem{key: new_key, ptr: new_ptr};
+            let new_elem = IntElem::new(new_key, new_ptr);
             let new_root_data = NodeData::Int(
                 IntData {
                     children: vec![new_elem]
@@ -486,7 +486,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             let old_root_data = mem::replace(root.deref_mut(), new_root_data);
             let old_root_node = Node::new(old_root_data);
             let old_ptr = TreePtr::Mem(Box::new(old_root_node));
-            let old_elem = IntElem{ key: K::min_value(), ptr: old_ptr };
+            let old_elem = IntElem::new(K::min_value(), old_ptr );
             root.as_int_mut().children.insert(0, old_elem);
             self.i.height.fetch_add(1, Ordering::Relaxed);
         }
@@ -948,19 +948,17 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             min_fanout, max_fanout,
             _max_size: max_size,
             root: RwLock::new(
-                IntElem{
-                    key: K::min_value(),
-                    ptr:
-                        TreePtr::Mem(
-                            Box::new(
-                                Node::new(
-                                    NodeData::Leaf(
-                                        LeafData::new()
-                                    )
+                IntElem::new(K::min_value(),
+                    TreePtr::Mem(
+                        Box::new(
+                            Node::new(
+                                NodeData::Leaf(
+                                    LeafData::new()
                                 )
                             )
                         )
-                }
+                    )
+                )
             )
         };
         Tree{ dml, i }
@@ -4275,8 +4273,8 @@ fn basic() {
     let drpl0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 0, 0, 0);
     let drpl1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 0, 0, 0);
     let children0 = vec![
-        IntElem{key: 0u32, ptr: TreePtr::Addr(drpl0)},
-        IntElem{key: 2u32, ptr: TreePtr::Addr(drpl1)},
+        IntElem::new(0u32, TreePtr::Addr(drpl0)),
+        IntElem::new(2u32, TreePtr::Addr(drpl1)),
     ];
     let in0 = Arc::new(Node::new(NodeData::Int(IntData{children: children0}))
     );
@@ -4287,12 +4285,12 @@ fn basic() {
     let drpl3 = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
     // We must make two copies of in1, one for DDMLMock::get and one for ::pop
     let children1 = vec![
-        IntElem{key: 4u32, ptr: TreePtr::Addr(drpl2)},
-        IntElem{key: 6u32, ptr: TreePtr::Addr(drpl3)},
+        IntElem::new(4u32, TreePtr::Addr(drpl2)),
+        IntElem::new(6u32, TreePtr::Addr(drpl3)),
     ];
     let children1_c = vec![
-        IntElem{key: 4u32, ptr: TreePtr::Addr(drpl2)},
-        IntElem{key: 6u32, ptr: TreePtr::Addr(drpl3)},
+        IntElem::new(4u32, TreePtr::Addr(drpl2)),
+        IntElem::new(6u32, TreePtr::Addr(drpl3)),
     ];
     let in1 = Arc::new(Node::new(NodeData::Int(IntData{children: children1}))
     );
@@ -4311,12 +4309,12 @@ fn basic() {
     let drpl5 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
     // We must make two copies of in2, one for DDMLMock::get and one for ::pop
     let children2 = vec![
-        IntElem{key: 8u32, ptr: TreePtr::Addr(drpl4)},
-        IntElem{key: 10u32, ptr: TreePtr::Addr(drpl5)},
+        IntElem::new(8u32, TreePtr::Addr(drpl4)),
+        IntElem::new(10u32, TreePtr::Addr(drpl5)),
     ];
     let children2_c = vec![
-        IntElem{key: 8u32, ptr: TreePtr::Addr(drpl4)},
-        IntElem{key: 10u32, ptr: TreePtr::Addr(drpl5)},
+        IntElem::new(8u32, TreePtr::Addr(drpl4)),
+        IntElem::new(10u32, TreePtr::Addr(drpl5)),
     ];
     let in2 = Arc::new(Node::new(NodeData::Int(IntData{children: children2})));
     let mut in2_c = Some(Arc::new(Node::new(
@@ -4460,12 +4458,12 @@ fn dirty_root() {
     let drpl1 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
     // We must make two copies of inr, one for DDMLMock::get and one for ::pop
     let children = vec![
-        IntElem{key: 8u32, ptr: TreePtr::Addr(drpl0)},
-        IntElem{key: 10u32, ptr: TreePtr::Addr(drpl1)},
+        IntElem::new(8u32, TreePtr::Addr(drpl0)),
+        IntElem::new(10u32, TreePtr::Addr(drpl1)),
     ];
     let children_c = vec![
-        IntElem{key: 8u32, ptr: TreePtr::Addr(drpl0)},
-        IntElem{key: 10u32, ptr: TreePtr::Addr(drpl1)},
+        IntElem::new(8u32, TreePtr::Addr(drpl0)),
+        IntElem::new(10u32, TreePtr::Addr(drpl1)),
     ];
     let inr = Arc::new(Node::<DRP, u32, f32>::new(
             NodeData::Int(IntData{children: children})));
@@ -4772,8 +4770,8 @@ fn read_int() {
     let drp0 = DRP::random(Compression::None, 40000);
     let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 16000);
     let children = vec![
-        IntElem{key: 0u32, ptr: TreePtr::Addr(drp0)},
-        IntElem{key: 256u32, ptr: TreePtr::Addr(drp1)},
+        IntElem::new(0u32, TreePtr::Addr(drp0)),
+        IntElem::new(256u32, TreePtr::Addr(drp1)),
     ];
     let node = Arc::new(Node::new(NodeData::Int(IntData{children})));
     let drpl = DRP::new(PBA{cluster: 1, lba: 2}, Compression::None, 36, 36, 0);

@@ -330,6 +330,10 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
         self.ptr.is_dirty()
     }
 
+    pub fn new(key: K, ptr: TreePtr<A, K, V>) -> Self {
+        IntElem{key, ptr}
+    }
+
     /// Lock nonexclusively
     pub fn rlock<'a, D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: &'a D)
         -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
@@ -732,8 +736,8 @@ fn serialize_int() {
     let drp1 = DRP::new(PBA::new(0, 256), Compression::ZstdL9NoShuffle,
                         16000, 8000, 0x1a7ebabe);
     let children = vec![
-        IntElem{key: 0u32, ptr: TreePtr::Addr(drp0)},
-        IntElem{key: 256u32, ptr: TreePtr::Addr(drp1)},
+        IntElem::new(0u32, TreePtr::Addr(drp0)),
+        IntElem::new(256u32, TreePtr::Addr(drp1)),
     ];
     let node_data = NodeData::Int(IntData{children});
     let node: Node<DRP, u32, u32> = Node(RwLock::new(node_data));
