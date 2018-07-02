@@ -38,6 +38,7 @@ pub trait PoolTrait {
     fn name(&self) -> &str;
     fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut>;
     fn sync_all(&self) -> Box<PoolFut>;
+    fn txg(&self) -> TxgT;
     fn uuid(&self) -> Uuid;
     fn write(&self, buf: IoVec) -> Result<(PBA, Box<PoolFut>), Error>;
     fn write_label(&self) -> Box<PoolFut>;
@@ -332,6 +333,10 @@ impl DML for DDML {
     fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a> {
         Box::new(self.pool.sync_all())
     }
+
+    fn txg(&self) -> TxgT {
+        self.pool.txg()
+    }
 }
 
 // LCOV_EXCL_START
@@ -359,6 +364,7 @@ mod t {
             fn name(&self) -> &str;
             fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut<'static>>;
             fn sync_all(&self) -> Box<PoolFut<'static>>;
+            fn txg(&self) -> TxgT;
             fn uuid(&self) -> Uuid;
             fn write(&self, buf: IoVec)
                 -> Result<(PBA, Box<PoolFut<'static>>), Error>;

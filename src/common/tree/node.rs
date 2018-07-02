@@ -13,7 +13,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
     mem,
-    ops::{Bound, Deref, DerefMut, RangeBounds},
+    ops::{Bound, Deref, DerefMut, Range, RangeBounds},
     sync::{
         Arc,
     }
@@ -219,6 +219,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
         // one.
+        // TODO: adjust TXG range
         let half = div_roundup(self.items.len(), 2);
         let cutoff = *self.items.keys().nth(half).unwrap();
         let new_items = self.items.split_off(&cutoff);
@@ -255,6 +256,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// the child's guard.
     // Consuming and returning self prevents lifetime checker issues that
     // interfere with lock coupling.
+    // TODO: update node's txg range
     pub fn xlock<'a, D: DML<Addr=A>>(mut self, dml: &'a D, child_idx: usize)
         -> (Box<Future<Item=(TreeWriteGuard<A, K, V>,
                              TreeWriteGuard<A, K, V>), Error=Error> + 'a>)
@@ -320,6 +322,7 @@ impl<A: Addr, K: Key, V: Value> DerefMut for TreeWriteGuard<A, K, V> {
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 pub(super) struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
     pub key: K,
+    pub txgs: Range<TxgT>,
     pub ptr: TreePtr<A, K, V>
 }
 
@@ -330,8 +333,8 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
         self.ptr.is_dirty()
     }
 
-    pub fn new(key: K, ptr: TreePtr<A, K, V>) -> Self {
-        IntElem{key, ptr}
+    pub fn new(key: K, txgs: Range<TxgT>, ptr: TreePtr<A, K, V>) -> Self {
+        IntElem{key, txgs, ptr}
     }
 
     /// Lock nonexclusively
@@ -377,6 +380,10 @@ impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
         self.children.len()
     }
 
+    pub fn new(children: Vec<IntElem<A, K, V>>) -> IntData<A, K, V> {
+        IntData{children}
+    }
+
     /// Find index of rightmost child whose key is less than or equal to k
     pub fn position<Q>(&self, k: &Q) -> usize
         where K: Borrow<Q>, Q: Ord
@@ -392,7 +399,7 @@ impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
         // one.
         let cutoff = div_roundup(self.children.len(), 2);
         let new_children = self.children.split_off(cutoff);
-        (new_children[0].key, IntData{children: new_children})
+        (new_children[0].key, IntData::new(new_children))
     }
 }
 
@@ -498,6 +505,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     /// Merge all of `other`'s data into `self`.  Afterwards, `other` may be
     /// deleted.
     pub fn merge(&mut self, mut other: TreeWriteGuard<A, K, V>) {
+        // TODO: adjust txg range
         match self {
             NodeData::Int(int) =>
                 int.children.append(&mut other.as_int_mut().children),
@@ -662,6 +670,7 @@ fn deserialize_int() {
         1u8, 0, 0, 0, // enum variant 0 for IntNode
         2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
            0, 0, 0, 0,              // K=0
+           1, 0, 0, 0, 9, 0, 0, 0,  // TXG range 1..9
            1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
@@ -670,6 +679,7 @@ fn deserialize_int() {
            0x40, 0x9c, 0, 0,         // csize=40000
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
            0, 1, 0, 0,              // K=256
+           2, 0, 0, 0, 8, 0, 0, 0,  // TXG range 1..9
            1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
@@ -690,6 +700,8 @@ fn deserialize_int() {
     assert_eq!(*int_data.children[0].ptr.as_addr(), drp0);
     assert_eq!(int_data.children[1].key, 256);
     assert_eq!(*int_data.children[1].ptr.as_addr(), drp1);
+    assert_eq!(int_data.children[0].txgs, 1..9);
+    assert_eq!(int_data.children[1].txgs, 2..8);
 }
 
 #[test]
@@ -715,6 +727,7 @@ fn serialize_int() {
     let expected = vec![1u8, 0, 0, 0, // enum variant 0 for IntNode
         2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
            0, 0, 0, 0,              // K=0
+           1, 0, 0, 0, 9, 0, 0, 0,  // TXG range 1..9
            1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
@@ -723,6 +736,7 @@ fn serialize_int() {
            0x40, 0x9c, 0, 0,         // csize=40000
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
            0, 1, 0, 0,              // K=256
+           2, 0, 0, 0, 8, 0, 0, 0,  // TXG range 1..9
            1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
@@ -736,10 +750,10 @@ fn serialize_int() {
     let drp1 = DRP::new(PBA::new(0, 256), Compression::ZstdL9NoShuffle,
                         16000, 8000, 0x1a7ebabe);
     let children = vec![
-        IntElem::new(0u32, TreePtr::Addr(drp0)),
-        IntElem::new(256u32, TreePtr::Addr(drp1)),
+        IntElem::new(0u32, 1..9, TreePtr::Addr(drp0)),
+        IntElem::new(256u32, 2..8, TreePtr::Addr(drp1)),
     ];
-    let node_data = NodeData::Int(IntData{children});
+    let node_data = NodeData::Int(IntData::new(children));
     let node: Node<DRP, u32, u32> = Node(RwLock::new(node_data));
     let (db, _dbs) = Arc::new(node).serialize();
     assert_eq!(&expected[..], &db[..]);

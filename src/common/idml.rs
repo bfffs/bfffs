@@ -309,6 +309,10 @@ impl DML for IDML {
                 .and_then(move |(_, _)| self.ddml.sync_all())
         )
     }
+
+    fn txg(&self) -> TxgT {
+        unimplemented!()
+    }
 }
 
 // LCOV_EXCL_START
@@ -354,6 +358,7 @@ mod t {
             .called_once()
             .with(passes(move |key: &*const DRP| unsafe {**key == drp}))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -370,7 +375,8 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let cache = Cache::new();
-        let ddml = DDML::new();
+        let mut ddml = DDML::new();
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -396,7 +402,8 @@ mod t {
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
-        let ddml = DDML::new();
+        let mut ddml = DDML::new();
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
@@ -415,7 +422,8 @@ mod t {
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
-        let ddml = DDML::new();
+        let mut ddml = DDML::new();
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
@@ -453,6 +461,7 @@ mod t {
                 let dbs = Box::new(DivBufShared::from(vec![0u8; 4096]));
                 Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
             });
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -467,7 +476,8 @@ mod t {
         let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100,
                             freed_blocks: 50};
         let cache = Cache::new();
-        let ddml = DDML::new();
+        let mut ddml = DDML::new();
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -529,6 +539,7 @@ mod t {
             .returning(move |(buf, _)|
                        (drp1, Box::new(future::ok::<DivBufShared, Error>(buf)))
             );
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -567,6 +578,7 @@ mod t {
             .returning(move |(buf, _)|
                        (drp1, Box::new(future::ok::<DivBufShared, Error>(buf)))
             );
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -601,6 +613,7 @@ mod t {
             .returning(|_| {
                 Box::new(future::ok::<(), Error>(()))
             });
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -626,7 +639,8 @@ mod t {
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
-        let ddml = DDML::new();
+        let mut ddml = DDML::new();
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -660,6 +674,7 @@ mod t {
                 let dbs = DivBufShared::from(vec![42u8; 4096]);
                 Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(dbs)))
             });
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -691,6 +706,7 @@ mod t {
                 let dbs = Box::new(DivBufShared::from(vec![42u8; 4096]));
                 Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
             });
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -723,6 +739,7 @@ mod t {
             .returning(move |(buf, _)|
                        (drp, Box::new(future::ok::<DivBufShared, Error>(buf)))
             );
+        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();

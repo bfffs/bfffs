@@ -326,6 +326,11 @@ impl<'a> Pool {
             })
     }
 
+    /// Get the currently active transaction group
+    pub fn txg(&self) -> TxgT {
+        *self.txg.borrow()
+    }
+
     /// Return the `Pool`'s UUID.
     pub fn uuid(&self) -> Uuid {
         self.uuid

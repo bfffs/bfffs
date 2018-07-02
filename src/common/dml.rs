@@ -83,5 +83,7 @@ pub trait DML {
 
     /// Sync all records written so far to stable storage.
     fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a>;
-}
 
+    /// Get the currently active transaction group
+    fn txg(&self) -> TxgT;
+}

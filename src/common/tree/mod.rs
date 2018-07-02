@@ -349,6 +349,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         // Then, try to steal keys from the right sibling
         // Then, try to merge with the left sibling
         // Then, try to steal keys from the left sibling
+        // TODO: adjust txg range when stealing keys
         let nchildren = parent.as_int().nchildren();
         let (fut, sib_idx, right) = {
             if child_idx < nchildren - 1 {
@@ -458,7 +459,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             let (new_key, new_node_data) = child.split();
             let new_node = Node::new(new_node_data);
             let new_ptr = TreePtr::Mem(Box::new(new_node));
-            let new_elem = IntElem::new(new_key, new_ptr);
+            // TODO: figure out correct txg range
+            let new_elem = IntElem::new(new_key, 0..42, new_ptr);
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
             self.insert_no_split(parent, k, v)
@@ -477,16 +479,12 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             let (new_key, new_node_data) = root.split();
             let new_node = Node::new(new_node_data);
             let new_ptr = TreePtr::Mem(Box::new(new_node));
-            let new_elem = IntElem::new(new_key, new_ptr);
-            let new_root_data = NodeData::Int(
-                IntData {
-                    children: vec![new_elem]
-                }
-            );
+            let new_elem = IntElem::new(new_key, 0..42, new_ptr);
+            let new_root_data = NodeData::Int( IntData::new(vec![new_elem]));
             let old_root_data = mem::replace(root.deref_mut(), new_root_data);
             let old_root_node = Node::new(old_root_data);
             let old_ptr = TreePtr::Mem(Box::new(old_root_node));
-            let old_elem = IntElem::new(K::min_value(), old_ptr );
+            let old_elem = IntElem::new(K::min_value(), 0..42, old_ptr );
             root.as_int_mut().children.insert(0, old_elem);
             self.i.height.fetch_add(1, Ordering::Relaxed);
         }
@@ -949,6 +947,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             _max_size: max_size,
             root: RwLock::new(
                 IntElem::new(K::min_value(),
+                    dml.txg()..dml.txg(),
                     TreePtr::Mem(
                         Box::new(
                             Node::new(
@@ -1377,7 +1376,9 @@ use tokio::runtime::current_thread;
 
 #[test]
 fn insert() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.insert(0, 0.0));
@@ -1390,6 +1391,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 42
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -1408,6 +1412,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -1425,6 +1432,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -1444,16 +1454,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1462,6 +1481,9 @@ root:
                               1: 1.0
                               2: 2.0
                     - key: 3
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1470,6 +1492,9 @@ root:
                               4: 4.0
                               5: 5.0
                     - key: 6
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1478,11 +1503,17 @@ root:
                               7: 7.0
                               8: 8.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1491,6 +1522,9 @@ root:
                               10: 10.0
                               11: 11.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1499,6 +1533,9 @@ root:
                               13: 13.0
                               14: 14.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1507,6 +1544,9 @@ root:
                               16: 16.0
                               17: 17.0
                     - key: 18
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1515,6 +1555,9 @@ root:
                               19: 19.0
                               20: 20.0
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1533,16 +1576,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1551,6 +1603,9 @@ root:
                               1: 1.0
                               2: 2.0
                     - key: 3
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1559,6 +1614,9 @@ root:
                               4: 4.0
                               5: 5.0
                     - key: 6
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1567,11 +1625,17 @@ root:
                               7: 7.0
                               8: 8.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1580,6 +1644,9 @@ root:
                               10: 10.0
                               11: 11.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1588,6 +1655,9 @@ root:
                               13: 13.0
                               14: 14.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1596,11 +1666,17 @@ root:
                               16: 16.0
                               17: 17.0
           - key: 18
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 18
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1609,6 +1685,9 @@ root:
                               19: 19.0
                               20: 20.0
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1631,11 +1710,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1644,6 +1729,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1665,11 +1753,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1678,6 +1772,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1686,6 +1783,9 @@ root:
                     4: 4.0
                     5: 5.0
           - key: 6
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1698,7 +1798,9 @@ root:
 /// Insert a key that splits the root IntNode
 #[test]
 fn insert_split_root_int() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 2
@@ -1707,11 +1809,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1720,6 +1828,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1728,6 +1839,9 @@ root:
                     4: 4.0
                     5: 5.0
           - key: 6
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1736,6 +1850,9 @@ root:
                     7: 7.0
                     8: 8.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1744,6 +1861,9 @@ root:
                     10: 10.0
                     11: 11.0
           - key: 12
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1763,16 +1883,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1781,6 +1910,9 @@ root:
                               1: 1.0
                               2: 2.0
                     - key: 3
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1789,6 +1921,9 @@ root:
                               4: 4.0
                               5: 5.0
                     - key: 6
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1797,11 +1932,17 @@ root:
                               7: 7.0
                               8: 8.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1810,6 +1951,9 @@ root:
                               10: 10.0
                               11: 11.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1832,6 +1976,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -1853,11 +2000,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1866,6 +2019,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1877,7 +2033,9 @@ root:
 
 #[test]
 fn get() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(future::lazy(|| {
@@ -1898,11 +2056,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1910,6 +2074,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -1924,7 +2091,9 @@ root:
 
 #[test]
 fn get_nonexistent() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.get(0));
@@ -1952,16 +2121,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 1
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1969,6 +2147,9 @@ root:
                               1: 1.0
                               2: 2.0
                     - key: 5
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1977,6 +2158,9 @@ root:
                               6: 6.0
                               7: 7.0
                     - key: 10
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1984,11 +2168,17 @@ root:
                               10: 10.0
                               11: 11.0
           - key: 15
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -1996,6 +2186,9 @@ root:
                               15: 15.0
                               16: 16.0
                     - key: 20
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2003,11 +2196,17 @@ root:
                               20: 20.0
                               25: 25.0
           - key: 30
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 31
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2015,6 +2214,9 @@ root:
                               31: 31.0
                               32: 32.0
                     - key: 37
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2035,11 +2237,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2047,6 +2255,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 5
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2056,6 +2267,9 @@ root:
                     7: 7.0
                     10: 10.0
           - key: 31
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2078,16 +2292,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 1
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2095,6 +2318,9 @@ root:
                               1: 1.0
                               2: 2.0
                     - key: 5
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2105,11 +2331,17 @@ root:
                               8: 8.0
                               9: 9.0
           - key: 15
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2117,6 +2349,9 @@ root:
                               15: 15.0
                               16: 16.0
                     - key: 20
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2124,11 +2359,17 @@ root:
                               20: 20.0
                               25: 25.0
           - key: 30
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 31
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2136,6 +2377,9 @@ root:
                               31: 31.0
                               32: 32.0
                     - key: 37
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2156,16 +2400,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 1
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2173,6 +2426,9 @@ root:
                               1: 1.0
                               2: 2.0
                     - key: 5
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2182,6 +2438,9 @@ root:
                               8: 8.0
                               9: 9.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2189,6 +2448,9 @@ root:
                               15: 15.0
                               16: 16.0
                     - key: 20
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2196,11 +2458,17 @@ root:
                               20: 20.0
                               25: 25.0
           - key: 30
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 31
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2208,6 +2476,9 @@ root:
                               31: 31.0
                               32: 32.0
                     - key: 37
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2228,11 +2499,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2240,6 +2517,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 4
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2250,6 +2530,9 @@ root:
                     7: 7.0
                     8: 8.0
           - key: 10
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2259,6 +2542,9 @@ root:
                     12: 12.0
                     13: 13.0
           - key: 20
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2280,11 +2566,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2292,6 +2584,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 4
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2302,6 +2597,9 @@ root:
                     12: 12.0
                     13: 13.0
           - key: 20
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2323,11 +2621,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2335,6 +2639,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 4
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2345,6 +2652,9 @@ root:
                     7: 7.0
                     8: 8.0
           - key: 10
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2354,6 +2664,9 @@ root:
                     12: 12.0
                     13: 13.0
           - key: 20
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2375,11 +2688,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2387,6 +2706,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 4
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2396,6 +2718,9 @@ root:
                     12: 12.0
                     13: 13.0
           - key: 20
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2417,16 +2742,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 1
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2434,6 +2768,9 @@ root:
                               1: 1.0
                               2: 2.0
                     - key: 4
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2444,6 +2781,9 @@ root:
                               7: 7.0
                               8: 8.0
                     - key: 10
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2465,11 +2805,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2477,6 +2823,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 4
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2485,6 +2834,9 @@ root:
                     7: 7.0
                     8: 8.0
           - key: 10
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2506,11 +2858,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2518,6 +2876,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 4
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2527,6 +2888,9 @@ root:
                     6: 6.0
                     7: 7.0
           - key: 10
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2547,11 +2911,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2559,6 +2929,9 @@ root:
                     1: 1.0
                     2: 2.0
           - key: 4
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2581,16 +2954,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 1
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2598,6 +2980,9 @@ root:
                               1: 1.0
                               2: 2.0
                     - key: 4
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2606,6 +2991,9 @@ root:
                               5: 5.0
                               6: 6.0
                     - key: 7
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2613,6 +3001,9 @@ root:
                               7: 7.0
                               8: 8.0
                     - key: 10
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2620,11 +3011,17 @@ root:
                               10: 10.0
                               11: 11.0
           - key: 15
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 20
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2633,6 +3030,9 @@ root:
                               21: 21.0
                               22: 22.0
                     - key: 24
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2640,11 +3040,17 @@ root:
                               24: 24.0
                               26: 26.0
           - key: 30
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 30
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2652,6 +3058,9 @@ root:
                               30: 30.0
                               31: 31.0
                     - key: 40
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2672,16 +3081,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 1
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2689,6 +3107,9 @@ root:
                               1: 1.0
                               2: 2.0
                     - key: 4
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2697,6 +3118,9 @@ root:
                               5: 5.0
                               6: 6.0
                     - key: 7
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2704,11 +3128,17 @@ root:
                               7: 7.0
                               8: 8.0
           - key: 15
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 20
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2717,6 +3147,9 @@ root:
                               21: 21.0
                               22: 22.0
                     - key: 24
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2724,6 +3157,9 @@ root:
                               24: 24.0
                               26: 26.0
                     - key: 30
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2731,6 +3167,9 @@ root:
                               30: 30.0
                               31: 31.0
                     - key: 40
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2751,11 +3190,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2764,6 +3209,9 @@ root:
                     2: 2.0
                     3: 3.0
           - key: 4
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2772,6 +3220,9 @@ root:
                     5: 5.0
                     6: 6.0
           - key: 10
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2779,6 +3230,9 @@ root:
                     10: 10.0
                     11: 11.0
           - key: 20
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2800,11 +3254,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 1
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2813,6 +3273,9 @@ root:
                     2: 2.0
                     3: 3.0
           - key: 20
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2835,11 +3298,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2847,6 +3316,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2872,11 +3344,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2884,6 +3362,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2918,6 +3399,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -2947,6 +3431,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -2976,11 +3463,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -2988,6 +3481,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3014,16 +3510,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3031,11 +3536,17 @@ root:
                               0: 0.0
                               1: 1.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3062,11 +3573,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3074,6 +3591,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3100,11 +3620,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3112,6 +3638,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3138,6 +3667,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -3155,6 +3687,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -3172,6 +3707,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -3191,6 +3729,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -3210,11 +3751,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3234,6 +3781,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -3253,16 +3803,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3270,6 +3829,9 @@ root:
                               0: 0.0
                               1: 1.0
                     - key: 3
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3277,6 +3839,9 @@ root:
                               3: 3.0
                               4: 4.0
                     - key: 6
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3284,11 +3849,17 @@ root:
                               6: 6.0
                               7: 7.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3296,6 +3867,9 @@ root:
                               9: 9.0
                               10: 10.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3303,6 +3877,9 @@ root:
                               12: 12.0
                               13: 13.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3310,11 +3887,17 @@ root:
                               15: 15.0
                               16: 16.0
           - key: 18
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 18
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3322,6 +3905,9 @@ root:
                               18: 18.0
                               19: 19.0
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3340,16 +3926,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3357,6 +3952,9 @@ root:
                               0: 0.0
                               1: 1.0
                     - key: 3
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3364,6 +3962,9 @@ root:
                               3: 3.0
                               4: 4.0
                     - key: 6
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3371,11 +3972,17 @@ root:
                               6: 6.0
                               7: 7.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3383,6 +3990,9 @@ root:
                               9: 9.0
                               10: 10.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3390,6 +4000,9 @@ root:
                               12: 12.0
                               13: 13.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3397,6 +4010,9 @@ root:
                               15: 15.0
                               16: 16.0
                     - key: 18
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3404,6 +4020,9 @@ root:
                               18: 18.0
                               19: 19.0
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3423,16 +4042,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3440,6 +4068,9 @@ root:
                               0: 0.0
                               1: 1.0
                     - key: 2
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3448,11 +4079,17 @@ root:
                               3: 3.0
                               4: 4.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3460,6 +4097,9 @@ root:
                               9: 9.0
                               10: 10.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3467,6 +4107,9 @@ root:
                               12: 12.0
                               13: 13.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3474,11 +4117,17 @@ root:
                               15: 15.0
                               16: 16.0
           - key: 18
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 18
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3486,6 +4135,9 @@ root:
                               18: 18.0
                               19: 19.0
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3503,16 +4155,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3520,6 +4181,9 @@ root:
                               0: 0.0
                               1: 1.0
                     - key: 2
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3527,6 +4191,9 @@ root:
                               2: 2.0
                               3: 3.0
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3534,6 +4201,9 @@ root:
                               9: 9.0
                               10: 10.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3541,6 +4211,9 @@ root:
                               12: 12.0
                               13: 13.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3548,11 +4221,17 @@ root:
                               15: 15.0
                               16: 16.0
           - key: 18
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 18
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3560,6 +4239,9 @@ root:
                               18: 18.0
                               19: 19.0
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3579,11 +4261,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3591,6 +4279,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3598,6 +4289,9 @@ root:
                     3: 3.0
                     4: 4.0
           - key: 5
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3616,11 +4310,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3628,6 +4328,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3648,11 +4351,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3660,6 +4369,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3667,6 +4379,9 @@ root:
                     3: 3.0
                     4: 4.0
           - key: 5
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3686,11 +4401,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3698,6 +4419,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3719,16 +4443,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3736,6 +4469,9 @@ root:
                               0: 0.0
                               1: 1.0
                     - key: 2
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3743,11 +4479,17 @@ root:
                               2: 2.0
                               3: 3.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3755,6 +4497,9 @@ root:
                               9: 9.0
                               10: 10.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3762,6 +4507,9 @@ root:
                               12: 12.0
                               13: 13.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3769,6 +4517,9 @@ root:
                               15: 15.0
                               16: 16.0
                     - key: 17
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3776,6 +4527,9 @@ root:
                               17: 17.0
                               18: 18.0
                     - key: 19
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3783,11 +4537,17 @@ root:
                               19: 19.0
                               20: 20.0
           - key: 21
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3795,6 +4555,9 @@ root:
                               21: 21.0
                               22: 22.0
                     - key: 24
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3813,16 +4576,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3830,6 +4602,9 @@ root:
                               0: 0.0
                               1: 1.0
                     - key: 2
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3837,11 +4612,17 @@ root:
                               2: 2.0
                               3: 3.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3849,6 +4630,9 @@ root:
                               9: 9.0
                               10: 10.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3856,6 +4640,9 @@ root:
                               12: 12.0
                               13: 13.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3863,6 +4650,9 @@ root:
                               15: 15.0
                               16: 16.0
                     - key: 17
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3870,11 +4660,17 @@ root:
                               17: 17.0
                               18: 18.0
           - key: 19
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 19
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3882,6 +4678,9 @@ root:
                               19: 19.0
                               20: 20.0
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3889,6 +4688,9 @@ root:
                               21: 21.0
                               22: 22.0
                     - key: 24
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3908,16 +4710,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3925,6 +4736,9 @@ root:
                               0: 0.0
                               1: 1.0
                     - key: 2
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3932,11 +4746,17 @@ root:
                               2: 2.0
                               3: 3.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3944,6 +4764,9 @@ root:
                               9: 9.0
                               10: 10.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3952,11 +4775,17 @@ root:
                               13: 13.0
                               14: 14.0
           - key: 15
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3964,6 +4793,9 @@ root:
                               15: 15.0
                               16: 16.0
                     - key: 17
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3971,6 +4803,9 @@ root:
                               17: 17.0
                               18: 18.0
                     - key: 19
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3978,6 +4813,9 @@ root:
                               19: 19.0
                               20: 20.0
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -3985,6 +4823,9 @@ root:
                               21: 21.0
                               22: 22.0
                     - key: 24
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4002,16 +4843,25 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4019,6 +4869,9 @@ root:
                               0: 0.0
                               1: 1.0
                     - key: 2
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4026,11 +4879,17 @@ root:
                               2: 2.0
                               3: 3.0
           - key: 9
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4038,6 +4897,9 @@ root:
                               9: 9.0
                               10: 10.0
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4045,6 +4907,9 @@ root:
                               12: 12.0
                               13: 13.0
                     - key: 15
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4052,11 +4917,17 @@ root:
                               15: 15.0
                               16: 16.0
           - key: 17
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 17
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4064,6 +4935,9 @@ root:
                               17: 17.0
                               18: 18.0
                     - key: 19
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4071,6 +4945,9 @@ root:
                               19: 19.0
                               20: 20.0
                     - key: 21
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4078,6 +4955,9 @@ root:
                               21: 21.0
                               22: 22.0
                     - key: 24
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4097,11 +4977,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4109,6 +4995,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 2
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4119,6 +5008,9 @@ root:
                     5: 5.0
                     6: 6.0
           - key: 8
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4137,11 +5029,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4149,6 +5047,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 2
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4158,6 +5059,9 @@ root:
                     4: 4.0
                     5: 5.0
           - key: 6
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4177,11 +5081,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4189,6 +5099,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4196,6 +5109,9 @@ root:
                     3: 3.0
                     4: 4.0
           - key: 5
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4217,11 +5133,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4229,6 +5151,9 @@ root:
                     0: 0.0
                     1: 1.0
           - key: 3
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4236,6 +5161,9 @@ root:
                     3: 3.0
                     5: 5.0
           - key: 6
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4248,7 +5176,9 @@ root:
 
 #[test]
 fn remove_nonexistent() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.remove(3));
@@ -4273,11 +5203,10 @@ fn basic() {
     let drpl0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 0, 0, 0);
     let drpl1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 0, 0, 0);
     let children0 = vec![
-        IntElem::new(0u32, TreePtr::Addr(drpl0)),
-        IntElem::new(2u32, TreePtr::Addr(drpl1)),
+        IntElem::new(0u32, 0..9, TreePtr::Addr(drpl0)),
+        IntElem::new(2u32, 0..9, TreePtr::Addr(drpl1)),
     ];
-    let in0 = Arc::new(Node::new(NodeData::Int(IntData{children: children0}))
-    );
+    let in0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
     let drpi0 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 0, 0, 0);
 
     // On-disk internal node with children both in and outside of target zone
@@ -4285,18 +5214,17 @@ fn basic() {
     let drpl3 = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
     // We must make two copies of in1, one for DDMLMock::get and one for ::pop
     let children1 = vec![
-        IntElem::new(4u32, TreePtr::Addr(drpl2)),
-        IntElem::new(6u32, TreePtr::Addr(drpl3)),
+        IntElem::new(4u32, 0..9, TreePtr::Addr(drpl2)),
+        IntElem::new(6u32, 0..9, TreePtr::Addr(drpl3)),
     ];
     let children1_c = vec![
-        IntElem::new(4u32, TreePtr::Addr(drpl2)),
-        IntElem::new(6u32, TreePtr::Addr(drpl3)),
+        IntElem::new(4u32, 0..9, TreePtr::Addr(drpl2)),
+        IntElem::new(6u32, 0..9, TreePtr::Addr(drpl3)),
     ];
-    let in1 = Arc::new(Node::new(NodeData::Int(IntData{children: children1}))
-    );
+    let in1 = Arc::new(Node::new(NodeData::Int(IntData::new(children1))));
     let mut in1_c = Some(Arc::new(Node::new(
-                NodeData::Int(IntData{children: children1_c}))
-    ));
+                NodeData::Int(IntData::new(children1_c))
+    )));
     let drpi1 = DRP::new(PBA{cluster: 0, lba: 4}, Compression::None, 0, 0, 0);
 
     let mut ld3 = LeafData::new();
@@ -4309,17 +5237,17 @@ fn basic() {
     let drpl5 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
     // We must make two copies of in2, one for DDMLMock::get and one for ::pop
     let children2 = vec![
-        IntElem::new(8u32, TreePtr::Addr(drpl4)),
-        IntElem::new(10u32, TreePtr::Addr(drpl5)),
+        IntElem::new(8u32, 0..9, TreePtr::Addr(drpl4)),
+        IntElem::new(10u32, 0..9, TreePtr::Addr(drpl5)),
     ];
     let children2_c = vec![
-        IntElem::new(8u32, TreePtr::Addr(drpl4)),
-        IntElem::new(10u32, TreePtr::Addr(drpl5)),
+        IntElem::new(8u32, 0..9, TreePtr::Addr(drpl4)),
+        IntElem::new(10u32, 0..9, TreePtr::Addr(drpl5)),
     ];
-    let in2 = Arc::new(Node::new(NodeData::Int(IntData{children: children2})));
+    let in2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
     let mut in2_c = Some(Arc::new(Node::new(
-                NodeData::Int(IntData{children: children2_c}))
-    ));
+                NodeData::Int(IntData::new(children2_c))
+    )));
     let drpi2 = DRP::new(PBA{cluster: 0, lba: 101}, Compression::None, 0, 0, 0);
 
     // On-disk leaf node in the target zone
@@ -4386,11 +5314,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Addr:
                 pba:
@@ -4401,6 +5335,9 @@ root:
                 csize: 0
                 checksum: 0
           - key: 4
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Addr:
                 pba:
@@ -4411,6 +5348,9 @@ root:
                 csize: 0
                 checksum: 0
           - key: 8
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Addr:
                 pba:
@@ -4421,11 +5361,17 @@ root:
                 csize: 0
                 checksum: 0
           - key: 12
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:  # In-memory Int node with a child in the target zone
                 Int:
                   children:
                     - key: 12
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -4433,6 +5379,9 @@ root:
                               6: 6.0
                               7: 7.0
                     - key: 16
+                      txgs:
+                        start: 0
+                        end: 42
                       ptr:
                         Addr:
                           pba:
@@ -4458,18 +5407,18 @@ fn dirty_root() {
     let drpl1 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
     // We must make two copies of inr, one for DDMLMock::get and one for ::pop
     let children = vec![
-        IntElem::new(8u32, TreePtr::Addr(drpl0)),
-        IntElem::new(10u32, TreePtr::Addr(drpl1)),
+        IntElem::new(8u32, 0..9, TreePtr::Addr(drpl0)),
+        IntElem::new(10u32, 0..9, TreePtr::Addr(drpl1)),
     ];
     let children_c = vec![
-        IntElem::new(8u32, TreePtr::Addr(drpl0)),
-        IntElem::new(10u32, TreePtr::Addr(drpl1)),
+        IntElem::new(8u32, 0..9, TreePtr::Addr(drpl0)),
+        IntElem::new(10u32, 0..9, TreePtr::Addr(drpl1)),
     ];
     let inr = Arc::new(Node::<DRP, u32, f32>::new(
-            NodeData::Int(IntData{children: children})));
+            NodeData::Int(IntData::new(children))));
     let mut inr_c = Some(Arc::new(Node::<DRP, u32, f32>::new(
-                NodeData::Int(IntData{children: children_c}))
-    ));
+                NodeData::Int(IntData::new(children_c))
+    )));
     let drpir = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
 
     let mut mock = DDMLMock::new();
@@ -4502,6 +5451,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Addr:
       pba:
@@ -4558,11 +5510,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Addr:
                 pba:
@@ -4573,6 +5531,9 @@ root:
                 csize: 36
                 checksum: 0
           - key: 256
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Addr:
                 pba:
@@ -4595,17 +5556,26 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
                   items:
                     0: 0
           - key: 256
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Addr:
                 pba:
@@ -4643,6 +5613,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Addr:
       pba:
@@ -4665,6 +5638,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:
@@ -4745,6 +5721,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Addr:
       pba:
@@ -4770,10 +5749,10 @@ fn read_int() {
     let drp0 = DRP::random(Compression::None, 40000);
     let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 16000);
     let children = vec![
-        IntElem::new(0u32, TreePtr::Addr(drp0)),
-        IntElem::new(256u32, TreePtr::Addr(drp1)),
+        IntElem::new(0u32, 0..9, TreePtr::Addr(drp0)),
+        IntElem::new(256u32, 0..9, TreePtr::Addr(drp1)),
     ];
-    let node = Arc::new(Node::new(NodeData::Int(IntData{children})));
+    let node = Arc::new(Node::new(NodeData::Int(IntData::new(children))));
     let drpl = DRP::new(PBA{cluster: 1, lba: 2}, Compression::None, 36, 36, 0);
     let mut mock = DDMLMock::new();
     mock.expect_get::<Arc<Node<DRP, u32, u32>>>()
@@ -4795,6 +5774,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Addr:
       pba:
@@ -4848,6 +5830,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Addr:
       pba:
@@ -4876,6 +5861,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Addr:
       pba:
@@ -4926,11 +5914,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -4938,6 +5932,9 @@ root:
                     0: 100
                     1: 200
           - key: 256
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Addr:
                 pba:
@@ -4979,11 +5976,17 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Int:
         children:
           - key: 0
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Addr:
                 pba:
@@ -4994,6 +5997,9 @@ root:
                 csize: 40000
                 checksum: 0xdeadbeef
           - key: 256
+            txgs:
+              start: 0
+              end: 42
             ptr:
               Addr:
                 pba:
@@ -5032,6 +6038,9 @@ max_fanout: 5
 _max_size: 4194304
 root:
   key: 0
+  txgs:
+    start: 0
+    end: 42
   ptr:
     Mem:
       Leaf:

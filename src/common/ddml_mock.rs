@@ -1,4 +1,5 @@
 // LCOV_EXCL_START
+use common::TxgT;
 use common::dml::*;
 use common::ddml::*;
 use futures::Future;
@@ -116,6 +117,11 @@ impl DDMLMock {
         self.e.then();
         self
     }
+
+    pub fn expect_txg(&mut self) -> Method<(), TxgT> {
+        self.e.expect::<(), TxgT>("txg")
+    }
+
 }
 
 #[cfg(test)]
@@ -158,6 +164,10 @@ impl DML for DDMLMock {
     fn sync_all(&self) -> Box<Future<Item=(), Error=Error>> {
         self.e.was_called_returning::<(), Box<Future<Item=(), Error=Error>>>
             ("sync_all", ())
+    }
+
+    fn txg(&self) -> TxgT {
+        self.e.was_called_returning::<(), TxgT>("txg", ())
     }
 }
 // LCOV_EXCL_STOP
