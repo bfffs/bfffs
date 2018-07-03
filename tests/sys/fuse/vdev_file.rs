@@ -79,7 +79,7 @@ test_suite! {
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.read_at(rbuf, 4)
         })));
-        assert_eq!(dbs.try().unwrap(), wbuf[..]);
+        assert_eq!(&dbs.try().unwrap()[..], &wbuf[..]);
     }
 
     test readv_at() {
@@ -103,7 +103,7 @@ test_suite! {
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.readv_at(rbufs, 4)
         })));
-        assert_eq!(dbs.try().unwrap(), wbuf[..]);
+        assert_eq!(&dbs.try().unwrap()[..], &wbuf[..]);
     }
 
     test write_at(vdev) {

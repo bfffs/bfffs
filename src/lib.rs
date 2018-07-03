@@ -26,6 +26,9 @@ extern crate metrohash;
 extern crate modulo;
 #[cfg(test)]
 extern crate permutohedron;
+#[cfg(test)]
+#[macro_use]
+extern crate pretty_assertions;
 extern crate nix;
 #[cfg(test)]
 extern crate rand;
