@@ -44,7 +44,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 40
+    start: 30
     end: 42
   ptr:
     Mem:
@@ -80,6 +80,243 @@ root:
     assert!(r.is_ok());
     let root_elem = tree.i.root.get_mut().unwrap();
     assert_eq!(root_elem.txgs, 41..43);
+}
+
+/// Remove a key that merges two int nodes
+#[test]
+fn merge() {
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let mut ld1 = LeafData::new();
+    ld1.insert(2, 2.0);
+    ld1.insert(3, 3.0);
+    ld1.insert(4, 4.0);
+    let drpl1 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None,
+                         16000, 8000, 1);
+    let ln1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
+    let holder1 = RefCell::new(Some(ln1));
+    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
+        .called_once()
+        .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl1} ))
+        .returning(move |_| {
+            // XXX simulacrum can't return a uniquely owned object in an
+            // expectation, so we must hack it with RefCell<Option<T>>
+            // https://github.com/pcsm/simulacrum/issues/52
+            let res = Box::new(holder1.borrow_mut().take().unwrap());
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+        });
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 20
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 30
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      txgs:
+                        start: 30
+                        end: 31
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 1
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 2
+                      txgs:
+                        start: 31
+                        end: 32
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 2
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+          - key: 9
+            txgs:
+              start: 20
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 3
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 12
+                      txgs:
+                        start: 20
+                        end: 21
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 4
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 15
+                      txgs:
+                        start: 24
+                        end: 25
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 5
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+          - key: 18
+            txgs:
+              start: 15
+              end: 16
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 6
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 1"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(4));
+    assert!(r2.is_ok());
+    println!("{}", &tree);
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 20
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 20
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      txgs:
+                        start: 30
+                        end: 31
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 1
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 2
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              2: 2.0
+                              3: 3.0
+                    - key: 9
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 3
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 12
+                      txgs:
+                        start: 20
+                        end: 21
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 4
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 15
+                      txgs:
+                        start: 24
+                        end: 25
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 5
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+          - key: 18
+            txgs:
+              start: 15
+              end: 16
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 6
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 1"#);
 }
 
 /// Insert a key that splits the root IntNode

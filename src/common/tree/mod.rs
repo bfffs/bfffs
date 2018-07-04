@@ -361,7 +361,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         fut.map(move |(mut parent, mut sibling)| {
             let (before, after) = if right {
                 if child.can_merge(&sibling, self.i.max_fanout) {
-                    child.merge(sibling);
+                    let child_txgs = child.merge(sibling, self.dml.txg());
+                    parent.as_int_mut().children[child_idx].txgs = child_txgs;
                     parent.as_int_mut().children.remove(sib_idx);
                     (0, 1)
                 } else {
@@ -371,7 +372,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 }
             } else {
                 if sibling.can_merge(&child, self.i.max_fanout) {
-                    sibling.merge(child);
+                    let sibling_txgs = sibling.merge(child, self.dml.txg());
+                    parent.as_int_mut().children[sib_idx].txgs = sibling_txgs;
                     parent.as_int_mut().children.remove(child_idx);
                     (1, 0)
                 } else {
