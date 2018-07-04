@@ -441,8 +441,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         self.write()
             .and_then(move |guard| {
                 self.xlock_root(guard)
-                     .and_then(move |(_root_guard, child_guard)| {
-                         self.insert_locked(child_guard, k, v)
+                     .and_then(move |(root_guard, child_guard)| {
+                         self.insert_locked(root_guard, child_guard, k, v)
                      })
             })
     }
@@ -456,56 +456,67 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
 
         // First, split the node, if necessary
         if (*child).should_split(self.i.max_fanout) {
-            let (new_key, new_node_data) = child.split();
-            let new_node = Node::new(new_node_data);
-            let new_ptr = TreePtr::Mem(Box::new(new_node));
-            // TODO: figure out correct txg range
-            let new_elem = IntElem::new(new_key, 0..42, new_ptr);
+            let (old_txgs, new_elem) = child.split(self.dml.txg());
+            parent.as_int_mut().children[child_idx].txgs = old_txgs;
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
-            self.insert_no_split(parent, k, v)
+            Box::new(self.insert_int_no_split(parent, k, v))
         } else {
-            drop(parent);
-            self.insert_no_split(child, k, v)
+            if child.is_leaf() {
+                let elem = &mut parent.as_int_mut().children[child_idx];
+                Box::new(self.insert_leaf_no_split( elem, child, k, v))
+            } else {
+                drop(parent);
+                Box::new(self.insert_int_no_split(child, k, v))
+            }
         }
+    }
+
+    /// Insert a value into a leaf node without splitting it
+    fn insert_leaf_no_split(&'a self, elem: &mut IntElem<A, K, V>,
+                  mut child: TreeWriteGuard<A, K, V>, k: K, v: V)
+        -> impl Future<Item=Option<V>, Error=Error> + 'a
+    {
+        let old_v = child.as_leaf_mut().insert(k, v);
+        let txg = self.dml.txg();
+        elem.txgs = txg..txg + 1;
+        return Ok(old_v).into_future()
     }
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
-    fn insert_locked(&'a self, mut root: TreeWriteGuard<A, K, V>, k: K, v: V)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
-
+    fn insert_locked(&'a self, mut relem: RwLockWriteGuard<IntElem<A, K, V>>,
+                     mut rnode: TreeWriteGuard<A, K, V>, k: K, v: V)
+        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+    {
         // First, split the root node, if necessary
-        if root.should_split(self.i.max_fanout) {
-            let (new_key, new_node_data) = root.split();
-            let new_node = Node::new(new_node_data);
-            let new_ptr = TreePtr::Mem(Box::new(new_node));
-            let new_elem = IntElem::new(new_key, 0..42, new_ptr);
+        if rnode.should_split(self.i.max_fanout) {
+            let (old_txgs, new_elem) = rnode.split(self.dml.txg());
             let new_root_data = NodeData::Int( IntData::new(vec![new_elem]));
-            let old_root_data = mem::replace(root.deref_mut(), new_root_data);
+            let old_root_data = mem::replace(rnode.deref_mut(), new_root_data);
             let old_root_node = Node::new(old_root_data);
             let old_ptr = TreePtr::Mem(Box::new(old_root_node));
-            let old_elem = IntElem::new(K::min_value(), 0..42, old_ptr );
-            root.as_int_mut().children.insert(0, old_elem);
+            let old_elem = IntElem::new(K::min_value(), old_txgs, old_ptr );
+            rnode.as_int_mut().children.insert(0, old_elem);
             self.i.height.fetch_add(1, Ordering::Relaxed);
         }
 
-        self.insert_no_split(root, k, v)
+        if rnode.is_leaf() {
+            Box::new(self.insert_leaf_no_split(&mut *relem, rnode, k, v))
+        } else {
+            drop(relem);
+            Box::new(self.insert_int_no_split(rnode, k, v))
+        }
     }
 
-    fn insert_no_split(&'a self, mut node: TreeWriteGuard<A, K, V>, k: K, v: V)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+    /// Insert a value into an int node without splitting it
+    fn insert_int_no_split(&'a self, node: TreeWriteGuard<A, K, V>, k: K, v: V)
+        -> impl Future<Item=Option<V>, Error=Error> + 'a
     {
-        if node.is_leaf() {
-            let old_v = node.as_leaf_mut().insert(k, v);
-            return Box::new(Ok(old_v).into_future())
-        } else {
-            let child_idx = node.as_int().position(&k);
-            let fut = node.xlock(&*self.dml, child_idx);
-            Box::new(fut.and_then(move |(parent, child)| {
-                    self.insert_int(parent, child_idx, child, k, v)
-                })
-            )
-        }
+        let child_idx = node.as_int().position(&k);
+        let fut = node.xlock(&*self.dml, child_idx);
+        fut.and_then(move |(parent, child)| {
+                self.insert_int(parent, child_idx, child, k, v)
+        })
     }
 
     /// Lookup the value of key `k`.  Return `None` if no value is present.
@@ -941,13 +952,15 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     fn new(dml: Arc<D>, min_fanout: usize, max_fanout: usize,
            max_size: usize) -> Self
     {
+        // Since there are no on-disk children, the initial TXG range is empty
+        let txgs = 0..0;
         let i: Inner<A, K, V> = Inner {
             height: AtomicUsize::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
             root: RwLock::new(
                 IntElem::new(K::min_value(),
-                    dml.txg()..dml.txg(),
+                    txgs,
                     TreePtr::Mem(
                         Box::new(
                             Node::new(
@@ -1027,6 +1040,16 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     /// Flush all in-memory Nodes to disk.
+    // Like range_delete, keep the entire Tree locked during flush.  That's
+    // because we need to write child nodes before we have valid addresses for
+    // their parents' child pointers.  It's also the only way to guarantee that
+    // the Tree will be completely clean by the time that flush returns.  Flush
+    // will probably only happen during TXG flush, which is once every few
+    // seconds.
+    //
+    // Alternatively, it would be possible to create a streaming flusher like
+    // RangeQuery that would descend through the tree multiple times, flushing a
+    // portion at each time.  But it wouldn't be able to guarantee a clean tree.
     pub fn flush(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
         self.write()
             .and_then(move |root_guard| {
@@ -1144,6 +1167,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         -> (Box<Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
                              TreeWriteGuard<A, K, V>), Error=Error> + 'a>)
     {
+        guard.txgs.end = self.dml.txg() + 1;
         if guard.ptr.is_mem() {
             Box::new(
                 guard.ptr.as_mem().0.write()
@@ -1393,7 +1417,7 @@ root:
   key: 0
   txgs:
     start: 42
-    end: 42
+    end: 43
   ptr:
     Mem:
       Leaf:
@@ -1403,7 +1427,9 @@ root:
 
 #[test]
 fn insert_dup() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
@@ -1433,8 +1459,8 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 42
+    end: 43
   ptr:
     Mem:
       Leaf:
@@ -1445,7 +1471,9 @@ root:
 /// Insert a key that splits a non-root interior node
 #[test]
 fn insert_split_int() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 3
@@ -1455,7 +1483,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -1463,7 +1491,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1471,7 +1499,7 @@ root:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1482,7 +1510,7 @@ root:
                               2: 2.0
                     - key: 3
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1493,7 +1521,7 @@ root:
                               5: 5.0
                     - key: 6
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1504,7 +1532,7 @@ root:
                               8: 8.0
           - key: 9
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1512,7 +1540,7 @@ root:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1523,7 +1551,7 @@ root:
                               11: 11.0
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1534,7 +1562,7 @@ root:
                               14: 14.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1545,7 +1573,7 @@ root:
                               17: 17.0
                     - key: 18
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1556,7 +1584,7 @@ root:
                               20: 20.0
                     - key: 21
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1577,15 +1605,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1593,7 +1621,7 @@ root:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1604,7 +1632,7 @@ root:
                               2: 2.0
                     - key: 3
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1615,7 +1643,7 @@ root:
                               5: 5.0
                     - key: 6
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1626,15 +1654,15 @@ root:
                               8: 8.0
           - key: 9
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1645,7 +1673,7 @@ root:
                               11: 11.0
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1656,7 +1684,7 @@ root:
                               14: 14.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1667,15 +1695,15 @@ root:
                               17: 17.0
           - key: 18
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 18
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1686,8 +1714,8 @@ root:
                               20: 20.0
                     - key: 21
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 42
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -1701,7 +1729,9 @@ root:
 /// Insert a key that splits a non-root leaf node
 #[test]
 fn insert_split_leaf() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 2
@@ -1711,7 +1741,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -1719,7 +1749,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1730,7 +1760,7 @@ root:
                     2: 2.0
           - key: 3
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1754,15 +1784,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1773,8 +1803,8 @@ root:
                     2: 2.0
           - key: 3
             txgs:
-              start: 0
-              end: 42
+              start: 42
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -1784,8 +1814,8 @@ root:
                     5: 5.0
           - key: 6
             txgs:
-              start: 0
-              end: 42
+              start: 42
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -1810,7 +1840,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -1818,7 +1848,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1829,7 +1859,7 @@ root:
                     2: 2.0
           - key: 3
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1840,7 +1870,7 @@ root:
                     5: 5.0
           - key: 6
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1851,7 +1881,7 @@ root:
                     8: 8.0
           - key: 9
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1862,7 +1892,7 @@ root:
                     11: 11.0
           - key: 12
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -1884,23 +1914,23 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1911,7 +1941,7 @@ root:
                               2: 2.0
                     - key: 3
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1922,7 +1952,7 @@ root:
                               5: 5.0
                     - key: 6
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1933,15 +1963,15 @@ root:
                               8: 8.0
           - key: 9
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -1952,8 +1982,8 @@ root:
                               11: 11.0
                     - key: 12
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 42
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -1967,7 +1997,9 @@ root:
 /// Insert a key that splits the root leaf node
 #[test]
 fn insert_split_root_leaf() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
 height: 1
@@ -1977,7 +2009,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -2001,16 +2033,16 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
-              end: 42
+              start: 42
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -2020,8 +2052,8 @@ root:
                     2: 2.0
           - key: 3
             txgs:
-              start: 0
-              end: 42
+              start: 42
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -2091,8 +2123,7 @@ root:
 
 #[test]
 fn get_nonexistent() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -2112,7 +2143,9 @@ fn get_nonexistent() {
 //    nodes.
 #[test]
 fn range_delete() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -2122,7 +2155,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -2130,7 +2163,7 @@ root:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2138,7 +2171,7 @@ root:
                   children:
                     - key: 1
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2148,7 +2181,7 @@ root:
                               2: 2.0
                     - key: 5
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2159,7 +2192,7 @@ root:
                               7: 7.0
                     - key: 10
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2169,7 +2202,7 @@ root:
                               11: 11.0
           - key: 15
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2177,7 +2210,7 @@ root:
                   children:
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2187,7 +2220,7 @@ root:
                               16: 16.0
                     - key: 20
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2197,7 +2230,7 @@ root:
                               25: 25.0
           - key: 30
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2205,7 +2238,7 @@ root:
                   children:
                     - key: 31
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2215,7 +2248,7 @@ root:
                               32: 32.0
                     - key: 37
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2238,15 +2271,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2256,8 +2289,8 @@ root:
                     2: 2.0
           - key: 5
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -2268,8 +2301,8 @@ root:
                     10: 10.0
           - key: 31
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -2283,7 +2316,9 @@ root:
 // in the cut
 #[test]
 fn range_delete_danger() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -2293,7 +2328,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -2301,7 +2336,7 @@ root:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2309,7 +2344,7 @@ root:
                   children:
                     - key: 1
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2319,7 +2354,7 @@ root:
                               2: 2.0
                     - key: 5
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2332,7 +2367,7 @@ root:
                               9: 9.0
           - key: 15
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2340,7 +2375,7 @@ root:
                   children:
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2350,7 +2385,7 @@ root:
                               16: 16.0
                     - key: 20
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2360,7 +2395,7 @@ root:
                               25: 25.0
           - key: 30
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2368,7 +2403,7 @@ root:
                   children:
                     - key: 31
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2378,7 +2413,7 @@ root:
                               32: 32.0
                     - key: 37
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2401,23 +2436,23 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 1
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 1
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2427,8 +2462,8 @@ root:
                               2: 2.0
                     - key: 5
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 41
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -2439,7 +2474,7 @@ root:
                               9: 9.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2449,7 +2484,7 @@ root:
                               16: 16.0
                     - key: 20
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2459,7 +2494,7 @@ root:
                               25: 25.0
           - key: 30
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2467,7 +2502,7 @@ root:
                   children:
                     - key: 31
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2477,7 +2512,7 @@ root:
                               32: 32.0
                     - key: 37
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2490,7 +2525,9 @@ root:
 // Delete a range that's exclusive on the left and right
 #[test]
 fn range_delete_exc_exc() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -2500,7 +2537,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -2508,7 +2545,7 @@ root:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2518,7 +2555,7 @@ root:
                     2: 2.0
           - key: 4
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2531,7 +2568,7 @@ root:
                     8: 8.0
           - key: 10
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2543,7 +2580,7 @@ root:
                     13: 13.0
           - key: 20
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2567,15 +2604,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2585,8 +2622,8 @@ root:
                     2: 2.0
           - key: 4
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -2598,7 +2635,7 @@ root:
                     13: 13.0
           - key: 20
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2612,7 +2649,9 @@ root:
 // Delete a range that's exclusive on the left and inclusive on the right
 #[test]
 fn range_delete_exc_inc() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -2622,7 +2661,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -2630,7 +2669,7 @@ root:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2640,7 +2679,7 @@ root:
                     2: 2.0
           - key: 4
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2653,7 +2692,7 @@ root:
                     8: 8.0
           - key: 10
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2665,7 +2704,7 @@ root:
                     13: 13.0
           - key: 20
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2689,15 +2728,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2707,8 +2746,8 @@ root:
                     2: 2.0
           - key: 4
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -2719,7 +2758,7 @@ root:
                     13: 13.0
           - key: 20
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2733,7 +2772,9 @@ root:
 // Delete a range that's contained within a single LeafNode
 #[test]
 fn range_delete_single_node() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -2743,7 +2784,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -2751,7 +2792,7 @@ root:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2759,7 +2800,7 @@ root:
                   children:
                     - key: 1
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2769,7 +2810,7 @@ root:
                               2: 2.0
                     - key: 4
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2782,7 +2823,7 @@ root:
                               8: 8.0
                     - key: 10
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2806,15 +2847,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2824,8 +2865,8 @@ root:
                     2: 2.0
           - key: 4
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -2835,7 +2876,7 @@ root:
                     8: 8.0
           - key: 10
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2849,7 +2890,9 @@ root:
 // Delete a range that includes a whole Node at the end of the Tree
 #[test]
 fn range_delete_to_end() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -2859,7 +2902,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -2867,7 +2910,7 @@ root:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2877,7 +2920,7 @@ root:
                     2: 2.0
           - key: 4
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2889,7 +2932,7 @@ root:
                     7: 7.0
           - key: 10
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2912,15 +2955,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2930,8 +2973,8 @@ root:
                     2: 2.0
           - key: 4
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -2945,7 +2988,9 @@ root:
 // int node to its right
 #[test]
 fn range_delete_to_end_of_int_node() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -2955,7 +3000,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -2963,7 +3008,7 @@ root:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -2971,7 +3016,7 @@ root:
                   children:
                     - key: 1
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2981,7 +3026,7 @@ root:
                               2: 2.0
                     - key: 4
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -2992,7 +3037,7 @@ root:
                               6: 6.0
                     - key: 7
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3002,7 +3047,7 @@ root:
                               8: 8.0
                     - key: 10
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3012,7 +3057,7 @@ root:
                               11: 11.0
           - key: 15
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3020,7 +3065,7 @@ root:
                   children:
                     - key: 20
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3031,7 +3076,7 @@ root:
                               22: 22.0
                     - key: 24
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3041,7 +3086,7 @@ root:
                               26: 26.0
           - key: 30
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3049,7 +3094,7 @@ root:
                   children:
                     - key: 30
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3059,7 +3104,7 @@ root:
                               31: 31.0
                     - key: 40
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3073,6 +3118,9 @@ root:
         tree.range_delete(10..16)
     );
     assert!(r.is_ok());
+    // Ideally the leaf node with key 7 wouldn't have its end txg changed.
+    // However, range_delete is a 2-pass operation, and by the time that the 1st
+    // pass is done, the 2nd pass can't tell that that node wasn't modified.
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
@@ -3082,23 +3130,23 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 1
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 1
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3108,7 +3156,7 @@ root:
                               2: 2.0
                     - key: 4
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3119,8 +3167,8 @@ root:
                               6: 6.0
                     - key: 7
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 41
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -3129,16 +3177,16 @@ root:
                               8: 8.0
           - key: 15
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 20
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 41
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -3148,7 +3196,7 @@ root:
                               22: 22.0
                     - key: 24
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3158,7 +3206,7 @@ root:
                               26: 26.0
                     - key: 30
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3168,7 +3216,7 @@ root:
                               31: 31.0
                     - key: 40
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3181,7 +3229,9 @@ root:
 // Delete a range that includes only whole nodes
 #[test]
 fn range_delete_whole_nodes() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -3191,7 +3241,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -3199,7 +3249,7 @@ root:
         children:
           - key: 1
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3210,7 +3260,7 @@ root:
                     3: 3.0
           - key: 4
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3221,7 +3271,7 @@ root:
                     6: 6.0
           - key: 10
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3231,7 +3281,7 @@ root:
                     11: 11.0
           - key: 20
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3246,6 +3296,9 @@ root:
         tree.range_delete(4..20)
     );
     assert!(r.is_ok());
+    // Ideally the first leaf node wouldn't have its end txg changed.  However,
+    // range_delete is a 2-pass operation, and by the time that the 1st pass is
+    // done, the 2nd pass can't tell that that node wasn't modified.
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
@@ -3255,16 +3308,16 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 1
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -3274,7 +3327,7 @@ root:
                     3: 3.0
           - key: 20
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3658,7 +3711,9 @@ root:
 
 #[test]
 fn remove_last_key() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -3689,7 +3744,7 @@ root:
   key: 0
   txgs:
     start: 0
-    end: 42
+    end: 43
   ptr:
     Mem:
       Leaf:
@@ -3698,7 +3753,9 @@ root:
 
 #[test]
 fn remove_from_leaf() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 1
@@ -3708,7 +3765,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -3730,8 +3787,8 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Leaf:
@@ -3742,7 +3799,9 @@ root:
 
 #[test]
 fn remove_and_merge_down() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -3752,7 +3811,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -3760,7 +3819,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3782,8 +3841,8 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Leaf:
@@ -3794,7 +3853,9 @@ root:
 
 #[test]
 fn remove_and_merge_int_left() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -3804,7 +3865,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -3812,7 +3873,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3820,7 +3881,7 @@ root:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3830,7 +3891,7 @@ root:
                               1: 1.0
                     - key: 3
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3840,7 +3901,7 @@ root:
                               4: 4.0
                     - key: 6
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3850,7 +3911,7 @@ root:
                               7: 7.0
           - key: 9
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3858,7 +3919,7 @@ root:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3868,7 +3929,7 @@ root:
                               10: 10.0
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3878,7 +3939,7 @@ root:
                               13: 13.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3888,7 +3949,7 @@ root:
                               16: 16.0
           - key: 18
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3896,7 +3957,7 @@ root:
                   children:
                     - key: 18
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3906,7 +3967,7 @@ root:
                               19: 19.0
                     - key: 21
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3927,15 +3988,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -3943,7 +4004,7 @@ root:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3953,7 +4014,7 @@ root:
                               1: 1.0
                     - key: 3
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3963,7 +4024,7 @@ root:
                               4: 4.0
                     - key: 6
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3973,15 +4034,15 @@ root:
                               7: 7.0
           - key: 9
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -3991,7 +4052,7 @@ root:
                               10: 10.0
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4001,7 +4062,7 @@ root:
                               13: 13.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4011,7 +4072,7 @@ root:
                               16: 16.0
                     - key: 18
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4021,8 +4082,8 @@ root:
                               19: 19.0
                     - key: 21
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 41
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -4033,7 +4094,9 @@ root:
 
 #[test]
 fn remove_and_merge_int_right() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -4043,7 +4106,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -4051,7 +4114,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4059,7 +4122,7 @@ root:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4069,7 +4132,7 @@ root:
                               1: 1.0
                     - key: 2
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4080,7 +4143,7 @@ root:
                               4: 4.0
           - key: 9
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4088,7 +4151,7 @@ root:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4098,7 +4161,7 @@ root:
                               10: 10.0
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4108,7 +4171,7 @@ root:
                               13: 13.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4118,7 +4181,7 @@ root:
                               16: 16.0
           - key: 18
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4126,7 +4189,7 @@ root:
                   children:
                     - key: 18
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4136,7 +4199,7 @@ root:
                               19: 19.0
                     - key: 21
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4156,23 +4219,23 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4182,8 +4245,8 @@ root:
                               1: 1.0
                     - key: 2
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 41
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -4192,7 +4255,7 @@ root:
                               3: 3.0
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4202,7 +4265,7 @@ root:
                               10: 10.0
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4212,7 +4275,7 @@ root:
                               13: 13.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4222,7 +4285,7 @@ root:
                               16: 16.0
           - key: 18
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4230,7 +4293,7 @@ root:
                   children:
                     - key: 18
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4240,7 +4303,7 @@ root:
                               19: 19.0
                     - key: 21
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4252,7 +4315,9 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_left() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -4262,7 +4327,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -4270,7 +4335,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4280,7 +4345,7 @@ root:
                     1: 1.0
           - key: 3
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4290,7 +4355,7 @@ root:
                     4: 4.0
           - key: 5
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4311,15 +4376,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4329,8 +4394,8 @@ root:
                     1: 1.0
           - key: 3
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -4342,7 +4407,9 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_right() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -4352,7 +4419,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -4360,7 +4427,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4370,7 +4437,7 @@ root:
                     1: 1.0
           - key: 3
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4380,7 +4447,7 @@ root:
                     4: 4.0
           - key: 5
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4402,15 +4469,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4420,8 +4487,8 @@ root:
                     1: 1.0
           - key: 3
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -4434,7 +4501,9 @@ root:
 
 #[test]
 fn remove_and_steal_int_left() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -4444,7 +4513,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -4452,7 +4521,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4460,7 +4529,7 @@ root:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4470,7 +4539,7 @@ root:
                               1: 1.0
                     - key: 2
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4480,7 +4549,7 @@ root:
                               3: 3.0
           - key: 9
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4488,7 +4557,7 @@ root:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4498,7 +4567,7 @@ root:
                               10: 10.0
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4508,7 +4577,7 @@ root:
                               13: 13.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4518,7 +4587,7 @@ root:
                               16: 16.0
                     - key: 17
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4528,7 +4597,7 @@ root:
                               18: 18.0
                     - key: 19
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4538,7 +4607,7 @@ root:
                               20: 20.0
           - key: 21
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4546,7 +4615,7 @@ root:
                   children:
                     - key: 21
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4556,7 +4625,7 @@ root:
                               22: 22.0
                     - key: 24
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4577,15 +4646,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4593,7 +4662,7 @@ root:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4603,7 +4672,7 @@ root:
                               1: 1.0
                     - key: 2
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4613,15 +4682,15 @@ root:
                               3: 3.0
           - key: 9
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4631,7 +4700,7 @@ root:
                               10: 10.0
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4641,7 +4710,7 @@ root:
                               13: 13.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4651,7 +4720,7 @@ root:
                               16: 16.0
                     - key: 17
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4661,15 +4730,15 @@ root:
                               18: 18.0
           - key: 19
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 19
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4679,7 +4748,7 @@ root:
                               20: 20.0
                     - key: 21
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4689,8 +4758,8 @@ root:
                               22: 22.0
                     - key: 24
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 41
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -4701,7 +4770,9 @@ root:
 
 #[test]
 fn remove_and_steal_int_right() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
@@ -4711,7 +4782,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -4719,7 +4790,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4727,7 +4798,7 @@ root:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4737,7 +4808,7 @@ root:
                               1: 1.0
                     - key: 2
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4747,7 +4818,7 @@ root:
                               3: 3.0
           - key: 9
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4755,7 +4826,7 @@ root:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4765,7 +4836,7 @@ root:
                               10: 10.0
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4776,7 +4847,7 @@ root:
                               14: 14.0
           - key: 15
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4784,7 +4855,7 @@ root:
                   children:
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4794,7 +4865,7 @@ root:
                               16: 16.0
                     - key: 17
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4804,7 +4875,7 @@ root:
                               18: 18.0
                     - key: 19
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4814,7 +4885,7 @@ root:
                               20: 20.0
                     - key: 21
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4824,7 +4895,7 @@ root:
                               22: 22.0
                     - key: 24
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4844,15 +4915,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4860,7 +4931,7 @@ root:
                   children:
                     - key: 0
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4870,7 +4941,7 @@ root:
                               1: 1.0
                     - key: 2
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4880,15 +4951,15 @@ root:
                               3: 3.0
           - key: 9
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 9
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4898,8 +4969,8 @@ root:
                               10: 10.0
                     - key: 12
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 41
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -4908,7 +4979,7 @@ root:
                               13: 13.0
                     - key: 15
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4918,15 +4989,15 @@ root:
                               16: 16.0
           - key: 17
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Int:
                   children:
                     - key: 17
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4936,7 +5007,7 @@ root:
                               18: 18.0
                     - key: 19
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4946,7 +5017,7 @@ root:
                               20: 20.0
                     - key: 21
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4956,7 +5027,7 @@ root:
                               22: 22.0
                     - key: 24
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -4968,7 +5039,9 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_left() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -4978,7 +5051,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -4986,7 +5059,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -4996,7 +5069,7 @@ root:
                     1: 1.0
           - key: 2
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -5009,7 +5082,7 @@ root:
                     6: 6.0
           - key: 8
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -5030,15 +5103,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -5048,8 +5121,8 @@ root:
                     1: 1.0
           - key: 2
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -5060,8 +5133,8 @@ root:
                     5: 5.0
           - key: 6
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -5072,7 +5145,9 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_right() {
-    let ddml = Arc::new(DDMLMock::new());
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
@@ -5082,7 +5157,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -5090,7 +5165,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -5100,7 +5175,7 @@ root:
                     1: 1.0
           - key: 3
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -5110,7 +5185,7 @@ root:
                     4: 4.0
           - key: 5
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -5134,15 +5209,15 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -5152,8 +5227,8 @@ root:
                     1: 1.0
           - key: 3
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -5162,8 +5237,8 @@ root:
                     5: 5.0
           - key: 6
             txgs:
-              start: 0
-              end: 42
+              start: 41
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -5203,8 +5278,8 @@ fn basic() {
     let drpl0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 0, 0, 0);
     let drpl1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 0, 0, 0);
     let children0 = vec![
-        IntElem::new(0u32, 0..9, TreePtr::Addr(drpl0)),
-        IntElem::new(2u32, 0..9, TreePtr::Addr(drpl1)),
+        IntElem::new(0u32, 8..9, TreePtr::Addr(drpl0)),
+        IntElem::new(2u32, 8..9, TreePtr::Addr(drpl1)),
     ];
     let in0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
     let drpi0 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 0, 0, 0);
@@ -5214,12 +5289,12 @@ fn basic() {
     let drpl3 = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
     // We must make two copies of in1, one for DDMLMock::get and one for ::pop
     let children1 = vec![
-        IntElem::new(4u32, 0..9, TreePtr::Addr(drpl2)),
-        IntElem::new(6u32, 0..9, TreePtr::Addr(drpl3)),
+        IntElem::new(4u32, 8..9, TreePtr::Addr(drpl2)),
+        IntElem::new(6u32, 8..9, TreePtr::Addr(drpl3)),
     ];
     let children1_c = vec![
-        IntElem::new(4u32, 0..9, TreePtr::Addr(drpl2)),
-        IntElem::new(6u32, 0..9, TreePtr::Addr(drpl3)),
+        IntElem::new(4u32, 8..9, TreePtr::Addr(drpl2)),
+        IntElem::new(6u32, 8..9, TreePtr::Addr(drpl3)),
     ];
     let in1 = Arc::new(Node::new(NodeData::Int(IntData::new(children1))));
     let mut in1_c = Some(Arc::new(Node::new(
@@ -5237,12 +5312,12 @@ fn basic() {
     let drpl5 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
     // We must make two copies of in2, one for DDMLMock::get and one for ::pop
     let children2 = vec![
-        IntElem::new(8u32, 0..9, TreePtr::Addr(drpl4)),
-        IntElem::new(10u32, 0..9, TreePtr::Addr(drpl5)),
+        IntElem::new(8u32, 8..9, TreePtr::Addr(drpl4)),
+        IntElem::new(10u32, 8..9, TreePtr::Addr(drpl5)),
     ];
     let children2_c = vec![
-        IntElem::new(8u32, 0..9, TreePtr::Addr(drpl4)),
-        IntElem::new(10u32, 0..9, TreePtr::Addr(drpl5)),
+        IntElem::new(8u32, 8..9, TreePtr::Addr(drpl4)),
+        IntElem::new(10u32, 8..9, TreePtr::Addr(drpl5)),
     ];
     let in2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
     let mut in2_c = Some(Arc::new(Node::new(
@@ -5305,6 +5380,7 @@ fn basic() {
             let drp = DRP::random(Compression::None, 1024);
             (drp, Box::new(future::ok::<(), Error>(())))
         });
+    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -5315,7 +5391,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 8
     end: 42
   ptr:
     Mem:
@@ -5323,7 +5399,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 8
               end: 42
             ptr:
               Addr:
@@ -5336,7 +5412,7 @@ root:
                 checksum: 0
           - key: 4
             txgs:
-              start: 0
+              start: 8
               end: 42
             ptr:
               Addr:
@@ -5349,7 +5425,7 @@ root:
                 checksum: 0
           - key: 8
             txgs:
-              start: 0
+              start: 8
               end: 42
             ptr:
               Addr:
@@ -5362,7 +5438,7 @@ root:
                 checksum: 0
           - key: 12
             txgs:
-              start: 0
+              start: 20
               end: 42
             ptr:
               Mem:  # In-memory Int node with a child in the target zone
@@ -5370,7 +5446,7 @@ root:
                   children:
                     - key: 12
                       txgs:
-                        start: 0
+                        start: 41
                         end: 42
                       ptr:
                         Mem:
@@ -5380,8 +5456,8 @@ root:
                               7: 7.0
                     - key: 16
                       txgs:
-                        start: 0
-                        end: 42
+                        start: 20
+                        end: 21
                       ptr:
                         Addr:
                           pba:
@@ -5501,6 +5577,7 @@ fn insert_below_root() {
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
+    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -5511,7 +5588,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -5519,7 +5596,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Addr:
@@ -5532,7 +5609,7 @@ root:
                 checksum: 0
           - key: 256
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Addr:
@@ -5557,16 +5634,16 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 41
+    end: 43
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
-              end: 42
+              start: 42
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -5574,7 +5651,7 @@ root:
                     0: 0
           - key: 256
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Addr:
@@ -5604,6 +5681,7 @@ fn insert_root() {
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
+    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -5614,7 +5692,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Addr:
@@ -5639,8 +5717,8 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 42
+    end: 43
   ptr:
     Mem:
       Leaf:
@@ -5885,6 +5963,7 @@ root:
 fn write_deep() {
     let mut mock = DDMLMock::new();
     let drp = DRP::random(Compression::None, 1000);
+    mock.expect_txg().called_any().returning(|_| 42);
     mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
@@ -5915,7 +5994,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
+    start: 41
     end: 42
   ptr:
     Mem:
@@ -5923,7 +6002,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Mem:
@@ -5933,7 +6012,7 @@ root:
                     1: 200
           - key: 256
             txgs:
-              start: 0
+              start: 41
               end: 42
             ptr:
               Addr:
@@ -5967,6 +6046,7 @@ fn write_int() {
             !int_data.children[1].ptr.is_mem()
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -5977,16 +6057,16 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 0
-    end: 42
+    start: 5
+    end: 25
   ptr:
     Mem:
       Int:
         children:
           - key: 0
             txgs:
-              start: 0
-              end: 42
+              start: 5
+              end: 15
             ptr:
               Addr:
                 pba:
@@ -5998,8 +6078,8 @@ root:
                 checksum: 0xdeadbeef
           - key: 256
             txgs:
-              start: 0
-              end: 42
+              start: 18
+              end: 25
             ptr:
               Addr:
                 pba:
@@ -6029,6 +6109,7 @@ fn write_leaf() {
             leaf_data.get(&0) == Some(100) &&
             leaf_data.get(&1) == Some(200)
         })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -6040,7 +6121,7 @@ root:
   key: 0
   txgs:
     start: 0
-    end: 42
+    end: 1
   ptr:
     Mem:
       Leaf:
@@ -6053,6 +6134,223 @@ root:
     let r = rt.block_on(tree.flush());
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
+}
+
+}
+
+/// Tests regarding transaction transaction membership of nodes
+#[cfg(test)]
+mod txg {
+
+use super::*;
+use common::ddml_mock::*;
+use futures::future;
+use simulacrum::*;
+use tokio::runtime::current_thread;
+
+/// Insert a key that splits the root IntNode
+#[test]
+fn split() {
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let mut ld = LeafData::new();
+    ld.insert(12, 12.0);
+    ld.insert(13, 13.0);
+    ld.insert(14, 14.0);
+    let drpl = DRP::new(PBA{cluster: 0, lba: 1280}, Compression::None,
+                        16000, 8000, 5);
+    let node = Arc::new(Node::new(NodeData::Leaf(ld)));
+    let node_holder = RefCell::new(Some(node));
+    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
+        .called_once()
+        .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
+        .returning(move |_| {
+            // XXX simulacrum can't return a uniquely owned object in an
+            // expectation, so we must hack it with RefCell<Option<T>>
+            // https://github.com/pcsm/simulacrum/issues/52
+            let res = Box::new(node_holder.borrow_mut().take().unwrap());
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+        });
+    let ddml = Arc::new(mock);
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 3
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 4
+              end: 10
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 256
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 1
+          - key: 3
+            txgs:
+              start: 5
+              end: 11
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 512
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 2
+          - key: 6
+            txgs:
+              start: 3
+              end: 12
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 768
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 3
+          - key: 9
+            txgs:
+              start: 6
+              end: 22
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 1024
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 4
+          - key: 12
+            txgs:
+              start: 7
+              end: 34
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 1280
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 5
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.insert(15, 15.0));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 3
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 3
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      txgs:
+                        start: 4
+                        end: 10
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 256
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 3
+                      txgs:
+                        start: 5
+                        end: 11
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 512
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 2
+                    - key: 6
+                      txgs:
+                        start: 3
+                        end: 12
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 768
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 3
+          - key: 9
+            txgs:
+              start: 6
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      txgs:
+                        start: 6
+                        end: 22
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 1024
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 12
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+                              14: 14.0
+                              15: 15.0"#);
 }
 
 }

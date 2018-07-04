@@ -215,15 +215,21 @@ impl<K: Key, V: Value> LeafData<K, V> {
         self.items.remove(k)
     }
 
-    pub fn split(&mut self) -> (K, LeafData<K, V>) {
+    /// Split this LeafNode in two.  Returns the transaction range of the rump
+    /// node, and a new IntElem containing the new node.
+    pub fn split<A: Addr>(&mut self, txg: TxgT)
+        -> (Range<TxgT>, IntElem<A, K, V>)
+    {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
         // one.
-        // TODO: adjust TXG range
         let half = div_roundup(self.items.len(), 2);
         let cutoff = *self.items.keys().nth(half).unwrap();
         let new_items = self.items.split_off(&cutoff);
-        (cutoff, LeafData{items: new_items})
+        let node = Node::new(NodeData::Leaf(LeafData{items: new_items}));
+        // There are no children, so the TXG range is just the current TXG
+        let txgs = txg..txg + 1;
+        (txgs.clone(), IntElem::new(cutoff, txgs, TreePtr::Mem(Box::new(node))))
     }
 }
 
@@ -256,11 +262,11 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// the child's guard.
     // Consuming and returning self prevents lifetime checker issues that
     // interfere with lock coupling.
-    // TODO: update node's txg range
     pub fn xlock<'a, D: DML<Addr=A>>(mut self, dml: &'a D, child_idx: usize)
         -> (Box<Future<Item=(TreeWriteGuard<A, K, V>,
                              TreeWriteGuard<A, K, V>), Error=Error> + 'a>)
     {
+        self.as_int_mut().children[child_idx].txgs.end = dml.txg() + 1;
         if self.as_int().children[child_idx].ptr.is_mem() {
             Box::new(
                 self.as_int().children[child_idx].ptr.as_mem().xlock()
@@ -283,10 +289,15 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                             let elem = &mut self.as_int_mut()
                                                 .children[child_idx];
                             elem.ptr = TreePtr::Mem(child_node);
-                            TreeWriteGuard::Mem(
+                            let guard = TreeWriteGuard::Mem(
                                 elem.ptr.as_mem()
                                     .0.try_write().unwrap()
-                            )
+                            );
+                            elem.txgs.start = match *guard {
+                                NodeData::Int(ref id) => id.start_txg(),
+                                NodeData::Leaf(_) => dml.txg()
+                            };
+                            guard
                         };
                         (self, child_guard)
                     })
@@ -322,6 +333,13 @@ impl<A: Addr, K: Key, V: Value> DerefMut for TreeWriteGuard<A, K, V> {
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 pub(super) struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
     pub key: K,
+    /// The range of transactions in which the target Node and all of its
+    /// children were written.
+    ///
+    /// This is _not_ the transactions in which individual data
+    /// items were added or modified; just the transaction in which the actual
+    /// tree nodes were written.  It may be overly broad following insert and
+    /// remove operations, but it will be fixed on flush.
     pub txgs: Range<TxgT>,
     pub ptr: TreePtr<A, K, V>
 }
@@ -393,13 +411,31 @@ impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
             .unwrap_or_else(|k| if k == 0 {k} else {k - 1})
     }
 
-    pub fn split(&mut self) -> (K, IntData<A, K, V>) {
+    /// Split this LeafNode in two.  Returns the transaction range of the rump
+    /// node, and a new IntElem containing the new node.
+    pub fn split(&mut self, txg: TxgT) -> (Range<TxgT>, IntElem<A, K, V>) {
         // Split the node in two.  Make the left node larger, on the assumption
         // that we're more likely to insert into the right node than the left
         // one.
         let cutoff = div_roundup(self.children.len(), 2);
         let new_children = self.children.split_off(cutoff);
-        (new_children[0].key, IntData::new(new_children))
+        let old_txgs = self.start_txg()..txg + 1;
+
+        let key = new_children[0].key;
+        let int_data = IntData::new(new_children);
+        let start = int_data.start_txg();
+        let node = Node::new(NodeData::Int(int_data));
+        let txgs = start..txg + 1;
+        let elem = IntElem::new(key, txgs, TreePtr::Mem(Box::new(node)));
+        (old_txgs, elem)
+    }
+
+    /// Find the oldest txg included amongst this node's children
+    fn start_txg(&self) -> TxgT {
+        self.children.iter()
+            .map(|child| child.txgs.start)
+            .min()
+            .unwrap()
     }
 }
 
@@ -488,15 +524,15 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         len >= max_fanout
     }
 
-    pub fn split(&mut self) -> (K, NodeData<A, K, V>) {
+    /// Split this LeafNode in two.  Returns the transaction range of the rump
+    /// node, and a new IntElem containing the new node.
+    pub fn split(&mut self, txg: TxgT) -> (Range<TxgT>, IntElem<A, K, V>) {
         match self {
             NodeData::Leaf(leaf) => {
-                let (k, new_leaf) = leaf.split();
-                (k, NodeData::Leaf(new_leaf))
+                leaf.split(txg)
             },
             NodeData::Int(int) => {
-                let (k, new_int) = int.split();
-                (k, NodeData::Int(new_int))
+                int.split(txg)
             },
 
         }
