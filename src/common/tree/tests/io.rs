@@ -422,7 +422,8 @@ fn write_deep() {
             leaf_data.get(&1) == Some(200)
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    mock.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
+    mock.then().expect_txg().called_any().returning(|_| 42);
+    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
             let node_data = arg.0.try_read().unwrap();

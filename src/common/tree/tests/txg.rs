@@ -9,6 +9,79 @@ use nix::Error;
 use simulacrum::*;
 use tokio::runtime::current_thread;
 
+/// Recompute start TXGs on Tree flush
+#[test]
+fn flush() {
+    let mut mock = DDMLMock::new();
+    let drp = DRP::random(Compression::None, 1000);
+    mock.expect_txg().called_any().returning(|_| 42);
+    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
+        .called_once()
+        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
+            let node_data = arg.0.try_read().unwrap();
+            node_data.is_leaf()
+        }))
+        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+    mock.then().expect_txg().called_any().returning(|_| 42);
+    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
+        .called_once()
+        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
+            let node_data = arg.0.try_read().unwrap();
+            let int_data = node_data.as_int();
+            int_data.children[0].key == 0 &&
+            int_data.children[0].txgs == (42..43) &&
+            int_data.children[1].key == 256 &&
+            int_data.children[1].txgs == (41..42)
+        }))
+        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+    let ddml = Arc::new(mock);
+    let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 40
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 40
+              end: 43
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 100
+                    1: 200
+          - key: 256
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 256
+                compression: ZstdL9NoShuffle
+                lsize: 16000
+                csize: 8000
+                checksum: 0x1a7ebabe
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.flush());
+    assert!(r.is_ok());
+    let root_elem = tree.i.root.get_mut().unwrap();
+    assert_eq!(root_elem.txgs, 41..43);
+}
+
 /// Insert a key that splits the root IntNode
 #[test]
 fn split() {

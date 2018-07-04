@@ -1063,8 +1063,9 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
                     Box::new(
                         self.flush_r(ptr.into_node())
-                            .map(move |addr| {
+                            .map(move |(addr, txgs)| {
                                 root_guard.ptr = TreePtr::Addr(addr);
+                                root_guard.txgs = txgs;
                             })
                     )
                 });
@@ -1084,10 +1085,15 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     fn flush_r(&'a self, mut node: Box<Node<A, K, V>>)
-        -> Box<Future<Item=D::Addr, Error=Error> + 'a>
+        -> Box<Future<Item=(D::Addr, Range<TxgT>), Error=Error> + 'a>
     {
         if node.0.get_mut().unwrap().is_leaf() {
-            return Box::new(self.write_leaf(node));
+            let fut = self.write_leaf(node)
+                .map(move |addr| {
+                    let txg = self.dml.txg();
+                    (addr, txg..txg + 1)
+                });
+            return Box::new(fut);
         }
         let ndata = node.0.try_write().unwrap();
 
@@ -1098,7 +1104,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         let rndata = Rc::new(RefCell::new(ndata));
         let nchildren = RefCell::borrow(&Rc::borrow(&rndata)).as_int().nchildren();
         let children_fut = (0..nchildren)
-        .filter_map(move |idx| {
+        .map(move |idx| {
             let rndata3 = rndata.clone();
             if rndata.borrow_mut()
                      .as_int_mut()
@@ -1123,24 +1129,30 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                                                        .children[idx].ptr,
                                            TreePtr::None);
                     self.flush_r(ptr.into_node())
-                        .map(move |addr| {
-                            rndata3.borrow_mut()
-                                   .as_int_mut()
-                                   .children[idx].ptr = TreePtr::Addr(addr);
+                        .map(move |(addr, txgs)| {
+                            let mut borrowed = rndata3.borrow_mut();
+                            let elem = &mut borrowed.as_int_mut().children[idx];
+                            elem.ptr = TreePtr::Addr(addr);
+                            let start_txg = txgs.start;
+                            elem.txgs = txgs;
+                            start_txg
                         })
                 });
-                Some(fut)
+                Box::new(fut) as Box<Future<Item=TxgT, Error=Error>>
             } else { // LCOV_EXCL_LINE kcov false negative
-                None
+                let borrowed = RefCell::borrow(&rndata3);
+                let txg = borrowed.as_int().children[idx].txgs.start;
+                Box::new(future::ok(txg)) as Box<Future<Item=TxgT, Error=Error>>
             }
         })
         .collect::<Vec<_>>();
         Box::new(
             future::join_all(children_fut)
-            .and_then(move |_| {
+            .and_then(move |txgs| {
+                let start_txg = *txgs.iter().min().unwrap();
                 let arc: Arc<Node<A, K, V>> = Arc::new(*node);
                 let (addr, fut) = self.dml.put(arc, Compression::None);
-                fut.map(move |_| addr)
+                fut.map(move |_| (addr, start_txg..self.dml.txg() + 1))
             })
         )
     }
