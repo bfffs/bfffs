@@ -81,10 +81,9 @@ impl<'a> IDML {
         self.list_indirect_records(&zone).for_each(move |record| {
             self.move_record(record)
         }).and_then(move |_| {
-            self.ridt.clean_zone(zone.pba..end)
-                .map(move |_| zone)
-        }).and_then(move |zone| {
-            self.alloct.clean_zone(zone.pba..end)
+            let czfut = self.ridt.clean_zone(zone.pba..end);
+            let atfut = self.alloct.clean_zone(zone.pba..end);
+            czfut.join(atfut).map(|_| ())
         })
     }
 
