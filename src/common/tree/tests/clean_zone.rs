@@ -208,7 +208,8 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
-    rt.block_on(tree.clean_zone(start..end)).unwrap();
+    let txgs = 1000..1001;  // XXX placeholder
+    rt.block_on(tree.clean_zone(start..end, txgs)).unwrap();
 }
 
 // The Root node lies in the dirty zone
@@ -280,6 +281,7 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
-    rt.block_on(tree.clean_zone(start..end)).unwrap();
+    let txgs = 1000..1001;  // XXX placeholder
+    rt.block_on(tree.clean_zone(start..end, txgs)).unwrap();
 }
 // LCOV_EXCL_STOP

@@ -191,7 +191,10 @@ struct CleanZonePass1Inner<'tree, D, K, V>
                        Error=Error> + 'tree>>,
 
     /// Range of addresses to move
-    range: Range<PBA>,
+    pbas: Range<PBA>,
+
+    /// Range of transactions that may contain PBAs of interest
+    _txgs: Range<TxgT>,
 
     /// Handle to the tree
     tree: &'tree Tree<ddml::DRP, D, K, V>
@@ -212,15 +215,15 @@ impl<'tree, D, K, V> CleanZonePass1<'tree, D, K, V>
           V: Value
     {
 
-    fn new(range: Range<PBA>, echelon: u8,
+    fn new(pbas: Range<PBA>, txgs: Range<TxgT>, echelon: u8,
            tree: &'tree Tree<ddml::DRP, D, K, V>)
         -> CleanZonePass1<'tree, D, K, V>
     {
         let cursor = Some(K::min_value());
         let data = VecDeque::new();
         let last_fut = None;
-        let inner = CleanZonePass1Inner{cursor, data, echelon, last_fut, range,
-                                        tree};
+        let inner = CleanZonePass1Inner{cursor, data, echelon, last_fut, pbas,
+                                        _txgs: txgs, tree};
         CleanZonePass1{inner: RefCell::new(inner)}
     }
 }
@@ -247,9 +250,9 @@ impl<'tree, D, K, V> Stream for CleanZonePass1<'tree, D, K, V>
                         let mut i = self.inner.borrow_mut();
                         let mut f = i.last_fut.take().unwrap_or_else(|| {
                             let l = i.cursor.clone().unwrap();
-                            let range = i.range.clone();
+                            let pbas = i.pbas.clone();
                             let e = i.echelon;
-                            Box::new(i.tree.get_dirty_nodes(l, range, e))
+                            Box::new(i.tree.get_dirty_nodes(l, pbas, e))
                         });
                         match f.poll() {
                             Ok(Async::Ready((v, bound))) => {
@@ -1223,7 +1226,7 @@ impl<A: Addr, D: DML<Addr=A>, K: Key, V: Value> Display for Tree<A, D, K, V> {
 // These methods are only for direct trees
 impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
     /// Clean `zone` by moving all of its records to other zones.
-    pub fn clean_zone(&'a self, range: Range<PBA>)
+    pub fn clean_zone(&'a self, pbas: Range<PBA>, txgs: Range<TxgT>)
         -> impl Future<Item=(), Error=Error> + 'a
     {
         // We can't rewrite children before their parents while sticking to a
@@ -1247,7 +1250,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         // number of Nodes that must be walked.
         let tree_height = self.i.height.load(Ordering::Relaxed) as u8;
         stream::iter_ok(0..tree_height).for_each(move|echelon| {
-            CleanZonePass1::new(range.clone(), echelon, self)
+            CleanZonePass1::new(pbas.clone(), txgs.clone(), echelon, self)
                 .collect()
                 .and_then(move |nodes| {
                     stream::iter_ok(nodes.into_iter()).for_each(move |node| {
@@ -1260,7 +1263,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         })
     }
 
-    fn get_dirty_nodes(&'a self, key: K, range: Range<PBA>, echelon: u8)
+    fn get_dirty_nodes(&'a self, key: K, pbas: Range<PBA>, echelon: u8)
         -> impl Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error> + 'a
     {
         self.read()
@@ -1269,8 +1272,8 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                 if h == echelon + 1 {
                     // Clean the tree root
                     let dirty = if guard.ptr.is_addr() &&
-                        guard.ptr.as_addr().pba() >= range.start &&
-                        guard.ptr.as_addr().pba() < range.end {
+                        guard.ptr.as_addr().pba() >= pbas.start &&
+                        guard.ptr.as_addr().pba() < pbas.end {
                         let mut v = VecDeque::new();
                         v.push_back(NodeId{height: echelon, key: guard.key});
                         v
@@ -1284,7 +1287,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                     let fut = guard.rlock(&*self.dml)
                          .and_then(move |guard| {
                              self.get_dirty_nodes_r(guard, h - 1, None, key,
-                                                    range, echelon)
+                                                    pbas, echelon)
                          });
                     Box::new(fut)
                         as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
@@ -1293,21 +1296,21 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
             })
     }
 
-    /// Find dirty nodes in `PBA` range `range`, beginning at `key`.
+    /// Find dirty nodes in `PBA` range `pbas`, beginning at `key`.
     /// `next_key`, if present, must be the key of the node immediately to the
     /// right (and possibly up one or more levels) from `guard`.  `height` is
     /// the tree height of `guard`, where leaves are 0.
     fn get_dirty_nodes_r(&'a self, guard: TreeReadGuard<ddml::DRP, K, V>,
                          height: u8,
                          next_key: Option<K>,
-                         key: K, range: Range<PBA>, echelon: u8)
+                         key: K, pbas: Range<PBA>, echelon: u8)
         -> Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error> + 'a>
     {
         if height == echelon + 1 {
             let nodes = guard.as_int().children.iter().filter_map(|child| {
                 if child.ptr.is_addr() &&
-                    child.ptr.as_addr().pba() >= range.start &&
-                    child.ptr.as_addr().pba() < range.end {
+                    child.ptr.as_addr().pba() >= pbas.start &&
+                    child.ptr.as_addr().pba() < pbas.end {
                     Some(NodeId{height: height - 1, key: child.key})
                 } else {
                     None
@@ -1326,7 +1329,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         Box::new(
             child_fut.and_then(move |child_guard| {
                 self.get_dirty_nodes_r(child_guard, height - 1, next_key,
-                                       key, range, echelon)
+                                       key, pbas, echelon)
             })
         ) as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>>
     }
