@@ -118,7 +118,7 @@ impl<'a> IDML {
     {
         // Even if the cache contains the target record, we must also do an RIDT
         // lookup because we're going to rewrite the RIDT
-        self.ridt.get(rid.clone())
+        self.ridt.get(rid)
             .and_then(move |v| {
                 let entry = v.expect(
                     "Inconsistency in alloct.  Entry not found in RIDT");
@@ -143,7 +143,7 @@ impl<'a> IDML {
                 let compression = entry.drp.compression();
                 let (drp, buf_fut) = self.ddml.put_direct(*buf, compression);
                 entry.drp = drp;
-                let ridt_fut = self.ridt.insert(rid.clone(), entry);
+                let ridt_fut = self.ridt.insert(rid, entry);
                 let alloct_fut = self.alloct.insert(drp.pba(), rid);
                 buf_fut.join3(ridt_fut, alloct_fut)
             }).map(|_| ())
@@ -153,11 +153,11 @@ impl<'a> IDML {
 impl DML for IDML {
     type Addr = RID;
 
-    fn delete<'a>(&'a self, rid: &Self::Addr)
+    fn delete<'a>(&'a self, ridp: &Self::Addr)
         -> Box<Future<Item=(), Error=Error> + 'a>
     {
-        let rid2 = rid.clone();
-        let fut = self.ridt.get(rid.clone())
+        let rid = *ridp;
+        let fut = self.ridt.get(rid)
             .and_then(|r| {
                 match r {
                     None => Err(Error::Sys(Errno::ENOENT)).into_future(),
@@ -166,11 +166,11 @@ impl DML for IDML {
             }).and_then(move |mut entry| {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
-                    self.cache.lock().unwrap().remove(&Key::Rid(rid2));
+                    self.cache.lock().unwrap().remove(&Key::Rid(rid));
                     // TODO: usd ddml.delete_direct
                     let ddml_fut = self.ddml.delete(&entry.drp);
                     let alloct_fut = self.alloct.remove(entry.drp.pba());
-                    let ridt_fut = self.ridt.remove(rid2);
+                    let ridt_fut = self.ridt.remove(rid);
                     Box::new(
                         ddml_fut.join3(alloct_fut, ridt_fut)
                              .map(|(_, old_rid, _old_ridt_entry)| {
@@ -178,7 +178,7 @@ impl DML for IDML {
                              })
                      ) as Box<Future<Item=(), Error=Error>>
                 } else {
-                    let ridt_fut = self.ridt.insert(rid2, entry)
+                    let ridt_fut = self.ridt.insert(rid, entry)
                         .map(|_| ());
                     Box::new(ridt_fut)
                     as Box<Future<Item=(), Error=Error>>
@@ -191,16 +191,16 @@ impl DML for IDML {
         self.cache.lock().unwrap().remove(&Key::Rid(*rid));
     }
 
-    fn get<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr)
+    fn get<'a, T: Cacheable, R: CacheRef>(&'a self, ridp: &Self::Addr)
         -> Box<Future<Item=Box<R>, Error=Error> + 'a>
     {
-        self.cache.lock().unwrap().get::<R>(&Key::Rid(*rid)).map(|t| {
+        let rid = *ridp;
+        self.cache.lock().unwrap().get::<R>(&Key::Rid(rid)).map(|t| {
             let r : Box<Future<Item=Box<R>, Error=Error>> =
             Box::new(future::ok::<Box<R>, Error>(t));
             r
         }).unwrap_or_else(|| {
-            let rid2 = rid.clone();
-            let fut = self.ridt.get(*rid)
+            let fut = self.ridt.get(rid)
                 .and_then(|r| {
                     match r {
                         None => Err(Error::Sys(Errno::ENOENT)).into_future(),
@@ -210,7 +210,7 @@ impl DML for IDML {
                     self.ddml.get_direct(&entry.drp)
                 }).map(move |cacheable: Box<T>| {
                     let r = cacheable.make_ref();
-                    let key = Key::Rid(rid2);
+                    let key = Key::Rid(rid);
                     self.cache.lock().unwrap().insert(key, cacheable);
                     r.downcast::<R>().unwrap()
                 });
@@ -218,11 +218,11 @@ impl DML for IDML {
         })
     }
 
-    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr)
+    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, ridp: &Self::Addr)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>
     {
-        let rid2 = rid.clone();
-        let fut = self.ridt.get(rid.clone())
+        let rid = *ridp;
+        let fut = self.ridt.get(rid)
             .and_then(|r| {
                 match r {
                     None => Err(Error::Sys(Errno::ENOENT)).into_future(),
@@ -232,7 +232,7 @@ impl DML for IDML {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
                     let cacheval = self.cache.lock().unwrap()
-                        .remove(&Key::Rid(rid2));
+                        .remove(&Key::Rid(rid));
                     let bfut: Box<Future<Item=Box<T>, Error=Error>> = cacheval
                         .map(|cacheable| {
                             let t = cacheable.downcast::<T>().unwrap();
@@ -243,7 +243,7 @@ impl DML for IDML {
                             Box::new(self.ddml.pop_direct::<T>(&entry.drp))
                         });
                     let alloct_fut = self.alloct.remove(entry.drp.pba());
-                    let ridt_fut = self.ridt.remove(rid2);
+                    let ridt_fut = self.ridt.remove(rid);
                     Box::new(
                         bfut.join3(alloct_fut, ridt_fut)
                              .map(|(cacheable, old_rid, _old_ridt_entry)| {
@@ -253,7 +253,7 @@ impl DML for IDML {
                      ) as Box<Future<Item=Box<T>, Error=Error>>
                 } else {
                     let cacheval = self.cache.lock().unwrap()
-                        .get::<R>(&Key::Rid(rid2));
+                        .get::<R>(&Key::Rid(rid));
                     let bfut = cacheval.map(|cacheref: Box<R>|{
                         let t = cacheref.to_owned().downcast::<T>().unwrap();
                         Box::new(future::ok(t))
@@ -261,7 +261,7 @@ impl DML for IDML {
                     }).unwrap_or_else(|| {
                         Box::new(self.ddml.get_direct::<T>(&entry.drp))
                     });
-                    let ridt_fut = self.ridt.insert(rid2, entry);
+                    let ridt_fut = self.ridt.insert(rid, entry);
                     Box::new(
                         bfut.join(ridt_fut)
                             .map(|(cacheable, _)| {
@@ -283,9 +283,9 @@ impl DML for IDML {
         // 4) Add reverse entry to the AllocT
         let (drp, ddml_fut) = self.ddml.put_direct(cacheable, compression);
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
-        let alloct_fut = self.alloct.insert(drp.pba(), rid.clone());
+        let alloct_fut = self.alloct.insert(drp.pba(), rid);
         let rid_entry = RidtEntry::new(drp);
-        let ridt_fut = self.ridt.insert(rid.clone(), rid_entry);
+        let ridt_fut = self.ridt.insert(rid, rid_entry);
         let fut = Box::new(
             ddml_fut.join3(ridt_fut, alloct_fut)
                 .map(move |(cacheable, old_rid_entry, old_alloc_entry)| {
@@ -336,8 +336,8 @@ mod t {
                      drp: &DRP, refcount: u64)
     {
         let entry = RidtEntry{drp: drp.clone(), refcount};
-        rt.block_on(idml.ridt.insert(rid.clone(), entry)).unwrap();
-        rt.block_on(idml.alloct.insert(drp.pba(), rid.clone())).unwrap();
+        rt.block_on(idml.ridt.insert(*rid, entry)).unwrap();
+        rt.block_on(idml.alloct.insert(drp.pba(), *rid)).unwrap();
     }
 
     #[test]
@@ -512,7 +512,6 @@ mod t {
         let v = vec![42u8; 4096];
         let dbs = DivBufShared::from(v.clone());
         let rid = RID(1);
-        let rid1 = rid.clone();
         let drp0 = DRP::random(Compression::None, 4096);
         let drp1 = DRP::random(Compression::None, 4096);
         let drp2 = drp1.clone();
@@ -521,7 +520,7 @@ mod t {
         cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(rid1)}
+                unsafe {**key == Key::Rid(rid)}
             })).returning(move |_| {
                 None
             });
@@ -559,7 +558,6 @@ mod t {
         let v = vec![42u8; 4096];
         let dbs = DivBufShared::from(v.clone());
         let rid = RID(1);
-        let rid1 = rid.clone();
         let drp0 = DRP::random(Compression::None, 4096);
         let drp1 = DRP::random(Compression::None, 4096);
         let drp2 = drp1.clone();
@@ -568,7 +566,7 @@ mod t {
         cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::Rid(rid1)}
+                unsafe {**key == Key::Rid(rid)}
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
