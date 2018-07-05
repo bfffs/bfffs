@@ -552,19 +552,14 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     /// Merge all of `other`'s data into `self`.  Afterwards, `other` may be
-    /// deleted.  Returns the transaction range of the combined node.
-    pub fn merge(&mut self, mut other: TreeWriteGuard<A, K, V>, txg: TxgT)
-        -> Range<TxgT>
+    /// deleted.
+    pub fn merge(&mut self, mut other: TreeWriteGuard<A, K, V>)
     {
         match self {
-            NodeData::Int(int) => {
-                int.children.append(&mut other.as_int_mut().children);
-                int.start_txg()..txg + 1
-            },
-            NodeData::Leaf(leaf) => {
-                leaf.items.append(&mut other.as_leaf_mut().items);
-                txg..txg + 1
-            }
+            NodeData::Int(int) =>
+                int.children.append(&mut other.as_int_mut().children),
+            NodeData::Leaf(leaf) =>
+                leaf.items.append(&mut other.as_leaf_mut().items)
         }
     }
 
