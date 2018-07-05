@@ -35,7 +35,7 @@ test_suite! {
             t!(file.set_len(len));
             let pool = Pool::create("TestPool".to_string(),
                 vec![
-                    Pool::create_cluster(1, 1, 1, 0, &[filename][..],
+                    Pool::create_cluster(1, 1, 1, None, 0, &[filename][..],
                                          Handle::default())
                 ]
             );

@@ -34,7 +34,8 @@ test_suite! {
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
             let pb = filename.to_path_buf();
-            let vdev = VdevFile::create(filename, Handle::current()).unwrap();
+            let vdev = VdevFile::create(filename, None,
+                                        Handle::current()).unwrap();
             (vdev, pb, tempdir)
         }
     });
@@ -75,7 +76,7 @@ test_suite! {
         // Run the test
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
-        let vdev = VdevFile::create(path, Handle::current()).unwrap();
+        let vdev = VdevFile::create(path, None, Handle::current()).unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.read_at(rbuf, 4)
         })));
@@ -99,7 +100,7 @@ test_suite! {
         let mut rbuf0 = dbs.try_mut().unwrap();
         let rbuf1 = rbuf0.split_off(1024);
         let rbufs = vec![rbuf0, rbuf1];
-        let vdev = VdevFile::create(path, Handle::current()).unwrap();
+        let vdev = VdevFile::create(path, None, Handle::current()).unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.readv_at(rbufs, 4)
         })));
@@ -193,26 +194,26 @@ test_suite! {
     use tokio::{runtime::current_thread, reactor::Handle};
     use uuid::Uuid;
 
-    const GOLDEN: [u8; 82] = [
+    const GOLDEN: [u8; 85] = [
         // First 16 bytes are file magic
         0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64, // ArkFS Vd
         0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ev......
         // Next 8 bytes are a checksum
-        0xb3, 0x64, 0xb4, 0x42, 0x53, 0xe1, 0xb5, 0x64,
+        0x41, 0xd1, 0x12, 0xee, 0x9f, 0x1d, 0xdc, 0xa1,
         // Next 8 bytes are the contents length, in BE
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x32, // .......2
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, // .......2
         // The rest is a serialized VdevFile::Label object
-        0xa3, 0x64, 0x75, 0x75, 0x69, 0x64, 0x50,
+        0xa3, 0x64, 0x75, 0x75, 0x69, 0x64, 0x50,       // .duuidP
         // These 16 bytes are a UUID
-                                                  0x19, // .duuidP.
-        0xfa, 0x3e, 0xe9, 0x9c, 0x35, 0x4e, 0x11, 0xb1, // .>..5N..
-        0x5b, 0xf9, 0x27, 0xcb, 0x7b, 0xc0, 0x61,
+                                                  0x41,
+        0x4f, 0x23, 0x38, 0x39, 0xcf, 0x45, 0x7f, 0xb1,
+        0xcb, 0xd4, 0x61, 0xf5, 0xa7, 0xcc, 0x4b,
         // This is the rest of the LabelData
-                                                  0x6d, // ....]..m
+                                                  0x6d, //        m
         0x6c, 0x62, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72, // lbas_per
-        0x5f, 0x7a, 0x6f, 0x6e, 0x65, 0x1a, 0x00, 0x01, // _zone...
-        0x00, 0x00, 0x64, 0x6c, 0x62, 0x61, 0x73, 0x19, // ..dlbas.
-        0x40, 0x00
+        0x5f, 0x7a, 0x6f, 0x6e, 0x65, 0x1b, 0xde, 0xad, // _zone...
+        0xbe, 0xef, 0x1a, 0x7e, 0xba, 0xbe, 0x64, 0x6c, // ...~..dl
+        0x62, 0x61, 0x73, 0x19, 0x40,                   // bas.@
     ];
 
     fixture!( fixture() -> (PathBuf, TempDir) {
@@ -230,7 +231,7 @@ test_suite! {
     // Open the golden master label
     test open(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "19fa3ee9-9c35-4e11-b15b-f927cb7bc061").unwrap();
+            "414f2338-39cf-457f-b1cb-d461f5a7cc4b").unwrap();
         {
             let mut f = std::fs::OpenOptions::new()
                 .write(true)
@@ -250,8 +251,9 @@ test_suite! {
 
     // Write the label, and compare to a golden master
     test write_label(fixture) {
-        let vdev = VdevFile::create(fixture.val.0.clone(),
-                                        Handle::current()).unwrap();
+        let lbas_per_zone = Some(0xdead_beef_1a7e_babe);
+        let vdev = VdevFile::create(fixture.val.0.clone(), lbas_per_zone,
+                                    Handle::current()).unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let label_writer = LabelWriter::new();
             vdev.write_label(label_writer)
@@ -260,6 +262,14 @@ test_suite! {
         let mut f = std::fs::File::open(fixture.val.0).unwrap();
         let mut v = vec![0; 4096];
         f.read_exact(&mut v).unwrap();
+        // Uncomment this block to save the binary label for inspection
+        /* {
+            use std::fs::File;
+            use std::io::Write;
+            let mut df = File::create("/tmp/label.bin").unwrap();
+            df.write_all(&v[..]).unwrap();
+            println!("UUID is {}", vdev.uuid());
+        } */
         // Compare against the golden master, skipping the checksum and UUID
         // fields
         assert_eq!(&v[0..16], &GOLDEN[0..16]);

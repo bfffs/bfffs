@@ -43,7 +43,7 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let mut vdev_raid = VdevRaid::create(*self.chunksize,
-                *self.n, *self.k, *self.f, &paths, Handle::default());
+                *self.n, *self.k, None, *self.f, &paths, Handle::default());
             current_thread::Runtime::new().unwrap().block_on(
                 vdev_raid.open_zone(0)
             ).expect("open_zone");
@@ -543,8 +543,8 @@ test_suite! {
                 t!(file.set_len(len));
                 fname
             }).collect::<Vec<_>>();
-            let mut vdev_raid = VdevRaid::create(2, num_disks, 3, 1, &paths,
-                                                 Handle::default());
+            let mut vdev_raid = VdevRaid::create(2, num_disks, 3, None, 1,
+                                                 &paths, Handle::default());
             (vdev_raid, tempdir, paths)
         }
     });

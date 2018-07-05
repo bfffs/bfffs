@@ -147,6 +147,9 @@ impl<'a> Pool {
     /// * `disks_per_stripe`:   Number of data plus parity chunks in each
     ///                         self-contained RAID stripe.  Must be less than
     ///                         or equal to `num_disks`.
+    /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
+    ///                         simulated zones on devices that don't have
+    ///                         native zones.
     /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
     ///                         disks may fail before the array becomes
     ///                         inoperable.
@@ -157,11 +160,12 @@ impl<'a> Pool {
     pub fn create_cluster<P: AsRef<Path>>(chunksize: LbaT,
                                num_disks: i16,
                                disks_per_stripe: i16,
+                               lbas_per_zone: Option<LbaT>,
                                redundancy: i16,
                                paths: &[P],
                                handle: Handle) -> Cluster {
         Cluster(cluster::Cluster::create(chunksize, num_disks, disks_per_stripe,
-                                         redundancy, paths, handle))
+            lbas_per_zone, redundancy, paths, handle))
     }
 
     #[cfg(not(test))]

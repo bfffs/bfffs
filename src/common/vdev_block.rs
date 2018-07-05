@@ -447,12 +447,17 @@ impl VdevBlock {
 
     /// Create a new VdevBlock from an unused file or device
     ///
-    /// * `path`:   A pathname to a file or device
-    /// * `handle`: Handle to the Tokio reactor that will be used to service
-    ///             this vdev.
+    /// * `path`:           A pathname to a file or device
+    /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
+    ///                     simulated zones on devices that don't have native
+    ///                     zones.
+    /// * `handle`:         Handle to the Tokio reactor that will be used to
+    ///                     service this vdev.
     #[cfg(not(test))]
-    pub fn create<P: AsRef<Path>>(path: P, handle: Handle) -> io::Result<Self> {
-        let leaf = VdevLeaf::create(path, handle.clone())?;
+    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<LbaT>,
+                                  handle: Handle) -> io::Result<Self>
+    {
+        let leaf = VdevLeaf::create(path, lbas_per_zone, handle.clone())?;
         Ok(VdevBlock::new(leaf, handle))
     }
 

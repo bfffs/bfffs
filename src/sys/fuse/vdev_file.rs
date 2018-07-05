@@ -31,6 +31,8 @@ struct Label {
 pub struct VdevFile {
     file:   File,
     handle: Handle,
+    /// Number of LBAs per simulated zone
+    lbas_per_zone:  LbaT,
     size:   LbaT,
     uuid:   Uuid
 }
@@ -66,7 +68,7 @@ impl Vdev for VdevFile {
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         if lba >= LABEL_LBAS {
-            Some((lba / (VdevFile::LBAS_PER_ZONE as u64)) as ZoneT)
+            Some((lba / (self.lbas_per_zone as u64)) as ZoneT)
         } else {
             None
         }
@@ -91,15 +93,15 @@ impl Vdev for VdevFile {
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         if zone == 0 {
-            (LABEL_LBAS, VdevFile::LBAS_PER_ZONE)
+            (LABEL_LBAS, self.lbas_per_zone)
         } else {
-            (u64::from(zone) * VdevFile::LBAS_PER_ZONE,
-             u64::from(zone + 1) * VdevFile::LBAS_PER_ZONE)
+            (u64::from(zone) * self.lbas_per_zone,
+             u64::from(zone + 1) * self.lbas_per_zone)
         }
     }
 
     fn zones(&self) -> ZoneT {
-        div_roundup(self.size, VdevFile::LBAS_PER_ZONE) as ZoneT
+        div_roundup(self.size, self.lbas_per_zone) as ZoneT
     }
 }
 
@@ -146,7 +148,7 @@ impl VdevLeafApi for VdevFile {
     fn write_label(&self, mut label_writer: LabelWriter) -> Box<VdevFut> {
         let label = Label {
             uuid: self.uuid,
-            lbas_per_zone: VdevFile::LBAS_PER_ZONE,
+            lbas_per_zone: self.lbas_per_zone,
             lbas: self.size
         };
         let dbs = label_writer.serialize(label).unwrap();
@@ -172,18 +174,23 @@ impl VdevLeafApi for VdevFile {
 
 impl VdevFile {
     /// Size of a simulated zone
-    const LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
+    const DEFAULT_LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
 
     /// Create a new Vdev, backed by a file
     ///
-    /// * `path`    Pathname for the file.  It may be a device node.
-    /// * `h`       Handle to the Tokio reactor that will be used to service
-    ///             this vdev.
-    pub fn create<P: AsRef<Path>>(path: P, h: Handle) -> io::Result<Self> {
+    /// * `path`:           Pathname for the file.  It may be a device node.
+    /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
+    ///                     simulated zones on devices that don't have native
+    ///                     zones.
+    /// * `h`:              Handle to the Tokio reactor that will be used to
+    ///                     service this vdev.
+    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<LbaT>,
+                                  h: Handle) -> io::Result<Self> {
         let f = File::open(path, h.clone())?;
+        let lpz = lbas_per_zone.unwrap_or(VdevFile::DEFAULT_LBAS_PER_ZONE);
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
         let uuid = Uuid::new_v4();
-        Ok(VdevFile{file: f, handle: h, size, uuid})
+        Ok(VdevFile{file: f, handle: h, lbas_per_zone: lpz, size, uuid})
     }
 
     /// Open an existing `VdevFile`
@@ -213,6 +220,7 @@ impl VdevFile {
                 let vdev = VdevFile {
                     file: f,
                     handle: h,
+                    lbas_per_zone: label.lbas_per_zone,
                     size: label.lbas,
                     uuid: label.uuid
                 };

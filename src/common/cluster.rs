@@ -491,6 +491,9 @@ impl<'a> Cluster {
     /// * `disks_per_stripe`:   Number of data plus parity chunks in each
     ///                         self-contained RAID stripe.  Must be less than
     ///                         or equal to `num_disks`.
+    /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
+    ///                         simulated zones on devices that don't have
+    ///                         native zones.
     /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
     ///                         disks may fail before the array becomes
     ///                         inoperable.
@@ -501,11 +504,12 @@ impl<'a> Cluster {
     pub fn create<P: AsRef<Path>>(chunksize: LbaT,
                                   num_disks: i16,
                                   disks_per_stripe: i16,
+                                  lbas_per_zone: Option<LbaT>,
                                   redundancy: i16,
                                   paths: &[P],
                                   handle: Handle) -> Self {
         let vdev = VdevRaid::create(chunksize, num_disks, disks_per_stripe,
-                                    redundancy, paths, handle);
+                                    lbas_per_zone, redundancy, paths, handle);
         let total_zones = vdev.zones();
         let fsm = FreeSpaceMap::new(total_zones);
         Cluster::new(fsm, vdev)

@@ -23,7 +23,8 @@ test_suite! {
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
-            let vdev = VdevBlock::create(filename, Handle::current()).unwrap();
+            let vdev = VdevBlock::create(filename, None,
+                                         Handle::current()).unwrap();
             (vdev, tempdir)
         }
     });
