@@ -10,15 +10,8 @@ use tokio::runtime::current_thread;
 
 #[test]
 fn basic() {
-    // On-disk internal node with on-disk children outside the target zone
-    let drpl0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 0, 0, 0);
-    let drpl1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 0, 0, 0);
-    let children0 = vec![
-        IntElem::new(0u32, 8..9, TreePtr::Addr(drpl0)),
-        IntElem::new(2u32, 8..9, TreePtr::Addr(drpl1)),
-    ];
-    let in0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
-    let drpi0 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 0, 0, 0);
+    // The Int Node at level 1, key 0 lies outside of the operation's TXG range,
+    // so it won't be read at all.
 
     // On-disk internal node with children both in and outside of target zone
     let drpl2 = DRP::new(PBA{cluster: 0, lba: 3}, Compression::None, 0, 0, 0);
@@ -26,11 +19,11 @@ fn basic() {
     // We must make two copies of in1, one for DDMLMock::get and one for ::pop
     let children1 = vec![
         IntElem::new(4u32, 8..9, TreePtr::Addr(drpl2)),
-        IntElem::new(6u32, 8..9, TreePtr::Addr(drpl3)),
+        IntElem::new(6u32, 20..21, TreePtr::Addr(drpl3)),
     ];
     let children1_c = vec![
         IntElem::new(4u32, 8..9, TreePtr::Addr(drpl2)),
-        IntElem::new(6u32, 8..9, TreePtr::Addr(drpl3)),
+        IntElem::new(6u32, 20..21, TreePtr::Addr(drpl3)),
     ];
     let in1 = Arc::new(Node::new(NodeData::Int(IntData::new(children1))));
     let mut in1_c = Some(Arc::new(Node::new(
@@ -49,11 +42,11 @@ fn basic() {
     // We must make two copies of in2, one for DDMLMock::get and one for ::pop
     let children2 = vec![
         IntElem::new(8u32, 8..9, TreePtr::Addr(drpl4)),
-        IntElem::new(10u32, 8..9, TreePtr::Addr(drpl5)),
+        IntElem::new(10u32, 10..11, TreePtr::Addr(drpl5)),
     ];
     let children2_c = vec![
         IntElem::new(8u32, 8..9, TreePtr::Addr(drpl4)),
-        IntElem::new(10u32, 8..9, TreePtr::Addr(drpl5)),
+        IntElem::new(10u32, 10..11, TreePtr::Addr(drpl5)),
     ];
     let in2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
     let mut in2_c = Some(Arc::new(Node::new(
@@ -73,13 +66,11 @@ fn basic() {
         .called_any()
         .with(passes(move |arg: & *const DRP| {
             unsafe {
-            **arg == drpi0 || **arg == drpi1 || **arg == drpi2
+            **arg == drpi1 || **arg == drpi2
         }} ))
         .returning(move |arg: *const DRP| {
             let res = Box::new( unsafe {
-                if *arg == drpi0 {
-                    in0.clone()
-                } else if *arg == drpi1 {
+                if *arg == drpi1 {
                     in1.clone()
                 } else if *arg == drpi2 {
                     in2.clone()
@@ -136,7 +127,7 @@ root:
           - key: 0
             txgs:
               start: 8
-              end: 42
+              end: 9
             ptr:
               Addr:
                 pba:
@@ -149,7 +140,7 @@ root:
           - key: 4
             txgs:
               start: 8
-              end: 42
+              end: 21
             ptr:
               Addr:
                 pba:
@@ -162,7 +153,7 @@ root:
           - key: 8
             txgs:
               start: 8
-              end: 42
+              end: 24
             ptr:
               Addr:
                 pba:
@@ -174,7 +165,7 @@ root:
                 checksum: 0
           - key: 12
             txgs:
-              start: 20
+              start: 21
               end: 42
             ptr:
               Mem:  # In-memory Int node with a child in the target zone
@@ -192,8 +183,8 @@ root:
                               7: 7.0
                     - key: 16
                       txgs:
-                        start: 20
-                        end: 21
+                        start: 21
+                        end: 22
                       ptr:
                         Addr:
                           pba:
@@ -208,7 +199,7 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
-    let txgs = 1000..1001;  // XXX placeholder
+    let txgs = 20..30;
     rt.block_on(tree.clean_zone(start..end, txgs)).unwrap();
 }
 

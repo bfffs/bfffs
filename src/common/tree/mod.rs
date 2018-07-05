@@ -36,6 +36,22 @@ use self::node::*;
 // Node must be visible for the IDML's unit tests
 pub(super) use self::node::Node;
 
+/// Are there any elements in common between the two Ranges?
+fn ranges_overlap<T: PartialOrd>(x: &Range<T>, y: &Range<T>) -> bool {
+    if x.end <= x.start || y.end <= y.start {
+        // One of the Ranges is empty
+        false
+    } else if x.end <= y.start {
+        // x precedes y
+        false
+    } else if y.end <= x.start {
+        // y precedes x
+        false
+    } else {
+        true
+    }
+}
+
 mod atomic_usize_serializer {
     use super::*;
     use serde::Deserialize;
@@ -194,7 +210,7 @@ struct CleanZonePass1Inner<'tree, D, K, V>
     pbas: Range<PBA>,
 
     /// Range of transactions that may contain PBAs of interest
-    _txgs: Range<TxgT>,
+    txgs: Range<TxgT>,
 
     /// Handle to the tree
     tree: &'tree Tree<ddml::DRP, D, K, V>
@@ -223,7 +239,7 @@ impl<'tree, D, K, V> CleanZonePass1<'tree, D, K, V>
         let data = VecDeque::new();
         let last_fut = None;
         let inner = CleanZonePass1Inner{cursor, data, echelon, last_fut, pbas,
-                                        _txgs: txgs, tree};
+                                        txgs, tree};
         CleanZonePass1{inner: RefCell::new(inner)}
     }
 }
@@ -251,8 +267,9 @@ impl<'tree, D, K, V> Stream for CleanZonePass1<'tree, D, K, V>
                         let mut f = i.last_fut.take().unwrap_or_else(|| {
                             let l = i.cursor.clone().unwrap();
                             let pbas = i.pbas.clone();
+                            let txgs = i.txgs.clone();
                             let e = i.echelon;
-                            Box::new(i.tree.get_dirty_nodes(l, pbas, e))
+                            Box::new(i.tree.get_dirty_nodes(l, pbas, txgs, e))
                         });
                         match f.poll() {
                             Ok(Async::Ready((v, bound))) => {
@@ -1263,7 +1280,11 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         })
     }
 
-    fn get_dirty_nodes(&'a self, key: K, pbas: Range<PBA>, echelon: u8)
+    /// Find all Nodes starting at `key` at a given level of the Tree which lay
+    /// in the indicated range of PBAs.  `txgs` must include all transactions in
+    /// which anything was written to any block in `pbas`.
+    fn get_dirty_nodes(&'a self, key: K, pbas: Range<PBA>, txgs: Range<TxgT>,
+                       echelon: u8)
         -> impl Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error> + 'a
     {
         self.read()
@@ -1287,7 +1308,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                     let fut = guard.rlock(&*self.dml)
                          .and_then(move |guard| {
                              self.get_dirty_nodes_r(guard, h - 1, None, key,
-                                                    pbas, echelon)
+                                                    pbas, txgs, echelon)
                          });
                     Box::new(fut)
                         as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
@@ -1303,35 +1324,55 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
     fn get_dirty_nodes_r(&'a self, guard: TreeReadGuard<ddml::DRP, K, V>,
                          height: u8,
                          next_key: Option<K>,
-                         key: K, pbas: Range<PBA>, echelon: u8)
+                         key: K, pbas: Range<PBA>, txgs: Range<TxgT>,
+                         echelon: u8)
         -> Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error> + 'a>
     {
         if height == echelon + 1 {
             let nodes = guard.as_int().children.iter().filter_map(|child| {
                 if child.ptr.is_addr() &&
                     child.ptr.as_addr().pba() >= pbas.start &&
-                    child.ptr.as_addr().pba() < pbas.end {
+                    child.ptr.as_addr().pba() < pbas.end
+                {
+                    if height == 1 {
+                        assert!(ranges_overlap(&txgs, &child.txgs),
+                            "Child node's TXG range {:?} did not overlap the query range {:?}",
+                            &child.txgs, &txgs);
+                    }
                     Some(NodeId{height: height - 1, key: child.key})
                 } else {
+                    if height == 1 {
+                        assert!(!ranges_overlap(&txgs, &child.txgs),
+                        "Child node's TXG range {:?} overlapped the query range {:?}, but did not have blocks in the PBA range {:?}",
+                            &child.txgs, &txgs, &pbas);
+                    }
                     None
                 }
             }).collect::<VecDeque<_>>();
             return Box::new(future::ok((nodes, next_key)))
         }
-        let idx = guard.as_int().position(&key);
-        let next_key = if idx < guard.as_int().nchildren() - 1 {
-            Some(guard.as_int().children[idx + 1].key)
+        // Find the first child >= key whose txg range overlaps with txgs
+        let idx0 = guard.as_int().position(&key);
+        let idx_in_range = (idx0..guard.as_int().nchildren()).filter(|idx| {
+            ranges_overlap(&guard.as_int().children[*idx].txgs, &txgs)
+        }).nth(0);
+        if let Some(idx) = idx_in_range {
+            let next_key = if idx < guard.as_int().nchildren() - 1 {
+                Some(guard.as_int().children[idx + 1].key)
+            } else {
+                next_key
+            };
+            let child_fut = guard.as_int().children[idx].rlock(&*self.dml);
+            drop(guard);
+            Box::new(
+                child_fut.and_then(move |child_guard| {
+                    self.get_dirty_nodes_r(child_guard, height - 1, next_key,
+                                           key, pbas, txgs, echelon)
+                })
+            ) as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>>
         } else {
-            next_key
-        };
-        let child_fut = guard.as_int().children[idx].rlock(&*self.dml);
-        drop(guard);
-        Box::new(
-            child_fut.and_then(move |child_guard| {
-                self.get_dirty_nodes_r(child_guard, height - 1, next_key,
-                                       key, pbas, echelon)
-            })
-        ) as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>>
+            Box::new(future::ok((VecDeque::new(), next_key)))
+        }
     }
 
     /// Rewrite `node`, without modifying its contents
