@@ -538,6 +538,19 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         }
     }
 
+    /// Find the oldest TXG amongst this Node and all its children
+    /// `my_txg` is the TXG that this node was written (or will be written)
+    pub fn start_txg(&self, my_txg: TxgT) -> TxgT {
+        match self {
+            NodeData::Int(int) => {
+                int.start_txg()
+            },
+            NodeData::Leaf(_leaf) => {
+                my_txg
+            }
+        }
+    }
+
     /// Merge all of `other`'s data into `self`.  Afterwards, `other` may be
     /// deleted.  Returns the transaction range of the combined node.
     pub fn merge(&mut self, mut other: TreeWriteGuard<A, K, V>, txg: TxgT)

@@ -523,4 +523,281 @@ root:
                               14: 14.0
                               15: 15.0"#);
 }
+
+/// Recompute TXG ranges after stealing keys
+#[test]
+fn steal() {
+    let mut mock = DDMLMock::new();
+    mock.expect_txg().called_any().returning(|_| 42);
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 10
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 10
+              end: 11
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 0
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 4
+          - key: 9
+            txgs:
+              start: 21
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 9
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 12
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 12
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 15
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 15
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 17
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 17
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 19
+                      txgs:
+                        start: 21
+                        end: 22
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 19
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+          - key: 21
+            txgs:
+              start: 39
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 21
+                      txgs:
+                        start: 39
+                        end: 40
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 21
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 24
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              24: 24.0
+                              25: 25.0
+                              26: 26.0"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(26));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 10
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 10
+              end: 11
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 0
+                compression: None
+                lsize: 16000
+                csize: 8000
+                checksum: 4
+          - key: 9
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 9
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 12
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 12
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 15
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 15
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 17
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 17
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+          - key: 19
+            txgs:
+              start: 21
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 19
+                      txgs:
+                        start: 21
+                        end: 22
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 19
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 21
+                      txgs:
+                        start: 39
+                        end: 40
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 21
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 4
+                    - key: 24
+                      txgs:
+                        start: 41
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              24: 24.0
+                              25: 25.0"#);
+}
+
 // LCOV_EXCL_STOP
