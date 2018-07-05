@@ -5,7 +5,10 @@ use common::{*, label::*};
 use futures::{Future, future};
 use nix::Error;
 #[cfg(not(test))] use nix::errno;
-use std::cell::RefCell;
+use std::{
+    cell::RefCell,
+    ops::Range
+};
 #[cfg(not(test))] use std::{collections::BTreeMap, path::Path};
 #[cfg(not(test))] use tokio::reactor::Handle;
 use uuid::Uuid;
@@ -50,7 +53,10 @@ pub struct ClosedZone {
     pub pba: PBA,
 
     /// Total number of blocks in this zone
-    pub total_blocks: LbaT
+    pub total_blocks: LbaT,
+
+    /// Range of transactions included in this zone
+    pub txgs: Range<TxgT>
 }
 
 // LCOV_EXCL_START
@@ -212,6 +218,7 @@ impl<'a> Pool {
                         freed_blocks: clz.freed_blocks,
                         pba: PBA::new(i as ClusterT, clz.start),
                         total_blocks: clz.total_blocks,
+                        txgs: clz.txgs
                     })
             })
     }
@@ -435,7 +442,7 @@ mod pool {
                         start: 30,
                         freed_blocks: 6,
                         total_blocks: 10,
-                        txgs: 0..1
+                        txgs: 2..3
                     },
                 ].into_iter())));
             s.expect(c.size_call().and_return_clone(32768000).times(..));
@@ -445,10 +452,14 @@ mod pool {
             vec![Box::new(cluster()), Box::new(cluster())]);
         let closed_zones = pool.list_closed_zones().collect::<Vec<_>>();
         let expected = vec![
-            ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5, total_blocks: 10},
-            ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6, total_blocks: 10},
-            ClosedZone{pba: PBA::new(1, 10), freed_blocks: 5, total_blocks: 10},
-            ClosedZone{pba: PBA::new(1, 30), freed_blocks: 6, total_blocks: 10},
+            ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5, total_blocks: 10,
+                       txgs: 0..1},
+            ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6, total_blocks: 10,
+                       txgs: 2..3},
+            ClosedZone{pba: PBA::new(1, 10), freed_blocks: 5, total_blocks: 10,
+                       txgs: 0..1},
+            ClosedZone{pba: PBA::new(1, 30), freed_blocks: 6, total_blocks: 10,
+                       txgs: 2..3},
         ];
         assert_eq!(closed_zones, expected);
     }

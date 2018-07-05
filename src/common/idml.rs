@@ -474,7 +474,7 @@ mod t {
     #[test]
     fn list_indirect_records() {
         let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100,
-                            freed_blocks: 50};
+                            freed_blocks: 50, txgs: 0..2};
         let cache = Cache::new();
         let mut ddml = DDML::new();
         ddml.expect_txg().called_any().returning(|_| 42);
