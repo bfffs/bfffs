@@ -405,14 +405,14 @@ mod pool {
                         start: 10,
                         freed_blocks: 5,
                         total_blocks: 10,
-                        txgs: 0..1
+                        txgs: TxgT::from(0)..TxgT::from(1)
                     },
                     cluster::ClosedZone {
                         zid: 3,
                         start: 30,
                         freed_blocks: 6,
                         total_blocks: 10,
-                        txgs: 2..3
+                        txgs: TxgT::from(2)..TxgT::from(3)
                     },
                 ].into_iter())));
             s.expect(c.size_call().and_return_clone(32768000).times(..));
@@ -423,13 +423,13 @@ mod pool {
         let closed_zones = pool.list_closed_zones().collect::<Vec<_>>();
         let expected = vec![
             ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5, total_blocks: 10,
-                       txgs: 0..1},
+                       txgs: TxgT::from(0)..TxgT::from(1)},
             ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6, total_blocks: 10,
-                       txgs: 2..3},
+                       txgs: TxgT::from(2)..TxgT::from(3)},
             ClosedZone{pba: PBA::new(1, 10), freed_blocks: 5, total_blocks: 10,
-                       txgs: 0..1},
+                       txgs: TxgT::from(0)..TxgT::from(1)},
             ClosedZone{pba: PBA::new(1, 30), freed_blocks: 6, total_blocks: 10,
-                       txgs: 2..3},
+                       txgs: TxgT::from(2)..TxgT::from(3)},
         ];
         assert_eq!(closed_zones, expected);
     }
@@ -467,7 +467,7 @@ mod pool {
         s.expect(cluster.size_call().and_return_clone(32768000).times(..));
         s.expect(cluster.write_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
-            }), 42)
+            }), TxgT::from(42))
             .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
         );
 
@@ -478,7 +478,8 @@ mod pool {
         let db0 = dbs.try().unwrap();
         let mut rt = current_thread::Runtime::new().unwrap();
         let result = rt.block_on(future::lazy(|| {
-            let (pba, fut) = pool.write(db0, 42).expect("write failed early");
+            let (pba, fut) = pool.write(db0, TxgT::from(42))
+                .expect("write failed early");
             fut.map(move |_| pba)
         }));
         assert_eq!(result.unwrap(), PBA::new(0, 0));

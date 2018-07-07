@@ -10,6 +10,7 @@ macro_rules! t {
 test_suite! {
     name persistence;
 
+    use arkfs::common::*;
     use arkfs::common::pool::*;
     use futures::future;
     use std::{fs, io::{Read, Seek, SeekFrom}};
@@ -67,7 +68,7 @@ test_suite! {
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            old_pool.write_label(0)
+            old_pool.write_label(TxgT::from(0))
         })).unwrap();
         drop(old_pool);
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -80,7 +81,7 @@ test_suite! {
 
     test write_label(objects()) {
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            objects.val.0.write_label(10)
+            objects.val.0.write_label(TxgT::from(10))
         })).unwrap();
         for path in objects.val.2 {
             let mut f = fs::File::open(path).unwrap();

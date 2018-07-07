@@ -402,7 +402,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.delete(&drp, 0)
+            ddml.delete(&drp, TxgT::from(0))
         })).unwrap();
     }
 
@@ -545,7 +545,7 @@ mod t {
         s.expect(pool.free_call(pba, 1).and_return(()));
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
-        ddml.pop::<DivBufShared, DivBuf>(&drp, 0);
+        ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0));
     }
 
     #[test]
@@ -570,7 +570,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.pop::<DivBufShared, DivBuf>(&drp, 0)
+            ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
         })).unwrap();
     }
 
@@ -594,7 +594,7 @@ mod t {
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         let err = rt.block_on(future::lazy(|| {
-            ddml.pop::<DivBufShared, DivBuf>(&drp, 0)
+            ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
         })).unwrap_err();
         assert_eq!(err, Error::Sys(errno::Errno::EIO));
     }
@@ -629,13 +629,13 @@ mod t {
             .with(params!(Key::PBA(pba), any()))
             .returning(|_| ());
         let pool = s.create_mock::<MockPool>();
-        s.expect(pool.write_call(ANY, 42)
+        s.expect(pool.write_call(ANY, TxgT::from(42))
             .and_return(Ok((pba, Box::new(future::ok::<(), Error>(())))))
         );
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put(dbs, Compression::None, 42);
+        let (drp, fut) = ddml.put(dbs, Compression::None, TxgT::from(42));
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
@@ -648,13 +648,14 @@ mod t {
         let cache = Cache::new();
         let pba = PBA::default();
         let pool = s.create_mock::<MockPool>();
-        s.expect(pool.write_call(ANY, 42)
+        let txg = TxgT::from(42);
+        s.expect(pool.write_call(ANY, txg)
             .and_return(Ok((pba, Box::new(future::ok::<(), Error>(())))))
         );
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put_direct(dbs, Compression::None, 42);
+        let (drp, fut) = ddml.put_direct(dbs, Compression::None, txg);
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
@@ -672,7 +673,7 @@ mod t {
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        assert!(rt.block_on(ddml.sync_all(0)).is_ok());
+        assert!(rt.block_on(ddml.sync_all(TxgT::from(0))).is_ok());
     }
 }
 // LCOV_EXCL_STOP

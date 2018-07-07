@@ -18,12 +18,14 @@ fn basic() {
     let drpl3 = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
     // We must make two copies of in1, one for DDMLMock::get and one for ::pop
     let children1 = vec![
-        IntElem::new(4u32, 8..9, TreePtr::Addr(drpl2)),
-        IntElem::new(6u32, 20..21, TreePtr::Addr(drpl3)),
+        IntElem::new(4u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl2)),
+        IntElem::new(6u32, TxgT::from(20)..TxgT::from(21),
+                     TreePtr::Addr(drpl3)),
     ];
     let children1_c = vec![
-        IntElem::new(4u32, 8..9, TreePtr::Addr(drpl2)),
-        IntElem::new(6u32, 20..21, TreePtr::Addr(drpl3)),
+        IntElem::new(4u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl2)),
+        IntElem::new(6u32, TxgT::from(20)..TxgT::from(21),
+                     TreePtr::Addr(drpl3)),
     ];
     let in1 = Arc::new(Node::new(NodeData::Int(IntData::new(children1))));
     let mut in1_c = Some(Arc::new(Node::new(
@@ -41,12 +43,14 @@ fn basic() {
     let drpl5 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
     // We must make two copies of in2, one for DDMLMock::get and one for ::pop
     let children2 = vec![
-        IntElem::new(8u32, 8..9, TreePtr::Addr(drpl4)),
-        IntElem::new(10u32, 10..11, TreePtr::Addr(drpl5)),
+        IntElem::new(8u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl4)),
+        IntElem::new(10u32, TxgT::from(10)..TxgT::from(11),
+                     TreePtr::Addr(drpl5)),
     ];
     let children2_c = vec![
-        IntElem::new(8u32, 8..9, TreePtr::Addr(drpl4)),
-        IntElem::new(10u32, 10..11, TreePtr::Addr(drpl5)),
+        IntElem::new(8u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl4)),
+        IntElem::new(10u32, TxgT::from(10)..TxgT::from(11),
+                     TreePtr::Addr(drpl5)),
     ];
     let in2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
     let mut in2_c = Some(Arc::new(Node::new(
@@ -84,7 +88,7 @@ fn basic() {
         .called_times(4)
         .with(passes(move |args: &(*const DRP, TxgT)| unsafe {
             (*args.0 == drpl3 || *args.0 == drpi2 || *args.0 == drpl8 ||
-            *args.0 == drpi1) && args.1 == 42
+            *args.0 == drpi1) && args.1 == TxgT::from(42)
         } ))
         .returning(move |args: (*const DRP, TxgT)| {
             let res = Box::new( unsafe {
@@ -104,7 +108,7 @@ fn basic() {
         });
     mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
         .called_times(3)
-        .with(passes(|args: &(_, _, TxgT)| args.2 == 42))
+        .with(passes(|args: &(_, _, TxgT)| args.2 == TxgT::from(42)))
         .returning(move |(_cacheable, _compression, _txg)| {
             let drp = DRP::random(Compression::None, 1024);
             (drp, Box::new(future::ok::<(), Error>(())))
@@ -200,8 +204,8 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
-    let txgs = 20..30;
-    rt.block_on(tree.clean_zone(start..end, txgs, 42)).unwrap();
+    let txgs = TxgT::from(20)..TxgT::from(30);
+    rt.block_on(tree.clean_zone(start..end, txgs, TxgT::from(42))).unwrap();
 }
 
 // The Root node lies in the dirty zone
@@ -212,12 +216,12 @@ fn dirty_root() {
     let drpl1 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
     // We must make two copies of inr, one for DDMLMock::get and one for ::pop
     let children = vec![
-        IntElem::new(8u32, 0..9, TreePtr::Addr(drpl0)),
-        IntElem::new(10u32, 0..9, TreePtr::Addr(drpl1)),
+        IntElem::new(8u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(drpl0)),
+        IntElem::new(10u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(drpl1)),
     ];
     let children_c = vec![
-        IntElem::new(8u32, 0..9, TreePtr::Addr(drpl0)),
-        IntElem::new(10u32, 0..9, TreePtr::Addr(drpl1)),
+        IntElem::new(8u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(drpl0)),
+        IntElem::new(10u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(drpl1)),
     ];
     let inr = Arc::new(Node::<DRP, u32, f32>::new(
             NodeData::Int(IntData::new(children))));
@@ -237,14 +241,14 @@ fn dirty_root() {
     mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
         .called_times(1)
         .with(passes(move |args: &(*const DRP, TxgT)|
-                     unsafe { *args.0 == drpir } && args.1 == 42)
+                     unsafe { *args.0 == drpir } && args.1 == TxgT::from(42))
         ).returning(move |_args: (*const DRP, TxgT)| {
             let res = Box::new(inr_c.take().unwrap());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
         });
     mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
         .called_times(1)
-        .with(passes(|args: &(_, _, TxgT)| args.2 == 42))
+        .with(passes(|args: &(_, _, TxgT)| args.2 == TxgT::from(42)))
         .returning(move |(_cacheable, _compression, _txg)| {
             let drp = DRP::random(Compression::None, 1024);
             (drp, Box::new(future::ok::<(), Error>(())))
@@ -275,7 +279,7 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
-    let txgs = 1000..1001;  // XXX placeholder
-    rt.block_on(tree.clean_zone(start..end, txgs, 42)).unwrap();
+    let txgs = TxgT::from(1000)..TxgT::from(1001);  // XXX placeholder
+    rt.block_on(tree.clean_zone(start..end, txgs, TxgT::from(42))).unwrap();
 }
 // LCOV_EXCL_STOP

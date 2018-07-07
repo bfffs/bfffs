@@ -43,6 +43,12 @@ impl MinValue for RID {
     }
 }
 
+impl MinValue for TxgT {
+    fn min_value() -> Self {
+        TxgT(u32::min_value())
+    }
+}
+
 pub trait Addr: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 
 impl<T> Addr for T
@@ -751,8 +757,8 @@ fn deserialize_int() {
     assert_eq!(*int_data.children[0].ptr.as_addr(), drp0);
     assert_eq!(int_data.children[1].key, 256);
     assert_eq!(*int_data.children[1].ptr.as_addr(), drp1);
-    assert_eq!(int_data.children[0].txgs, 1..9);
-    assert_eq!(int_data.children[1].txgs, 2..8);
+    assert_eq!(int_data.children[0].txgs, TxgT::from(1)..TxgT::from(9));
+    assert_eq!(int_data.children[1].txgs, TxgT::from(2)..TxgT::from(8));
 }
 
 #[test]
@@ -801,8 +807,8 @@ fn serialize_int() {
     let drp1 = DRP::new(PBA::new(0, 256), Compression::ZstdL9NoShuffle,
                         16000, 8000, 0x1a7ebabe);
     let children = vec![
-        IntElem::new(0u32, 1..9, TreePtr::Addr(drp0)),
-        IntElem::new(256u32, 2..8, TreePtr::Addr(drp1)),
+        IntElem::new(0u32, TxgT::from(1)..TxgT::from(9), TreePtr::Addr(drp0)),
+        IntElem::new(256u32, TxgT::from(2)..TxgT::from(8), TreePtr::Addr(drp1)),
     ];
     let node_data = NodeData::Int(IntData::new(children));
     let node: Node<DRP, u32, u32> = Node(RwLock::new(node_data));

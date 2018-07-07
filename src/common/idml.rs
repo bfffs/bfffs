@@ -98,7 +98,7 @@ impl<'a> IDML {
         let next_rid = Atomic::new(0);
         let ridt = DTree::<RID, RidtEntry>::create(ddml.clone());
         // TODO: get txg from the label
-        let transaction = RwLock::new(0);
+        let transaction = RwLock::new(TxgT::from(0));
         IDML{alloct, cache, ddml, next_rid, ridt, transaction}
     }
 
@@ -373,8 +373,9 @@ mod t {
                      drp: &DRP, refcount: u64)
     {
         let entry = RidtEntry{drp: drp.clone(), refcount};
-        rt.block_on(idml.ridt.insert(*rid, entry, 0)).unwrap();
-        rt.block_on(idml.alloct.insert(drp.pba(), *rid, 0)).unwrap();
+        let txg = TxgT::from(0);
+        rt.block_on(idml.ridt.insert(*rid, entry, txg)).unwrap();
+        rt.block_on(idml.alloct.insert(drp.pba(), *rid, txg)).unwrap();
     }
 
     #[test]
@@ -393,14 +394,14 @@ mod t {
         ddml.expect_delete()
             .called_once()
             .with(passes(move |args: &(*const DRP, TxgT)|
-                         unsafe {*args.0 == drp} && args.1 == 42)
+                         unsafe {*args.0 == drp} && args.1 == TxgT::from(42))
             ).returning(|_| Box::new(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 1);
 
-        rt.block_on(idml.delete(&rid, 42)).unwrap();
+        rt.block_on(idml.delete(&rid, TxgT::from(42))).unwrap();
         // Now verify the contents of the RIDT and AllocT
         assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
         assert!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().is_none());
@@ -417,7 +418,7 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 2);
 
-        rt.block_on(idml.delete(&rid, 42)).unwrap();
+        rt.block_on(idml.delete(&rid, TxgT::from(42))).unwrap();
         // Now verify the contents of the RIDT and AllocT
         let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry2.drp, drp);
@@ -505,8 +506,9 @@ mod t {
 
     #[test]
     fn list_indirect_records() {
+        let txgs = TxgT::from(0)..TxgT::from(2);
         let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100,
-                            freed_blocks: 50, txgs: 0..2};
+                            freed_blocks: 50, txgs};
         let cache = Cache::new();
         let ddml = DDML::new();
         let arc_ddml = Arc::new(ddml);
@@ -574,7 +576,7 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp0, 1);
 
-        rt.block_on(idml.move_record(rid, 0)).unwrap();
+        rt.block_on(idml.move_record(rid, TxgT::from(0))).unwrap();
 
         // Now verify the RIDT and alloct entries
         let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
@@ -611,7 +613,7 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp0, 1);
 
-        rt.block_on(idml.move_record(rid, 0)).unwrap();
+        rt.block_on(idml.move_record(rid, TxgT::from(0))).unwrap();
 
         // Now verify the RIDT and alloct entries
         let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
@@ -637,7 +639,7 @@ mod t {
         ddml.expect_delete()
             .called_once()
             .with(passes(move |args: &(*const DRP, TxgT)|
-                         unsafe {*args.0 == drp} && args.1 == 42)
+                         unsafe {*args.0 == drp} && args.1 == TxgT::from(42))
             ).returning(|_| {
                 Box::new(future::ok::<(), Error>(()))
             });
@@ -646,7 +648,7 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 1);
 
-        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, 42);
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(42));
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
         assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
@@ -672,7 +674,7 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 2);
 
-        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, 0);
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0));
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
         let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
@@ -705,7 +707,7 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 1);
 
-        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, 0);
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0));
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
         assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
@@ -736,7 +738,7 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 2);
 
-        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, 0);
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0));
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
         let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
@@ -767,7 +769,7 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
 
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (actual_rid, fut) = idml.put(dbs, Compression::None, 0);
+        let (actual_rid, fut) = idml.put(dbs, Compression::None, TxgT::from(0));
         assert_eq!(rid, actual_rid);
         rt.block_on(fut).unwrap();
 
@@ -789,28 +791,28 @@ mod t {
                            0xdeadbeef);
         ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
             .called_any()
-            .with(params!(any(), any(), 42))
+            .with(params!(any(), any(), TxgT::from(42)))
             .returning(move |(_, _, _)|
                 (DRP::random(Compression::None, 4096),
                  Box::new(future::ok::<(), Error>(())))
             );
         ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
             .called_any()
-            .with(params!(any(), any(), 42))
+            .with(params!(any(), any(), TxgT::from(42)))
             .returning(move |(_, _, _)|
                 (DRP::random(Compression::None, 4096),
                  Box::new(future::ok::<(), Error>(())))
             );
         ddml.expect_sync_all()
             .called_once()
-            .with(42)
+            .with(TxgT::from(42))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 2);
 
-        rt.block_on(idml.sync_all(42)).unwrap();
+        rt.block_on(idml.sync_all(TxgT::from(42))).unwrap();
     }
 
     #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test https://github.com/pcsm/simulacrum/issues/55"]
@@ -832,21 +834,21 @@ mod t {
             );
         ddml.expect_sync_all()
             .called_once()
-            .with(0)
+            .with(TxgT::from(0))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         ddml.then().expect_write_label()
             .called_once()
-            .with(0)
+            .with(TxgT::from(0))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         ddml.expect_sync_all()
             .called_once()
-            .with(0)
+            .with(TxgT::from(0))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
 
         rt.block_on(idml.sync_transaction()).unwrap();
-        assert_eq!(*idml.transaction.try_read().unwrap(), 1);
+        assert_eq!(*idml.transaction.try_read().unwrap(), TxgT::from(1));
     }
 }

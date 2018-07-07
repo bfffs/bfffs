@@ -13,7 +13,8 @@ test_suite! {
     use arkfs::common::{
         cache::*,
         ddml::*,
-        pool::*
+        pool::*,
+        TxgT
     };
     use divbuf::{DivBuf, DivBufShared};
     use futures::{Future, future};
@@ -47,7 +48,7 @@ test_suite! {
     test basic(objects) {
         let ddml: DDML = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put(dbs, Compression::None, 0);
+        let (drp, fut) = ddml.put(dbs, Compression::None, TxgT::from(0));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let ddml2 = &ddml;
             let drp2 = &drp;
@@ -56,7 +57,7 @@ test_suite! {
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 4096][..]);
             }).and_then(|_| {
-                ddml.pop::<DivBufShared, DivBuf>(&drp, 0)
+                ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
             }).map(|dbs: Box<DivBufShared>| {
                 assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 4096][..]);
             }).and_then(|_| {
@@ -72,6 +73,7 @@ test_suite! {
     // Round trip some compressible data.  Use the contents of vdev_raid.rs, a
     // moderately large and compressible file
     test compressible(objects) {
+        let txg = TxgT::from(0);
         let ddml: DDML = objects.val;
         let filename = Path::new(file!())
             .parent().unwrap()
@@ -82,7 +84,7 @@ test_suite! {
         let mut vdev_raid_contents = Vec::new();
         file.read_to_end(&mut vdev_raid_contents).unwrap();
         let dbs = DivBufShared::from(vdev_raid_contents.clone());
-        let (drp, fut) = ddml.put(dbs, Compression::ZstdL9NoShuffle, 0);
+        let (drp, fut) = ddml.put(dbs, Compression::ZstdL9NoShuffle, txg);
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let ddml2 = &ddml;
             let drp2 = &drp;
@@ -91,7 +93,7 @@ test_suite! {
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vdev_raid_contents[..]);
             }).and_then(|_| {
-                ddml.pop::<DivBufShared, DivBuf>(&drp, 0)
+                ddml.pop::<DivBufShared, DivBuf>(&drp, txg)
             }).map(|dbs: Box<DivBufShared>| {
                 assert_eq!(&dbs.try().unwrap()[..], &vdev_raid_contents[..]);
             }).and_then(|_| {
@@ -108,7 +110,7 @@ test_suite! {
     test short(objects) {
         let ddml: DDML = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 1024]);
-        let (drp, fut) = ddml.put(dbs, Compression::None, 0);
+        let (drp, fut) = ddml.put(dbs, Compression::None, TxgT::from(0));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let ddml2 = &ddml;
             let drp2 = &drp;
@@ -117,7 +119,7 @@ test_suite! {
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 1024][..]);
             }).and_then(|_| {
-                ddml.pop::<DivBufShared, DivBuf>(&drp, 0)
+                ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
             }).map(|dbs: Box<DivBufShared>| {
                 assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 1024][..]);
             }).and_then(|_| {

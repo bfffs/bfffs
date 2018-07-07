@@ -1,7 +1,7 @@
 // vim: tw=80
 
 use divbuf::{DivBuf, DivBufMut, DivBufShared};
-use std::{hash::Hasher, ops::{Add, Div, Sub}};
+use std::{hash::Hasher, ops::{Add, AddAssign, Div, Sub}};
 
 pub mod cache;
 #[cfg(test)] mod cache_mock;
@@ -63,7 +63,37 @@ pub type LbaT = u64;
 
 /// Transaction numbers.
 // 32-bits is enough for 1 per second for 100 years
-pub type TxgT = u32;
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd,
+         Serialize)]
+pub struct TxgT(u32);
+
+impl Add<u32> for TxgT {
+    type Output = Self;
+
+    fn add(self, rhs: u32) -> Self::Output {
+        TxgT(self.0 + rhs)
+    }
+}
+
+impl AddAssign<u32> for TxgT {
+    fn add_assign(&mut self, rhs: u32) {
+        *self = TxgT(self.0 + rhs)
+    }
+}
+
+impl From<u32> for TxgT {
+    fn from(t: u32) -> Self {
+        TxgT(t)
+    }
+}
+
+impl Sub<u32> for TxgT {
+    type Output = Self;
+
+    fn sub(self, rhs: u32) -> Self::Output {
+        TxgT(self.0 - rhs)
+    }
+}
 
 /// Physical Block Address.
 ///

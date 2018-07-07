@@ -985,7 +985,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
            max_size: usize) -> Self
     {
         // Since there are no on-disk children, the initial TXG range is empty
-        let txgs = 0..0;
+        let txgs = TxgT::from(0)..TxgT::from(0);
         let i: Inner<A, K, V> = Inner {
             height: AtomicUsize::new(1),
             min_fanout, max_fanout,

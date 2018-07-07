@@ -13,7 +13,7 @@ fn insert() {
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.insert(0, 0.0, 42));
+    let r = rt.block_on(tree.insert(0, 0.0, TxgT::from(42)));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -55,7 +55,7 @@ root:
           0: 0.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.insert(0, 100.0, 42));
+    let r = rt.block_on(tree.insert(0, 100.0, TxgT::from(42)));
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -200,7 +200,7 @@ root:
                               22: 22.0
                               23: 23.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(24, 24.0, 42));
+    let r2 = rt.block_on(tree.insert(24, 24.0, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -378,7 +378,7 @@ root:
                     7: 7.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(8, 8.0, 42));
+    let r2 = rt.block_on(tree.insert(8, 8.0, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", tree),
 r#"---
@@ -507,7 +507,7 @@ root:
                     14: 14.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(15, 15.0, 42));
+    let r2 = rt.block_on(tree.insert(15, 15.0, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -625,7 +625,7 @@ root:
           4: 4.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(5, 5.0, 42));
+    let r2 = rt.block_on(tree.insert(5, 5.0, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -673,7 +673,7 @@ fn get() {
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(future::lazy(|| {
-        tree.insert(0, 0.0, 0)
+        tree.insert(0, 0.0, TxgT::from(42))
             .and_then(|_| tree.get(0))
     }));
     assert_eq!(r, Ok(Some(0.0)));
@@ -860,7 +860,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(11..=31, 42)
+        tree.range_delete(11..=31, TxgT::from(42))
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1024,7 +1024,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(5..6, 42)
+        tree.range_delete(5..6, TxgT::from(42))
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1191,7 +1191,8 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete((Bound::Excluded(4), Bound::Excluded(10)), 42)
+        tree.range_delete((Bound::Excluded(4), Bound::Excluded(10)),
+                          TxgT::from(42))
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1314,7 +1315,8 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete((Bound::Excluded(4), Bound::Included(10)), 42)
+        tree.range_delete((Bound::Excluded(4), Bound::Included(10)),
+                          TxgT::from(42))
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1432,7 +1434,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(5..7, 42)
+        tree.range_delete(5..7, TxgT::from(42))
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1539,7 +1541,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(7..20, 42)
+        tree.range_delete(7..20, TxgT::from(42))
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1710,7 +1712,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(10..16, 42)
+        tree.range_delete(10..16, TxgT::from(42))
     );
     assert!(r.is_ok());
     // Ideally the leaf node with key 7 wouldn't have its end txg changed.
@@ -1887,7 +1889,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(4..20, 42)
+        tree.range_delete(4..20, TxgT::from(42))
     );
     assert!(r.is_ok());
     // Ideally the first leaf node wouldn't have its end txg changed.  However,
@@ -2325,7 +2327,7 @@ root:
           0: 0.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.remove(0, 42));
+    let r = rt.block_on(tree.remove(0, TxgT::from(42)));
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -2368,7 +2370,7 @@ root:
           2: 2.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.remove(1, 42));
+    let r = rt.block_on(tree.remove(1, TxgT::from(42)));
     assert_eq!(r, Ok(Some(1.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -2421,7 +2423,7 @@ root:
                     2: 2.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(1, 42));
+    let r2 = rt.block_on(tree.remove(1, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2567,7 +2569,7 @@ root:
                               22: 22.0
                               23: 23.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(23, 42));
+    let r2 = rt.block_on(tree.remove(23, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2797,7 +2799,7 @@ root:
                               21: 21.0
                               22: 22.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(4, 42));
+    let r2 = rt.block_on(tree.remove(4, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2953,7 +2955,7 @@ root:
                     7: 7.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(7, 42));
+    let r2 = rt.block_on(tree.remove(7, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3045,7 +3047,7 @@ root:
                     7: 7.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(4, 42));
+    let r2 = rt.block_on(tree.remove(4, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3221,7 +3223,7 @@ root:
                               25: 25.0
                               26: 26.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(26, 42));
+    let r2 = rt.block_on(tree.remove(26, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3489,7 +3491,7 @@ root:
                               24: 24.0
                               26: 26.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(14, 42));
+    let r2 = rt.block_on(tree.remove(14, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3676,7 +3678,7 @@ root:
                     9: 9.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(8, 42));
+    let r2 = rt.block_on(tree.remove(8, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3781,7 +3783,7 @@ root:
                     9: 9.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(4, 42));
+    let r2 = rt.block_on(tree.remove(4, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3838,7 +3840,7 @@ fn remove_nonexistent() {
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.remove(3, 42));
+    let r = rt.block_on(tree.remove(3, TxgT::from(42)));
     assert_eq!(r, Ok(None));
 }
 // LCOV_EXCL_STOP

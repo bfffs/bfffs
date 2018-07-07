@@ -18,7 +18,7 @@ fn flush() {
         .called_once()
         .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, TxgT)|{
             let node_data = (args.0).0.try_read().unwrap();
-            node_data.is_leaf() || args.2 == 42
+            node_data.is_leaf() || args.2 == TxgT::from(42)
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
     mock.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
@@ -27,10 +27,10 @@ fn flush() {
             let node_data = (args.0).0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
-            int_data.children[0].txgs == (42..43) &&
+            int_data.children[0].txgs == (TxgT::from(42)..TxgT::from(43)) &&
             int_data.children[1].key == 256 &&
-            int_data.children[1].txgs == (41..42) &&
-            args.2 == 42
+            int_data.children[1].txgs == (TxgT::from(41)..TxgT::from(42)) &&
+            args.2 == TxgT::from(42)
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
     let ddml = Arc::new(mock);
@@ -75,10 +75,10 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush(42));
+    let r = rt.block_on(tree.flush(TxgT::from(42)));
     assert!(r.is_ok());
     let root_elem = tree.i.root.get_mut().unwrap();
-    assert_eq!(root_elem.txgs, 41..43);
+    assert_eq!(root_elem.txgs, TxgT::from(41)..TxgT::from(43));
 }
 
 /// Remove a key that merges two int nodes
@@ -96,7 +96,7 @@ fn merge() {
     mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
         .called_once()
         .with(passes(move |args: &(*const DRP, TxgT)|
-                     unsafe {*args.0 == drpl1} && args.1 == 42)
+                     unsafe {*args.0 == drpl1} && args.1 == TxgT::from(42))
         ).returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must hack it with RefCell<Option<T>>
@@ -215,7 +215,7 @@ root:
                 csize: 8000
                 checksum: 1"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(4, 42));
+    let r2 = rt.block_on(tree.remove(4, TxgT::from(42)));
     assert!(r2.is_ok());
     println!("{}", &tree);
     assert_eq!(format!("{}", &tree),
@@ -333,7 +333,7 @@ fn split() {
     mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
         .called_once()
         .with(passes(move |args: &(*const DRP, TxgT)|
-                     unsafe {*args.0 == drpl} && args.1 == 42)
+                     unsafe {*args.0 == drpl} && args.1 == TxgT::from(42))
         ).returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must hack it with RefCell<Option<T>>
@@ -424,7 +424,7 @@ root:
                 checksum: 5
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(15, 15.0, 42));
+    let r2 = rt.block_on(tree.insert(15, 15.0, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -662,7 +662,7 @@ root:
                               25: 25.0
                               26: 26.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(26, 42));
+    let r2 = rt.block_on(tree.remove(26, TxgT::from(42)));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
