@@ -63,7 +63,7 @@ pub trait DML {
     type Addr;
 
     /// Delete the record from the cache, and free its storage space.
-    fn delete<'a>(&'a self, addr: &Self::Addr)
+    fn delete<'a>(&'a self, addr: &Self::Addr, txg: TxgT)
         -> Box<Future<Item=(), Error=Error> + 'a>;
 
     /// If the given record is present in the cache, evict it.
@@ -74,16 +74,15 @@ pub trait DML {
         -> Box<Future<Item=Box<R>, Error=Error> + 'a>;
 
     /// Read a record and return ownership of it.
-    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr)
+    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr, txg: TxgT)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
-    fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression)
+    fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
+                             txg: TxgT)
         -> (Self::Addr, Box<Future<Item=(), Error=Error> + 'a>);
 
     /// Sync all records written so far to stable storage.
-    fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a>;
-
-    /// Get the currently active transaction group
-    fn txg(&self) -> TxgT;
+    fn sync_all<'a>(&'a self, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + 'a>;
 }

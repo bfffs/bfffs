@@ -47,7 +47,7 @@ test_suite! {
     test basic(objects) {
         let ddml: DDML = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put(dbs, Compression::None);
+        let (drp, fut) = ddml.put(dbs, Compression::None, 0);
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let ddml2 = &ddml;
             let drp2 = &drp;
@@ -56,7 +56,7 @@ test_suite! {
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 4096][..]);
             }).and_then(|_| {
-                ddml.pop::<DivBufShared, DivBuf>(&drp)
+                ddml.pop::<DivBufShared, DivBuf>(&drp, 0)
             }).map(|dbs: Box<DivBufShared>| {
                 assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 4096][..]);
             }).and_then(|_| {
@@ -82,7 +82,7 @@ test_suite! {
         let mut vdev_raid_contents = Vec::new();
         file.read_to_end(&mut vdev_raid_contents).unwrap();
         let dbs = DivBufShared::from(vdev_raid_contents.clone());
-        let (drp, fut) = ddml.put(dbs, Compression::ZstdL9NoShuffle);
+        let (drp, fut) = ddml.put(dbs, Compression::ZstdL9NoShuffle, 0);
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let ddml2 = &ddml;
             let drp2 = &drp;
@@ -91,7 +91,7 @@ test_suite! {
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vdev_raid_contents[..]);
             }).and_then(|_| {
-                ddml.pop::<DivBufShared, DivBuf>(&drp)
+                ddml.pop::<DivBufShared, DivBuf>(&drp, 0)
             }).map(|dbs: Box<DivBufShared>| {
                 assert_eq!(&dbs.try().unwrap()[..], &vdev_raid_contents[..]);
             }).and_then(|_| {
@@ -108,7 +108,7 @@ test_suite! {
     test short(objects) {
         let ddml: DDML = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 1024]);
-        let (drp, fut) = ddml.put(dbs, Compression::None);
+        let (drp, fut) = ddml.put(dbs, Compression::None, 0);
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let ddml2 = &ddml;
             let drp2 = &drp;
@@ -117,7 +117,7 @@ test_suite! {
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 1024][..]);
             }).and_then(|_| {
-                ddml.pop::<DivBufShared, DivBuf>(&drp)
+                ddml.pop::<DivBufShared, DivBuf>(&drp, 0)
             }).map(|dbs: Box<DivBufShared>| {
                 assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 1024][..]);
             }).and_then(|_| {

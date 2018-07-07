@@ -17,6 +17,7 @@ use common::{
     tree::*
 };
 use futures::{Future, IntoFuture, Stream, future};
+use futures_locks::{RwLock, RwLockReadFut};
 use nix::{Error, errno::Errno};
 use std::sync::{Arc, Mutex};
 
@@ -63,12 +64,15 @@ pub struct IDML {
     next_rid: Atomic<u64>,
 
     /// Record indirection table.  Maps record IDs to disk addresses.
-    ridt: DTree<RID, RidtEntry>
+    ridt: DTree<RID, RidtEntry>,
+
+    /// Current transaction group
+    transaction: RwLock<TxgT>
 }
 
 impl<'a> IDML {
     /// Clean `zone` by moving all of its records to other zones.
-    pub fn clean_zone(&'a self, zone: ClosedZone)
+    pub fn clean_zone(&'a self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + 'a
     {
         // Outline:
@@ -79,10 +83,12 @@ impl<'a> IDML {
         //    do in the second.
         let end = PBA::new(zone.pba.cluster, zone.pba.lba + zone.total_blocks);
         self.list_indirect_records(&zone).for_each(move |record| {
-            self.move_record(record)
+            self.move_record(record, txg)
         }).and_then(move |_| {
-            let czfut = self.ridt.clean_zone(zone.pba..end, zone.txgs.clone());
-            let atfut = self.alloct.clean_zone(zone.pba..end, zone.txgs);
+            let czfut = self.ridt.clean_zone(zone.pba..end, zone.txgs.clone(),
+                                             txg);
+            let atfut = self.alloct.clean_zone(zone.pba..end, zone.txgs,
+                                               txg);
             czfut.join(atfut).map(|_| ())
         })
     }
@@ -91,7 +97,9 @@ impl<'a> IDML {
         let alloct = DTree::<PBA, RID>::create(ddml.clone());
         let next_rid = Atomic::new(0);
         let ridt = DTree::<RID, RidtEntry>::create(ddml.clone());
-        IDML{alloct, cache, ddml, next_rid, ridt}
+        // TODO: get txg from the label
+        let transaction = RwLock::new(0);
+        IDML{alloct, cache, ddml, next_rid, ridt, transaction}
     }
 
     pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
@@ -113,7 +121,7 @@ impl<'a> IDML {
     }
 
     /// Rewrite the given direct Record and update its metadata.
-    fn move_record(&'a self, rid: RID)
+    fn move_record(&'a self, rid: RID, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + 'a
     {
         // Even if the cache contains the target record, we must also do an RIDT
@@ -141,19 +149,50 @@ impl<'a> IDML {
                 // NB: on a cache miss, this will result in decompressing and
                 // recompressing the record, which is inefficient.
                 let compression = entry.drp.compression();
-                let (drp, buf_fut) = self.ddml.put_direct(*buf, compression);
+                let (drp, buf_fut) = self.ddml.put_direct(*buf, compression,
+                                                          txg);
                 entry.drp = drp;
-                let ridt_fut = self.ridt.insert(rid, entry);
-                let alloct_fut = self.alloct.insert(drp.pba(), rid);
+                let ridt_fut = self.ridt.insert(rid, entry, txg);
+                let alloct_fut = self.alloct.insert(drp.pba(), rid, txg);
                 buf_fut.join3(ridt_fut, alloct_fut)
             }).map(|_| ())
     }
+
+    /// Get a reference to the current transaction group.
+    ///
+    /// The reference will prevent the current transaction group from syncing,
+    /// so don't hold it too long.
+    pub fn txg(&self) -> RwLockReadFut<TxgT> {
+        self.transaction.read()
+    }
+
+    /// Finish the current transaction group and start a new one.
+    pub fn sync_transaction(&'a self)
+        -> impl Future<Item=(), Error=Error> + 'a
+    {
+        // Outline:
+        // 1) Sync the pool
+        // 2) Write the label
+        // 3) Sync the pool again
+        // TODO: use two labels, so the pool will be recoverable even if power
+        // is lost while writing a label.
+        self.transaction.write()
+            .map_err(|_| Error::Sys(Errno::EPIPE))
+            .and_then(move |mut txg_guard| {
+                let txg = *txg_guard;
+                self.sync_all(txg)
+                    .and_then(move |_| self.ddml.write_label(txg))
+                    .and_then(move |_| self.sync_all(txg))
+                    .map(move |_| *txg_guard += 1)
+            })
+    }
+
 }
 
 impl DML for IDML {
     type Addr = RID;
 
-    fn delete<'a>(&'a self, ridp: &Self::Addr)
+    fn delete<'a>(&'a self, ridp: &Self::Addr, txg: TxgT)
         -> Box<Future<Item=(), Error=Error> + 'a>
     {
         let rid = *ridp;
@@ -168,9 +207,9 @@ impl DML for IDML {
                 if entry.refcount == 0 {
                     self.cache.lock().unwrap().remove(&Key::Rid(rid));
                     // TODO: usd ddml.delete_direct
-                    let ddml_fut = self.ddml.delete(&entry.drp);
-                    let alloct_fut = self.alloct.remove(entry.drp.pba());
-                    let ridt_fut = self.ridt.remove(rid);
+                    let ddml_fut = self.ddml.delete(&entry.drp, txg);
+                    let alloct_fut = self.alloct.remove(entry.drp.pba(), txg);
+                    let ridt_fut = self.ridt.remove(rid, txg);
                     Box::new(
                         ddml_fut.join3(alloct_fut, ridt_fut)
                              .map(|(_, old_rid, _old_ridt_entry)| {
@@ -178,7 +217,7 @@ impl DML for IDML {
                              })
                      ) as Box<Future<Item=(), Error=Error>>
                 } else {
-                    let ridt_fut = self.ridt.insert(rid, entry)
+                    let ridt_fut = self.ridt.insert(rid, entry, txg)
                         .map(|_| ());
                     Box::new(ridt_fut)
                     as Box<Future<Item=(), Error=Error>>
@@ -218,7 +257,8 @@ impl DML for IDML {
         })
     }
 
-    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, ridp: &Self::Addr)
+    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, ridp: &Self::Addr,
+                                          txg: TxgT)
         -> Box<Future<Item=Box<T>, Error=Error> + 'a>
     {
         let rid = *ridp;
@@ -236,14 +276,14 @@ impl DML for IDML {
                     let bfut: Box<Future<Item=Box<T>, Error=Error>> = cacheval
                         .map(|cacheable| {
                             let t = cacheable.downcast::<T>().unwrap();
-                            Box::new(self.ddml.delete(&entry.drp)
+                            Box::new(self.ddml.delete(&entry.drp, txg)
                                               .map(move |_| t)
                             ) as Box<Future<Item=Box<T>, Error=Error>>
                         }).unwrap_or_else(||{
                             Box::new(self.ddml.pop_direct::<T>(&entry.drp))
                         });
-                    let alloct_fut = self.alloct.remove(entry.drp.pba());
-                    let ridt_fut = self.ridt.remove(rid);
+                    let alloct_fut = self.alloct.remove(entry.drp.pba(), txg);
+                    let ridt_fut = self.ridt.remove(rid, txg);
                     Box::new(
                         bfut.join3(alloct_fut, ridt_fut)
                              .map(|(cacheable, old_rid, _old_ridt_entry)| {
@@ -261,7 +301,7 @@ impl DML for IDML {
                     }).unwrap_or_else(|| {
                         Box::new(self.ddml.get_direct::<T>(&entry.drp))
                     });
-                    let ridt_fut = self.ridt.insert(rid, entry);
+                    let ridt_fut = self.ridt.insert(rid, entry, txg);
                     Box::new(
                         bfut.join(ridt_fut)
                             .map(|(cacheable, _)| {
@@ -273,7 +313,8 @@ impl DML for IDML {
         Box::new(fut)
     }
 
-    fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression)
+    fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
+                             txg: TxgT)
         -> (Self::Addr, Box<Future<Item=(), Error=Error> + 'a>)
     {
         // Outline:
@@ -281,11 +322,11 @@ impl DML for IDML {
         // 2) Cache
         // 3) Add entry to the RIDT
         // 4) Add reverse entry to the AllocT
-        let (drp, ddml_fut) = self.ddml.put_direct(cacheable, compression);
+        let (drp, ddml_fut) = self.ddml.put_direct(cacheable, compression, txg);
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
-        let alloct_fut = self.alloct.insert(drp.pba(), rid);
+        let alloct_fut = self.alloct.insert(drp.pba(), rid, txg);
         let rid_entry = RidtEntry::new(drp);
-        let ridt_fut = self.ridt.insert(rid, rid_entry);
+        let ridt_fut = self.ridt.insert(rid, rid_entry, txg);
         let fut = Box::new(
             ddml_fut.join3(ridt_fut, alloct_fut)
                 .map(move |(cacheable, old_rid_entry, old_alloc_entry)| {
@@ -300,17 +341,13 @@ impl DML for IDML {
         (rid, fut)
     }
 
-    fn sync_all<'a>(&'a self) -> Box<Future<Item=(), Error=Error> + 'a>
+    fn sync_all<'a>(&'a self, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + 'a>
     {
-        Box::new(
-            self.ridt.flush()
-                .join(self.alloct.flush())
-                .and_then(move |(_, _)| self.ddml.sync_all())
-        )
-    }
-
-    fn txg(&self) -> TxgT {
-        unimplemented!()
+        let fut = self.ridt.flush(txg)
+            .join(self.alloct.flush(txg))
+            .and_then(move |(_, _)| self.ddml.sync_all(txg));
+        Box::new(fut)
     }
 }
 
@@ -336,8 +373,8 @@ mod t {
                      drp: &DRP, refcount: u64)
     {
         let entry = RidtEntry{drp: drp.clone(), refcount};
-        rt.block_on(idml.ridt.insert(*rid, entry)).unwrap();
-        rt.block_on(idml.alloct.insert(drp.pba(), *rid)).unwrap();
+        rt.block_on(idml.ridt.insert(*rid, entry, 0)).unwrap();
+        rt.block_on(idml.alloct.insert(drp.pba(), *rid, 0)).unwrap();
     }
 
     #[test]
@@ -355,15 +392,15 @@ mod t {
         let mut ddml = DDML::new();
         ddml.expect_delete()
             .called_once()
-            .with(passes(move |key: &*const DRP| unsafe {**key == drp}))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
-        ddml.expect_txg().called_any().returning(|_| 42);
+            .with(passes(move |args: &(*const DRP, TxgT)|
+                         unsafe {*args.0 == drp} && args.1 == 42)
+            ).returning(|_| Box::new(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 1);
 
-        rt.block_on(idml.delete(&rid)).unwrap();
+        rt.block_on(idml.delete(&rid, 42)).unwrap();
         // Now verify the contents of the RIDT and AllocT
         assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
         assert!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().is_none());
@@ -374,14 +411,13 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let cache = Cache::new();
-        let mut ddml = DDML::new();
-        ddml.expect_txg().called_any().returning(|_| 42);
+        let ddml = DDML::new();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 2);
 
-        rt.block_on(idml.delete(&rid)).unwrap();
+        rt.block_on(idml.delete(&rid, 42)).unwrap();
         // Now verify the contents of the RIDT and AllocT
         let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry2.drp, drp);
@@ -401,8 +437,7 @@ mod t {
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
-        let mut ddml = DDML::new();
-        ddml.expect_txg().called_any().returning(|_| 42);
+        let ddml = DDML::new();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
@@ -421,8 +456,7 @@ mod t {
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
-        let mut ddml = DDML::new();
-        ddml.expect_txg().called_any().returning(|_| 42);
+        let ddml = DDML::new();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
@@ -460,7 +494,6 @@ mod t {
                 let dbs = Box::new(DivBufShared::from(vec![0u8; 4096]));
                 Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
             });
-        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -475,8 +508,7 @@ mod t {
         let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100,
                             freed_blocks: 50, txgs: 0..2};
         let cache = Cache::new();
-        let mut ddml = DDML::new();
-        ddml.expect_txg().called_any().returning(|_| 42);
+        let ddml = DDML::new();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -534,16 +566,15 @@ mod t {
             });
         ddml.expect_put_direct::<DivBufShared>()
             .called_once()
-            .returning(move |(buf, _)|
+            .returning(move |(buf, _, _)|
                        (drp1, Box::new(future::ok::<DivBufShared, Error>(buf)))
             );
-        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp0, 1);
 
-        rt.block_on(idml.move_record(rid)).unwrap();
+        rt.block_on(idml.move_record(rid, 0)).unwrap();
 
         // Now verify the RIDT and alloct entries
         let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
@@ -572,16 +603,15 @@ mod t {
             });
         ddml.expect_put_direct::<DivBufShared>()
             .called_once()
-            .returning(move |(buf, _)|
+            .returning(move |(buf, _, _)|
                        (drp1, Box::new(future::ok::<DivBufShared, Error>(buf)))
             );
-        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp0, 1);
 
-        rt.block_on(idml.move_record(rid)).unwrap();
+        rt.block_on(idml.move_record(rid, 0)).unwrap();
 
         // Now verify the RIDT and alloct entries
         let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
@@ -606,17 +636,17 @@ mod t {
         let mut ddml = DDML::new();
         ddml.expect_delete()
             .called_once()
-            .with(passes(move |key: &*const DRP| unsafe {**key == drp}))
-            .returning(|_| {
+            .with(passes(move |args: &(*const DRP, TxgT)|
+                         unsafe {*args.0 == drp} && args.1 == 42)
+            ).returning(|_| {
                 Box::new(future::ok::<(), Error>(()))
             });
-        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 1);
 
-        let fut = idml.pop::<DivBufShared, DivBuf>(&rid);
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, 42);
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
         assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
@@ -636,14 +666,13 @@ mod t {
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
-        let mut ddml = DDML::new();
-        ddml.expect_txg().called_any().returning(|_| 42);
+        let ddml = DDML::new();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 2);
 
-        let fut = idml.pop::<DivBufShared, DivBuf>(&rid);
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, 0);
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
         let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
@@ -671,13 +700,12 @@ mod t {
                 let dbs = DivBufShared::from(vec![42u8; 4096]);
                 Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(dbs)))
             });
-        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 1);
 
-        let fut = idml.pop::<DivBufShared, DivBuf>(&rid);
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, 0);
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
         assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
@@ -703,13 +731,12 @@ mod t {
                 let dbs = Box::new(DivBufShared::from(vec![42u8; 4096]));
                 Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
             });
-        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 2);
 
-        let fut = idml.pop::<DivBufShared, DivBuf>(&rid);
+        let fut = idml.pop::<DivBufShared, DivBuf>(&rid, 0);
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
         let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
@@ -732,17 +759,15 @@ mod t {
             .returning(|_| ());
         ddml.expect_put_direct::<DivBufShared>()
             .called_once()
-            .with(params!(any(), any()))
-            .returning(move |(buf, _)|
+            .returning(move |(buf, _, _)|
                        (drp, Box::new(future::ok::<DivBufShared, Error>(buf)))
             );
-        ddml.expect_txg().called_any().returning(|_| 42);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
 
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (actual_rid, fut) = idml.put(dbs, Compression::None);
+        let (actual_rid, fut) = idml.put(dbs, Compression::None, 0);
         assert_eq!(rid, actual_rid);
         rt.block_on(fut).unwrap();
 
@@ -764,26 +789,64 @@ mod t {
                            0xdeadbeef);
         ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
             .called_any()
-            .with(params!(any(), any()))
-            .returning(move |(_, _)|
+            .with(params!(any(), any(), 42))
+            .returning(move |(_, _, _)|
                 (DRP::random(Compression::None, 4096),
                  Box::new(future::ok::<(), Error>(())))
             );
         ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
             .called_any()
-            .with(params!(any(), any()))
-            .returning(move |(_, _)|
+            .with(params!(any(), any(), 42))
+            .returning(move |(_, _, _)|
                 (DRP::random(Compression::None, 4096),
                  Box::new(future::ok::<(), Error>(())))
             );
         ddml.expect_sync_all()
             .called_once()
+            .with(42)
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp, 2);
 
-        rt.block_on(idml.sync_all()).unwrap();
+        rt.block_on(idml.sync_all(42)).unwrap();
+    }
+
+    #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test https://github.com/pcsm/simulacrum/issues/55"]
+    #[test]
+    fn sync_transaction() {
+        let cache = Cache::new();
+        let mut ddml = DDML::new();
+        ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
+            .called_any()
+            .returning(move |(_, _, _)|
+                (DRP::random(Compression::None, 4096),
+                 Box::new(future::ok::<(), Error>(())))
+            );
+        ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
+            .called_any()
+            .returning(move |(_, _, _)|
+                (DRP::random(Compression::None, 4096),
+                 Box::new(future::ok::<(), Error>(())))
+            );
+        ddml.expect_sync_all()
+            .called_once()
+            .with(0)
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+        ddml.then().expect_write_label()
+            .called_once()
+            .with(0)
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+        ddml.expect_sync_all()
+            .called_once()
+            .with(0)
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+
+        rt.block_on(idml.sync_transaction()).unwrap();
+        assert_eq!(*idml.transaction.try_read().unwrap(), 1);
     }
 }

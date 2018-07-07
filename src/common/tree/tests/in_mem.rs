@@ -9,12 +9,11 @@ use tokio::runtime::current_thread;
 
 #[test]
 fn insert() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.insert(0, 0.0));
+    let r = rt.block_on(tree.insert(0, 0.0, 42));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -36,8 +35,7 @@ root:
 
 #[test]
 fn insert_dup() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
@@ -57,7 +55,7 @@ root:
           0: 0.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.insert(0, 100.0));
+    let r = rt.block_on(tree.insert(0, 100.0, 42));
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -80,8 +78,7 @@ root:
 /// Insert a key that splits a non-root interior node
 #[test]
 fn insert_split_int() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
@@ -203,7 +200,7 @@ root:
                               22: 22.0
                               23: 23.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(24, 24.0));
+    let r2 = rt.block_on(tree.insert(24, 24.0, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -338,8 +335,7 @@ root:
 /// Insert a key that splits a non-root leaf node
 #[test]
 fn insert_split_leaf() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
@@ -382,7 +378,7 @@ root:
                     7: 7.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(8, 8.0));
+    let r2 = rt.block_on(tree.insert(8, 8.0, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", tree),
 r#"---
@@ -437,8 +433,7 @@ root:
 /// Insert a key that splits the root IntNode
 #[test]
 fn insert_split_root_int() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
@@ -512,7 +507,7 @@ root:
                     14: 14.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(15, 15.0));
+    let r2 = rt.block_on(tree.insert(15, 15.0, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -606,8 +601,7 @@ root:
 /// Insert a key that splits the root leaf node
 #[test]
 fn insert_split_root_leaf() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
 ---
@@ -631,7 +625,7 @@ root:
           4: 4.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(5, 5.0));
+    let r2 = rt.block_on(tree.insert(5, 5.0, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -674,13 +668,12 @@ root:
 
 #[test]
 fn get() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(future::lazy(|| {
-        tree.insert(0, 0.0)
+        tree.insert(0, 0.0, 0)
             .and_then(|_| tree.get(0))
     }));
     assert_eq!(r, Ok(Some(0.0)));
@@ -752,8 +745,7 @@ fn get_nonexistent() {
 //    nodes.
 #[test]
 fn range_delete() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -868,7 +860,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(11..=31)
+        tree.range_delete(11..=31, 42)
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -925,8 +917,7 @@ root:
 // in the cut
 #[test]
 fn range_delete_danger() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -1033,7 +1024,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(5..6)
+        tree.range_delete(5..6, 42)
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1134,8 +1125,7 @@ root:
 // Delete a range that's exclusive on the left and right
 #[test]
 fn range_delete_exc_exc() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -1201,7 +1191,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete((Bound::Excluded(4), Bound::Excluded(10)))
+        tree.range_delete((Bound::Excluded(4), Bound::Excluded(10)), 42)
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1258,8 +1248,7 @@ root:
 // Delete a range that's exclusive on the left and inclusive on the right
 #[test]
 fn range_delete_exc_inc() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -1325,7 +1314,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete((Bound::Excluded(4), Bound::Included(10)))
+        tree.range_delete((Bound::Excluded(4), Bound::Included(10)), 42)
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1381,8 +1370,7 @@ root:
 // Delete a range that's contained within a single LeafNode
 #[test]
 fn range_delete_single_node() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -1444,7 +1432,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(5..7)
+        tree.range_delete(5..7, 42)
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1499,8 +1487,7 @@ root:
 // Delete a range that includes a whole Node at the end of the Tree
 #[test]
 fn range_delete_to_end() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -1552,7 +1539,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(7..20)
+        tree.range_delete(7..20, 42)
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1597,8 +1584,7 @@ root:
 // int node to its right
 #[test]
 fn range_delete_to_end_of_int_node() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -1724,7 +1710,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(10..16)
+        tree.range_delete(10..16, 42)
     );
     assert!(r.is_ok());
     // Ideally the leaf node with key 7 wouldn't have its end txg changed.
@@ -1838,8 +1824,7 @@ root:
 // Delete a range that includes only whole nodes
 #[test]
 fn range_delete_whole_nodes() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -1902,7 +1887,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(4..20)
+        tree.range_delete(4..20, 42)
     );
     assert!(r.is_ok());
     // Ideally the first leaf node wouldn't have its end txg changed.  However,
@@ -2320,8 +2305,7 @@ root:
 
 #[test]
 fn remove_last_key() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -2341,7 +2325,7 @@ root:
           0: 0.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.remove(0));
+    let r = rt.block_on(tree.remove(0, 42));
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -2362,8 +2346,7 @@ root:
 
 #[test]
 fn remove_from_leaf() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -2385,7 +2368,7 @@ root:
           2: 2.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.remove(1));
+    let r = rt.block_on(tree.remove(1, 42));
     assert_eq!(r, Ok(Some(1.0)));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -2408,8 +2391,7 @@ root:
 
 #[test]
 fn remove_and_merge_down() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -2439,7 +2421,7 @@ root:
                     2: 2.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(1));
+    let r2 = rt.block_on(tree.remove(1, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2462,8 +2444,7 @@ root:
 
 #[test]
 fn remove_and_merge_int_left() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -2586,7 +2567,7 @@ root:
                               22: 22.0
                               23: 23.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(23));
+    let r2 = rt.block_on(tree.remove(23, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2703,8 +2684,7 @@ root:
 
 #[test]
 fn remove_and_merge_int_right() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -2817,7 +2797,7 @@ root:
                               21: 21.0
                               22: 22.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(4));
+    let r2 = rt.block_on(tree.remove(4, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2924,8 +2904,7 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_left() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -2974,7 +2953,7 @@ root:
                     7: 7.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(7));
+    let r2 = rt.block_on(tree.remove(7, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3016,8 +2995,7 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_right() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -3067,7 +3045,7 @@ root:
                     7: 7.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(4));
+    let r2 = rt.block_on(tree.remove(4, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3110,8 +3088,7 @@ root:
 
 #[test]
 fn remove_and_steal_int_left() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -3244,7 +3221,7 @@ root:
                               25: 25.0
                               26: 26.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(26));
+    let r2 = rt.block_on(tree.remove(26, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3379,8 +3356,7 @@ root:
 
 #[test]
 fn remove_and_steal_int_right() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -3513,7 +3489,7 @@ root:
                               24: 24.0
                               26: 26.0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(14));
+    let r2 = rt.block_on(tree.remove(14, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3648,8 +3624,7 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_left() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -3701,7 +3676,7 @@ root:
                     9: 9.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(8));
+    let r2 = rt.block_on(tree.remove(8, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3754,8 +3729,7 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_right() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -3807,7 +3781,7 @@ root:
                     9: 9.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(4));
+    let r2 = rt.block_on(tree.remove(4, 42));
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3860,12 +3834,11 @@ root:
 
 #[test]
 fn remove_nonexistent() {
-    let mut mock = DDMLMock::new();
-    mock.expect_txg().called_any().returning(|_| 42);
+    let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.remove(3));
+    let r = rt.block_on(tree.remove(3, 42));
     assert_eq!(r, Ok(None));
 }
 // LCOV_EXCL_STOP

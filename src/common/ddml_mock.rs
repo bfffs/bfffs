@@ -18,10 +18,10 @@ impl DDMLMock {
         }
     }
 
-    pub fn expect_delete(&mut self) -> Method<*const DRP,
+    pub fn expect_delete(&mut self) -> Method<(*const DRP, TxgT),
         Box<Future<Item=(), Error=Error>>>
     {
-        self.e.expect::<*const DRP,
+        self.e.expect::<(*const DRP, TxgT),
             Box<Future<Item=(), Error=Error>>>
             ("delete")
     }
@@ -33,25 +33,26 @@ impl DDMLMock {
             ("get")
     }
 
-    pub fn expect_pop<T: Cacheable, R:CacheRef>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<T>, Error=Error>>>
+    pub fn expect_pop<T: Cacheable, R:CacheRef>(&mut self)
+        -> Method<(*const DRP, TxgT), Box<Future<Item=Box<T>, Error=Error>>>
     {
-        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
+        self.e.expect::<(*const DRP, TxgT),
+                        Box<Future<Item=Box<T>, Error=Error>>>
             ("pop")
     }
 
-    pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression),
+    pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
         (DRP, Box<Future<Item=(), Error=Error>>)>
     {
-        self.e.expect::<(T, Compression),
+        self.e.expect::<(T, Compression, TxgT),
                         (DRP, Box<Future<Item=(), Error=Error>>)>
             ("put")
     }
 
     pub fn expect_sync_all(&mut self)
-        -> Method<(), Box<Future<Item=(), Error=Error>>>
+        -> Method<TxgT, Box<Future<Item=(), Error=Error>>>
     {
-        self.e.expect::<(), Box<Future<Item=(), Error=Error>>>("sync_all")
+        self.e.expect::<TxgT, Box<Future<Item=(), Error=Error>>>("sync_all")
     }
 
     pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
@@ -96,19 +97,19 @@ impl DDMLMock {
     }
 
     pub fn put_direct<T: Cacheable>(&self, cacheable: T,
-                                    compression: Compression)
+                                    compression: Compression, txg: TxgT)
         -> (DRP, Box<Future<Item=T, Error=Error>>)
     {
-        self.e.was_called_returning::<(T, Compression),
+        self.e.was_called_returning::<(T, Compression, TxgT),
                                       (DRP, Box<Future<Item=T, Error=Error>>)>
-            ("put_direct", (cacheable, compression))
+            ("put_direct", (cacheable, compression, txg))
     }
 
     pub fn expect_put_direct<T: Cacheable>(&mut self)
-        -> Method<(T, Compression),
+        -> Method<(T, Compression, TxgT),
         (DRP, Box<Future<Item=T, Error=Error>>)>
     {
-        self.e.expect::<(T, Compression),
+        self.e.expect::<(T, Compression, TxgT),
                         (DRP, Box<Future<Item=T, Error=Error>>)>
             ("put_direct")
     }
@@ -118,20 +119,29 @@ impl DDMLMock {
         self
     }
 
-    pub fn expect_txg(&mut self) -> Method<(), TxgT> {
-        self.e.expect::<(), TxgT>("txg")
+    pub fn write_label(&self, txg: TxgT) -> impl Future<Item=(), Error=Error> {
+        self.e.was_called_returning::<TxgT, Box<Future<Item=(), Error=Error>>>
+            ("write_label", txg)
     }
 
+    pub fn expect_write_label(&mut self)
+        -> Method<TxgT, Box<Future<Item=(), Error=Error>>>
+    {
+        self.e.expect::<TxgT, Box<Future<Item=(), Error=Error>>>
+            ("write_label")
+    }
 }
 
 #[cfg(test)]
 impl DML for DDMLMock {
     type Addr = DRP;
 
-    fn delete(&self, drp: &DRP) -> Box<Future<Item=(), Error=Error>> {
-        self.e.was_called_returning::<*const DRP,
+    fn delete(&self, drp: &DRP, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error>>
+    {
+        self.e.was_called_returning::<(*const DRP, TxgT),
             Box<Future<Item=(), Error=Error>>>
-            ("delete", drp as *const DRP)
+            ("delete", (drp as *const DRP, txg))
     }
 
     fn evict(&self, drp: &DRP) {
@@ -145,29 +155,26 @@ impl DML for DDMLMock {
             ("get", drp as *const DRP)
     }
 
-    fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
+    fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP, txg: TxgT)
         -> Box<Future<Item=Box<T>, Error=Error>>
     {
-        self.e.was_called_returning::<*const DRP,
+        self.e.was_called_returning::<(*const DRP, TxgT),
             Box<Future<Item=Box<T>, Error=Error>>>
-            ("pop", drp as *const DRP)
+            ("pop", (drp as *const DRP, txg))
     }
 
-    fn put<T: Cacheable>(&self, cacheable: T, compression: Compression)
+    fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
+                         txg:TxgT)
         -> (DRP, Box<Future<Item=(), Error=Error>>)
     {
-        self.e.was_called_returning::<(T, Compression),
+        self.e.was_called_returning::<(T, Compression, TxgT),
                                       (DRP, Box<Future<Item=(), Error=Error>>)>
-            ("put", (cacheable, compression))
+            ("put", (cacheable, compression, txg))
     }
 
-    fn sync_all(&self) -> Box<Future<Item=(), Error=Error>> {
-        self.e.was_called_returning::<(), Box<Future<Item=(), Error=Error>>>
-            ("sync_all", ())
-    }
-
-    fn txg(&self) -> TxgT {
-        self.e.was_called_returning::<(), TxgT>("txg", ())
+    fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error>> {
+        self.e.was_called_returning::<TxgT, Box<Future<Item=(), Error=Error>>>
+            ("sync_all", txg)
     }
 }
 // LCOV_EXCL_STOP

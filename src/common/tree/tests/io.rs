@@ -18,15 +18,15 @@ fn insert_below_root() {
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
     mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
-        .returning(move |_| {
+        .with(passes(move |args: &(*const DRP, TxgT)|
+                     unsafe {*args.0 == drpl} && args.1 == 42)
+        ).returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must hack it with RefCell<Option<T>>
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
-    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -72,7 +72,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.insert(0, 0));
+    let r = rt.block_on(tree.insert(0, 0, 42));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -122,15 +122,15 @@ fn insert_root() {
     let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
     mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
-        .returning(move |_| {
+        .with(passes(move |args: &(*const DRP, TxgT)|
+                     unsafe {*args.0 == drpl} && args.1 == 42)
+        ).returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must hack it with RefCell<Option<T>>
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
         });
-    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -155,7 +155,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.insert(0, 0));
+    let r = rt.block_on(tree.insert(0, 0, 42));
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -403,7 +403,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush());
+    let r = rt.block_on(tree.flush(42));
     assert!(r.is_ok());
 }
 
@@ -412,26 +412,26 @@ root:
 fn write_deep() {
     let mut mock = DDMLMock::new();
     let drp = DRP::random(Compression::None, 1000);
-    mock.expect_txg().called_any().returning(|_| 42);
     mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
-            let node_data = arg.0.try_read().unwrap();
+        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, _)| {
+            let node_data = (args.0).0.try_read().unwrap();
             let leaf_data = node_data.as_leaf();
             leaf_data.get(&0) == Some(100) &&
-            leaf_data.get(&1) == Some(200)
+            leaf_data.get(&1) == Some(200) &&
+            args.2 == 42
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    mock.then().expect_txg().called_any().returning(|_| 42);
-    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
+    mock.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
-            let node_data = arg.0.try_read().unwrap();
+        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, _)| {
+            let node_data = (args.0).0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
             int_data.children[0].ptr.is_addr() &&
             int_data.children[1].key == 256 &&
-            int_data.children[1].ptr.is_addr()
+            int_data.children[1].ptr.is_addr() &&
+            args.2 == 42
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
     let ddml = Arc::new(mock);
@@ -476,7 +476,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush());
+    let r = rt.block_on(tree.flush(42));
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
@@ -487,16 +487,16 @@ fn write_int() {
     let drp = DRP::random(Compression::None, 1000);
     mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
-            let node_data = arg.0.try_read().unwrap();
+        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, _)|{
+            let node_data = (args.0).0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
             !int_data.children[0].ptr.is_mem() &&
             int_data.children[1].key == 256 &&
-            !int_data.children[1].ptr.is_mem()
+            !int_data.children[1].ptr.is_mem() &&
+            args.2 == 42
         }))
         .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -542,7 +542,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush());
+    let r = rt.block_on(tree.flush(42));
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }
@@ -553,13 +553,13 @@ fn write_leaf() {
     let drp = DRP::random(Compression::None, 1000);
     mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
-        .with(passes(move |&(ref arg, _): &(Arc<Node<DRP, u32, u32>>, _)| {
-            let node_data = arg.0.try_read().unwrap();
+        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, _)|{
+            let node_data = (args.0).0.try_read().unwrap();
             let leaf_data = node_data.as_leaf();
             leaf_data.get(&0) == Some(100) &&
-            leaf_data.get(&1) == Some(200)
+            leaf_data.get(&1) == Some(200) &&
+            args.2 == 42
         })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
-    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -581,7 +581,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush());
+    let r = rt.block_on(tree.flush(42));
     assert!(r.is_ok());
     assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
 }

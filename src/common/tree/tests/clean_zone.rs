@@ -82,32 +82,33 @@ fn basic() {
         });
     mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
         .called_times(4)
-        .with(passes(move |arg: & *const DRP| unsafe {
-            **arg == drpl3 || **arg == drpi2 || **arg == drpl8 || **arg == drpi1
+        .with(passes(move |args: &(*const DRP, TxgT)| unsafe {
+            (*args.0 == drpl3 || *args.0 == drpi2 || *args.0 == drpl8 ||
+            *args.0 == drpi1) && args.1 == 42
         } ))
-        .returning(move |arg: *const DRP| {
+        .returning(move |args: (*const DRP, TxgT)| {
             let res = Box::new( unsafe {
-                if *arg == drpl3 {
+                if *args.0 == drpl3 {
                     ln3.take().unwrap()
-                } else if *arg == drpi1 {
+                } else if *args.0 == drpi1 {
                     in1_c.take().unwrap()
-                } else if *arg == drpi2 {
+                } else if *args.0 == drpi2 {
                     in2_c.take().unwrap()
-                } else if *arg == drpl8 {
+                } else if *args.0 == drpl8 {
                     ln8.take().unwrap()
                 } else {
-                    panic!("unexpected DDMLMock::pop {:?}", *arg);
+                    panic!("unexpected DDMLMock::pop {:?}", *args.0);
                 }
             });
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
         });
     mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
         .called_times(3)
-        .returning(move |(_cacheable, _compression)| {
+        .with(passes(|args: &(_, _, TxgT)| args.2 == 42))
+        .returning(move |(_cacheable, _compression, _txg)| {
             let drp = DRP::random(Compression::None, 1024);
             (drp, Box::new(future::ok::<(), Error>(())))
         });
-    mock.expect_txg().called_any().returning(|_| 42);
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
@@ -200,7 +201,7 @@ root:
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
     let txgs = 20..30;
-    rt.block_on(tree.clean_zone(start..end, txgs)).unwrap();
+    rt.block_on(tree.clean_zone(start..end, txgs, 42)).unwrap();
 }
 
 // The Root node lies in the dirty zone
@@ -235,14 +236,16 @@ fn dirty_root() {
         });
     mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
         .called_times(1)
-        .with(passes(move |arg: & *const DRP| unsafe { **arg == drpir }))
-        .returning(move |_arg: *const DRP| {
+        .with(passes(move |args: &(*const DRP, TxgT)|
+                     unsafe { *args.0 == drpir } && args.1 == 42)
+        ).returning(move |_args: (*const DRP, TxgT)| {
             let res = Box::new(inr_c.take().unwrap());
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
         });
     mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
         .called_times(1)
-        .returning(move |(_cacheable, _compression)| {
+        .with(passes(|args: &(_, _, TxgT)| args.2 == 42))
+        .returning(move |(_cacheable, _compression, _txg)| {
             let drp = DRP::random(Compression::None, 1024);
             (drp, Box::new(future::ok::<(), Error>(())))
         });
@@ -273,6 +276,6 @@ root:
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
     let txgs = 1000..1001;  // XXX placeholder
-    rt.block_on(tree.clean_zone(start..end, txgs)).unwrap();
+    rt.block_on(tree.clean_zone(start..end, txgs, 42)).unwrap();
 }
 // LCOV_EXCL_STOP

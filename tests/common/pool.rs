@@ -29,7 +29,7 @@ test_suite! {
         0x48, 0x26, 0xe0, 0x7e, 0xb8,                   // H&.~.
         // UUID over, here's the rest of the label
                                       0x63, 0x74, 0x78, //      ctx
-        0x67, 0x00, 0x68, 0x63, 0x68, 0x69, 0x6c, 0x64, // g.hchild
+        0x67, 0x0a, 0x68, 0x63, 0x68, 0x69, 0x6c, 0x64, // g.hchild
         0x72, 0x65, 0x6e, 0x82,                         // ren.
         // These are the Cluster UUIDs
                                 0x50, 0xd2, 0xf5, 0x4a, //     P..J
@@ -67,7 +67,7 @@ test_suite! {
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            old_pool.write_label()
+            old_pool.write_label(0)
         })).unwrap();
         drop(old_pool);
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -80,7 +80,7 @@ test_suite! {
 
     test write_label(objects()) {
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            objects.val.0.write_label()
+            objects.val.0.write_label(10)
         })).unwrap();
         for path in objects.val.2 {
             let mut f = fs::File::open(path).unwrap();

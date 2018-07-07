@@ -1,11 +1,12 @@
 // vim: tw=80
 
+use common::*;
 use common::idml::{IDML, ClosedZone};
 use futures::{
     Future,
     stream::{self, Stream}
 };
-use nix::Error;
+use nix::{Error, errno};
 
 /// Garbage collector.
 ///
@@ -33,15 +34,19 @@ impl<'a> Cleaner {
         let stream = stream::iter_ok::<_, ()>(self.select_zones());
         stream.map_err(|_| unreachable!())
             .for_each(move |zone| {
-            self.clean_zone(zone)
-        })
+                self.idml.txg()
+                    .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    .and_then(move |txg_guard| {
+                        self.clean_zone(zone, *txg_guard)
+                    })
+            })
     }
 
     /// Immediately clean the given zone in the foreground
-    fn clean_zone(&'a self, zone: ClosedZone)
+    fn clean_zone(&'a self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + 'a
     {
-        self.idml.clean_zone(zone)
+        self.idml.clean_zone(zone, txg)
     }
 
     /// Select which zones to clean and return them sorted by cleanliness:

@@ -7,14 +7,11 @@
 
 use common::*;
 use common::dataset::*;
-use common::dml::DML;
-use common::ddml::DRP;
+use common::ddml::DRP;  // Can we remove this somehow?
 use common::idml::*;
 use common::tree::*;
 use futures::{Future, IntoFuture};
-use futures_locks::RwLock;
 use nix::{Error, errno};
-//use serde::{Serialize, de::DeserializeOwned};
 use std::sync::Arc;
 use tokio::executor::SpawnError;
 
@@ -53,7 +50,6 @@ pub struct Database {
     _forest: DTree<TreeID, DRP>,
     idml: Arc<IDML>,
     inner: Arc<Inner>,
-    transaction: RwLock<TxgT>,
 }
 
 impl<'a> Database {
@@ -70,14 +66,11 @@ impl<'a> Database {
         Ok(f(ds).into_future())
     }
 
-    pub fn sync(&'a self) -> impl Future<Item=(), Error=Error> + 'a
+    /// Finish the current transaction group and start a new one.
+    pub fn sync_transaction(&'a self) -> impl Future<Item=(), Error=Error> + 'a
     {
-        self.transaction.write()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
-            .and_then(move |_txg| {
-                // TODO: force all trees to flush
-                self.idml.sync_all()
-            })
+        // TODO: force all trees to flush
+        self.idml.sync_transaction()
     }
 
     /// Perform a read-write operation on a Dataset
@@ -93,7 +86,7 @@ impl<'a> Database {
               V: Value,
     {
         let inner = self.inner.clone();
-        self.transaction.read()
+        self.idml.txg()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |txg| {
                 let ds = inner.rw_dataset::<K, V>(tree_id, *txg);

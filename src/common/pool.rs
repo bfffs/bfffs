@@ -130,9 +130,6 @@ pub struct Pool {
 
     stats: RefCell<Stats>,
 
-    /// Current transaction group
-    txg: RefCell<TxgT>,
-
     uuid: Uuid,
 }
 
@@ -170,7 +167,7 @@ impl<'a> Pool {
 
     #[cfg(not(test))]
     pub fn create(name: String, clusters: Vec<Cluster>) -> Self {
-        Pool::new(name, Uuid::new_v4(), 0,
+        Pool::new(name, Uuid::new_v4(),
                   clusters.into_iter().map(|c| c.0).collect::<Vec<_>>())
     }
 
@@ -192,7 +189,7 @@ impl<'a> Pool {
     /// Construct a new `Pool` from some already constructed
     /// [`Cluster`](struct.Cluster.html)s
     #[cfg(any(not(test), feature = "mocks"))]
-    fn new(name: String, uuid: Uuid, txg: TxgT, clusters: Vec<ClusterLike>)
+    fn new(name: String, uuid: Uuid, clusters: Vec<ClusterLike>)
         -> Self
     {
         let size: Vec<_> = clusters.iter()
@@ -209,7 +206,7 @@ impl<'a> Pool {
             queue_depth,
             size
         });
-        Pool{name, clusters, stats, uuid, txg: RefCell::new(txg)}
+        Pool{name, clusters, stats, uuid}
     }
 
     /// List all closed zones in this Pool in no particular order
@@ -277,7 +274,7 @@ impl<'a> Pool {
                         }
                     }
                     if clusters.len() == num_clusters {
-                        Ok(Pool::new(name, label.uuid, label.txg, clusters))
+                        Ok(Pool::new(name, label.uuid, clusters))
                     } else {
                         Err(Error::Sys(errno::Errno::ENOENT))
                     }
@@ -311,37 +308,6 @@ impl<'a> Pool {
         ).map(|_| ())
     }
 
-    /// Complete the current transaction group.
-    ///
-    /// Pool may decide to do nothing, if no action is required.  The caller
-    /// must ensure that all higher-level write caches are flushed.
-    ///
-    /// # Returns
-    ///
-    /// The identifier of the new transaction group.
-    pub fn transact(&'a self) -> impl Future<Item=TxgT, Error=Error> + 'a {
-        // Outline:
-        // 1) Sync all clusters
-        // 2) Write the label to all clusters
-        // 3) Sync all clusters again
-        // TODO: use two labels, so the pool will be recoverable even if power
-        // is lost while writing a label.
-        self.sync_all()
-            .and_then(move |_| self.write_label())
-            .and_then(move |_| self.sync_all())
-            .map(move |_| {
-                let mut txg = self.txg.borrow_mut();
-                let new_txg = *txg + 1;
-                *txg = new_txg;
-                *txg
-            })
-    }
-
-    /// Get the currently active transaction group
-    pub fn txg(&self) -> TxgT {
-        *self.txg.borrow()
-    }
-
     /// Return the `Pool`'s UUID.
     pub fn uuid(&self) -> Uuid {
         self.uuid
@@ -353,14 +319,14 @@ impl<'a> Pool {
     ///
     /// The `PBA` where the data will be written, and a `Future` for the
     /// operation in progress.
-    pub fn write(&'a self, buf: IoVec)
+    pub fn write(&'a self, buf: IoVec, txg: TxgT)
         -> Result<(PBA, Box<PoolFut<'a>>), Error> {
 
         let cluster = self.stats.borrow().choose_cluster();
         let mut stats = self.stats.borrow_mut();
         stats.queue_depth[cluster as usize] += 1;
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
-        self.clusters[cluster as usize].write(buf, *self.txg.borrow())
+        self.clusters[cluster as usize].write(buf, txg)
             .map(|(lba, wfut)| {
                 stats.allocated_space[cluster as usize] += space;
                 let fut: Box<PoolFut> = Box::new(wfut.then(move |r| {
@@ -372,7 +338,7 @@ impl<'a> Pool {
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
-    pub fn write_label(&self) -> impl Future<Item=(), Error=Error> {
+    pub fn write_label(&self, txg: TxgT) -> impl Future<Item=(), Error=Error> {
         let mut labeller = LabelWriter::new();
         let cluster_uuids = self.clusters.iter().map(|cluster| cluster.uuid())
             .collect::<Vec<_>>();
@@ -380,7 +346,7 @@ impl<'a> Pool {
             name: self.name.clone(),
             uuid: self.uuid,
             children: cluster_uuids,
-            txg: *self.txg.borrow()
+            txg
         };
         let dbs = labeller.serialize(label);
         let futs = self.clusters.iter().map(|cluster| {
@@ -401,7 +367,7 @@ mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
     use futures::future;
-    use mockers::{Scenario, Sequence, matchers};
+    use mockers::Scenario;
     use mockers_derive::mock;
     use tokio::runtime::current_thread;
 
@@ -452,7 +418,7 @@ mod pool {
             s.expect(c.size_call().and_return_clone(32768000).times(..));
             c
         };
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), 0,
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
             vec![Box::new(cluster()), Box::new(cluster())]);
         let closed_zones = pool.list_closed_zones().collect::<Vec<_>>();
         let expected = vec![
@@ -483,49 +449,12 @@ mod pool {
             c
         };
 
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), 0,
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
                              vec![Box::new(cluster()),
                                   Box::new(cluster())]);
 
         let mut rt = current_thread::Runtime::new().unwrap();
         assert!(rt.block_on(pool.sync_all()).is_ok());
-    }
-
-    #[test]
-    fn transact() {
-        let s = Scenario::new();
-        let mut seq = Sequence::new();
-        let cluster = s.create_mock::<MockCluster>();
-        s.expect(cluster.optimum_queue_depth_call()
-                 .and_return_clone(10)
-                 .times(..));
-        s.expect(cluster.size_call().and_return_clone(32768000).times(..));
-        s.expect(cluster.uuid_call().and_return_clone(Uuid::new_v4()).times(..));
-        seq.expect(cluster.write_call(matchers::ANY, matchers::ANY)
-            .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
-        );
-        seq.expect(cluster.sync_all_call()
-            .and_return(Box::new(future::ok::<(), Error>(()))));
-        seq.expect(cluster.write_label_call(matchers::ANY)
-            .and_return(Box::new(future::ok::<(), Error>(()))));
-        seq.expect(cluster.sync_all_call()
-            .and_return(Box::new(future::ok::<(), Error>(()))));
-        s.expect(seq);
-
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), 0,
-                             vec![Box::new(cluster)]);
-
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let txg = rt.block_on(future::lazy(|| {
-            let (_pba, fut) = pool.write(db0).expect("write failed early");
-            fut.and_then(|_| {
-                pool.transact()
-            })
-        })).unwrap();
-        assert_eq!(txg, 1);
-        assert_eq!(*pool.txg.borrow(), 1);
     }
 
     #[test]
@@ -538,18 +467,18 @@ mod pool {
         s.expect(cluster.size_call().and_return_clone(32768000).times(..));
         s.expect(cluster.write_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
-            }), matchers::ANY)
+            }), 42)
             .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
         );
 
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), 0,
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
                              vec![Box::new(cluster)]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
         let mut rt = current_thread::Runtime::new().unwrap();
         let result = rt.block_on(future::lazy(|| {
-            let (pba, fut) = pool.write(db0).expect("write failed early");
+            let (pba, fut) = pool.write(db0, 42).expect("write failed early");
             fut.map(move |_| pba)
         }));
         assert_eq!(result.unwrap(), PBA::new(0, 0));

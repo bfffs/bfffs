@@ -262,11 +262,12 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// the child's guard.
     // Consuming and returning self prevents lifetime checker issues that
     // interfere with lock coupling.
-    pub fn xlock<'a, D: DML<Addr=A>>(mut self, dml: &'a D, child_idx: usize)
+    pub fn xlock<'a, D: DML<Addr=A>>(mut self, dml: &'a D, child_idx: usize,
+                                     txg: TxgT)
         -> (Box<Future<Item=(TreeWriteGuard<A, K, V>,
                              TreeWriteGuard<A, K, V>), Error=Error> + 'a>)
     {
-        self.as_int_mut().children[child_idx].txgs.end = dml.txg() + 1;
+        self.as_int_mut().children[child_idx].txgs.end = txg + 1;
         if self.as_int().children[child_idx].ptr.is_mem() {
             Box::new(
                 self.as_int().children[child_idx].ptr.as_mem().xlock()
@@ -280,7 +281,8 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                             .ptr
                             .as_addr();
                 Box::new(
-                    dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr)
+                    dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr,
+                                                                      txg)
                        .map(move |arc|
                     {
                         let child_node = Box::new(Arc::try_unwrap(*arc)
@@ -295,7 +297,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                             );
                             elem.txgs.start = match *guard {
                                 NodeData::Int(ref id) => id.start_txg(),
-                                NodeData::Leaf(_) => dml.txg()
+                                NodeData::Leaf(_) => txg
                             };
                             guard
                         };
