@@ -7,6 +7,8 @@ pub mod cache;
 #[cfg(test)] mod cache_mock;
 pub mod cleaner;
 pub mod cluster;
+pub mod database;
+pub mod dataset;
 pub mod ddml;
 #[cfg(test)] mod ddml_mock;
 pub mod declust;

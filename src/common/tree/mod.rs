@@ -36,6 +36,8 @@ use self::node::*;
 // Node must be visible for the IDML's unit tests
 pub(super) use self::node::Node;
 
+pub use self::node::{Key, MinValue, Value};
+
 /// Are there any elements in common between the two Ranges?
 fn ranges_overlap<T: PartialOrd>(x: &Range<T>, y: &Range<T>) -> bool {
     if x.end <= x.start || y.end <= y.start {
