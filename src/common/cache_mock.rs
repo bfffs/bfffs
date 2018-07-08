@@ -1,3 +1,4 @@
+// vim: tw=80
 // LCOV_EXCL_START
 use common::cache::*;
 use simulacrum::*;

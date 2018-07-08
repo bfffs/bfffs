@@ -1,3 +1,4 @@
+// vim: tw=80
 // LCOV_EXCL_START
 use common::TxgT;
 use common::dml::*;
@@ -6,11 +7,10 @@ use futures::Future;
 use nix::Error;
 use simulacrum::*;
 
-#[cfg(test)]
 pub struct DDMLMock {
     e: Expectations
 }
-#[cfg(test)]
+
 impl DDMLMock {
     pub fn new() -> Self {
         Self {
@@ -132,7 +132,6 @@ impl DDMLMock {
     }
 }
 
-#[cfg(test)]
 impl DML for DDMLMock {
     type Addr = DRP;
 
