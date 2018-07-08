@@ -15,6 +15,7 @@ pub mod declust;
 pub mod dml;
 pub mod dva;
 pub mod idml;
+#[cfg(test)] mod idml_mock;
 pub mod label;
 pub mod null_raid;
 pub mod pool;
