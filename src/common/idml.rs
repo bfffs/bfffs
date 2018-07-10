@@ -33,7 +33,7 @@ use common::ddml::DDML;
 use common::ddml_mock::DDMLMock as DDML;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-pub struct RidtEntry {
+struct RidtEntry {
     drp: DRP,
     refcount: u64
 }
