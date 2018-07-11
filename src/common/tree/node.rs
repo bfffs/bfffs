@@ -61,10 +61,10 @@ impl<T> Key for T
 where T: Copy + Debug + DeserializeOwned + Ord + MinValue + Serialize
     + 'static {}
 
-pub trait Value: Copy + Debug + DeserializeOwned + Serialize + 'static {}
+pub trait Value: Clone + Debug + DeserializeOwned + Serialize + 'static {}
 
 impl<T> Value for T
-where T: Copy + Debug + DeserializeOwned + Serialize + 'static {}
+where T: Clone + Debug + DeserializeOwned + Serialize + 'static {}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned,
@@ -195,7 +195,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
             _ => true
         };
         let items = self.items.range(range)
-            .map(|(&k, &v)| (k.clone(), v.clone()))
+            .map(|(&ref k, &ref v)| (k.clone(), v.clone()))
             .collect::<VecDeque<(K, V)>>();
         (items, more)
     }
