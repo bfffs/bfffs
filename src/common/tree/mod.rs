@@ -4,6 +4,7 @@
 //!
 //! [^CowBtrees]: Rodeh, Ohad. "B-trees, shadowing, and clones." ACM Transactions on Storage (TOS) 3.4 (2008): 2.
 
+use bincode;
 use common::*;
 use common::dml::*;
 use futures::{
@@ -322,9 +323,11 @@ struct Inner<A: Addr, K: Key, V: Value> {
     // Use atomics so it can be modified from an immutable reference.  Accesses
     // should be very rare, so performance is not a concern.
     #[serde(with = "atomic_usize_serializer")]
+    /// TODO: convert to u64
     height: AtomicUsize,
     /// Minimum node fanout.  Smaller nodes will be merged, or will steal
     /// children from their neighbors.
+    /// TODO: convert to u64
     min_fanout: usize,
     /// Maximum node fanout.  Larger nodes will be split.
     max_fanout: usize,
@@ -678,6 +681,12 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             mem::replace(root_guard.deref_mut(), new_root_data);
             self.i.height.fetch_sub(1, Ordering::Relaxed);
         }
+    }
+
+    /// Open a `Tree` from its serialized representation
+    pub fn open(dml: Arc<D>, on_disk: TreeOnDisk) -> bincode::Result<Self> {
+        let inner = bincode::deserialize(&on_disk.0[..])?;
+        Ok(Tree{ dml, i: inner })
     }
 
     /// Lookup a range of (key, value) pairs for keys within the range `range`.
@@ -1074,7 +1083,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         }
     }
 
-    /// Flush all in-memory Nodes to disk.
+    /// Flush all in-memory Nodes to disk, returning a serialized `TreeOnDisk`
+    /// object
     // Like range_delete, keep the entire Tree locked during flush.  That's
     // because we need to write child nodes before we have valid addresses for
     // their parents' child pointers.  It's also the only way to guarantee that
@@ -1086,7 +1096,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     // RangeQuery that would descend through the tree multiple times, flushing a
     // portion at each time.  But it wouldn't be able to guarantee a clean tree.
     pub fn flush(&'a self, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + 'a
+        -> impl Future<Item=TreeOnDisk, Error=Error> + 'a
     {
         self.write()
             .and_then(move |root_guard| {
@@ -1113,6 +1123,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 Box::new(future::ok::<(), Error>(()))
             }
         })
+        .map(move |_| TreeOnDisk(bincode::serialize(&self.i).unwrap()))
     }
 
     fn write_leaf(&'a self, node: Box<Node<A, K, V>>, txg: TxgT)
@@ -1462,5 +1473,8 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         }
     }
 }
+
+/// The serialized, on-disk representation of a `Tree`
+pub struct TreeOnDisk(Vec<u8>);
 
 #[cfg(test)] mod tests;

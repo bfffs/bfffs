@@ -176,6 +176,45 @@ root:
 }
 
 #[test]
+fn open() {
+    let v = vec![
+        1u8, 0, 0, 0, 0, 0, 0, 0,               // Height = 1
+        2, 0, 0, 0, 0, 0, 0, 0,                 // min_fanout = 2
+        5, 0, 0, 0, 0, 0, 0, 0,                 // max_fanout = 5
+        0, 0, 0x40, 0, 0, 0, 0, 0,              // max_size = 4MB
+        0, 0, 0, 0,                             // root.key = 0
+        0, 0, 0, 0,                             // root.txgs.start = 0
+        42, 0, 0, 0,                            // root.txgs.end = 42
+        1, 0, 0, 0,                             // root.ptr is a TreePtr::Addr
+        2, 0,                                   // pba.cluster = 2
+        8, 7, 6, 5, 4, 3, 2, 1,                 // pba.lba = 0x0102030405060708
+        1, 0, 0, 0,                             // compression = ZstdL9NoShuffle
+        78, 0, 0, 0,                            // lsize = 78
+        36, 0, 0, 0,                            // csize = 36
+        1, 2, 3, 4, 5, 6, 7, 8,                 // checksum = 0x0807060504030201
+    ];
+    let expected_drp = DRP::new(PBA::new(2, 0x0102030405060708),
+        Compression::ZstdL9NoShuffle,
+        78,     // lsize
+        36,     // csize
+        0x0807060504030201
+    );
+    let on_disk = TreeOnDisk(v);
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree = Tree::<DRP, DDMLMock, u32, u32>::open(ddml, on_disk).unwrap();
+    assert_eq!(tree.i.height.load(Ordering::Relaxed), 1);
+    assert_eq!(tree.i.min_fanout, 2);
+    assert_eq!(tree.i.max_fanout, 5);
+    assert_eq!(tree.i._max_size, 4194304);
+    let root_elem_guard = tree.i.root.try_read().unwrap();
+    assert_eq!(root_elem_guard.key, 0);
+    assert_eq!(root_elem_guard.txgs, TxgT::from(0)..TxgT::from(42));
+    let drp = root_elem_guard.ptr.as_addr();
+    assert_eq!(*drp, expected_drp);
+}
+
+#[test]
 fn range_leaf() {
     struct FutureMock {
         e: Expectations
@@ -374,6 +413,54 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.get(1));
     assert_eq!(Ok(Some(200)), r);
+}
+
+// Tree::flush should serialize the Tree::Inner object
+#[test]
+fn serialize_inner() {
+    let expected = vec![
+        1u8, 0, 0, 0, 0, 0, 0, 0,               // Height = 1
+        2, 0, 0, 0, 0, 0, 0, 0,                 // min_fanout = 2
+        5, 0, 0, 0, 0, 0, 0, 0,                 // max_fanout = 5
+        0, 0, 0x40, 0, 0, 0, 0, 0,              // max_size = 4MB
+        0, 0, 0, 0,                             // root.key = 0
+        0, 0, 0, 0,                             // root.txgs.start = 0
+        42, 0, 0, 0,                            // root.txgs.end = 42
+        1, 0, 0, 0,                             // root.ptr is a TreePtr::Addr
+        2, 0,                                   // pba.cluster = 2
+        8, 7, 6, 5, 4, 3, 2, 1,                 // pba.lba = 0x0102030405060708
+        1, 0, 0, 0,                             // compression = ZstdL9NoShuffle
+        78, 0, 0, 0,                            // lsize = 78
+        36, 0, 0, 0,                            // csize = 36
+        1, 2, 3, 4, 5, 6, 7, 8,                 // checksum = 0x0807060504030201
+    ];
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Addr:
+      pba:
+        cluster: 2
+        lba: 0x0102030405060708
+      compression: ZstdL9NoShuffle
+      lsize: 78
+      csize: 36
+      checksum: 0x0807060504030201
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.flush(TxgT::from(42)));
+    assert_eq!(&expected[..], &r.unwrap().0[..])
 }
 
 // If the tree isn't dirty, then there's nothing to do
