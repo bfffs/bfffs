@@ -7,7 +7,6 @@
 
 use common::*;
 use common::dataset::*;
-use common::ddml::DRP;  // Can we remove this somehow?
 use common::idml::*;
 use common::tree::*;
 use futures::{Future, IntoFuture};
@@ -47,7 +46,7 @@ impl Inner {
 }
 
 pub struct Database {
-    _forest: DTree<TreeID, DRP>,
+    _forest: DTree<TreeID, TreeOnDisk>,
     idml: Arc<IDML>,
     inner: Arc<Inner>,
 }
