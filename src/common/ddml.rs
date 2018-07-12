@@ -8,6 +8,7 @@
 use common::{
     *,
     cache::{Cacheable, CacheRef, Key},
+    label::*,
     pool::*
 };
 use futures::{Future, IntoFuture, future};
@@ -41,7 +42,7 @@ pub trait PoolTrait {
     fn uuid(&self) -> Uuid;
     fn write(&self, buf: IoVec, txg: TxgT)
         -> Result<(PBA, Box<PoolFut>), Error>;
-    fn write_label(&self, txg: TxgT) -> Box<PoolFut>;
+    fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
 }
 #[cfg(test)]
 pub type PoolLike = Box<PoolTrait>;
@@ -266,10 +267,10 @@ impl<'a> DDML {
         self.put_common(cacheable, compression, txg)
     }
 
-    pub fn write_label(&'a self, txg: TxgT)
+    pub fn write_label(&'a self, labeller: LabelWriter)
         -> impl Future<Item=(), Error=Error> + 'a
     {
-        self.pool.write_label(txg)
+        self.pool.write_label(labeller)
     }
 }
 
@@ -376,7 +377,8 @@ mod t {
             fn uuid(&self) -> Uuid;
             fn write(&self, buf: IoVec, txg: TxgT)
                 -> Result<(PBA, Box<PoolFut<'static>>), Error>;
-            fn write_label(&self, txg: TxgT) -> Box<PoolFut>;
+            fn write_label(&self, mut labeller: LabelWriter)
+                -> Box<PoolFut>;
         }
     }
 

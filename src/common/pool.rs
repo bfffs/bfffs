@@ -68,9 +68,6 @@ struct Label {
     /// Pool UUID, fixed at format time
     uuid:               Uuid,
 
-    /// Last transaction group synced before the label was written
-    txg:                TxgT,
-
     /// `UUID`s of all component `VdevRaid`s
     children:           Vec<Uuid>,
 }
@@ -189,8 +186,7 @@ impl<'a> Pool {
     /// Construct a new `Pool` from some already constructed
     /// [`Cluster`](struct.Cluster.html)s
     #[cfg(any(not(test), feature = "mocks"))]
-    fn new(name: String, uuid: Uuid, clusters: Vec<ClusterLike>)
-        -> Self
+    fn new(name: String, uuid: Uuid, clusters: Vec<ClusterLike>) -> Self
     {
         let size: Vec<_> = clusters.iter()
             .map(|cluster| cluster.size())
@@ -338,15 +334,16 @@ impl<'a> Pool {
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
-    pub fn write_label(&self, txg: TxgT) -> impl Future<Item=(), Error=Error> {
-        let mut labeller = LabelWriter::new();
+    pub fn write_label(&'a self, mut labeller: LabelWriter)
+        -> impl Future<Item=(), Error=Error> + 'a
+    {
+        //let mut labeller = LabelWriter::new();
         let cluster_uuids = self.clusters.iter().map(|cluster| cluster.uuid())
             .collect::<Vec<_>>();
         let label = Label {
             name: self.name.clone(),
             uuid: self.uuid,
             children: cluster_uuids,
-            txg
         };
         let dbs = labeller.serialize(label);
         let futs = self.clusters.iter().map(|cluster| {

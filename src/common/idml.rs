@@ -14,6 +14,7 @@ use common::{
     dml::*,
     ddml::DRP,
     cache::{Cacheable, CacheRef, Key},
+    label::*,
     tree::*
 };
 use futures::{Future, IntoFuture, Stream, future};
@@ -181,12 +182,25 @@ impl<'a> IDML {
             .and_then(move |mut txg_guard| {
                 let txg = *txg_guard;
                 self.sync_all(txg)
-                    .and_then(move |_| self.ddml.write_label(txg))
+                    .and_then(move |_| self.write_label(txg))
                     .and_then(move |_| self.sync_all(txg))
                     .map(move |_| *txg_guard += 1)
             })
     }
 
+    /// Asynchronously write this `IDML`'s label to its `Pool`
+    pub fn write_label(&'a self, txg: TxgT)
+        -> impl Future<Item=(), Error=Error> + 'a
+    {
+        let mut labeller = LabelWriter::new();
+        let label = Label {
+            txg
+        };
+        let dbs = labeller.serialize(label);
+        self.ddml.write_label(labeller).map(move |_| {
+            let _ = dbs;    // needs to live this long
+        })
+    }
 }
 
 impl DML for IDML {
@@ -349,6 +363,12 @@ impl DML for IDML {
             .and_then(move |(_, _)| self.ddml.sync_all(txg));
         Box::new(fut)
     }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Label {
+    /// Last transaction group synced before the label was written
+    txg:                TxgT,
 }
 
 // LCOV_EXCL_START
@@ -838,7 +858,6 @@ mod t {
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         ddml.then().expect_write_label()
             .called_once()
-            .with(TxgT::from(0))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         ddml.expect_sync_all()
             .called_once()

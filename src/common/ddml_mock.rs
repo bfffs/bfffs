@@ -3,6 +3,7 @@
 use common::TxgT;
 use common::dml::*;
 use common::ddml::*;
+use common::label::*;
 use futures::Future;
 use nix::Error;
 use simulacrum::*;
@@ -119,15 +120,18 @@ impl DDMLMock {
         self
     }
 
-    pub fn write_label(&self, txg: TxgT) -> impl Future<Item=(), Error=Error> {
-        self.e.was_called_returning::<TxgT, Box<Future<Item=(), Error=Error>>>
-            ("write_label", txg)
+    pub fn write_label(&self, labeller: LabelWriter)
+        -> impl Future<Item=(), Error=Error>
+    {
+        self.e.was_called_returning::<LabelWriter,
+                                      Box<Future<Item=(), Error=Error>>>
+            ("write_label", labeller)
     }
 
     pub fn expect_write_label(&mut self)
-        -> Method<TxgT, Box<Future<Item=(), Error=Error>>>
+        -> Method<LabelWriter, Box<Future<Item=(), Error=Error>>>
     {
-        self.e.expect::<TxgT, Box<Future<Item=(), Error=Error>>>
+        self.e.expect::<LabelWriter, Box<Future<Item=(), Error=Error>>>
             ("write_label")
     }
 }
