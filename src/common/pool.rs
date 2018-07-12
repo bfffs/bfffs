@@ -316,17 +316,17 @@ impl<'a> Pool {
     /// The `PBA` where the data will be written, and a `Future` for the
     /// operation in progress.
     pub fn write(&'a self, buf: IoVec, txg: TxgT)
-        -> Result<(PBA, Box<PoolFut<'a>>), Error> {
-
+        -> Result<(PBA, Box<PoolFut<'a>>), Error>
+    {
         let cluster = self.stats.borrow().choose_cluster();
-        let mut stats = self.stats.borrow_mut();
-        stats.queue_depth[cluster as usize] += 1;
+        let cidx = cluster as usize;
+        self.stats.borrow_mut().queue_depth[cidx] += 1;
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
-        self.clusters[cluster as usize].write(buf, txg)
+        self.clusters[cidx].write(buf, txg)
             .map(|(lba, wfut)| {
-                stats.allocated_space[cluster as usize] += space;
+                self.stats.borrow_mut().allocated_space[cidx] += space;
                 let fut: Box<PoolFut> = Box::new(wfut.then(move |r| {
-                    stats.queue_depth[cluster as usize] -= 1;
+                    self.stats.borrow_mut().queue_depth[cidx] -= 1;
                     r
                 }));
                 (PBA::new(cluster, lba), fut)
