@@ -247,7 +247,12 @@ impl<'a> DDML {
             if compression == Compression::None {
                 // Truncate uncompressed DivBufShareds.  We padded them in the
                 // previous step
-                cacheable.truncate(csize as usize);
+                if keeper.is_some() {
+                    // The serialized buffer is temporary.  No need to unpad it.
+                } else {
+                    // Unpad the cacheable before we cache it.
+                    cacheable.truncate(csize as usize);
+                }
             } else {
                 let _ = compressed_dbs;
             }

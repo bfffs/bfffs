@@ -674,7 +674,7 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
     }
 
     fn truncate(&self, _len: usize) {
-        unimplemented!()
+        panic!("Can't truncate or resize an unserialized Node");
     }
 }
 
