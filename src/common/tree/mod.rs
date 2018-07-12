@@ -4,6 +4,9 @@
 //!
 //! [^CowBtrees]: Rodeh, Ohad. "B-trees, shadowing, and clones." ACM Transactions on Storage (TOS) 3.4 (2008): 2.
 
+// use the atomic crate since libstd's AtomicU64 type is still unstable
+// https://github.com/rust-lang/rust/issues/32976
+use atomic::{Atomic, Ordering};
 use bincode;
 use common::*;
 use common::dml::*;
@@ -29,7 +32,6 @@ use std::{
     ops::{Bound, DerefMut, Range, RangeBounds},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering}
     }
 };
 mod node;
@@ -55,18 +57,18 @@ fn ranges_overlap<T: PartialOrd>(x: &Range<T>, y: &Range<T>) -> bool {
     }
 }
 
-mod atomic_usize_serializer {
+mod atomic_u64_serializer {
     use super::*;
     use serde::Deserialize;
 
-    pub fn deserialize<'de, D>(d: D) -> Result<AtomicUsize, D::Error>
+    pub fn deserialize<'de, D>(d: D) -> Result<Atomic<u64>, D::Error>
         where D: Deserializer<'de>
     {
-        usize::deserialize(d)
-            .map(|u| AtomicUsize::new(u))
+        u64::deserialize(d)
+            .map(|u| Atomic::new(u))
     }
 
-    pub fn serialize<S>(x: &AtomicUsize, s: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(x: &Atomic<u64>, s: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
         s.serialize_u64(x.load(Ordering::Relaxed) as u64)
@@ -322,18 +324,16 @@ struct Inner<A: Addr, K: Key, V: Value> {
     /// Tree height.  1 if the Tree consists of a single Leaf node.
     // Use atomics so it can be modified from an immutable reference.  Accesses
     // should be very rare, so performance is not a concern.
-    #[serde(with = "atomic_usize_serializer")]
-    /// TODO: convert to u64
-    height: AtomicUsize,
+    #[serde(with = "atomic_u64_serializer")]
+    height: Atomic<u64>,
     /// Minimum node fanout.  Smaller nodes will be merged, or will steal
     /// children from their neighbors.
-    /// TODO: convert to u64
-    min_fanout: usize,
+    min_fanout: u64,
     /// Maximum node fanout.  Larger nodes will be split.
-    max_fanout: usize,
+    max_fanout: u64,
     /// Maximum node size in bytes.  Larger nodes will be split or their message
     /// buffers flushed
-    _max_size: usize,
+    _max_size: u64,
     /// Root node
     #[serde(with = "tree_root_serializer")]
     root: RwLock<IntElem<A, K, V>>
@@ -448,7 +448,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
                 // LCOV_EXCL_STOP
             };
-            let b = self.i.min_fanout;
+            let b = self.i.min_fanout as usize;
             if child.as_int().nchildren() - cut_grandkids <= b - 1 {
                 Box::new(self.fix_int(parent, child_idx, child, txg))
             } else {
@@ -990,13 +990,12 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         Box::new(fut)
     }
 
-    fn new(dml: Arc<D>, min_fanout: usize, max_fanout: usize,
-           max_size: usize) -> Self
+    fn new(dml: Arc<D>, min_fanout: u64, max_fanout: u64, max_size: u64) -> Self
     {
         // Since there are no on-disk children, the initial TXG range is empty
         let txgs = TxgT::from(0)..TxgT::from(0);
         let i: Inner<A, K, V> = Inner {
-            height: AtomicUsize::new(1),
+            height: Atomic::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
             root: RwLock::new(

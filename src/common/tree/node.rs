@@ -496,9 +496,9 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         }
     }
 
-    /// Can this child be merged with `other` without violating constraints?
-    pub fn can_merge(&self, other: &NodeData<A, K, V>, max_fanout: usize) -> bool {
-        self.len() + other.len() <= max_fanout
+    /// Can this child be merged with `rhs` without violating constraints?
+    pub fn can_merge(&self, rhs: &NodeData<A, K, V>, max_fanout: u64) -> bool {
+        (self.len() + rhs.len()) as u64 <= max_fanout
     }
 
     /// Return this `NodeData`s lower bound key, suitable for use in its
@@ -519,14 +519,14 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     /// Is this node currently underflowing?
-    pub fn underflow(&self, min_fanout: usize) -> bool {
-        let len = self.len();
+    pub fn underflow(&self, min_fanout: u64) -> bool {
+        let len = self.len() as u64;
         len <= min_fanout
     }
 
     /// Should this node be split because it's too big?
-    pub fn should_split(&self, max_fanout: usize) -> bool {
-        let len = self.len();
+    pub fn should_split(&self, max_fanout: u64) -> bool {
+        let len = self.len() as u64;
         debug_assert!(len <= max_fanout,
                       "Overfull nodes shouldn't be possible");
         len >= max_fanout
