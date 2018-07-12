@@ -17,9 +17,10 @@ sed '
 /"::common"/d
 /"::common::cache_mock"/d
 /"::common::ddml_mock"/d
+/"::common::idml_mock"/d
 /"::common::dva"/d
 /"::common::sgcursor"/d
-/"::common::tree::atomic_usize_serializer"/d
+/"::common::tree::atomic_u64_serializer"/d
 /"::common::tree::tree_root_serializer"/d
 /"::common::vdev"/d
 #
