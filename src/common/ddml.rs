@@ -15,11 +15,10 @@ use futures::{Future, IntoFuture, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
-use std::{
-    hash::Hasher,
-    sync::{Arc, Mutex}
-};
+use std::{hash::Hasher, sync::{Arc, Mutex} };
+#[cfg(not(test))] use std::path::Path;
 #[cfg(all(test, feature = "mocks"))] use simulacrum::*;
+#[cfg(not(test))] use tokio::reactor::Handle;
 #[cfg(test)] use uuid::Uuid;
 
 pub use common::dml::{Compression, DML};
@@ -179,6 +178,27 @@ impl<'a> DDML {
                     Err(Error::Sys(errno::Errno::EIO))
                 }
             })
+        )
+    }
+
+    /// Open an existing `DDML` by its pool name
+    ///
+    /// Returns a new `DDML` object
+    ///
+    /// * `cache`:  An existing `Cache`
+    /// * `name`:   Name of the desired `Pool`
+    /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
+    ///             must be present.
+    /// * `h`:      Handle to the Tokio reactor that will be used to service
+    ///             this `Pool`.
+    #[cfg(not(test))]
+    pub fn open<P>(cache: Arc<Mutex<Cache>>, name: String, paths: Vec<P>,
+                   handle: Handle)
+        -> impl Future<Item=(Self, LabelReader), Error=Error>
+        where P: AsRef<Path> + 'static
+    {
+        Pool::open(name, paths, handle).map(move |(pool, label_reader)|
+            (DDML{pool, cache}, label_reader)
         )
     }
 

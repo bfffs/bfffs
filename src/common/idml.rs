@@ -20,9 +20,9 @@ use common::{
 use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
 use nix::{Error, errno::Errno};
+#[cfg(not(test))] use std::path::Path;
 use std::sync::{Arc, Mutex};
-
-pub use common::ddml::ClosedZone;
+#[cfg(not(test))] use tokio::reactor::Handle;
 
 #[cfg(not(test))]
 use common::cache::Cache;
@@ -32,6 +32,8 @@ use common::cache_mock::CacheMock as Cache;
 use common::ddml::DDML;
 #[cfg(test)]
 use common::ddml_mock::DDMLMock as DDML;
+
+pub use common::ddml::ClosedZone;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 struct RidtEntry {
@@ -98,7 +100,6 @@ impl<'a> IDML {
         let alloct = DTree::<PBA, RID>::create(ddml.clone());
         let next_rid = Atomic::new(0);
         let ridt = DTree::<RID, RidtEntry>::create(ddml.clone());
-        // TODO: get txg from the label
         let transaction = RwLock::new(TxgT::from(0));
         IDML{alloct, cache, ddml, next_rid, ridt, transaction}
     }
@@ -119,6 +120,33 @@ impl<'a> IDML {
         let end = PBA::new(zone.pba.cluster, zone.pba.lba + zone.total_blocks);
         self.alloct.range(zone.pba..end)
             .map(|(_pba, rid)| rid)
+    }
+
+    /// Open an existing `IDML` by its pool name
+    ///
+    /// Returns a new `IDML` object
+    ///
+    /// * `name`:   Name of the desired `Pool`
+    /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
+    ///             must be present.
+    /// * `h`:      Handle to the Tokio reactor that will be used to service
+    ///             this `Pool`.
+    #[cfg(not(test))]
+    pub fn open<P>(poolname: String, paths: Vec<P>, handle: Handle)
+        -> impl Future<Item=Self, Error=Error>
+        where P: AsRef<Path> + 'static
+    {
+        let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000_000)));
+        DDML::open(cache.clone(), poolname, paths, handle)
+        .map(move |(ddml, mut label_reader)| {
+            let l: Label = label_reader.deserialize().unwrap();
+            let arc_ddml = Arc::new(ddml);
+            let alloct = Tree::open(arc_ddml.clone(), l.alloct).unwrap();
+            let ridt = Tree::open(arc_ddml.clone(), l.ridt).unwrap();
+            let transaction = RwLock::new(TxgT::from(l.txg));
+            let next_rid = Atomic::new(l.next_rid);
+            IDML{alloct, cache, ddml: arc_ddml, next_rid, ridt, transaction}
+        })
     }
 
     /// Rewrite the given direct Record and update its metadata.
@@ -193,12 +221,19 @@ impl<'a> IDML {
         -> impl Future<Item=(), Error=Error> + 'a
     {
         let mut labeller = LabelWriter::new();
-        let label = Label {
-            txg
-        };
-        let dbs = labeller.serialize(label);
-        self.ddml.write_label(labeller).map(move |_| {
-            let _ = dbs;    // needs to live this long
+        self.alloct.flush(txg)
+        .join(self.ridt.flush(txg))
+        .and_then(move |(alloct, ridt)| {
+            let label = Label {
+                alloct,
+                next_rid: self.next_rid.load(Ordering::Relaxed),
+                ridt,
+                txg,
+            };
+            let dbs = labeller.serialize(label);
+            self.ddml.write_label(labeller).map(move |_| {
+                let _ = dbs;    // needs to live this long
+            })
         })
     }
 }
@@ -367,6 +402,9 @@ impl DML for IDML {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
+    alloct:             TreeOnDisk,
+    next_rid:           u64,
+    ridt:               TreeOnDisk,
     /// Last transaction group synced before the label was written
     txg:                TxgT,
 }

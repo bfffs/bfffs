@@ -71,7 +71,7 @@ test_suite! {
         })).unwrap();
         drop(old_pool);
         let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(|| {
+        let (pool, _label_reader) = rt.block_on(future::lazy(|| {
             Pool::open(name.clone(), paths, Handle::default())
         })).unwrap();
         assert_eq!(name, pool.name());

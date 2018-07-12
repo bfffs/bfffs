@@ -236,7 +236,7 @@ impl<'a> Pool {
     ///             this `Pool`.
     #[cfg(not(test))]
     pub fn open<P>(name: String, paths: Vec<P>, handle: Handle)
-        -> impl Future<Item=Self, Error=Error>
+        -> impl Future<Item=(Self, LabelReader), Error=Error>
         where P: AsRef<Path> + 'static
     {
          // Outline:
@@ -256,21 +256,26 @@ impl<'a> Pool {
                         label = Some(l);
                     }
                 }
-                (cluster.uuid(), cluster)
-            }).collect::<BTreeMap<Uuid, cluster::Cluster>>();
+                (cluster.uuid(), (cluster, label_reader))
+            }).collect::<BTreeMap<Uuid, (cluster::Cluster, LabelReader)>>();
 
             match label {
                 Some(label) => {
                     let num_clusters = label.children.len();
                     let mut clusters = Vec::with_capacity(num_clusters);
+                    let mut label_reader = None;
                     for uuid in label.children {
                         match all_clusters.remove(&uuid) {
-                            Some(cluster) => clusters.push(cluster),
+                            Some((cluster, reader)) => {
+                                clusters.push(cluster);
+                                label_reader = Some(reader)
+                            },
                             None => break
                         }
                     }
                     if clusters.len() == num_clusters {
-                        Ok(Pool::new(name, label.uuid, clusters))
+                        Ok((Pool::new(name, label.uuid, clusters),
+                            label_reader.take().unwrap()))
                     } else {
                         Err(Error::Sys(errno::Errno::ENOENT))
                     }

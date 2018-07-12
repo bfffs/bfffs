@@ -3,7 +3,7 @@
 use common::{*, label::*, vdev::{Vdev, VdevFut}};
 #[cfg(not(test))] use common::vdev_raid::*;
 use futures::{Future, IntoFuture, future};
-use itertools::multizip;
+#[cfg(any(not(test), feature = "mocks"))] use itertools::multizip;
 use nix::{Error, errno};
 use std::{
     cell::RefCell,
