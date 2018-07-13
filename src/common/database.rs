@@ -16,7 +16,12 @@ use std::sync::Arc;
 use tokio::executor::SpawnError;
 #[cfg(not(test))] use tokio::reactor::Handle;
 
-type ITree<K, V> = Tree<RID, IDML, K, V>;
+// TODO: define real keys and values for filesystems
+type FSKey = u32;
+type FSValue = u32;
+
+type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
+type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
 
 /// Keys into the Forest
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
@@ -33,17 +38,17 @@ impl MinValue for TreeID {
 }
 
 struct Inner {
+    dummy: Arc<ITree<FSKey, FSValue>>,
+    idml: Arc<IDML>,
 }
 
 impl Inner {
-    fn ro_dataset<K: Key, V: Value>(&self, _tree_id: TreeID)
-        -> ReadOnlyDataset<K, V>
+    fn ro_filesystem(&self, _tree_id: TreeID) -> ReadOnlyFilesystem
     {
-        unimplemented!()
+        ReadOnlyFilesystem::new(self.dummy.clone())
     }
 
-    fn rw_dataset<K: Key, V: Value>(&self, _tree_id: TreeID, _txg: TxgT)
-        -> ReadWriteDataset<K, V>
+    fn rw_filesystem(&self, _tree_id: TreeID, _txg: TxgT) -> ReadWriteFilesystem
     {
         unimplemented!()
     }
@@ -51,8 +56,6 @@ impl Inner {
 
 pub struct Database {
     // TODO: store all filesystem and device trees
-    _dummy: ITree<u32, u32>,
-    idml: Arc<IDML>,
     inner: Arc<Inner>,
 }
 
@@ -63,52 +66,51 @@ impl<'a> Database {
         where P: AsRef<Path> + 'static
     {
         IDML::open(poolname, paths, handle).map(|idml| {
-            let inner = Arc::new(Inner{});
             let arc_idml = Arc::new(idml);
-            let _dummy = ITree::create(arc_idml.clone());
-            Database{_dummy, idml: arc_idml, inner}
+            let dummy = Arc::new(ITree::create(arc_idml.clone()));
+            let inner = Arc::new(Inner{dummy, idml: arc_idml});
+            Database{inner}
         })
     }
 
-    /// Perform a read-only operation on a Dataset
-    pub fn read<F, B, E, K, R, V>(&self, tree_id: TreeID, f: F)
+    /// Perform a read-only operation on a Filesystem
+    pub fn fsread<F, B, E, R>(&self, tree_id: TreeID, f: F)
         -> Result<impl Future<Item = R, Error = Error>, SpawnError>
-        where F: FnOnce(ReadOnlyDataset<K, V>) -> B + 'static,
+        where F: FnOnce(ReadOnlyFilesystem) -> B + 'static,
               B: IntoFuture<Item = R, Error = Error> + 'static,
-              K: Key,
-              V: Value,
               R: 'static
     {
-        let ds = self.inner.ro_dataset::<K, V>(tree_id);
+        let ds = self.inner.ro_filesystem(tree_id);
         Ok(f(ds).into_future())
     }
 
     /// Finish the current transaction group and start a new one.
     pub fn sync_transaction(&'a self) -> impl Future<Item=(), Error=Error> + 'a
     {
-        self.idml.sync_transaction(move |txg|{
-            // TODO: flush all indirect trees
-            self.idml.write_label(txg)
-        })
+        // TODO: flush the trees before the first sync_all
+        self.inner.idml.sync_transaction(move |txg|{
+            self.inner.dummy.flush(txg)
+            .and_then(move |_| {
+                    self.inner.idml.write_label(txg)
+                })
+            })
     }
 
-    /// Perform a read-write operation on a Dataset
+    /// Perform a read-write operation on a Filesystem
     ///
     /// All operations conducted by the supplied closure will be completed
     /// within the same Pool transaction group.  Thus, after a power failure and
     /// recovery, either all will have completed, or none will have.
-    pub fn write<F, B, E, K, R, V>(&'a self, tree_id: TreeID, f: F)
+    pub fn fswrite<F, B, E, R>(&'a self, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
-        where F: FnOnce(ReadWriteDataset<K, V>) -> B + 'a,
+        where F: FnOnce(ReadWriteFilesystem) -> B + 'a,
               B: Future<Item = R, Error = Error> + 'a,
-              K: Key,
-              V: Value,
     {
         let inner = self.inner.clone();
-        self.idml.txg()
+        self.inner.idml.txg()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |txg| {
-                let ds = inner.rw_dataset::<K, V>(tree_id, *txg);
+                let ds = inner.rw_filesystem(tree_id, *txg);
                 f(ds)
             })
     }

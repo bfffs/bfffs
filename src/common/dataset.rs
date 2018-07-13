@@ -11,18 +11,23 @@ use common::idml::*;
 use common::tree::*;
 use futures::Future;
 use nix::Error;
+use std::sync::Arc;
 
-type ITree<K, V> = Tree<RID, IDML, K, V>;
+pub type ITree<K, V> = Tree<RID, IDML, K, V>;
 
 /// Inner Dataset structure, not directly exposed to user
 struct Dataset<K: Key, V: Value>  {
-    _tree: ITree<K, V>
+    tree: Arc<ITree<K, V>>
 }
 
 impl<'a, K: Key, V: Value> Dataset<K, V> {
-    fn get(&'a self, _k: K) -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+    fn get(&'a self, k: K) -> impl Future<Item=Option<V>, Error=Error> + 'a
     {
-        unimplemented!()
+        self.tree.get(k)
+    }
+
+    pub fn new(tree: Arc<ITree<K, V>>) -> Self {
+        Dataset{tree}
     }
 }
 
@@ -35,6 +40,10 @@ impl<'a, K: Key, V: Value> ReadOnlyDataset<K, V> {
     pub fn get(&'a self, k: K) -> impl Future<Item=Option<V>, Error=Error> + 'a
     {
         self.dataset.get(k)
+    }
+
+    pub fn new(tree: Arc<ITree<K, V>>) -> Self {
+        ReadOnlyDataset{dataset: Dataset::new(tree)}
     }
 }
 
