@@ -11,20 +11,24 @@ use common::idml::*;
 use common::tree::*;
 use futures::{Future, IntoFuture};
 use nix::{Error, errno};
+#[cfg(not(test))] use std::path::Path;
 use std::sync::Arc;
 use tokio::executor::SpawnError;
+#[cfg(not(test))] use tokio::reactor::Handle;
+
+type ITree<K, V> = Tree<RID, IDML, K, V>;
 
 /// Keys into the Forest
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
          Serialize)]
 pub enum TreeID {
     /// A filesystem, snapshot, or clone
-    Subvolume(u64)
+    Fs(u32)
 }
 
 impl MinValue for TreeID {
     fn min_value() -> Self {
-        TreeID::Subvolume(u64::min_value())
+        TreeID::Fs(u32::min_value())
     }
 }
 
@@ -46,12 +50,26 @@ impl Inner {
 }
 
 pub struct Database {
-    _forest: DTree<TreeID, TreeOnDisk>,
+    // TODO: store all filesystem and device trees
+    _dummy: ITree<u32, u32>,
     idml: Arc<IDML>,
     inner: Arc<Inner>,
 }
 
 impl<'a> Database {
+    #[cfg(not(test))]
+    pub fn open<P>(poolname: String, paths: Vec<P>, handle: Handle)
+        -> impl Future<Item=Self, Error=Error>
+        where P: AsRef<Path> + 'static
+    {
+        IDML::open(poolname, paths, handle).map(|idml| {
+            let inner = Arc::new(Inner{});
+            let arc_idml = Arc::new(idml);
+            let _dummy = ITree::create(arc_idml.clone());
+            Database{_dummy, idml: arc_idml, inner}
+        })
+    }
+
     /// Perform a read-only operation on a Dataset
     pub fn read<F, B, E, K, R, V>(&self, tree_id: TreeID, f: F)
         -> Result<impl Future<Item = R, Error = Error>, SpawnError>
@@ -68,8 +86,10 @@ impl<'a> Database {
     /// Finish the current transaction group and start a new one.
     pub fn sync_transaction(&'a self) -> impl Future<Item=(), Error=Error> + 'a
     {
-        // TODO: force all trees to flush
-        self.idml.sync_transaction()
+        self.idml.sync_transaction(move |txg|{
+            // TODO: flush all indirect trees
+            self.idml.write_label(txg)
+        })
     }
 
     /// Perform a read-write operation on a Dataset

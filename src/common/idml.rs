@@ -196,8 +196,10 @@ impl<'a> IDML {
     }
 
     /// Finish the current transaction group and start a new one.
-    pub fn sync_transaction(&'a self)
+    pub fn sync_transaction<B, F>(&'a self, f: F)
         -> impl Future<Item=(), Error=Error> + 'a
+        where F: FnOnce(TxgT) -> B + 'a,
+              B: IntoFuture<Item = (), Error = Error> + 'a
     {
         // Outline:
         // 1) Sync the pool
@@ -210,7 +212,7 @@ impl<'a> IDML {
             .and_then(move |mut txg_guard| {
                 let txg = *txg_guard;
                 self.sync_all(txg)
-                    .and_then(move |_| self.write_label(txg))
+                    .and_then(move |_| f(txg))
                     .and_then(move |_| self.sync_all(txg))
                     .map(move |_| *txg_guard += 1)
             })
@@ -894,9 +896,6 @@ mod t {
             .called_once()
             .with(TxgT::from(0))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
-        ddml.then().expect_write_label()
-            .called_once()
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
         ddml.expect_sync_all()
             .called_once()
             .with(TxgT::from(0))
@@ -905,7 +904,7 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
 
-        rt.block_on(idml.sync_transaction()).unwrap();
+        rt.block_on(idml.sync_transaction(|_txg| Ok(()))).unwrap();
         assert_eq!(*idml.transaction.try_read().unwrap(), TxgT::from(1));
     }
 }
