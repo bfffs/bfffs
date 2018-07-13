@@ -196,25 +196,17 @@ impl<'a> IDML {
     }
 
     /// Finish the current transaction group and start a new one.
-    pub fn sync_transaction<B, F>(&'a self, f: F)
+    pub fn advance_transaction<B, F>(&'a self, f: F)
         -> impl Future<Item=(), Error=Error> + 'a
         where F: FnOnce(TxgT) -> B + 'a,
               B: IntoFuture<Item = (), Error = Error> + 'a
     {
-        // Outline:
-        // 1) Sync the pool
-        // 2) Write the label
-        // 3) Sync the pool again
-        // TODO: use two labels, so the pool will be recoverable even if power
-        // is lost while writing a label.
         self.transaction.write()
             .map_err(|_| Error::Sys(Errno::EPIPE))
             .and_then(move |mut txg_guard| {
                 let txg = *txg_guard;
-                self.sync_all(txg)
-                    .and_then(move |_| f(txg))
-                    .and_then(move |_| self.sync_all(txg))
-                    .map(move |_| *txg_guard += 1)
+                f(txg).into_future()
+                .map(move |_| *txg_guard += 1)
             })
     }
 
@@ -875,36 +867,15 @@ mod t {
         rt.block_on(idml.sync_all(TxgT::from(42))).unwrap();
     }
 
-    #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test https://github.com/pcsm/simulacrum/issues/55"]
     #[test]
-    fn sync_transaction() {
+    fn advance_transaction() {
         let cache = Cache::new();
-        let mut ddml = DDML::new();
-        ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
-            .called_any()
-            .returning(move |(_, _, _)|
-                (DRP::random(Compression::None, 4096),
-                 Box::new(future::ok::<(), Error>(())))
-            );
-        ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
-            .called_any()
-            .returning(move |(_, _, _)|
-                (DRP::random(Compression::None, 4096),
-                 Box::new(future::ok::<(), Error>(())))
-            );
-        ddml.expect_sync_all()
-            .called_once()
-            .with(TxgT::from(0))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
-        ddml.expect_sync_all()
-            .called_once()
-            .with(TxgT::from(0))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+        let ddml = DDML::new();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
 
-        rt.block_on(idml.sync_transaction(|_txg| Ok(()))).unwrap();
+        rt.block_on(idml.advance_transaction(|_txg| Ok(()))).unwrap();
         assert_eq!(*idml.transaction.try_read().unwrap(), TxgT::from(1));
     }
 }
