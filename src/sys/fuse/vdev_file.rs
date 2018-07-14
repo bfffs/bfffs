@@ -62,10 +62,6 @@ impl BorrowMut<[u8]> for IoVecMutContainer {
 }
 
 impl Vdev for VdevFile {
-    fn handle(&self) -> Handle {
-        self.handle.clone()
-    }
-
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         if lba >= LABEL_LBAS {
             Some((lba / (self.lbas_per_zone as u64)) as ZoneT)

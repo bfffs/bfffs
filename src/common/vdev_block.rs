@@ -15,7 +15,7 @@ use std::{
 };
 #[cfg(not(test))]
 use std::{io, path::Path};
-use tokio::{executor::current_thread, reactor::Handle};
+use tokio::executor::current_thread;
 use uuid::Uuid;
 
 use common::{*, label::*, vdev::*, vdev_leaf::*};
@@ -656,10 +656,6 @@ impl VdevBlock {
 }
 
 impl Vdev for VdevBlock {
-    fn handle(&self) -> Handle {
-        unimplemented!()
-    }
-
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         self.inner.borrow().leaf.lba2zone(lba)
     }
@@ -712,13 +708,11 @@ test_suite! {
     use mockers_derive::mock;
     use permutohedron;
     use tokio::runtime::current_thread;
-    use tokio::reactor::Handle;
 
     mock!{
         MockVdevLeaf2,
         vdev,
         trait Vdev {
-            fn handle(&self) -> Handle;
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
             fn optimum_queue_depth(&self) -> u32;
             fn size(&self) -> LbaT;

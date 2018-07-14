@@ -3,7 +3,6 @@
 use common::*;
 use futures;
 use nix;
-use tokio::reactor::Handle;
 use uuid::Uuid;
 
 /// Future representing an operation on a vdev.
@@ -21,9 +20,6 @@ pub type VdevFut = futures::Future<Item = (), Error = nix::Error>;
 /// However, those methods are not technically part of the trait, because they
 /// have different return values at different levels.
 pub trait Vdev {
-    /// Return the Tokio reactor handle used for this vdev
-    fn handle(&self) -> Handle;
-
     /// Return the zone number at which the given LBA resides
     ///
     /// There may be unused space in between the zones.  A return value of

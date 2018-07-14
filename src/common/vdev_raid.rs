@@ -13,7 +13,6 @@ use nix::Error;
 use std::{cell::RefCell, cmp, mem, ptr};
 use std::collections::BTreeMap;
 #[cfg(not(test))] use std::path::Path;
-use tokio::reactor::Handle;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -339,8 +338,6 @@ impl VdevRaid {
     ///
     /// * `paths`:  Pathnames to search for the `VdevRaid`s.  All child devices
     ///             must be present.
-    /// * `h`:      Handle to the Tokio reactor that will be used to service
-    ///             this vdev.
     #[cfg(not(test))]
     pub fn open_all<P>(paths: Vec<P>)
         -> impl Future<Item=Vec<(Self, LabelReader)>, Error=Error>
@@ -965,10 +962,6 @@ fn min_max<I>(iterable: I) -> Option<(I::Item, I::Item)>
 }
 
 impl Vdev for VdevRaid {
-    fn handle(&self) -> Handle {
-        unimplemented!()
-    }
-
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
         let disk_lba = loc.offset * self.chunksize;
@@ -1272,7 +1265,6 @@ mock!{
     MockVdevBlock,
     vdev,
     trait Vdev {
-        fn handle(&self) -> Handle;
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;

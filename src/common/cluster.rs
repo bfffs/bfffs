@@ -694,13 +694,11 @@ mod cluster {
     use mockers::{Scenario, matchers};
     use mockers_derive::mock;
     use tokio::runtime::current_thread;
-    use tokio::reactor::Handle;
 
     mock!{
         MockVdevRaid,
         vdev,
         trait Vdev {
-            fn handle(&self) -> Handle;
             fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
             fn optimum_queue_depth(&self) -> u32;
             fn size(&self) -> LbaT;
