@@ -137,15 +137,9 @@ mod t {
     use common::dml::*;
     use common::ddml::DRP;
     use common::ddml_mock::DDMLMock as DDML;
-    use divbuf::DivBufShared;
     use futures::future;
-    use simulacrum::*;
     use simulacrum::validators::trivial::any;
-    use std::{
-        cell::RefCell,
-        rc::Rc,
-        sync::Mutex
-    };
+    use std::sync::Mutex;
     use tokio::runtime::current_thread;
 
     #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test https://github.com/pcsm/simulacrum/issues/55"]
