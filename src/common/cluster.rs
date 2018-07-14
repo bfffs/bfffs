@@ -663,10 +663,12 @@ impl<'a> Cluster {
             })
         }).map(|(zone_id, lba, oz_fut)| {
             let fut : Box<Future<Item = (), Error = Error>+ 'a>;
-            let wfut = oz_fut.and_then(move |_|
-                self.vdev.write_at(buf, zone_id, lba)
+            let wfut = self.vdev.write_at(buf, zone_id, lba);
+            let owfut = oz_fut.and_then(move |_| {
+                wfut
+            }
             );
-            fut = Box::new(future::join_all(finish_futs).join(wfut).map(|_| ()));
+            fut = Box::new(future::join_all(finish_futs).join(owfut).map(|_| ()));
             (lba, fut)
         }).ok_or(Error::Sys(errno::Errno::ENOSPC))
     }
@@ -949,6 +951,30 @@ mod cluster {
                        txgs: TxgT::from(0)..TxgT::from(1)}
         ];
         assert_eq!(closed_zones, expected);
+    }
+
+    // VdevRaid::write_at must be called synchronously with Cluster::write, even
+    // if opening a zone is slow.
+    #[test]
+    fn open_zone_slow() {
+        let s = Scenario::new();
+        let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.zones_call().and_return_clone(32768).times(..));
+        s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
+        s.expect(vr.open_zone_call(0)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
+                buf.len() == BYTES_PER_LBA
+            }),
+            0,  // Zone
+            0   /* Lba */)
+            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Cluster::new(fsm, Box::new(vr));
+
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let db0 = dbs.try().unwrap();
+        let _ = cluster.write(db0, TxgT::from(0)).expect("write failed early");
     }
 
     // Cluster.sync_all should flush all open VdevRaid zones, then sync_all the
