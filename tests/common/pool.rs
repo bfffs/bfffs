@@ -15,7 +15,7 @@ test_suite! {
     use futures::future;
     use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;
-    use tokio::{runtime::current_thread, reactor::Handle};
+    use tokio::runtime::current_thread;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -52,8 +52,7 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let clusters = paths.iter().map(|p| {
-                Pool::create_cluster(1, 1, 1, None, 0, &[p][..],
-                                     Handle::default())
+                Pool::create_cluster(1, 1, 1, None, 0, &[p][..])
             }).collect::<Vec<_>>();;
             let pool = Pool::create("TestPool".to_string(), clusters);
             (pool, tempdir, paths)
@@ -72,7 +71,7 @@ test_suite! {
         drop(old_pool);
         let mut rt = current_thread::Runtime::new().unwrap();
         let (pool, _label_reader) = rt.block_on(future::lazy(|| {
-            Pool::open(name.clone(), paths, Handle::default())
+            Pool::open(name.clone(), paths)
         })).unwrap();
         assert_eq!(name, pool.name());
         assert_eq!(uuid, pool.uuid());

@@ -22,7 +22,6 @@ use futures_locks::{RwLock, RwLockReadFut};
 use nix::{Error, errno::Errno};
 #[cfg(not(test))] use std::path::Path;
 use std::sync::{Arc, Mutex};
-#[cfg(not(test))] use tokio::reactor::Handle;
 
 #[cfg(not(test))]
 use common::cache::Cache;
@@ -129,15 +128,13 @@ impl<'a> IDML {
     /// * `name`:   Name of the desired `Pool`
     /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
     ///             must be present.
-    /// * `h`:      Handle to the Tokio reactor that will be used to service
-    ///             this `Pool`.
     #[cfg(not(test))]
-    pub fn open<P>(poolname: String, paths: Vec<P>, handle: Handle)
+    pub fn open<P>(poolname: String, paths: Vec<P>)
         -> impl Future<Item=Self, Error=Error>
         where P: AsRef<Path> + 'static
     {
         let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000_000)));
-        DDML::open(cache.clone(), poolname, paths, handle)
+        DDML::open(cache.clone(), poolname, paths)
         .map(move |(ddml, mut label_reader)| {
             let l: Label = label_reader.deserialize().unwrap();
             let arc_ddml = Arc::new(ddml);

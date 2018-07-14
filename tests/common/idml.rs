@@ -23,7 +23,7 @@ test_suite! {
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
-    use tokio::{runtime::current_thread, reactor::Handle};
+    use tokio::runtime::current_thread;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -72,8 +72,7 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename.clone()];
-            let cluster = Pool::create_cluster(1, 1, 1, None, 0, &paths,
-                                               Handle::default());
+            let cluster = Pool::create_cluster(1, 1, 1, None, 0, &paths);
             let clusters = vec![cluster];
             let pool = Pool::create(POOLNAME.to_string(), clusters);
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
@@ -95,7 +94,7 @@ test_suite! {
         drop(old_idml);
         let mut rt = current_thread::Runtime::new().unwrap();
         let _idml = rt.block_on(future::lazy(|| {
-            IDML::open(POOLNAME.to_string(), vec![path], Handle::default())
+            IDML::open(POOLNAME.to_string(), vec![path])
         })).unwrap();
     }
 

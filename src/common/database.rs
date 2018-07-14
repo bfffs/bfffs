@@ -15,7 +15,6 @@ use nix::{Error, errno};
 #[cfg(not(test))] use std::path::Path;
 use std::sync::Arc;
 use tokio::executor::SpawnError;
-#[cfg(not(test))] use tokio::reactor::Handle;
 
 // TODO: define real keys and values for filesystems
 type FSKey = u32;
@@ -68,11 +67,11 @@ impl<'a> Database {
     }
 
     #[cfg(not(test))]
-    pub fn open<P>(poolname: String, paths: Vec<P>, handle: Handle)
+    pub fn open<P>(poolname: String, paths: Vec<P>)
         -> impl Future<Item=Self, Error=Error>
         where P: AsRef<Path> + 'static
     {
-        IDML::open(poolname, paths, handle).map(|idml| {
+        IDML::open(poolname, paths).map(|idml| {
             let arc_idml = Arc::new(idml);
             Database::new(arc_idml)
         })

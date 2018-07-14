@@ -24,7 +24,7 @@ test_suite! {
         path::PathBuf,
     };
     use tempdir::TempDir;
-    use tokio::{runtime::current_thread, reactor::Handle};
+    use tokio::runtime::current_thread;
 
     fixture!( vdev() -> (VdevFile, PathBuf, TempDir) {
         setup(&mut self) {
@@ -34,8 +34,7 @@ test_suite! {
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
             let pb = filename.to_path_buf();
-            let vdev = VdevFile::create(filename, None,
-                                        Handle::current()).unwrap();
+            let vdev = VdevFile::create(filename, None).unwrap();
             (vdev, pb, tempdir)
         }
     });
@@ -76,7 +75,7 @@ test_suite! {
         // Run the test
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
-        let vdev = VdevFile::create(path, None, Handle::current()).unwrap();
+        let vdev = VdevFile::create(path, None).unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.read_at(rbuf, 4)
         })));
@@ -100,7 +99,7 @@ test_suite! {
         let mut rbuf0 = dbs.try_mut().unwrap();
         let rbuf1 = rbuf0.split_off(1024);
         let rbufs = vec![rbuf0, rbuf1];
-        let vdev = VdevFile::create(path, None, Handle::current()).unwrap();
+        let vdev = VdevFile::create(path, None).unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.readv_at(rbufs, 4)
         })));
@@ -191,7 +190,7 @@ test_suite! {
     };
     use std;
     use tempdir::TempDir;
-    use tokio::{runtime::current_thread, reactor::Handle};
+    use tokio::runtime::current_thread;
     use uuid::Uuid;
 
     const GOLDEN: [u8; 85] = [
@@ -239,7 +238,7 @@ test_suite! {
             f.write_all(&GOLDEN).unwrap();
         }
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            VdevFile::open(fixture.val.0, Handle::current())
+            VdevFile::open(fixture.val.0)
                 .and_then(|(vdev, _label_reader)| {
                     assert_eq!(vdev.size(), 16_384);
                     assert_eq!(vdev.uuid(), golden_uuid);
@@ -252,8 +251,8 @@ test_suite! {
     // Write the label, and compare to a golden master
     test write_label(fixture) {
         let lbas_per_zone = Some(0xdead_beef_1a7e_babe);
-        let vdev = VdevFile::create(fixture.val.0.clone(), lbas_per_zone,
-                                    Handle::current()).unwrap();
+        let vdev = VdevFile::create(fixture.val.0.clone(), lbas_per_zone)
+            .unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let label_writer = LabelWriter::new();
             vdev.write_label(label_writer)

@@ -14,7 +14,7 @@ test_suite! {
     use futures::future;
     use std::fs;
     use tempdir::TempDir;
-    use tokio::{runtime::current_thread, reactor::Handle};
+    use tokio::runtime::current_thread;
 
     fixture!( vdev() -> (VdevBlock, TempDir) {
         setup(&mut self) {
@@ -23,8 +23,7 @@ test_suite! {
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
-            let vdev = VdevBlock::create(filename, None,
-                                         Handle::current()).unwrap();
+            let vdev = VdevBlock::create(filename, None).unwrap();
             (vdev, tempdir)
         }
     });

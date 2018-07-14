@@ -10,7 +10,6 @@ use std::{
     ops::Range
 };
 #[cfg(not(test))] use std::{collections::BTreeMap, path::Path};
-#[cfg(not(test))] use tokio::reactor::Handle;
 use uuid::Uuid;
 
 pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
@@ -148,18 +147,16 @@ impl<'a> Pool {
     ///                         disks may fail before the array becomes
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
-    /// * `handle`:             Handle to the Tokio reactor that will be used to
-    ///                         service this vdev.
     #[cfg(not(test))]
     pub fn create_cluster<P: AsRef<Path>>(chunksize: LbaT,
                                num_disks: i16,
                                disks_per_stripe: i16,
                                lbas_per_zone: Option<LbaT>,
                                redundancy: i16,
-                               paths: &[P],
-                               handle: Handle) -> Cluster {
+                               paths: &[P]) -> Cluster
+    {
         Cluster(cluster::Cluster::create(chunksize, num_disks, disks_per_stripe,
-            lbas_per_zone, redundancy, paths, handle))
+            lbas_per_zone, redundancy, paths))
     }
 
     #[cfg(not(test))]
@@ -232,10 +229,8 @@ impl<'a> Pool {
     /// * `name`:   Name of the desired `Pool`
     /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
     ///             must be present.
-    /// * `h`:      Handle to the Tokio reactor that will be used to service
-    ///             this `Pool`.
     #[cfg(not(test))]
-    pub fn open<P>(name: String, paths: Vec<P>, handle: Handle)
+    pub fn open<P>(name: String, paths: Vec<P>)
         -> impl Future<Item=(Self, LabelReader), Error=Error>
         where P: AsRef<Path> + 'static
     {
@@ -246,7 +241,7 @@ impl<'a> Pool {
          // 3) Construct a `Pool` with all required `Cluster`s.
          // 4) `drop` any unwanted `Cluster`s.
 
-        cluster::Cluster::open_all(paths, handle).and_then(|v| {
+        cluster::Cluster::open_all(paths).and_then(|v| {
             let mut label = None;
             let mut all_clusters = v.into_iter()
                                     .map(|(cluster, mut label_reader)| {

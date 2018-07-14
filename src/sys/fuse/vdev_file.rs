@@ -182,15 +182,15 @@ impl VdevFile {
     /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
     ///                     simulated zones on devices that don't have native
     ///                     zones.
-    /// * `h`:              Handle to the Tokio reactor that will be used to
-    ///                     service this vdev.
-    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<LbaT>,
-                                  h: Handle) -> io::Result<Self> {
-        let f = File::open(path, h.clone())?;
+    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<LbaT>)
+        -> io::Result<Self>
+    {
+        let handle = Handle::default();
+        let f = File::open(path, handle.clone())?;
         let lpz = lbas_per_zone.unwrap_or(VdevFile::DEFAULT_LBAS_PER_ZONE);
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
         let uuid = Uuid::new_v4();
-        Ok(VdevFile{file: f, handle: h, lbas_per_zone: lpz, size, uuid})
+        Ok(VdevFile{file: f, handle, lbas_per_zone: lpz, size, uuid})
     }
 
     /// Open an existing `VdevFile`
@@ -199,12 +199,11 @@ impl VdevFile {
     /// used to construct other vdevs stacked on top of this one.
     ///
     /// * `path`    Pathname for the file.  It may be a device node.
-    /// * `h`       Handle to the Tokio reactor that will be used to service
-    ///             this vdev.
-    pub fn open<P: AsRef<Path>>(path: P, h: Handle)
-        -> impl Future<Item=(Self, LabelReader), Error=nix::Error> {
-
-        let f = File::open(path, h.clone()).unwrap();
+    pub fn open<P: AsRef<Path>>(path: P)
+        -> impl Future<Item=(Self, LabelReader), Error=nix::Error>
+    {
+        let handle = Handle::default();
+        let f = File::open(path, handle.clone()).unwrap();
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
 
         let dbs = DivBufShared::from(vec![0u8; LABEL_SIZE]);
@@ -219,7 +218,7 @@ impl VdevFile {
                            "Vdev has shrunk since creation");
                 let vdev = VdevFile {
                     file: f,
-                    handle: h,
+                    handle,
                     lbas_per_zone: label.lbas_per_zone,
                     size: label.lbas,
                     uuid: label.uuid

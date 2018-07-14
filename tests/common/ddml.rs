@@ -25,7 +25,7 @@ test_suite! {
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
-    use tokio::{runtime::current_thread, reactor::Handle};
+    use tokio::runtime::current_thread;
 
     fixture!( objects() -> DDML {
         setup(&mut self) {
@@ -36,8 +36,7 @@ test_suite! {
             t!(file.set_len(len));
             let pool = Pool::create("TestPool".to_string(),
                 vec![
-                    Pool::create_cluster(1, 1, 1, None, 0, &[filename][..],
-                                         Handle::default())
+                    Pool::create_cluster(1, 1, 1, None, 0, &[filename][..])
                 ]
             );
             let cache = Cache::with_capacity(1_000_000_000);

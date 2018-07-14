@@ -11,7 +11,6 @@ use std::{
     ops::Range
 };
 #[cfg(not(test))] use std::path::Path;
-#[cfg(not(test))] use tokio::reactor::Handle;
 use uuid::Uuid;
 
 pub type ClusterFut<'a> = Future<Item = (), Error = Error> + 'a;
@@ -499,18 +498,16 @@ impl<'a> Cluster {
     ///                         disks may fail before the array becomes
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
-    /// * `handle`:             Handle to the Tokio reactor that will be used to
-    ///                         service this vdev.
     #[cfg(not(test))]
     pub fn create<P: AsRef<Path>>(chunksize: LbaT,
                                   num_disks: i16,
                                   disks_per_stripe: i16,
                                   lbas_per_zone: Option<LbaT>,
                                   redundancy: i16,
-                                  paths: &[P],
-                                  handle: Handle) -> Self {
+                                  paths: &[P]) -> Self
+    {
         let vdev = VdevRaid::create(chunksize, num_disks, disks_per_stripe,
-                                    lbas_per_zone, redundancy, paths, handle);
+                                    lbas_per_zone, redundancy, paths);
         let total_zones = vdev.zones();
         let fsm = FreeSpaceMap::new(total_zones);
         Cluster::new(fsm, vdev)
@@ -572,14 +569,12 @@ impl<'a> Cluster {
     ///
     /// * `paths`:  Pathnames to search for the `VdevRaid`.  All child devices
     ///             must be present.
-    /// * `h`:      Handle to the Tokio reactor that will be used to service
-    ///             this vdev.
     #[cfg(not(test))]
-    pub fn open_all<P>(paths: Vec<P>, handle: Handle)
+    pub fn open_all<P>(paths: Vec<P>)
         -> impl Future<Item=Vec<(Self, LabelReader)>, Error=Error>
         where P: AsRef<Path> + 'static
     {
-        VdevRaid::open_all(paths, handle).map(|v| {
+        VdevRaid::open_all(paths).map(|v| {
             v.into_iter().map(|(vdev_raid, mut reader)| {
                 let l: Label = reader.deserialize().unwrap();
                 let fsm = FreeSpaceMap::open(l, &vdev_raid);

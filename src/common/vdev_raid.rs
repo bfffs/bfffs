@@ -181,9 +181,6 @@ pub struct VdevRaid {
     /// RAID codec
     codec: Codec,
 
-    /// Tokio reactor handle
-    handle: Handle,
-
     /// Locator, declustering or otherwise
     locator: Box<Locator>,
 
@@ -278,24 +275,22 @@ impl VdevRaid {
     ///                         disks may fail before the array becomes
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
-    /// * `handle`:             Handle to the Tokio reactor that will be used to
-    ///                         service this vdev.
     #[cfg(not(test))]
     pub fn create<P: AsRef<Path>>(chunksize: LbaT,
                                   num_disks: i16,
                                   disks_per_stripe: i16,
                                   lbas_per_zone: Option<LbaT>,
                                   redundancy: i16,
-                                  paths: &[P],
-                                  handle: Handle) -> Self {
+                                  paths: &[P]) -> Self
+    {
         let layout_algo = VdevRaid::choose_layout(num_disks, disks_per_stripe,
                                                   redundancy);
         let uuid = Uuid::new_v4();
         let blockdevs = paths.iter().map(|path| {
-            VdevBlock::create(path, lbas_per_zone, handle.clone()).unwrap()
+            VdevBlock::create(path, lbas_per_zone).unwrap()
         }).collect::<Vec<_>>();
         VdevRaid::new(chunksize, disks_per_stripe, redundancy, uuid,
-                      layout_algo, blockdevs.into_boxed_slice(), handle)
+                      layout_algo, blockdevs.into_boxed_slice())
     }
 
     #[cfg(any(not(test), feature = "mocks"))]
@@ -304,9 +299,8 @@ impl VdevRaid {
            redundancy: i16,
            uuid: Uuid,
            layout_algorithm: LayoutAlgorithm,
-           blockdevs: Box<[VdevBlockLike]>,
-           handle: Handle) -> Self {
-
+           blockdevs: Box<[VdevBlockLike]>) -> Self
+    {
         let num_disks = blockdevs.len() as i16;
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
         let locator: Box<Locator> = match layout_algorithm {
@@ -335,7 +329,7 @@ impl VdevRaid {
         VdevRaid { chunksize, codec, locator, blockdevs, layout_algorithm,
                    optimum_queue_depth,
                    stripe_buffers: RefCell::new(BTreeMap::new()),
-                   uuid, handle }   // LCOV_EXCL_LINE   kcov false negative
+                   uuid}   // LCOV_EXCL_LINE   kcov false negative
     }
 
     /// Open all existing `VdevRaid`s found in `paths`.
@@ -348,16 +342,15 @@ impl VdevRaid {
     /// * `h`:      Handle to the Tokio reactor that will be used to service
     ///             this vdev.
     #[cfg(not(test))]
-    pub fn open_all<P>(paths: Vec<P>, handle: Handle)
+    pub fn open_all<P>(paths: Vec<P>)
         -> impl Future<Item=Vec<(Self, LabelReader)>, Error=Error>
         where P: AsRef<Path> + 'static
     {
 
-        let handle2 = handle.clone();
         // TODO: error handling for devices that don't exist or have no VdevFile
         // label
         future::join_all(paths.into_iter().map(move |path| {
-            VdevBlock::open(path, handle.clone())
+            VdevBlock::open(path)
         })).and_then(move |blockdevs| {
             let mut all_blockdevs = blockdevs.into_iter().map(|(bd, reader)| {
                 (bd.uuid(), (bd, Some(reader)))
@@ -385,8 +378,7 @@ impl VdevRaid {
                                       rlabel.redundancy,
                                       rlabel.uuid,
                                       rlabel.layout_algorithm,
-                                      blockdevs.into_boxed_slice(),
-                                      handle2.clone()),
+                                      blockdevs.into_boxed_slice()),
                        label_reader))
                 } else {
                     // Some block devices weren't found
@@ -974,7 +966,7 @@ fn min_max<I>(iterable: I) -> Option<(I::Item, I::Item)>
 
 impl Vdev for VdevRaid {
     fn handle(&self) -> Handle {
-        self.handle.clone()
+        unimplemented!()
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
@@ -1347,8 +1339,7 @@ test_suite! {
             let vdev_raid = VdevRaid::new(*self.chunksize, *self.k,
                                           *self.f, Uuid::new_v4(),
                                           LayoutAlgorithm::PrimeS,
-                                          blockdevs.into_boxed_slice(),
-                                          Handle::default());
+                                          blockdevs.into_boxed_slice());
             (s, vdev_raid)
         }
     });
@@ -1508,8 +1499,7 @@ fn read_at_one_stripe() {
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice(),
-                                      Handle::default());
+                                      blockdevs.into_boxed_slice());
         vdev_raid.open_zone(1);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
@@ -1549,8 +1539,7 @@ fn sync_all() {
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
-                                  blockdevs.into_boxed_slice(),
-                                  Handle::default());
+                                  blockdevs.into_boxed_slice());
     vdev_raid.sync_all();
 }
 
@@ -1594,8 +1583,7 @@ fn sync_all_unflushed() {
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
-                                  blockdevs.into_boxed_slice(),
-                                  Handle::default());
+                                  blockdevs.into_boxed_slice());
 
     vdev_raid.open_zone(1);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
@@ -1670,8 +1658,7 @@ fn write_at_one_stripe() {
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice(),
-                                      Handle::default());
+                                      blockdevs.into_boxed_slice());
         vdev_raid.open_zone(1);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try().unwrap();
@@ -1740,8 +1727,7 @@ fn write_at_and_flush_zone() {
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
-                                  blockdevs.into_boxed_slice(),
-                                  Handle::default());
+                                  blockdevs.into_boxed_slice());
     vdev_raid.open_zone(1);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try().unwrap();
@@ -1787,8 +1773,7 @@ fn erase_zone() {
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
-                                  blockdevs.into_boxed_slice(),
-                                  Handle::default());
+                                  blockdevs.into_boxed_slice());
     vdev_raid.erase_zone(0);
 }
 
@@ -1823,8 +1808,7 @@ fn flush_zone_closed() {
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
-                                  blockdevs.into_boxed_slice(),
-                                  Handle::default());
+                                  blockdevs.into_boxed_slice());
     vdev_raid.flush_zone(0);
 }
 
@@ -1864,8 +1848,7 @@ fn flush_zone_empty_stripe_buffer() {
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
-                                  blockdevs.into_boxed_slice(),
-                                  Handle::default());
+                                  blockdevs.into_boxed_slice());
     vdev_raid.open_zone(1);
     vdev_raid.flush_zone(1);
 }
@@ -1913,8 +1896,7 @@ fn open_zone_zero_fill_wasted_chunks() {
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice(),
-                                      Handle::default());
+                                      blockdevs.into_boxed_slice());
         vdev_raid.open_zone(1);
 }
 
@@ -1969,8 +1951,7 @@ fn open_zone_zero_fill_wasted_stripes() {
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice(),
-                                      Handle::default());
+                                      blockdevs.into_boxed_slice());
         vdev_raid.open_zone(1);
 }
 }

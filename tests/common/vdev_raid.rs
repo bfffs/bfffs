@@ -17,7 +17,7 @@ test_suite! {
     use rand::{Rng, thread_rng};
     use std::fs;
     use tempdir::TempDir;
-    use tokio::{runtime::current_thread, reactor::Handle};
+    use tokio::runtime::current_thread;
 
     fixture!( raid(n: i16, k: i16, f: i16, chunksize: LbaT) ->
               (VdevRaid, TempDir, Vec<String>) {
@@ -43,7 +43,7 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let mut vdev_raid = VdevRaid::create(*self.chunksize,
-                *self.n, *self.k, None, *self.f, &paths, Handle::default());
+                *self.n, *self.k, None, *self.f, &paths);
             current_thread::Runtime::new().unwrap().block_on(
                 vdev_raid.open_zone(0)
             ).expect("open_zone");
@@ -496,7 +496,7 @@ test_suite! {
     use futures::future;
     use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;
-    use tokio::{runtime::current_thread, reactor::Handle};
+    use tokio::runtime::current_thread;
 
     const GOLDEN_VDEV_RAID_LABEL: [u8; 183] = [
         // Past the VdevFile::Label, we have a VdevRaid::Label
@@ -544,7 +544,7 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let mut vdev_raid = VdevRaid::create(2, num_disks, 3, None, 1,
-                                                 &paths, Handle::default());
+                                                 &paths);
             (vdev_raid, tempdir, paths)
         }
     });
@@ -562,7 +562,7 @@ test_suite! {
         drop(old_raid);
         let mut rt = current_thread::Runtime::new().unwrap();
         let vdev_raid = rt.block_on(future::lazy(|| {
-            VdevRaid::open_all(paths, Handle::default())
+            VdevRaid::open_all(paths)
         })).unwrap().pop().unwrap().0;
         assert_eq!(uuid, vdev_raid.uuid());
     }
