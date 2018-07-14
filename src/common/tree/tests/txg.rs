@@ -217,7 +217,6 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r2 = rt.block_on(tree.remove(4, TxgT::from(42)));
     assert!(r2.is_ok());
-    println!("{}", &tree);
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
