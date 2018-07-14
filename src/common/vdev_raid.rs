@@ -1696,8 +1696,8 @@ fn write_at_and_flush_zone() {
     let bd1 = bd();
     // This write is from the zero-fill
     s.expect(bd1.writev_at_call(check!(|buf: &SGList| {
-        &buf[0][..] == &vec![0u8; BYTES_PER_LBA][..] &&
-        &buf[1][..] == &vec![0u8; BYTES_PER_LBA][..]
+        buf.len() == 1 &&
+        &buf[0][..] == &vec![0u8; 2 * BYTES_PER_LBA][..]
     }), 60_000)
         .and_return( Box::new( future::ok::<(), Error>(())))
     );

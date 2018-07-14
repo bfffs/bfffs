@@ -46,7 +46,7 @@ lazy_static! {
     /// impact on the CPU cache.  A larger size will consume fewer CPU cycles
     /// manipulating sglists.
     static ref ZERO_REGION: DivBufShared =
-        DivBufShared::from(vec![0u8; BYTES_PER_LBA]);
+        DivBufShared::from(vec![0u8; 8 * BYTES_PER_LBA]);
 }
 
 /// Indexes a `Cluster` within the `Pool`.
