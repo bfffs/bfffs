@@ -181,7 +181,7 @@ impl VdevFile {
     pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<LbaT>)
         -> io::Result<Self>
     {
-        let handle = Handle::default();
+        let handle = Handle::current();
         let f = File::open(path, handle.clone())?;
         let lpz = lbas_per_zone.unwrap_or(VdevFile::DEFAULT_LBAS_PER_ZONE);
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
@@ -198,7 +198,7 @@ impl VdevFile {
     pub fn open<P: AsRef<Path>>(path: P)
         -> impl Future<Item=(Self, LabelReader), Error=nix::Error>
     {
-        let handle = Handle::default();
+        let handle = Handle::current();
         let f = File::open(path, handle.clone()).unwrap();
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
 
