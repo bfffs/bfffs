@@ -221,10 +221,8 @@ impl<'a> IDML {
                 ridt,
                 txg,
             };
-            let dbs = labeller.serialize(label);
-            self.ddml.write_label(labeller).map(move |_| {
-                let _ = dbs;    // needs to live this long
-            })
+            labeller.serialize(label).unwrap();
+            self.ddml.write_label(labeller)
         })
     }
 }

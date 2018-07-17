@@ -664,13 +664,13 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
         true    // The Arc guarantees that we can expire at any time
     }
 
-    fn serialize(&self) -> (DivBuf, Option<DivBufShared>) {
+    fn serialize(&self) -> (DivBuf, bool) {
         let g = self.0.try_read().expect(
             "Shouldn't be serializing a Node that's locked for writing");
         let v = bincode::serialize(&g.deref()).unwrap();
         let dbs = DivBufShared::from(v);
         let db = dbs.try().unwrap();
-        (db, Some(dbs))
+        (db, false)
     }
 
     fn truncate(&self, _len: usize) {

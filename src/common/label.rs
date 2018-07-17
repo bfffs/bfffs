@@ -97,21 +97,17 @@ impl LabelWriter {
     /// last `serialize` call's data will be encoded into the lowest position in
     /// the label.
     pub fn serialize<T: Serialize>(&mut self, t: T)
-        -> serde_cbor::error::Result<(DivBufShared)> {
+        -> serde_cbor::error::Result<()> {
 
         serde_cbor::ser::to_vec(&t).map(|v| {
             let dbs = DivBufShared::from(v);
             self.buffers.push(dbs.try().unwrap());
-            dbs
         })
     }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Consume the `LabelWriter` and return an `SGList` suitable for writing to
     /// the first sector of a disk.
-    ///
-    /// The second return argument owns the data referenced by the `SGList` and
-    /// must outlive it.
-    pub fn into_sglist(self) -> (SGList, Vec<DivBufShared>) {
+    pub fn into_sglist(self) -> SGList {
         let mut sglist: SGList = Vec::with_capacity(self.buffers.len() + 2);
         let header_len = MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN;
         let header_dbs = DivBufShared::with_capacity(header_len);
@@ -132,6 +128,6 @@ impl LabelWriter {
         let len = MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN + contents_len;
         let padlen = LABEL_SIZE - len;
         sglist.append(&mut zero_sglist(padlen));
-        (sglist, vec![header_dbs])
+        sglist
     }
 }

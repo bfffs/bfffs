@@ -325,6 +325,8 @@ test_suite! {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
             write_read0(raid.val.0, vec![wbuf_short], vec![rbuf_short]);
+            // After write returns, the DivBufShared should no longer be needed.
+            drop(dbsw);
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try().unwrap()[0..BYTES_PER_LBA]);

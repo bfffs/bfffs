@@ -758,7 +758,6 @@ impl VdevRaid {
 
         // Allocate storage for parity for the entire operation
         let mut parity = Vec::<IoVecMut>::with_capacity(f);
-        let mut parity_dbses = Vec::<DivBufShared>::with_capacity(f);
         for _ in 0..f {
             let mut v = Vec::<u8>::with_capacity(stripes * col_len);
             //codec::encode will actually fill the column
@@ -766,7 +765,6 @@ impl VdevRaid {
             let col = DivBufShared::from(v);
             let mut dbm = col.try_mut().unwrap();
             parity.push(dbm);
-            parity_dbses.push(col);
         }
 
         // Calculate parity.  We must do it separately for each stripe
@@ -829,10 +827,7 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(move |_| {
-            let _ = parity_dbses;   // Needs to live this long
-            ()
-        }))
+        Box::new(fut.map(move |_| ()))
     }
 
     /// Write exactly one stripe
@@ -847,7 +842,6 @@ impl VdevRaid {
 
         let mut parity = Vec::<IoVecMut>::with_capacity(f);
         let mut prefs = Vec::<*mut u8>::with_capacity(f);
-        let mut parity_dbses = Vec::<DivBufShared>::with_capacity(f);
         for _ in 0..f {
             let mut v = Vec::<u8>::with_capacity(col_len);
             //codec::encode will actually fill the column
@@ -856,7 +850,6 @@ impl VdevRaid {
             let mut dbm = col.try_mut().unwrap();
             prefs.push(dbm.as_mut_ptr());
             parity.push(dbm);
-            parity_dbses.push(col);
         }
 
         self.codec.encode(col_len, &drefs, &prefs);
@@ -867,9 +860,7 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::new(data_fut.join(parity_fut).map(move |_| {
-            let _ = parity_dbses;   // Needs to live this long
-        }))
+        Box::new(data_fut.join(parity_fut).map(move |_| ()))
     }
 
     /// Asynchronously write this Vdev's label to all component devices
@@ -886,13 +877,11 @@ impl VdevRaid {
             layout_algorithm: self.layout_algorithm,
             children: children_uuids
         };
-        let dbs = labeller.serialize(label);
+        labeller.serialize(label).unwrap();
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        future::join_all(futs).map(move |_| {
-            let _ = dbs;    // needs to live this long
-        })
+        future::join_all(futs).map(|_| ())
     }
 
     /// Write exactly one stripe, with SGLists.
@@ -921,7 +910,6 @@ impl VdevRaid {
 
         let mut pcols = Vec::<IoVecMut>::with_capacity(f);
         let mut prefs = Vec::<*mut u8>::with_capacity(f);
-        let mut parity_dbses = Vec::<DivBufShared>::with_capacity(f);
         for _ in 0..f {
             let mut v = Vec::<u8>::with_capacity(col_len);
             //codec::encode will actually fill the column
@@ -930,7 +918,6 @@ impl VdevRaid {
             let mut dbm = col.try_mut().unwrap();
             prefs.push(dbm.as_mut_ptr());
             pcols.push(dbm);
-            parity_dbses.push(col);
         }
 
         self.codec.encodev(col_len, &dcols, &mut pcols);
@@ -941,10 +928,7 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::new(data_fut.join(parity_fut).map(move |_| {
-            let _ = parity_dbses;   // Needs to live this long
-            ()
-        }))
+        Box::new(data_fut.join(parity_fut).map(move |_| () ))
     }
 }
 

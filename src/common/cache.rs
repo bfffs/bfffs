@@ -34,9 +34,9 @@ pub trait Cacheable: Any + Debug {
     fn safe_to_expire(&self) -> bool;
 
     /// Serialize to a `DivBuf`.  If serialization was a zero-copy operation,
-    /// then the second return value will be `None`.  Otherwise, the second
-    /// value will be the owner of the first.
-    fn serialize(&self) -> (DivBuf, Option<DivBufShared>);
+    /// then the second return value will be `true`.  Otherwise, the second
+    /// value will be `false`.
+    fn serialize(&self) -> (DivBuf, bool);
 
     /// Truncate this `Cacheable` down to the given size.
     ///
@@ -77,8 +77,8 @@ impl Cacheable for DivBufShared {
         self.try_mut().is_ok()
     }
 
-    fn serialize(&self) -> (DivBuf, Option<DivBufShared>) {
-        (self.try().unwrap(), None)
+    fn serialize(&self) -> (DivBuf, bool) {
+        (self.try().unwrap(), true)
     }
 
     fn truncate(&self, len: usize) {

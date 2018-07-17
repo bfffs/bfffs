@@ -226,7 +226,7 @@ impl<'a> DDML {
         // 6) Cache
 
         // Serialize
-        let (serialized, keeper) = cacheable.serialize();
+        let (serialized, zero_copy) = cacheable.serialize();
         assert!(serialized.len() < u32::max_value() as usize,
             "Record exceeds maximum allowable length");
         let lsize = serialized.len() as u32;
@@ -264,16 +264,13 @@ impl<'a> DDML {
             if compression == Compression::None {
                 // Truncate uncompressed DivBufShareds.  We padded them in the
                 // previous step
-                if keeper.is_some() {
-                    // The serialized buffer is temporary.  No need to unpad it.
-                } else {
+                if zero_copy {
                     // Unpad the cacheable before we cache it.
                     cacheable.truncate(csize as usize);
+                } else {
+                    // The serialized buffer is temporary.  No need to unpad it.
                 }
-            } else {
-                let _ = compressed_dbs;
             }
-            let _ = keeper;
             cacheable
         });
         let drp = DRP { pba, compression, lsize, csize, checksum };

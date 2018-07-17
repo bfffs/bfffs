@@ -147,13 +147,9 @@ impl VdevLeafApi for VdevFile {
             lbas_per_zone: self.lbas_per_zone,
             lbas: self.size
         };
-        let dbs = label_writer.serialize(label).unwrap();
-        let (sglist, keeper) = label_writer.into_sglist();
-        Box::new(self.writev_at(sglist, 0).then(move |r| {
-            let _ = dbs;
-            let _ = keeper;
-            r
-        }))
+        label_writer.serialize(label).unwrap();
+        let sglist = label_writer.into_sglist();
+        Box::new(self.writev_at(sglist, 0))
     }
 
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {

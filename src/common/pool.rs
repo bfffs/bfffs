@@ -345,13 +345,11 @@ impl<'a> Pool {
             uuid: self.uuid,
             children: cluster_uuids,
         };
-        let dbs = labeller.serialize(label);
+        labeller.serialize(label).unwrap();
         let futs = self.clusters.iter().map(|cluster| {
             cluster.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        future::join_all(futs).map(move |_| {
-            let _ = dbs;    // needs to live this long
-        })
+        future::join_all(futs).map(|_| ())
     }
 }
 

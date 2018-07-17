@@ -678,10 +678,8 @@ impl<'a> Cluster {
         -> impl Future<Item=(), Error=Error>
     {
         let label = self.fsm.borrow().serialize();
-        let dbs = labeller.serialize(label);
-        self.vdev.write_label(labeller).map(move |_| {
-            let _ = dbs;    // needs to live this long
-        })
+        labeller.serialize(label).unwrap();
+        self.vdev.write_label(labeller)
     }
 }
 
