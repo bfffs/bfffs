@@ -36,6 +36,7 @@ pub trait PoolTrait {
     fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>;
     fn name(&self) -> &str;
     fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut>;
+    fn size(&self) -> LbaT;
     fn sync_all(&self) -> Box<PoolFut>;
     fn uuid(&self) -> Uuid;
     fn write(&self, buf: IoVec, txg: TxgT)
@@ -286,6 +287,11 @@ impl<'a> DDML {
         self.put_common(cacheable, compression, txg)
     }
 
+    /// Return approximately the usable storage space in LBAs.
+    pub fn size(&self) -> LbaT {
+        self.pool.size()
+    }
+
     pub fn write_label(&'a self, labeller: LabelWriter)
         -> impl Future<Item=(), Error=Error> + 'a
     {
@@ -392,6 +398,7 @@ mod t {
             fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>;
             fn name(&self) -> &str;
             fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut<'static>>;
+            fn size(&self) -> LbaT;
             fn sync_all(&self) -> Box<PoolFut<'static>>;
             fn uuid(&self) -> Uuid;
             fn write(&self, buf: IoVec, txg: TxgT)

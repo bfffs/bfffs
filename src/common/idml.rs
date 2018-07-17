@@ -184,6 +184,11 @@ impl<'a> IDML {
             }).map(|_| ())
     }
 
+    /// Return approximately the usable storage space in LBAs.
+    pub fn size(&self) -> LbaT {
+        self.ddml.size()
+    }
+
     /// Get a reference to the current transaction group.
     ///
     /// The reference will prevent the current transaction group from syncing,

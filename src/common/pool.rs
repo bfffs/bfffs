@@ -294,6 +294,12 @@ impl<'a> Pool {
         })
     }
 
+    /// Return approximately the Pool's usable storage space in LBAs.
+    pub fn size(&self) -> LbaT {
+        self.clusters.iter()
+            .fold(0, |acc, c| acc + c.size())
+    }
+
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
     /// storage.
     pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
@@ -427,6 +433,25 @@ mod pool {
                        txgs: TxgT::from(2)..TxgT::from(3)},
         ];
         assert_eq!(closed_zones, expected);
+    }
+
+    #[test]
+    fn size() {
+        let s = Scenario::new();
+        let cluster = || {
+            let c = s.create_mock::<MockCluster>();
+            s.expect(c.optimum_queue_depth_call()
+                     .and_return_clone(10)
+                     .times(..));
+            s.expect(c.size_call().and_return_clone(1000).times(..));
+            c
+        };
+
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
+                             vec![Box::new(cluster()),
+                                  Box::new(cluster())]);
+
+        assert_eq!(pool.size(), 2000);
     }
 
     #[test]

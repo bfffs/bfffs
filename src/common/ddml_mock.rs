@@ -1,6 +1,6 @@
 // vim: tw=80
 // LCOV_EXCL_START
-use common::TxgT;
+use common::{LbaT, TxgT};
 use common::dml::*;
 use common::ddml::*;
 use common::label::*;
@@ -113,6 +113,14 @@ impl DDMLMock {
         self.e.expect::<(T, Compression, TxgT),
                         (DRP, Box<Future<Item=T, Error=Error>>)>
             ("put_direct")
+    }
+
+    pub fn size(&self) -> LbaT {
+        self.e.was_called_returning::<(), LbaT>("size", ())
+    }
+
+    pub fn expect_size(&mut self) -> Method<(), LbaT> {
+        self.e.expect::<(), LbaT>("size")
     }
 
     pub fn then(&mut self) -> &mut Self {
