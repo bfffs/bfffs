@@ -1,8 +1,12 @@
 extern crate arkfs;
 #[macro_use] extern crate clap;
 extern crate fuse;
+extern crate futures;
+extern crate tokio;
 
 use fuse::Filesystem;
+use futures::future::lazy;
+use tokio::runtime::current_thread;
 
 struct NullFS;
 
@@ -21,6 +25,16 @@ fn main() {
              .multiple(true)
          );
     let matches = app.get_matches();
+    let poolname = matches.value_of("name").unwrap().to_string();
+    let mountpoint = &matches.value_of("mountpoint").unwrap();
+    let devices = matches.values_of("devices").unwrap()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
 
-    fuse::mount(NullFS, &matches.value_of("mountpoint").unwrap(), &[]).unwrap();
+    let mut rt = current_thread::Runtime::new().unwrap();
+
+    let _db = rt.block_on(lazy(|| {
+        arkfs::common::database::Database::open(poolname, devices)
+    })).unwrap();
+    fuse::mount(NullFS, mountpoint, &[]).unwrap();
 }
