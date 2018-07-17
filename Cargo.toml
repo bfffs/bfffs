@@ -14,6 +14,7 @@ blosc = "0.1"
 byteorder = "1.0"
 divbuf = { git = "https://github.com/asomers/divbuf/", rev = "9d9bc62" }
 downcast = "0.8"
+env_logger = "0.5"
 fixedbitset = "0.1.8"
 fuse = "0.3"
 futures = "0.1.14"

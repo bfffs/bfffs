@@ -1,5 +1,6 @@
 extern crate arkfs;
 #[macro_use] extern crate clap;
+extern crate env_logger;
 extern crate fuse;
 extern crate futures;
 extern crate tokio;
@@ -13,6 +14,7 @@ struct NullFS;
 impl Filesystem for NullFS {}
 
 fn main() {
+    env_logger::init();
     let app = clap::App::new("arkfsd")
         .version(crate_version!())
         .arg(clap::Arg::with_name("name")
