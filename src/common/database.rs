@@ -14,7 +14,6 @@ use futures::{Future, IntoFuture};
 use nix::{Error, errno};
 #[cfg(not(test))] use std::path::Path;
 use std::sync::Arc;
-use tokio::executor::SpawnError;
 
 // TODO: define real keys and values for filesystems
 type FSKey = u32;
@@ -45,7 +44,7 @@ struct Inner {
 impl Inner {
     fn ro_filesystem(&self, _tree_id: TreeID) -> ReadOnlyFilesystem
     {
-        ReadOnlyFilesystem::new(self.dummy.clone())
+        ReadOnlyFilesystem::new(self.idml.clone(), self.dummy.clone())
     }
 
     fn rw_filesystem(&self, _tree_id: TreeID, _txg: TxgT) -> ReadWriteFilesystem
@@ -78,14 +77,14 @@ impl<'a> Database {
     }
 
     /// Perform a read-only operation on a Filesystem
-    pub fn fsread<F, B, E, R>(&self, tree_id: TreeID, f: F)
-        -> Result<impl Future<Item = R, Error = Error>, SpawnError>
+    pub fn fsread<F, B, R>(&self, tree_id: TreeID, f: F)
+        -> impl Future<Item = R, Error = Error>
         where F: FnOnce(ReadOnlyFilesystem) -> B + 'static,
               B: IntoFuture<Item = R, Error = Error> + 'static,
               R: 'static
     {
         let ds = self.inner.ro_filesystem(tree_id);
-        Ok(f(ds).into_future())
+        f(ds).into_future()
     }
 
     /// Finish the current transaction group and start a new one.
@@ -111,7 +110,7 @@ impl<'a> Database {
     /// All operations conducted by the supplied closure will be completed
     /// within the same Pool transaction group.  Thus, after a power failure and
     /// recovery, either all will have completed, or none will have.
-    pub fn fswrite<F, B, E, R>(&'a self, tree_id: TreeID, f: F)
+    pub fn fswrite<F, B, R>(&'a self, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
         where F: FnOnce(ReadWriteFilesystem) -> B + 'a,
               B: Future<Item = R, Error = Error> + 'a,

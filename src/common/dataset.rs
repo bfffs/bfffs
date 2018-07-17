@@ -17,6 +17,7 @@ pub type ITree<K, V> = Tree<RID, IDML, K, V>;
 
 /// Inner Dataset structure, not directly exposed to user
 struct Dataset<K: Key, V: Value>  {
+    idml: Arc<IDML>,
     tree: Arc<ITree<K, V>>
 }
 
@@ -26,8 +27,12 @@ impl<'a, K: Key, V: Value> Dataset<K, V> {
         self.tree.get(k)
     }
 
-    pub fn new(tree: Arc<ITree<K, V>>) -> Self {
-        Dataset{tree}
+    pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>) -> Self {
+        Dataset{idml, tree}
+    }
+
+    pub fn size(&self) -> LbaT {
+        self.idml.size()
     }
 }
 
@@ -42,8 +47,12 @@ impl<'a, K: Key, V: Value> ReadOnlyDataset<K, V> {
         self.dataset.get(k)
     }
 
-    pub fn new(tree: Arc<ITree<K, V>>) -> Self {
-        ReadOnlyDataset{dataset: Dataset::new(tree)}
+    pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>) -> Self {
+        ReadOnlyDataset{dataset: Dataset::new(idml, tree)}
+    }
+
+    pub fn size(&self) -> LbaT {
+        self.dataset.size()
     }
 }
 
