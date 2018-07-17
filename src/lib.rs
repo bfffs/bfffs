@@ -9,6 +9,7 @@ extern crate divbuf;
 #[macro_use]
 extern crate downcast;
 extern crate fixedbitset;
+extern crate fuse;
 extern crate futures;
 extern crate futures_locks;
 #[cfg(test)]

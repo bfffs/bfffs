@@ -5,13 +5,11 @@ extern crate fuse;
 extern crate futures;
 extern crate tokio;
 
-use fuse::Filesystem;
+use arkfs::common::database::TreeID;
+use arkfs::sys::fs::FS as FS;
 use futures::future::lazy;
+use std::sync::Arc;
 use tokio::runtime::current_thread;
-
-struct NullFS;
-
-impl Filesystem for NullFS {}
 
 fn main() {
     env_logger::init();
@@ -35,8 +33,10 @@ fn main() {
 
     let mut rt = current_thread::Runtime::new().unwrap();
 
-    let _db = rt.block_on(lazy(|| {
+    let db = rt.block_on(lazy(|| {
         arkfs::common::database::Database::open(poolname, devices)
     })).unwrap();
-    fuse::mount(NullFS, mountpoint, &[]).unwrap();
+    // TODO: use distinct TreeID for each mountpoint
+    let fs = FS::new(Arc::new(db), rt, TreeID::Fs(0));
+    fuse::mount(fs, mountpoint, &[]).unwrap();
 }
