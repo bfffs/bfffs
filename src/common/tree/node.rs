@@ -54,17 +54,18 @@ pub trait Addr: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 impl<T> Addr for T
 where T: Copy + Debug + DeserializeOwned + Serialize + 'static {}
 
-pub trait Key: Copy + Debug + DeserializeOwned + Ord + MinValue + Serialize
-    + 'static {}
+pub trait Key: Copy + Debug + DeserializeOwned + Ord + MinValue + Send +
+    Serialize + 'static {}
 
 impl<T> Key for T
-where T: Copy + Debug + DeserializeOwned + Ord + MinValue + Serialize
+where T: Copy + Debug + DeserializeOwned + Ord + MinValue + Send + Serialize
     + 'static {}
 
-pub trait Value: Clone + Debug + DeserializeOwned + Serialize + 'static {}
+pub trait Value: Clone + Debug + DeserializeOwned + Send + Serialize +
+    'static {}
 
 impl<T> Value for T
-where T: Clone + Debug + DeserializeOwned + Serialize + 'static {}
+where T: Clone + Debug + DeserializeOwned + Send + Serialize + 'static {}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned,
