@@ -88,7 +88,7 @@ impl Chunkloc {
 /// design, but it has performance benefits as well.  Chiefly, during a rebuild
 /// no healthy disk will be saturated, so user I/O suffers less than in a
 /// traditional RAID array.
-pub trait Locator {
+pub trait Locator : Send {
     /// Return the total number of disks in the layout
     fn clustsize(&self) -> i16;
 
