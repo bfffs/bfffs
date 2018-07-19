@@ -18,6 +18,7 @@ pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 /// specifiers than in the non-test versions.  This is because mockers doesn't
 /// work with parameterized traits.
 pub trait ClusterTrait {
+    fn allocated(&self) -> LbaT;
     fn free(&self, lba: LbaT, length: LbaT)
         -> Box<Future<Item=(), Error=Error>>;
     fn list_closed_zones(&self) -> Box<Iterator<Item=cluster::ClosedZone>>;
@@ -190,9 +191,8 @@ impl<'a> Pool {
         let size: Vec<_> = clusters.iter()
             .map(|cluster| cluster.size())
             .collect();
-        // TODO: ask the Cluster for its allocated space
         let allocated_space: Vec<_> = clusters.iter()
-            .map(|_| Atomic::new(0))
+            .map(|c| Atomic::new(c.allocated()))
             .collect();
         let optimum_queue_depth: Vec<_> = clusters.iter().map(|cluster| {
             cluster.optimum_queue_depth() as f64
@@ -384,6 +384,7 @@ mod pool {
         MockCluster,
         self,
         trait ClusterTrait {
+            fn allocated(&self) -> LbaT;
             fn free(&self, lba: LbaT, length: LbaT)
                 -> Box<Future<Item=(), Error=Error>>;
             fn list_closed_zones(&self)
@@ -404,6 +405,7 @@ mod pool {
         let s = Scenario::new();
         let cluster = || {
             let c = s.create_mock::<MockCluster>();
+            s.expect(c.allocated_call().and_return_clone(0).times(..));
             s.expect(c.optimum_queue_depth_call()
                 .and_return_clone(10)
                 .times(..));
@@ -444,13 +446,14 @@ mod pool {
     }
 
     #[test]
-    fn size() {
+    fn new() {
         let s = Scenario::new();
         let cluster = || {
             let c = s.create_mock::<MockCluster>();
             s.expect(c.optimum_queue_depth_call()
                      .and_return_clone(10)
                      .times(..));
+            s.expect(c.allocated_call().and_return_clone(500).times(..));
             s.expect(c.size_call().and_return_clone(1000).times(..));
             c
         };
@@ -459,6 +462,10 @@ mod pool {
                              vec![Box::new(cluster()),
                                   Box::new(cluster())]);
 
+        assert_eq!(pool.stats.allocated_space[0].load(Ordering::Relaxed), 500);
+        assert_eq!(pool.stats.allocated_space[1].load(Ordering::Relaxed), 500);
+        assert_eq!(pool.stats.optimum_queue_depth[0], 10.0);
+        assert_eq!(pool.stats.optimum_queue_depth[1], 10.0);
         assert_eq!(pool.size(), 2000);
     }
 
@@ -467,6 +474,7 @@ mod pool {
         let s = Scenario::new();
         let cluster = || {
             let c = s.create_mock::<MockCluster>();
+            s.expect(c.allocated_call().and_return_clone(0).times(..));
             s.expect(c.optimum_queue_depth_call()
                      .and_return_clone(10)
                      .times(..));
@@ -489,6 +497,7 @@ mod pool {
     fn write() {
         let s = Scenario::new();
         let cluster = s.create_mock::<MockCluster>();
+            s.expect(cluster.allocated_call().and_return_clone(0).times(..));
         s.expect(cluster.optimum_queue_depth_call()
                  .and_return_clone(10)
                  .times(..));

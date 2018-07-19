@@ -126,7 +126,22 @@ struct FreeSpaceMap {
 }
 
 impl<'a> FreeSpaceMap {
-    /// How many blocks are available to be immediately written?
+    /// How many blocks have been allocated, including blocks that have been
+    /// freed but not erased?
+    fn allocated(&self) -> LbaT {
+        (0..self.zones.len()).map(|idx| {
+            let zid = idx as ZoneT;
+            if let Some(oz) = self.open_zones.get(&zid) {
+                oz.allocated_blocks as LbaT
+            } else if self.empty_zones.contains(&zid) {
+                0
+            } else {
+                self.zones[idx].total_blocks as LbaT
+            }
+        }).sum()
+    }
+
+    /// How many blocks are available to be immediately written in the Zone?
     fn available(&self, zone_id: ZoneT) -> LbaT {
         if let Some(oz) = self.open_zones.get(&zone_id) {
             let z = &self.zones[zone_id as usize];
@@ -481,6 +496,12 @@ impl<'a> Iterator for ClosedZoneIterator<'a> {
 }
 
 impl<'a> Cluster {
+    /// How many blocks have been allocated, including blocks that have been
+    /// freed but not erased?
+    pub fn allocated(&self) -> LbaT {
+        self.fsm.borrow().allocated()
+    }
+
     /// Create a new `Cluster` from unused files or devices
     ///
     /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
@@ -1159,6 +1180,40 @@ mod cluster {
 
 mod free_space_map {
     use super::super::*;
+
+    #[test]
+    fn allocated_all_empty() {
+        let fsm = FreeSpaceMap::new(32768);
+        assert_eq!(0, fsm.allocated());
+    }
+
+    #[test]
+    fn allocated_one_closed_zone() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        fsm.open_zone(0, 1000, 2000, 0, TxgT::from(0)).unwrap();
+        fsm.finish_zone(0, TxgT::from(0));
+        assert_eq!(1000, fsm.allocated());
+    }
+
+    #[test]
+    fn allocated_one_open_zone() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        fsm.open_zone(0, 1000, 2000, 200, TxgT::from(0)).unwrap();
+        assert_eq!(200, fsm.allocated());
+    }
+
+    #[test]
+    fn allocated_one_empty_two_closed_two_open_zones() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        fsm.open_zone(0, 1000, 2000, 200, TxgT::from(0)).unwrap();
+        // Leave zone 1 empty
+        fsm.open_zone(2, 3000, 4000, 0, TxgT::from(0)).unwrap();
+        fsm.finish_zone(2, TxgT::from(0));
+        fsm.open_zone(3, 4000, 5000, 500, TxgT::from(0)).unwrap();
+        fsm.open_zone(4, 5000, 7000, 0, TxgT::from(0)).unwrap();
+        fsm.finish_zone(4, TxgT::from(0));
+        assert_eq!(3700, fsm.allocated());
+    }
 
     #[test]
     fn erase_closed_zone() {
