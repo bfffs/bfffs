@@ -1,14 +1,12 @@
 // vim: tw=80
 
+use atomic::{Atomic, Ordering};
 use common::{*, label::*};
 #[cfg(not(test))] use common::cluster;
 use futures::{Future, future};
 use nix::Error;
 #[cfg(not(test))] use nix::errno;
-use std::{
-    cell::RefCell,
-    ops::Range
-};
+use std::ops::Range;
 #[cfg(not(test))] use std::{collections::BTreeMap, path::Path};
 use uuid::Uuid;
 
@@ -75,7 +73,10 @@ struct Label {
 struct Stats {
     /// The queue depth of each `Cluster`, including both commands that have
     /// been sent to the disks, and commands that are pending in `VdevBlock`
-    queue_depth: Vec<i32>,
+    // NB: 32 bits would be preferable for queue_depth, once stable Rust
+    // supports atomic 32-bit ints
+    // https://github.com/rust-lang/rust/issues/32976
+    queue_depth: Vec<Atomic<u64>>,
 
     /// "Best" number of commands to queue to each VdevRaid
     optimum_queue_depth: Vec<f64>,
@@ -83,9 +84,9 @@ struct Stats {
     /// The total size of each `Cluster`
     size: Vec<LbaT>,
 
-    /// The total percentage of allocated space in each `Cluster`, excluding
+    /// The total amount of allocated space in each `Cluster`, excluding
     /// space that has already been freed but not erased.
-    allocated_space: Vec<u64>,
+    allocated_space: Vec<Atomic<LbaT>>,
 }
 
 impl Stats {
@@ -103,10 +104,10 @@ impl Stats {
         // calculation only occasionally, to update coefficients, and perform a
         // quick calculation on each write.
         (0..self.size.len()).map(|i| {
-            let space_util = (self.allocated_space[i] as f64) /
-                             (self.size[i] as f64);
-            let queue_fraction = (self.queue_depth[i] as f64) /
-                                  self.optimum_queue_depth[i];
+            let alloc = self.allocated_space[i].load(Ordering::Relaxed) as f64;
+            let space_util = alloc / (self.size[i] as f64);
+            let qdepth = self.queue_depth[i].load(Ordering::Relaxed) as f64;
+            let queue_fraction = qdepth / self.optimum_queue_depth[i];
             let q_coeff = if 0.95 > space_util {0.95 - space_util} else {0.0};
             let weight = q_coeff * queue_fraction + space_util;
             (i, weight)
@@ -124,7 +125,7 @@ pub struct Pool {
     /// Human-readable pool name.  Must be unique on any one system.
     name: String,
 
-    stats: RefCell<Stats>,
+    stats: Stats,
 
     uuid: Uuid,
 }
@@ -176,7 +177,8 @@ impl<'a> Pool {
     pub fn free(&self, pba: PBA, length: LbaT)
         -> impl Future<Item=(), Error=Error>
     {
-        self.stats.borrow_mut().allocated_space[pba.cluster as usize] -= length;
+        let idx = pba.cluster as usize;
+        self.stats.allocated_space[idx].fetch_sub(length, Ordering::Relaxed);
         self.clusters[pba.cluster as usize].free(pba.lba, length)
     }
 
@@ -188,17 +190,22 @@ impl<'a> Pool {
         let size: Vec<_> = clusters.iter()
             .map(|cluster| cluster.size())
             .collect();
-        let allocated_space: Vec<_> = clusters.iter().map(|_| 0).collect();
+        // TODO: ask the Cluster for its allocated space
+        let allocated_space: Vec<_> = clusters.iter()
+            .map(|_| Atomic::new(0))
+            .collect();
         let optimum_queue_depth: Vec<_> = clusters.iter().map(|cluster| {
             cluster.optimum_queue_depth() as f64
         }).collect();
-        let queue_depth: Vec<_> = clusters.iter().map(|_| 0).collect();
-        let stats = RefCell::new(Stats{
+        let queue_depth: Vec<_> = clusters.iter()
+            .map(|_| Atomic::new(0))
+            .collect();
+        let stats = Stats{
             allocated_space,
             optimum_queue_depth,
             queue_depth,
             size
-        });
+        };
         Pool{name, clusters, stats, uuid}
     }
 
@@ -285,11 +292,11 @@ impl<'a> Pool {
     pub fn read(&'a self, buf: IoVecMut, pba: PBA)
         -> impl Future<Item=(), Error=Error> + 'a
     {
-        let mut stats = self.stats.borrow_mut();
-        stats.queue_depth[pba.cluster as usize] += 1;
+        let cidx = pba.cluster as usize;
+        self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
         self.clusters[pba.cluster as usize].read(buf, pba.lba)
                  .then(move |r| {
-            stats.queue_depth[pba.cluster as usize] -= 1;
+            self.stats.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
             r
         })
     }
@@ -324,15 +331,16 @@ impl<'a> Pool {
     pub fn write(&'a self, buf: IoVec, txg: TxgT)
         -> Result<(PBA, Box<PoolFut<'a>>), Error>
     {
-        let cluster = self.stats.borrow().choose_cluster();
+        let cluster = self.stats.choose_cluster();
         let cidx = cluster as usize;
-        self.stats.borrow_mut().queue_depth[cidx] += 1;
+        self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
         self.clusters[cidx].write(buf, txg)
             .map(|(lba, wfut)| {
-                self.stats.borrow_mut().allocated_space[cidx] += space;
+                self.stats.allocated_space[cidx]
+                    .fetch_add(space, Ordering::Relaxed);
                 let fut: Box<PoolFut> = Box::new(wfut.then(move |r| {
-                    self.stats.borrow_mut().queue_depth[cidx] -= 1;
+                    self.stats.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
                     r
                 }));
                 (PBA::new(cluster, lba), fut)
@@ -514,14 +522,14 @@ mod stats {
         // Two clusters, one full and one empty.  Choose the empty one
         let mut stats = Stats {
             optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![0, 0],
+            queue_depth: vec![Atomic::new(0), Atomic::new(0)],
             size: vec![1000, 1000],
-            allocated_space: vec![0, 1000]
+            allocated_space: vec![Atomic::new(0), Atomic::new(1000)]
         };
         assert_eq!(stats.choose_cluster(), 0);
 
         // Try the reverse, too
-        stats.allocated_space = vec![1000, 0];
+        stats.allocated_space = vec![Atomic::new(1000), Atomic::new(0)];
         assert_eq!(stats.choose_cluster(), 1);
     }
 
@@ -530,14 +538,14 @@ mod stats {
         // Two clusters, one busy and one idle.  Choose the idle one
         let mut stats = Stats {
             optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![0, 10],
+            queue_depth: vec![Atomic::new(0), Atomic::new(10)],
             size: vec![1000, 1000],
-            allocated_space: vec![0, 0]
+            allocated_space: vec![Atomic::new(0), Atomic::new(0)]
         };
         assert_eq!(stats.choose_cluster(), 0);
 
         // Try the reverse, too
-        stats.queue_depth = vec![10, 0];
+        stats.queue_depth = vec![Atomic::new(10), Atomic::new(0)];
         assert_eq!(stats.choose_cluster(), 1);
     }
 
@@ -547,15 +555,15 @@ mod stats {
         // full.  Choose the not very full one.
         let mut stats = Stats {
             optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![0, 10],
+            queue_depth: vec![Atomic::new(0), Atomic::new(10)],
             size: vec![1000, 1000],
-            allocated_space: vec![960, 50]
+            allocated_space: vec![Atomic::new(960), Atomic::new(50)]
         };
         assert_eq!(stats.choose_cluster(), 1);
 
         // Try the reverse, too
-        stats.queue_depth = vec![10, 0];
-        stats.allocated_space = vec![50, 960];
+        stats.queue_depth = vec![Atomic::new(10), Atomic::new(0)];
+        stats.allocated_space = vec![Atomic::new(50), Atomic::new(960)];
         assert_eq!(stats.choose_cluster(), 0);
     }
 }
