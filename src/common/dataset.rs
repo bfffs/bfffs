@@ -22,16 +22,20 @@ struct Dataset<K: Key, V: Value>  {
 }
 
 impl<'a, K: Key, V: Value> Dataset<K, V> {
+    fn allocated(&self) -> LbaT {
+        self.idml.allocated()
+    }
+
     fn get(&'a self, k: K) -> impl Future<Item=Option<V>, Error=Error> + 'a
     {
         self.tree.get(k)
     }
 
-    pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>) -> Self {
+    fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>) -> Self {
         Dataset{idml, tree}
     }
 
-    pub fn size(&self) -> LbaT {
+    fn size(&self) -> LbaT {
         self.idml.size()
     }
 }
@@ -42,6 +46,10 @@ pub struct ReadOnlyDataset<K: Key, V: Value>  {
 }
 
 impl<'a, K: Key, V: Value> ReadOnlyDataset<K, V> {
+    pub fn allocated(&self) -> LbaT {
+        self.dataset.allocated()
+    }
+
     pub fn get(&'a self, k: K) -> impl Future<Item=Option<V>, Error=Error> + 'a
     {
         self.dataset.get(k)
@@ -63,6 +71,10 @@ pub struct ReadWriteDataset<K: Key, V: Value>  {
 }
 
 impl<'a, K: Key, V: Value> ReadWriteDataset<K, V> {
+    pub fn allocated(&self) -> LbaT {
+        self.dataset.allocated()
+    }
+
     pub fn get(&'a self, k: K) -> impl Future<Item=Option<V>, Error=Error> + 'a
     {
         self.dataset.get(k)

@@ -13,6 +13,15 @@ pub struct DDMLMock {
 }
 
 impl DDMLMock {
+    pub fn allocated(&self) -> LbaT {
+        self.e.was_called_returning::<(), LbaT>
+            ("allocated", ())
+    }
+
+    pub fn expect_allocated(&mut self) -> Method<(), LbaT> {
+        self.e.expect::<(), LbaT>("allocated")
+    }
+
     pub fn new() -> Self {
         Self {
             e: Expectations::new()

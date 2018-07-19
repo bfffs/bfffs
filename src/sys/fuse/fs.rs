@@ -58,21 +58,26 @@ impl Filesystem for FS {
 
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
         let fut = self.db.fsread(self.tree, |dataset| {
-            future::ok::<LbaT, Error>(dataset.size())
+            future::ok::<(LbaT, LbaT), Error>((dataset.size(),
+                                               dataset.allocated()))
         });
         // NB: these are the fields of FUSE's statfs structure, which is
         // actually closer to struct statvfs than struct statfs.
-        let blocks = self.runtime.block_on(fut).unwrap();   // total blocks in filesystem
+        let result = self.runtime.block_on(fut).unwrap();
+        let blocks = result.0;          // total blocks in filesystem
         let files = u64::max_value();   // total file nodes in filesystem
         let ffree = files;              // free file nodes in filesystem
         let frsize = 4096;              // fragment size
         let bsize = 4096;               // optimal transfer block size
+        let allocated = result.1;
+        // free blocks available to unpriveleged user
+        let bavail = blocks - allocated;
+        let bfree = bavail;             // free blocks in fs
 
         // TODO: use real values below, instead of dummy values
-        let bfree = blocks / 4 * 3;     // free blocks in fs
-        let bavail = bfree;     // free blocks available to unpriveleged user
-        let namelen = 255; // max length of filenames
+        let namelen = 255;              // max length of filenames
 
-        reply.statfs(blocks, bfree, bavail, files, ffree, bsize, namelen, frsize);
+        reply.statfs(blocks, bfree, bavail, files, ffree, bsize, namelen,
+                     frsize);
     }
 }

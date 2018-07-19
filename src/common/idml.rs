@@ -73,6 +73,12 @@ pub struct IDML {
 }
 
 impl<'a> IDML {
+    /// How many blocks have been allocated, including blocks that have been
+    /// freed but not erased?
+    pub fn allocated(&self) -> LbaT {
+        self.ddml.allocated()
+    }
+
     /// Clean `zone` by moving all of its records to other zones.
     pub fn clean_zone(&'a self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + 'a

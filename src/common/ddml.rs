@@ -32,6 +32,7 @@ use common::cache_mock::CacheMock as Cache;
 #[cfg(test)]
 /// Only exists so mockers can replace Pool
 pub trait PoolTrait {
+    fn allocated(&self) -> LbaT;
     fn free(&self, pba: PBA, length: LbaT);
     fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>;
     fn name(&self) -> &str;
@@ -124,6 +125,12 @@ pub struct DDML {
 }
 
 impl<'a> DDML {
+    /// How many blocks have been allocated, including blocks that have been
+    /// freed but not erased?
+    pub fn allocated(&self) -> LbaT {
+        self.pool.allocated()
+    }
+
     pub fn new(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
         DDML{pool, cache}
     }
@@ -394,6 +401,7 @@ mod t {
         MockPool,
         self,
         trait PoolTrait {
+            fn allocated(&self) -> LbaT;
             fn free(&self, pba: PBA, length: LbaT);
             fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>;
             fn name(&self) -> &str;

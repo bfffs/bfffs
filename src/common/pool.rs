@@ -91,6 +91,14 @@ struct Stats {
 }
 
 impl Stats {
+    /// How many blocks have been allocated, including blocks that have been
+    /// freed but not erased?
+    fn allocated(&self) -> LbaT {
+        self.allocated_space.iter()
+            .map(|alloc| alloc.load(Ordering::Relaxed))
+            .sum()
+    }
+
     /// Choose the best Cluster for the next write
     ///
     /// This decision is subjective, but should strive to:
@@ -132,6 +140,12 @@ pub struct Pool {
 }
 
 impl<'a> Pool {
+    /// How many blocks have been allocated, including blocks that have been
+    /// freed but not erased?
+    pub fn allocated(&self) -> LbaT {
+        self.stats.allocated()
+    }
+
     /// Create a new `Cluster` from unused files or devices
     ///
     /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
@@ -525,6 +539,17 @@ mod pool {
 
 mod stats {
     use super::super::*;
+
+    #[test]
+    fn allocated() {
+        let stats = Stats {
+            optimum_queue_depth: vec![10.0, 10.0],
+            queue_depth: vec![Atomic::new(0), Atomic::new(0)],
+            size: vec![1000, 1000],
+            allocated_space: vec![Atomic::new(10), Atomic::new(900)]
+        };
+        assert_eq!(stats.allocated(), 910);
+    }
 
     #[test]
     fn choose_cluster_empty() {
