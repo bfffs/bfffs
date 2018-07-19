@@ -15,7 +15,7 @@ pub enum Key {
 }
 
 /// Types that implement `Cacheable` may be stored in the cache
-pub trait Cacheable: Any + Debug {
+pub trait Cacheable: Any + Debug + Send + Sync {
     /// Deserialize a buffer into Self.  Will panic if deserialization fails.
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized;
 

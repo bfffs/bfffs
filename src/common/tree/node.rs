@@ -49,10 +49,10 @@ impl MinValue for TxgT {
     }
 }
 
-pub trait Addr: Copy + Debug + DeserializeOwned + Serialize + 'static {}
+pub trait Addr: Copy + Debug + DeserializeOwned + Send + Serialize + 'static {}
 
 impl<T> Addr for T
-where T: Copy + Debug + DeserializeOwned + Serialize + 'static {}
+where T: Copy + Debug + DeserializeOwned + Send + Serialize + 'static {}
 
 pub trait Key: Copy + Debug + DeserializeOwned + Ord + MinValue + Send +
     Serialize + 'static {}
