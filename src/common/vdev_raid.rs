@@ -418,9 +418,9 @@ impl VdevRaid {
                 sb.pad();
                 let lba = sb.lba();
                 let sgl = sb.pop();
-                self.writev_at_one(&sgl, lba)
+                Box::new(self.writev_at_one(&sgl, lba))
             } else {
-                Box::new(future::ok::<(), Error>(()))
+                Box::new(future::ok::<(), Error>(())) as Box<VdevFut>
             }
         };
         let (start, end) = self.blockdevs[0].zone_limits(zone);
@@ -457,7 +457,7 @@ impl VdevRaid {
                     let pad_lbas = sb.pad();
                     let lba = sb.lba();
                     let sgl = sb.pop();
-                    (pad_lbas, self.writev_at_one(&sgl, lba))
+                    (pad_lbas, Box::new(self.writev_at_one(&sgl, lba)))
                 }
             }
         }
@@ -889,7 +889,9 @@ impl VdevRaid {
     /// This is mostly useful internally, for writing from the stripe buffer.
     /// It should not be used publicly.
     #[doc(hidden)]
-    pub fn writev_at_one(&self, buf: &SGList, lba: LbaT) -> Box<VdevFut> {
+    pub fn writev_at_one(&self, buf: &SGList, lba: LbaT)
+        -> impl Future<Item = (), Error = Error>
+    {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -928,7 +930,7 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::new(data_fut.join(parity_fut).map(move |_| () ))
+        data_fut.join(parity_fut).map(move |_| () )
     }
 }
 
