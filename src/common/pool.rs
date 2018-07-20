@@ -382,7 +382,6 @@ impl<'a> Pool {
     pub fn write_label(&'a self, mut labeller: LabelWriter)
         -> impl Future<Item=(), Error=Error> + 'a
     {
-        //let mut labeller = LabelWriter::new();
         let cluster_uuids = self.clusters.iter().map(|cluster| cluster.uuid())
             .collect::<Vec<_>>();
         let label = Label {
