@@ -498,8 +498,8 @@ impl<'a> Iterator for ClosedZoneIterator<'a> {
 impl<'a> Cluster {
     /// How many blocks have been allocated, including blocks that have been
     /// freed but not erased?
-    pub fn allocated(&self) -> LbaT {
-        self.fsm.borrow().allocated()
+    pub fn allocated(&self) -> impl Future<Item=LbaT, Error=Error> {
+        future::ok(self.fsm.borrow().allocated())
     }
 
     /// Create a new `Cluster` from unused files or devices
@@ -608,8 +608,8 @@ impl<'a> Cluster {
     /// smaller number may result in inefficient use of resources, or even
     /// starvation.  A larger number won't hurt, but won't accrue any economies
     /// of scale, either.
-    pub fn optimum_queue_depth(&self) -> u32 {
-        self.vdev.optimum_queue_depth()
+    pub fn optimum_queue_depth(&self) -> impl Future<Item=u32, Error=Error> {
+        future::ok(self.vdev.optimum_queue_depth())
     }
 
     /// Asynchronously read from the cluster
@@ -620,8 +620,8 @@ impl<'a> Cluster {
     }
 
     /// Return approximately the usable space of the Cluster in LBAs.
-    pub fn size(&self) -> LbaT {
-        self.vdev.size()
+    pub fn size(&self) -> impl Future<Item=LbaT, Error=Error> {
+        future::ok(self.vdev.size())
     }
 
     /// Sync the `Cluster`, ensuring that all data written so far reaches stable

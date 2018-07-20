@@ -18,13 +18,13 @@ pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 /// specifiers than in the non-test versions.  This is because mockers doesn't
 /// work with parameterized traits.
 pub trait ClusterTrait {
-    fn allocated(&self) -> LbaT;
+    fn allocated(&self) -> Box<Future<Item=LbaT, Error=Error>>;
     fn free(&self, lba: LbaT, length: LbaT)
         -> Box<Future<Item=(), Error=Error>>;
     fn list_closed_zones(&self) -> Box<Iterator<Item=cluster::ClosedZone>>;
-    fn optimum_queue_depth(&self) -> u32;
+    fn optimum_queue_depth(&self) -> Box<Future<Item=u32, Error=Error>>;
     fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
-    fn size(&self) -> LbaT;
+    fn size(&self) -> Box<Future<Item=LbaT, Error=Error>>;
     fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
     fn uuid(&self) -> Uuid;
     fn write(&self, buf: IoVec, txg: TxgT)
@@ -125,6 +125,11 @@ impl Stats {
         .map(|(i, _)| i)
         .unwrap() as ClusterT
     }
+
+    /// The approximate usable size of the Pool
+    fn size(&self) -> LbaT {
+        self.size.iter().sum()
+    }
 }
 
 /// An ArkFS storage pool
@@ -176,7 +181,9 @@ impl<'a> Pool {
     }
 
     #[cfg(not(test))]
-    pub fn create(name: String, clusters: Vec<Cluster>) -> Self {
+    pub fn create(name: String, clusters: Vec<Cluster>)
+        -> impl Future<Item=Self, Error=Error>
+    {
         Pool::new(name, Uuid::new_v4(),
                   clusters.into_iter().map(|c| c.0).collect::<Vec<_>>())
     }
@@ -200,27 +207,36 @@ impl<'a> Pool {
     /// Construct a new `Pool` from some already constructed
     /// [`Cluster`](struct.Cluster.html)s
     #[cfg(any(not(test), feature = "mocks"))]
-    fn new(name: String, uuid: Uuid, clusters: Vec<ClusterLike>) -> Self
+    fn new(name: String, uuid: Uuid, clusters: Vec<ClusterLike>)
+        -> impl Future<Item=Self, Error=Error>
     {
-        let size: Vec<_> = clusters.iter()
+        let size_fut = future::join_all(clusters.iter()
             .map(|cluster| cluster.size())
-            .collect();
-        let allocated_space: Vec<_> = clusters.iter()
-            .map(|c| Atomic::new(c.allocated()))
-            .collect();
-        let optimum_queue_depth: Vec<_> = clusters.iter().map(|cluster| {
-            cluster.optimum_queue_depth() as f64
-        }).collect();
+            .collect::<Vec<_>>()
+        );
+        let allocated_fut = future::join_all(clusters.iter()
+            .map(|cluster| cluster.allocated()
+                 .map(|allocated| Atomic::new(allocated))
+            ).collect::<Vec<_>>()
+        );
+        let oqd_fut = future::join_all(clusters.iter()
+            .map(|cluster| cluster.optimum_queue_depth()
+                 .map(|oqd| oqd as f64)
+            ).collect::<Vec<_>>()
+        );
         let queue_depth: Vec<_> = clusters.iter()
             .map(|_| Atomic::new(0))
             .collect();
-        let stats = Stats{
-            allocated_space,
-            optimum_queue_depth,
-            queue_depth,
-            size
-        };
-        Pool{name, clusters, stats, uuid}
+        size_fut.join3(allocated_fut, oqd_fut)
+        .map(move |(size, allocated_space, optimum_queue_depth)| {
+            let stats = Stats{
+                allocated_space,
+                optimum_queue_depth,
+                queue_depth,
+                size
+            };
+            Pool{name, clusters, stats, uuid}
+        })
     }
 
     /// List all closed zones in this Pool in no particular order
@@ -298,6 +314,8 @@ impl<'a> Pool {
                 },
                 None => Err(Error::Sys(errno::Errno::ENOENT))
             }
+        }).and_then(|(pool_fut, label_reader)| {
+            pool_fut.map(move |pool| (pool, label_reader))
         })
     }
 
@@ -317,8 +335,7 @@ impl<'a> Pool {
 
     /// Return approximately the Pool's usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
-        self.clusters.iter()
-            .fold(0, |acc, c| acc + c.size())
+        self.stats.size()
     }
 
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
@@ -389,7 +406,7 @@ mod t {
 mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
-    use futures::future;
+    use futures::{IntoFuture, future};
     use mockers::Scenario;
     use mockers_derive::mock;
     use tokio::runtime::current_thread;
@@ -398,14 +415,14 @@ mod pool {
         MockCluster,
         self,
         trait ClusterTrait {
-            fn allocated(&self) -> LbaT;
+            fn allocated(&self) -> Box<Future<Item=LbaT, Error=Error>>;
             fn free(&self, lba: LbaT, length: LbaT)
                 -> Box<Future<Item=(), Error=Error>>;
             fn list_closed_zones(&self)
                 -> Box<Iterator<Item=cluster::ClosedZone>>;
-            fn optimum_queue_depth(&self) -> u32;
+            fn optimum_queue_depth(&self) -> Box<Future<Item=u32, Error=Error>>;
             fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
-            fn size(&self) -> LbaT;
+            fn size(&self) -> Box<Future<Item=LbaT, Error=Error>>;
             fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
             fn uuid(&self) -> Uuid;
             fn write(&self, buf: IoVec, txg: TxgT)
@@ -419,10 +436,10 @@ mod pool {
         let s = Scenario::new();
         let cluster = || {
             let c = s.create_mock::<MockCluster>();
-            s.expect(c.allocated_call().and_return_clone(0).times(..));
+            s.expect(c.allocated_call()
+                .and_return(Box::new(Ok(0).into_future())));
             s.expect(c.optimum_queue_depth_call()
-                .and_return_clone(10)
-                .times(..));
+                .and_return(Box::new(Ok(10).into_future())));
             s.expect(c.list_closed_zones_call()
                 .and_return(Box::new(vec![
                     cluster::ClosedZone {
@@ -440,11 +457,15 @@ mod pool {
                         txgs: TxgT::from(2)..TxgT::from(3)
                     },
                 ].into_iter())));
-            s.expect(c.size_call().and_return_clone(32768000).times(..));
+            s.expect(c.size_call()
+                .and_return(Box::new(Ok(32768000).into_future())));
             c
         };
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
-            vec![Box::new(cluster()), Box::new(cluster())]);
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let pool = rt.block_on(
+            Pool::new("foo".to_string(), Uuid::new_v4(),
+                vec![Box::new(cluster()), Box::new(cluster())])
+        ).unwrap();
         let closed_zones = pool.list_closed_zones().collect::<Vec<_>>();
         let expected = vec![
             ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5, total_blocks: 10,
@@ -465,17 +486,19 @@ mod pool {
         let cluster = || {
             let c = s.create_mock::<MockCluster>();
             s.expect(c.optimum_queue_depth_call()
-                     .and_return_clone(10)
-                     .times(..));
-            s.expect(c.allocated_call().and_return_clone(500).times(..));
-            s.expect(c.size_call().and_return_clone(1000).times(..));
+                     .and_return(Box::new(Ok(10).into_future())));
+            s.expect(c.allocated_call()
+                     .and_return(Box::new(Ok(500).into_future())));
+            s.expect(c.size_call()
+                     .and_return(Box::new(Ok(1000).into_future())));
             c
         };
 
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
-                             vec![Box::new(cluster()),
-                                  Box::new(cluster())]);
-
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let pool = rt.block_on(
+            Pool::new("foo".to_string(), Uuid::new_v4(),
+                      vec![Box::new(cluster()), Box::new(cluster())])
+        ).unwrap();
         assert_eq!(pool.stats.allocated_space[0].load(Ordering::Relaxed), 500);
         assert_eq!(pool.stats.allocated_space[1].load(Ordering::Relaxed), 500);
         assert_eq!(pool.stats.optimum_queue_depth[0], 10.0);
@@ -488,22 +511,24 @@ mod pool {
         let s = Scenario::new();
         let cluster = || {
             let c = s.create_mock::<MockCluster>();
-            s.expect(c.allocated_call().and_return_clone(0).times(..));
+            s.expect(c.allocated_call()
+                .and_return(Box::new(Ok(0).into_future())));
             s.expect(c.optimum_queue_depth_call()
-                     .and_return_clone(10)
-                     .times(..));
-            s.expect(c.size_call().and_return_clone(32768000).times(..));
+                .and_return(Box::new(Ok(10).into_future())));
+            s.expect(c.size_call()
+                .and_return(Box::new(Ok(32768000).into_future())));
             s.expect(c.sync_all_call()
                 .and_return(Box::new(future::ok::<(), Error>(())))
             );
             c
         };
 
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
-                             vec![Box::new(cluster()),
-                                  Box::new(cluster())]);
-
         let mut rt = current_thread::Runtime::new().unwrap();
+        let pool = rt.block_on(
+            Pool::new("foo".to_string(), Uuid::new_v4(),
+                      vec![Box::new(cluster()), Box::new(cluster())])
+        ).unwrap();
+
         assert!(rt.block_on(pool.sync_all()).is_ok());
     }
 
@@ -511,23 +536,26 @@ mod pool {
     fn write() {
         let s = Scenario::new();
         let cluster = s.create_mock::<MockCluster>();
-            s.expect(cluster.allocated_call().and_return_clone(0).times(..));
+            s.expect(cluster.allocated_call()
+                .and_return(Box::new(Ok(0).into_future())));
         s.expect(cluster.optimum_queue_depth_call()
-                 .and_return_clone(10)
-                 .times(..));
-        s.expect(cluster.size_call().and_return_clone(32768000).times(..));
+                 .and_return(Box::new(Ok(10).into_future())));
+        s.expect(cluster.size_call()
+                .and_return(Box::new(Ok(32768000).into_future())));
         s.expect(cluster.write_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
             }), TxgT::from(42))
             .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
         );
 
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(),
-                             vec![Box::new(cluster)]);
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let pool = rt.block_on(
+            Pool::new("foo".to_string(), Uuid::new_v4(),
+                      vec![Box::new(cluster)])
+        ).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
-        let mut rt = current_thread::Runtime::new().unwrap();
         let result = rt.block_on(future::lazy(|| {
             let (pba, fut) = pool.write(db0, TxgT::from(42))
                 .expect("write failed early");

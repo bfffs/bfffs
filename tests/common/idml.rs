@@ -74,7 +74,10 @@ test_suite! {
             let paths = [filename.clone()];
             let cluster = Pool::create_cluster(1, 1, 1, None, 0, &paths);
             let clusters = vec![cluster];
-            let pool = Pool::create(POOLNAME.to_string(), clusters);
+            let mut rt = current_thread::Runtime::new().unwrap();
+            let pool = rt.block_on(
+                Pool::create(POOLNAME.to_string(), clusters)
+            ).unwrap();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = IDML::create(ddml, cache);

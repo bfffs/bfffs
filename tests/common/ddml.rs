@@ -34,11 +34,13 @@ test_suite! {
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
-            let pool = Pool::create("TestPool".to_string(),
-                vec![
-                    Pool::create_cluster(1, 1, 1, None, 0, &[filename][..])
-                ]
-            );
+            let clusters = vec![
+                Pool::create_cluster(1, 1, 1, None, 0, &[filename][..])
+            ];
+            let mut rt = current_thread::Runtime::new().unwrap();
+            let pool = rt.block_on(
+                Pool::create("TestPool".to_string(), clusters)
+            ).unwrap();
             let cache = Cache::with_capacity(1_000_000_000);
             DDML::new(pool, Arc::new(Mutex::new(cache)))
         }

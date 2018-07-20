@@ -54,7 +54,10 @@ test_suite! {
             let clusters = paths.iter().map(|p| {
                 Pool::create_cluster(1, 1, 1, None, 0, &[p][..])
             }).collect::<Vec<_>>();;
-            let pool = Pool::create("TestPool".to_string(), clusters);
+            let mut rt = current_thread::Runtime::new().unwrap();
+            let pool = rt.block_on(
+                Pool::create("TestPool".to_string(), clusters)
+            ).unwrap();
             (pool, tempdir, paths)
         }
     });

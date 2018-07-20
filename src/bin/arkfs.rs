@@ -9,7 +9,7 @@ use arkfs::common::cache::Cache;
 use arkfs::common::ddml::DDML;
 use arkfs::common::idml::IDML;
 use arkfs::common::pool::{Cluster, Pool};
-use futures::future::lazy;
+use futures::Future;
 use std::sync::{Arc,Mutex};
 use super::*;
 use tokio::runtime::current_thread;
@@ -66,14 +66,18 @@ fn create(args: &clap::ArgMatches) {
             }
         }
     }
-    let pool = Pool::create(String::from(name), clusters);
-    let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
-    let ddml = Arc::new(DDML::new(pool, cache.clone()));
-    let idml = IDML::create(ddml, cache);
     let mut rt = current_thread::Runtime::new().unwrap();
-    rt.block_on(lazy(|| {
+    let idml = rt.block_on(
+        Pool::create(String::from(name), clusters)
+        .map(|pool| {
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            IDML::create(ddml, cache)
+        })
+    ).unwrap();
+    rt.block_on(
         idml.write_label(TxgT::from(0))
-    })).unwrap();
+    ).unwrap();
 }
 
 fn create_cluster(vtype: &str, devs: &[&str]) -> Cluster {
