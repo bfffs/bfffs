@@ -241,7 +241,7 @@ impl<'a> FreeSpaceMap {
     }
 
     /// List all closed zones, in no particular order
-    pub fn find_closed_zone(&'a self, start: ZoneT)
+    fn find_closed_zone(&'a self, start: ZoneT)
         -> Option<ClosedZone>
     {
         self.zones[(start as usize)..].iter()
@@ -325,7 +325,7 @@ impl<'a> FreeSpaceMap {
     /// Open a FreeSpaceMap from a deserialized label.  The vdev is necessary
     /// too, to find zone information.
     #[cfg(any(not(test), feature = "mocks"))]
-    pub fn open(label: Label, vdev: &VdevRaidLike) -> Self {
+    fn open(label: Label, vdev: &VdevRaidLike) -> Self {
         let total_zones = label.allocated_blocks.len() as ZoneT;
         let mut fsm = FreeSpaceMap::new(total_zones);
         assert_eq!(total_zones, label.freed_blocks.len() as ZoneT);
@@ -356,12 +356,12 @@ impl<'a> FreeSpaceMap {
     }
 
     /// Return an iterator over the zone IDs of all open zones
-    pub fn open_zone_ids(&self) -> Keys<ZoneT, OpenZone> {
+    fn open_zone_ids(&self) -> Keys<ZoneT, OpenZone> {
         self.open_zones.keys()
     }
 
     /// Serialize this `FreeSpaceMap` into a `Label`.
-    pub fn serialize(&self) -> Label {
+    fn serialize(&self) -> Label {
         let allocated_blocks = (0..self.total_zones).map(|z| {
             if self.is_empty(z) {
                 0
@@ -423,7 +423,7 @@ impl<'a> FreeSpaceMap {
     }
 
     /// Mark the next `space` LBAs in zone `zid` as wasted
-    pub fn waste_space(&mut self, zid: ZoneT, space: LbaT) {
+    fn waste_space(&mut self, zid: ZoneT, space: LbaT) {
         let oz = self.open_zones.get_mut(&zid).unwrap();
         oz.waste_space(space);
         self.zones[zid as usize].freed_blocks += space as u32;
