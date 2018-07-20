@@ -2,7 +2,7 @@
 
 use common::{*, label::*, vdev::{Vdev, VdevFut}};
 #[cfg(not(test))] use common::vdev_raid::*;
-use futures::{Future, IntoFuture, future};
+use futures::{Async, Future, IntoFuture, Poll, Stream, future};
 #[cfg(any(not(test), feature = "mocks"))] use itertools::multizip;
 use nix::{Error, errno};
 use std::{
@@ -478,20 +478,17 @@ pub struct ClosedZoneIterator<'a> {
     cursor: ZoneT,
 }
 
-impl<'a> Iterator for ClosedZoneIterator<'a> {
+impl<'a> Stream for ClosedZoneIterator<'a> {
     type Item = ClosedZone;
+    type Error = Error;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let mut zone = self.cluster.fsm.borrow().find_closed_zone(self.cursor);
         if let Some(ref mut z) = zone.as_mut() {
             z.start = self.cluster.vdev.zone_limits(z.zid).0;
             self.cursor = z.zid + 1;
         }
-        zone
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, Some(self.cluster.fsm.borrow().zones.len()))
+        Ok(Async::Ready(zone))
     }
 }
 
@@ -572,7 +569,9 @@ impl<'a> Cluster {
 
     /// List all closed zones in this Cluster in no particular order
     // Must return a Vec rather than an Iterator so we can drop the cell::Ref
-    pub fn list_closed_zones(&'a self) -> ClosedZoneIterator<'a>{
+    pub fn list_closed_zones(&'a self)
+        -> impl Stream<Item=cluster::ClosedZone, Error=Error> + 'a
+    {
         ClosedZoneIterator{cluster: self, cursor: 0}
     }
 
@@ -960,7 +959,11 @@ mod cluster {
         fsm.open_zone(4, 4, 5, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(4, TxgT::from(0));
         let cluster = Cluster::new(fsm, Box::new(vr));
-        let closed_zones = cluster.list_closed_zones().collect::<Vec<_>>();
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let closed_zones = rt.block_on(
+            cluster.list_closed_zones()
+            .collect()
+        ).unwrap();
         let expected = vec![
             ClosedZone{zid: 0, start: 0, freed_blocks: 1, total_blocks: 1,
                        txgs: TxgT::from(0)..TxgT::from(1)},

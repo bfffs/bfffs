@@ -28,7 +28,7 @@ impl<'a> Cleaner {
     const DEFAULT_THRESHOLD: f32 = 0.5;
 
     /// Clean zones in the foreground, blocking the task
-    pub fn clean_now(&'a self) -> impl Future<Item=(), Error=Error>  + 'a {
+    pub fn clean_now(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
         // Outline:
         // 1) Get a list of mostly-free zones
         // 2) For each zone:
@@ -37,8 +37,9 @@ impl<'a> Cleaner {
         //        let record = find_record(zone, offset)
         //        idml.move(record)
         //        offset += sizeof(record)
-        let stream = stream::iter_ok::<_, ()>(self.select_zones());
-        stream.map_err(|_| unreachable!())
+        self.select_zones()
+        .and_then(move |zones| {
+            stream::iter_ok(zones.into_iter())
             .for_each(move |zone| {
                 self.idml.txg()
                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
@@ -46,6 +47,7 @@ impl<'a> Cleaner {
                         self.clean_zone(zone, *txg_guard)
                     })
             })
+        })
     }
 
     /// Immediately clean the given zone in the foreground
@@ -61,23 +63,27 @@ impl<'a> Cleaner {
 
     /// Select which zones to clean and return them sorted by cleanliness:
     /// dirtiest zones first.
-    fn select_zones(&self) -> Vec<ClosedZone> {
-        let mut zones = self.idml.list_closed_zones()
-            .filter(|z| {
-                let dirtiness = z.freed_blocks as f32 / z.total_blocks as f32;
-                dirtiness >= self.threshold
-            }).collect::<Vec<_>>();
-        // Sort by highest percentage of free space to least
-        // TODO: optimize for the case where all zones have equal size, removing
-        // the division.
-        zones.sort_unstable_by(|a, b| {
-            // Annoyingly, f32 only implements PartialOrd, not Ord.  So we have
-            // to define a comparator function.
-            let afrac = -(a.freed_blocks as f32 / a.total_blocks as f32);
-            let bfrac = -(b.freed_blocks as f32 / b.total_blocks as f32);
-            afrac.partial_cmp(&bfrac).unwrap()
-        });
-        zones
+    fn select_zones(&'a self)
+        -> impl Future<Item=Vec<ClosedZone>, Error=Error> + 'a
+    {
+        self.idml.list_closed_zones()
+        .filter(move |z| {
+            let dirtiness = z.freed_blocks as f32 / z.total_blocks as f32;
+            dirtiness >= self.threshold
+        }).collect()
+        .map(|mut zones: Vec<ClosedZone>| {
+            // Sort by highest percentage of free space to least
+            // TODO: optimize for the case where all zones have equal size,
+            // removing the division.
+            zones.sort_unstable_by(|a, b| {
+                // Annoyingly, f32 only implements PartialOrd, not Ord.  So we
+                // have to define a comparator function.
+                let afrac = -(a.freed_blocks as f32 / a.total_blocks as f32);
+                let bfrac = -(b.freed_blocks as f32 / b.total_blocks as f32);
+                afrac.partial_cmp(&bfrac).unwrap()
+            });
+            zones
+        })
     }
 }
 
@@ -102,7 +108,7 @@ fn no_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 1, total_blocks: 100,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::new(czs.into_iter())
+            Box::new(stream::iter_ok(czs.into_iter()))
         });
     idml.expect_txg().called_never();
     idml.expect_clean_zone().called_never();
@@ -124,7 +130,7 @@ fn one_sufficiently_dirty_zone() {
                 ClosedZone{freed_blocks: 55, total_blocks: 100,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::new(czs.into_iter())
+            Box::new(stream::iter_ok(czs.into_iter()))
         });
     idml.expect_txg()
         .called_once()
@@ -158,7 +164,7 @@ fn two_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 75, total_blocks: 100,
                     pba: PBA::new(2, 0), txgs: TxgT::from(1)..TxgT::from(2)},
             ];
-            Box::new(czs.into_iter())
+            Box::new(stream::iter_ok(czs.into_iter()))
         });
     idml.expect_txg()
         .called_once()

@@ -4,7 +4,7 @@ use common::{LbaT, TxgT};
 use common::dml::*;
 use common::ddml::*;
 use common::label::*;
-use futures::Future;
+use futures::{Future, Stream};
 use nix::Error;
 use simulacrum::*;
 
@@ -79,16 +79,19 @@ impl DDMLMock {
             ("get_direct")
     }
 
-    pub fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>
+    pub fn list_closed_zones(&self)
+        -> Box<Stream<Item=ClosedZone, Error=Error>>
     {
-        self.e.was_called_returning::<(), Box<Iterator<Item=ClosedZone>>>
+        self.e.was_called_returning::<(),
+            Box<Stream<Item=ClosedZone, Error=Error>>>
             ("list_closed_zones", ())
     }
 
     pub fn expect_list_closed_zones(&mut self)
-        -> Method<(), Box<Iterator<Item=ClosedZone>>>
+        -> Method<(), Box<Stream<Item=ClosedZone, Error=Error>>>
     {
-        self.e.expect::<(), Box<Iterator<Item=ClosedZone>>>("list_closed_zones")
+        self.e.expect::<(), Box<Stream<Item=ClosedZone, Error=Error>>>
+            ("list_closed_zones")
     }
 
     pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)

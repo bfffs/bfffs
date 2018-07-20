@@ -11,7 +11,7 @@ use common::{
     label::*,
     pool::*
 };
-use futures::{Future, IntoFuture, future};
+use futures::{Future, IntoFuture, Stream, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
@@ -34,7 +34,7 @@ use common::cache_mock::CacheMock as Cache;
 pub trait PoolTrait {
     fn allocated(&self) -> LbaT;
     fn free(&self, pba: PBA, length: LbaT);
-    fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>;
+    fn list_closed_zones(&self) -> Box<Stream<Item=ClosedZone, Error=Error>>;
     fn name(&self) -> &str;
     fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut>;
     fn size(&self) -> LbaT;
@@ -144,7 +144,9 @@ impl<'a> DDML {
         })
     }
 
-    pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
+    pub fn list_closed_zones(&'a self)
+        -> impl Stream<Item=ClosedZone, Error=Error> + 'a
+    {
         self.pool.list_closed_zones()
     }
 
@@ -403,7 +405,8 @@ mod t {
         trait PoolTrait {
             fn allocated(&self) -> LbaT;
             fn free(&self, pba: PBA, length: LbaT);
-            fn list_closed_zones(&self) -> Box<Iterator<Item=ClosedZone>>;
+            fn list_closed_zones(&self)
+                -> Box<Stream<Item=ClosedZone, Error=Error>>;
             fn name(&self) -> &str;
             fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut<'static>>;
             fn size(&self) -> LbaT;

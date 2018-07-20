@@ -3,7 +3,7 @@
 use atomic::{Atomic, Ordering};
 use common::{*, label::*};
 #[cfg(not(test))] use common::cluster;
-use futures::{Future, future};
+use futures::{Future, Stream, future, stream};
 use nix::Error;
 #[cfg(not(test))] use nix::errno;
 use std::ops::Range;
@@ -21,7 +21,8 @@ pub trait ClusterTrait {
     fn allocated(&self) -> Box<Future<Item=LbaT, Error=Error>>;
     fn free(&self, lba: LbaT, length: LbaT)
         -> Box<Future<Item=(), Error=Error>>;
-    fn list_closed_zones(&self) -> Box<Iterator<Item=cluster::ClosedZone>>;
+    fn list_closed_zones(&self)
+        -> Box<Stream<Item=cluster::ClosedZone, Error=Error>>;
     fn optimum_queue_depth(&self) -> Box<Future<Item=u32, Error=Error>>;
     fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
     fn size(&self) -> Box<Future<Item=LbaT, Error=Error>>;
@@ -240,18 +241,19 @@ impl<'a> Pool {
     }
 
     /// List all closed zones in this Pool in no particular order
-    pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
-        self.clusters.iter()
-            .enumerate()
-            .flat_map(|(i, cluster)| {
-                cluster.list_closed_zones()
-                    .map(move |clz| ClosedZone {
-                        freed_blocks: clz.freed_blocks,
-                        pba: PBA::new(i as ClusterT, clz.start),
-                        total_blocks: clz.total_blocks,
-                        txgs: clz.txgs
-                    })
+    pub fn list_closed_zones(&'a self)
+        -> impl Stream<Item=ClosedZone, Error=Error> + 'a
+    {
+        stream::iter_ok::<_, Error>(self.clusters.iter().enumerate())
+        .map(|(i, cluster)| {
+            cluster.list_closed_zones()
+            .map(move |clz| ClosedZone {
+                freed_blocks: clz.freed_blocks,
+                pba: PBA::new(i as ClusterT, clz.start),
+                total_blocks: clz.total_blocks,
+                txgs: clz.txgs
             })
+        }).flatten()
     }
 
     /// Return the `Pool`'s name.
@@ -418,7 +420,7 @@ mod pool {
             fn free(&self, lba: LbaT, length: LbaT)
                 -> Box<Future<Item=(), Error=Error>>;
             fn list_closed_zones(&self)
-                -> Box<Iterator<Item=cluster::ClosedZone>>;
+                -> Box<Stream<Item=cluster::ClosedZone, Error=Error>>;
             fn optimum_queue_depth(&self) -> Box<Future<Item=u32, Error=Error>>;
             fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
             fn size(&self) -> Box<Future<Item=LbaT, Error=Error>>;
@@ -440,22 +442,24 @@ mod pool {
             s.expect(c.optimum_queue_depth_call()
                 .and_return(Box::new(Ok(10).into_future())));
             s.expect(c.list_closed_zones_call()
-                .and_return(Box::new(vec![
-                    cluster::ClosedZone {
-                        zid: 1,
-                        start: 10,
-                        freed_blocks: 5,
-                        total_blocks: 10,
-                        txgs: TxgT::from(0)..TxgT::from(1)
-                    },
-                    cluster::ClosedZone {
-                        zid: 3,
-                        start: 30,
-                        freed_blocks: 6,
-                        total_blocks: 10,
-                        txgs: TxgT::from(2)..TxgT::from(3)
-                    },
-                ].into_iter())));
+                .and_return(Box::new(stream::iter_ok::<_, Error>(
+                    vec![
+                        cluster::ClosedZone {
+                            zid: 1,
+                            start: 10,
+                            freed_blocks: 5,
+                            total_blocks: 10,
+                            txgs: TxgT::from(0)..TxgT::from(1)
+                        },
+                        cluster::ClosedZone {
+                            zid: 3,
+                            start: 30,
+                            freed_blocks: 6,
+                            total_blocks: 10,
+                            txgs: TxgT::from(2)..TxgT::from(3)
+                        },
+                    ].into_iter()
+                ))));
             s.expect(c.size_call()
                 .and_return(Box::new(Ok(32768000).into_future())));
             c
@@ -465,7 +469,9 @@ mod pool {
             Pool::new("foo".to_string(), Uuid::new_v4(),
                 vec![Box::new(cluster()), Box::new(cluster())])
         ).unwrap();
-        let closed_zones = pool.list_closed_zones().collect::<Vec<_>>();
+        let closed_zones = rt.block_on(
+            pool.list_closed_zones().collect()
+        ).unwrap();
         let expected = vec![
             ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5, total_blocks: 10,
                        txgs: TxgT::from(0)..TxgT::from(1)},

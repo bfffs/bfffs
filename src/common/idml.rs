@@ -109,7 +109,9 @@ impl<'a> IDML {
         IDML{alloct, cache, ddml, next_rid, ridt, transaction}
     }
 
-    pub fn list_closed_zones(&'a self) -> impl Iterator<Item=ClosedZone> + 'a {
+    pub fn list_closed_zones(&'a self)
+        -> impl Stream<Item=ClosedZone, Error=Error> + 'a
+    {
         self.ddml.list_closed_zones()
     }
 
