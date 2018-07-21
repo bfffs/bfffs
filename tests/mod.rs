@@ -4,6 +4,7 @@ extern crate fixedbitset;
 extern crate futures;
 #[macro_use] extern crate galvanic_test;
 extern crate itertools;
+extern crate nix;
 #[macro_use] extern crate pretty_assertions;
 extern crate rand;
 extern crate tempdir;
