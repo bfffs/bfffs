@@ -8,12 +8,13 @@ use nix::{Error, errno};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
+    rc::Rc,
     ops::Range
 };
 #[cfg(not(test))] use std::path::Path;
 use uuid::Uuid;
 
-pub type ClusterFut<'a> = Future<Item = (), Error = Error> + 'a;
+pub type ClusterFut = Future<Item = (), Error = Error>;
 
 #[cfg(test)]
 /// Only exists so mockers can replace VdevRaid
@@ -454,7 +455,9 @@ pub struct Cluster {
     fsm: RefCell<FreeSpaceMap>,
 
     /// Underlying vdev (which may or may not use RAID)
-    vdev: VdevRaidLike
+    // The Rc is necessary in order for some methods to return futures with
+    // 'static lifetimes
+    vdev: Rc<VdevRaidLike>
 }
 
 /// Finish any zones that are too full for new allocations.
@@ -579,7 +582,7 @@ impl<'a> Cluster {
     /// [`VdevRaid`](struct.VdevRaid.html)
     #[cfg(any(not(test), feature = "mocks"))]
     fn new(fsm: FreeSpaceMap, vdev: VdevRaidLike) -> Self {
-        Cluster{fsm: RefCell::new(fsm), vdev}
+        Cluster{fsm: RefCell::new(fsm), vdev: Rc::new(vdev)}
     }
 
     /// Open all existing `Cluster`s fuond in `paths`.
@@ -625,7 +628,7 @@ impl<'a> Cluster {
 
     /// Sync the `Cluster`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
+    pub fn sync_all(&self) -> impl Future<Item=(), Error=Error> {
         let mut fsm = self.fsm.borrow_mut();
         let zone_ids = fsm.open_zone_ids().cloned().collect::<Vec<_>>();
         let flush_futs = zone_ids.iter().map(|&zone_id| {
@@ -634,7 +637,8 @@ impl<'a> Cluster {
             fut
         }).collect::<Vec<_>>();
         let flush_fut = future::join_all(flush_futs);
-        flush_fut.and_then(move |_| self.vdev.sync_all())
+        let vdev2 = self.vdev.clone();
+        flush_fut.and_then(move |_| vdev2.sync_all())
     }
 
     /// Return the `Cluster`'s UUID.  It's the same as its RAID device's.
@@ -648,8 +652,8 @@ impl<'a> Cluster {
     ///
     /// The LBA where the data will be written, and a
     /// `Future` for the operation in progress.
-    pub fn write(&'a self, buf: IoVec, txg: TxgT)
-        -> Result<(LbaT, Box<ClusterFut<'a>>), Error> {
+    pub fn write(&self, buf: IoVec, txg: TxgT)
+        -> Result<(LbaT, Box<ClusterFut>), Error> {
         // Outline:
         // 1) Try allocating in an open zone
         // 2) If that doesn't work, try opening a new one, and allocating from
@@ -660,20 +664,22 @@ impl<'a> Cluster {
         let (alloc_result, nearly_full_zones) =
             self.fsm.borrow_mut().try_allocate(space);
         let finish_futs = close_zones!(self, &nearly_full_zones, txg);
+        let vdev2 = self.vdev.clone();
+        let vdev3 = self.vdev.clone();
         alloc_result.map(|(zone_id, lba)| {
-            let oz_fut: Box<ClusterFut<'static>> = Box::new(future::ok::<(),
+            let oz_fut: Box<ClusterFut> = Box::new(future::ok::<(),
                                                             Error>(()));
             (zone_id, lba, oz_fut)
         }).or_else(|| {
             let empty_zone = self.fsm.borrow().find_empty();
             empty_zone.and_then(|zone_id| {
-                let zl = self.vdev.zone_limits(zone_id);
+                let zl = vdev2.zone_limits(zone_id);
                 let e = self.fsm.borrow_mut().open_zone(zone_id, zl.0, zl.1,
                                                         space, txg);
                 match e {
                     Ok(Some((zone_id, lba))) => {
                         let oz_fut = Box::new(
-                            self.vdev.open_zone(zone_id)
+                            vdev2.open_zone(zone_id)
                         ) as Box<VdevFut>;
                         Some((zone_id, lba, oz_fut))
                     },
@@ -682,8 +688,8 @@ impl<'a> Cluster {
                 }
             })
         }).map(|(zone_id, lba, oz_fut)| {
-            let fut : Box<Future<Item = (), Error = Error>+ 'a>;
-            let wfut = self.vdev.write_at(buf, zone_id, lba);
+            let fut : Box<Future<Item = (), Error = Error>>;
+            let wfut = vdev3.write_at(buf, zone_id, lba);
             let owfut = oz_fut.and_then(move |_| {
                 wfut
             }
