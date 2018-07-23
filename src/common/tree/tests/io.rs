@@ -508,7 +508,7 @@ fn write_deep() {
             leaf_data.get(&1) == Some(200) &&
             args.2 == TxgT::from(42)
         }))
-        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+        .returning(move |_| Box::new(Ok(drp).into_future()));
     mock.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, _)| {
@@ -520,7 +520,7 @@ fn write_deep() {
             int_data.children[1].ptr.is_addr() &&
             args.2 == TxgT::from(42)
         }))
-        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+        .returning(move |_| Box::new(Ok(drp).into_future()));
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -583,7 +583,7 @@ fn write_int() {
             !int_data.children[1].ptr.is_mem() &&
             args.2 == TxgT::from(42)
         }))
-        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+        .returning(move |_| Box::new(Ok(drp).into_future()));
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---
@@ -646,7 +646,7 @@ fn write_leaf() {
             leaf_data.get(&0) == Some(100) &&
             leaf_data.get(&1) == Some(200) &&
             args.2 == TxgT::from(42)
-        })).returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+        })).returning(move |_| Box::new(Ok(drp).into_future()));
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---

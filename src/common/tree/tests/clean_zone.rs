@@ -111,7 +111,7 @@ fn basic() {
         .with(passes(|args: &(_, _, TxgT)| args.2 == TxgT::from(42)))
         .returning(move |(_cacheable, _compression, _txg)| {
             let drp = DRP::random(Compression::None, 1024);
-            (drp, Box::new(future::ok::<(), Error>(())))
+            Box::new(Ok(drp).into_future())
         });
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
@@ -251,7 +251,7 @@ fn dirty_root() {
         .with(passes(|args: &(_, _, TxgT)| args.2 == TxgT::from(42)))
         .returning(move |(_cacheable, _compression, _txg)| {
             let drp = DRP::random(Compression::None, 1024);
-            (drp, Box::new(future::ok::<(), Error>(())))
+            Box::new(Ok(drp).into_future())
         });
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"

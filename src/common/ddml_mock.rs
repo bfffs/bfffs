@@ -52,10 +52,10 @@ impl DDMLMock {
     }
 
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
-        (DRP, Box<Future<Item=(), Error=Error>>)>
+        Box<Future<Item=DRP, Error=Error>>>
     {
         self.e.expect::<(T, Compression, TxgT),
-                        (DRP, Box<Future<Item=(), Error=Error>>)>
+                        Box<Future<Item=DRP, Error=Error>>>
             ("put")
     }
 
@@ -111,19 +111,19 @@ impl DDMLMock {
 
     pub fn put_direct<T: Cacheable>(&self, cacheable: T,
                                     compression: Compression, txg: TxgT)
-        -> (DRP, Box<Future<Item=T, Error=Error>>)
+        -> Box<Future<Item=(DRP, T), Error=Error>>
     {
         self.e.was_called_returning::<(T, Compression, TxgT),
-                                      (DRP, Box<Future<Item=T, Error=Error>>)>
+                                      Box<Future<Item=(DRP, T), Error=Error>>>
             ("put_direct", (cacheable, compression, txg))
     }
 
     pub fn expect_put_direct<T: Cacheable>(&mut self)
         -> Method<(T, Compression, TxgT),
-        (DRP, Box<Future<Item=T, Error=Error>>)>
+        Box<Future<Item=(DRP, T), Error=Error>>>
     {
         self.e.expect::<(T, Compression, TxgT),
-                        (DRP, Box<Future<Item=T, Error=Error>>)>
+                        Box<Future<Item=(DRP, T), Error=Error>>>
             ("put_direct")
     }
 
@@ -188,10 +188,10 @@ impl DML for DDMLMock {
 
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                          txg:TxgT)
-        -> (DRP, Box<Future<Item=(), Error=Error>>)
+        -> Box<Future<Item=DRP, Error=Error>>
     {
         self.e.was_called_returning::<(T, Compression, TxgT),
-                                      (DRP, Box<Future<Item=(), Error=Error>>)>
+                                      (Box<Future<Item=DRP, Error=Error>>)>
             ("put", (cacheable, compression, txg))
     }
 

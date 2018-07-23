@@ -147,23 +147,23 @@ mod t {
         let mut ddml = DDML::new();
         ddml.expect_put::<Arc<tree::Node<RID, FSKey, FSValue>>>()
             .called_any()
-            .returning(move |(_, _, _)|
-                (DRP::random(Compression::None, 4096),
-                 Box::new(future::ok::<(), Error>(())))
-            );
+            .returning(move |(_, _, _)| {
+                let drp = DRP::random(Compression::None, 4096);
+                 Box::new(future::ok::<DRP, Error>(drp))
+            });
         // Can't set this expectation, because RidtEntry isn't pubic
         //ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
             //.called_any()
-            //.returning(move |(_, _, _)|
-                //(DRP::random(Compression::None, 4096),
-                 //Box::new(future::ok::<(), Error>(())))
-            //);
+            //.returning(move |(_, _, _)| {
+                //let drp = DRP::random(Compression::None, 4096);
+                 //Box::new(future::ok::<DRP, Error>(drp)))
+            //});
         ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
             .called_any()
-            .returning(move |(_, _, _)|
-                (DRP::random(Compression::None, 4096),
-                 Box::new(future::ok::<(), Error>(())))
-            );
+            .returning(move |(_, _, _)| {
+                let drp = DRP::random(Compression::None, 4096);
+                 Box::new(future::ok::<DRP, Error>(drp))
+            });
         ddml.expect_sync_all()
             .called_once()
             .with(TxgT::from(0))

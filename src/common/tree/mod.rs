@@ -1129,8 +1129,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         -> impl Future<Item=A, Error=Error> + 'a
     {
         let arc: Arc<Node<A, K, V>> = Arc::new(*node);
-        let (addr, fut) = self.dml.put(arc, Compression::None, txg);
-        fut.map(move |_| addr)
+        self.dml.put(arc, Compression::None, txg)
     }
 
     fn flush_r(&'a self, mut node: Box<Node<A, K, V>>, txg: TxgT)
@@ -1199,8 +1198,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
             .and_then(move |txgs| {
                 let start_txg = *txgs.iter().min().unwrap();
                 let arc: Arc<Node<A, K, V>> = Arc::new(*node);
-                let (addr, fut) = self.dml.put(arc, Compression::None, txg);
-                fut.map(move |_| (addr, start_txg..txg + 1))
+                self.dml.put(arc, Compression::None, txg)
+                    .map(move |addr| (addr, start_txg..txg + 1))
             })
         )
     }
@@ -1414,11 +1413,10 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                                          Arc<Node<ddml::DRP, K, V>>>(
                                          guard.ptr.as_addr(), txg)
                     .and_then(move |arc| {
-                        let (addr, fut) = self.dml.put(*arc, Compression::None,
-                                                       txg);
+                        self.dml.put(*arc, Compression::None, txg)
+                    }).map(move |addr| {
                         let new = TreePtr::Addr(addr);
                         guard.ptr = new;
-                        fut
                     });
                 Box::new(fut) as Box<Future<Item=(), Error=Error>>
             } else {
@@ -1455,11 +1453,10 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                             assert!(node.key <= *guard.key());
                         }
                     }
-                    let (addr, fut) = self.dml.put(*arc, Compression::None,
-                                                   txg);
+                    self.dml.put(*arc, Compression::None, txg)
+                }).map(move |addr| {
                     let new = TreePtr::Addr(addr);
                     guard.as_int_mut().children[child_idx].ptr = new;
-                    fut
                 });
             Box::new(fut)
         } else {

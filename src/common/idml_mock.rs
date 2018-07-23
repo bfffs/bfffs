@@ -59,10 +59,10 @@ impl IDMLMock {
     }
 
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
-        (RID, Box<Future<Item=(), Error=Error>>)>
+        Box<Future<Item=RID, Error=Error>>>
     {
         self.e.expect::<(T, Compression, TxgT),
-                        (RID, Box<Future<Item=(), Error=Error>>)>
+                        Box<Future<Item=RID, Error=Error>>>
             ("put")
     }
 
@@ -148,10 +148,10 @@ impl DML for IDMLMock {
 
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                          txg:TxgT)
-        -> (RID, Box<Future<Item=(), Error=Error>>)
+        -> Box<Future<Item=RID, Error=Error>>
     {
         self.e.was_called_returning::<(T, Compression, TxgT),
-                                      (RID, Box<Future<Item=(), Error=Error>>)>
+                                      Box<Future<Item=RID, Error=Error>>>
             ("put", (cacheable, compression, txg))
     }
 

@@ -20,7 +20,7 @@ fn flush() {
             let node_data = (args.0).0.try_read().unwrap();
             node_data.is_leaf() || args.2 == TxgT::from(42)
         }))
-        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+        .returning(move |_| Box::new(Ok(drp).into_future()));
     mock.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
         .called_once()
         .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, TxgT)|{
@@ -32,7 +32,7 @@ fn flush() {
             int_data.children[1].txgs == (TxgT::from(41)..TxgT::from(42)) &&
             args.2 == TxgT::from(42)
         }))
-        .returning(move |_| (drp, Box::new(future::ok::<(), Error>(()))));
+        .returning(move |_| Box::new(Ok(drp).into_future()));
     let ddml = Arc::new(mock);
     let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---

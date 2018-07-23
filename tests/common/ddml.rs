@@ -49,22 +49,23 @@ test_suite! {
     test basic(objects) {
         let ddml: DDML = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put(dbs, Compression::None, TxgT::from(0));
+        let ddml2 = &ddml;
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let ddml2 = &ddml;
-            let drp2 = &drp;
-            fut.and_then(move |_| {
+            ddml.put(dbs, Compression::None, TxgT::from(0))
+            .and_then(move |drp| {
+                let drp2 = &drp;
                 ddml2.get::<DivBufShared, DivBuf>(drp2)
-            }).map(|db: Box<DivBuf>| {
-                assert_eq!(&db[..], &vec![42u8; 4096][..]);
-            }).and_then(|_| {
-                ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
-            }).map(|dbs: Box<DivBufShared>| {
-                assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 4096][..]);
-            }).and_then(|_| {
-                // Even though the record has been removed from cache, it should
-                // still be on disk
-                ddml.get::<DivBufShared, DivBuf>(&drp)
+                .map(|db: Box<DivBuf>| {
+                    assert_eq!(&db[..], &vec![42u8; 4096][..]);
+                }).and_then(move |_| {
+                    ddml2.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
+                }).map(|dbs: Box<DivBufShared>| {
+                    assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 4096][..]);
+                }).and_then(move |_| {
+                    // Even though the record has been removed from cache, it
+                    // should still be on disk
+                    ddml2.get::<DivBufShared, DivBuf>(&drp)
+                })
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 4096][..]);
             })
@@ -76,6 +77,7 @@ test_suite! {
     test compressible(objects) {
         let txg = TxgT::from(0);
         let ddml: DDML = objects.val;
+        let ddml2 = &ddml;
         let filename = Path::new(file!())
             .parent().unwrap()
             .parent().unwrap()
@@ -85,24 +87,24 @@ test_suite! {
         let mut vdev_raid_contents = Vec::new();
         file.read_to_end(&mut vdev_raid_contents).unwrap();
         let dbs = DivBufShared::from(vdev_raid_contents.clone());
-        let (drp, fut) = ddml.put(dbs, Compression::ZstdL9NoShuffle, txg);
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let ddml2 = &ddml;
-            let drp2 = &drp;
-            fut.and_then(move |_| {
+            ddml.put(dbs, Compression::ZstdL9NoShuffle, txg)
+            .and_then(|drp| {
+                let drp2 = &drp;
                 ddml2.get::<DivBufShared, DivBuf>(drp2)
-            }).map(|db: Box<DivBuf>| {
-                assert_eq!(&db[..], &vdev_raid_contents[..]);
-            }).and_then(|_| {
-                ddml.pop::<DivBufShared, DivBuf>(&drp, txg)
-            }).map(|dbs: Box<DivBufShared>| {
-                assert_eq!(&dbs.try().unwrap()[..], &vdev_raid_contents[..]);
-            }).and_then(|_| {
-                // Even though the record has been removed from cache, it should
-                // still be on disk
-                ddml.get::<DivBufShared, DivBuf>(&drp)
-            }).map(|db: Box<DivBuf>| {
-                assert_eq!(&db[..], &vdev_raid_contents[..]);
+                .map(|db: Box<DivBuf>| {
+                    assert_eq!(&db[..], &vdev_raid_contents[..]);
+                }).and_then(move |_| {
+                    ddml2.pop::<DivBufShared, DivBuf>(&drp, txg)
+                }).map(|dbs: Box<DivBufShared>| {
+                    assert_eq!(&dbs.try().unwrap()[..], &vdev_raid_contents[..]);
+                }).and_then(move |_| {
+                    // Even though the record has been removed from cache, it
+                    // should still be on disk
+                    ddml2.get::<DivBufShared, DivBuf>(&drp)
+                }).map(|db: Box<DivBuf>| {
+                    assert_eq!(&db[..], &vdev_raid_contents[..]);
+                })
             })
         })).unwrap();
     }
@@ -110,23 +112,24 @@ test_suite! {
     // Records of less than an LBA should be padded up.
     test short(objects) {
         let ddml: DDML = objects.val;
+        let ddml2 = &ddml;
         let dbs = DivBufShared::from(vec![42u8; 1024]);
-        let (drp, fut) = ddml.put(dbs, Compression::None, TxgT::from(0));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let ddml2 = &ddml;
-            let drp2 = &drp;
-            fut.and_then(move |_| {
+            ddml.put(dbs, Compression::None, TxgT::from(0))
+            .and_then(move |drp| {
+                let drp2 = &drp;
                 ddml2.get::<DivBufShared, DivBuf>(drp2)
-            }).map(|db: Box<DivBuf>| {
-                assert_eq!(&db[..], &vec![42u8; 1024][..]);
-            }).and_then(|_| {
-                ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
-            }).map(|dbs: Box<DivBufShared>| {
-                assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 1024][..]);
-            }).and_then(|_| {
-                // Even though the record has been removed from cache, it should
-                // still be on disk
-                ddml.get::<DivBufShared, DivBuf>(&drp)
+                .map(|db: Box<DivBuf>| {
+                    assert_eq!(&db[..], &vec![42u8; 1024][..]);
+                }).and_then(move |_| {
+                    ddml2.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
+                }).map(|dbs: Box<DivBufShared>| {
+                    assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 1024][..]);
+                }).and_then(move |_| {
+                    // Even though the record has been removed from cache, it
+                    // should still be on disk
+                    ddml2.get::<DivBufShared, DivBuf>(&drp)
+                })
             }).map(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 1024][..]);
             })

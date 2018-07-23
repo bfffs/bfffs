@@ -359,25 +359,26 @@ impl<'a> Pool {
     ///
     /// # Returns
     ///
-    /// The `PBA` where the data will be written, and a `Future` for the
-    /// operation in progress.
+    /// The `PBA` where the data was written
     pub fn write(&'a self, buf: IoVec, txg: TxgT)
-        -> Result<(PBA, Box<PoolFut<'a>>), Error>
+        -> impl Future<Item = PBA, Error=Error> + 'a
     {
         let cluster = self.stats.choose_cluster();
         let cidx = cluster as usize;
         self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
-        self.clusters[cidx].write(buf, txg)
-            .map(|(lba, wfut)| {
-                self.stats.allocated_space[cidx]
-                    .fetch_add(space, Ordering::Relaxed);
-                let fut: Box<PoolFut> = Box::new(wfut.then(move |r| {
+        match self.clusters[cidx].write(buf, txg) {
+            Ok((lba, fut)) => Box::new(
+                fut.map(move |_| {
+                    self.stats.allocated_space[cidx]
+                        .fetch_add(space, Ordering::Relaxed);
                     self.stats.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
-                    r
-                }));
-                (PBA::new(cluster, lba), fut)
-            })
+                    PBA::new(cluster, lba)
+                })
+            ) as Box<Future<Item = PBA, Error = Error>>,
+            Err(e) => Box::new(future::err(e))
+                as Box<Future<Item = PBA, Error = Error>>
+        }
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
@@ -561,11 +562,7 @@ mod pool {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
-        let result = rt.block_on(future::lazy(|| {
-            let (pba, fut) = pool.write(db0, TxgT::from(42))
-                .expect("write failed early");
-            fut.map(move |_| pba)
-        }));
+        let result = rt.block_on( pool.write(db0, TxgT::from(42)));
         assert_eq!(result.unwrap(), PBA::new(0, 0));
     }
 }

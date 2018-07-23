@@ -41,7 +41,7 @@ pub trait PoolTrait {
     fn sync_all(&self) -> Box<PoolFut>;
     fn uuid(&self) -> Uuid;
     fn write(&self, buf: IoVec, txg: TxgT)
-        -> Result<(PBA, Box<PoolFut>), Error>;
+        -> Box<Future<Item=PBA, Error=Error>>;
     fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
 }
 #[cfg(test)]
@@ -224,7 +224,7 @@ impl<'a> DDML {
     /// Does most of the work of DDML::put
     fn put_common<T>(&'a self, cacheable: T, compression: Compression,
                      txg: TxgT)
-        -> (DRP, impl Future<Item=T, Error=Error> + 'a)
+        -> impl Future<Item=(DRP, T), Error=Error> + 'a
         where T:Cacheable
     {
         // Outline:
@@ -269,8 +269,8 @@ impl<'a> DDML {
         };
 
         // Write
-        let (pba, wfut) = self.pool.write(compressed_db, txg).unwrap();
-        let fut = wfut.map(move |_| {
+        self.pool.write(compressed_db, txg)
+        .map(move |pba| {
             if compression == Compression::None {
                 // Truncate uncompressed DivBufShareds.  We padded them in the
                 // previous step
@@ -281,16 +281,15 @@ impl<'a> DDML {
                     // The serialized buffer is temporary.  No need to unpad it.
                 }
             }
-            cacheable
-        });
-        let drp = DRP { pba, compression, lsize, csize, checksum };
-        (drp, fut)
+            let drp = DRP { pba, compression, lsize, csize, checksum };
+            (drp, cacheable)
+        })
     }
 
     /// Write a buffer bypassing cache.  Return the same buffer
     pub fn put_direct<T>(&'a self, cacheable: T, compression: Compression,
                          txg: TxgT)
-        -> (DRP, impl Future<Item=T, Error=Error> + 'a)
+        -> impl Future<Item=(DRP, T), Error=Error> + 'a
         where T:Cacheable
     {
         self.put_common(cacheable, compression, txg)
@@ -365,15 +364,16 @@ impl DML for DDML {
 
     fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> (DRP, Box<Future<Item=(), Error=Error> + 'a>)
+        -> Box<Future<Item=DRP, Error=Error> + 'a>
     {
-        let (drp, fut1) = self.put_common(cacheable, compression, txg);
-        let pba = drp.pba();
-        let fut2 = Box::new(fut1.map(move |cacheable| {
-            self.cache.lock().unwrap().insert(Key::PBA(pba),
-                                              Box::new(cacheable));
-        }));
-        (drp, fut2)
+        let fut = self.put_common(cacheable, compression, txg)
+            .map(move |(drp, cacheable)|{
+                let pba = drp.pba();
+                self.cache.lock().unwrap()
+                    .insert(Key::PBA(pba), Box::new(cacheable));
+                drp
+            });
+        Box::new(fut)
     }
 
     fn sync_all<'a>(&'a self, _txg: TxgT)
@@ -413,7 +413,7 @@ mod t {
             fn sync_all(&self) -> Box<PoolFut<'static>>;
             fn uuid(&self) -> Uuid;
             fn write(&self, buf: IoVec, txg: TxgT)
-                -> Result<(PBA, Box<PoolFut<'static>>), Error>;
+                -> Box<Future<Item=PBA, Error=Error>>;
             fn write_label(&self, mut labeller: LabelWriter)
                 -> Box<PoolFut>;
         }
@@ -669,16 +669,18 @@ mod t {
             .returning(|_| ());
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.write_call(ANY, TxgT::from(42))
-            .and_return(Ok((pba, Box::new(future::ok::<(), Error>(())))))
+            .and_return(Box::new(future::ok::<PBA, Error>(pba)))
         );
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put(dbs, Compression::None, TxgT::from(42));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let drp = rt.block_on(
+            ddml.put(dbs, Compression::None, TxgT::from(42))
+        ).unwrap();
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
-        current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
     }
 
     #[test]
@@ -689,16 +691,18 @@ mod t {
         let pool = s.create_mock::<MockPool>();
         let txg = TxgT::from(42);
         s.expect(pool.write_call(ANY, txg)
-            .and_return(Ok((pba, Box::new(future::ok::<(), Error>(())))))
+            .and_return(Box::new(future::ok::<PBA, Error>(pba)))
         );
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (drp, fut) = ddml.put_direct(dbs, Compression::None, txg);
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let (drp, _cacheable) = rt.block_on(
+            ddml.put_direct(dbs, Compression::None, txg)
+        ).unwrap();
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
-        current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
     }
 
     #[test]

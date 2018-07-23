@@ -179,16 +179,17 @@ impl<'a> IDML {
                             self.ddml.get_direct::<DivBufShared>(&entry.drp)
                         ) as Box<Future<Item=Box<DivBufShared>, Error=Error>>
                     }).map(move |buf| (entry, buf))
-            }).and_then(move |(mut entry, buf)| {
+            }).and_then(move |(entry, buf)| {
                 // NB: on a cache miss, this will result in decompressing and
                 // recompressing the record, which is inefficient.
                 let compression = entry.drp.compression();
-                let (drp, buf_fut) = self.ddml.put_direct(*buf, compression,
-                                                          txg);
+                self.ddml.put_direct(*buf, compression, txg)
+                    .map(move |(drp, _cacheable)| (entry, drp))
+            }).and_then(move |(mut entry, drp)| {
                 entry.drp = drp;
                 let ridt_fut = self.ridt.insert(rid, entry, txg);
                 let alloct_fut = self.alloct.insert(drp.pba(), rid, txg);
-                buf_fut.join3(ridt_fut, alloct_fut)
+                ridt_fut.join(alloct_fut)
             }).map(|_| ())
     }
 
@@ -366,30 +367,31 @@ impl DML for IDML {
 
     fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> (Self::Addr, Box<Future<Item=(), Error=Error> + 'a>)
+        -> Box<Future<Item=Self::Addr, Error=Error> + 'a>
     {
         // Outline:
         // 1) Write to the DDML
         // 2) Cache
         // 3) Add entry to the RIDT
         // 4) Add reverse entry to the AllocT
-        let (drp, ddml_fut) = self.ddml.put_direct(cacheable, compression, txg);
-        let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
-        let alloct_fut = self.alloct.insert(drp.pba(), rid, txg);
-        let rid_entry = RidtEntry::new(drp);
-        let ridt_fut = self.ridt.insert(rid, rid_entry, txg);
-        let fut = Box::new(
-            ddml_fut.join3(ridt_fut, alloct_fut)
-                .map(move |(cacheable, old_rid_entry, old_alloc_entry)| {
-                    assert!(old_rid_entry.is_none(), "RID was not unique");
-                    assert!(old_alloc_entry.is_none(), concat!(
-                        "Double allocate without free.  ",
-                        "DDML allocator leak detected!"));
-                    self.cache.lock().unwrap().insert(Key::Rid(rid),
-                        Box::new(cacheable));
-                })
-        );
-        (rid, fut)
+        let fut = self.ddml.put_direct(cacheable, compression, txg)
+        .and_then(move|(drp, cacheable)| {
+            let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
+            let alloct_fut = self.alloct.insert(drp.pba(), rid, txg);
+            let rid_entry = RidtEntry::new(drp);
+            let ridt_fut = self.ridt.insert(rid, rid_entry, txg);
+            ridt_fut.join(alloct_fut)
+            .map(move |(old_rid_entry, old_alloc_entry)| {
+                assert!(old_rid_entry.is_none(), "RID was not unique");
+                assert!(old_alloc_entry.is_none(), concat!(
+                    "Double allocate without free.  ",
+                    "DDML allocator leak detected!"));
+                self.cache.lock().unwrap().insert(Key::Rid(rid),
+                    Box::new(cacheable));
+                rid
+            })
+        });
+        Box::new(fut)
     }
 
     fn sync_all<'a>(&'a self, txg: TxgT)
@@ -629,7 +631,7 @@ mod t {
         ddml.expect_put_direct::<DivBufShared>()
             .called_once()
             .returning(move |(buf, _, _)|
-                       (drp1, Box::new(future::ok::<DivBufShared, Error>(buf)))
+                       Box::new(Ok((drp1, buf)).into_future())
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -666,7 +668,7 @@ mod t {
         ddml.expect_put_direct::<DivBufShared>()
             .called_once()
             .returning(move |(buf, _, _)|
-                       (drp1, Box::new(future::ok::<DivBufShared, Error>(buf)))
+                       Box::new(Ok((drp1, buf)).into_future())
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -822,16 +824,17 @@ mod t {
         ddml.expect_put_direct::<DivBufShared>()
             .called_once()
             .returning(move |(buf, _, _)|
-                       (drp, Box::new(future::ok::<DivBufShared, Error>(buf)))
+                       Box::new(Ok((drp, buf)).into_future())
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
 
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let (actual_rid, fut) = idml.put(dbs, Compression::None, TxgT::from(0));
+        let actual_rid = rt.block_on(
+            idml.put(dbs, Compression::None, TxgT::from(0))
+        ).unwrap();
         assert_eq!(rid, actual_rid);
-        rt.block_on(fut).unwrap();
 
         // Now verify the contents of the RIDT and AllocT
         let entry = rt.block_on(idml.ridt.get(actual_rid)).unwrap().unwrap();
@@ -852,17 +855,17 @@ mod t {
         ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
             .called_any()
             .with(params!(any(), any(), TxgT::from(42)))
-            .returning(move |(_, _, _)|
-                (DRP::random(Compression::None, 4096),
-                 Box::new(future::ok::<(), Error>(())))
-            );
+            .returning(move |(_, _, _)| {
+                let drp = DRP::random(Compression::None, 4096);
+                 Box::new(Ok(drp).into_future())
+            });
         ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
             .called_any()
             .with(params!(any(), any(), TxgT::from(42)))
-            .returning(move |(_, _, _)|
-                (DRP::random(Compression::None, 4096),
-                 Box::new(future::ok::<(), Error>(())))
-            );
+            .returning(move |(_, _, _)| {
+                let drp = DRP::random(Compression::None, 4096);
+                 Box::new(Ok(drp).into_future())
+            });
         ddml.expect_sync_all()
             .called_once()
             .with(TxgT::from(42))

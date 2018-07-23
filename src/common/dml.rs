@@ -80,7 +80,7 @@ pub trait DML {
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> (Self::Addr, Box<Future<Item=(), Error=Error> + 'a>);
+        -> Box<Future<Item=Self::Addr, Error=Error> + 'a>;
 
     /// Sync all records written so far to stable storage.
     fn sync_all<'a>(&'a self, txg: TxgT)
