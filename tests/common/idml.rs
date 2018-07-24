@@ -23,7 +23,7 @@ test_suite! {
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
-    use tokio::runtime::current_thread;
+    use tokio::runtime::current_thread::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -62,7 +62,7 @@ test_suite! {
 
     const POOLNAME: &str = &"TestPool";
 
-    fixture!( objects() -> (IDML, TempDir, PathBuf) {
+    fixture!( objects() -> (Runtime, IDML, TempDir, PathBuf) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
             let tempdir = t!(TempDir::new("test_idml_persistence"));
@@ -72,16 +72,16 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename.clone()];
-            let cluster = Pool::create_cluster(1, 1, 1, None, 0, &paths);
-            let clusters = vec![cluster];
-            let mut rt = current_thread::Runtime::new().unwrap();
-            let pool = rt.block_on(
+            let mut rt = Runtime::new().unwrap();
+            let pool = rt.block_on(future::lazy(|| {
+                let cluster = Pool::create_cluster(1, 1, 1, None, 0, &paths);
+                let clusters = vec![cluster];
                 Pool::create(POOLNAME.to_string(), clusters)
-            ).unwrap();
+            })).unwrap();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = IDML::create(ddml, cache);
-            (idml, tempdir, filename)
+            (rt, idml, tempdir, filename)
         }
     });
 
@@ -89,23 +89,22 @@ test_suite! {
     // store separate golden labels for each VdevLeaf.  Instead, we'll just
     // check that we can open-after-write
     test open_all(objects()) {
-        let (old_idml, _tempdir, path) = objects.val;
+        let (mut rt, old_idml, _tempdir, path) = objects.val;
         let txg = TxgT::from(42);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        rt.block_on(future::lazy(|| {
             old_idml.write_label(txg)
         })).unwrap();
         drop(old_idml);
-        let mut rt = current_thread::Runtime::new().unwrap();
         let _idml = rt.block_on(future::lazy(|| {
             IDML::open(POOLNAME.to_string(), vec![path])
         })).unwrap();
     }
 
     test write_label(objects()) {
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            objects.val.0.write_label(TxgT::from(42))
+        let (mut rt, old_idml, _tempdir, path) = objects.val;
+        rt.block_on(future::lazy(|| {
+            old_idml.write_label(TxgT::from(42))
         })).unwrap();
-        let path = &objects.val.2;
         let mut f = fs::File::open(path).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, raid, cluster, and pool labels

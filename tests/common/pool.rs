@@ -15,7 +15,7 @@ test_suite! {
     use futures::future;
     use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;
-    use tokio::runtime::current_thread;
+    use tokio::runtime::current_thread::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -40,7 +40,7 @@ test_suite! {
         0x1d,
     ];
 
-    fixture!( objects() -> (Pool, TempDir, Vec<String>) {
+    fixture!( objects() -> (Runtime, Pool, TempDir, Vec<String>) {
         setup(&mut self) {
             let num_disks = 2;
             let len = 1 << 26;  // 64 MB
@@ -51,28 +51,27 @@ test_suite! {
                 t!(file.set_len(len));
                 fname
             }).collect::<Vec<_>>();
-            let clusters = paths.iter().map(|p| {
-                Pool::create_cluster(1, 1, 1, None, 0, &[p][..])
-            }).collect::<Vec<_>>();;
-            let mut rt = current_thread::Runtime::new().unwrap();
-            let pool = rt.block_on(
+            let mut rt = Runtime::new().unwrap();
+            let pool = rt.block_on(future::lazy(|| {
+                let clusters = paths.iter().map(|p| {
+                    Pool::create_cluster(1, 1, 1, None, 0, &[p][..])
+                }).collect::<Vec<_>>();
                 Pool::create("TestPool".to_string(), clusters)
-            ).unwrap();
-            (pool, tempdir, paths)
+            })).unwrap();
+            (rt, pool, tempdir, paths)
         }
     });
 
     // Test open-after-write for Pool
     test open_all(objects()) {
-        let (old_pool, _tempdir, paths) = objects.val;
+        let (mut rt, old_pool, _tempdir, paths) = objects.val;
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        rt.block_on(future::lazy(|| {
             let label_writer = LabelWriter::new();
             old_pool.write_label(label_writer)
         })).unwrap();
         drop(old_pool);
-        let mut rt = current_thread::Runtime::new().unwrap();
         let (pool, _label_reader) = rt.block_on(future::lazy(|| {
             Pool::open(name.clone(), paths)
         })).unwrap();
@@ -81,11 +80,12 @@ test_suite! {
     }
 
     test write_label(objects()) {
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        let (mut rt, old_pool, _tempdir, paths) = objects.val;
+        rt.block_on(future::lazy(|| {
             let label_writer = LabelWriter::new();
-            objects.val.0.write_label(label_writer)
+            old_pool.write_label(label_writer)
         })).unwrap();
-        for path in objects.val.2 {
+        for path in paths {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
             // Skip leaf, raid, and cluster labels

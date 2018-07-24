@@ -25,32 +25,32 @@ test_suite! {
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
-    use tokio::runtime::current_thread;
+    use tokio::runtime::current_thread::Runtime;
 
-    fixture!( objects() -> DDML {
+    fixture!( objects() -> (Runtime, DDML) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
             let tempdir = t!(TempDir::new("ddml"));
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
-            let clusters = vec![
-                Pool::create_cluster(1, 1, 1, None, 0, &[filename][..])
-            ];
-            let mut rt = current_thread::Runtime::new().unwrap();
-            let pool = rt.block_on(
+            let mut rt = Runtime::new().unwrap();
+            let pool = rt.block_on(future::lazy(|| {
+                let clusters = vec![
+                    Pool::create_cluster(1, 1, 1, None, 0, &[filename][..])
+                ];
                 Pool::create("TestPool".to_string(), clusters)
-            ).unwrap();
+            })).unwrap();
             let cache = Cache::with_capacity(1_000_000_000);
-            DDML::new(pool, Arc::new(Mutex::new(cache)))
+            (rt, DDML::new(pool, Arc::new(Mutex::new(cache))))
         }
     });
 
     test basic(objects) {
-        let ddml: DDML = objects.val;
+        let (mut rt, ddml) = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let ddml2 = &ddml;
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        rt.block_on(future::lazy(|| {
             ddml.put(dbs, Compression::None, TxgT::from(0))
             .and_then(move |drp| {
                 let drp2 = &drp;
@@ -76,7 +76,7 @@ test_suite! {
     // moderately large and compressible file
     test compressible(objects) {
         let txg = TxgT::from(0);
-        let ddml: DDML = objects.val;
+        let (mut rt, ddml) = objects.val;
         let ddml2 = &ddml;
         let filename = Path::new(file!())
             .parent().unwrap()
@@ -87,7 +87,7 @@ test_suite! {
         let mut vdev_raid_contents = Vec::new();
         file.read_to_end(&mut vdev_raid_contents).unwrap();
         let dbs = DivBufShared::from(vdev_raid_contents.clone());
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        rt.block_on(future::lazy(|| {
             ddml.put(dbs, Compression::ZstdL9NoShuffle, txg)
             .and_then(|drp| {
                 let drp2 = &drp;
@@ -111,10 +111,10 @@ test_suite! {
 
     // Records of less than an LBA should be padded up.
     test short(objects) {
-        let ddml: DDML = objects.val;
+        let (mut rt, ddml) = objects.val;
         let ddml2 = &ddml;
         let dbs = DivBufShared::from(vec![42u8; 1024]);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        rt.block_on(future::lazy(|| {
             ddml.put(dbs, Compression::None, TxgT::from(0))
             .and_then(move |drp| {
                 let drp2 = &drp;

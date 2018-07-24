@@ -11,7 +11,7 @@ use common::{
     label::*,
     pool::*
 };
-use futures::{Future, IntoFuture, Stream, future};
+use futures::{Future, Stream, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
@@ -33,8 +33,9 @@ use common::cache_mock::CacheMock as Cache;
 /// Only exists so mockers can replace Pool
 pub trait PoolTrait {
     fn allocated(&self) -> LbaT;
-    fn free(&self, pba: PBA, length: LbaT);
-    fn list_closed_zones(&self) -> Box<Stream<Item=ClosedZone, Error=Error>>;
+    fn free(&self, pba: PBA, length: LbaT) -> Box<Future<Item=(), Error=Error>>;
+    fn list_closed_zones(&self)
+        -> Box<Stream<Item=ClosedZone, Error=Error>>;
     fn name(&self) -> &str;
     fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut>;
     fn size(&self) -> LbaT;
@@ -215,10 +216,11 @@ impl<'a> DDML {
     {
         let lbas = drp.asize();
         let pba = drp.pba;
-        self.read(*drp).map(move |dbs| {
-            self.pool.free(pba, lbas);
-            Box::new(T::deserialize(dbs))
-        })
+        self.read(*drp)
+            .and_then(move |dbs|
+                self.pool.free(pba, lbas)
+                .map(move |_| Box::new(T::deserialize(dbs)))
+            )
     }
 
     /// Does most of the work of DDML::put
@@ -314,8 +316,7 @@ impl DML for DDML {
         -> Box<Future<Item=(), Error=Error> +'a>
     {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
-        self.pool.free(drp.pba, drp.asize());
-        Box::new(Ok(()).into_future())
+        Box::new(self.pool.free(drp.pba, drp.asize()))
     }
 
     fn evict(&self, drp: &DRP) {
@@ -350,15 +351,13 @@ impl DML for DDML {
         let lbas = drp.asize();
         let pba = drp.pba;
         self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|cacheable| {
-            self.pool.free(pba, lbas);
             let t = cacheable.downcast::<T>().unwrap();
-            let r : Box<Future<Item=Box<T>, Error=Error>> =
-            Box::new(future::ok::<Box<T>, Error>(t));
-            r
+            Box::new(self.pool.free(pba, lbas).map(|_| t))
+                as Box<Future<Item=Box<T>, Error=Error>>
         }).unwrap_or_else(|| {
             Box::new(
                 self.pop_direct::<T>(drp)
-            )
+            ) as Box<Future<Item=Box<T>, Error=Error>>
         })
     }
 
@@ -390,7 +389,7 @@ mod t {
 
     use super::*;
     use divbuf::DivBufShared;
-    use futures::future;
+    use futures::{IntoFuture, future};
     use mockers::matchers::ANY;
     use mockers::{Scenario, Sequence};
     use mockers_derive::mock;
@@ -404,7 +403,8 @@ mod t {
         self,
         trait PoolTrait {
             fn allocated(&self) -> LbaT;
-            fn free(&self, pba: PBA, length: LbaT);
+            fn free(&self, pba: PBA, length: LbaT)
+                -> Box<Future<Item=(), Error=Error>>;
             fn list_closed_zones(&self)
                 -> Box<Stream<Item=ClosedZone, Error=Error>>;
             fn name(&self) -> &str;
@@ -437,7 +437,8 @@ mod t {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
         let pool = s.create_mock::<MockPool>();
-        s.expect(pool.free_call(pba, 1).and_return(()));
+        s.expect(pool.free_call(pba, 1)
+            .and_return(Box::new(Ok(()).into_future())));
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
@@ -581,7 +582,8 @@ mod t {
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
-        s.expect(pool.free_call(pba, 1).and_return(()));
+        s.expect(pool.free_call(pba, 1)
+            .and_return(Box::new(Ok(()).into_future())));
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
         ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0));
@@ -604,7 +606,8 @@ mod t {
             })).returning(|_| None);
         seq.expect(pool.read_call(ANY, pba)
                    .and_return(Box::new(future::ok::<(), Error>(()))));
-        seq.expect(pool.free_call(pba, 1).and_return(()));
+        seq.expect(pool.free_call(pba, 1)
+            .and_return(Box::new(Ok(()).into_future())));
         s.expect(seq);
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
@@ -649,7 +652,8 @@ mod t {
         let pool = s.create_mock::<MockPool>();
         seq.expect(pool.read_call(ANY, pba)
                    .and_return(Box::new(future::ok::<(), Error>(()))));
-        seq.expect(pool.free_call(pba, 1).and_return(()));
+        seq.expect(pool.free_call(pba, 1)
+            .and_return(Box::new(Ok(()).into_future())));
         s.expect(seq);
 
         let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));

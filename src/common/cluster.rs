@@ -2,7 +2,7 @@
 
 use common::{*, label::*, vdev::{Vdev, VdevFut}};
 #[cfg(not(test))] use common::vdev_raid::*;
-use futures::{Async, Future, IntoFuture, Poll, Stream, future};
+use futures::{ Future, IntoFuture, future};
 #[cfg(any(not(test), feature = "mocks"))] use itertools::multizip;
 use nix::{Error, errno};
 use std::{
@@ -108,6 +108,7 @@ impl OpenZone {
 // * Choose a zone to reclaim
 // * Find a zone by Zone ID, to rebuild it
 // * Find all zones modified in a certain txg range
+#[derive(Debug)]
 struct FreeSpaceMap {
     /// Stores the set of empty zones with id less than zones.len().  All zones
     /// with id greater than or equal to zones.len() are implicitly empty
@@ -241,9 +242,8 @@ impl<'a> FreeSpaceMap {
             self.empty_zones.contains(&zone_id)
     }
 
-    /// List all closed zones, in no particular order
-    fn find_closed_zone(&'a self, start: ZoneT)
-        -> Option<ClosedZone>
+    /// Find the next closed zone including or after `start`
+    fn find_closed_zone(&'a self, start: ZoneT) -> Option<ClosedZone>
     {
         self.zones[(start as usize)..].iter()
             .enumerate()
@@ -474,32 +474,11 @@ macro_rules! close_zones{
     }
 }
 
-/// The return type of
-/// [`Cluster::list_closed_zones`](struct.Cluster.html#method.list_closed_zones)
-pub struct ClosedZoneIterator<'a> {
-    cluster: &'a Cluster,
-    cursor: ZoneT,
-}
-
-impl<'a> Stream for ClosedZoneIterator<'a> {
-    type Item = ClosedZone;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let mut zone = self.cluster.fsm.borrow().find_closed_zone(self.cursor);
-        if let Some(ref mut z) = zone.as_mut() {
-            z.start = self.cluster.vdev.zone_limits(z.zid).0;
-            self.cursor = z.zid + 1;
-        }
-        Ok(Async::Ready(zone))
-    }
-}
-
 impl<'a> Cluster {
     /// How many blocks have been allocated, including blocks that have been
     /// freed but not erased?
-    pub fn allocated(&self) -> impl Future<Item=LbaT, Error=Error> {
-        future::ok(self.fsm.borrow().allocated())
+    pub fn allocated(&self) -> LbaT {
+        self.fsm.borrow().allocated()
     }
 
     /// Create a new `Cluster` from unused files or devices
@@ -542,6 +521,15 @@ impl<'a> Cluster {
         self.vdev.erase_zone(zone)
     }
 
+    /// Find the first closed zone whose index is greater than or equal to `zid`
+    pub fn find_closed_zone(&self, zid: ZoneT) -> Option<ClosedZone> {
+        self.fsm.borrow().find_closed_zone(zid)
+            .map(|mut zone| {
+                zone.start = self.vdev.zone_limits(zone.zid).0;
+                zone
+            })
+    }
+
     /// Mark `length` LBAs beginning at LBA `lba` as unused, and possibly delete
     /// them from the underlying storage.
     ///
@@ -570,14 +558,6 @@ impl<'a> Cluster {
         }
     }
 
-    /// List all closed zones in this Cluster in no particular order
-    // Must return a Vec rather than an Iterator so we can drop the cell::Ref
-    pub fn list_closed_zones(&'a self)
-        -> impl Stream<Item=cluster::ClosedZone, Error=Error> + 'a
-    {
-        ClosedZoneIterator{cluster: self, cursor: 0}
-    }
-
     /// Construct a new `Cluster` from an already constructed
     /// [`VdevRaid`](struct.VdevRaid.html)
     #[cfg(any(not(test), feature = "mocks"))]
@@ -585,7 +565,7 @@ impl<'a> Cluster {
         Cluster{fsm: RefCell::new(fsm), vdev: Rc::new(vdev)}
     }
 
-    /// Open all existing `Cluster`s fuond in `paths`.
+    /// Open all existing `Cluster`s found in `paths`.
     ///
     /// Returns a vector of new `Cluster` objects and `LabelReader`s that may
     /// be used to construct other vdevs stacked on top of these.
@@ -610,8 +590,8 @@ impl<'a> Cluster {
     /// smaller number may result in inefficient use of resources, or even
     /// starvation.  A larger number won't hurt, but won't accrue any economies
     /// of scale, either.
-    pub fn optimum_queue_depth(&self) -> impl Future<Item=u32, Error=Error> {
-        future::ok(self.vdev.optimum_queue_depth())
+    pub fn optimum_queue_depth(&self) -> u32 {
+        self.vdev.optimum_queue_depth()
     }
 
     /// Asynchronously read from the cluster
@@ -622,8 +602,8 @@ impl<'a> Cluster {
     }
 
     /// Return approximately the usable space of the Cluster in LBAs.
-    pub fn size(&self) -> impl Future<Item=LbaT, Error=Error> {
-        future::ok(self.vdev.size())
+    pub fn size(&self) -> LbaT {
+        self.vdev.size()
     }
 
     /// Sync the `Cluster`, ensuring that all data written so far reaches stable
@@ -950,10 +930,11 @@ mod cluster {
     }
 
     #[test]
-    fn list_closed_zones() {
+    fn find_closed_zone() {
         let s = Scenario::new();
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1)).times(..));
+        s.expect(vr.zone_limits_call(1).and_return_clone((1, 2)).times(..));
         s.expect(vr.zone_limits_call(3).and_return_clone((3, 4)).times(..));
         s.expect(vr.zone_limits_call(4).and_return_clone((4, 5)).times(..));
         let mut fsm = FreeSpaceMap::new(10);
@@ -964,21 +945,18 @@ mod cluster {
         fsm.finish_zone(3, TxgT::from(3));
         fsm.open_zone(4, 4, 5, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(4, TxgT::from(0));
+        println!("FSM is {:?}", fsm);
         let cluster = Cluster::new(fsm, Box::new(vr));
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let closed_zones = rt.block_on(
-            cluster.list_closed_zones()
-            .collect()
-        ).unwrap();
-        let expected = vec![
+        assert_eq!(cluster.find_closed_zone(0).unwrap(),
             ClosedZone{zid: 0, start: 0, freed_blocks: 1, total_blocks: 1,
-                       txgs: TxgT::from(0)..TxgT::from(1)},
+                       txgs: TxgT::from(0)..TxgT::from(1)});
+        assert_eq!(cluster.find_closed_zone(1).unwrap(),
             ClosedZone{zid: 3, start: 3, freed_blocks: 1, total_blocks: 1,
-                       txgs: TxgT::from(1)..TxgT::from(4)},
+                       txgs: TxgT::from(1)..TxgT::from(4)});
+        assert_eq!(cluster.find_closed_zone(4).unwrap(),
             ClosedZone{zid: 4, start: 4, freed_blocks: 1, total_blocks: 1,
-                       txgs: TxgT::from(0)..TxgT::from(1)}
-        ];
-        assert_eq!(closed_zones, expected);
+                       txgs: TxgT::from(0)..TxgT::from(1)});
+        assert!(cluster.find_closed_zone(5).is_none());
     }
 
     // VdevRaid::write_at must be called synchronously with Cluster::write, even
