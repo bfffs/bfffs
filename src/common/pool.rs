@@ -409,7 +409,7 @@ mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
     use futures::{IntoFuture, future};
-    use mockers::Scenario;
+    use mockers::{Scenario, matchers};
     use mockers_derive::mock;
     use tokio::runtime::current_thread;
 
@@ -510,6 +510,38 @@ mod pool {
         assert_eq!(pool.stats.optimum_queue_depth[0], 10.0);
         assert_eq!(pool.stats.optimum_queue_depth[1], 10.0);
         assert_eq!(pool.size(), 2000);
+    }
+
+    #[test]
+    fn read() {
+        let s = Scenario::new();
+        let cluster = s.create_mock::<MockCluster>();
+            s.expect(cluster.allocated_call()
+                .and_return(Box::new(Ok(0).into_future())));
+        s.expect(cluster.optimum_queue_depth_call()
+                 .and_return(Box::new(Ok(10).into_future())));
+        s.expect(cluster.size_call()
+                .and_return(Box::new(Ok(32768000).into_future())));
+        s.expect(cluster.read_call(matchers::ANY, 10)
+            .and_call(|mut iovec: IoVecMut, _lba: LbaT| {
+                iovec.copy_from_slice(&vec![99; 4096][..]);
+                Box::new( future::ok::<(), Error>(()))
+            })
+        );
+
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let pool = rt.block_on(
+            Pool::new("foo".to_string(), Uuid::new_v4(),
+                      vec![Box::new(cluster)])
+        ).unwrap();
+
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let dbm0 = dbs.try_mut().unwrap();
+        let pba = PBA::new(0, 10);
+        let result = rt.block_on(pool.read(dbm0, pba));
+        assert!(result.is_ok());
+        let db0 = dbs.try().unwrap();
+        assert_eq!(&db0[..], &vec![99u8; 4096][..]);
     }
 
     #[test]
