@@ -487,6 +487,32 @@ mod pool {
     }
 
     #[test]
+    fn free() {
+        let s = Scenario::new();
+        let cluster = || {
+            let c = s.create_mock::<MockCluster>();
+            s.expect(c.allocated_call()
+                .and_return(Box::new(Ok(0).into_future())));
+            s.expect(c.optimum_queue_depth_call()
+                .and_return(Box::new(Ok(10).into_future())));
+            s.expect(c.size_call()
+                .and_return(Box::new(Ok(32768000).into_future())));
+            c
+        };
+        let c0 = Box::new(cluster());
+        let c1 = Box::new(cluster());
+        s.expect(c1.free_call(12345, 16)
+            .and_return(Box::new(Ok(()).into_future())));
+
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let pool = rt.block_on(
+            Pool::new("foo".to_string(), Uuid::new_v4(), vec![c0, c1])
+        ).unwrap();
+
+        assert!(rt.block_on(pool.free(PBA::new(1, 12345), 16)).is_ok());
+    }
+
+    #[test]
     fn new() {
         let s = Scenario::new();
         let cluster = || {
