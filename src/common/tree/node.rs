@@ -307,7 +307,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                                 NodeData::Leaf(_) => txg
                             };
                             guard
-                        };
+                        };  // LCOV_EXCL_LINE   kcov false negative
                         (self, child_guard)
                     })
                 )
@@ -721,6 +721,15 @@ mod serialization {
 use common::ddml::DRP;
 use std::ops::Deref;
 use super::*;
+
+// pet kcov
+#[test]
+fn debug() {
+    let mut items: BTreeMap<u32, u32> = BTreeMap::new();
+    let node: Arc<Node<DRP, u32, u32>> =
+        Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    format!("{:?}", node);
+}
 
 #[test]
 fn deserialize_int() {

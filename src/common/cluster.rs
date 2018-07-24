@@ -77,7 +77,6 @@ pub struct ClosedZone {
 
 }
 
-// LCOV_EXCL_START
 #[derive(Clone, Copy, Debug)]
 struct OpenZone {
     /// First LBA of the `Zone`.  It may never change while the `Zone` is open
@@ -86,7 +85,6 @@ struct OpenZone {
     /// Number of LBAs that have been allocated within this `Zone` so far.
     pub allocated_blocks: u32,
 }
-// LCOV_EXCL_STOP
 
 impl OpenZone {
     /// Returns the next LBA within this `Zone` that should be allocated
@@ -479,7 +477,7 @@ impl<'a> Cluster {
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {
         self.fsm.borrow().allocated()
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Create a new `Cluster` from unused files or devices
     ///
@@ -619,7 +617,7 @@ impl<'a> Cluster {
         let flush_fut = future::join_all(flush_futs);
         let vdev2 = self.vdev.clone();
         flush_fut.and_then(move |_| vdev2.sync_all())
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Return the `Cluster`'s UUID.  It's the same as its RAID device's.
     pub fn uuid(&self) -> Uuid {
@@ -666,7 +664,7 @@ impl<'a> Cluster {
                     Err(_) => None,
                     Ok(None) => panic!("Tried a 0-length write?"),
                 }
-            })
+            })  // LCOV_EXCL_LINE   kcov false negative
         }).map(|(zone_id, lba, oz_fut)| {
             let fut : Box<Future<Item = (), Error = Error>>;
             let wfut = vdev3.write_at(buf, zone_id, lba);
@@ -682,7 +680,7 @@ impl<'a> Cluster {
     /// Asynchronously write this Vdev's label to all component devices
     pub fn write_label(&self, mut labeller: LabelWriter)
         -> impl Future<Item=(), Error=Error>
-    {
+    {   // LCOV_EXCL_LINE   kcov false negative
         let label = self.fsm.borrow().serialize();
         labeller.serialize(label).unwrap();
         self.vdev.write_label(labeller)
@@ -692,6 +690,17 @@ impl<'a> Cluster {
 // LCOV_EXCL_START
 #[cfg(test)]
 mod t {
+
+mod open_zone {
+    use super::super::*;
+
+    // pet kcov
+    #[test]
+    fn debug() {
+        let oz = OpenZone{start: 0, allocated_blocks: 0};
+        format!("{:?}", oz);
+    }
+}
 
 #[cfg(feature = "mocks")]
 mod cluster {

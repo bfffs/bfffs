@@ -440,6 +440,14 @@ mod t {
         rt.block_on(idml.alloct.insert(drp.pba(), *rid, txg)).unwrap();
     }
 
+    // pet kcov
+    #[test]
+    fn ridtentry_debug() {
+        let drp = DRP::random(Compression::None, 4096);
+        let ridt_entry = RidtEntry::new(drp);
+        format!("{:?}", ridt_entry);
+    }
+
     #[test]
     fn delete_last() {
         let rid = RID(42);

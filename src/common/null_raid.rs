@@ -6,11 +6,9 @@
 
 use common::declust::*;
 
-// LCOV_EXCL_START
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NullRaid {
 }
-// LCOV_EXCL_STOP
 
 impl NullRaid {
     /// Create a new NullRaid Locator
@@ -85,3 +83,17 @@ impl Locator for NullRaid {
         1
     }
 }
+
+// LCOV_EXCL_START
+#[cfg(test)]
+mod t {
+    use super::*;
+
+    // pet kcov
+    #[test]
+    fn debug() {
+        let nr = NullRaid::new(1, 1, 0);
+        format!("{:?}", nr);
+    }
+}
+// LCOV_EXCL_STOP

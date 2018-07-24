@@ -261,7 +261,7 @@ impl<'tree, D, K, V> Stream for CleanZonePass1<'tree, D, K, V>
         let first = {
             let mut i = self.inner.borrow_mut();
             i.data.pop_front()
-        };
+        };  // LCOV_EXCL_LINE   kcov false negative
         first.map(|x| Ok(Async::Ready(Some(x))))
             .unwrap_or_else(|| {
                 let i = self.inner.borrow();
@@ -512,7 +512,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
         let old_v = child.as_leaf_mut().insert(k, v);
         elem.txgs = txg..txg + 1;
         return Ok(old_v).into_future()
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
     fn insert_locked(&'a self, mut relem: RwLockWriteGuard<IntElem<A, K, V>>,
@@ -1317,7 +1317,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                         let mut v = VecDeque::new();
                         v.push_back(NodeId{height: echelon, key: guard.key});
                         v
-                    } else {
+                    } else {   // LCOV_EXCL_LINE   kcov false negative
                         VecDeque::new()
                     };
                     Box::new(future::ok((dirty, None)))
@@ -1475,3 +1475,17 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
 pub struct TreeOnDisk(Vec<u8>);
 
 #[cfg(test)] mod tests;
+
+// LCOV_EXCL_START
+#[cfg(test)]
+mod t {
+    use super::*;
+
+    // pet kcov
+    #[test]
+    fn debug() {
+        let tod = TreeOnDisk(vec![]);
+        format!("{:?}", tod);
+    }
+}
+// LCOV_EXCL_STOP

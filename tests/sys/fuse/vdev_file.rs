@@ -39,6 +39,11 @@ test_suite! {
         }
     });
 
+    // pet kcov
+    test debug(vdev) {
+        format!("{:?}", vdev.val.0);
+    }
+
     test lba2zone(vdev) {
         assert_eq!(vdev.val.0.lba2zone(0), None);
         assert_eq!(vdev.val.0.lba2zone(3), None);

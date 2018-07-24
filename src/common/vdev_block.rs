@@ -27,7 +27,6 @@ pub type VdevLeaf = Box<VdevLeafApi>;
 #[cfg(not(test))]
 pub type VdevLeaf = VdevFile;
 
-// LCOV_EXCL_START
 #[derive(Debug)]
 enum Cmd {
     OpenZone,
@@ -42,7 +41,6 @@ enum Cmd {
     WriteLabel(LabelWriter),
     SyncAll,
 }
-// LCOV_EXCL_STOP
 
 impl Cmd {
     // Oh, this would be so much easier if only `std::mem::Discriminant`
@@ -694,6 +692,30 @@ impl Vdev for VdevBlock {
 }
 
 // LCOV_EXCL_START
+
+// pet kcov
+#[test]
+fn debug_cmd() {
+    let dbs = DivBufShared::from(vec![0u8]);
+    {
+        let read_at = Cmd::ReadAt(dbs.try_mut().unwrap());
+        format!("{:?}", read_at);
+    }
+    {
+        let readv_at = Cmd::ReadvAt(vec![dbs.try_mut().unwrap()]);
+        format!("{:?}", readv_at);
+    }
+    let write_at = Cmd::WriteAt(dbs.try().unwrap());
+    let writev_at = Cmd::WritevAt(vec![dbs.try().unwrap()]);
+    let erase_zone = Cmd::EraseZone(0);
+    let finish_zone = Cmd::FinishZone(0);
+    let sync_all = Cmd::SyncAll;
+    let label_writer = LabelWriter::new();
+    let write_label = Cmd::WriteLabel(label_writer);
+    format!("{:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at, erase_zone,
+            finish_zone, sync_all, write_label);
+}
+
 #[cfg(feature = "mocks")]
 #[cfg(test)]
 test_suite! {

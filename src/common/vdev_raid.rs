@@ -152,7 +152,6 @@ impl StripeBuffer {
     }
 }
 
-// LCOV_EXCL_START
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
     /// Vdev UUID, fixed at format time
@@ -163,7 +162,6 @@ struct Label {
     layout_algorithm:   LayoutAlgorithm,
     children:           Vec<Uuid>
 }
-// LCOV_EXCL_STOP
 
 /// `VdevRaid`: Virtual Device for the RAID transform
 ///
@@ -419,7 +417,7 @@ impl VdevRaid {
                 let lba = sb.lba();
                 let sgl = sb.pop();
                 Box::new(self.writev_at_one(&sgl, lba))
-            } else {
+            } else {    // LCOV_EXCL_LINE kcov false negative
                 Box::new(future::ok::<(), Error>(())) as Box<VdevFut>
             }
         };
@@ -988,7 +986,7 @@ impl Vdev for VdevRaid {
                 self.blockdevs.iter()
                 .map(|bd| bd.sync_all())
                 .collect::<Vec<_>>()
-            ).map(|_| ())
+            ).map(|_| ())   // LCOV_EXCL_LINE kcov false negative
         )
     }
 
@@ -1270,6 +1268,20 @@ mock!{
         fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
         fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
     }
+}
+
+// pet kcov
+#[test]
+fn debug() {
+    let label = Label {
+        uuid: Uuid::new_v4(),
+        chunksize: 1,
+        disks_per_stripe: 1,
+        redundancy: 0,
+        layout_algorithm: LayoutAlgorithm::NullRaid,
+        children: vec![Uuid::new_v4()]
+    };
+    format!("{:?}", label);
 }
 
 test_suite! {

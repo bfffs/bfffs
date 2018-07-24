@@ -106,7 +106,6 @@ struct ChunklocInt {
 /// optimal and near-optimal parallelism." ACM SIGARCH Computer Architecture
 /// News. Vol. 26. No. 3. IEEE Computer Society, 1998.
 /// 
-// LCOV_EXCL_START
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PrimeS {
     /// Total number of disks
@@ -133,7 +132,6 @@ pub struct PrimeS {
     stripes: u32,
     depth: i16
 }
-// LCOV_EXCL_STOP
 
 impl PrimeS {
     /// Create a new PrimeS Locator
@@ -551,6 +549,13 @@ impl Iterator for PrimeSIterData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // pet kcov
+    #[test]
+    fn debug() {
+        let locator = PrimeS::new(7, 4, 2);
+        format!("{:?}", locator);
+    }
 
     #[test]
     fn test_invmod() {

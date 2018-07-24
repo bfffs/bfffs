@@ -294,7 +294,6 @@ pub struct ClosedZone {
     pub txgs: Range<TxgT>
 }
 
-// LCOV_EXCL_START
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
     /// Human-readable name
@@ -306,7 +305,6 @@ struct Label {
     /// `UUID`s of all component `VdevRaid`s
     children:           Vec<Uuid>,
 }
-// LCOV_EXCL_STOP
 
 struct Stats {
     /// The queue depth of each `Cluster`, including both commands that have
@@ -649,6 +647,20 @@ impl<'a> Pool {
 // LCOV_EXCL_START
 #[cfg(test)]
 mod t {
+
+mod label {
+    use super::super::*;
+
+    // pet kcov
+    #[test]
+    fn debug() {
+        let label = Label{name: "Foo".to_owned(),
+            uuid: Uuid::new_v4(),
+            children: vec![]
+        };
+        format!("{:?}", label);
+    }
+}
 
 #[cfg(feature = "mocks")]
 mod pool {
