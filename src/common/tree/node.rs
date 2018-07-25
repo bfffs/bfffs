@@ -725,7 +725,7 @@ use super::*;
 // pet kcov
 #[test]
 fn debug() {
-    let mut items: BTreeMap<u32, u32> = BTreeMap::new();
+    let items: BTreeMap<u32, u32> = BTreeMap::new();
     let node: Arc<Node<DRP, u32, u32>> =
         Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     format!("{:?}", node);
