@@ -89,7 +89,7 @@ struct OpenZone {
 impl OpenZone {
     /// Returns the next LBA within this `Zone` that should be allocated
     fn write_pointer(&self) -> LbaT {
-        self.start + (self.allocated_blocks as LbaT)
+        self.start + LbaT::from(self.allocated_blocks)
     }
 
     /// Mark some space in this Zone as wasted, usually because `VdevRaid`
@@ -132,11 +132,11 @@ impl<'a> FreeSpaceMap {
         (0..self.zones.len()).map(|idx| {
             let zid = idx as ZoneT;
             if let Some(oz) = self.open_zones.get(&zid) {
-                oz.allocated_blocks as LbaT
+                LbaT::from(oz.allocated_blocks)
             } else if self.empty_zones.contains(&zid) {
                 0
             } else {
-                self.zones[idx].total_blocks as LbaT
+                LbaT::from(self.zones[idx].total_blocks)
             }
         }).sum()
     }
@@ -145,7 +145,7 @@ impl<'a> FreeSpaceMap {
     fn available(&self, zone_id: ZoneT) -> LbaT {
         if let Some(oz) = self.open_zones.get(&zone_id) {
             let z = &self.zones[zone_id as usize];
-            (z.total_blocks - oz.allocated_blocks) as LbaT
+            LbaT::from(z.total_blocks - oz.allocated_blocks)
         } else {
             0
         }
@@ -204,7 +204,7 @@ impl<'a> FreeSpaceMap {
         // NB: the next two lines can be replaced by u32::try_from(length), once
         // that feature is stabilized
         // https://github.com/rust-lang/rust/issues/33417
-        assert!(length < u32::max_value() as LbaT);
+        assert!(length < LbaT::from(u32::max_value()));
         zone.freed_blocks += length as u32;
         assert!(zone.freed_blocks <= zone.total_blocks,
                 "Double free detected");
@@ -220,10 +220,10 @@ impl<'a> FreeSpaceMap {
             0
         } else if let Some(oz) = self.open_zones.get(&zone_id) {
             let z = &self.zones[zone_id as usize];
-            (oz.allocated_blocks - z.freed_blocks) as LbaT
+            LbaT::from(oz.allocated_blocks - z.freed_blocks)
         } else /* zone is closed */ {
             let z = &self.zones[zone_id as usize];
-            (z.total_blocks - z.freed_blocks) as LbaT
+            LbaT::from(z.total_blocks - z.freed_blocks)
         }
     }
 
@@ -255,8 +255,8 @@ impl<'a> FreeSpaceMap {
                     Some(ClosedZone {
                         zid,
                         start: LbaT::max_value(),   // sentinel value
-                        freed_blocks: z.freed_blocks as LbaT,
-                        total_blocks: z.total_blocks as LbaT,
+                        freed_blocks: LbaT::from(z.freed_blocks),
+                        total_blocks: LbaT::from(z.total_blocks),
                         txgs: z.txgs.clone()
                     })
                 }
@@ -406,7 +406,7 @@ impl<'a> FreeSpaceMap {
             // NB the next two lines can be replaced by u32::try_from(space),
             // once that feature is stabilized
             // https://github.com/rust-lang/rust/issues/33417
-            assert!(space < u32::max_value() as LbaT);
+            assert!(space < LbaT::from(u32::max_value()));
             if avail_lbas < space as u32 {
                 nearly_full_zones.push(*zone_id);
                 false

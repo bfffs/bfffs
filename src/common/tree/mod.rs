@@ -139,13 +139,13 @@ impl<'tree, A, D, K, T, V> RangeQuery<'tree, A, D, K, T, V>
         where R: RangeBounds<T>
     {
         let cursor: Option<Bound<T>> = Some(match range.start_bound() {
-            Bound::Included(&ref b) => Bound::Included(b.clone()),
-            Bound::Excluded(&ref b) => Bound::Excluded(b.clone()),
+            Bound::Included(b) => Bound::Included(b.clone()),
+            Bound::Excluded(b) => Bound::Excluded(b.clone()),
             Bound::Unbounded => Bound::Unbounded,
         });
         let end: Bound<T> = match range.end_bound() {
-            Bound::Included(&ref e) => Bound::Included(e.clone()),
-            Bound::Excluded(&ref e) => Bound::Excluded(e.clone()),
+            Bound::Included(e) => Bound::Included(e.clone()),
+            Bound::Excluded(e) => Bound::Excluded(e.clone()),
             Bound::Unbounded => Bound::Unbounded,
         };
         let data = VecDeque::new();
@@ -270,7 +270,7 @@ impl<'tree, D, K, V> Stream for CleanZonePass1<'tree, D, K, V>
                     let mut f = stream::poll_fn(|| -> Poll<Option<()>, Error> {
                         let mut i = self.inner.borrow_mut();
                         let mut f = i.last_fut.take().unwrap_or_else(|| {
-                            let l = i.cursor.clone().unwrap();
+                            let l = i.cursor.unwrap();
                             let pbas = i.pbas.clone();
                             let txgs = i.txgs.clone();
                             let e = i.echelon;

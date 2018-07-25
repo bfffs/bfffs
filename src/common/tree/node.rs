@@ -94,7 +94,7 @@ impl<A: Addr, K: Key, V: Value> TreePtr<A, K, V> {
         }
     }
 
-    pub fn as_mem(&self) -> &Box<Node<A, K, V>> {
+    pub fn as_mem(&self) -> &Node<A, K, V> {
         if let TreePtr::Mem(mem) = self {
             mem
         } else {
@@ -196,7 +196,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
             _ => true
         };
         let items = self.items.range(range)
-            .map(|(&ref k, &ref v)| (k.clone(), v.clone()))
+            .map(|(k, v)| (*k, v.clone()))
             .collect::<VecDeque<(K, V)>>();
         (items, more)
     }

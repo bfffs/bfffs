@@ -148,7 +148,7 @@ impl<'a> IDML {
             let arc_ddml = Arc::new(ddml);
             let alloct = Tree::open(arc_ddml.clone(), l.alloct).unwrap();
             let ridt = Tree::open(arc_ddml.clone(), l.ridt).unwrap();
-            let transaction = RwLock::new(TxgT::from(l.txg));
+            let transaction = RwLock::new(l.txg);
             let next_rid = Atomic::new(l.next_rid);
             IDML{alloct, cache, ddml: arc_ddml, next_rid, ridt, transaction}
         })

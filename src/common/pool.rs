@@ -468,7 +468,7 @@ impl<'a> Pool {
         );
         let oqd_fut = future::join_all(clusters.iter()
             .map(|cluster| cluster.optimum_queue_depth()
-                 .map(|oqd| oqd as f64)
+                 .map(|oqd| f64::from(oqd))
             ).collect::<Vec<_>>()
         );
         let queue_depth: Vec<_> = clusters.iter()

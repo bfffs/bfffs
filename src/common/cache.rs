@@ -183,10 +183,10 @@ impl Cache {
         let entry = LruEntry { buf, mru: None, lru: self.mru};
         assert!(self.store.insert(key, entry).is_none());
         if self.mru.is_some() {
-            self.store.get_mut(&self.mru.unwrap()).map(|v| {
+            if let Some(v) = self.store.get_mut(&self.mru.unwrap()) {
                 debug_assert!(v.mru.is_none());
                 v.mru = Some(key);
-            });
+            }
         }
         self.mru = Some(key);
         if self.lru.is_none() {

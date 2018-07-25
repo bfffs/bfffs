@@ -16,8 +16,8 @@ pub enum Compression {
 }
 
 impl Compression {
-    pub fn compress(&self, input: &IoVec) -> Option<DivBufShared> {
-        match *self {
+    pub fn compress(self, input: &IoVec) -> Option<DivBufShared> {
+        match self {
             Compression::None  => {
                 None
             },
@@ -32,8 +32,8 @@ impl Compression {
         }
     }
 
-    pub fn decompress(&self, input: &IoVec) -> Option<DivBufShared> {
-        match *self {
+    pub fn decompress(self, input: &IoVec) -> Option<DivBufShared> {
+        match self {
             Compression::None  => {
                 None
             },
