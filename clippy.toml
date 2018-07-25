@@ -2,3 +2,5 @@ doc-valid-idents = ["ArkFS"]
 # I don't like this warning.  I use a lot of single char variable names, both to
 # keep the line length down and when I'm writing mathy stuff.
 single-char-binding-names-threshold=1000
+# Optimize for 64-bit architectures
+trivial-copy-size-limit=8

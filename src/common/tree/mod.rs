@@ -42,6 +42,7 @@ pub(super) use self::node::Node;
 pub use self::node::{Key, MinValue, Value};
 
 /// Are there any elements in common between the two Ranges?
+#[cfg_attr(feature = "cargo-clippy", allow(if_same_then_else))]
 fn ranges_overlap<T: PartialOrd>(x: &Range<T>, y: &Range<T>) -> bool {
     if x.end <= x.start || y.end <= y.start {
         // One of the Ranges is empty
