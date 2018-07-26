@@ -1,3 +1,4 @@
+mod cluster;
 mod ddml;
 mod idml;
 mod pool;
