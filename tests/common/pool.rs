@@ -20,7 +20,7 @@ test_suite! {
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
     const GOLDEN_POOL_LABEL: [u8; 81] = [
-        // Past the VdevRaid::Label, we have a Pool::Label
+        // Past the Cluster::Label, we have a Pool::Label
         0xa3, 0x64, 0x6e, 0x61, 0x6d, 0x65, 0x68, 0x54, // .dnamehT
         0x65, 0x73, 0x74, 0x50, 0x6f, 0x6f, 0x6c, 0x64, // estPoold
         0x75, 0x75, 0x69, 0x64, 0x50,                   // uuidP
