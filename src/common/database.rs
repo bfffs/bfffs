@@ -12,7 +12,6 @@ use common::idml::*;
 use common::tree::*;
 use futures::{Future, IntoFuture};
 use nix::{Error, errno};
-#[cfg(not(test))] use std::path::Path;
 use std::sync::Arc;
 
 // TODO: define real keys and values for filesystems
@@ -59,22 +58,11 @@ pub struct Database {
 }
 
 impl<'a> Database {
+    /// Construct a new `Database` from its `IDML`.
     pub fn new(idml: Arc<IDML>) -> Self {
         let dummy = Arc::new(ITree::create(idml.clone()));
         let inner = Arc::new(Inner{dummy, idml});
         Database{inner}
-    }
-
-    #[cfg(not(test))]
-    #[deprecated(note = "use new instead")]
-    pub fn open<P>(poolname: String, paths: Vec<P>)
-        -> impl Future<Item=Self, Error=Error>
-        where P: AsRef<Path> + 'static
-    {
-        IDML::open(poolname, paths).map(|idml| {
-            let arc_idml = Arc::new(idml);
-            Database::new(arc_idml)
-        })
     }
 
     /// Perform a read-only operation on a Filesystem

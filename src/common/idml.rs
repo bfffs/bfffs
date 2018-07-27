@@ -20,7 +20,6 @@ use common::{
 use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
 use nix::{Error, errno::Errno};
-#[cfg(not(test))] use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 #[cfg(not(test))]
@@ -129,7 +128,15 @@ impl<'a> IDML {
             .map(|(_pba, rid)| rid)
     }
 
-    pub fn open2(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
+    /// Open an existing `IDML`
+    ///
+    /// # Parameters
+    ///
+    /// * `ddml`:           An already-opened `DDML`
+    /// * `cache`:          An already-constrcuted `Cache`
+    /// * `label_reader`:   A `LabelReader` that has already consumed all labels
+    ///                     prior to this layer.
+    pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
                  mut label_reader: LabelReader) -> Self
     {
         let l: Label = label_reader.deserialize().unwrap();
@@ -138,32 +145,6 @@ impl<'a> IDML {
         let transaction = RwLock::new(l.txg);
         let next_rid = Atomic::new(l.next_rid);
         IDML{alloct, cache, ddml, next_rid, ridt, transaction}
-    }
-
-    /// Open an existing `IDML` by its pool name
-    ///
-    /// Returns a new `IDML` object
-    ///
-    /// * `name`:   Name of the desired `Pool`
-    /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
-    ///             must be present.
-    #[cfg(not(test))]
-    #[deprecated(note = "Use open2 instead")]
-    pub fn open<P>(poolname: String, paths: Vec<P>)
-        -> impl Future<Item=Self, Error=Error>
-        where P: AsRef<Path> + 'static
-    {
-        let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000_000)));
-        DDML::open(cache.clone(), poolname, paths)
-        .map(move |(ddml, mut label_reader)| {
-            let l: Label = label_reader.deserialize().unwrap();
-            let arc_ddml = Arc::new(ddml);
-            let alloct = Tree::open(arc_ddml.clone(), l.alloct).unwrap();
-            let ridt = Tree::open(arc_ddml.clone(), l.ridt).unwrap();
-            let transaction = RwLock::new(l.txg);
-            let next_rid = Atomic::new(l.next_rid);
-            IDML{alloct, cache, ddml: arc_ddml, next_rid, ridt, transaction}
-        })
     }
 
     /// Rewrite the given direct Record and update its metadata.

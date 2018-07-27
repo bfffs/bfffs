@@ -6,8 +6,6 @@ use common::{*, declust::*, label::*, vdev::*, raid::*};
 use common::{null_raid::*, prime_s::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
-#[cfg(not(test))]
-use itertools::Itertools;
 use itertools::multizip;
 use nix::Error;
 use std::{cell::RefCell, cmp, mem, ptr};
@@ -329,6 +327,14 @@ impl VdevRaid {
                    uuid}   // LCOV_EXCL_LINE   kcov false negative
     }
 
+    /// Open an existing `VdevRaid` from its component devices
+    ///
+    /// # Parameters
+    ///
+    /// * `uuid`:       Uuid of the desired `VdevRaid`, if present.  If `None`, then
+    ///                 it will not be verified.
+    /// * `combined`:   An array of pairs of `VdevBlock`s and their
+    ///                 associated `LabelReader`.  The labels of each will be verified.
     pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlockLike, LabelReader)>)
         -> (Self, LabelReader)
     {
@@ -357,61 +363,6 @@ impl VdevRaid {
                                  label.layout_algorithm,
                                  children.into_boxed_slice());
         (raid, label_reader)
-    }
-
-    /// Open all existing `VdevRaid`s found in `paths`.
-    ///
-    /// Returns a vector of new `VdevRaid` objects and `LabelReader`s that may
-    /// be used to construct other vdevs stacked on top of these.
-    ///
-    /// * `paths`:  Pathnames to search for the `VdevRaid`s.  All child devices
-    ///             must be present.
-    #[cfg(not(test))]
-    #[deprecated(note = "Use open instead")]
-    pub fn open_all<P>(paths: Vec<P>)
-        -> impl Future<Item=Vec<(Self, LabelReader)>, Error=Error>
-        where P: AsRef<Path> + 'static
-    {
-
-        // TODO: error handling for devices that don't exist or have no VdevFile
-        // label
-        future::join_all(paths.into_iter().map(move |path| {
-            VdevBlock::open(path)
-        })).and_then(move |blockdevs| {
-            let mut all_blockdevs = blockdevs.into_iter().map(|(bd, reader)| {
-                (bd.uuid(), (bd, Some(reader)))
-            }).collect::<BTreeMap<Uuid, (VdevBlock, Option<LabelReader>)>>();
-
-            let all_raid_labels = all_blockdevs.iter_mut().map(|(_, v)| {
-                let mut label_reader = v.1.take().unwrap();
-                let label: Label = label_reader.deserialize().unwrap();
-                (label, label_reader)
-            }).unique_by(|v| v.0.uuid)
-            .collect::<Vec<_>>();
-
-            Ok(all_raid_labels.into_iter().filter_map(|(rlabel, label_reader)| {
-                let mut blockdevs = Vec::with_capacity(rlabel.children.len());
-                let num_disks = rlabel.children.len() as i16;
-                for child_uuid in rlabel.children {
-                    match all_blockdevs.remove(&child_uuid) {
-                        Some(bd) => blockdevs.push(bd.0),
-                        None => break,
-                    }
-                }
-                if blockdevs.len() == num_disks as usize {
-                    Some((VdevRaid::new(rlabel.chunksize,
-                                      rlabel.disks_per_stripe,
-                                      rlabel.redundancy,
-                                      rlabel.uuid,
-                                      rlabel.layout_algorithm,
-                                      blockdevs.into_boxed_slice()),
-                       label_reader))
-                } else {
-                    // Some block devices weren't found
-                    None
-                }
-            }).collect::<Vec<_>>())
-        })
     }
 
     /// Asynchronously erase a zone on a RAID device

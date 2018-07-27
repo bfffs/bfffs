@@ -67,7 +67,7 @@ test_suite! {
     });
 
     // Test open-after-write for Pool
-    test open2(objects()) {
+    test open(objects()) {
         let (mut rt, old_pool, _tempdir, paths) = objects.val;
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
@@ -93,7 +93,7 @@ test_suite! {
                 .and_then(move |((c0, c0r), (c1,c1r))| {
                     let proxy0 = ClusterProxy::new(c0);
                     let proxy1 = ClusterProxy::new(c1);
-                    Pool::open2(Some(uuid), vec![(proxy0, c0r), (proxy1,c1r)])
+                    Pool::open(Some(uuid), vec![(proxy0, c0r), (proxy1,c1r)])
                 })
         })).unwrap();
         assert_eq!(name, pool.name());

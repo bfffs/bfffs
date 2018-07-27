@@ -89,10 +89,10 @@ test_suite! {
         }
     });
 
-    // Testing VdevRaid::open with golden labels is too hard, because we need to
+    // Testing IDML::open with golden labels is too hard, because we need to
     // store separate golden labels for each VdevLeaf.  Instead, we'll just
     // check that we can open-after-write
-    test open_all(objects()) {
+    test open(objects()) {
         let (mut rt, old_idml, _tempdir, path) = objects.val;
         let txg = TxgT::from(42);
         rt.block_on(future::lazy(|| {
@@ -107,12 +107,12 @@ test_suite! {
                     cluster::Cluster::open(vr,lr)
             }) .and_then(move |(cluster, reader)|{
                 let proxy = ClusterProxy::new(cluster);
-                Pool::open2(None, vec![(proxy, reader)])
+                Pool::open(None, vec![(proxy, reader)])
             }).map(|(pool, reader)| {
                 let cache = cache::Cache::with_capacity(1_000_000);
                 let arc_cache = Arc::new(Mutex::new(cache));
-                let ddml = Arc::new(ddml::DDML::open2(pool, arc_cache.clone()));
-                idml::IDML::open2(ddml, arc_cache, reader)
+                let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
+                idml::IDML::open(ddml, arc_cache, reader)
             })
         })).unwrap();
     }

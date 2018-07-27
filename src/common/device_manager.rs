@@ -63,12 +63,12 @@ impl DevManager {
         });
         future::join_all(proxies).map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |proxies| {
-                pool::Pool::open2(Some(uuid), proxies)
+                pool::Pool::open(Some(uuid), proxies)
             }).map(|(pool, label_reader)| {
                 let cache = cache::Cache::with_capacity(1_000_000_000);
                 let arc_cache = Arc::new(Mutex::new(cache));
-                let ddml = Arc::new(ddml::DDML::open2(pool, arc_cache.clone()));
-                idml::IDML::open2(ddml, arc_cache, label_reader)
+                let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
+                idml::IDML::open(ddml, arc_cache, label_reader)
             })
     }
 

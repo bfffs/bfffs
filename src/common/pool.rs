@@ -511,7 +511,17 @@ impl<'a> Pool {
         &self.name
     }
 
-    pub fn open2(uuid: Option<Uuid>, combined: Vec<(ClusterProxy, LabelReader)>)
+    /// Open an existing `Pool` from its component devices.
+    ///
+    /// Returns a new `Pool` object and a `LabelReader`
+    ///
+    /// # Parameters
+    ///
+    /// * `uuid`:       Uuid of the desired `Pool`, if present.  If `None`, then
+    ///                 it will not be verified.
+    /// * `combined`:   An array of pairs of `ClusterProxy`s and their
+    ///                 associated `LabelReader`.  The labels of each will be verified.
+    pub fn open(uuid: Option<Uuid>, combined: Vec<(ClusterProxy, LabelReader)>)
         -> impl Future<Item = (Self, LabelReader), Error = Error>
     {
         let mut label_pair = None;
@@ -535,68 +545,6 @@ impl<'a> Pool {
         Pool::new(label.name, label.uuid, children)
             .map(|pool| (pool, label_reader))
     }
-
-    /// Open an existing `Pool` by name
-    ///
-    /// Returns a new `Pool` object
-    ///
-    /// * `name`:   Name of the desired `Pool`
-    /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
-    ///             must be present.
-    #[cfg(not(test))]
-    #[deprecated(note = "use open2 instead")]
-    pub fn open<P>(name: String, paths: Vec<P>)
-        -> impl Future<Item=(Self, LabelReader), Error=Error>
-        where P: AsRef<Path> + 'static
-    {
-         // Outline:
-         // 1) Discover all `Cluster`s.
-         // 2) Search among the `Cluster`s for one that has a `Pool` label
-         //    matching `name`.
-         // 3) Construct a `Pool` with all required `Cluster`s.
-         // 4) `drop` any unwanted `Cluster`s.
-
-        cluster::Cluster::open_all(paths).and_then(|v| {
-            let mut label = None;
-            let mut all_clusters = v.into_iter()
-                                    .map(|(cluster, mut label_reader)| {
-                if label.is_none() {
-                    let l: Label = label_reader.deserialize().unwrap();
-                    if l.name == name {
-                        label = Some(l);
-                    }
-                }
-                (cluster.uuid(), (cluster, label_reader))
-            }).collect::<BTreeMap<Uuid, (cluster::Cluster, LabelReader)>>();
-
-            match label {
-                Some(label) => {
-                    let num_clusters = label.children.len();
-                    let mut proxies = Vec::with_capacity(num_clusters);
-                    let mut label_reader = None;
-                    for uuid in label.children {
-                        match all_clusters.remove(&uuid) {
-                            Some((cluster, reader)) => {
-                                proxies.push(ClusterProxy::new(cluster));
-                                label_reader = Some(reader)
-                            },
-                            None => break
-                        }
-                    }
-                    if proxies.len() == num_clusters {
-                        Ok((Pool::new(name, label.uuid, proxies),
-                            label_reader.take().unwrap()))
-                    } else {
-                        Err(Error::Sys(errno::Errno::ENOENT))
-                    }
-                },
-                None => Err(Error::Sys(errno::Errno::ENOENT))
-            }
-        }).and_then(|(pool_fut, label_reader)| {
-            pool_fut.map(move |pool| (pool, label_reader))
-        })
-    }
-
 
     /// Asynchronously read from the pool
     pub fn read(&'a self, buf: IoVecMut, pba: PBA)

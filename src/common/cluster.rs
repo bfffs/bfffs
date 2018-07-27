@@ -564,34 +564,15 @@ impl<'a> Cluster {
 
     /// Open a `Cluster` from an already opened
     /// [`VdevRaid`](struct.VdevRaid.html)
+    ///
+    /// Returns a new `Cluster` and a `LabelReader` that may be used to
+    /// construct other vdevs stacked on top.
     pub fn open(vdev_raid: VdevRaidLike, mut reader: LabelReader)
         -> (Self, LabelReader)
     {
         let l: Label = reader.deserialize().unwrap();
         let fsm = FreeSpaceMap::open(l, &vdev_raid);
         (Cluster::new(fsm, vdev_raid), reader)
-    }
-
-    /// Open all existing `Cluster`s found in `paths`.
-    ///
-    /// Returns a vector of new `Cluster` objects and `LabelReader`s that may
-    /// be used to construct other vdevs stacked on top of these.
-    ///
-    /// * `paths`:  Pathnames to search for the `VdevRaid`.  All child devices
-    ///             must be present.
-    #[cfg(not(test))]
-    #[deprecated(note = "use open2 instead")]
-    pub fn open_all<P>(paths: Vec<P>)
-        -> impl Future<Item=Vec<(Self, LabelReader)>, Error=Error>
-        where P: AsRef<Path> + 'static
-    {
-        VdevRaid::open_all(paths).map(|v| {
-            v.into_iter().map(|(vdev_raid, mut reader)| {
-                let l: Label = reader.deserialize().unwrap();
-                let fsm = FreeSpaceMap::open(l, &vdev_raid);
-                (Cluster::new(fsm, vdev_raid), reader)
-            }).collect::<Vec<_>>()
-        })
     }
 
     /// Returns the "best" number of operations to queue to this `Cluster`.  A

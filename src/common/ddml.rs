@@ -16,7 +16,6 @@ use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
 use std::{hash::Hasher, sync::{Arc, Mutex} };
-#[cfg(not(test))] use std::path::Path;
 #[cfg(all(test, feature = "mocks"))] use simulacrum::*;
 #[cfg(test)] use uuid::Uuid;
 
@@ -191,27 +190,14 @@ impl<'a> DDML {
         )
     }
 
-    pub fn open2(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
+    /// Open an existing `DDML` from its underlying `Pool`.
+    ///
+    /// # Parameters
+    ///
+    /// * `cache`:      An already constructed `Cache`
+    /// * `pool`:       An already constructed `Pool`
+    pub fn open(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
         DDML{pool, cache}
-    }
-
-    /// Open an existing `DDML` by its pool name
-    ///
-    /// Returns a new `DDML` object
-    ///
-    /// * `cache`:  An existing `Cache`
-    /// * `name`:   Name of the desired `Pool`
-    /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
-    ///             must be present.
-    #[cfg(not(test))]
-    pub fn open<P>(cache: Arc<Mutex<Cache>>, name: String, paths: Vec<P>
-                   )
-        -> impl Future<Item=(Self, LabelReader), Error=Error>
-        where P: AsRef<Path> + 'static
-    {
-        Pool::open(name, paths).map(move |(pool, label_reader)|
-            (DDML{pool, cache}, label_reader)
-        )
     }
 
     /// Read a record and return ownership of it, bypassing Cache
