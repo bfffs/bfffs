@@ -9,10 +9,10 @@ use arkfs::common::cache::Cache;
 use arkfs::common::ddml::DDML;
 use arkfs::common::idml::IDML;
 use arkfs::common::pool::{Cluster, Pool};
-use futures::Future;
-use std::sync::{Arc,Mutex};
+use futures::{Future, future};
+use std::sync::{Arc, Mutex};
 use super::*;
-use tokio::runtime::current_thread;
+use tokio::runtime::current_thread::Runtime;
 
 // TODO: specify CHUNKSIZE on the command line
 const CHUNKSIZE: LbaT = 16;
@@ -23,6 +23,7 @@ fn create(args: &clap::ArgMatches) {
     let mut cluster = None;
     let mut clusters = vec![];
     let mut devs = vec![];
+    let mut rt = Runtime::new().unwrap();
     loop {
         let next = values.next();
         match next {
@@ -66,18 +67,15 @@ fn create(args: &clap::ArgMatches) {
             }
         }
     }
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let idml = rt.block_on(
+    let idml = rt.block_on(future::lazy(|| {
         Pool::create(String::from(name), clusters)
         .map(|pool| {
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             IDML::create(ddml, cache)
         })
-    ).unwrap();
-    rt.block_on(
-        idml.write_label(TxgT::from(0))
-    ).unwrap();
+    })).unwrap();
+    rt.block_on(idml.write_label(TxgT::from(0))).unwrap();
 }
 
 fn create_cluster(vtype: &str, devs: &[&str]) -> Cluster {

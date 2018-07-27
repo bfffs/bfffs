@@ -547,7 +547,7 @@ impl VdevBlock {
     ///
     /// * `leaf`    An already-open underlying VdevLeaf 
     #[cfg(any(not(test), feature = "mocks"))]
-    fn new(leaf: VdevLeaf) -> Self {
+    pub fn new(leaf: VdevLeaf) -> Self {
         let size = leaf.size();
         let inner = Rc::new(RefCell::new(Inner {
             delayed: None,

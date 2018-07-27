@@ -324,7 +324,6 @@ impl<'a> FreeSpaceMap {
 
     /// Open a FreeSpaceMap from a deserialized label.  The vdev is necessary
     /// too, to find zone information.
-    #[cfg(any(not(test), feature = "mocks"))]
     fn open(label: Label, vdev: &VdevRaidLike) -> Self {
         let total_zones = label.allocated_blocks.len() as ZoneT;
         let mut fsm = FreeSpaceMap::new(total_zones);
@@ -434,7 +433,7 @@ impl<'a> FreeSpaceMap {
 /// Persists information necessary to recreate the `FreeSpaceMap`.
 // LCOV_EXCL_START
 #[derive(Serialize, Deserialize, Debug)]
-struct Label {
+pub struct Label {
     /// An array of the number of blocks that have been allocated in each Zone.
     /// If zero, then the zone is empty.  If `u32::max_value()`, then the zone
     /// is closed.
@@ -559,9 +558,18 @@ impl<'a> Cluster {
 
     /// Construct a new `Cluster` from an already constructed
     /// [`VdevRaid`](struct.VdevRaid.html)
-    #[cfg(any(not(test), feature = "mocks"))]
     fn new(fsm: FreeSpaceMap, vdev: VdevRaidLike) -> Self {
         Cluster{fsm: RefCell::new(fsm), vdev: Rc::new(vdev)}
+    }
+
+    /// Open a `Cluster` from an already opened
+    /// [`VdevRaid`](struct.VdevRaid.html)
+    pub fn open(vdev_raid: VdevRaidLike, mut reader: LabelReader)
+        -> (Self, LabelReader)
+    {
+        let l: Label = reader.deserialize().unwrap();
+        let fsm = FreeSpaceMap::open(l, &vdev_raid);
+        (Cluster::new(fsm, vdev_raid), reader)
     }
 
     /// Open all existing `Cluster`s found in `paths`.
@@ -572,6 +580,7 @@ impl<'a> Cluster {
     /// * `paths`:  Pathnames to search for the `VdevRaid`.  All child devices
     ///             must be present.
     #[cfg(not(test))]
+    #[deprecated(note = "use open2 instead")]
     pub fn open_all<P>(paths: Vec<P>)
         -> impl Future<Item=Vec<(Self, LabelReader)>, Error=Error>
         where P: AsRef<Path> + 'static

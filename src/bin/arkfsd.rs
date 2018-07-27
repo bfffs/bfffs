@@ -5,9 +5,10 @@ extern crate fuse;
 extern crate futures;
 extern crate tokio;
 
-use arkfs::common::database::TreeID;
+use arkfs::common::database::*;
+use arkfs::common::device_manager::DevManager;
 use arkfs::sys::fs::FS as FS;
-use futures::future::lazy;
+use futures::{Future, future};
 use std::sync::Arc;
 use tokio::runtime::current_thread;
 
@@ -31,10 +32,20 @@ fn main() {
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
 
+    let mut dev_manager = DevManager::new();
+    for dev in devices.iter() {
+        dev_manager.taste(dev);
+    }
+    let uuid = dev_manager.importable_pools().filter(|(name, _uuid)| {
+        **name == poolname
+    }).nth(0).unwrap().1;
+
     let mut rt = current_thread::Runtime::new().unwrap();
 
-    let db = rt.block_on(lazy(|| {
-        arkfs::common::database::Database::open(poolname, devices)
+    let db = rt.block_on(future::lazy(|| {
+        dev_manager.import(*uuid).map(|idml| {
+            Database::new(Arc::new(idml))
+        })
     })).unwrap();
     // TODO: use distinct TreeID for each mountpoint
     let fs = FS::new(Arc::new(db), rt, TreeID::Fs(0));

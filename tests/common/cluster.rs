@@ -11,7 +11,10 @@ test_suite! {
     name persistence;
 
     use arkfs::common::label::*;
+    use arkfs::common::vdev_block::*;
+    use arkfs::common::vdev_raid::*;
     use arkfs::common::cluster::*;
+    use arkfs::sys::vdev_file::*;
     use futures::{Future, future};
     use std::{fs, io::{Read, Seek, SeekFrom, Write}};
     use tempdir::TempDir;
@@ -72,8 +75,8 @@ test_suite! {
         }
     });
 
-    // Test Cluster::open_all
-    test open_all(objects()) {
+    // Test Cluster::open
+    test open(objects()) {
         {
             let mut f = fs::OpenOptions::new()
                 .write(true)
@@ -81,11 +84,13 @@ test_suite! {
             f.write_all(&GOLDEN_LABEL).unwrap();
         }
         Runtime::new().unwrap().block_on(future::lazy(|| {
-            Cluster::open_all(vec![objects.val.3.clone()])
-                .map(|combined| {
-                    let cluster = &combined[0].0;
-                    assert_eq!(cluster.allocated(), 0);
-                })
+            VdevFile::open(objects.val.3.clone()).map(|(leaf, reader)| {
+                (VdevBlock::new(leaf), reader)
+            }).map(move |combined| {
+                let (vdev_raid, reader) = VdevRaid::open(None, vec![combined]);
+                let (cluster, _reader) = Cluster::open(vdev_raid, reader);
+                assert_eq!(cluster.allocated(), 0);
+            })
         })).unwrap();
     }
 

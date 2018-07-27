@@ -12,6 +12,7 @@ pub mod dataset;
 pub mod ddml;
 #[cfg(test)] mod ddml_mock;
 pub mod declust;
+pub mod device_manager;
 pub mod dml;
 pub mod dva;
 pub mod idml;

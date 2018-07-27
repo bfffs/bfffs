@@ -59,13 +59,14 @@ pub struct Database {
 }
 
 impl<'a> Database {
-    fn new(idml: Arc<IDML>) -> Self {
+    pub fn new(idml: Arc<IDML>) -> Self {
         let dummy = Arc::new(ITree::create(idml.clone()));
         let inner = Arc::new(Inner{dummy, idml});
         Database{inner}
     }
 
     #[cfg(not(test))]
+    #[deprecated(note = "use new instead")]
     pub fn open<P>(poolname: String, paths: Vec<P>)
         -> impl Future<Item=Self, Error=Error>
         where P: AsRef<Path> + 'static

@@ -10,9 +10,13 @@ macro_rules! t {
 test_suite! {
     name persistence;
 
+    use arkfs::sys::vdev_file::*;
+    use arkfs::common::vdev_block::*;
+    use arkfs::common::vdev_raid::*;
+    use arkfs::common::cluster;
     use arkfs::common::label::*;
     use arkfs::common::pool::*;
-    use futures::future;
+    use futures::{Future, future};
     use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;
     use tokio::runtime::current_thread::Runtime;
@@ -63,7 +67,7 @@ test_suite! {
     });
 
     // Test open-after-write for Pool
-    test open_all(objects()) {
+    test open2(objects()) {
         let (mut rt, old_pool, _tempdir, paths) = objects.val;
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
@@ -73,7 +77,24 @@ test_suite! {
         })).unwrap();
         drop(old_pool);
         let (pool, _label_reader) = rt.block_on(future::lazy(|| {
-            Pool::open(name.clone(), paths)
+            let c0_fut = VdevFile::open(paths[0].clone())
+                .map(|(leaf, reader)| {
+                    let block = VdevBlock::new(leaf);
+                    let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
+                    cluster::Cluster::open(vr,lr)
+            });
+            let c1_fut = VdevFile::open(paths[1].clone())
+                .map(|(leaf, reader)| {
+                    let block = VdevBlock::new(leaf);
+                    let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
+                    cluster::Cluster::open(vr,lr)
+            });
+            c0_fut.join(c1_fut)
+                .and_then(move |((c0, c0r), (c1,c1r))| {
+                    let proxy0 = ClusterProxy::new(c0);
+                    let proxy1 = ClusterProxy::new(c1);
+                    Pool::open2(Some(uuid), vec![(proxy0, c0r), (proxy1,c1r)])
+                })
         })).unwrap();
         assert_eq!(name, pool.name());
         assert_eq!(uuid, pool.uuid());

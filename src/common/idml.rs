@@ -129,6 +129,17 @@ impl<'a> IDML {
             .map(|(_pba, rid)| rid)
     }
 
+    pub fn open2(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
+                 mut label_reader: LabelReader) -> Self
+    {
+        let l: Label = label_reader.deserialize().unwrap();
+        let alloct = Tree::open(ddml.clone(), l.alloct).unwrap();
+        let ridt = Tree::open(ddml.clone(), l.ridt).unwrap();
+        let transaction = RwLock::new(l.txg);
+        let next_rid = Atomic::new(l.next_rid);
+        IDML{alloct, cache, ddml, next_rid, ridt, transaction}
+    }
+
     /// Open an existing `IDML` by its pool name
     ///
     /// Returns a new `IDML` object
@@ -137,6 +148,7 @@ impl<'a> IDML {
     /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
     ///             must be present.
     #[cfg(not(test))]
+    #[deprecated(note = "Use open2 instead")]
     pub fn open<P>(poolname: String, paths: Vec<P>)
         -> impl Future<Item=Self, Error=Error>
         where P: AsRef<Path> + 'static

@@ -153,14 +153,14 @@ impl StripeBuffer {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Label {
+pub struct Label {
     /// Vdev UUID, fixed at format time
-    uuid:               Uuid,
+    pub uuid:           Uuid,
     chunksize:          LbaT,
     disks_per_stripe:   i16,
     redundancy:         i16,
     layout_algorithm:   LayoutAlgorithm,
-    children:           Vec<Uuid>
+    pub children:       Vec<Uuid>
 }
 
 /// `VdevRaid`: Virtual Device for the RAID transform
@@ -329,6 +329,36 @@ impl VdevRaid {
                    uuid}   // LCOV_EXCL_LINE   kcov false negative
     }
 
+    pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlockLike, LabelReader)>)
+        -> (Self, LabelReader)
+    {
+        let mut label_pair = None;
+        let mut all_blockdevs = combined.into_iter()
+            .map(|(vdev_block, mut label_reader)| {
+            let label: Label = label_reader.deserialize().unwrap();
+            if let Some(u) = uuid {
+                assert_eq!(u, label.uuid, "Opening disk from wrong cluster");
+            }
+            if label_pair.is_none() {
+                label_pair = Some((label, label_reader));
+            }
+            (vdev_block.uuid(), vdev_block)
+        }).collect::<BTreeMap<Uuid, VdevBlockLike>>();
+        let (label, label_reader) = label_pair.unwrap();
+        assert_eq!(all_blockdevs.len(), label.children.len(),
+            "Missing block devices");
+        let children = label.children.iter().map(|uuid| {
+            all_blockdevs.remove(&uuid).unwrap()
+        }).collect::<Vec<_>>();
+        let raid = VdevRaid::new(label.chunksize,
+                                 label.disks_per_stripe,
+                                 label.redundancy,
+                                 label.uuid,
+                                 label.layout_algorithm,
+                                 children.into_boxed_slice());
+        (raid, label_reader)
+    }
+
     /// Open all existing `VdevRaid`s found in `paths`.
     ///
     /// Returns a vector of new `VdevRaid` objects and `LabelReader`s that may
@@ -337,6 +367,7 @@ impl VdevRaid {
     /// * `paths`:  Pathnames to search for the `VdevRaid`s.  All child devices
     ///             must be present.
     #[cfg(not(test))]
+    #[deprecated(note = "Use open instead")]
     pub fn open_all<P>(paths: Vec<P>)
         -> impl Future<Item=Vec<(Self, LabelReader)>, Error=Error>
         where P: AsRef<Path> + 'static

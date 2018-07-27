@@ -12,10 +12,14 @@ test_suite! {
 
     use arkfs::common::*;
     use arkfs::common::cache::*;
+    use arkfs::common::vdev_block::*;
+    use arkfs::common::vdev_raid::*;
+    use arkfs::common::cluster;
     use arkfs::common::pool::*;
     use arkfs::common::ddml::*;
     use arkfs::common::idml::*;
-    use futures::future;
+    use arkfs::sys::vdev_file::*;
+    use futures::{Future, future};
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
@@ -96,7 +100,20 @@ test_suite! {
         })).unwrap();
         drop(old_idml);
         let _idml = rt.block_on(future::lazy(|| {
-            IDML::open(POOLNAME.to_string(), vec![path])
+            VdevFile::open(path)
+                .map(|(leaf, reader)| {
+                    let block = VdevBlock::new(leaf);
+                    let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
+                    cluster::Cluster::open(vr,lr)
+            }) .and_then(move |(cluster, reader)|{
+                let proxy = ClusterProxy::new(cluster);
+                Pool::open2(None, vec![(proxy, reader)])
+            }).map(|(pool, reader)| {
+                let cache = cache::Cache::with_capacity(1_000_000);
+                let arc_cache = Arc::new(Mutex::new(cache));
+                let ddml = Arc::new(ddml::DDML::open2(pool, arc_cache.clone()));
+                idml::IDML::open2(ddml, arc_cache, reader)
+            })
         })).unwrap();
     }
 

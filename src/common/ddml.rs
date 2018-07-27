@@ -191,6 +191,10 @@ impl<'a> DDML {
         )
     }
 
+    pub fn open2(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
+        DDML{pool, cache}
+    }
+
     /// Open an existing `DDML` by its pool name
     ///
     /// Returns a new `DDML` object

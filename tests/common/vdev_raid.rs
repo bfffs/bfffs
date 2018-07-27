@@ -494,8 +494,9 @@ test_suite! {
 test_suite! {
     name persistence;
 
-    use arkfs::common::{label::*, vdev_raid::*, vdev::Vdev};
-    use futures::future;
+    use arkfs::common::{label::*, vdev_block::*, vdev_raid::*, vdev::Vdev};
+    use arkfs::sys::vdev_file::*;
+    use futures::{Future, future};
     use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;
     use tokio::runtime::current_thread;
@@ -551,9 +552,27 @@ test_suite! {
         }
     });
 
-    // Testing VdevRaid::open_all with golden labels is too hard, because we
+    // Testing VdevRaid::open2 with golden labels is too hard, because we
     // need to store separate golden labels for each VdevLeaf.  Instead, we'll
     // just check that we can open-after-write
+    test open(raid()) {
+        let (old_raid, _tempdir, paths) = raid.val;
+        let uuid = old_raid.uuid();
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(move || {
+            let label_writer = LabelWriter::new();
+            old_raid.write_label(label_writer).and_then(move |_| {
+                future::join_all(paths.into_iter().map(|path| {
+                    VdevFile::open(path).map(|(leaf, reader)| {
+                        (VdevBlock::new(leaf), reader)
+                    })
+                }))
+            }).map(move |combined| {
+                let (vdev_raid, _) = VdevRaid::open(Some(uuid), combined);
+                assert_eq!(uuid, vdev_raid.uuid());
+            })
+        })).unwrap();
+    }
+
     test open_all(raid()) {
         let (old_raid, _tempdir, paths) = raid.val;
         let uuid = old_raid.uuid();

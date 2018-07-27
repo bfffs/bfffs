@@ -10,7 +10,7 @@ use tokio_file::File;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Label {
+pub struct Label {
     /// Vdev UUID, fixed at format time
     uuid:           Uuid,
     /// Number of LBAs per simulated zone

@@ -16,7 +16,8 @@ use std::{
     ops::Range,
     rc::Rc
 };
-#[cfg(not(test))] use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
+#[cfg(not(test))] use std::path::Path;
 use tokio::executor;
 use uuid::Uuid;
 
@@ -54,6 +55,7 @@ pub type ClusterLike = cluster::Cluster;
 pub struct Cluster(cluster::Cluster);
 
 /// Communication type used between `ClusterProxy` and `ClusterServer`
+#[derive(Debug)]
 enum Rpc {
     Allocated(oneshot::Sender<LbaT>),
     FindClosedZone(ZoneT, oneshot::Sender<Option<cluster::ClosedZone>>),
@@ -160,7 +162,8 @@ impl<'a> ClusterServer {
 }
 
 /// `Send`able, `Clone`able handle to a `ClusterServer`
-struct ClusterProxy {
+#[derive(Debug)]
+pub struct ClusterProxy {
     server: mpsc::UnboundedSender<Rpc>,
     // Copy of the underlying Cluster's uuid
     uuid: Uuid
@@ -220,7 +223,7 @@ impl<'a> ClusterProxy {
 
     /// Create a new ClusterServer/ClusterProxy pair, start the server, and
     /// return the proxy
-    fn new(cluster: ClusterLike) -> Self {
+    pub fn new(cluster: ClusterLike) -> Self {
         let (tx, rx) = mpsc::unbounded();
         let uuid = cluster.uuid();
         let cs = Rc::new(ClusterServer::new(cluster));
@@ -295,15 +298,15 @@ pub struct ClosedZone {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Label {
+pub struct Label {
     /// Human-readable name
-    name:               String,
+    pub name:               String,
 
     /// Pool UUID, fixed at format time
-    uuid:               Uuid,
+    pub uuid:               Uuid,
 
     /// `UUID`s of all component `VdevRaid`s
-    children:           Vec<Uuid>,
+    pub children:           Vec<Uuid>,
 }
 
 struct Stats {
@@ -508,6 +511,31 @@ impl<'a> Pool {
         &self.name
     }
 
+    pub fn open2(uuid: Option<Uuid>, combined: Vec<(ClusterProxy, LabelReader)>)
+        -> impl Future<Item = (Self, LabelReader), Error = Error>
+    {
+        let mut label_pair = None;
+        let mut all_clusters = combined.into_iter()
+            .map(|(cluster_proxy, mut label_reader)| {
+            let label: Label = label_reader.deserialize().unwrap();
+            if let Some(u) = uuid {
+                assert_eq!(u, label.uuid, "Opening cluster from wrong pool");
+            }
+            if label_pair.is_none() {
+                label_pair = Some((label, label_reader));
+            }
+            (cluster_proxy.uuid(), cluster_proxy)
+        }).collect::<BTreeMap<Uuid, ClusterProxy>>();
+        let (label, label_reader) = label_pair.unwrap();
+        assert_eq!(all_clusters.len(), label.children.len(),
+            "Missing clusters");
+        let children = label.children.iter().map(|uuid| {
+            all_clusters.remove(&uuid).unwrap()
+        }).collect::<Vec<_>>();
+        Pool::new(label.name, label.uuid, children)
+            .map(|pool| (pool, label_reader))
+    }
+
     /// Open an existing `Pool` by name
     ///
     /// Returns a new `Pool` object
@@ -516,6 +544,7 @@ impl<'a> Pool {
     /// * `paths`:  Pathnames to search for the `Pool`.  All child devices
     ///             must be present.
     #[cfg(not(test))]
+    #[deprecated(note = "use open2 instead")]
     pub fn open<P>(name: String, paths: Vec<P>)
         -> impl Future<Item=(Self, LabelReader), Error=Error>
         where P: AsRef<Path> + 'static
