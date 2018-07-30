@@ -29,6 +29,9 @@ const ROOT_ATTR: FileAttr = FileAttr {
 };
 
 /// FUSE's handle to an ArkFS filesystem.  One per mountpoint.
+///
+/// This object lives in the synchronous domain, and spawns commands into the
+/// Tokio domain.
 pub struct FS {
     db: Arc<Database>,
     tree: TreeID,
@@ -37,7 +40,8 @@ pub struct FS {
 }
 
 impl FS {
-    pub fn new(database: Arc<Database>, runtime: current_thread::Runtime, tree: TreeID)
+    pub fn new(database: Arc<Database>, runtime: current_thread::Runtime,
+               tree: TreeID)
         -> Self
     {
         FS{db: database, runtime, tree}
