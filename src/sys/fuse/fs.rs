@@ -32,23 +32,23 @@ const ROOT_ATTR: FileAttr = FileAttr {
 ///
 /// This object lives in the synchronous domain, and spawns commands into the
 /// Tokio domain.
-pub struct FS {
+pub struct FuseFs {
     db: Arc<Database>,
     tree: TreeID,
     // TODO: wrap Runtime in ARC so it can be shared by multiple filesystems
     runtime: current_thread::Runtime
 }
 
-impl FS {
+impl FuseFs {
     pub fn new(database: Arc<Database>, runtime: current_thread::Runtime,
                tree: TreeID)
         -> Self
     {
-        FS{db: database, runtime, tree}
+        FuseFs{db: database, runtime, tree}
     }
 }
 
-impl Filesystem for FS {
+impl Filesystem for FuseFs {
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let ttl = Timespec { sec: 0, nsec: 0 };
         match ino {

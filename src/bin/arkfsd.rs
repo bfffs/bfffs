@@ -7,7 +7,7 @@ extern crate tokio;
 
 use arkfs::common::database::*;
 use arkfs::common::device_manager::DevManager;
-use arkfs::sys::fs::FS as FS;
+use arkfs::sys::fs::FuseFs;
 use futures::{Future, future};
 use std::sync::Arc;
 use tokio::runtime::current_thread;
@@ -48,6 +48,6 @@ fn main() {
         })
     })).unwrap();
     // TODO: use distinct TreeID for each mountpoint
-    let fs = FS::new(Arc::new(db), rt, TreeID::Fs(0));
+    let fs = FuseFs::new(Arc::new(db), rt, TreeID::Fs(0));
     fuse::mount(fs, mountpoint, &[]).unwrap();
 }
