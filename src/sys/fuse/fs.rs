@@ -1,11 +1,10 @@
 // vim: tw=80
 //! FUSE filesystem access
 
-use common::*;
 use common::database::*;
+use common::fs::Fs;
 use fuse::*;
-use futures::future;
-use nix::{Error, errno};
+use nix::errno;
 use std::sync::Arc;
 use time::Timespec;
 use tokio::runtime::current_thread;
@@ -33,10 +32,7 @@ const ROOT_ATTR: FileAttr = FileAttr {
 /// This object lives in the synchronous domain, and spawns commands into the
 /// Tokio domain.
 pub struct FuseFs {
-    db: Arc<Database>,
-    tree: TreeID,
-    // TODO: wrap Runtime in ARC so it can be shared by multiple filesystems
-    runtime: current_thread::Runtime
+    fs: Fs,
 }
 
 impl FuseFs {
@@ -44,7 +40,8 @@ impl FuseFs {
                tree: TreeID)
         -> Self
     {
-        FuseFs{db: database, runtime, tree}
+        let fs = Fs::new(database, runtime, tree);
+        FuseFs{fs}
     }
 }
 
@@ -61,13 +58,10 @@ impl Filesystem for FuseFs {
     }
 
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
-        let fut = self.db.fsread(self.tree, |dataset| {
-            future::ok::<(LbaT, LbaT), Error>((dataset.size(),
-                                               dataset.allocated()))
-        });
+        let result = self.fs.statfs();
+
         // NB: these are the fields of FUSE's statfs structure, which is
         // actually closer to struct statvfs than struct statfs.
-        let result = self.runtime.block_on(fut).unwrap();
         let blocks = result.0;          // total blocks in filesystem
         let files = u64::max_value();   // total file nodes in filesystem
         let ffree = files;              // free file nodes in filesystem
