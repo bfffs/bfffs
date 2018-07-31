@@ -4,6 +4,7 @@ extern crate env_logger;
 extern crate fuse;
 extern crate futures;
 extern crate tokio;
+extern crate tokio_io_pool;
 
 use arkfs::common::database::*;
 use arkfs::common::device_manager::DevManager;
@@ -36,14 +37,15 @@ fn main() {
     for dev in devices.iter() {
         dev_manager.taste(dev);
     }
-    let uuid = dev_manager.importable_pools().filter(|(name, _uuid)| {
+    let uuid = *dev_manager.importable_pools().filter(|(name, _uuid)| {
         **name == poolname
     }).nth(0).unwrap().1;
 
-    let mut rt = current_thread::Runtime::new().unwrap();
+    let rt = tokio_io_pool::Runtime::new();
+    let mut ct_rt = current_thread::Runtime::new().unwrap();
 
-    let db = rt.block_on(future::lazy(|| {
-        dev_manager.import(*uuid).map(|idml| {
+    let db = ct_rt.block_on(future::lazy(|| {
+        dev_manager.import(uuid).map(|idml| {
             Database::new(Arc::new(idml))
         })
     })).unwrap();

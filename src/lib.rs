@@ -44,6 +44,7 @@ extern crate serde_yaml;
 extern crate time;
 extern crate tokio;
 extern crate tokio_file;
+extern crate tokio_io_pool;
 extern crate uuid;
 
 pub mod common;

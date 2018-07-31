@@ -7,7 +7,7 @@ use fuse::*;
 use nix::errno;
 use std::sync::Arc;
 use time::Timespec;
-use tokio::runtime::current_thread;
+use tokio_io_pool;
 
 const EPOCH_TIME: Timespec = Timespec { sec: 0, nsec: 0};
 const ROOT_ATTR: FileAttr = FileAttr {
@@ -36,7 +36,7 @@ pub struct FuseFs {
 }
 
 impl FuseFs {
-    pub fn new(database: Arc<Database>, runtime: current_thread::Runtime,
+    pub fn new(database: Arc<Database>, runtime: tokio_io_pool::Runtime,
                tree: TreeID)
         -> Self
     {
