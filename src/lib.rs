@@ -19,6 +19,7 @@ extern crate itertools;
 extern crate isa_l;
 #[macro_use]
 extern crate lazy_static;
+extern crate libc;
 extern crate metrohash;
 #[cfg(test)]
 #[macro_use]

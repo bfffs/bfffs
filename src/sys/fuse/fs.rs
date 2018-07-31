@@ -58,24 +58,9 @@ impl Filesystem for FuseFs {
     }
 
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
-        let result = self.fs.statfs();
-
-        // NB: these are the fields of FUSE's statfs structure, which is
-        // actually closer to struct statvfs than struct statfs.
-        let blocks = result.0;          // total blocks in filesystem
-        let files = u64::max_value();   // total file nodes in filesystem
-        let ffree = files;              // free file nodes in filesystem
-        let frsize = 4096;              // fragment size
-        let bsize = 4096;               // optimal transfer block size
-        let allocated = result.1;
-        // free blocks available to unpriveleged user
-        let bavail = blocks - allocated;
-        let bfree = bavail;             // free blocks in fs
-
-        // TODO: use real values below, instead of dummy values
-        let namelen = 255;              // max length of filenames
-
-        reply.statfs(blocks, bfree, bavail, files, ffree, bsize, namelen,
-                     frsize);
+        let statvfs = self.fs.statvfs();
+        reply.statfs(statvfs.f_blocks, statvfs.f_bfree, statvfs.f_bavail,
+                     statvfs.f_files, statvfs.f_ffree, statvfs.f_bsize as u32,
+                     statvfs.f_namemax as u32, statvfs.f_frsize as u32);
     }
 }
