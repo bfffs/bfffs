@@ -1,5 +1,5 @@
 [package]
-name = "arkfs"
+name = "bfffs"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
 

@@ -87,7 +87,7 @@ impl DevManager {
         }
     }
 
-    /// Taste the device identified by `p` for an ArkFS label.
+    /// Taste the device identified by `p` for an BFFFS label.
     ///
     /// If present, retain the device in the `DevManager` for use as a spare or
     /// for building Pools.

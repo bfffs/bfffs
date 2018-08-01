@@ -370,7 +370,7 @@ impl Stats {
     }
 }
 
-/// An ArkFS storage pool
+/// An BFFFS storage pool
 pub struct Pool {
     clusters: Vec<ClusterProxy>,
 
@@ -441,7 +441,7 @@ impl<'a> Pool {
     ///
     /// Freeing data in increments other than it was written is unsupported.
     /// In particular, it is not allowed to delete across zone boundaries.
-    // Before deleting the underlying storage, ArkFS should double-check that
+    // Before deleting the underlying storage, BFFFS should double-check that
     // nothing is using it.  That requires using the AllocationTable, which is
     // above the layer of the Pool.
     pub fn free(&self, pba: PBA, length: LbaT)

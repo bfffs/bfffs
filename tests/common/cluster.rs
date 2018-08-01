@@ -10,11 +10,11 @@ macro_rules! t {
 test_suite! {
     name persistence;
 
-    use arkfs::common::label::*;
-    use arkfs::common::vdev_block::*;
-    use arkfs::common::vdev_raid::*;
-    use arkfs::common::cluster::*;
-    use arkfs::sys::vdev_file::*;
+    use bfffs::common::label::*;
+    use bfffs::common::vdev_block::*;
+    use bfffs::common::vdev_raid::*;
+    use bfffs::common::cluster::*;
+    use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
     use std::{fs, io::{Read, Seek, SeekFrom, Write}};
     use tempdir::TempDir;
@@ -23,7 +23,7 @@ test_suite! {
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
     const GOLDEN_LABEL: [u8; 0x10e] = [
-        0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64, // ArkFS Vd
+        0x42, 0x46, 0x46, 0x46, 0x53, 0x20, 0x56, 0x64, // BFFFS Vd
         0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ev......
         0x7e, 0x7c, 0x71, 0x58, 0x9b, 0xc8, 0x66, 0xff, // ~|qX..f.
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xee, // ........

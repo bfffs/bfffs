@@ -1,4 +1,4 @@
-doc-valid-idents = ["ArkFS"]
+doc-valid-idents = ["BFFFS"]
 # I don't like this warning.  I use a lot of single char variable names, both to
 # keep the line length down and when I'm writing mathy stuff.
 single-char-binding-names-threshold=1000

@@ -2,7 +2,7 @@
 use common::*;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
-/// Data Virtual Address for ArkFS.  Each DVA uniquely identifies the physical
+/// Data Virtual Address for BFFFS.  Each DVA uniquely identifies the physical
 /// location of a record.
 // LCOV_EXCL_START
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

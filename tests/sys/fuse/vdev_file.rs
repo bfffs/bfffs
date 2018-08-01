@@ -8,7 +8,7 @@ macro_rules! t {
 test_suite! {
     name basic;
 
-    use arkfs::{
+    use bfffs::{
         common::{
             vdev::*,
             vdev_leaf::*
@@ -179,7 +179,7 @@ test_suite! {
 test_suite! {
     name persistence;
 
-    use arkfs::{
+    use bfffs::{
         common::{
             label::*,
             vdev::*,
@@ -201,7 +201,7 @@ test_suite! {
 
     const GOLDEN: [u8; 85] = [
         // First 16 bytes are file magic
-        0x41, 0x72, 0x6b, 0x46, 0x53, 0x20, 0x56, 0x64, // ArkFS Vd
+        0x42, 0x46, 0x46, 0x46, 0x53, 0x20, 0x56, 0x64, // BFFFS Vd
         0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ev......
         // Next 8 bytes are a checksum
         0x41, 0xd1, 0x12, 0xee, 0x9f, 0x1d, 0xdc, 0xa1,

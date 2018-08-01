@@ -1,4 +1,4 @@
-extern crate arkfs;
+extern crate bfffs;
 #[macro_use] extern crate clap;
 extern crate env_logger;
 extern crate fuse;
@@ -6,16 +6,16 @@ extern crate futures;
 extern crate tokio;
 extern crate tokio_io_pool;
 
-use arkfs::common::database::*;
-use arkfs::common::device_manager::DevManager;
-use arkfs::sys::fs::FuseFs;
+use bfffs::common::database::*;
+use bfffs::common::device_manager::DevManager;
+use bfffs::sys::fs::FuseFs;
 use futures::{Future, future};
 use std::sync::Arc;
 use tokio::runtime::current_thread;
 
 fn main() {
     env_logger::init();
-    let app = clap::App::new("arkfsd")
+    let app = clap::App::new("bfffsd")
         .version(crate_version!())
         .arg(clap::Arg::with_name("name")
              .help("Pool name")

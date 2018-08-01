@@ -9,7 +9,7 @@ test_suite! {
     // These tests use a real VdevLeaf object
     name vdev_block;
 
-    use arkfs::common::{vdev::*, vdev_block::*};
+    use bfffs::common::{vdev::*, vdev_block::*};
     use divbuf::DivBufShared;
     use futures::future;
     use std::fs;

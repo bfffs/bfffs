@@ -10,15 +10,15 @@ macro_rules! t {
 test_suite! {
     name persistence;
 
-    use arkfs::common::*;
-    use arkfs::common::cache::*;
-    use arkfs::common::vdev_block::*;
-    use arkfs::common::vdev_raid::*;
-    use arkfs::common::cluster;
-    use arkfs::common::pool::*;
-    use arkfs::common::ddml::*;
-    use arkfs::common::idml::*;
-    use arkfs::sys::vdev_file::*;
+    use bfffs::common::*;
+    use bfffs::common::cache::*;
+    use bfffs::common::vdev_block::*;
+    use bfffs::common::vdev_raid::*;
+    use bfffs::common::cluster;
+    use bfffs::common::pool::*;
+    use bfffs::common::ddml::*;
+    use bfffs::common::idml::*;
+    use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
     use std::{
         fs,

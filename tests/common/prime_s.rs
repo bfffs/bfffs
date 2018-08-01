@@ -1,7 +1,7 @@
 // vim: tw=80
 
-use arkfs::common::declust::*;
-use arkfs::common::prime_s::*;
+use bfffs::common::declust::*;
+use bfffs::common::prime_s::*;
 
 // PrimeS should panic if you try to use a composite number of disks
 #[test]

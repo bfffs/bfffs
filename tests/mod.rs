@@ -1,4 +1,4 @@
-extern crate arkfs;
+extern crate bfffs;
 extern crate divbuf;
 extern crate fixedbitset;
 extern crate futures;

@@ -447,7 +447,7 @@ pub struct Label {
 }
 // LCOV_EXCL_STOP
 
-/// A `Cluster` is ArkFS's equivalent of ZFS's top-level Vdev.  It is the
+/// A `Cluster` is BFFFS's equivalent of ZFS's top-level Vdev.  It is the
 /// highest level `Vdev` that has its own LBA space.
 pub struct Cluster {
     fsm: RefCell<FreeSpaceMap>,

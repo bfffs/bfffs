@@ -11,7 +11,7 @@ test_suite! {
     // These tests use real VdevBlock and VdevLeaf objects
     name vdev_raid;
 
-    use arkfs::{common::*, common::vdev_raid::*, common::vdev::Vdev};
+    use bfffs::{common::*, common::vdev_raid::*, common::vdev::Vdev};
     use divbuf::DivBufShared;
     use futures::{Future, future};
     use rand::{Rng, thread_rng};
@@ -494,8 +494,8 @@ test_suite! {
 test_suite! {
     name persistence;
 
-    use arkfs::common::{label::*, vdev_block::*, vdev_raid::*, vdev::Vdev};
-    use arkfs::sys::vdev_file::*;
+    use bfffs::common::{label::*, vdev_block::*, vdev_raid::*, vdev::Vdev};
+    use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
     use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;

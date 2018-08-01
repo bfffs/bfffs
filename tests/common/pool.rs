@@ -10,12 +10,12 @@ macro_rules! t {
 test_suite! {
     name persistence;
 
-    use arkfs::sys::vdev_file::*;
-    use arkfs::common::vdev_block::*;
-    use arkfs::common::vdev_raid::*;
-    use arkfs::common::cluster;
-    use arkfs::common::label::*;
-    use arkfs::common::pool::*;
+    use bfffs::sys::vdev_file::*;
+    use bfffs::common::vdev_block::*;
+    use bfffs::common::vdev_raid::*;
+    use bfffs::common::cluster;
+    use bfffs::common::label::*;
+    use bfffs::common::pool::*;
     use futures::{Future, future};
     use std::{fs, io::{Read, Seek, SeekFrom}};
     use tempdir::TempDir;

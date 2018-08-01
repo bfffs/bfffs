@@ -21,7 +21,7 @@ pub struct Label {
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`
 ///
-/// This is used by the FUSE implementation of ArkFS.  It works with both
+/// This is used by the FUSE implementation of BFFFS.  It works with both
 /// regular files and device files
 ///
 #[derive(Debug)]
@@ -34,7 +34,7 @@ pub struct VdevFile {
     uuid:   Uuid
 }
 
-/// Tokio-File requires boxed `DivBufs`, but the upper layers of ArkFS don't.
+/// Tokio-File requires boxed `DivBufs`, but the upper layers of BFFFS don't.
 /// Take care of the mismatch here, by wrapping `DivBuf` in a new struct
 struct IoVecContainer(IoVec);
 impl Borrow<[u8]> for IoVecContainer {
@@ -43,7 +43,7 @@ impl Borrow<[u8]> for IoVecContainer {
     }
 }
 
-/// Tokio-File requires boxed `DivBufMuts`, but the upper layers of ArkFS don't.
+/// Tokio-File requires boxed `DivBufMuts`, but the upper layers of BFFFS don't.
 /// Take care of the mismatch here, by wrapping `DivBufMut` in a new struct
 struct IoVecMutContainer(IoVecMut);
 impl Borrow<[u8]> for IoVecMutContainer {

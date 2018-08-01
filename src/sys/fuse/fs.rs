@@ -33,7 +33,7 @@ const ROOT_ATTR: FileAttr = FileAttr {
     flags: 0
 };
 
-/// FUSE's handle to an ArkFS filesystem.  One per mountpoint.
+/// FUSE's handle to an BFFFS filesystem.  One per mountpoint.
 ///
 /// This object lives in the synchronous domain, and spawns commands into the
 /// Tokio domain.

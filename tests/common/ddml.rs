@@ -10,7 +10,7 @@ macro_rules! t {
 test_suite! {
     name ddml;
 
-    use arkfs::common::{
+    use bfffs::common::{
         cache::*,
         ddml::*,
         pool::*,

@@ -3,7 +3,7 @@
 //! The PRIME-S Declustering Layout
 //!
 //! This layout is based on PRIME[^PRIME_], but modified for compatibility with
-//! SMR drives.  See `doc/prime-s.tex` in ArkFS's source directory for a more
+//! SMR drives.  See `doc/prime-s.tex` in BFFFS's source directory for a more
 //! detailed description.
 //!
 //! [^PRIME_]: Alvarez, Guillermo A., et al. "Declustered disk array

@@ -1,14 +1,14 @@
-extern crate arkfs;
+extern crate bfffs;
 #[macro_use] extern crate clap;
 extern crate futures;
 extern crate tokio;
 
 mod pool{
-use arkfs::common::{LbaT, TxgT};
-use arkfs::common::cache::Cache;
-use arkfs::common::ddml::DDML;
-use arkfs::common::idml::IDML;
-use arkfs::common::pool::{Cluster, Pool};
+use bfffs::common::{LbaT, TxgT};
+use bfffs::common::cache::Cache;
+use bfffs::common::ddml::DDML;
+use bfffs::common::idml::IDML;
+use bfffs::common::pool::{Cluster, Pool};
 use futures::{Future, future};
 use std::sync::{Arc, Mutex};
 use super::*;
@@ -123,7 +123,7 @@ pub fn main(args: &clap::ArgMatches) {
 }
 
 fn main() {
-    let app = clap::App::new("arkfs")
+    let app = clap::App::new("bfffs")
         .version(crate_version!())
         .subcommand(clap::SubCommand::with_name("pool")
             .about("create, destroy, and modify storage pools")
