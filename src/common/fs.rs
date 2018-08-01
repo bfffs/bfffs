@@ -2,9 +2,17 @@
 //! Common VFS implementation
 
 use common::database::*;
-use futures::{Future, IntoFuture, sync::oneshot};
-use libc::statvfs;
-use std::sync::Arc;
+use futures::{
+    Future,
+    IntoFuture,
+    Sink,
+    Stream,
+    stream,
+    sync::{mpsc, oneshot}
+};
+use libc;
+use nix::{Error, errno};
+use std::{mem, sync::Arc};
 use tokio_io_pool;
 
 /// Generic Filesystem layer.
@@ -27,13 +35,75 @@ impl Fs {
 }
 
 impl Fs {
-    pub fn statvfs(&self) -> statvfs {
-        let (tx, rx) = oneshot::channel::<statvfs>();
+    // TODO: instead of the full size struct libc::dirent, use a variable size
+    // structure in the mpsc channel
+    pub fn readdir(&self, ino: u64, _fh: u64, offset: i64)
+        -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>
+    {
+        // Big enough to fill a 4KB page with full-size dirents
+        let chansize: usize = 14;
+        let dirent_size = mem::size_of::<libc::dirent>() as u16;
+
+        let (tx, rx) = mpsc::channel(chansize);
+        self.runtime.spawn(
+            self.db.fsread(self.tree, move |_dataset| {
+                if ino == 1 {
+                    // Create a stream of directory entries.  Overkill for this
+                    // stub, but it's similar to how a complete readdir
+                    // implementation will work
+                    let s = stream::unfold(offset, move |offs| {
+                        if offs < 2 {
+                            let (fut, next_offset) = if offs < 1 {
+                                let mut dirent = libc::dirent {
+                                    d_fileno: 9999,
+                                    d_reclen: dirent_size,
+                                    d_type: libc::DT_DIR,
+                                    d_namlen: 3,
+                                    d_name: unsafe{mem::zeroed()}
+                                };
+                                dirent.d_name[0] = '.' as i8;
+                                dirent.d_name[1] = '.' as i8;
+                                (Ok((dirent, 1)).into_future(), 1)
+                            } else {
+                                let mut dirent = libc::dirent {
+                                    d_fileno: 1,
+                                    d_reclen: dirent_size,
+                                    d_type: libc::DT_DIR,
+                                    d_namlen: 2,
+                                    d_name: unsafe{mem::zeroed()}
+                                };
+                                dirent.d_name[0] = '.' as i8;
+                                (Ok((dirent, 2)).into_future(), 2)
+                            };
+                            Some(fut.map(move |r| (r, next_offset)))
+                        } else {
+                            None
+                        }
+                    });
+                    let fut = s.fold(tx, |tx, dirent|
+                        tx.send(Ok(dirent))
+                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    ).map(|_| ());
+                    Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+
+                } else {
+                    let fut = tx.send(Err(errno::Errno::ENOENT as i32))
+                        .map(|_| ())
+                        .map_err(|_| Error::Sys(errno::Errno::EPIPE));
+                    Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+                }
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().map(|r| r.unwrap())
+    }
+
+    pub fn statvfs(&self) -> libc::statvfs {
+        let (tx, rx) = oneshot::channel::<libc::statvfs>();
         self.runtime.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let blocks = dataset.size();
                 let allocated = dataset.allocated();
-                let r = statvfs {
+                let r = libc::statvfs {
                     f_bavail: blocks - allocated,
                     f_bfree: blocks - allocated,
                     f_blocks: blocks,

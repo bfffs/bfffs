@@ -4,8 +4,14 @@
 use common::database::*;
 use common::fs::Fs;
 use fuse::*;
+use libc;
 use nix::errno;
-use std::sync::Arc;
+use std::{
+    ffi::OsStr,
+    os::unix::ffi::OsStrExt,
+    slice,
+    sync::Arc
+};
 use time::Timespec;
 use tokio_io_pool;
 
@@ -55,6 +61,38 @@ impl Filesystem for FuseFs {
             },
             _ => reply.error(errno::Errno::ENOENT as i32)
         }
+    }
+
+    fn readdir(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64,
+               mut reply: ReplyDirectory)
+    {
+        for v in self.fs.readdir(ino, fh, offset) {
+            match v {
+                Ok((dirent, offset)) => {
+                    let ft = match dirent.d_type {
+                        libc::DT_FIFO => FileType::NamedPipe,
+                        libc::DT_CHR => FileType::CharDevice,
+                        libc::DT_DIR => FileType::Directory,
+                        libc::DT_BLK => FileType::BlockDevice,
+                        libc::DT_REG => FileType::RegularFile,
+                        libc::DT_LNK => FileType::Symlink,
+                        libc::DT_SOCK => FileType::Socket,
+                        e => panic!("Unknown dirent type {:?}", e)
+                    };
+                    let nameptr = dirent.d_name.as_ptr() as *const u8;
+                    let namelen = usize::from(dirent.d_namlen);
+                    let name = unsafe{slice::from_raw_parts(nameptr, namelen)};
+                    let r = reply.add(dirent.d_fileno.into(), offset, ft,
+                        OsStr::from_bytes(name));
+                    assert!(!r, "TODO: deal with full FUSE ReplyDirectory buffers");
+                },
+                Err(e) => {
+                    reply.error(e);
+                    return;
+                }
+            }
+        }
+        reply.ok();
     }
 
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
