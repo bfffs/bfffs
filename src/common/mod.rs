@@ -16,6 +16,7 @@ pub mod device_manager;
 pub mod dml;
 pub mod dva;
 pub mod fs;
+pub mod fs_tree;
 pub mod idml;
 #[cfg(test)] mod idml_mock;
 pub mod label;

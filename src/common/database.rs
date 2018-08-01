@@ -8,15 +8,12 @@
 use common::*;
 use common::dataset::*;
 use common::dml::DML;
+use common::fs_tree::*;
 use common::idml::*;
 use common::tree::*;
 use futures::{Future, IntoFuture};
 use nix::{Error, errno};
 use std::sync::Arc;
-
-// TODO: define real keys and values for filesystems
-type FSKey = u32;
-type FSValue = u32;
 
 type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
 type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
