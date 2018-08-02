@@ -1,5 +1,6 @@
 mod cluster;
 mod ddml;
+mod fs;
 mod idml;
 mod pool;
 mod prime_s;

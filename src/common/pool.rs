@@ -19,9 +19,10 @@ use std::{
 use std::collections::BTreeMap;
 #[cfg(not(test))] use std::{
     num::NonZeroU64,
-    path::Path
+    path::{Path, PathBuf}
 };
 use tokio::executor;
+#[cfg(not(test))] use tokio::executor::{DefaultExecutor, Executor};
 use uuid::Uuid;
 
 pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
@@ -410,7 +411,7 @@ impl<'a> Pool {
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
     #[cfg(not(test))]
-    pub fn create_cluster<P: AsRef<Path>>(chunksize: LbaT,
+    pub fn create_cluster<P: AsRef<Path> + Sync>(chunksize: LbaT,
                                num_disks: i16,
                                disks_per_stripe: i16,
                                lbas_per_zone: Option<NonZeroU64>,
@@ -418,9 +419,18 @@ impl<'a> Pool {
                                paths: &[P])
         -> impl Future<Item=ClusterProxy, Error=()>
     {
-        let c = cluster::Cluster::create(chunksize, num_disks, disks_per_stripe,
-            lbas_per_zone, redundancy, paths);
-        Ok(ClusterProxy::new(c)).into_future()
+        let (tx, rx) = oneshot::channel();
+        // DefaultExecutor needs 'static futures; we must copy the Paths
+        let owned_paths = paths.iter()
+            .map(|p| p.as_ref().to_owned())
+            .collect::<Vec<PathBuf>>();
+        DefaultExecutor::current().spawn(Box::new(future::lazy(move || {
+            let c = cluster::Cluster::create(chunksize, num_disks,
+                disks_per_stripe, lbas_per_zone, redundancy, &owned_paths);
+            tx.send(ClusterProxy::new(c)).unwrap();
+            Ok(())
+        }))).unwrap();
+        rx.map_err(|_| panic!("Closed Runtime while creating Cluster?"))
     }
 
     /// Create a new `Pool` from some freshly created `Cluster`s.
