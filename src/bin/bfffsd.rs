@@ -11,7 +11,6 @@ use bfffs::common::device_manager::DevManager;
 use bfffs::sys::fs::FuseFs;
 use futures::{Future, future};
 use std::sync::Arc;
-use tokio::runtime::current_thread;
 
 fn main() {
     env_logger::init();
@@ -42,10 +41,8 @@ fn main() {
             **name == poolname
         }).nth(0).unwrap().1;
 
-    let rt = tokio_io_pool::Runtime::new();
-    let mut ct_rt = current_thread::Runtime::new().unwrap();
-
-    let db = ct_rt.block_on(future::lazy(|| {
+    let mut rt = tokio_io_pool::Runtime::new();
+    let db = rt.block_on(future::lazy(move || {
         dev_manager.import(uuid).map(|idml| {
             Database::new(Arc::new(idml))
         })
