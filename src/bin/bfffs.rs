@@ -8,7 +8,7 @@ use bfffs::common::{LbaT, TxgT};
 use bfffs::common::cache::Cache;
 use bfffs::common::ddml::DDML;
 use bfffs::common::idml::IDML;
-use bfffs::common::pool::{Cluster, Pool};
+use bfffs::common::pool::{ClusterProxy, Pool};
 use futures::{Future, future};
 use std::sync::{Arc, Mutex};
 use super::*;
@@ -31,8 +31,9 @@ fn create(args: &clap::ArgMatches) {
                 if devs.len() > 0 {
                     match cluster{
                         Some("mirror") =>
-                            clusters.push(create_mirror(&devs[..])),
-                        Some("raid") => clusters.push(create_raid(&devs[..])),
+                            clusters.push(create_mirror(&mut rt, &devs[..])),
+                        Some("raid") => clusters.push(
+                            create_raid(&mut rt, &devs[..])),
                         None => assert!(devs.is_empty()),
                         _ => unreachable!()
                     }
@@ -41,7 +42,7 @@ fn create(args: &clap::ArgMatches) {
             },
             Some("mirror") => {
                 if devs.len() > 0 {
-                    let c = create_cluster(cluster.as_ref().unwrap(),
+                    let c = create_cluster(&mut rt, cluster.as_ref().unwrap(),
                                            &devs[..]);
                     clusters.push(c);
                 }
@@ -50,7 +51,7 @@ fn create(args: &clap::ArgMatches) {
             },
             Some("raid") => {
                 if devs.len() > 0 {
-                    let c = create_cluster(cluster.as_ref().unwrap(),
+                    let c = create_cluster(&mut rt, cluster.as_ref().unwrap(),
                                            &devs[..]);
                     clusters.push(c);
                 }
@@ -59,7 +60,7 @@ fn create(args: &clap::ArgMatches) {
             },
             Some(ref dev) => {
                 if cluster == None {
-                    let c = create_single(dev);
+                    let c = create_single(&mut rt, dev);
                     clusters.push(c);
                 } else {
                     devs.push(dev);
@@ -78,36 +79,42 @@ fn create(args: &clap::ArgMatches) {
     rt.block_on(idml.write_label(TxgT::from(0))).unwrap();
 }
 
-fn create_cluster(vtype: &str, devs: &[&str]) -> Cluster {
+fn create_cluster(rt: &mut Runtime, vtype: &str, devs: &[&str]) -> ClusterProxy {
     match vtype {
-        "mirror" => create_mirror(devs),
-        "raid" => create_raid(devs),
+        "mirror" => create_mirror(rt, devs),
+        "raid" => create_raid(rt, devs),
         _ => panic!("Unsupported vdev type {}", vtype)
     }
 }
 
-fn create_mirror(devs: &[&str]) -> Cluster {
+fn create_mirror(rt: &mut Runtime, devs: &[&str]) -> ClusterProxy {
     // TODO: allow creating declustered mirrors
     let n = devs.len() as i16;
     let k = devs.len() as i16;
     let f = devs.len() as i16 - 1;
-    let cluster = Pool::create_cluster(CHUNKSIZE, n, k, None, f, &devs[2..]);
-    cluster
+    do_create_cluster(rt, n, k, f, &devs[2..])
 }
 
-fn create_raid(devs: &[&str]) -> Cluster {
+fn create_raid(rt: &mut Runtime, devs: &[&str]) -> ClusterProxy {
     let n = devs.len() as i16 - 2;
     let k = i16::from_str_radix(devs[0], 10)
         .expect("Disks per stripe must be an integer");
     let f = i16::from_str_radix(devs[1], 10)
         .expect("Disks per stripe must be an integer");
-    let cluster = Pool::create_cluster(CHUNKSIZE, n, k, None, f, &devs[2..]);
-    cluster
+    do_create_cluster(rt, n, k, f, &devs[2..])
 }
 
-fn create_single(dev: &str) -> Cluster {
-    let cluster = Pool::create_cluster(CHUNKSIZE, 1, 1, None, 0, &[&dev]);
-    cluster
+fn create_single(rt: &mut Runtime, dev: &str) -> ClusterProxy {
+    do_create_cluster(rt, 1, 1, 0, &[&dev])
+}
+
+fn do_create_cluster(rt: &mut Runtime, n: i16, k: i16, f: i16, devs: &[&str])
+    -> ClusterProxy
+{
+    rt.block_on(future::lazy(move || {
+        let c = Pool::create_cluster(CHUNKSIZE, n, k, None, f, devs);
+        future::ok::<ClusterProxy, ()>(c)
+    })).unwrap()
 }
 
 pub fn main(args: &clap::ArgMatches) {

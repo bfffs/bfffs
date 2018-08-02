@@ -50,10 +50,6 @@ pub type ClusterLike = Box<ClusterTrait>;
 #[doc(hidden)]
 pub type ClusterLike = cluster::Cluster;
 
-/// Opaque helper type used for `Pool::create`
-#[cfg(not(test))]
-pub struct Cluster(cluster::Cluster);
-
 /// Communication type used between `ClusterProxy` and `ClusterServer`
 #[derive(Debug)]
 enum Rpc {
@@ -416,24 +412,21 @@ impl<'a> Pool {
                                disks_per_stripe: i16,
                                lbas_per_zone: Option<LbaT>,
                                redundancy: i16,
-                               paths: &[P]) -> Cluster
+                               paths: &[P]) -> ClusterProxy
     {
-        Cluster(cluster::Cluster::create(chunksize, num_disks, disks_per_stripe,
-            lbas_per_zone, redundancy, paths))
+        let c = cluster::Cluster::create(chunksize, num_disks, disks_per_stripe,
+            lbas_per_zone, redundancy, paths);
+        ClusterProxy::new(c)
     }
 
     /// Create a new `Pool` from some freshly created `Cluster`s.
     ///
     /// Must be called from within the context of a Tokio Runtime.
     #[cfg(not(test))]
-    pub fn create(name: String, clusters: Vec<Cluster>)
+    pub fn create(name: String, clusters: Vec<ClusterProxy>)
         -> impl Future<Item=Self, Error=Error>
     {
-        let proxies = clusters.into_iter()
-            .map(|c| {
-                ClusterProxy::new(c.0)
-            }).collect::<Vec<_>>();
-        Pool::new(name, Uuid::new_v4(), proxies)
+        Pool::new(name, Uuid::new_v4(), clusters)
     }
 
     /// Mark `length` LBAs beginning at PBA `pba` as unused, but do not delete
