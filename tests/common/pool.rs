@@ -60,7 +60,11 @@ test_suite! {
                 let clusters = paths.iter().map(|p| {
                     Pool::create_cluster(1, 1, 1, None, 0, &[p][..])
                 }).collect::<Vec<_>>();
-                Pool::create("TestPool".to_string(), clusters)
+                future::join_all(clusters)
+                    .map_err(|_| unreachable!())
+                    .and_then(|clusters|
+                        Pool::create("TestPool".to_string(), clusters)
+                    )
             })).unwrap();
             (rt, pool, tempdir, paths)
         }

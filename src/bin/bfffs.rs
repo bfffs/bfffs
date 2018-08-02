@@ -112,8 +112,7 @@ fn do_create_cluster(rt: &mut Runtime, n: i16, k: i16, f: i16, devs: &[&str])
     -> ClusterProxy
 {
     rt.block_on(future::lazy(move || {
-        let c = Pool::create_cluster(CHUNKSIZE, n, k, None, f, devs);
-        future::ok::<ClusterProxy, ()>(c)
+        Pool::create_cluster(CHUNKSIZE, n, k, None, f, devs)
     })).unwrap()
 }
 

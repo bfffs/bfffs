@@ -415,11 +415,12 @@ impl<'a> Pool {
                                disks_per_stripe: i16,
                                lbas_per_zone: Option<NonZeroU64>,
                                redundancy: i16,
-                               paths: &[P]) -> ClusterProxy
+                               paths: &[P])
+        -> impl Future<Item=ClusterProxy, Error=()>
     {
         let c = cluster::Cluster::create(chunksize, num_disks, disks_per_stripe,
             lbas_per_zone, redundancy, paths);
-        ClusterProxy::new(c)
+        Ok(ClusterProxy::new(c)).into_future()
     }
 
     /// Create a new `Pool` from some freshly created `Cluster`s.

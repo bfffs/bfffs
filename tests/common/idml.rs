@@ -80,7 +80,11 @@ test_suite! {
             let pool = rt.block_on(future::lazy(|| {
                 let cluster = Pool::create_cluster(1, 1, 1, None, 0, &paths);
                 let clusters = vec![cluster];
-                Pool::create(POOLNAME.to_string(), clusters)
+                future::join_all(clusters)
+                    .map_err(|_| unreachable!())
+                    .and_then(|clusters|
+                        Pool::create(POOLNAME.to_string(), clusters)
+                    )
             })).unwrap();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));

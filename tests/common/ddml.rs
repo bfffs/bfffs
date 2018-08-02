@@ -39,7 +39,11 @@ test_suite! {
                 let clusters = vec![
                     Pool::create_cluster(1, 1, 1, None, 0, &[filename][..])
                 ];
-                Pool::create("TestPool".to_string(), clusters)
+                future::join_all(clusters)
+                    .map_err(|_| unreachable!())
+                    .and_then(|clusters|
+                        Pool::create("TestPool".to_string(), clusters)
+                    )
             })).unwrap();
             let cache = Cache::with_capacity(1_000_000_000);
             (rt, DDML::new(pool, Arc::new(Mutex::new(cache))))
