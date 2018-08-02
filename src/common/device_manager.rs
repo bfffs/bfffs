@@ -7,34 +7,51 @@ use futures::{Future, future};
 #[cfg(not(test))] use futures::Stream;
 #[cfg(not(test))] use nix::{Error, errno};
 use std::{
-    borrow::{Borrow, ToOwned},
+    borrow::ToOwned,
     collections::BTreeMap,
     path::{Path, PathBuf},
+    sync::Mutex
 };
-#[cfg(not(test))] use std::sync::{Arc, Mutex};
+#[cfg(not(test))] use std::sync::Arc;
 use sys::vdev_file;
 use uuid::Uuid;
 use tokio::runtime::current_thread;
 #[cfg(not(test))] use tokio::executor::{self, DefaultExecutor, Executor};
 
-pub struct DevManager {
+struct Inner {
     leaves: BTreeMap<Uuid, PathBuf>,
     raids: BTreeMap<Uuid, vdev_raid::Label>,
     pools: BTreeMap<Uuid, pool::Label>,
 }
 
+pub struct DevManager {
+    inner: Mutex<Inner>
+}
+
 impl DevManager {
     /// Import a pool by its UUID
     #[cfg(not(test))]
-    pub fn import<'a>(&'a self, uuid: Uuid)
-        -> impl Future<Item = idml::IDML, Error = Error> + 'a
+    pub fn import(&self, uuid: Uuid)
+        -> impl Future<Item = idml::IDML, Error = Error>
     {
-        let proxies = self.pools[&uuid].children.iter().map(move |child_uuid| {
-            let raid = &self.raids[&child_uuid];
-            let raid_uuid = raid.uuid.clone();
-            let leaf_paths = raid.children.iter()
-                .map(|uuid| self.leaves[&uuid].clone())
+        let (_pool, raids, mut leaves) = {
+            let mut inner = self.inner.lock().unwrap();
+            let pool = inner.pools.remove(&uuid).unwrap();
+            let raids = pool.children.iter()
+                .map(|child_uuid| inner.raids.remove(child_uuid).unwrap())
                 .collect::<Vec<_>>();
+            let leaves = raids.iter().map(|raid| {
+                let leaves = raid.children.iter().map(|uuid| {
+                    inner.leaves.remove(&uuid).unwrap()
+                }).collect::<Vec<_>>();
+                (raid.uuid.clone(), leaves)
+            }).collect::<BTreeMap<_, _>>();
+            // Drop the self.inner mutex
+            (pool, raids, leaves)
+        };
+        let proxies = raids.into_iter().map(move |raid| {
+            let raid_uuid = raid.uuid.clone();
+            let leaf_paths = leaves.remove(&raid_uuid).unwrap();
             let (tx, rx) = oneshot::channel();
             // The top-level Executor spawn puts each Cluster onto a different
             // thread, when using tokio-io-pool
@@ -73,25 +90,27 @@ impl DevManager {
     }
 
     /// List every pool that hasn't been imported, but can be
-    pub fn importable_pools(&self) -> impl Iterator<Item=(&str, &Uuid)> {
-        self.pools.iter()
+    pub fn importable_pools(&self) -> Vec<(String, Uuid)> {
+        let inner = self.inner.lock().unwrap();
+        inner.pools.iter()
             .map(|(_uuid, label)| {
-                (label.name.borrow(), &label.uuid)
-            })
+                (label.name.clone(), label.uuid)
+            }).collect::<Vec<_>>()
     }
 
     pub fn new() -> Self {
-        DevManager{ leaves: BTreeMap::new(),
+        let inner = Inner{ leaves: BTreeMap::new(),
             raids: BTreeMap::new(),
             pools: BTreeMap::new()
-        }
+        };
+        DevManager{inner: Mutex::new(inner)}
     }
 
     /// Taste the device identified by `p` for an BFFFS label.
     ///
     /// If present, retain the device in the `DevManager` for use as a spare or
     /// for building Pools.
-    pub fn taste<P: AsRef<Path>>(&mut self, p: P) {
+    pub fn taste<P: AsRef<Path>>(&self, p: P) {
         // taste should be called from the synchronous domain, so it needs to
         // create its own temporary Runtime
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -99,12 +118,13 @@ impl DevManager {
             let pathbuf = p.as_ref().to_owned();
             vdev_file::VdevFile::open(p)
                 .map(move |(vdev_file, mut reader)| {
-                    self.leaves.insert(vdev_file.uuid(), pathbuf);
+                    let mut inner = self.inner.lock().unwrap();
+                    inner.leaves.insert(vdev_file.uuid(), pathbuf);
                     let rl: vdev_raid::Label = reader.deserialize().unwrap();
-                    self.raids.insert(rl.uuid, rl);
+                    inner.raids.insert(rl.uuid, rl);
                     let _cl: cluster::Label = reader.deserialize().unwrap();
                     let pl: pool::Label = reader.deserialize().unwrap();
-                    self.pools.insert(pl.uuid, pl);
+                    inner.pools.insert(pl.uuid, pl);
                 })
         })).unwrap();
     }

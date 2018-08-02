@@ -33,13 +33,14 @@ fn main() {
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
 
-    let mut dev_manager = DevManager::new();
+    let dev_manager = DevManager::new();
     for dev in devices.iter() {
         dev_manager.taste(dev);
     }
-    let uuid = *dev_manager.importable_pools().filter(|(name, _uuid)| {
-        **name == poolname
-    }).nth(0).unwrap().1;
+    let uuid = dev_manager.importable_pools().iter()
+        .filter(|(name, _uuid)| {
+            **name == poolname
+        }).nth(0).unwrap().1;
 
     let rt = tokio_io_pool::Runtime::new();
     let mut ct_rt = current_thread::Runtime::new().unwrap();
