@@ -13,8 +13,11 @@ use std::{
     thread,
     time,
 };
-#[cfg(not(test))]
-use std::{io, path::Path};
+#[cfg(not(test))] use std::{
+    io,
+    num::NonZeroU64,
+    path::Path
+};
 use tokio::executor::current_thread;
 use uuid::Uuid;
 
@@ -447,7 +450,7 @@ impl VdevBlock {
     ///                     simulated zones on devices that don't have native
     ///                     zones.
     #[cfg(not(test))]
-    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<LbaT>)
+    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>
     {
         let leaf = VdevLeaf::create(path, lbas_per_zone)?;

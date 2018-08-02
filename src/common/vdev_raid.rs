@@ -2,15 +2,22 @@
 
 use common::{*, declust::*, label::*, vdev::*, raid::*};
 #[cfg(not(test))] use common::vdev_block::*;
-#[cfg(any(not(test), feature = "mocks"))]
 use common::{null_raid::*, prime_s::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
 use nix::Error;
-use std::{cell::RefCell, cmp, mem, ptr};
+use std::{
+    cell::RefCell,
+    cmp,
+    mem,
+    ptr
+};
 use std::collections::BTreeMap;
-#[cfg(not(test))] use std::path::Path;
+#[cfg(not(test))] use std::{
+    num::NonZeroU64,
+    path::Path
+};
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -274,7 +281,7 @@ impl VdevRaid {
     pub fn create<P: AsRef<Path>>(chunksize: LbaT,
                                   num_disks: i16,
                                   disks_per_stripe: i16,
-                                  lbas_per_zone: Option<LbaT>,
+                                  lbas_per_zone: Option<NonZeroU64>,
                                   redundancy: i16,
                                   paths: &[P]) -> Self
     {
@@ -288,7 +295,6 @@ impl VdevRaid {
                       layout_algo, blockdevs.into_boxed_slice())
     }
 
-    #[cfg(any(not(test), feature = "mocks"))]
     fn new(chunksize: LbaT,
            disks_per_stripe: i16,
            redundancy: i16,
@@ -331,10 +337,11 @@ impl VdevRaid {
     ///
     /// # Parameters
     ///
-    /// * `uuid`:       Uuid of the desired `VdevRaid`, if present.  If `None`, then
-    ///                 it will not be verified.
+    /// * `uuid`:       Uuid of the desired `VdevRaid`, if present.  If `None`,
+    ///                 then it will not be verified.
     /// * `combined`:   An array of pairs of `VdevBlock`s and their
-    ///                 associated `LabelReader`.  The labels of each will be verified.
+    ///                 associated `LabelReader`.  The labels of each will be
+    ///                 verified.
     pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlockLike, LabelReader)>)
         -> (Self, LabelReader)
     {

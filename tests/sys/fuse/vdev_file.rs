@@ -191,6 +191,7 @@ test_suite! {
     use std::{
         fs,
         io::{Read, Write},
+        num::NonZeroU64,
         path::PathBuf
     };
     use std;
@@ -264,7 +265,7 @@ test_suite! {
 
     // Write the label, and compare to a golden master
     test write_label(fixture) {
-        let lbas_per_zone = Some(0xdead_beef_1a7e_babe);
+        let lbas_per_zone = NonZeroU64::new(0xdead_beef_1a7e_babe);
         let vdev = VdevFile::create(fixture.val.0.clone(), lbas_per_zone)
             .unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {

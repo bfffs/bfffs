@@ -4,7 +4,12 @@ use common::{*, label::*, vdev::*, vdev_leaf::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use nix;
-use std::{ borrow::{Borrow, BorrowMut}, io, path::Path };
+use std::{
+    borrow::{Borrow, BorrowMut},
+    io,
+    num::NonZeroU64,
+    path::Path
+};
 use tokio::reactor::Handle;
 use tokio_file::File;
 use uuid::Uuid;
@@ -170,12 +175,15 @@ impl VdevFile {
     /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
     ///                     simulated zones on devices that don't have native
     ///                     zones.
-    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<LbaT>)
+    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>
     {
         let handle = Handle::current();
         let f = File::open(path, handle.clone())?;
-        let lpz = lbas_per_zone.unwrap_or(VdevFile::DEFAULT_LBAS_PER_ZONE);
+        let lpz = match lbas_per_zone {
+            None => VdevFile::DEFAULT_LBAS_PER_ZONE,
+            Some(x) => x.get()
+        };
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
         let uuid = Uuid::new_v4();
         Ok(VdevFile{file: f, handle, lbas_per_zone: lpz, size, uuid})

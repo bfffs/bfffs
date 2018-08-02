@@ -16,7 +16,11 @@ test_suite! {
     use bfffs::common::cluster::*;
     use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
-    use std::{fs, io::{Read, Seek, SeekFrom, Write}};
+    use std::{
+        fs,
+        io::{Read, Seek, SeekFrom, Write},
+        num::NonZeroU64
+    };
     use tempdir::TempDir;
     use tokio::runtime::current_thread::Runtime;
 
@@ -69,8 +73,8 @@ test_suite! {
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
             let mut rt = Runtime::new().unwrap();
-            let cluster = Cluster::create(16, 1, 1, Some(65536), 0,
-                                          &[fname.clone()]);
+            let lpz = NonZeroU64::new(65536);
+            let cluster = Cluster::create(16, 1, 1, lpz, 0, &[fname.clone()]);
             (rt, cluster, tempdir, fname)
         }
     });

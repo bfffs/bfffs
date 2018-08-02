@@ -17,7 +17,10 @@ use std::{
     rc::Rc
 };
 use std::collections::BTreeMap;
-#[cfg(not(test))] use std::path::Path;
+#[cfg(not(test))] use std::{
+    num::NonZeroU64,
+    path::Path
+};
 use tokio::executor;
 use uuid::Uuid;
 
@@ -410,7 +413,7 @@ impl<'a> Pool {
     pub fn create_cluster<P: AsRef<Path>>(chunksize: LbaT,
                                num_disks: i16,
                                disks_per_stripe: i16,
-                               lbas_per_zone: Option<LbaT>,
+                               lbas_per_zone: Option<NonZeroU64>,
                                redundancy: i16,
                                paths: &[P]) -> ClusterProxy
     {
@@ -449,7 +452,6 @@ impl<'a> Pool {
     /// [`Cluster`](struct.Cluster.html)s.
     ///
     /// Must be called from within the context of a Tokio Runtime.
-    #[cfg(any(not(test), feature = "mocks"))]
     fn new(name: String, uuid: Uuid, clusters: Vec<ClusterProxy>)
         -> impl Future<Item=Self, Error=Error>
     {

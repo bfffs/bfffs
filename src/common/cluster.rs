@@ -3,7 +3,7 @@
 use common::{*, label::*, vdev::{Vdev, VdevFut}};
 #[cfg(not(test))] use common::vdev_raid::*;
 use futures::{ Future, IntoFuture, future};
-#[cfg(any(not(test), feature = "mocks"))] use itertools::multizip;
+use itertools::multizip;
 use nix::{Error, errno};
 use std::{
     cell::RefCell,
@@ -11,7 +11,10 @@ use std::{
     rc::Rc,
     ops::Range
 };
-#[cfg(not(test))] use std::path::Path;
+#[cfg(not(test))] use std::{
+    num::NonZeroU64,
+    path::Path
+};
 use uuid::Uuid;
 
 pub type ClusterFut = Future<Item = (), Error = Error>;
@@ -500,7 +503,7 @@ impl<'a> Cluster {
     pub fn create<P: AsRef<Path>>(chunksize: LbaT,
                                   num_disks: i16,
                                   disks_per_stripe: i16,
-                                  lbas_per_zone: Option<LbaT>,
+                                  lbas_per_zone: Option<NonZeroU64>,
                                   redundancy: i16,
                                   paths: &[P]) -> Self
     {
