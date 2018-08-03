@@ -32,20 +32,23 @@ use common::cache_mock::CacheMock as Cache;
 /// Only exists so mockers can replace Pool
 pub trait PoolTrait {
     fn allocated(&self) -> LbaT;
-    fn free(&self, pba: PBA, length: LbaT) -> Box<Future<Item=(), Error=Error>>;
+    fn free(&self, pba: PBA, length: LbaT)
+        -> Box<Future<Item=(), Error=Error> + Send>;
     fn list_closed_zones(&self)
-        -> Box<Stream<Item=ClosedZone, Error=Error>>;
+        -> Box<Stream<Item=ClosedZone, Error=Error> + Send>;
     fn name(&self) -> &str;
-    fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut>;
+    fn read(&self, buf: IoVecMut, pba: PBA)
+        -> Box<Future<Item=(), Error=Error> + Send>;
     fn size(&self) -> LbaT;
-    fn sync_all(&self) -> Box<PoolFut>;
+    fn sync_all(&self) -> Box<Future<Item=(), Error=Error> + Send>;
     fn uuid(&self) -> Uuid;
     fn write(&self, buf: IoVec, txg: TxgT)
-        -> Box<Future<Item=PBA, Error=Error>>;
-    fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
+        -> Box<Future<Item=PBA, Error=Error> + Send>;
+    fn write_label(&self, labeller: LabelWriter)
+        -> Box<Future<Item=(), Error=Error> + Send>;
 }
 #[cfg(test)]
-pub type PoolLike = Box<PoolTrait>;
+pub type PoolLike = Box<PoolTrait + Send + Sync>;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type PoolLike = Pool;
@@ -137,7 +140,7 @@ impl<'a> DDML {
 
     /// Get directly from disk, bypassing cache
     pub fn get_direct<T: Cacheable>(&'a self, drp: &DRP)
-        -> impl Future<Item=Box<T>, Error=Error> +'a
+        -> impl Future<Item=Box<T>, Error=Error> + 'a
     {
         self.read(*drp).map(move |dbs| {
             Box::new(T::deserialize(dbs))
@@ -154,7 +157,7 @@ impl<'a> DDML {
     // XXX This method should return impl Trait instead, but that triggers a
     // compiler error with Rustc 1.26.1 and 1.28.0-nightly-2018-06-01
     fn read(&'a self, drp: DRP)
-        -> Box<Future<Item=DivBufShared, Error=Error> + 'a> {
+        -> Box<Future<Item=DivBufShared, Error=Error> + Send + 'a> {
 
         // Outline
         // 1) Read
@@ -303,7 +306,7 @@ impl DML for DDML {
     type Addr = DRP;
 
     fn delete<'a>(&'a self, drp: &DRP, _txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> +'a>
+        -> Box<Future<Item=(), Error=Error> + Send + 'a>
     {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
         Box::new(self.pool.free(drp.pba, drp.asize()))
@@ -314,16 +317,15 @@ impl DML for DDML {
     }
 
     fn get<'a, T: Cacheable, R: CacheRef>(&'a self, drp: &DRP)
-        -> Box<Future<Item=Box<R>, Error=Error> + 'a> {
+        -> Box<Future<Item=Box<R>, Error=Error> + Send + 'a> {
 
         // Outline:
         // 1) Fetch from cache, or
         // 2) Read from disk, then insert into cache
         let pba = drp.pba;
         self.cache.lock().unwrap().get::<R>(&Key::PBA(pba)).map(|t| {
-            let r : Box<Future<Item=Box<R>, Error=Error>> =
-            Box::new(future::ok::<Box<R>, Error>(t));
-            r
+            Box::new(future::ok::<Box<R>, Error>(t))
+                as Box<Future<Item=Box<R>, Error=Error> + Send>
         }).unwrap_or_else(|| {
             Box::new(
                 self.get_direct(drp).map(move |cacheable: Box<T>| {
@@ -336,24 +338,24 @@ impl DML for DDML {
     }
 
     fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, drp: &DRP, _txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + 'a> {
+        -> Box<Future<Item=Box<T>, Error=Error> + Send + 'a> {
 
         let lbas = drp.asize();
         let pba = drp.pba;
         self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|cacheable| {
             let t = cacheable.downcast::<T>().unwrap();
             Box::new(self.pool.free(pba, lbas).map(|_| t))
-                as Box<Future<Item=Box<T>, Error=Error>>
+                as Box<Future<Item=Box<T>, Error=Error> + Send>
         }).unwrap_or_else(|| {
             Box::new(
                 self.pop_direct::<T>(drp)
-            ) as Box<Future<Item=Box<T>, Error=Error>>
+            ) as Box<Future<Item=Box<T>, Error=Error> + Send>
         })
     }
 
     fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<Future<Item=DRP, Error=Error> + 'a>
+        -> Box<Future<Item=DRP, Error=Error> + Send + 'a>
     {
         let fut = self.put_common(cacheable, compression, txg)
             .map(move |(drp, cacheable)|{
@@ -366,7 +368,7 @@ impl DML for DDML {
     }
 
     fn sync_all<'a>(&'a self, _txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + 'a>
+        -> Box<Future<Item=(), Error=Error> + Send + 'a>
     {
         Box::new(self.pool.sync_all())
     }
@@ -394,18 +396,20 @@ mod t {
         trait PoolTrait {
             fn allocated(&self) -> LbaT;
             fn free(&self, pba: PBA, length: LbaT)
-                -> Box<Future<Item=(), Error=Error>>;
+                -> Box<Future<Item=(), Error=Error> + Send>;
             fn list_closed_zones(&self)
-                -> Box<Stream<Item=ClosedZone, Error=Error>>;
+                -> Box<Stream<Item=ClosedZone, Error=Error> + Send>;
             fn name(&self) -> &str;
-            fn read(&self, buf: IoVecMut, pba: PBA) -> Box<PoolFut<'static>>;
+            fn read(&self, buf: IoVecMut, pba: PBA)
+                -> Box<Future<Item=(), Error=Error> + Send>;
             fn size(&self) -> LbaT;
-            fn sync_all(&self) -> Box<PoolFut<'static>>;
+            fn sync_all(&self)
+                -> Box<Future<Item=(), Error=Error> + Send>;
             fn uuid(&self) -> Uuid;
             fn write(&self, buf: IoVec, txg: TxgT)
-                -> Box<Future<Item=PBA, Error=Error>>;
+                -> Box<Future<Item=PBA, Error=Error> + Send>;
             fn write_label(&self, mut labeller: LabelWriter)
-                -> Box<PoolFut>;
+                -> Box<Future<Item=(), Error=Error> + Send>;
         }
     }
 

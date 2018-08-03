@@ -272,7 +272,8 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     pub fn xlock<'a, D: DML<Addr=A>>(mut self, dml: &'a D, child_idx: usize,
                                      txg: TxgT)
         -> (Box<Future<Item=(TreeWriteGuard<A, K, V>,
-                             TreeWriteGuard<A, K, V>), Error=Error> + 'a>)
+                             TreeWriteGuard<A, K, V>),
+                       Error=Error> + Send + 'a>)
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
         if self.as_int().children[child_idx].ptr.is_mem() {
@@ -366,7 +367,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
 
     /// Lock nonexclusively
     pub fn rlock<'a, D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: &'a D)
-        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
+        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + Send + 'a>
     {
         match self.ptr {
             TreePtr::Mem(ref node) => {

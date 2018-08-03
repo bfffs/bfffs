@@ -59,30 +59,30 @@ impl Default for Compression {
 ///
 /// A DML handles reading and writing records with cacheing.  It also handles
 /// compression and checksumming.
-pub trait DML {
+pub trait DML: Send + Sync {
     type Addr;
 
     /// Delete the record from the cache, and free its storage space.
     fn delete<'a>(&'a self, addr: &Self::Addr, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + 'a>;
+        -> Box<Future<Item=(), Error=Error> + Send + 'a>;
 
     /// If the given record is present in the cache, evict it.
     fn evict(&self, addr: &Self::Addr);
 
     /// Read a record and return a shared reference
     fn get<'a, T: Cacheable, R: CacheRef>(&'a self, addr: &Self::Addr)
-        -> Box<Future<Item=Box<R>, Error=Error> + 'a>;
+        -> Box<Future<Item=Box<R>, Error=Error> + Send + 'a>;
 
     /// Read a record and return ownership of it.
     fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr, txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + 'a>;
+        -> Box<Future<Item=Box<T>, Error=Error> + Send + 'a>;
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<Future<Item=Self::Addr, Error=Error> + 'a>;
+        -> Box<Future<Item=Self::Addr, Error=Error> + Send + 'a>;
 
     /// Sync all records written so far to stable storage.
     fn sync_all<'a>(&'a self, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + 'a>;
+        -> Box<Future<Item=(), Error=Error> + Send + 'a>;
 }

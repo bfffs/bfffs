@@ -48,7 +48,7 @@ pub trait Cacheable: Any + Debug + Send + Sync {
 downcast!(Cacheable);
 
 /// Types that implement `CacheRef` are read-only handles to cached objects.
-pub trait CacheRef: Any {
+pub trait CacheRef: Any + Send {
     /// Deserialize a buffer into the kind of `Cacheable` that's associated with
     /// this `CacheRef`.  Will panic if deserialization fails.
     fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized;

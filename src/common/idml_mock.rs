@@ -120,7 +120,7 @@ impl DML for IDMLMock {
     type Addr = RID;
 
     fn delete(&self, rid: &RID, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error>>
+        -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const RID, TxgT),
             Box<Future<Item=(), Error=Error>>>
@@ -132,14 +132,15 @@ impl DML for IDMLMock {
     }
 
     fn get<T: Cacheable, R: CacheRef>(&self, rid: &RID)
-        -> Box<Future<Item=Box<R>, Error=Error>> {
+        -> Box<Future<Item=Box<R>, Error=Error> + Send>
+    {
         self.e.was_called_returning::<*const RID,
             Box<Future<Item=Box<R>, Error=Error>>>
             ("get", rid as *const RID)
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, rid: &RID, txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error>>
+        -> Box<Future<Item=Box<T>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const RID, TxgT),
             Box<Future<Item=Box<T>, Error=Error>>>
@@ -148,14 +149,14 @@ impl DML for IDMLMock {
 
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                          txg:TxgT)
-        -> Box<Future<Item=RID, Error=Error>>
+        -> Box<Future<Item=RID, Error=Error> + Send>
     {
         self.e.was_called_returning::<(T, Compression, TxgT),
                                       Box<Future<Item=RID, Error=Error>>>
             ("put", (cacheable, compression, txg))
     }
 
-    fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error>> {
+    fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error> + Send> {
         self.e.was_called_returning::<TxgT, Box<Future<Item=(), Error=Error>>>
             ("sync_all", txg)
     }

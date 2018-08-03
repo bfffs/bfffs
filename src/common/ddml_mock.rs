@@ -160,7 +160,7 @@ impl DML for DDMLMock {
     type Addr = DRP;
 
     fn delete(&self, drp: &DRP, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error>>
+        -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const DRP, TxgT),
             Box<Future<Item=(), Error=Error>>>
@@ -172,14 +172,15 @@ impl DML for DDMLMock {
     }
 
     fn get<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<R>, Error=Error>> {
+        -> Box<Future<Item=Box<R>, Error=Error> + Send>
+    {
         self.e.was_called_returning::<*const DRP,
             Box<Future<Item=Box<R>, Error=Error>>>
             ("get", drp as *const DRP)
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP, txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error>>
+        -> Box<Future<Item=Box<T>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const DRP, TxgT),
             Box<Future<Item=Box<T>, Error=Error>>>
@@ -188,14 +189,15 @@ impl DML for DDMLMock {
 
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                          txg:TxgT)
-        -> Box<Future<Item=DRP, Error=Error>>
+        -> Box<Future<Item=DRP, Error=Error> + Send>
     {
         self.e.was_called_returning::<(T, Compression, TxgT),
                                       (Box<Future<Item=DRP, Error=Error>>)>
             ("put", (cacheable, compression, txg))
     }
 
-    fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error>> {
+    fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error> + Send>
+    {
         self.e.was_called_returning::<TxgT, Box<Future<Item=(), Error=Error>>>
             ("sync_all", txg)
     }

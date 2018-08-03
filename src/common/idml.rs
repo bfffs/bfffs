@@ -238,7 +238,7 @@ impl DML for IDML {
     type Addr = RID;
 
     fn delete<'a>(&'a self, ridp: &Self::Addr, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + 'a>
+        -> Box<Future<Item=(), Error=Error> + Send + 'a>
     {
         let rid = *ridp;
         let fut = self.ridt.get(rid)
@@ -260,12 +260,12 @@ impl DML for IDML {
                              .map(|(_, old_rid, _old_ridt_entry)| {
                                  assert!(old_rid.is_some());
                              })
-                     ) as Box<Future<Item=(), Error=Error>>
+                     ) as Box<Future<Item=(), Error=Error> + Send>
                 } else {
                     let ridt_fut = self.ridt.insert(rid, entry, txg)
                         .map(|_| ());
                     Box::new(ridt_fut)
-                    as Box<Future<Item=(), Error=Error>>
+                    as Box<Future<Item=(), Error=Error> + Send>
                 }
             });
         Box::new(fut)
@@ -276,13 +276,12 @@ impl DML for IDML {
     }
 
     fn get<'a, T: Cacheable, R: CacheRef>(&'a self, ridp: &Self::Addr)
-        -> Box<Future<Item=Box<R>, Error=Error> + 'a>
+        -> Box<Future<Item=Box<R>, Error=Error> + Send + 'a>
     {
         let rid = *ridp;
         self.cache.lock().unwrap().get::<R>(&Key::Rid(rid)).map(|t| {
-            let r : Box<Future<Item=Box<R>, Error=Error>> =
-            Box::new(future::ok::<Box<R>, Error>(t));
-            r
+            Box::new(future::ok::<Box<R>, Error>(t))
+                as Box<Future<Item=Box<R>, Error=Error> + Send>
         }).unwrap_or_else(|| {
             let fut = self.ridt.get(rid)
                 .and_then(|r| {
@@ -304,7 +303,7 @@ impl DML for IDML {
 
     fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, ridp: &Self::Addr,
                                           txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + 'a>
+        -> Box<Future<Item=Box<T>, Error=Error> + Send + 'a>
     {
         let rid = *ridp;
         let fut = self.ridt.get(rid)
@@ -318,15 +317,15 @@ impl DML for IDML {
                 if entry.refcount == 0 {
                     let cacheval = self.cache.lock().unwrap()
                         .remove(&Key::Rid(rid));
-                    let bfut: Box<Future<Item=Box<T>, Error=Error>> = cacheval
+                    let bfut = cacheval
                         .map(|cacheable| {
                             let t = cacheable.downcast::<T>().unwrap();
                             Box::new(self.ddml.delete(&entry.drp, txg)
                                               .map(move |_| t)
-                            ) as Box<Future<Item=Box<T>, Error=Error>>
+                            ) as Box<Future<Item=Box<T>, Error=Error> + Send>
                         }).unwrap_or_else(||{
                             Box::new(self.ddml.pop_direct::<T>(&entry.drp))
-                        });
+                        }) as Box<Future<Item=Box<T>, Error=Error> + Send>;
                     let alloct_fut = self.alloct.remove(entry.drp.pba(), txg);
                     let ridt_fut = self.ridt.remove(rid, txg);
                     Box::new(
@@ -335,14 +334,14 @@ impl DML for IDML {
                                  assert!(old_rid.is_some());
                                  cacheable
                              })
-                     ) as Box<Future<Item=Box<T>, Error=Error>>
+                     ) as Box<Future<Item=Box<T>, Error=Error> + Send>
                 } else {
                     let cacheval = self.cache.lock().unwrap()
                         .get::<R>(&Key::Rid(rid));
                     let bfut = cacheval.map(|cacheref: Box<R>|{
                         let t = cacheref.to_owned().downcast::<T>().unwrap();
                         Box::new(future::ok(t))
-                            as Box<Future<Item=Box<T>, Error=Error>>
+                            as Box<Future<Item=Box<T>, Error=Error> + Send>
                     }).unwrap_or_else(|| {
                         Box::new(self.ddml.get_direct::<T>(&entry.drp))
                     });
@@ -352,7 +351,7 @@ impl DML for IDML {
                             .map(|(cacheable, _)| {
                                 cacheable
                             })
-                    ) as Box<Future<Item=Box<T>, Error=Error>>
+                    ) as Box<Future<Item=Box<T>, Error=Error> + Send>
                 }
             });
         Box::new(fut)
@@ -360,7 +359,7 @@ impl DML for IDML {
 
     fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<Future<Item=Self::Addr, Error=Error> + 'a>
+        -> Box<Future<Item=Self::Addr, Error=Error> + Send + 'a>
     {
         // Outline:
         // 1) Write to the DDML
@@ -388,7 +387,7 @@ impl DML for IDML {
     }
 
     fn sync_all<'a>(&'a self, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + 'a>
+        -> Box<Future<Item=(), Error=Error> + Send + 'a>
     {
         let fut = self.ridt.flush(txg)
             .join(self.alloct.flush(txg))

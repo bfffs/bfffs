@@ -484,7 +484,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     fn insert_int(&'a self, mut parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize,
                   mut child: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a> {
+        -> Box<Future<Item=Option<V>, Error=Error> + Send + 'a> {
 
         // First, split the node, if necessary
         if (*child).should_split(self.i.max_fanout) {
@@ -517,7 +517,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     /// Helper for `insert`.  Handles insertion once the tree is locked
     fn insert_locked(&'a self, mut relem: RwLockWriteGuard<IntElem<A, K, V>>,
                      mut rnode: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+        -> Box<Future<Item=Option<V>, Error=Error> + Send + 'a>
     {
         // First, split the root node, if necessary
         if rnode.should_split(self.i.max_fanout) {
@@ -563,7 +563,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
 
     /// Lookup the value of key `k` in a node, which must already be locked.
     fn get_r(&'a self, node: TreeReadGuard<A, K, V>, k: K)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+        -> Box<Future<Item=Option<V>, Error=Error> + Send + 'a>
     {
 
         let next_node_fut = match *node {
@@ -1018,7 +1018,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
 
     /// Remove and return the value at key `k`, if any.
     pub fn remove(&'a self, k: K, txg: TxgT)
-        -> impl Future<Item=Option<V>, Error=Error> + 'a
+        -> impl Future<Item=Option<V>, Error=Error> + Send + 'a
     {
         self.write()
             .and_then(move |guard| {
@@ -1034,7 +1034,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     fn remove_int(&'a self, parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, child: TreeWriteGuard<A, K, V>, k: K,
                   txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+        -> Box<Future<Item=Option<V>, Error=Error> + Send + 'a>
     {
         // First, fix the node, if necessary
         if child.underflow(self.i.min_fanout) {
@@ -1057,7 +1057,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     /// Helper for `remove`.  Handles removal once the tree is locked
     fn remove_locked(&'a self, mut root: TreeWriteGuard<A, K, V>, k: K,
                      txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+        -> Box<Future<Item=Option<V>, Error=Error> + Send + 'a>
     {
         self.merge_root(&mut root);
         self.remove_no_fix(root, k, txg)
@@ -1066,7 +1066,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     /// Remove key `k` from a node, but don't try to fixup the node.
     fn remove_no_fix(&'a self, mut node: TreeWriteGuard<A, K, V>, k: K,
                      txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + 'a>
+        -> Box<Future<Item=Option<V>, Error=Error> + Send + 'a>
     {
 
         if node.is_leaf() {
@@ -1117,7 +1117,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                             })
                     )
                 });
-                Box::new(fut) as Box<Future<Item=(), Error=Error>>
+                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
             } else {
                 Box::new(future::ok::<(), Error>(()))
             }
@@ -1133,7 +1133,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     fn flush_r(&'a self, mut node: Box<Node<A, K, V>>, txg: TxgT)
-        -> Box<Future<Item=(D::Addr, Range<TxgT>), Error=Error> + 'a>
+        -> Box<Future<Item=(D::Addr, Range<TxgT>), Error=Error> + Send + 'a>
     {
         if node.0.get_mut().unwrap().is_leaf() {
             let fut = self.write_leaf(node, txg)
@@ -1165,10 +1165,11 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 }).map(move |(addr, txgs)| {
                     IntElem::new(key, txgs, TreePtr::Addr(addr))
                 });
-                Box::new(fut) as Box<Future<Item=IntElem<A, K, V>, Error=Error>>
+                Box::new(fut)
+                    as Box<Future<Item=IntElem<A, K, V>, Error=Error> + Send>
             } else { // LCOV_EXCL_LINE kcov false negative
                 Box::new(future::ok(elem))
-                    as Box<Future<Item=IntElem<A, K, V>, Error=Error>>
+                    as Box<Future<Item=IntElem<A, K, V>, Error=Error> + Send>
             }
         })
         .collect::<Vec<_>>();
@@ -1207,7 +1208,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     fn xlock_root(&'a self, mut guard: RwLockWriteGuard<IntElem<A, K, V>>,
                   txg: TxgT)
         -> (Box<Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
-                             TreeWriteGuard<A, K, V>), Error=Error> + 'a>)
+                             TreeWriteGuard<A, K, V>), Error=Error> + Send + 'a>)
     {
         guard.txgs.end = txg + 1;
         if guard.ptr.is_mem() {
