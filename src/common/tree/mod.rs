@@ -28,7 +28,6 @@ use std::{
     collections::VecDeque,
     fmt::Debug,
     mem,
-    rc::Rc,
     ops::{Bound, DerefMut, Range, RangeBounds},
     sync::{
         Arc,
@@ -1143,61 +1142,45 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 });
             return Box::new(fut);
         }
-        let ndata = node.0.try_write().unwrap();
+        let mut ndata = node.0.try_write().unwrap();
 
-        // Rust's borrow checker doesn't understand that children_fut will
-        // complete before its continuation will run, so it won't let ndata
-        // be borrowed in both places.  So we'll have to use RefCell to allow
-        // dynamic borrowing and Rc to allow moving into both closures.
-        let rndata = Rc::new(RefCell::new(ndata));
-        let nchildren = RefCell::borrow(&Rc::borrow(&rndata)).as_int().nchildren();
-        let children_fut = (0..nchildren)
-        .map(move |idx| {
-            let rndata3 = rndata.clone();
-            if rndata.borrow_mut()
-                     .as_int_mut()
-                     .children[idx].is_dirty()
+        // We need to flush each dirty child, rewrite its TreePtr, and update
+        // the Node's txg range.  Satisfying the borrow checker requires that
+        // xlock's continuation have ownership over the child IntElem.  So we
+        // need to deconstruct the entire NodeData.children vector and
+        // reassemble it after the join_all
+        let children_fut = ndata.as_int_mut().children.drain(..)
+        .map(move |mut elem| {
+            if elem.is_dirty()
             {
                 // If the child is dirty, then we have ownership over it.  We
                 // need to lock it, then release the lock.  Then we'll know that
                 // we have exclusive access to it, and we can move it into the
                 // Cache.
-                let fut = rndata.borrow_mut()
-                                .as_int_mut()
-                                .children[idx]
-                                .ptr
-                                .as_mem()
-                                .xlock()
-                                .and_then(move |guard|
+                let key = elem.key;
+                let fut = elem.ptr.as_mem().xlock().and_then(move |guard|
                 {
                     drop(guard);
-
-                    let ptr = mem::replace(&mut rndata3.borrow_mut()
-                                                       .as_int_mut()
-                                                       .children[idx].ptr,
-                                           TreePtr::None);
-                    self.flush_r(ptr.into_node(), txg)
-                        .map(move |(addr, txgs)| {
-                            let mut borrowed = rndata3.borrow_mut();
-                            let elem = &mut borrowed.as_int_mut().children[idx];
-                            elem.ptr = TreePtr::Addr(addr);
-                            let start_txg = txgs.start;
-                            elem.txgs = txgs;
-                            start_txg
-                        })
+                    self.flush_r(elem.ptr.into_node(), txg)
+                }).map(move |(addr, txgs)| {
+                    IntElem::new(key, txgs, TreePtr::Addr(addr))
                 });
-                Box::new(fut) as Box<Future<Item=TxgT, Error=Error>>
+                Box::new(fut) as Box<Future<Item=IntElem<A, K, V>, Error=Error>>
             } else { // LCOV_EXCL_LINE kcov false negative
-                let borrowed = RefCell::borrow(&rndata3);
-                let txg = borrowed.as_int().children[idx].txgs.start;
-                Box::new(future::ok(txg)) as Box<Future<Item=TxgT, Error=Error>>
+                Box::new(future::ok(elem))
+                    as Box<Future<Item=IntElem<A, K, V>, Error=Error>>
             }
         })
         .collect::<Vec<_>>();
         Box::new(
             future::join_all(children_fut)
-            .and_then(move |txgs| {
-                let start_txg = *txgs.iter().min().unwrap();
+            .and_then(move |elems| {
+                let start_txg = elems.iter()
+                    .map(|e| e.txgs.start)
+                    .min()
+                    .unwrap();
+                ndata.as_int_mut().children = elems;
+                drop(ndata);
                 let arc: Arc<Node<A, K, V>> = Arc::new(*node);
                 self.dml.put(arc, Compression::None, txg)
                     .map(move |addr| (addr, start_txg..txg + 1))
