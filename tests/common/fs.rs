@@ -32,7 +32,7 @@ test_suite! {
         setup(&mut self) {
             let mut rt = Runtime::new();
             let len = 1 << 30;  // 1GB
-            let tempdir = t!(TempDir::new("test_vdev_file_basic"));
+            let tempdir = t!(TempDir::new("test_fs"));
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
