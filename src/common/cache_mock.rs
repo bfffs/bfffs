@@ -51,4 +51,9 @@ impl CacheMock {
         self
     }
 }
+
+// XXX totally unsafe!  But Simulacrum doesn't support mocking Send traits.  So
+// we have to cheat.  This works as long as CacheMock is only used in
+// single-threaded unit tests.
+unsafe impl Send for CacheMock {}
 // LCOV_EXCL_STOP

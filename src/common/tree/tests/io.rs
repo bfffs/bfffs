@@ -248,6 +248,11 @@ fn range_leaf() {
         }
     }
 
+    // XXX totally unsafe!  But Simulacrum doesn't support mocking Send traits.
+    // So we have to cheat.  This works as long as FutureMock is only used in
+    // single-threaded unit tests.
+    unsafe impl Send for FutureMock {}
+
     let mut mock = DDMLMock::new();
     let mut ld1 = LeafData::new();
     ld1.insert(0, 0.0);

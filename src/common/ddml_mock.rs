@@ -29,101 +29,106 @@ impl DDMLMock {
     }
 
     pub fn expect_delete(&mut self) -> Method<(*const DRP, TxgT),
-        Box<Future<Item=(), Error=Error>>>
+        Box<Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<(*const DRP, TxgT),
-            Box<Future<Item=(), Error=Error>>>
+            Box<Future<Item=(), Error=Error> + Send>>
             ("delete")
     }
 
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<R>, Error=Error>>>
+        Box<Future<Item=Box<R>, Error=Error> + Send>>
     {
-        self.e.expect::<*const DRP, Box<Future<Item=Box<R>, Error=Error>>>
+        self.e.expect::<*const DRP,
+                        Box<Future<Item=Box<R>, Error=Error> + Send>>
             ("get")
     }
 
     pub fn expect_pop<T: Cacheable, R:CacheRef>(&mut self)
-        -> Method<(*const DRP, TxgT), Box<Future<Item=Box<T>, Error=Error>>>
+        -> Method<(*const DRP, TxgT),
+                  Box<Future<Item=Box<T>, Error=Error> + Send>>
     {
         self.e.expect::<(*const DRP, TxgT),
-                        Box<Future<Item=Box<T>, Error=Error>>>
+                        Box<Future<Item=Box<T>, Error=Error> + Send>>
             ("pop")
     }
 
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
-        Box<Future<Item=DRP, Error=Error>>>
+        Box<Future<Item=DRP, Error=Error> + Send>>
     {
         self.e.expect::<(T, Compression, TxgT),
-                        Box<Future<Item=DRP, Error=Error>>>
+                        Box<Future<Item=DRP, Error=Error> + Send>>
             ("put")
     }
 
     pub fn expect_sync_all(&mut self)
-        -> Method<TxgT, Box<Future<Item=(), Error=Error>>>
+        -> Method<TxgT, Box<Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<TxgT, Box<Future<Item=(), Error=Error>>>("sync_all")
+        self.e.expect::<TxgT,
+                        Box<Future<Item=(), Error=Error> + Send>>("sync_all")
     }
 
     pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error>> {
+        -> Box<Future<Item=Box<T>, Error=Error> + Send> {
         self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<T>, Error=Error>>>
+            Box<Future<Item=Box<T>, Error=Error> + Send>>
             ("get_direct", drp as *const DRP)
     }
 
     pub fn expect_get_direct<T: Cacheable>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<T>, Error=Error>>>
+        Box<Future<Item=Box<T>, Error=Error> + Send>>
     {
-        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
+        self.e.expect::<*const DRP,
+                        Box<Future<Item=Box<T>, Error=Error> + Send>>
             ("get_direct")
     }
 
     pub fn list_closed_zones(&self)
-        -> Box<Stream<Item=ClosedZone, Error=Error>>
+        -> Box<Stream<Item=ClosedZone, Error=Error> + Send>
     {
         self.e.was_called_returning::<(),
-            Box<Stream<Item=ClosedZone, Error=Error>>>
+            Box<Stream<Item=ClosedZone, Error=Error> + Send>>
             ("list_closed_zones", ())
     }
 
     pub fn expect_list_closed_zones(&mut self)
-        -> Method<(), Box<Stream<Item=ClosedZone, Error=Error>>>
+        -> Method<(), Box<Stream<Item=ClosedZone, Error=Error> + Send>>
     {
-        self.e.expect::<(), Box<Stream<Item=ClosedZone, Error=Error>>>
+        self.e.expect::<(), Box<Stream<Item=ClosedZone, Error=Error> + Send>>
             ("list_closed_zones")
     }
 
     pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error>>
+        -> Box<Future<Item=Box<T>, Error=Error> + Send>
     {
         self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<T>, Error=Error>>>
+            Box<Future<Item=Box<T>, Error=Error> + Send>>
             ("pop_direct", drp as *const DRP)
     }
 
     pub fn expect_pop_direct<T: Cacheable>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<T>, Error=Error>>>
+        Box<Future<Item=Box<T>, Error=Error> + Send>>
     {
-        self.e.expect::<*const DRP, Box<Future<Item=Box<T>, Error=Error>>>
+        self.e.expect::<*const DRP,
+                        Box<Future<Item=Box<T>, Error=Error> + Send>>
             ("pop_direct")
     }
 
     pub fn put_direct<T: Cacheable>(&self, cacheable: T,
                                     compression: Compression, txg: TxgT)
-        -> Box<Future<Item=(DRP, T), Error=Error>>
+        -> Box<Future<Item=(DRP, T), Error=Error> + Send>
     {
         self.e.was_called_returning::<(T, Compression, TxgT),
-                                      Box<Future<Item=(DRP, T), Error=Error>>>
+            Box<Future<Item=(DRP, T), Error=Error> + Send>>
             ("put_direct", (cacheable, compression, txg))
     }
 
     pub fn expect_put_direct<T: Cacheable>(&mut self)
         -> Method<(T, Compression, TxgT),
-        Box<Future<Item=(DRP, T), Error=Error>>>
+        Box<Future<Item=(DRP, T), Error=Error> + Send>>
     {
         self.e.expect::<(T, Compression, TxgT),
-                        Box<Future<Item=(DRP, T), Error=Error>>>
+                        Box<Future<Item=(DRP, T), Error=Error> + Send>>
             ("put_direct")
     }
 
@@ -141,17 +146,17 @@ impl DDMLMock {
     }
 
     pub fn write_label(&self, labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         self.e.was_called_returning::<LabelWriter,
-                                      Box<Future<Item=(), Error=Error>>>
+                                      Box<Future<Item=(), Error=Error> + Send>>
             ("write_label", labeller)
     }
 
     pub fn expect_write_label(&mut self)
-        -> Method<LabelWriter, Box<Future<Item=(), Error=Error>>>
+        -> Method<LabelWriter, Box<Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<LabelWriter, Box<Future<Item=(), Error=Error>>>
+        self.e.expect::<LabelWriter, Box<Future<Item=(), Error=Error> + Send>>
             ("write_label")
     }
 }
@@ -163,7 +168,7 @@ impl DML for DDMLMock {
         -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const DRP, TxgT),
-            Box<Future<Item=(), Error=Error>>>
+            Box<Future<Item=(), Error=Error> + Send>>
             ("delete", (drp as *const DRP, txg))
     }
 
@@ -175,7 +180,7 @@ impl DML for DDMLMock {
         -> Box<Future<Item=Box<R>, Error=Error> + Send>
     {
         self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<R>, Error=Error>>>
+            Box<Future<Item=Box<R>, Error=Error> + Send>>
             ("get", drp as *const DRP)
     }
 
@@ -183,7 +188,7 @@ impl DML for DDMLMock {
         -> Box<Future<Item=Box<T>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const DRP, TxgT),
-            Box<Future<Item=Box<T>, Error=Error>>>
+            Box<Future<Item=Box<T>, Error=Error> + Send>>
             ("pop", (drp as *const DRP, txg))
     }
 
@@ -192,14 +197,21 @@ impl DML for DDMLMock {
         -> Box<Future<Item=DRP, Error=Error> + Send>
     {
         self.e.was_called_returning::<(T, Compression, TxgT),
-                                      (Box<Future<Item=DRP, Error=Error>>)>
+            (Box<Future<Item=DRP, Error=Error> + Send>)>
             ("put", (cacheable, compression, txg))
     }
 
     fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error> + Send>
     {
-        self.e.was_called_returning::<TxgT, Box<Future<Item=(), Error=Error>>>
+        self.e.was_called_returning::<TxgT,
+                                      Box<Future<Item=(), Error=Error> + Send>>
             ("sync_all", txg)
     }
 }
+
+// XXX totally unsafe!  But Simulacrum doesn't support mocking Send traits.  So
+// we have to cheat.  This works as long as DDMLMock is only used in
+// single-threaded unit tests.
+unsafe impl Send for DDMLMock {}
+unsafe impl Sync for DDMLMock {}
 // LCOV_EXCL_STOP

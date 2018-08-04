@@ -9,8 +9,8 @@ use common::{
     *,
     cache::{Cacheable, CacheRef, Key},
     label::*,
-    pool::*
 };
+#[cfg(not(test))] use common::pool::*;
 use futures::{Future, Stream, future};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
@@ -47,8 +47,73 @@ pub trait PoolTrait {
     fn write_label(&self, labeller: LabelWriter)
         -> Box<Future<Item=(), Error=Error> + Send>;
 }
+
+/// Part of an ugly hack for mocking a Send trait
 #[cfg(test)]
-pub type PoolLike = Box<PoolTrait + Send + Sync>;
+pub struct MockPoolWrapper(Box<PoolTrait>);
+//#[cfg(test)]
+//impl MockPoolWrapper {
+    //#[cfg(test)]
+    //fn new(pool: Box<PoolTrait>) -> Self {
+        //MockPoolWrapper(pool)
+    //}
+//}
+#[cfg(test)]
+impl PoolTrait for MockPoolWrapper {
+    fn allocated(&self) -> LbaT {
+        self.0.allocated()
+    }
+    fn free(&self, pba: PBA, length: LbaT)
+        -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        self.0.free(pba, length)
+    }
+    fn list_closed_zones(&self)
+        -> Box<Stream<Item=ClosedZone, Error=Error> + Send>
+    {
+        self.0.list_closed_zones()
+    }
+    fn name(&self) -> &str {
+        self.0.name()
+    }
+    fn read(&self, buf: IoVecMut, pba: PBA)
+        -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        self.0.read(buf, pba)
+    }
+    fn size(&self) -> LbaT {
+        self.0.size()
+    }
+    fn sync_all(&self)
+        -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        self.0.sync_all()
+    }
+    fn uuid(&self) -> Uuid {
+        self.0.uuid()
+    }
+    fn write(&self, buf: IoVec, txg: TxgT)
+        -> Box<Future<Item=PBA, Error=Error> + Send>
+    {
+        self.0.write(buf, txg)
+    }
+    fn write_label(&self, labeller: LabelWriter)
+        -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        self.0.write_label(labeller)
+    }
+}
+
+// XXX totally unsafe!  But Mockers doesn't support mocking Send traits.  So
+// we have to cheat.  This works as long as MockPoolWrapper is only used in
+// single-threaded unit tests.
+#[cfg(test)]
+unsafe impl Send for MockPoolWrapper {}
+#[cfg(test)]
+unsafe impl Sync for MockPoolWrapper {}
+
+#[cfg(test)]
+pub type PoolLike = MockPoolWrapper;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type PoolLike = Pool;
@@ -434,7 +499,8 @@ mod t {
         s.expect(pool.free_call(pba, 1)
             .and_return(Box::new(Ok(()).into_future())));
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             ddml.delete(&drp, TxgT::from(0))
         })).unwrap();
@@ -454,8 +520,9 @@ mod t {
                 unsafe {**key == Key::PBA(pba2)}
             })).returning(|_| None);
         let pool = s.create_mock::<MockPool>();
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         ddml.evict(&drp);
     }
 
@@ -471,7 +538,8 @@ mod t {
             dbm.len() == 4096
         }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             ddml.get_direct::<DivBufShared>(&drp)
         })).unwrap();
@@ -495,7 +563,8 @@ mod t {
                 Some(Box::new(dbs.try().unwrap()))
             });
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         ddml.get::<DivBufShared, DivBuf>(&drp);
     }
 
@@ -528,7 +597,8 @@ mod t {
                 owned_by_cache2.borrow_mut().push(dbs);
             });
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             ddml.get::<DivBufShared, DivBuf>(&drp)
         })).unwrap();
@@ -552,7 +622,8 @@ mod t {
             dbm.len() == 4096
         }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         let err = rt.block_on(future::lazy(|| {
             ddml.get::<DivBufShared, DivBuf>(&drp)
@@ -579,7 +650,8 @@ mod t {
         s.expect(pool.free_call(pba, 1)
             .and_return(Box::new(Ok(()).into_future())));
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0));
     }
 
@@ -604,7 +676,8 @@ mod t {
             .and_return(Box::new(Ok(()).into_future())));
         s.expect(seq);
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
         })).unwrap();
@@ -627,7 +700,8 @@ mod t {
         s.expect(pool.read_call(ANY, pba)
                    .and_return(Box::new(future::ok::<(), Error>(()))));
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         let err = rt.block_on(future::lazy(|| {
             ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
@@ -650,7 +724,8 @@ mod t {
             .and_return(Box::new(Ok(()).into_future())));
         s.expect(seq);
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             ddml.pop_direct::<DivBufShared>(&drp)
         })).unwrap();
@@ -670,7 +745,8 @@ mod t {
             .and_return(Box::new(future::ok::<PBA, Error>(pba)))
         );
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let mut rt = current_thread::Runtime::new().unwrap();
         let drp = rt.block_on(
@@ -692,7 +768,8 @@ mod t {
             .and_return(Box::new(future::ok::<PBA, Error>(pba)))
         );
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let mut rt = current_thread::Runtime::new().unwrap();
         let (drp, _cacheable) = rt.block_on(
@@ -712,7 +789,8 @@ mod t {
             .and_return(Box::new(future::ok::<(), Error>(())))
         );
 
-        let ddml = DDML::new(Box::new(pool), Arc::new(Mutex::new(cache)));
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         assert!(rt.block_on(ddml.sync_all(TxgT::from(0))).is_ok());
     }

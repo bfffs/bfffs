@@ -123,7 +123,7 @@ impl DML for IDMLMock {
         -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const RID, TxgT),
-            Box<Future<Item=(), Error=Error>>>
+            Box<Future<Item=(), Error=Error> + Send>>
             ("delete", (rid as *const RID, txg))
     }
 
@@ -135,7 +135,7 @@ impl DML for IDMLMock {
         -> Box<Future<Item=Box<R>, Error=Error> + Send>
     {
         self.e.was_called_returning::<*const RID,
-            Box<Future<Item=Box<R>, Error=Error>>>
+            Box<Future<Item=Box<R>, Error=Error> + Send>>
             ("get", rid as *const RID)
     }
 
@@ -143,7 +143,7 @@ impl DML for IDMLMock {
         -> Box<Future<Item=Box<T>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const RID, TxgT),
-            Box<Future<Item=Box<T>, Error=Error>>>
+            Box<Future<Item=Box<T>, Error=Error> + Send>>
             ("pop", (rid as *const RID, txg))
     }
 
@@ -152,13 +152,20 @@ impl DML for IDMLMock {
         -> Box<Future<Item=RID, Error=Error> + Send>
     {
         self.e.was_called_returning::<(T, Compression, TxgT),
-                                      Box<Future<Item=RID, Error=Error>>>
+                                      Box<Future<Item=RID, Error=Error> + Send>>
             ("put", (cacheable, compression, txg))
     }
 
     fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error> + Send> {
-        self.e.was_called_returning::<TxgT, Box<Future<Item=(), Error=Error>>>
+        self.e.was_called_returning::<TxgT,
+                                      Box<Future<Item=(), Error=Error> + Send>>
             ("sync_all", txg)
     }
 }
+
+// XXX totally unsafe!  But Simulacrum doesn't support mocking Send traits.  So
+// we have to cheat.  This works as long as IDMLMock is only used in
+// single-threaded unit tests.
+unsafe impl Send for IDMLMock {}
+unsafe impl Sync for IDMLMock {}
 // LCOV_EXCL_STOP
