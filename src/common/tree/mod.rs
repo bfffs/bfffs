@@ -1265,10 +1265,6 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
         // Not because we strictly need to, but because rewriting the lowest
         // levels first will modify many mid-level nodes, obliviating the need
         // to rewrite them.  It simplifies the first pass, too.
-        //
-        // TODO: Store the TXG range of each zone and the TXG range of the
-        // subtree represented by each Node.  Use that information to prune the
-        // number of Nodes that must be walked.
         let tree_height = self.i.height.load(Ordering::Relaxed) as u8;
         stream::iter_ok(0..tree_height).for_each(move|echelon| {
             CleanZonePass1::new(pbas.clone(), txgs.clone(), echelon, self)
