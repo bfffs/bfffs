@@ -362,7 +362,7 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(future::lazy(|| {
         let root_guard = tree.i.root.try_read().unwrap();
-        root_guard.rlock(&*ddml).map(|node| {
+        root_guard.rlock(ddml).map(|node| {
             let int_data = (*node).as_int();
             assert_eq!(int_data.nchildren(), 2);
             // Validate DRPs as well as possible using their public API

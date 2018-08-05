@@ -380,9 +380,9 @@ impl DML for DDML {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
     }
 
-    fn get<'a, T: Cacheable, R: CacheRef>(&'a self, drp: &DRP)
-        -> Box<Future<Item=Box<R>, Error=Error> + Send + 'a> {
-
+    fn get<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
+        -> Box<Future<Item=Box<R>, Error=Error> + Send>
+    {
         // Outline:
         // 1) Fetch from cache, or
         // 2) Read from disk, then insert into cache
@@ -391,10 +391,11 @@ impl DML for DDML {
             Box::new(future::ok::<Box<R>, Error>(t))
                 as Box<Future<Item=Box<R>, Error=Error> + Send>
         }).unwrap_or_else(|| {
+            let cache2 = self.cache.clone();
             Box::new(
                 self.get_direct(drp).map(move |cacheable: Box<T>| {
                     let r = cacheable.make_ref();
-                    self.cache.lock().unwrap().insert(Key::PBA(pba), cacheable);
+                    cache2.lock().unwrap().insert(Key::PBA(pba), cacheable);
                     r.downcast::<R>().unwrap()
                 })
             )

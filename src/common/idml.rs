@@ -275,14 +275,16 @@ impl DML for IDML {
         self.cache.lock().unwrap().remove(&Key::Rid(*rid));
     }
 
-    fn get<'a, T: Cacheable, R: CacheRef>(&'a self, ridp: &Self::Addr)
-        -> Box<Future<Item=Box<R>, Error=Error> + Send + 'a>
+    fn get<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr)
+        -> Box<Future<Item=Box<R>, Error=Error> + Send>
     {
         let rid = *ridp;
         self.cache.lock().unwrap().get::<R>(&Key::Rid(rid)).map(|t| {
             Box::new(future::ok::<Box<R>, Error>(t))
                 as Box<Future<Item=Box<R>, Error=Error> + Send>
         }).unwrap_or_else(|| {
+            let cache2 = self.cache.clone();
+            let ddml2 = self.ddml.clone();
             let fut = self.ridt.get(rid)
                 .and_then(|r| {
                     match r {
@@ -290,11 +292,11 @@ impl DML for IDML {
                         Some(entry) => Ok(entry).into_future()
                     }
                 }).and_then(move |entry| {
-                    self.ddml.get_direct(&entry.drp)
+                    ddml2.get_direct(&entry.drp)
                 }).map(move |cacheable: Box<T>| {
                     let r = cacheable.make_ref();
                     let key = Key::Rid(rid);
-                    self.cache.lock().unwrap().insert(key, cacheable);
+                    cache2.lock().unwrap().insert(key, cacheable);
                     r.downcast::<R>().unwrap()
                 });
             Box::new(fut)

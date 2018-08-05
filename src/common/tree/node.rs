@@ -366,8 +366,8 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     }
 
     /// Lock nonexclusively
-    pub fn rlock<'a, D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: &'a D)
-        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + Send + 'a>
+    pub fn rlock<D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: Arc<D>)
+        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + Send>
     {
         match self.ptr {
             TreePtr::Mem(ref node) => {

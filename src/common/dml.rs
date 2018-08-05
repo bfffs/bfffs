@@ -70,8 +70,8 @@ pub trait DML: Send + Sync {
     fn evict(&self, addr: &Self::Addr);
 
     /// Read a record and return a shared reference
-    fn get<'a, T: Cacheable, R: CacheRef>(&'a self, addr: &Self::Addr)
-        -> Box<Future<Item=Box<R>, Error=Error> + Send + 'a>;
+    fn get<T: Cacheable, R: CacheRef>(&self, addr: &Self::Addr)
+        -> Box<Future<Item=Box<R>, Error=Error> + Send>;
 
     /// Read a record and return ownership of it.
     fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr, txg: TxgT)

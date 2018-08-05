@@ -155,7 +155,7 @@ impl<'tree, A, D, K, T, V> RangeQuery<'tree, A, D, K, T, V>
 
 impl<'tree, A, D, K, T, V> Stream for RangeQuery<'tree, A, D, K, T, V>
     where A: Addr,
-          D: DML<Addr=A>,
+          D: DML<Addr=A> + 'static,
           K: Key + Borrow<T>,
           T: Ord + Clone + 'static,
           V: Value
@@ -250,7 +250,7 @@ impl<'tree, D, K, V> CleanZonePass1<'tree, D, K, V>
 }
 
 impl<'tree, D, K, V> Stream for CleanZonePass1<'tree, D, K, V>
-    where D: DML<Addr=ddml::DRP>,
+    where D: DML<Addr=ddml::DRP> + 'static,
           K: Key,
           V: Value
 {
@@ -350,8 +350,12 @@ pub struct Tree<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
     i: Inner<A, K, V>
 }
 
-impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
-
+impl<'a, A, D, K, V> Tree<A, D, K, V>
+    where A: Addr,
+          D: DML<Addr=A> + 'static,
+          K: Key,
+          V: Value
+{
     pub fn create(dml: Arc<D>) -> Self {
         Tree::new(dml,
                   4,        // BetrFS's min fanout
@@ -552,33 +556,35 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     /// Lookup the value of key `k`.  Return `None` if no value is present.
-    pub fn get(&'a self, k: K) -> impl Future<Item=Option<V>, Error=Error> + 'a
+    pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
+        let dml2 = self.dml.clone();
+        let dml3 = self.dml.clone();
         self.read()
             .and_then(move |guard| {
-                guard.rlock(&*self.dml)
-                     .and_then(move |guard| self.get_r(guard, k))
+                guard.rlock(dml2)
+                     .and_then(move |guard| Tree::get_r(dml3, guard, k))
             })
     }
 
     /// Lookup the value of key `k` in a node, which must already be locked.
-    fn get_r(&'a self, node: TreeReadGuard<A, K, V>, k: K)
-        -> Box<Future<Item=Option<V>, Error=Error> + Send + 'a>
+    fn get_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>, k: K)
+        -> Box<Future<Item=Option<V>, Error=Error> + Send>
     {
-
+        let dml2 = dml.clone();
         let next_node_fut = match *node {
             NodeData::Leaf(ref leaf) => {
                 return Box::new(Ok(leaf.get(&k)).into_future())
             },
             NodeData::Int(ref int) => {
                 let child_elem = &int.children[int.position(&k)];
-                child_elem.rlock(&*self.dml)
+                child_elem.rlock(dml)
             }
         };
         drop(node);
         Box::new(
             next_node_fut
-            .and_then(move |next_node| self.get_r(next_node, k))
+            .and_then(move |next_node| Tree::get_r(dml2, next_node, k))
         )
     }
 
@@ -595,7 +601,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     {
         self.read()
             .and_then(move |guard| {
-                guard.rlock(&*self.dml)
+                guard.rlock(self.dml.clone())
                      .and_then(move |g| self.get_range_r(g, None, range))
             })
     }
@@ -643,7 +649,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                 let child_elem = &int.children[child_idx];
                 let next_fut = if child_idx < int.nchildren() - 1 {
                     Box::new(
-                        int.children[child_idx + 1].rlock(&*self.dml)
+                        int.children[child_idx + 1].rlock(self.dml.clone())
                             .map(|guard| Some(guard))
                     ) as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
                                     Error=Error>>
@@ -652,7 +658,7 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
                         as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
                                       Error=Error>>
                 };
-                let child_fut = child_elem.rlock(&*self.dml);
+                let child_fut = child_elem.rlock(self.dml.clone());
                 (child_fut, next_fut)
             } // LCOV_EXCL_LINE kcov false negative
         };
@@ -1190,8 +1196,8 @@ impl<'a, A: Addr, D: DML<Addr=A>, K: Key, V: Value> Tree<A, D, K, V> {
     }
 
     /// Lock the Tree for reading
-    fn read(&'a self) -> impl Future<Item=RwLockReadGuard<IntElem<A, K, V>>,
-                                     Error=Error> + 'a
+    fn read(&self) -> impl Future<Item=RwLockReadGuard<IntElem<A, K, V>>,
+                                     Error=Error>
     {
         self.i.root.read().map_err(|_| Error::Sys(errno::Errno::EPIPE))
     }
@@ -1245,7 +1251,11 @@ impl<A: Addr, D: DML<Addr=A>, K: Key, V: Value> Display for Tree<A, D, K, V> {
 }
 
 // These methods are only for direct trees
-impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
+impl<'a, D, K, V> Tree<ddml::DRP, D, K, V>
+    where D: DML<Addr=ddml::DRP> + 'static,
+          K: Key,
+          V: Value
+{
     /// Clean `zone` by moving all of its records to other zones.
     pub fn clean_zone(&'a self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + 'a
@@ -1305,7 +1315,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
                         as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
                                       Error=Error>>
                 } else {
-                    let fut = guard.rlock(&*self.dml)
+                    let fut = guard.rlock(self.dml.clone())
                          .and_then(move |guard| {
                              self.get_dirty_nodes_r(guard, h - 1, None, key,
                                                     pbas, txgs, echelon)
@@ -1362,7 +1372,7 @@ impl<'a, D: DML<Addr=ddml::DRP>, K: Key, V: Value> Tree<ddml::DRP, D, K, V> {
             } else {
                 next_key
             };
-            let child_fut = guard.as_int().children[idx].rlock(&*self.dml);
+            let child_fut = guard.as_int().children[idx].rlock(self.dml.clone());
             drop(guard);
             Box::new(
                 child_fut.and_then(move |child_guard| {
