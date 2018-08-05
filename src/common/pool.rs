@@ -14,7 +14,8 @@ use futures::{
 use nix::{Error, errno};
 use std::{
     ops::Range,
-    rc::Rc
+    rc::Rc,
+    sync::Arc
 };
 use std::collections::BTreeMap;
 #[cfg(not(test))] use std::{
@@ -25,7 +26,7 @@ use tokio::executor;
 #[cfg(not(test))] use tokio::executor::{DefaultExecutor, Executor};
 use uuid::Uuid;
 
-pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
+pub type PoolFut = Future<Item = (), Error = Error>;
 
 #[cfg(test)]
 /// Only exists so mockers can replace Cluster
@@ -35,18 +36,17 @@ pub type PoolFut<'a> = Future<Item = (), Error = Error> + 'a;
 pub trait ClusterTrait {
     fn allocated(&self) -> LbaT;
     fn find_closed_zone(&self, zid: ZoneT) -> Option<cluster::ClosedZone>;
-    fn free(&self, lba: LbaT, length: LbaT)
-        -> Box<Future<Item=(), Error=Error>>;
+    fn free(&self, lba: LbaT, length: LbaT) -> Box<PoolFut>;
     fn list_closed_zones(&self)
         -> Box<Stream<Item=cluster::ClosedZone, Error=Error>>;
     fn optimum_queue_depth(&self) -> u32;
-    fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
+    fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut>;
     fn size(&self) -> LbaT;
-    fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
+    fn sync_all(&self) -> Box<PoolFut>;
     fn uuid(&self) -> Uuid;
     fn write(&self, buf: IoVec, txg: TxgT)
-        -> Result<(LbaT, Box<PoolFut<'static>>), Error>;
-    fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut<'static>>;
+        -> Result<(LbaT, Box<PoolFut>), Error>;
+    fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
 }
 #[cfg(test)]
 pub type ClusterLike = Box<ClusterTrait>;
@@ -377,7 +377,7 @@ pub struct Pool {
     /// Human-readable pool name.  Must be unique on any one system.
     name: String,
 
-    stats: Stats,
+    stats: Arc<Stats>,
 
     uuid: Uuid,
 }
@@ -485,12 +485,12 @@ impl<'a> Pool {
             .collect();
         size_fut.join3(allocated_fut, oqd_fut)
         .map(move |(size, allocated_space, optimum_queue_depth)| {
-            let stats = Stats{
+            let stats = Arc::new(Stats{
                 allocated_space,
                 optimum_queue_depth,
                 queue_depth,
                 size
-            };
+            });
             Pool{name, clusters, stats, uuid}
         })
     }
@@ -553,16 +553,17 @@ impl<'a> Pool {
     }
 
     /// Asynchronously read from the pool
-    pub fn read(&'a self, buf: IoVecMut, pba: PBA)
-        -> impl Future<Item=(), Error=Error> + 'a
+    pub fn read(&self, buf: IoVecMut, pba: PBA)
+        -> impl Future<Item=(), Error=Error>
     {
         let cidx = pba.cluster as usize;
         self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
+        let stats2 = self.stats.clone();
         self.clusters[pba.cluster as usize].read(buf, pba.lba)
-                 .then(move |r| {
-            self.stats.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
-            r
-        })
+            .then(move |r| {
+                stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
+                r
+            })
     }
 
     /// Return approximately the Pool's usable storage space in LBAs.
@@ -572,7 +573,7 @@ impl<'a> Pool {
 
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
+    pub fn sync_all(&self) -> impl Future<Item=(), Error=Error> {
         future::join_all(
             self.clusters.iter()
             .map(|bd| bd.sync_all())
@@ -590,27 +591,29 @@ impl<'a> Pool {
     /// # Returns
     ///
     /// The `PBA` where the data was written
-    pub fn write(&'a self, buf: IoVec, txg: TxgT)
-        -> impl Future<Item = PBA, Error=Error> + 'a
+    pub fn write(&self, buf: IoVec, txg: TxgT)
+        -> impl Future<Item = PBA, Error=Error>
     {
         let cluster = self.stats.choose_cluster();
         let cidx = cluster as usize;
         self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
         let space = (buf.len() / BYTES_PER_LBA) as LbaT;
+        let stats2 = self.stats.clone();
+        let stats3 = self.stats.clone();
         self.clusters[cidx].write(buf, txg)
             .then(move |r| {
-                self.stats.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
+                stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
                 r
             }).map(move |lba| {
-                self.stats.allocated_space[cidx]
+                stats3.allocated_space[cidx]
                     .fetch_add(space, Ordering::Relaxed);
                 PBA::new(cluster, lba)
             })
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
-    pub fn write_label(&'a self, mut labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error> + 'a
+    pub fn write_label(&self, mut labeller: LabelWriter)
+        -> impl Future<Item=(), Error=Error>
     {
         let cluster_uuids = self.clusters.iter().map(|cluster| cluster.uuid())
             .collect::<Vec<_>>();
@@ -666,13 +669,13 @@ mod pool {
             fn list_closed_zones(&self)
                 -> Box<Stream<Item=cluster::ClosedZone, Error=Error>>;
             fn optimum_queue_depth(&self) -> u32;
-            fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut<'static>>;
+            fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut>;
             fn size(&self) -> LbaT;
             fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
             fn uuid(&self) -> Uuid;
             fn write(&self, buf: IoVec, txg: TxgT)
-                -> Result<(LbaT, Box<PoolFut<'static>>), Error>;
-            fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut<'static>>;
+                -> Result<(LbaT, Box<PoolFut>), Error>;
+            fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
         }
     }
 
