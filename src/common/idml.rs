@@ -402,12 +402,13 @@ impl DML for IDML {
         Box::new(fut)
     }
 
-    fn sync_all<'a>(&'a self, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send + 'a>
+    fn sync_all(&self, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>
     {
+        let ddml2 = self.ddml.clone();
         let fut = self.ridt.flush(txg)
             .join(self.alloct.flush(txg))
-            .and_then(move |(_, _)| self.ddml.sync_all(txg));
+            .and_then(move |(_, _)| ddml2.sync_all(txg));
         Box::new(fut)
     }
 }

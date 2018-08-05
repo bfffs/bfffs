@@ -83,6 +83,6 @@ pub trait DML: Send + Sync {
         -> Box<Future<Item=Self::Addr, Error=Error> + Send>;
 
     /// Sync all records written so far to stable storage.
-    fn sync_all<'a>(&'a self, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send + 'a>;
+    fn sync_all(&self, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>;
 }

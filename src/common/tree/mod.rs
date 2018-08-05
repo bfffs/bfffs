@@ -1126,10 +1126,10 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
     // Alternatively, it would be possible to create a streaming flusher like
     // RangeQuery that would descend through the tree multiple times, flushing a
     // portion at each time.  But it wouldn't be able to guarantee a clean tree.
-    pub fn flush(&'a self, txg: TxgT)
-        -> impl Future<Item=TreeOnDisk, Error=Error> + 'a
+    pub fn flush(&self, txg: TxgT) -> impl Future<Item=TreeOnDisk, Error=Error>
     {
         let dml2 = self.dml.clone();
+        let inner2 = self.i.clone();
         self.write()
             .and_then(move |root_guard| {
             if root_guard.ptr.is_dirty() {
@@ -1137,13 +1137,14 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 // another task may still have a lock on it.  We must acquire
                 // then release the lock to ensure that we have the sole
                 // reference.
+                let dml3 = dml2.clone();
                 let fut = Tree::xlock_root(dml2, root_guard, txg)
                     .and_then(move |(mut root_guard, child_guard)|
                 {
                     drop(child_guard);
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
                     Box::new(
-                        self.flush_r(ptr.into_node(), txg)
+                        Tree::flush_r(dml3, ptr.into_node(), txg)
                             .map(move |(addr, txgs)| {
                                 root_guard.ptr = TreePtr::Addr(addr);
                                 root_guard.txgs = txgs;
@@ -1155,21 +1156,21 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 Box::new(future::ok::<(), Error>(()))
             }
         })
-        .map(move |_| TreeOnDisk(bincode::serialize(&*self.i).unwrap()))
+        .map(move |_| TreeOnDisk(bincode::serialize(&*inner2).unwrap()))
     }
 
-    fn write_leaf(&'a self, node: Box<Node<A, K, V>>, txg: TxgT)
-        -> impl Future<Item=A, Error=Error> + 'a
+    fn write_leaf(dml: Arc<D>, node: Box<Node<A, K, V>>, txg: TxgT)
+        -> impl Future<Item=A, Error=Error>
     {
         let arc: Arc<Node<A, K, V>> = Arc::new(*node);
-        self.dml.put(arc, Compression::None, txg)
+        dml.put(arc, Compression::None, txg)
     }
 
-    fn flush_r(&'a self, mut node: Box<Node<A, K, V>>, txg: TxgT)
-        -> Box<Future<Item=(D::Addr, Range<TxgT>), Error=Error> + Send + 'a>
+    fn flush_r(dml: Arc<D>, mut node: Box<Node<A, K, V>>, txg: TxgT)
+        -> Box<Future<Item=(D::Addr, Range<TxgT>), Error=Error> + Send>
     {
         if node.0.get_mut().unwrap().is_leaf() {
-            let fut = self.write_leaf(node, txg)
+            let fut = Tree::write_leaf(dml, node, txg)
                 .map(move |addr| {
                     (addr, txg..txg + 1)
                 });
@@ -1182,6 +1183,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
         // xlock's continuation have ownership over the child IntElem.  So we
         // need to deconstruct the entire NodeData.children vector and
         // reassemble it after the join_all
+        let dml2 = dml.clone();
         let children_fut = ndata.as_int_mut().children.drain(..)
         .map(move |mut elem| {
             if elem.is_dirty()
@@ -1191,10 +1193,11 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 // we have exclusive access to it, and we can move it into the
                 // Cache.
                 let key = elem.key;
+                let dml3 = dml.clone();
                 let fut = elem.ptr.as_mem().xlock().and_then(move |guard|
                 {
                     drop(guard);
-                    self.flush_r(elem.ptr.into_node(), txg)
+                    Tree::flush_r(dml3, elem.ptr.into_node(), txg)
                 }).map(move |(addr, txgs)| {
                     IntElem::new(key, txgs, TreePtr::Addr(addr))
                 });
@@ -1216,7 +1219,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 ndata.as_int_mut().children = elems;
                 drop(ndata);
                 let arc: Arc<Node<A, K, V>> = Arc::new(*node);
-                self.dml.put(arc, Compression::None, txg)
+                dml2.put(arc, Compression::None, txg)
                     .map(move |addr| (addr, start_txg..txg + 1))
             })
         )

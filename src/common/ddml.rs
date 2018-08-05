@@ -433,8 +433,8 @@ impl DML for DDML {
         Box::new(fut)
     }
 
-    fn sync_all<'a>(&'a self, _txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send + 'a>
+    fn sync_all(&self, _txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>
     {
         Box::new(self.pool.sync_all())
     }
