@@ -189,7 +189,7 @@ pub struct DDML {
     // futures_lock::Mutex, because we will never need to block while holding
     // this lock.
     cache: Arc<Mutex<Cache>>,
-    pool: PoolLike,
+    pool: Arc<PoolLike>,
 }
 
 impl<'a> DDML {
@@ -200,12 +200,12 @@ impl<'a> DDML {
     }
 
     pub fn new(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
-        DDML{pool, cache}
+        DDML{pool: Arc::new(pool), cache}
     }
 
     /// Get directly from disk, bypassing cache
-    pub fn get_direct<T: Cacheable>(&'a self, drp: &DRP)
-        -> impl Future<Item=Box<T>, Error=Error> + 'a
+    pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
+        -> impl Future<Item=Box<T>, Error=Error>
     {
         self.read(*drp).map(move |dbs| {
             Box::new(T::deserialize(dbs))
@@ -219,8 +219,8 @@ impl<'a> DDML {
     }
 
     /// Read a record from disk
-    fn read(&'a self, drp: DRP)
-        -> impl Future<Item=DivBufShared, Error=Error> + Send + 'a
+    fn read(&self, drp: DRP)
+        -> impl Future<Item=DivBufShared, Error=Error> + Send
     {
         // Outline
         // 1) Read
@@ -263,26 +263,27 @@ impl<'a> DDML {
     /// * `cache`:      An already constructed `Cache`
     /// * `pool`:       An already constructed `Pool`
     pub fn open(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
-        DDML{pool, cache}
+        DDML{pool: Arc::new(pool), cache}
     }
 
     /// Read a record and return ownership of it, bypassing Cache
-    pub fn pop_direct<T: Cacheable>(&'a self, drp: &DRP)
-        -> impl Future<Item=Box<T>, Error=Error> + 'a
+    pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
+        -> impl Future<Item=Box<T>, Error=Error>
     {
         let lbas = drp.asize();
         let pba = drp.pba;
+        let pool2 = self.pool.clone();
         self.read(*drp)
             .and_then(move |dbs|
-                self.pool.free(pba, lbas)
+                pool2.free(pba, lbas)
                 .map(move |_| Box::new(T::deserialize(dbs)))
             )
     }
 
     /// Does most of the work of DDML::put
-    fn put_common<T>(&'a self, cacheable: T, compression: Compression,
+    fn put_common<T>(&self, cacheable: T, compression: Compression,
                      txg: TxgT)
-        -> impl Future<Item=(DRP, T), Error=Error> + 'a
+        -> impl Future<Item=(DRP, T), Error=Error>
         where T:Cacheable
     {
         // Outline:
@@ -345,9 +346,9 @@ impl<'a> DDML {
     }
 
     /// Write a buffer bypassing cache.  Return the same buffer
-    pub fn put_direct<T>(&'a self, cacheable: T, compression: Compression,
+    pub fn put_direct<T>(&self, cacheable: T, compression: Compression,
                          txg: TxgT)
-        -> impl Future<Item=(DRP, T), Error=Error> + 'a
+        -> impl Future<Item=(DRP, T), Error=Error>
         where T:Cacheable
     {
         self.put_common(cacheable, compression, txg)
@@ -358,8 +359,8 @@ impl<'a> DDML {
         self.pool.size()
     }
 
-    pub fn write_label(&'a self, labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error> + 'a
+    pub fn write_label(&self, labeller: LabelWriter)
+        -> impl Future<Item=(), Error=Error>
     {
         self.pool.write_label(labeller)
     }
