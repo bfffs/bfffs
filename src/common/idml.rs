@@ -47,30 +47,35 @@ impl RidtEntry {
 
 pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
 
+/// Container for the IDML's private trees
+struct Trees {
+    /// Allocation table.  The reverse of `ridt`.
+    ///
+    /// Maps disk addresses back to record IDs.  Used for operations like
+    /// garbage collection and defragmentation.
+    // TODO: consider a lazy delete strategy to reduce the amount of tree
+    // activity on pop/delete by deferring alloct removals to the cleaner.
+    alloct: DTree<PBA, RID>,
+
+    /// Record indirection table.  Maps record IDs to disk addresses.
+    ridt: DTree<RID, RidtEntry>,
+}
+
 /// Indirect Data Management Layer for a single `Pool`
 pub struct IDML {
     cache: Arc<Mutex<Cache>>,
 
     ddml: Arc<DDML>,
 
-    /// Allocation table.  The reverse of `ridt`.
-    ///
-    /// Maps disk addresses back to record IDs.  Used for operations like
-    /// garbage collection and defragmentation.
-    // Even though it has a single owner, the tree must be Arc so IDML methods
-    // can be 'static
-    // TODO: consider a lazy delete strategy to reduce the amount of tree
-    // activity on pop/delete by deferring alloct removals to the cleaner.
-    alloct: Arc<DTree<PBA, RID>>,
-
     /// Holds the next RID to allocate.  They are never reused.
     next_rid: Atomic<u64>,
 
-    /// Record indirection table.  Maps record IDs to disk addresses.
-    ridt: Arc<DTree<RID, RidtEntry>>,
-
     /// Current transaction group
-    transaction: RwLock<TxgT>
+    transaction: RwLock<TxgT>,
+
+    // Even though it has a single owner, the tree must be Arc so IDML methods
+    // can be 'static
+    trees: Arc<Trees>
 }
 
 impl<'a> IDML {
@@ -94,20 +99,21 @@ impl<'a> IDML {
         self.list_indirect_records(&zone).for_each(move |record| {
             self.move_record(record, txg)
         }).and_then(move |_| {
-            let czfut = self.ridt.clean_zone(zone.pba..end, zone.txgs.clone(),
-                                             txg);
-            let atfut = self.alloct.clean_zone(zone.pba..end, zone.txgs,
-                                               txg);
+            let czfut = self.trees.ridt.clean_zone(zone.pba..end,
+                                                   zone.txgs.clone(), txg);
+            let atfut = self.trees.alloct.clean_zone(zone.pba..end, zone.txgs,
+                                                     txg);
             czfut.join(atfut).map(|_| ())
         })
     }
 
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
-        let alloct = Arc::new(DTree::<PBA, RID>::create(ddml.clone()));
+        let alloct = DTree::<PBA, RID>::create(ddml.clone());
         let next_rid = Atomic::new(0);
-        let ridt = Arc::new(DTree::<RID, RidtEntry>::create(ddml.clone()));
+        let ridt = DTree::<RID, RidtEntry>::create(ddml.clone());
         let transaction = RwLock::new(TxgT::from(0));
-        IDML{alloct, cache, ddml, next_rid, ridt, transaction}
+        let trees = Arc::new(Trees{alloct, ridt});
+        IDML{cache, ddml, next_rid, transaction, trees}
     }
 
     pub fn list_closed_zones(&'a self)
@@ -126,7 +132,7 @@ impl<'a> IDML {
         // Iterate through the AllocT to get indirect records from the target
         // zone.
         let end = PBA::new(zone.pba.cluster, zone.pba.lba + zone.total_blocks);
-        self.alloct.range(zone.pba..end)
+        self.trees.alloct.range(zone.pba..end)
             .map(|(_pba, rid)| rid)
     }
 
@@ -142,11 +148,12 @@ impl<'a> IDML {
                  mut label_reader: LabelReader) -> Self
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let alloct = Arc::new(Tree::open(ddml.clone(), l.alloct).unwrap());
-        let ridt = Arc::new(Tree::open(ddml.clone(), l.ridt).unwrap());
+        let alloct = Tree::open(ddml.clone(), l.alloct).unwrap();
+        let ridt = Tree::open(ddml.clone(), l.ridt).unwrap();
         let transaction = RwLock::new(l.txg);
         let next_rid = Atomic::new(l.next_rid);
-        IDML{alloct, cache, ddml, next_rid, ridt, transaction}
+        let trees = Arc::new(Trees{alloct, ridt});
+        IDML{cache, ddml, next_rid, transaction, trees}
     }
 
     /// Rewrite the given direct Record and update its metadata.
@@ -155,7 +162,7 @@ impl<'a> IDML {
     {
         // Even if the cache contains the target record, we must also do an RIDT
         // lookup because we're going to rewrite the RIDT
-        self.ridt.get(rid)
+        self.trees.ridt.get(rid)
             .and_then(move |v| {
                 let entry = v.expect(
                     "Inconsistency in alloct.  Entry not found in RIDT");
@@ -182,8 +189,8 @@ impl<'a> IDML {
                     .map(move |(drp, _cacheable)| (entry, drp))
             }).and_then(move |(mut entry, drp)| {
                 entry.drp = drp;
-                let ridt_fut = self.ridt.insert(rid, entry, txg);
-                let alloct_fut = self.alloct.insert(drp.pba(), rid, txg);
+                let ridt_fut = self.trees.ridt.insert(rid, entry, txg);
+                let alloct_fut = self.trees.alloct.insert(drp.pba(), rid, txg);
                 ridt_fut.join(alloct_fut)
             }).map(|_| ())
     }
@@ -221,8 +228,8 @@ impl<'a> IDML {
         -> impl Future<Item=(), Error=Error> + 'a
     {
         let mut labeller = LabelWriter::new();
-        self.alloct.flush(txg)
-        .join(self.ridt.flush(txg))
+        self.trees.alloct.flush(txg)
+        .join(self.trees.ridt.flush(txg))
         .and_then(move |(alloct, ridt)| {
             let label = Label {
                 alloct,
@@ -244,10 +251,11 @@ impl DML for IDML {
     {
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
-        let alloct2 = self.alloct.clone();
-        let ridt2 = self.ridt.clone();
+        let trees2 = self.trees.clone();
+        //let alloct2 = self.alloct.clone();
+        //let ridt2 = self.ridt.clone();
         let rid = *ridp;
-        let fut = self.ridt.get(rid)
+        let fut = self.trees.ridt.get(rid)
             .and_then(|r| {
                 match r {
                     None => Err(Error::Sys(Errno::ENOENT)).into_future(),
@@ -259,8 +267,8 @@ impl DML for IDML {
                     cache2.lock().unwrap().remove(&Key::Rid(rid));
                     // TODO: usd ddml.delete_direct
                     let ddml_fut = ddml2.delete(&entry.drp, txg);
-                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
-                    let ridt_fut = ridt2.remove(rid, txg);
+                    let alloct_fut = trees2.alloct.remove(entry.drp.pba(), txg);
+                    let ridt_fut = trees2.ridt.remove(rid, txg);
                     Box::new(
                         ddml_fut.join3(alloct_fut, ridt_fut)
                              .map(|(_, old_rid, _old_ridt_entry)| {
@@ -268,7 +276,7 @@ impl DML for IDML {
                              })
                      ) as Box<Future<Item=(), Error=Error> + Send>
                 } else {
-                    let ridt_fut = ridt2.insert(rid, entry, txg)
+                    let ridt_fut = trees2.ridt.insert(rid, entry, txg)
                         .map(|_| ());
                     Box::new(ridt_fut)
                     as Box<Future<Item=(), Error=Error> + Send>
@@ -291,7 +299,7 @@ impl DML for IDML {
         }).unwrap_or_else(|| {
             let cache2 = self.cache.clone();
             let ddml2 = self.ddml.clone();
-            let fut = self.ridt.get(rid)
+            let fut = self.trees.ridt.get(rid)
                 .and_then(|r| {
                     match r {
                         None => Err(Error::Sys(Errno::ENOENT)).into_future(),
@@ -316,9 +324,8 @@ impl DML for IDML {
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
         let ddml3 = self.ddml.clone();
-        let alloct2 = self.alloct.clone();
-        let ridt2 = self.ridt.clone();
-        let fut = self.ridt.get(rid)
+        let trees2 = self.trees.clone();
+        let fut = self.trees.ridt.get(rid)
             .and_then(|r| {
                 match r {
                     None => Err(Error::Sys(Errno::ENOENT)).into_future(),
@@ -338,8 +345,8 @@ impl DML for IDML {
                         }).unwrap_or_else(||{
                             Box::new(ddml3.pop_direct::<T>(&entry.drp))
                         }) as Box<Future<Item=Box<T>, Error=Error> + Send>;
-                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
-                    let ridt_fut = ridt2.remove(rid, txg);
+                    let alloct_fut = trees2.alloct.remove(entry.drp.pba(), txg);
+                    let ridt_fut = trees2.ridt.remove(rid, txg);
                     Box::new(
                         bfut.join3(alloct_fut, ridt_fut)
                              .map(|(cacheable, old_rid, _old_ridt_entry)| {
@@ -357,7 +364,7 @@ impl DML for IDML {
                     }).unwrap_or_else(|| {
                         Box::new(ddml2.get_direct::<T>(&entry.drp))
                     });
-                    let ridt_fut = ridt2.insert(rid, entry, txg);
+                    let ridt_fut = trees2.ridt.insert(rid, entry, txg);
                     Box::new(
                         bfut.join(ridt_fut)
                             .map(|(cacheable, _)| {
@@ -379,15 +386,14 @@ impl DML for IDML {
         // 3) Add entry to the RIDT
         // 4) Add reverse entry to the AllocT
         let cache2 = self.cache.clone();
-        let alloct2 = self.alloct.clone();
-        let ridt2 = self.ridt.clone();
+        let trees2 = self.trees.clone();
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
 
         let fut = self.ddml.put_direct(cacheable, compression, txg)
         .and_then(move|(drp, cacheable)| {
-            let alloct_fut = alloct2.insert(drp.pba(), rid, txg);
+            let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
             let rid_entry = RidtEntry::new(drp);
-            let ridt_fut = ridt2.insert(rid, rid_entry, txg);
+            let ridt_fut = trees2.ridt.insert(rid, rid_entry, txg);
             ridt_fut.join(alloct_fut)
             .map(move |(old_rid_entry, old_alloc_entry)| {
                 assert!(old_rid_entry.is_none(), "RID was not unique");
@@ -406,8 +412,8 @@ impl DML for IDML {
         -> Box<Future<Item=(), Error=Error> + Send>
     {
         let ddml2 = self.ddml.clone();
-        let fut = self.ridt.flush(txg)
-            .join(self.alloct.flush(txg))
+        let fut = self.trees.ridt.flush(txg)
+            .join(self.trees.alloct.flush(txg))
             .and_then(move |(_, _)| ddml2.sync_all(txg));
         Box::new(fut)
     }
@@ -445,8 +451,8 @@ mod t {
     {
         let entry = RidtEntry{drp: drp.clone(), refcount};
         let txg = TxgT::from(0);
-        rt.block_on(idml.ridt.insert(*rid, entry, txg)).unwrap();
-        rt.block_on(idml.alloct.insert(drp.pba(), *rid, txg)).unwrap();
+        rt.block_on(idml.trees.ridt.insert(*rid, entry, txg)).unwrap();
+        rt.block_on(idml.trees.alloct.insert(drp.pba(), *rid, txg)).unwrap();
     }
 
     // pet kcov
@@ -482,8 +488,9 @@ mod t {
 
         rt.block_on(idml.delete(&rid, TxgT::from(42))).unwrap();
         // Now verify the contents of the RIDT and AllocT
-        assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
-        assert!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().is_none());
+        assert!(rt.block_on(idml.trees.ridt.get(rid)).unwrap().is_none());
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp.pba())).unwrap();
+        assert!(alloc_rec.is_none());
     }
 
     #[test]
@@ -499,11 +506,11 @@ mod t {
 
         rt.block_on(idml.delete(&rid, TxgT::from(42))).unwrap();
         // Now verify the contents of the RIDT and AllocT
-        let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        let entry2 = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry2.drp, drp);
         assert_eq!(entry2.refcount, 1);
-        assert_eq!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().unwrap(),
-            rid);
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp.pba())).unwrap();
+        assert_eq!(alloc_rec.unwrap(), rid);
     }
 
     #[test]
@@ -658,11 +665,11 @@ mod t {
         rt.block_on(idml.move_record(rid, TxgT::from(0))).unwrap();
 
         // Now verify the RIDT and alloct entries
-        let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        let entry = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp2);
-        assert_eq!(rt.block_on(idml.alloct.get(drp2.pba())).unwrap().unwrap(),
-                   rid);
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp2.pba())).unwrap();
+        assert_eq!(alloc_rec.unwrap(), rid);
     }
 
     #[test]
@@ -695,11 +702,11 @@ mod t {
         rt.block_on(idml.move_record(rid, TxgT::from(0))).unwrap();
 
         // Now verify the RIDT and alloct entries
-        let entry = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        let entry = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp2);
-        assert_eq!(rt.block_on(idml.alloct.get(drp2.pba())).unwrap().unwrap(),
-                   rid);
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp2.pba())).unwrap();
+        assert_eq!(alloc_rec.unwrap(), rid);
     }
 
     #[test]
@@ -730,8 +737,9 @@ mod t {
         let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(42));
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
-        assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
-        assert!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().is_none());
+        assert!(rt.block_on(idml.trees.ridt.get(rid)).unwrap().is_none());
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp.pba())).unwrap();
+        assert!(alloc_rec.is_none());
     }
 
     #[test]
@@ -756,11 +764,11 @@ mod t {
         let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0));
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
-        let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        let entry2 = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry2.drp, drp);
         assert_eq!(entry2.refcount, 1);
-        assert_eq!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().unwrap(),
-            rid);
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp.pba())).unwrap();
+        assert_eq!(alloc_rec.unwrap(), rid);
     }
 
     #[test]
@@ -789,8 +797,9 @@ mod t {
         let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0));
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
-        assert!(rt.block_on(idml.ridt.get(rid)).unwrap().is_none());
-        assert!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().is_none());
+        assert!(rt.block_on(idml.trees.ridt.get(rid)).unwrap().is_none());
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp.pba())).unwrap();
+        assert!(alloc_rec.is_none());
     }
 
     #[test]
@@ -820,11 +829,11 @@ mod t {
         let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0));
         rt.block_on(fut).unwrap();
         // Now verify the contents of the RIDT and AllocT
-        let entry2 = rt.block_on(idml.ridt.get(rid)).unwrap().unwrap();
+        let entry2 = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry2.drp, drp);
         assert_eq!(entry2.refcount, 1);
-        assert_eq!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().unwrap(),
-            rid);
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp.pba())).unwrap();
+        assert_eq!(alloc_rec.unwrap(), rid);
     }
 
     #[test]
@@ -854,11 +863,12 @@ mod t {
         assert_eq!(rid, actual_rid);
 
         // Now verify the contents of the RIDT and AllocT
-        let entry = rt.block_on(idml.ridt.get(actual_rid)).unwrap().unwrap();
+        let ridt_fut = idml.trees.ridt.get(actual_rid);
+        let entry = rt.block_on(ridt_fut).unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp);
-        assert_eq!(rt.block_on(idml.alloct.get(drp.pba())).unwrap().unwrap(),
-                   actual_rid);
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp.pba())).unwrap();
+        assert_eq!(alloc_rec.unwrap(), actual_rid);
     }
 
     #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test https://github.com/pcsm/simulacrum/issues/55"]
