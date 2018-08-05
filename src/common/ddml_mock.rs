@@ -28,6 +28,16 @@ impl DDMLMock {
         }
     }
 
+    pub fn delete_static(&self, drp: &DRP, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        // XXX Using "delete" here looks like a bug, but it's deliberate.  This
+        // way expect_delete will work with delete_static
+        self.e.was_called_returning::<(*const DRP, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>
+            ("delete", (drp as *const DRP, txg))
+    }
+
     pub fn expect_delete(&mut self) -> Method<(*const DRP, TxgT),
         Box<Future<Item=(), Error=Error> + Send>>
     {

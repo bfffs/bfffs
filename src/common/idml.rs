@@ -57,15 +57,17 @@ pub struct IDML {
     ///
     /// Maps disk addresses back to record IDs.  Used for operations like
     /// garbage collection and defragmentation.
+    // Even though it has a single owner, the tree must be Arc so IDML methods
+    // can be 'static
     // TODO: consider a lazy delete strategy to reduce the amount of tree
     // activity on pop/delete by deferring alloct removals to the cleaner.
-    alloct: DTree<PBA, RID>,
+    alloct: Arc<DTree<PBA, RID>>,
 
     /// Holds the next RID to allocate.  They are never reused.
     next_rid: Atomic<u64>,
 
     /// Record indirection table.  Maps record IDs to disk addresses.
-    ridt: DTree<RID, RidtEntry>,
+    ridt: Arc<DTree<RID, RidtEntry>>,
 
     /// Current transaction group
     transaction: RwLock<TxgT>
@@ -101,9 +103,9 @@ impl<'a> IDML {
     }
 
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
-        let alloct = DTree::<PBA, RID>::create(ddml.clone());
+        let alloct = Arc::new(DTree::<PBA, RID>::create(ddml.clone()));
         let next_rid = Atomic::new(0);
-        let ridt = DTree::<RID, RidtEntry>::create(ddml.clone());
+        let ridt = Arc::new(DTree::<RID, RidtEntry>::create(ddml.clone()));
         let transaction = RwLock::new(TxgT::from(0));
         IDML{alloct, cache, ddml, next_rid, ridt, transaction}
     }
@@ -140,8 +142,8 @@ impl<'a> IDML {
                  mut label_reader: LabelReader) -> Self
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let alloct = Tree::open(ddml.clone(), l.alloct).unwrap();
-        let ridt = Tree::open(ddml.clone(), l.ridt).unwrap();
+        let alloct = Arc::new(Tree::open(ddml.clone(), l.alloct).unwrap());
+        let ridt = Arc::new(Tree::open(ddml.clone(), l.ridt).unwrap());
         let transaction = RwLock::new(l.txg);
         let next_rid = Atomic::new(l.next_rid);
         IDML{alloct, cache, ddml, next_rid, ridt, transaction}
@@ -303,11 +305,15 @@ impl DML for IDML {
         })
     }
 
-    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, ridp: &Self::Addr,
-                                          txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + Send + 'a>
+    fn pop<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr, txg: TxgT)
+        -> Box<Future<Item=Box<T>, Error=Error> + Send>
     {
         let rid = *ridp;
+        let cache2 = self.cache.clone();
+        let ddml2 = self.ddml.clone();
+        let ddml3 = self.ddml.clone();
+        let alloct2 = self.alloct.clone();
+        let ridt2 = self.ridt.clone();
         let fut = self.ridt.get(rid)
             .and_then(|r| {
                 match r {
@@ -317,19 +323,19 @@ impl DML for IDML {
             }).and_then(move |mut entry| {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
-                    let cacheval = self.cache.lock().unwrap()
+                    let cacheval = cache2.lock().unwrap()
                         .remove(&Key::Rid(rid));
                     let bfut = cacheval
-                        .map(|cacheable| {
+                        .map(move |cacheable| {
                             let t = cacheable.downcast::<T>().unwrap();
-                            Box::new(self.ddml.delete(&entry.drp, txg)
+                            Box::new(ddml2.delete_static(&entry.drp, txg)
                                               .map(move |_| t)
                             ) as Box<Future<Item=Box<T>, Error=Error> + Send>
                         }).unwrap_or_else(||{
-                            Box::new(self.ddml.pop_direct::<T>(&entry.drp))
+                            Box::new(ddml3.pop_direct::<T>(&entry.drp))
                         }) as Box<Future<Item=Box<T>, Error=Error> + Send>;
-                    let alloct_fut = self.alloct.remove(entry.drp.pba(), txg);
-                    let ridt_fut = self.ridt.remove(rid, txg);
+                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
+                    let ridt_fut = ridt2.remove(rid, txg);
                     Box::new(
                         bfut.join3(alloct_fut, ridt_fut)
                              .map(|(cacheable, old_rid, _old_ridt_entry)| {
@@ -338,16 +344,16 @@ impl DML for IDML {
                              })
                      ) as Box<Future<Item=Box<T>, Error=Error> + Send>
                 } else {
-                    let cacheval = self.cache.lock().unwrap()
+                    let cacheval = cache2.lock().unwrap()
                         .get::<R>(&Key::Rid(rid));
                     let bfut = cacheval.map(|cacheref: Box<R>|{
                         let t = cacheref.to_owned().downcast::<T>().unwrap();
                         Box::new(future::ok(t))
                             as Box<Future<Item=Box<T>, Error=Error> + Send>
                     }).unwrap_or_else(|| {
-                        Box::new(self.ddml.get_direct::<T>(&entry.drp))
+                        Box::new(ddml2.get_direct::<T>(&entry.drp))
                     });
-                    let ridt_fut = self.ridt.insert(rid, entry, txg);
+                    let ridt_fut = ridt2.insert(rid, entry, txg);
                     Box::new(
                         bfut.join(ridt_fut)
                             .map(|(cacheable, _)| {

@@ -74,8 +74,8 @@ pub trait DML: Send + Sync {
         -> Box<Future<Item=Box<R>, Error=Error> + Send>;
 
     /// Read a record and return ownership of it.
-    fn pop<'a, T: Cacheable, R: CacheRef>(&'a self, rid: &Self::Addr, txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + Send + 'a>;
+    fn pop<T: Cacheable, R: CacheRef>(&self, rid: &Self::Addr, txg: TxgT)
+        -> Box<Future<Item=Box<T>, Error=Error> + Send>;
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,

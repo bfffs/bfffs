@@ -269,11 +269,11 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// the child's guard.
     // Consuming and returning self prevents lifetime checker issues that
     // interfere with lock coupling.
-    pub fn xlock<'a, D: DML<Addr=A>>(mut self, dml: &'a D, child_idx: usize,
-                                     txg: TxgT)
+    pub fn xlock<D>(mut self, dml: Arc<D>, child_idx: usize, txg: TxgT)
         -> (Box<Future<Item=(TreeWriteGuard<A, K, V>,
                              TreeWriteGuard<A, K, V>),
-                       Error=Error> + Send + 'a>)
+                       Error=Error> + Send>)
+        where D: DML<Addr=A> + 'static
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
         if self.as_int().children[child_idx].ptr.is_mem() {
