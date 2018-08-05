@@ -219,11 +219,9 @@ impl<'a> DDML {
     }
 
     /// Read a record from disk
-    // XXX This method should return impl Trait instead, but that triggers a
-    // compiler error with Rustc 1.26.1 and 1.28.0-nightly-2018-06-01
     fn read(&'a self, drp: DRP)
-        -> Box<Future<Item=DivBufShared, Error=Error> + Send + 'a> {
-
+        -> impl Future<Item=DivBufShared, Error=Error> + Send + 'a
+    {
         // Outline
         // 1) Read
         // 2) Truncate
