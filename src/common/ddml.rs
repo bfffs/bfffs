@@ -427,14 +427,15 @@ impl DML for DDML {
         })
     }
 
-    fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
+    fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<Future<Item=DRP, Error=Error> + Send + 'a>
+        -> Box<Future<Item=DRP, Error=Error> + Send>
     {
+        let cache2 = self.cache.clone();
         let fut = self.put_common(cacheable, compression, txg)
             .map(move |(drp, cacheable)|{
                 let pba = drp.pba();
-                self.cache.lock().unwrap()
+                cache2.lock().unwrap()
                     .insert(Key::PBA(pba), Box::new(cacheable));
                 drp
             });

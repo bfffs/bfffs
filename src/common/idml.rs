@@ -365,28 +365,32 @@ impl DML for IDML {
         Box::new(fut)
     }
 
-    fn put<'a, T: Cacheable>(&'a self, cacheable: T, compression: Compression,
+    fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<Future<Item=Self::Addr, Error=Error> + Send + 'a>
+        -> Box<Future<Item=Self::Addr, Error=Error> + Send>
     {
         // Outline:
         // 1) Write to the DDML
         // 2) Cache
         // 3) Add entry to the RIDT
         // 4) Add reverse entry to the AllocT
+        let cache2 = self.cache.clone();
+        let alloct2 = self.alloct.clone();
+        let ridt2 = self.ridt.clone();
+        let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
+
         let fut = self.ddml.put_direct(cacheable, compression, txg)
         .and_then(move|(drp, cacheable)| {
-            let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
-            let alloct_fut = self.alloct.insert(drp.pba(), rid, txg);
+            let alloct_fut = alloct2.insert(drp.pba(), rid, txg);
             let rid_entry = RidtEntry::new(drp);
-            let ridt_fut = self.ridt.insert(rid, rid_entry, txg);
+            let ridt_fut = ridt2.insert(rid, rid_entry, txg);
             ridt_fut.join(alloct_fut)
             .map(move |(old_rid_entry, old_alloc_entry)| {
                 assert!(old_rid_entry.is_none(), "RID was not unique");
                 assert!(old_alloc_entry.is_none(), concat!(
                     "Double allocate without free.  ",
                     "DDML allocator leak detected!"));
-                self.cache.lock().unwrap().insert(Key::Rid(rid),
+                cache2.lock().unwrap().insert(Key::Rid(rid),
                     Box::new(cacheable));
                 rid
             })
