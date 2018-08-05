@@ -347,7 +347,7 @@ struct Inner<A: Addr, K: Key, V: Value> {
 /// *`V`:   Value type in the leaves.
 pub struct Tree<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
     dml: Arc<D>,
-    i: Inner<A, K, V>
+    i: Arc<Inner<A, K, V>>
 }
 
 impl<'a, A, D, K, V> Tree<A, D, K, V>
@@ -465,7 +465,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
 
     #[cfg(test)]
     pub fn from_str(dml: Arc<D>, s: &str) -> Self {
-        let i: Inner<A, K, V> = serde_yaml::from_str(s).unwrap();
+        let i: Arc<Inner<A, K, V>> = Arc::new(serde_yaml::from_str(s).unwrap());
         Tree{dml, i}
     }
 
@@ -691,7 +691,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
 
     /// Open a `Tree` from its serialized representation
     pub fn open(dml: Arc<D>, on_disk: TreeOnDisk) -> bincode::Result<Self> {
-        let inner = bincode::deserialize(&on_disk.0[..])?;
+        let inner = Arc::new(bincode::deserialize(&on_disk.0[..])?);
         Ok(Tree{ dml, i: inner })
     }
 
@@ -1000,7 +1000,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
     {
         // Since there are no on-disk children, the initial TXG range is empty
         let txgs = TxgT::from(0)..TxgT::from(0);
-        let i: Inner<A, K, V> = Inner {
+        let i: Arc<Inner<A, K, V>> = Arc::new(Inner {
             height: Atomic::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
@@ -1018,7 +1018,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                     )
                 )
             )
-        };
+        });
         Tree{ dml, i }
     }
 
@@ -1128,7 +1128,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 Box::new(future::ok::<(), Error>(()))
             }
         })
-        .map(move |_| TreeOnDisk(bincode::serialize(&self.i).unwrap()))
+        .map(move |_| TreeOnDisk(bincode::serialize(&*self.i).unwrap()))
     }
 
     fn write_leaf(&'a self, node: Box<Node<A, K, V>>, txg: TxgT)
@@ -1246,7 +1246,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
 #[cfg(test)]
 impl<A: Addr, D: DML<Addr=A>, K: Key, V: Value> Display for Tree<A, D, K, V> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.write_str(&serde_yaml::to_string(&self.i).unwrap())
+        f.write_str(&serde_yaml::to_string(&*self.i).unwrap())
     }
 }
 

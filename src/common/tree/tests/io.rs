@@ -570,7 +570,10 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.flush(TxgT::from(42)));
     assert!(r.is_ok());
-    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
+    let root_drp = *Arc::get_mut(&mut tree.i).unwrap()
+        .root.get_mut().unwrap()
+        .ptr.as_addr();
+    assert_eq!(root_drp, drp);
 }
 
 #[test]
@@ -636,7 +639,10 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.flush(TxgT::from(42)));
     assert!(r.is_ok());
-    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
+    let root_drp = *Arc::get_mut(&mut tree.i).unwrap()
+        .root.get_mut().unwrap()
+        .ptr.as_addr();
+    assert_eq!(root_drp, drp);
 }
 
 #[test]
@@ -675,6 +681,9 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.flush(TxgT::from(42)));
     assert!(r.is_ok());
-    assert_eq!(*tree.i.root.get_mut().unwrap().ptr.as_addr(), drp);
+    let root_drp = *Arc::get_mut(&mut tree.i).unwrap()
+        .root.get_mut().unwrap()
+        .ptr.as_addr();
+    assert_eq!(root_drp, drp);
 }
 // LCOV_EXCL_STOP

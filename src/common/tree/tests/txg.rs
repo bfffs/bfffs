@@ -77,7 +77,8 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.flush(TxgT::from(42)));
     assert!(r.is_ok());
-    let root_elem = tree.i.root.get_mut().unwrap();
+    let root_elem = Arc::get_mut(&mut tree.i).unwrap()
+        .root.get_mut().unwrap();
     assert_eq!(root_elem.txgs, TxgT::from(41)..TxgT::from(43));
 }
 
