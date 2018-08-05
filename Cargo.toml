@@ -10,6 +10,7 @@ mocks = ["mockers", "mockers_derive"]
 [dependencies]
 atomic = "0.3"
 bincode = "1.0"
+bitfield = "0.13"
 blosc = "0.1"
 byteorder = "1.0"
 divbuf = { git = "https://github.com/asomers/divbuf/", rev = "9d9bc62" }
@@ -33,7 +34,7 @@ mockers_derive = { version = "=0.11.1", optional = true }
 # https://github.com/rust-lang/rust/issues/49048
 modulo = "0.1.2"
 nix = "0.11.0"
-serde = "1.0"
+serde = "1.0.60"
 serde_cbor = "0.8"
 serde_derive = "1.0"
 time = "0.1"	# needed for FUSE
@@ -68,3 +69,4 @@ members = ["isa-l"]
 
 [patch.crates-io]
 simulacrum_mock = { git = "https://github.com/asomers/simulacrum/", rev = "4be48c4" }
+bitfield = { git = "https://github.com/dzamlo/rust-bitfield.git", rev = "233c81a" }

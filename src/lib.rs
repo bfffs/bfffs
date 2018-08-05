@@ -3,6 +3,8 @@
 
 extern crate atomic;
 extern crate bincode;
+#[macro_use]
+extern crate bitfield;
 extern crate blosc;
 extern crate byteorder;
 extern crate divbuf;
