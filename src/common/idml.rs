@@ -239,9 +239,13 @@ impl<'a> IDML {
 impl DML for IDML {
     type Addr = RID;
 
-    fn delete<'a>(&'a self, ridp: &Self::Addr, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send + 'a>
+    fn delete(&self, ridp: &Self::Addr, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>
     {
+        let cache2 = self.cache.clone();
+        let ddml2 = self.ddml.clone();
+        let alloct2 = self.alloct.clone();
+        let ridt2 = self.ridt.clone();
         let rid = *ridp;
         let fut = self.ridt.get(rid)
             .and_then(|r| {
@@ -252,11 +256,11 @@ impl DML for IDML {
             }).and_then(move |mut entry| {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
-                    self.cache.lock().unwrap().remove(&Key::Rid(rid));
+                    cache2.lock().unwrap().remove(&Key::Rid(rid));
                     // TODO: usd ddml.delete_direct
-                    let ddml_fut = self.ddml.delete(&entry.drp, txg);
-                    let alloct_fut = self.alloct.remove(entry.drp.pba(), txg);
-                    let ridt_fut = self.ridt.remove(rid, txg);
+                    let ddml_fut = ddml2.delete(&entry.drp, txg);
+                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
+                    let ridt_fut = ridt2.remove(rid, txg);
                     Box::new(
                         ddml_fut.join3(alloct_fut, ridt_fut)
                              .map(|(_, old_rid, _old_ridt_entry)| {
@@ -264,7 +268,7 @@ impl DML for IDML {
                              })
                      ) as Box<Future<Item=(), Error=Error> + Send>
                 } else {
-                    let ridt_fut = self.ridt.insert(rid, entry, txg)
+                    let ridt_fut = ridt2.insert(rid, entry, txg)
                         .map(|_| ());
                     Box::new(ridt_fut)
                     as Box<Future<Item=(), Error=Error> + Send>
@@ -328,7 +332,7 @@ impl DML for IDML {
                     let bfut = cacheval
                         .map(move |cacheable| {
                             let t = cacheable.downcast::<T>().unwrap();
-                            Box::new(ddml2.delete_static(&entry.drp, txg)
+                            Box::new(ddml2.delete(&entry.drp, txg)
                                               .map(move |_| t)
                             ) as Box<Future<Item=Box<T>, Error=Error> + Send>
                         }).unwrap_or_else(||{

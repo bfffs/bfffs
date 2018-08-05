@@ -199,15 +199,6 @@ impl<'a> DDML {
         self.pool.allocated()
     }
 
-    /// Like DML::delete, but 'static
-    // TODO: remove this method after DML::delete becomes 'static
-    pub fn delete_static(&self, drp: &DRP, _txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
-    {
-        self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
-        Box::new(self.pool.free(drp.pba, drp.asize()))
-    }
-
     pub fn new(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
         DDML{pool: Arc::new(pool), cache}
     }
@@ -378,8 +369,8 @@ impl<'a> DDML {
 impl DML for DDML {
     type Addr = DRP;
 
-    fn delete<'a>(&'a self, drp: &DRP, _txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send + 'a>
+    fn delete(&self, drp: &DRP, _txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
         Box::new(self.pool.free(drp.pba, drp.asize()))

@@ -63,8 +63,8 @@ pub trait DML: Send + Sync {
     type Addr;
 
     /// Delete the record from the cache, and free its storage space.
-    fn delete<'a>(&'a self, addr: &Self::Addr, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send + 'a>;
+    fn delete(&self, addr: &Self::Addr, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>;
 
     /// If the given record is present in the cache, evict it.
     fn evict(&self, addr: &Self::Addr);
