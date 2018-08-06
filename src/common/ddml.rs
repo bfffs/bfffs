@@ -11,7 +11,7 @@ use common::{
     label::*,
 };
 #[cfg(not(test))] use common::pool::*;
-use futures::{Future, Stream, future};
+use futures::{Future, Stream, future, stream};
 use metrohash::MetroHash64;
 use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
@@ -32,6 +32,9 @@ use common::cache_mock::CacheMock as Cache;
 /// Only exists so mockers can replace Pool
 pub trait PoolTrait {
     fn allocated(&self) -> LbaT;
+    fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
+        -> Box<Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
+                      Error=Error>>;
     fn free(&self, pba: PBA, length: LbaT)
         -> Box<Future<Item=(), Error=Error> + Send>;
     fn list_closed_zones(&self)
@@ -51,17 +54,17 @@ pub trait PoolTrait {
 /// Part of an ugly hack for mocking a Send trait
 #[cfg(test)]
 pub struct MockPoolWrapper(Box<PoolTrait>);
-//#[cfg(test)]
-//impl MockPoolWrapper {
-    //#[cfg(test)]
-    //fn new(pool: Box<PoolTrait>) -> Self {
-        //MockPoolWrapper(pool)
-    //}
-//}
+
 #[cfg(test)]
 impl PoolTrait for MockPoolWrapper {
     fn allocated(&self) -> LbaT {
         self.0.allocated()
+    }
+    fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
+        -> Box<Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
+                      Error=Error>>
+    {
+        self.0.find_closed_zone(clust, zid)
     }
     fn free(&self, pba: PBA, length: LbaT)
         -> Box<Future<Item=(), Error=Error> + Send>
@@ -192,7 +195,7 @@ pub struct DDML {
     pool: Arc<PoolLike>,
 }
 
-impl<'a> DDML {
+impl DDML {
     /// How many blocks have been allocated, including blocks that have been
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {
@@ -212,10 +215,39 @@ impl<'a> DDML {
         })
     }
 
-    pub fn list_closed_zones(&'a self)
-        -> impl Stream<Item=ClosedZone, Error=Error> + 'a
+    /// List all closed zones in the `DDML` in no particular order
+    pub fn list_closed_zones(&self)
+        -> impl Stream<Item=ClosedZone, Error=Error>
     {
-        self.pool.list_closed_zones()
+        struct State {
+            pool: Arc<PoolLike>,
+            cluster: ClusterT,
+            zid: ZoneT
+        };
+
+        let initial = Some(State{pool: self.pool.clone(), cluster: 0, zid: 0});
+        stream::unfold(initial, |state| {
+            if let Some(s) = state {
+                let fut = s.pool.find_closed_zone(s.cluster, s.zid)
+                .map(|r| {
+                    match r {
+                        (Some(pclz), Some((c, z))) => {
+                            let next = State{pool: s.pool, cluster: c, zid: z};
+                            (Some(pclz), Some(next))
+                        },
+                        (Some(_), None) => unreachable!(),
+                        (None, Some((c, z))) => {
+                            let next = State{pool: s.pool, cluster: c, zid: z};
+                            (None, Some(next))
+                        },
+                        (None, None) => (None, None)
+                    }
+                });
+                Some(fut)
+            } else {
+                None
+            }
+        }).filter_map(|opt_zone| opt_zone)
     }
 
     /// Read a record from disk
@@ -461,6 +493,10 @@ mod t {
         self,
         trait PoolTrait {
             fn allocated(&self) -> LbaT;
+            fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
+                -> Box<Future<Item=(Option<ClosedZone>,
+                                    Option<(ClusterT, ZoneT)>),
+                              Error=Error>>;
             fn free(&self, pba: PBA, length: LbaT)
                 -> Box<Future<Item=(), Error=Error> + Send>;
             fn list_closed_zones(&self)
@@ -630,6 +666,50 @@ mod t {
             ddml.get::<DivBufShared, DivBuf>(&drp)
         })).unwrap_err();
         assert_eq!(err, Error::Sys(errno::Errno::EIO));
+    }
+
+    #[test]
+    fn list_closed_zones() {
+        let s = Scenario::new();
+        let cache = Cache::new();
+        let pool = s.create_mock::<MockPool>();
+
+        // The first cluster has two closed zones
+        let clz0 = ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5,
+            total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1)};
+        s.expect(pool.find_closed_zone_call(0, 0).and_return(
+            Box::new(Ok((Some(clz0.clone()), Some((0, 11)))).into_future())));
+
+        let clz1 = ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6,
+            total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3)};
+        s.expect(pool.find_closed_zone_call(0, 11).and_return(
+            Box::new(Ok((Some(clz1.clone()), Some((0, 31)))).into_future())));
+
+        s.expect(pool.find_closed_zone_call(0, 31).and_return(
+            Box::new(Ok((None, Some((1, 0)))).into_future())));
+
+        // The second cluster has no closed zones
+        s.expect(pool.find_closed_zone_call(1, 0).and_return(
+            Box::new(Ok((None, Some((2, 0)))).into_future())));
+
+        // The third cluster has one closed zone
+        let clz2 = ClosedZone{pba: PBA::new(2, 10), freed_blocks: 5,
+            total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1)};
+        s.expect(pool.find_closed_zone_call(2, 0).and_return(
+            Box::new(Ok((Some(clz2.clone()), Some((2, 11)))).into_future())));
+
+        s.expect(pool.find_closed_zone_call(2, 11).and_return(
+            Box::new(Ok((None, None)).into_future())));
+
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+
+        let closed_zones = rt.block_on(
+            ddml.list_closed_zones().collect()
+        ).unwrap();
+        let expected = vec![clz0, clz1, clz2];
+        assert_eq!(closed_zones, expected);
     }
 
     #[test]
