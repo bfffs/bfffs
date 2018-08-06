@@ -116,8 +116,8 @@ impl<'a> IDML {
         IDML{cache, ddml, next_rid, transaction, trees}
     }
 
-    pub fn list_closed_zones(&'a self)
-        -> impl Stream<Item=ClosedZone, Error=Error> + 'a
+    pub fn list_closed_zones(&self)
+        -> impl Stream<Item=ClosedZone, Error=Error>
     {
         self.ddml.list_closed_zones()
     }

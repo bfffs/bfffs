@@ -63,13 +63,14 @@ impl<'a> Cleaner {
 
     /// Select which zones to clean and return them sorted by cleanliness:
     /// dirtiest zones first.
-    fn select_zones(&'a self)
-        -> impl Future<Item=Vec<ClosedZone>, Error=Error> + 'a
+    fn select_zones(&self)
+        -> impl Future<Item=Vec<ClosedZone>, Error=Error>
     {
+        let threshold = self.threshold;
         self.idml.list_closed_zones()
         .filter(move |z| {
             let dirtiness = z.freed_blocks as f32 / z.total_blocks as f32;
-            dirtiness >= self.threshold
+            dirtiness >= threshold
         }).collect()
         .map(|mut zones: Vec<ClosedZone>| {
             // Sort by highest percentage of free space to least
