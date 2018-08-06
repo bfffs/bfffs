@@ -67,15 +67,13 @@ impl Database {
     /// Create a new, blank filesystem
     pub fn new_fs(&self) -> TreeID {
         let mut guard = self.inner.filesystems.lock().unwrap();
-        for i in 0..u32::max_value() {
-            let key = TreeID::Fs(i);
-            if ! guard.contains_key(&key) {
-                let fs = Arc::new(ITree::create(self.inner.idml.clone()));
-                guard.insert(key, fs);
-                return key
-            }
-        }
-        panic!("Maximum number of filesystems reached");
+        let k = (0..=u32::max_value()).filter(|i| {
+            !guard.contains_key(&TreeID::Fs(*i))
+        }).nth(0).expect("Maximum number of filesystems reached");
+        let key = TreeID::Fs(k);
+        let fs = Arc::new(ITree::create(self.inner.idml.clone()));
+        guard.insert(key, fs);
+        key
     }
 
     /// Perform a read-only operation on a Filesystem
