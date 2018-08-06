@@ -353,7 +353,7 @@ pub struct Tree<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
     i: Arc<Inner<A, K, V>>
 }
 
-impl<'a, A, D, K, V> Tree<A, D, K, V>
+impl<A, D, K, V> Tree<A, D, K, V>
     where A: Addr,
           D: DML<Addr=A> + 'static,
           K: Key,
@@ -429,24 +429,24 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
     /// Subroutine of range_delete.  Fixes a node that is in danger of an
     /// underflow.  Returns the node guard, and two ints which are the number of
     /// nodes that were merged before and after the fixed child, respectively.
-    fn fix_if_in_danger<R, T>(&'a self, parent: TreeWriteGuard<A, K, V>,
-                  child_idx: usize, child: TreeWriteGuard<A, K, V>, range: R,
-                  ubound: Option<K>, txg: TxgT)
-        -> Box<Future<Item=(TreeWriteGuard<A, K, V>, i8, i8), Error=Error> + 'a>
+    fn fix_if_in_danger<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+        parent: TreeWriteGuard<A, K, V>, child_idx: usize,
+        child: TreeWriteGuard<A, K, V>, range: R, ubound: Option<K>, txg: TxgT)
+        -> Box<Future<Item=(TreeWriteGuard<A, K, V>, i8, i8), Error=Error>>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static + Debug
     {
         // Is the child underfull?  The limit here is b-1, not b as in
         // Tree::remove, because we've already removed keys
-        if child.underflow(self.i.min_fanout - 1) {
-            Box::new(Tree::fix_int(self.i.clone(), self.dml.clone(), parent,
+        if child.underflow(inner.min_fanout - 1) {
+            Box::new(Tree::fix_int(inner, dml, parent,
                                    child_idx, child, txg))
         } else if !child.is_leaf() {
             // How many grandchildren are in the cut?
-            let (start_idx_bound, end_idx_bound) = self.range_delete_get_bounds(
-                &child, &range, ubound);
-            let cut_grandkids = match (start_idx_bound, end_idx_bound) {
+            let (start_idxbound, end_idxbound) = Tree::range_delete_get_bounds(
+                &child, &*dml, &range, ubound);
+            let cut_grandkids = match (start_idxbound, end_idxbound) {
                 (Bound::Included(_), Bound::Excluded(_)) => 0,
                 (Bound::Included(_), Bound::Included(_)) => 1,
                 (Bound::Excluded(_), Bound::Excluded(_)) => 1,
@@ -457,9 +457,9 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
                 // LCOV_EXCL_STOP
             };
-            let b = self.i.min_fanout as usize;
+            let b = inner.min_fanout as usize;
             if child.as_int().nchildren() - cut_grandkids <= b - 1 {
-                Box::new(Tree::fix_int(self.i.clone(), self.dml.clone(), parent,
+                Box::new(Tree::fix_int(inner, dml, parent,
                                        child_idx, child, txg))
             } else {
                 Box::new(Ok((parent, 0, 0)).into_future())
@@ -721,8 +721,8 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Delete a range of keys
-    pub fn range_delete<R, T>(&'a self, range: R, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + 'a
+    pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
+        -> impl Future<Item=(), Error=Error>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static + Debug
@@ -737,19 +737,24 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
         let dml3 = self.dml.clone();
         let dml4 = self.dml.clone();
         let dml5 = self.dml.clone();
+        let dml6 = self.dml.clone();
+        let dml7 = self.dml.clone();
+        let inner2 = self.i.clone();
+        let inner3 = self.i.clone();
         self.write()
             .and_then(move |guard| {
                 Tree::xlock_root(dml2, guard, txg)
                      .and_then(move |(tree_guard, root_guard)| {
-                         self.range_delete_pass1(root_guard, range, None, txg)
+                         Tree::range_delete_pass1(dml6, root_guard, range, None,
+                                                  txg)
                              .map(|_| tree_guard)
                      })
             })
             .and_then(move |guard| {
                 Tree::xlock_root(dml3, guard, txg)
                     .and_then(move |(tree_guard, root_guard)| {
-                        self.range_delete_pass2(root_guard, rangeclone, None,
-                                                txg)
+                        Tree::range_delete_pass2(inner2, dml7, root_guard,
+                                                 rangeclone, None, txg)
                             .map(|_| tree_guard)
                     })
             })
@@ -761,7 +766,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
             .and_then(move |tree_guard| {
                 Tree::xlock_root(dml4, tree_guard, txg)
                     .map(move |(tree_guard, mut root_guard)| {
-                        Tree::merge_root(&*self.i, &*dml5, &mut root_guard);
+                        Tree::merge_root(&*inner3, &*dml5, &mut root_guard);
                         // Keep the whole tree locked during range_delete
                         drop(tree_guard)
                     })  // LCOV_EXCL_LINE   kcov false negative
@@ -770,7 +775,8 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
 
     /// Subroutine of range_delete.  Returns the bounds, as indices, of the
     /// affected children of this node.
-    fn range_delete_get_bounds<R, T>(&self, guard: &TreeWriteGuard<A, K, V>,
+    // TODO: eliminate the dml argument by not parameterizing on D
+    fn range_delete_get_bounds<R, T>(guard: &TreeWriteGuard<A, K, V>, _dml: &D,
                                      range: &R, ubound: Option<K>)
         -> (Bound<usize>, Bound<usize>)
         where K: Borrow<T>,
@@ -829,9 +835,9 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
     /// Depth-first traversal deleting keys without reshaping tree
     /// `ubound` is the first key in the Node immediately to the right of
     /// this one, unless this is the rightmost Node on its level.
-    fn range_delete_pass1<R, T>(&'a self, mut guard: TreeWriteGuard<A, K, V>,
+    fn range_delete_pass1<R, T>(dml: Arc<D>, mut guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + 'a
+        -> impl Future<Item=(), Error=Error>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static + Debug
@@ -846,9 +852,10 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
         // range), and completely delete 0 or more children (in the middle
         // of the range)
         let l = guard.as_int().nchildren();
-        let (start_idx_bound, end_idx_bound) = self.range_delete_get_bounds(
-            &guard, &range, ubound);
-        let dml2 = self.dml.clone();
+        let (start_idx_bound, end_idx_bound) = Tree::range_delete_get_bounds(
+            &guard, &*dml, &range, ubound);
+        let dml2 = dml.clone();
+        let dml3 = dml.clone();
         let fut: Box<Future<Item=TreeWriteGuard<A, K, V>, Error=Error>>
             = match (start_idx_bound, end_idx_bound) {
             (Bound::Included(_), Bound::Excluded(_)) => {
@@ -864,7 +871,8 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 };
                 Box::new(guard.xlock(dml2, j, txg)
                     .and_then(move |(parent_guard, child_guard)| {
-                        self.range_delete_pass1(child_guard, range, ubound, txg)
+                        Tree::range_delete_pass1(dml3, child_guard, range,
+                                                 ubound, txg)
                             .map(move |_| parent_guard)
                     }))
             },
@@ -877,7 +885,8 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 };
                 Box::new(guard.xlock(dml2, i, txg)
                     .and_then(move |(parent_guard, child_guard)| {
-                        self.range_delete_pass1(child_guard, range, ubound, txg)
+                        Tree::range_delete_pass1(dml3, child_guard, range,
+                                                 ubound, txg)
                             .map(move |_| parent_guard)
                     }))
             },
@@ -890,15 +899,18 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 } else {
                     ubound
                 };
-                let dml3 = self.dml.clone();
+                let dml4 = dml.clone();
+                let dml5 = dml.clone();
                 Box::new(guard.xlock(dml2, i, txg)
                     .and_then(move |(parent_guard, child_guard)| {
-                        self.range_delete_pass1(child_guard, range, ub_l, txg)
+                        Tree::range_delete_pass1(dml3, child_guard, range, ub_l,
+                                                 txg)
                             .map(|_| parent_guard)
                     }).and_then(move |parent_guard| {
-                        parent_guard.xlock(dml3, j, txg)
+                        parent_guard.xlock(dml4, j, txg)
                     }).and_then(move |(parent_guard, child_guard)| {
-                        self.range_delete_pass1(child_guard, range2, ub_h, txg)
+                        Tree::range_delete_pass1(dml5, child_guard, range2,
+                                                 ub_h, txg)
                             .map(|_| parent_guard)
                     }))
             },
@@ -911,7 +923,8 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 };
                 Box::new(guard.xlock(dml2, i, txg)
                     .and_then(move |(parent_guard, child_guard)| {
-                        self.range_delete_pass1(child_guard, range, ubound, txg)
+                        Tree::range_delete_pass1(dml3, child_guard, range,
+                                                 ubound, txg)
                             .map(move |_| parent_guard)
                     }))
             },
@@ -940,9 +953,10 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
 
     /// Depth-first traversal reshaping the tree after some keys were deleted by
     /// range_delete_pass1.
-    fn range_delete_pass2<R, T>(&'a self, guard: TreeWriteGuard<A, K, V>,
+    fn range_delete_pass2<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+                                guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + 'a>
+        -> Box<Future<Item=(), Error=Error>>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static + Debug
@@ -958,8 +972,8 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
             return Box::new(Ok(()).into_future());
         }
 
-        let (start_idx_bound, end_idx_bound) = self.range_delete_get_bounds(
-            &guard, &range, ubound);
+        let (start_idx_bound, end_idx_bound) = Tree::range_delete_get_bounds(
+            &guard, &*dml, &range, ubound);
         let range2 = range.clone();
         let range3 = range.clone();
         let children_to_fix = match (start_idx_bound, end_idx_bound) {
@@ -985,21 +999,25 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 ubound
             };
             let range2 = range.clone();
-            let dml2 = self.dml.clone();
-            let dml3 = self.dml.clone();
+            let dml2 = dml.clone();
+            let dml3 = dml.clone();
+            let dml4 = dml.clone();
+            let dml5 = dml.clone();
+            let inner2 = inner.clone();
+            let inner3 = inner.clone();
             Box::new(
                 parent_guard.xlock(dml2, idx, txg)
                 .and_then(move |(parent_guard, child_guard)| {
-                    self.fix_if_in_danger(parent_guard, idx, child_guard,
-                                          range, child_ubound, txg)
+                    Tree::fix_if_in_danger(inner2, dml4, parent_guard, idx,
+                        child_guard, range, child_ubound, txg)
                 }).and_then(move |(parent_guard, merged_before, merged_after)| {
                     let merged = merged_before + merged_after;
                     parent_guard.xlock(dml3, idx - merged_before as usize,
                                        txg)
                         .map(move |(parent, child)| (parent, child, merged))
                 }).and_then(move |(parent_guard, child_guard, merged)| {
-                    self.range_delete_pass2(child_guard, range2, child_ubound,
-                                            txg)
+                    Tree::range_delete_pass2(inner3, dml5, child_guard, range2,
+                                             child_ubound, txg)
                         .map(move |_| (parent_guard, merged))
                 })
             ) as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8), Error=Error>>
