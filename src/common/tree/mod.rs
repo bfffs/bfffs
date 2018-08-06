@@ -108,11 +108,11 @@ mod tree_root_serializer {
     }
 }
 
-pub struct RangeQuery<'tree, A, D, K, T, V>
+pub struct RangeQuery<A, D, K, T, V>
     where A: Addr,
-          D: DML<Addr=A> + 'tree,
+          D: DML<Addr=A>,
           K: Key + Borrow<T>,
-          T: Ord + Clone + 'tree,
+          T: Ord + Clone,
           V: Value
 {
     /// If Some, then there are more nodes in the Tree to query
@@ -121,12 +121,14 @@ pub struct RangeQuery<'tree, A, D, K, T, V>
     data: VecDeque<(K, V)>,
     end: Bound<T>,
     last_fut: Option<Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
-                       Error=Error> + 'tree>>,
-    /// Handle to the tree
-    tree: &'tree Tree<A, D, K, V>
+                       Error=Error>>>,
+    /// Handle to the tree's inner
+    inner: Arc<Inner<A, K, V>>,
+    /// Handle to the tree's DML
+    dml: Arc<D>
 }
 
-impl<'tree, A, D, K, T, V> RangeQuery<'tree, A, D, K, T, V>
+impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A>,
           K: Key + Borrow<T>,
@@ -134,8 +136,8 @@ impl<'tree, A, D, K, T, V> RangeQuery<'tree, A, D, K, T, V>
           V: Value
     {
 
-    fn new<R>(range: R, tree: &'tree Tree<A, D, K, V>)
-        -> RangeQuery<'tree, A, D, K, T, V>
+    fn new<R>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>, range: R)
+        -> RangeQuery<A, D, K, T, V>
         where R: RangeBounds<T>
     {
         let cursor: Option<Bound<T>> = Some(match range.start_bound() {
@@ -149,11 +151,11 @@ impl<'tree, A, D, K, T, V> RangeQuery<'tree, A, D, K, T, V>
             Bound::Unbounded => Bound::Unbounded,
         };
         let data = VecDeque::new();
-        RangeQuery{cursor, data, end, last_fut: None, tree: tree}
+        RangeQuery{cursor, data, end, last_fut: None, inner, dml}
     }
 }
 
-impl<'tree, A, D, K, T, V> Stream for RangeQuery<'tree, A, D, K, T, V>
+impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A> + 'static,
           K: Key + Borrow<T>,
@@ -171,7 +173,8 @@ impl<'tree, A, D, K, T, V> Stream for RangeQuery<'tree, A, D, K, T, V>
                     let mut fut = self.last_fut.take().unwrap_or_else(|| {
                         let l = self.cursor.clone().unwrap();
                         let r = (l, self.end.clone());
-                        Box::new(self.tree.get_range(r))
+                        let dml2 = self.dml.clone();
+                        Box::new(Tree::get_range(&self.inner, dml2, r))
                     });
                     match fut.poll() {
                         Ok(Async::Ready((v, bound))) => {
@@ -370,7 +373,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, mut child: TreeWriteGuard<A, K, V>,
                   txg: TxgT)
-        -> impl Future<Item=(TreeWriteGuard<A, K, V>, i8, i8), Error=Error> + 'a
+        -> impl Future<Item=(TreeWriteGuard<A, K, V>, i8, i8), Error=Error>
         where K: Borrow<Q>, Q: Ord
     {
         // Outline:
@@ -600,31 +603,32 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
     /// results, consisting of all matching (K,V) pairs within a single Leaf
     /// Node, plus an optional Bound for the next iteration of the search.  If
     /// the Bound is `None`, then the search is complete.
-    fn get_range<R, T>(&'a self, range: R)
+    fn get_range<R, T>(inner: &Inner<A, K, V>, dml: Arc<D>, range: R)
         -> impl Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
-                       Error=Error> + 'a
+                       Error=Error>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static
     {
-        self.read()
+        Tree::read_root(&inner, &dml)
             .and_then(move |guard| {
-                guard.rlock(self.dml.clone())
-                     .and_then(move |g| self.get_range_r(g, None, range))
+                guard.rlock(dml.clone())
+                     .and_then(move |g| Tree::get_range_r(dml, g, None, range))
             })
     }
 
     /// Range lookup beginning in the node `guard`.  `next_guard`, if present,
     /// must be the node immediately to the right (and possibly up one or more
     /// levels) from `guard`.
-    fn get_range_r<R, T>(&'a self, guard: TreeReadGuard<A, K, V>,
+    fn get_range_r<R, T>(dml: Arc<D>, guard: TreeReadGuard<A, K, V>,
                             next_guard: Option<TreeReadGuard<A, K, V>>, range: R)
         -> Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
-                      Error=Error> + 'a>
+                      Error=Error>>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static
     {
+        let dml2 = dml.clone();
         let (child_fut, next_fut) = match *guard {
             NodeData::Leaf(ref leaf) => {
                 let (v, more) = leaf.range(range.clone());
@@ -632,7 +636,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                     // We must've started the query with a key that's not
                     // present, and lies between two leaves.  Check the next
                     // node
-                    self.get_range_r(next_guard.unwrap(), None, range)
+                    Tree::get_range_r(dml2, next_guard.unwrap(), None, range)
                 } else if v.is_empty() {
                     // The range is truly empty
                     Box::new(Ok((v, None)).into_future())
@@ -656,8 +660,9 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                 };
                 let child_elem = &int.children[child_idx];
                 let next_fut = if child_idx < int.nchildren() - 1 {
+                    let dml3 = dml2.clone();
                     Box::new(
-                        int.children[child_idx + 1].rlock(self.dml.clone())
+                        int.children[child_idx + 1].rlock(dml3)
                             .map(|guard| Some(guard))
                     ) as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
                                     Error=Error>>
@@ -666,7 +671,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
                         as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
                                       Error=Error>>
                 };
-                let child_fut = child_elem.rlock(self.dml.clone());
+                let child_fut = child_elem.rlock(dml2);
                 (child_fut, next_fut)
             } // LCOV_EXCL_LINE kcov false negative
         };
@@ -674,7 +679,7 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
         Box::new(
             child_fut.join(next_fut)
                 .and_then(move |(child_guard, next_guard)| {
-                self.get_range_r(child_guard, next_guard, range)
+                Tree::get_range_r(dml, child_guard, next_guard, range)
             })
         ) as Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>), Error=Error>>
     }
@@ -707,12 +712,12 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Lookup a range of (key, value) pairs for keys within the range `range`.
-    pub fn range<R, T>(&'a self, range: R) -> RangeQuery<'a, A, D, K, T, V>
+    pub fn range<R, T>(&self, range: R) -> RangeQuery<A, D, K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T>,
               T: Ord + Clone
     {
-        RangeQuery::new(range, self)
+        RangeQuery::new(self.i.clone(), self.dml.clone(), range)
     }
 
     /// Delete a range of keys
@@ -1229,7 +1234,14 @@ impl<'a, A, D, K, V> Tree<A, D, K, V>
     fn read(&self) -> impl Future<Item=RwLockReadGuard<IntElem<A, K, V>>,
                                      Error=Error>
     {
-        self.i.root.read().map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        Tree::read_root(&self.i, &self.dml)
+    }
+
+    // TODO: eliminate the dml argument by not parameterizing on D
+    fn read_root(inner: &Inner<A, K, V>, _dml: &Arc<D>)
+        -> impl Future<Item=RwLockReadGuard<IntElem<A, K, V>>, Error=Error>
+    {
+        inner.root.read().map_err(|_| Error::Sys(errno::Errno::EPIPE))
     }
 
     /// Lock the Tree for writing
