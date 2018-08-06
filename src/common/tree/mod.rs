@@ -448,8 +448,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                    child_idx, child, txg))
         } else if !child.is_leaf() {
             // How many grandchildren are in the cut?
-            let (start_idxbound, end_idxbound) = Tree::range_delete_get_bounds(
-                &child, &*dml, &range, ubound);
+            let (start_idxbound, end_idxbound)
+                = Tree::<A, D, K, V>::range_delete_get_bounds(&child,
+                                                              &range, ubound);
             let cut_grandkids = match (start_idxbound, end_idxbound) {
                 (Bound::Included(_), Bound::Excluded(_)) => 0,
                 (Bound::Included(_), Bound::Included(_)) => 1,
@@ -513,7 +514,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         } else {
             if child.is_leaf() {
                 let elem = &mut parent.as_int_mut().children[child_idx];
-                Box::new(Tree::insert_leaf_no_split(elem, dml, child, k, v, txg))
+                Box::new(Tree::<A, D, K, V>::insert_leaf_no_split(elem,
+                    child, k, v, txg))
             } else {
                 drop(parent);
                 Box::new(Tree::insert_int_no_split(inner, dml, child, k, v, txg))
@@ -522,8 +524,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Insert a value into a leaf node without splitting it
-    // TODO: eliminate the dml argument by not parameterizing on D
-    fn insert_leaf_no_split(elem: &mut IntElem<A, K, V>, _dml: Arc<D>,
+    fn insert_leaf_no_split(elem: &mut IntElem<A, K, V>,
                   mut child: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
         -> impl Future<Item=Option<V>, Error=Error>
     {
@@ -551,7 +552,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }
 
         if rnode.is_leaf() {
-            Box::new(Tree::insert_leaf_no_split(&mut *relem, dml, rnode, k, v, txg))
+            Box::new(Tree::<A, D, K, V>::insert_leaf_no_split(&mut *relem,
+                                                              rnode, k, v, txg))
         } else {
             drop(relem);
             Box::new(Tree::insert_int_no_split(inner, dml, rnode, k, v, txg))
@@ -614,7 +616,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static
     {
-        Tree::read_root(&inner, &*dml)
+        Tree::<A, D, K, V>::read_root(&inner)
             .and_then(move |guard| {
                 guard.rlock(dml.clone())
                      .and_then(move |g| Tree::get_range_r(dml, g, None, range))
@@ -689,8 +691,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Merge the root node with its children, if necessary
-    // TODO: eliminate the _dml argument by not parameterizing on D
-    fn merge_root(inner: &Inner<A, K, V>, _dml: &D,
+    fn merge_root(inner: &Inner<A, K, V>,
                   root_guard: &mut TreeWriteGuard<A, K, V>)
     {
         if ! root_guard.is_leaf() && root_guard.as_int().nchildren() == 1
@@ -740,7 +741,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml2 = self.dml.clone();
         let dml3 = self.dml.clone();
         let dml4 = self.dml.clone();
-        let dml5 = self.dml.clone();
         let dml6 = self.dml.clone();
         let dml7 = self.dml.clone();
         let inner2 = self.i.clone();
@@ -770,7 +770,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
             .and_then(move |tree_guard| {
                 Tree::xlock_root(dml4, tree_guard, txg)
                     .map(move |(tree_guard, mut root_guard)| {
-                        Tree::merge_root(&*inner3, &*dml5, &mut root_guard);
+                        Tree::<A, D, K, V>::merge_root(&*inner3,
+                                                       &mut root_guard);
                         // Keep the whole tree locked during range_delete
                         drop(tree_guard)
                     })  // LCOV_EXCL_LINE   kcov false negative
@@ -779,8 +780,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Subroutine of range_delete.  Returns the bounds, as indices, of the
     /// affected children of this node.
-    // TODO: eliminate the dml argument by not parameterizing on D
-    fn range_delete_get_bounds<R, T>(guard: &TreeWriteGuard<A, K, V>, _dml: &D,
+    fn range_delete_get_bounds<R, T>(guard: &TreeWriteGuard<A, K, V>,
                                      range: &R, ubound: Option<K>)
         -> (Bound<usize>, Bound<usize>)
         where K: Borrow<T>,
@@ -856,8 +856,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // range), and completely delete 0 or more children (in the middle
         // of the range)
         let l = guard.as_int().nchildren();
-        let (start_idx_bound, end_idx_bound) = Tree::range_delete_get_bounds(
-            &guard, &*dml, &range, ubound);
+        let (start_idx_bound, end_idx_bound)
+            = Tree::<A, D, K, V>::range_delete_get_bounds(&guard, &range,
+                                                          ubound);
         let dml2 = dml.clone();
         let dml3 = dml.clone();
         let fut: Box<Future<Item=TreeWriteGuard<A, K, V>, Error=Error>>
@@ -976,8 +977,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
             return Box::new(Ok(()).into_future());
         }
 
-        let (start_idx_bound, end_idx_bound) = Tree::range_delete_get_bounds(
-            &guard, &*dml, &range, ubound);
+        let (start_idx_bound, end_idx_bound)
+            = Tree::<A, D, K, V>::range_delete_get_bounds( &guard, &range,
+                                                           ubound);
         let range2 = range.clone();
         let range3 = range.clone();
         let children_to_fix = match (start_idx_bound, end_idx_bound) {
@@ -1117,7 +1119,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                      mut root: TreeWriteGuard<A, K, V>, k: K, txg: TxgT)
         -> Box<Future<Item=Option<V>, Error=Error> + Send>
     {
-        Tree::merge_root(&*inner, &*dml, &mut root);
+        Tree::<A, D, K, V>::merge_root(&*inner, &mut root);
         Tree::remove_no_fix(inner, dml, root, k, txg)
     }
 
@@ -1256,11 +1258,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn read(&self) -> impl Future<Item=RwLockReadGuard<IntElem<A, K, V>>,
                                      Error=Error>
     {
-        Tree::read_root(&self.i, &*self.dml)
+        Tree::<A, D, K, V>::read_root(&self.i)
     }
 
-    // TODO: eliminate the dml argument by not parameterizing on D
-    fn read_root(inner: &Inner<A, K, V>, _dml: &D)
+    fn read_root(inner: &Inner<A, K, V>)
         -> impl Future<Item=RwLockReadGuard<IntElem<A, K, V>>, Error=Error>
     {
         inner.root.read().map_err(|_| Error::Sys(errno::Errno::EPIPE))
@@ -1270,11 +1271,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn write(&self) -> impl Future<Item=RwLockWriteGuard<IntElem<A, K, V>>,
                                       Error=Error>
     {
-        Tree::write_root(&self.i, &*self.dml)
+        Tree::<A, D, K, V>::write_root(&self.i)
     }
 
-    // TODO: eliminate the dml argument by not parameterizing on D
-    fn write_root(inner: &Inner<A, K, V>, _dml: &D)
+    fn write_root(inner: &Inner<A, K, V>)
         -> impl Future<Item=RwLockWriteGuard<IntElem<A, K, V>>, Error=Error>
     {
         inner.root.write().map_err(|_| Error::Sys(errno::Errno::EPIPE))
@@ -1380,7 +1380,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                        pbas: Range<PBA>, txgs: Range<TxgT>, echelon: u8)
         -> impl Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>
     {
-        Tree::read_root(&*inner, &*dml)
+        Tree::<ddml::DRP, D, K, V>::read_root(&*inner)
             .and_then(move |guard| {
                 let h = inner.height.load(Ordering::Relaxed) as u8;
                 if h == echelon + 1 {
@@ -1474,7 +1474,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
         -> impl Future<Item=(), Error=Error>
     {
         let dml2 = dml.clone();
-        Tree::write_root(&*inner, &*dml)
+        Tree::<ddml::DRP, D, K, V>::write_root(&*inner)
             .and_then(move |mut guard| {
             let h = inner.height.load(Ordering::Relaxed) as u8;
             if h == node.height + 1 {
