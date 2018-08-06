@@ -98,9 +98,10 @@ test_suite! {
     // check that we can open-after-write
     test open(objects()) {
         let (mut rt, old_idml, _tempdir, path) = objects.val;
-        let txg = TxgT::from(42);
         rt.block_on(future::lazy(|| {
-            old_idml.write_label(txg)
+            old_idml.advance_transaction(|_| {
+                old_idml.write_label(TxgT::from(42))
+            })
         })).unwrap();
         drop(old_idml);
         let _idml = rt.block_on(future::lazy(|| {
@@ -122,9 +123,11 @@ test_suite! {
     }
 
     test write_label(objects()) {
-        let (mut rt, old_idml, _tempdir, path) = objects.val;
+        let (mut rt, idml, _tempdir, path) = objects.val;
         rt.block_on(future::lazy(|| {
-            old_idml.write_label(TxgT::from(42))
+            idml.advance_transaction(|_| {
+                idml.write_label(TxgT::from(42))
+            })
         })).unwrap();
         let mut f = fs::File::open(path).unwrap();
         let mut v = vec![0; 8192];
