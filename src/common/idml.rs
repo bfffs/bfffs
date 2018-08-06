@@ -86,8 +86,8 @@ impl<'a> IDML {
     }
 
     /// Clean `zone` by moving all of its records to other zones.
-    pub fn clean_zone(&'a self, zone: ClosedZone, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + 'a
+    pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
+        -> impl Future<Item=(), Error=Error>
     {
         // Outline:
         // 1) Lookup the Zone's PBA range in the Allocation Table.  Rewrite each
@@ -96,13 +96,17 @@ impl<'a> IDML {
         //    second, because the first step will reduce the amount of work to
         //    do in the second.
         let end = PBA::new(zone.pba.cluster, zone.pba.lba + zone.total_blocks);
+        let cache2 = self.cache.clone();
+        let trees2 = self.trees.clone();
+        let trees3 = self.trees.clone();
+        let ddml2 = self.ddml.clone();
         self.list_indirect_records(&zone).for_each(move |record| {
-            self.move_record(record, txg)
+            IDML::move_record(cache2.clone(), trees2.clone(), ddml2.clone(),
+                              record, txg)
         }).and_then(move |_| {
-            let czfut = self.trees.ridt.clean_zone(zone.pba..end,
-                                                   zone.txgs.clone(), txg);
-            let atfut = self.trees.alloct.clean_zone(zone.pba..end, zone.txgs,
-                                                     txg);
+            let txgs2 = zone.txgs.clone();
+            let czfut = trees3.ridt.clean_zone(zone.pba..end, txgs2, txg);
+            let atfut = trees3.alloct.clean_zone(zone.pba..end, zone.txgs, txg);
             czfut.join(atfut).map(|_| ())
         })
     }
@@ -126,8 +130,8 @@ impl<'a> IDML {
     /// been written to the IDML in the given Zone.
     ///
     /// This list should be persistent across reboots.
-    fn list_indirect_records(&'a self, zone: &ClosedZone)
-        -> impl Stream<Item=RID, Error=Error> + 'a
+    fn list_indirect_records(&self, zone: &ClosedZone)
+        -> impl Stream<Item=RID, Error=Error>
     {
         // Iterate through the AllocT to get indirect records from the target
         // zone.
@@ -157,16 +161,17 @@ impl<'a> IDML {
     }
 
     /// Rewrite the given direct Record and update its metadata.
-    fn move_record(&self, rid: RID, txg: TxgT)
+    fn move_record(cache: Arc<Mutex<Cache>>, trees: Arc<Trees>, ddml: Arc<DDML>,
+                   rid: RID, txg: TxgT)
         -> impl Future<Item=(), Error=Error>
     {
         // Even if the cache contains the target record, we must also do an RIDT
         // lookup because we're going to rewrite the RIDT
-        let cache2 = self.cache.clone();
-        let ddml2 = self.ddml.clone();
-        let ddml3 = self.ddml.clone();
-        let trees2 = self.trees.clone();
-        self.trees.ridt.get(rid)
+        let cache2 = cache.clone();
+        let ddml2 = ddml.clone();
+        let ddml3 = ddml.clone();
+        let trees2 = trees.clone();
+        trees.ridt.get(rid)
             .and_then(move |v| {
                 let entry = v.expect(
                     "Inconsistency in alloct.  Entry not found in RIDT");
@@ -673,7 +678,9 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp0, 1);
 
-        rt.block_on(idml.move_record(rid, TxgT::from(0))).unwrap();
+        rt.block_on(IDML::move_record(idml.cache.clone(), idml.trees.clone(),
+                                      idml.ddml.clone(), rid, TxgT::from(0))
+        ).unwrap();
 
         // Now verify the RIDT and alloct entries
         let entry = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
@@ -710,7 +717,9 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp0, 1);
 
-        rt.block_on(idml.move_record(rid, TxgT::from(0))).unwrap();
+        rt.block_on(IDML::move_record(idml.cache.clone(), idml.trees.clone(),
+                                      idml.ddml.clone(), rid, TxgT::from(0))
+        ).unwrap();
 
         // Now verify the RIDT and alloct entries
         let entry = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
