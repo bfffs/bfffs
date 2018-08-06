@@ -11,9 +11,10 @@ use common::dml::DML;
 use common::fs_tree::*;
 use common::idml::*;
 use common::tree::*;
-use futures::{Future, IntoFuture};
+use futures::{Future, IntoFuture, future};
 use nix::{Error, errno};
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
 type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
@@ -33,14 +34,15 @@ impl MinValue for TreeID {
 }
 
 struct Inner {
-    dummy: Arc<ITree<FSKey, FSValue>>,
+    filesystems: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue>>>>,
     idml: Arc<IDML>,
 }
 
 impl Inner {
-    fn ro_filesystem(&self, _tree_id: TreeID) -> ReadOnlyFilesystem
+    fn ro_filesystem(&self, tree_id: TreeID) -> ReadOnlyFilesystem
     {
-        ReadOnlyFilesystem::new(self.idml.clone(), self.dummy.clone())
+        let fs = self.filesystems.lock().unwrap()[&tree_id].clone();
+        ReadOnlyFilesystem::new(self.idml.clone(), fs)
     }
 
     fn rw_filesystem(&self, _tree_id: TreeID, _txg: TxgT) -> ReadWriteFilesystem
@@ -57,9 +59,23 @@ pub struct Database {
 impl Database {
     /// Construct a new `Database` from its `IDML`.
     pub fn new(idml: Arc<IDML>) -> Self {
-        let dummy = Arc::new(ITree::create(idml.clone()));
-        let inner = Arc::new(Inner{dummy, idml});
+        let filesystems = Mutex::new(BTreeMap::new());
+        let inner = Arc::new(Inner{filesystems, idml});
         Database{inner}
+    }
+
+    /// Create a new, blank filesystem
+    pub fn new_fs(&self) -> TreeID {
+        let mut guard = self.inner.filesystems.lock().unwrap();
+        for i in 0..u32::max_value() {
+            let key = TreeID::Fs(i);
+            if ! guard.contains_key(&key) {
+                let fs = Arc::new(ITree::create(self.inner.idml.clone()));
+                guard.insert(key, fs);
+                return key
+            }
+        }
+        panic!("Maximum number of filesystems reached");
     }
 
     /// Perform a read-only operation on a Filesystem
@@ -88,7 +104,12 @@ impl Database {
             let idml2 = inner2.idml.clone();
             let idml3 = inner2.idml.clone();
             let idml4 = inner2.idml.clone();
-            inner2.dummy.flush(txg)
+            let fsfuts = inner2.filesystems.lock().unwrap().values()
+                .map(|itree| itree.flush(txg))
+                .collect::<Vec<_>>();
+            future::join_all(fsfuts)
+                // TODO: write the serialized TreeOnDisk structures to the
+                // forest
             .and_then(move |_| idml2.sync_all(txg))
             .and_then(move |_| idml3.write_label(txg))
             .and_then(move |_| idml4.sync_all(txg))

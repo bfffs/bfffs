@@ -50,7 +50,8 @@ test_suite! {
                     })
                 })
             })).unwrap();
-            let fs = Fs::new(Arc::new(db), rt, TreeID::Fs(0));
+            let tree_id = db.new_fs();
+            let fs = Fs::new(Arc::new(db), rt, tree_id);
             fs
         }
     });
