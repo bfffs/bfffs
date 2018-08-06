@@ -36,8 +36,6 @@ pub trait ClusterTrait {
     fn allocated(&self) -> LbaT;
     fn find_closed_zone(&self, zid: ZoneT) -> Option<cluster::ClosedZone>;
     fn free(&self, lba: LbaT, length: LbaT) -> Box<PoolFut>;
-    fn list_closed_zones(&self)
-        -> Box<Stream<Item=cluster::ClosedZone, Error=Error>>;
     fn optimum_queue_depth(&self) -> u32;
     fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut>;
     fn size(&self) -> LbaT;
@@ -669,8 +667,6 @@ mod pool {
                 -> Option<cluster::ClosedZone>;
             fn free(&self, lba: LbaT, length: LbaT)
                 -> Box<Future<Item=(), Error=Error>>;
-            fn list_closed_zones(&self)
-                -> Box<Stream<Item=cluster::ClosedZone, Error=Error>>;
             fn optimum_queue_depth(&self) -> u32;
             fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut>;
             fn size(&self) -> LbaT;
