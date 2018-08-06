@@ -157,16 +157,21 @@ impl<'a> IDML {
     }
 
     /// Rewrite the given direct Record and update its metadata.
-    fn move_record(&'a self, rid: RID, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + 'a
+    fn move_record(&self, rid: RID, txg: TxgT)
+        -> impl Future<Item=(), Error=Error>
     {
         // Even if the cache contains the target record, we must also do an RIDT
         // lookup because we're going to rewrite the RIDT
+        let cache2 = self.cache.clone();
+        let ddml2 = self.ddml.clone();
+        let ddml3 = self.ddml.clone();
+        let trees2 = self.trees.clone();
         self.trees.ridt.get(rid)
             .and_then(move |v| {
                 let entry = v.expect(
                     "Inconsistency in alloct.  Entry not found in RIDT");
-                self.cache.lock().unwrap().get::<DivBuf>(&Key::Rid(rid))
+                let mut guard = cache2.lock().unwrap();
+                guard.get::<DivBuf>(&Key::Rid(rid))
                     .map(|t: Box<DivBuf>| {
                         // XXX: this data copy could probably be removed
                         let r = (*t).to_owned()
@@ -178,19 +183,19 @@ impl<'a> IDML {
                     })
                     .unwrap_or_else(|| {
                         Box::new(
-                            self.ddml.get_direct::<DivBufShared>(&entry.drp)
+                            ddml2.get_direct::<DivBufShared>(&entry.drp)
                         ) as Box<Future<Item=Box<DivBufShared>, Error=Error>>
                     }).map(move |buf| (entry, buf))
             }).and_then(move |(entry, buf)| {
                 // NB: on a cache miss, this will result in decompressing and
                 // recompressing the record, which is inefficient.
                 let compression = entry.drp.compression();
-                self.ddml.put_direct(*buf, compression, txg)
+                ddml3.put_direct(*buf, compression, txg)
                     .map(move |(drp, _cacheable)| (entry, drp))
             }).and_then(move |(mut entry, drp)| {
                 entry.drp = drp;
-                let ridt_fut = self.trees.ridt.insert(rid, entry, txg);
-                let alloct_fut = self.trees.alloct.insert(drp.pba(), rid, txg);
+                let ridt_fut = trees2.ridt.insert(rid, entry, txg);
+                let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
                 ridt_fut.join(alloct_fut)
             }).map(|_| ())
     }
