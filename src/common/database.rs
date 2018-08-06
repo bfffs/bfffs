@@ -54,7 +54,7 @@ pub struct Database {
     inner: Arc<Inner>,
 }
 
-impl<'a> Database {
+impl Database {
     /// Construct a new `Database` from its `IDML`.
     pub fn new(idml: Arc<IDML>) -> Self {
         let dummy = Arc::new(ITree::create(idml.clone()));
@@ -100,10 +100,10 @@ impl<'a> Database {
     /// All operations conducted by the supplied closure will be completed
     /// within the same Pool transaction group.  Thus, after a power failure and
     /// recovery, either all will have completed, or none will have.
-    pub fn fswrite<F, B, R>(&'a self, tree_id: TreeID, f: F)
+    pub fn fswrite<F, B, R>(&self, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
-        where F: FnOnce(ReadWriteFilesystem) -> B + 'a,
-              B: Future<Item = R, Error = Error> + 'a,
+        where F: FnOnce(ReadWriteFilesystem) -> B ,
+              B: Future<Item = R, Error = Error>,
     {
         let inner = self.inner.clone();
         self.inner.idml.txg()
