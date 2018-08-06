@@ -28,7 +28,7 @@ impl<'a> Cleaner {
     const DEFAULT_THRESHOLD: f32 = 0.5;
 
     /// Clean zones in the foreground, blocking the task
-    pub fn clean_now(&'a self) -> impl Future<Item=(), Error=Error> + 'a {
+    pub fn clean_now(&self) -> impl Future<Item=(), Error=Error> {
         // Outline:
         // 1) Get a list of mostly-free zones
         // 2) For each zone:
@@ -37,22 +37,25 @@ impl<'a> Cleaner {
         //        let record = find_record(zone, offset)
         //        idml.move(record)
         //        offset += sizeof(record)
+        let idml2 = self.idml.clone();
         self.select_zones()
         .and_then(move |zones| {
             stream::iter_ok(zones.into_iter())
             .for_each(move |zone| {
-                self.idml.txg()
+                let idml3 = idml2.clone();
+                idml2.txg()
                     .map_err(|_| Error::Sys(errno::Errno::EPIPE))
                     .and_then(move |txg_guard| {
-                        self.clean_zone(zone, *txg_guard)
+                        idml3.clean_zone(zone, *txg_guard)
+                        //self.clean_zone(zone, *txg_guard)
                     })
             })
         })
     }
 
     /// Immediately clean the given zone in the foreground
-    fn clean_zone(&'a self, zone: ClosedZone, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + 'a
+    pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
+        -> impl Future<Item=(), Error=Error>
     {
         self.idml.clean_zone(zone, txg)
     }
