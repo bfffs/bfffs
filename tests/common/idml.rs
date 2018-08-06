@@ -98,11 +98,11 @@ test_suite! {
     // check that we can open-after-write
     test open(objects()) {
         let (mut rt, old_idml, _tempdir, path) = objects.val;
-        rt.block_on(future::lazy(|| {
+        rt.block_on(
             old_idml.advance_transaction(|_| {
                 old_idml.write_label(TxgT::from(42))
             })
-        })).unwrap();
+        ).unwrap();
         drop(old_idml);
         let _idml = rt.block_on(future::lazy(|| {
             VdevFile::open(path)
@@ -124,11 +124,11 @@ test_suite! {
 
     test write_label(objects()) {
         let (mut rt, idml, _tempdir, path) = objects.val;
-        rt.block_on(future::lazy(|| {
+        rt.block_on(
             idml.advance_transaction(|_| {
                 idml.write_label(TxgT::from(42))
             })
-        })).unwrap();
+        ).unwrap();
         let mut f = fs::File::open(path).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, raid, cluster, and pool labels

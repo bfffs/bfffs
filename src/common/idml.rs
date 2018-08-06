@@ -214,7 +214,7 @@ impl<'a> IDML {
     }
 
     /// Finish the current transaction group and start a new one.
-    pub fn advance_transaction<B, F>(&'a self, f: F)
+    pub fn advance_transaction<B, F>(&self, f: F)
         -> impl Future<Item=(), Error=Error> + 'a
         where F: FnOnce(TxgT) -> B + 'a,
               B: IntoFuture<Item = (), Error = Error> + 'a

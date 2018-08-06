@@ -74,7 +74,7 @@ impl<'a> Database {
     }
 
     /// Finish the current transaction group and start a new one.
-    pub fn sync_transaction(&'a self) -> impl Future<Item=(), Error=Error> + 'a
+    pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error>
     {
         // Outline:
         // 1) Flush the trees
@@ -83,11 +83,15 @@ impl<'a> Database {
         // 4) Sync the pool again
         // TODO: use two labels, so the pool will be recoverable even if power
         // is lost while writing a label.
+        let inner2 = self.inner.clone();
         self.inner.idml.advance_transaction(move |txg|{
-            self.inner.dummy.flush(txg)
-            .and_then(move |_| self.inner.idml.sync_all(txg))
-            .and_then(move |_| self.inner.idml.write_label(txg))
-            .and_then(move |_| self.inner.idml.sync_all(txg))
+            let idml2 = inner2.idml.clone();
+            let idml3 = inner2.idml.clone();
+            let idml4 = inner2.idml.clone();
+            inner2.dummy.flush(txg)
+            .and_then(move |_| idml2.sync_all(txg))
+            .and_then(move |_| idml3.write_label(txg))
+            .and_then(move |_| idml4.sync_all(txg))
         })
     }
 
