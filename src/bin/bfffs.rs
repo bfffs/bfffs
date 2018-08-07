@@ -4,8 +4,9 @@ extern crate futures;
 extern crate tokio;
 
 mod pool{
-use bfffs::common::{LbaT, TxgT};
+use bfffs::common::LbaT;
 use bfffs::common::cache::Cache;
+use bfffs::common::database::*;
 use bfffs::common::ddml::DDML;
 use bfffs::common::idml::IDML;
 use bfffs::common::pool::{ClusterProxy, Pool};
@@ -68,18 +69,17 @@ fn create(args: &clap::ArgMatches) {
             }
         }
     }
-    let idml = rt.block_on(future::lazy(|| {
+    let db = rt.block_on(future::lazy(|| {
         Pool::create(String::from(name), clusters)
         .map(|pool| {
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
-            IDML::create(ddml, cache)
+            let idml = Arc::new(IDML::create(ddml, cache));
+            Database::create(idml)
         })
     })).unwrap();
     rt.block_on(
-        idml.advance_transaction(|_| {
-            idml.write_label(TxgT::from(0))
-        })
+        db.sync_transaction()
     ).unwrap();
 }
 

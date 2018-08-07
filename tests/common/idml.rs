@@ -18,6 +18,7 @@ test_suite! {
     use bfffs::common::pool::*;
     use bfffs::common::ddml::*;
     use bfffs::common::idml::*;
+    use bfffs::common::label::*;
     use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
     use std::{
@@ -100,7 +101,8 @@ test_suite! {
         let (mut rt, old_idml, _tempdir, path) = objects.val;
         rt.block_on(
             old_idml.advance_transaction(|_| {
-                old_idml.write_label(TxgT::from(42))
+                let label_writer = LabelWriter::new();
+                old_idml.write_label(label_writer, TxgT::from(42))
             })
         ).unwrap();
         drop(old_idml);
@@ -126,7 +128,8 @@ test_suite! {
         let (mut rt, idml, _tempdir, path) = objects.val;
         rt.block_on(
             idml.advance_transaction(|_| {
-                idml.write_label(TxgT::from(42))
+                let label_writer = LabelWriter::new();
+                idml.write_label(label_writer, TxgT::from(42))
             })
         ).unwrap();
         let mut f = fs::File::open(path).unwrap();

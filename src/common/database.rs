@@ -10,6 +10,7 @@ use common::dataset::*;
 use common::dml::DML;
 use common::fs_tree::*;
 use common::idml::*;
+use common::label::*;
 use common::tree::*;
 use futures::{Future, IntoFuture, future};
 use libc;
@@ -35,8 +36,14 @@ impl MinValue for TreeID {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct Label {
+    forest:             TreeOnDisk
+}
+
 struct Inner {
     filesystems: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue>>>>,
+    forest: ITree<TreeID, TreeOnDisk>,
     idml: Arc<IDML>,
 }
 
@@ -52,6 +59,20 @@ impl Inner {
         let fs = self.filesystems.lock().unwrap()[&tree_id].clone();
         ReadWriteFilesystem::new(self.idml.clone(), fs, txg)
     }
+
+    /// Asynchronously write this `Database`'s label to its `IDML`
+    fn write_label(&self, txg: TxgT)
+        -> impl Future<Item=(), Error=Error>
+    {
+        let mut labeller = LabelWriter::new();
+        let idml2 = self.idml.clone();
+        self.forest.flush(txg)
+            .and_then(move |tod| {
+                let label = Label { forest: tod };
+                labeller.serialize(label).unwrap();
+                idml2.write_label(labeller, txg)
+            })
+    }
 }
 
 pub struct Database {
@@ -62,7 +83,8 @@ impl Database {
     /// Construct a new `Database` from its `IDML`.
     pub fn create(idml: Arc<IDML>) -> Self {
         let filesystems = Mutex::new(BTreeMap::new());
-        let inner = Arc::new(Inner{filesystems, idml});
+        let forest = ITree::create(idml.clone());
+        let inner = Arc::new(Inner{filesystems, idml, forest});
         Database{inner}
     }
 
@@ -120,18 +142,25 @@ impl Database {
         // is lost while writing a label.
         let inner2 = self.inner.clone();
         self.inner.idml.advance_transaction(move |txg|{
+            let inner4 = inner2.clone();
             let idml2 = inner2.idml.clone();
             let idml3 = inner2.idml.clone();
-            let idml4 = inner2.idml.clone();
-            let fsfuts = inner2.filesystems.lock().unwrap().values()
-                .map(|itree| itree.flush(txg))
-                .collect::<Vec<_>>();
+            let fsfuts = {
+                let guard = inner2.filesystems.lock().unwrap();
+                guard.iter()
+                    .map(move |(tree_id, itree)| {
+                        let inner5 = inner4.clone();
+                        let tree_id2 = *tree_id;
+                        itree.flush(txg)
+                            .and_then(move |tod| {
+                                inner5.forest.insert(tree_id2, tod, txg)
+                            })
+                    }).collect::<Vec<_>>()
+            };
             future::join_all(fsfuts)
-                // TODO: write the serialized TreeOnDisk structures to the
-                // forest
             .and_then(move |_| idml2.sync_all(txg))
-            .and_then(move |_| idml3.write_label(txg))
-            .and_then(move |_| idml4.sync_all(txg))
+            .and_then(move |_| inner2.write_label(txg))
+            .and_then(move |_| idml3.sync_all(txg))
         })
     }
 

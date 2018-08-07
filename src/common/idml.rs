@@ -234,14 +234,13 @@ impl<'a> IDML {
     }
 
     /// Asynchronously write this `IDML`'s label to its `Pool`
-    pub fn write_label(&self, txg: TxgT)
+    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
         -> impl Future<Item=(), Error=Error>
     {
         // The txg lock must be held when calling write_label.  Otherwise,
         // next_rid may be out-of-date by the time we serialize the label.
         debug_assert!(self.transaction.try_read().is_err(),
             "IDML::write_label must be called with the txg lock held");
-        let mut labeller = LabelWriter::new();
         let ddml2 = self.ddml.clone();
         let next_rid = self.next_rid.load(Ordering::Relaxed);
         self.trees.alloct.flush(txg)

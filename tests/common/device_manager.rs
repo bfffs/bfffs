@@ -12,7 +12,7 @@ test_suite! {
     name device_manager;
 
     use bfffs::{
-        common::*,
+        common::database::*,
         common::device_manager::*,
         common::cache::*,
         common::ddml::*,
@@ -39,7 +39,7 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let pathsclone = paths.clone();
-            let idml = rt.block_on(future::lazy(move || {
+            let db = rt.block_on(future::lazy(move || {
                 Pool::create_cluster(16, 3, 3, None, 1, &paths)
                 .map_err(|_| unreachable!())
                 .and_then(|cluster| {
@@ -47,13 +47,12 @@ test_suite! {
                 }).map(|pool| {
                     let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
                     let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                    IDML::create(ddml, cache)
+                    let idml = Arc::new(IDML::create(ddml, cache));
+                    Database::create(idml)
                 })
             })).unwrap();
             rt.block_on(
-                idml.advance_transaction(|_| {
-                    idml.write_label(TxgT::from(0))
-                })
+                db.sync_transaction()
             ).unwrap();
             let dev_manager = DevManager::new();
             (rt, dev_manager, pathsclone, tempdir)
