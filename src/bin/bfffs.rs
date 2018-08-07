@@ -76,7 +76,11 @@ fn create(args: &clap::ArgMatches) {
             IDML::create(ddml, cache)
         })
     })).unwrap();
-    rt.block_on(idml.write_label(TxgT::from(0))).unwrap();
+    rt.block_on(
+        idml.advance_transaction(|_| {
+            idml.write_label(TxgT::from(0))
+        })
+    ).unwrap();
 }
 
 fn create_cluster(rt: &mut Runtime, vtype: &str, devs: &[&str]) -> ClusterProxy {
