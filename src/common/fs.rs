@@ -2,11 +2,13 @@
 //! Common VFS implementation
 
 use common::database::*;
+use common::fs_tree::*;
 use futures::{
     Future,
     IntoFuture,
     Sink,
     Stream,
+    future,
     stream,
     sync::{mpsc, oneshot}
 };
@@ -35,6 +37,31 @@ impl Fs {
 }
 
 impl Fs {
+    pub fn getattr(&self, ino: u64) -> Result<Inode, Error> {
+        let (tx, rx) = oneshot::channel();
+        self.runtime.spawn(
+            self.db.fsread(self.tree, move |dataset| {
+                let key = FSKey::new(ino, ObjKey::Inode);
+                dataset.get(key)
+                .then(|r| {
+                    match r {
+                        Ok(Some(v)) => {
+                            tx.send(Ok(v.as_inode().unwrap().clone()))
+                        },
+                        Ok(None) => {
+                            tx.send(Err(Error::Sys(errno::Errno::ENOENT)))
+                        },
+                        Err(e) => {
+                            tx.send(Err(e))
+                        }
+                    }.unwrap();
+                    future::ok::<(), Error>(())
+                })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     // TODO: instead of the full size struct libc::dirent, use a variable size
     // structure in the mpsc channel
     pub fn readdir(&self, ino: u64, _fh: u64, offset: i64)

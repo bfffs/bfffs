@@ -5,7 +5,7 @@ use common::database::*;
 use common::fs::Fs;
 use fuse::*;
 use libc;
-use nix::errno;
+use nix::Error;
 use std::{
     ffi::OsStr,
     os::unix::ffi::OsStrExt,
@@ -14,24 +14,6 @@ use std::{
 };
 use time::Timespec;
 use tokio_io_pool;
-
-const EPOCH_TIME: Timespec = Timespec { sec: 0, nsec: 0};
-const ROOT_ATTR: FileAttr = FileAttr {
-    ino: 1,
-    size: 0,
-    blocks: 0,
-    atime: EPOCH_TIME,
-    mtime: EPOCH_TIME,
-    ctime: EPOCH_TIME,
-    crtime: EPOCH_TIME,
-    kind: FileType::Directory,
-    perm: 0o755,
-    nlink: 2,
-    uid: 0,
-    gid: 0,
-    rdev: 0,    // device number
-    flags: 0
-};
 
 /// FUSE's handle to an BFFFS filesystem.  One per mountpoint.
 ///
@@ -54,12 +36,43 @@ impl FuseFs {
 impl Filesystem for FuseFs {
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let ttl = Timespec { sec: 0, nsec: 0 };
-        match ino {
-            1 => {
-                // FUSE hardcodes inode 1 to the root
-                reply.attr(&ttl, &ROOT_ATTR)
+        match self.fs.getattr(ino) {
+            Ok(inode) => {
+                let kind = match inode.mode & libc::S_IFMT {
+                    libc::S_IFIFO => FileType::NamedPipe,
+                    libc::S_IFCHR => FileType::CharDevice,
+                    libc::S_IFDIR => FileType::Directory,
+                    libc::S_IFBLK => FileType::BlockDevice,
+                    libc::S_IFREG => FileType::RegularFile,
+                    libc::S_IFLNK => FileType::Symlink,
+                    libc::S_IFSOCK => FileType::Socket,
+                    _ => panic!("Unknown file mode {:?}", inode.mode)
+                };
+                let attr = FileAttr {
+                    ino,
+                    size: inode.size,
+                    blocks: 0,
+                    atime: inode.atime,
+                    mtime: inode.mtime,
+                    ctime: inode.ctime,
+                    crtime: inode.birthtime,
+                    kind,
+                    perm: (inode.mode & 0xFFFF) as u16,
+                    nlink: inode.nlink as u32,
+                    uid: inode.uid,
+                    gid: inode.gid,
+                    rdev: 0,    // ???
+                    flags: inode.flags as u32
+                };
+                reply.attr(&ttl, &attr)
             },
-            _ => reply.error(errno::Errno::ENOENT as i32)
+            Err(e) => {
+                let errno = match e {
+                    Error::Sys(errno) => errno as i32,
+                    _ => libc::EINVAL
+                };
+                reply.error(errno)
+            }
         }
     }
 

@@ -12,9 +12,11 @@ use common::fs_tree::*;
 use common::idml::*;
 use common::tree::*;
 use futures::{Future, IntoFuture, future};
+use libc;
 use nix::{Error, errno};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use time;
 
 type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
 type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
@@ -45,14 +47,14 @@ impl Inner {
         ReadOnlyFilesystem::new(self.idml.clone(), fs)
     }
 
-    fn rw_filesystem(&self, _tree_id: TreeID, _txg: TxgT) -> ReadWriteFilesystem
+    fn rw_filesystem(&self, tree_id: TreeID, txg: TxgT) -> ReadWriteFilesystem
     {
-        unimplemented!()
+        let fs = self.filesystems.lock().unwrap()[&tree_id].clone();
+        ReadWriteFilesystem::new(self.idml.clone(), fs, txg)
     }
 }
 
 pub struct Database {
-    // TODO: store all filesystem and device trees
     inner: Arc<Inner>,
 }
 
@@ -65,7 +67,7 @@ impl Database {
     }
 
     /// Create a new, blank filesystem
-    pub fn new_fs(&self) -> TreeID {
+    pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> {
         let mut guard = self.inner.filesystems.lock().unwrap();
         let k = (0..=u32::max_value()).filter(|i| {
             !guard.contains_key(&TreeID::Fs(*i))
@@ -73,7 +75,26 @@ impl Database {
         let key = TreeID::Fs(k);
         let fs = Arc::new(ITree::create(self.inner.idml.clone()));
         guard.insert(key, fs);
-        key
+
+        // Create the filesystem's root directory
+        self.fswrite(key, move |dataset| {
+            let ino = 1;    // FUSE requires root dir to have inode 1
+            let key = FSKey::new(ino, ObjKey::Inode);
+            let inode = Inode {
+                size: 0,
+                nlink: 0,
+                flags: 0,
+                atime: time::get_time(),
+                mtime: time::get_time(),
+                ctime: time::get_time(),
+                birthtime: time::get_time(),
+                uid: 0,
+                gid: 0,
+                mode: libc::S_IFDIR | 0755
+            };
+            let value = FSValue::Inode(inode);
+            dataset.insert(key, value)
+        }).map(move |_| key)
     }
 
     /// Perform a read-only operation on a Filesystem

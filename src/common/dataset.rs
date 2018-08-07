@@ -31,6 +31,12 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.tree.get(k)
     }
 
+    fn insert(&self, txg: TxgT, k: K, v: V)
+        -> impl Future<Item=Option<V>, Error=Error>
+    {
+        self.tree.insert(k, v, txg)
+    }
+
     fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>) -> Self {
         Dataset{idml, tree}
     }
@@ -67,7 +73,7 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
 /// A dataset handle with read/write access
 pub struct ReadWriteDataset<K: Key, V: Value>  {
     dataset: Dataset<K, V>,
-    _txg: TxgT
+    txg: TxgT
 }
 
 impl<K: Key, V: Value> ReadWriteDataset<K, V> {
@@ -80,9 +86,13 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
         self.dataset.get(k)
     }
 
-    pub fn insert(&self, _k: K, _v: V)
-        -> Box<Future<Item=Option<V>, Error=Error>>
+    pub fn insert(&self, k: K, v: V)
+        -> impl Future<Item=Option<V>, Error=Error>
     {
-        unimplemented!()
+        self.dataset.insert(self.txg, k, v)
+    }
+
+    pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT) -> Self {
+        ReadWriteDataset{dataset: Dataset::new(idml, tree), txg}
     }
 }

@@ -47,9 +47,8 @@ fn main() {
             Database::new(Arc::new(idml))
         })
     })).unwrap();
-    // TODO: Create filesystems with bin/bfffs
-    let tree_id = db.new_fs();
-    // TODO: use distinct TreeID for each mountpoint
+    let tree_id = rt.block_on(db.new_fs()).unwrap();
+    // TODO: Create filesystems with bin/bfffs instead of here
     let fs = FuseFs::new(Arc::new(db), rt, tree_id);
     fuse::mount(fs, mountpoint, &[]).unwrap();
 }
