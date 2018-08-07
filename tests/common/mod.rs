@@ -1,4 +1,5 @@
 mod cluster;
+mod database;
 mod device_manager;
 mod ddml;
 mod fs;

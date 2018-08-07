@@ -149,7 +149,7 @@ impl<'a> IDML {
     /// * `label_reader`:   A `LabelReader` that has already consumed all labels
     ///                     prior to this layer.
     pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
-                 mut label_reader: LabelReader) -> Self
+                 mut label_reader: LabelReader) -> (Self, LabelReader)
     {
         let l: Label = label_reader.deserialize().unwrap();
         let alloct = Tree::open(ddml.clone(), l.alloct).unwrap();
@@ -157,7 +157,8 @@ impl<'a> IDML {
         let transaction = RwLock::new(l.txg);
         let next_rid = Atomic::new(l.next_rid);
         let trees = Arc::new(Trees{alloct, ridt});
-        IDML{cache, ddml, next_rid, transaction, trees}
+        let idml = IDML{cache, ddml, next_rid, transaction, trees};
+        (idml, label_reader)
     }
 
     /// Rewrite the given direct Record and update its metadata.

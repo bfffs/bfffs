@@ -82,10 +82,8 @@ pub struct Database {
 impl Database {
     /// Construct a new `Database` from its `IDML`.
     pub fn create(idml: Arc<IDML>) -> Self {
-        let filesystems = Mutex::new(BTreeMap::new());
         let forest = ITree::create(idml.clone());
-        let inner = Arc::new(Inner{filesystems, idml, forest});
-        Database{inner}
+        Database::new(idml, forest)
     }
 
     /// Create a new, blank filesystem
@@ -102,14 +100,15 @@ impl Database {
         self.fswrite(key, move |dataset| {
             let ino = 1;    // FUSE requires root dir to have inode 1
             let key = FSKey::new(ino, ObjKey::Inode);
+            let now = time::get_time();
             let inode = Inode {
                 size: 0,
                 nlink: 0,
                 flags: 0,
-                atime: time::get_time(),
-                mtime: time::get_time(),
-                ctime: time::get_time(),
-                birthtime: time::get_time(),
+                atime: now,
+                mtime: now,
+                ctime: now,
+                birthtime: now,
                 uid: 0,
                 gid: 0,
                 mode: libc::S_IFDIR | 0o755
@@ -128,6 +127,26 @@ impl Database {
     {
         let ds = self.inner.ro_filesystem(tree_id);
         f(ds).into_future()
+    }
+
+    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>) -> Self {
+        let filesystems = Mutex::new(BTreeMap::new());
+        let inner = Arc::new(Inner{filesystems, idml, forest});
+        Database{inner}
+    }
+
+    /// Open an existing `Database`
+    ///
+    /// # Parameters
+    ///
+    /// * `idml`:           An already-opened `IDML`
+    /// * `label_reader`:   A `LabelReader` that has already consumed all labels
+    ///                     prior to this layer.
+    pub fn open(idml: Arc<IDML>, mut label_reader: LabelReader) -> Self
+    {
+        let l: Label = label_reader.deserialize().unwrap();
+        let forest = Tree::open(idml.clone(), l.forest).unwrap();
+        Database::new(idml, forest)
     }
 
     /// Finish the current transaction group and start a new one.

@@ -9,7 +9,7 @@ extern crate tokio_io_pool;
 use bfffs::common::database::*;
 use bfffs::common::device_manager::DevManager;
 use bfffs::sys::fs::FuseFs;
-use futures::{Future, future};
+use futures::future;
 use std::sync::Arc;
 
 fn main() {
@@ -43,9 +43,7 @@ fn main() {
 
     let mut rt = tokio_io_pool::Runtime::new();
     let db = rt.block_on(future::lazy(move || {
-        dev_manager.import(uuid).map(|idml| {
-            Database::create(Arc::new(idml))
-        })
+        dev_manager.import(uuid)
     })).unwrap();
     let tree_id = rt.block_on(db.new_fs()).unwrap();
     // TODO: Create filesystems with bin/bfffs instead of here
