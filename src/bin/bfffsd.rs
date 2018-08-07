@@ -44,7 +44,7 @@ fn main() {
     let mut rt = tokio_io_pool::Runtime::new();
     let db = rt.block_on(future::lazy(move || {
         dev_manager.import(uuid).map(|idml| {
-            Database::new(Arc::new(idml))
+            Database::create(Arc::new(idml))
         })
     })).unwrap();
     let tree_id = rt.block_on(db.new_fs()).unwrap();

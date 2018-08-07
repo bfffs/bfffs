@@ -46,7 +46,7 @@ test_suite! {
                         let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
                         let ddml = Arc::new(DDML::new(pool, cache.clone()));
                         let idml = IDML::create(ddml, cache);
-                        Database::new(Arc::new(idml))
+                        Database::create(Arc::new(idml))
                     })
                 })
             })).unwrap();

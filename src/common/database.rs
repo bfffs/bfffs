@@ -60,7 +60,7 @@ pub struct Database {
 
 impl Database {
     /// Construct a new `Database` from its `IDML`.
-    pub fn new(idml: Arc<IDML>) -> Self {
+    pub fn create(idml: Arc<IDML>) -> Self {
         let filesystems = Mutex::new(BTreeMap::new());
         let inner = Arc::new(Inner{filesystems, idml});
         Database{inner}
@@ -208,7 +208,7 @@ mod t {
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
-        let db = Database::new(Arc::new(idml));
+        let db = Database::create(Arc::new(idml));
         let mut rt = current_thread::Runtime::new().unwrap();
 
         rt.block_on(db.sync_transaction()).unwrap();
