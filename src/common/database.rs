@@ -90,7 +90,7 @@ impl Database {
                 birthtime: time::get_time(),
                 uid: 0,
                 gid: 0,
-                mode: libc::S_IFDIR | 0755
+                mode: libc::S_IFDIR | 0o755
             };
             let value = FSValue::Inode(inode);
             dataset.insert(key, value)

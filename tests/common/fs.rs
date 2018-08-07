@@ -56,6 +56,21 @@ test_suite! {
         }
     });
 
+    /// getattr on the filesystem's root directory
+    test getattr(mocks) {
+        let inode = mocks.val.getattr(1).unwrap();
+        assert_eq!(inode.nlink, 0);
+        assert_eq!(inode.flags, 0);
+        assert!(inode.atime.sec > 0);
+        assert!(inode.mtime.sec > 0);
+        assert!(inode.ctime.sec > 0);
+        assert!(inode.birthtime.sec > 0);
+        assert_eq!(inode.uid, 0);
+        assert_eq!(inode.gid, 0);
+        assert_eq!(inode.mode & 0o7777, 0o755);
+        assert_eq!(inode.mode & libc::S_IFMT, libc::S_IFDIR);
+    }
+
     test readdir(mocks) {
         let mut entries = mocks.val.readdir(1, 0, 0);
         let (dotdot, ofs) = entries.next().unwrap().unwrap();

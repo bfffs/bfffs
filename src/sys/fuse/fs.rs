@@ -57,7 +57,7 @@ impl Filesystem for FuseFs {
                     ctime: inode.ctime,
                     crtime: inode.birthtime,
                     kind,
-                    perm: (inode.mode & 0xFFFF) as u16,
+                    perm: (inode.mode & 0o7777) as u16,
                     nlink: inode.nlink as u32,
                     uid: inode.uid,
                     gid: inode.gid,
