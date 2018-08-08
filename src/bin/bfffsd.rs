@@ -45,8 +45,8 @@ fn main() {
     let db = rt.block_on(future::lazy(move || {
         dev_manager.import(uuid)
     })).unwrap();
-    let tree_id = rt.block_on(db.new_fs()).unwrap();
-    // TODO: Create filesystems with bin/bfffs instead of here
+    // For now, hardcode tree_id to 0
+    let tree_id = TreeID::Fs(0);
     let fs = FuseFs::new(Arc::new(db), rt, tree_id);
     fuse::mount(fs, mountpoint, &[]).unwrap();
 }

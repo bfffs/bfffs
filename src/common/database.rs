@@ -48,16 +48,31 @@ struct Inner {
 }
 
 impl Inner {
-    fn ro_filesystem(&self, tree_id: TreeID) -> ReadOnlyFilesystem
+    fn open_filesystem(inner: Arc<Inner>, tree_id: TreeID)
+        -> Box<Future<Item=Arc<ITree<FSKey, FSValue>>, Error=Error> + Send>
     {
-        let fs = self.filesystems.lock().unwrap()[&tree_id].clone();
-        ReadOnlyFilesystem::new(self.idml.clone(), fs)
+        if let Some(fs) = inner.filesystems.lock().unwrap().get(&tree_id) {
+            return Box::new(Ok(fs.clone()).into_future());
+        }
+
+        let idml2 = inner.idml.clone();
+        let inner2 = inner.clone();
+        let fut = inner.forest.get(tree_id)
+            .map(move |tod| {
+                let tree = Arc::new(Tree::open(idml2, tod.unwrap()).unwrap());
+                inner2.filesystems.lock().unwrap()
+                    .insert(tree_id, tree.clone());
+                tree
+            });
+        Box::new(fut)
     }
 
-    fn rw_filesystem(&self, tree_id: TreeID, txg: TxgT) -> ReadWriteFilesystem
+    fn rw_filesystem(inner: Arc<Inner>, tree_id: TreeID, txg: TxgT)
+        -> impl Future<Item=ReadWriteFilesystem, Error=Error>
     {
-        let fs = self.filesystems.lock().unwrap()[&tree_id].clone();
-        ReadWriteFilesystem::new(self.idml.clone(), fs, txg)
+        let idml2 = inner.idml.clone();
+        Inner::open_filesystem(inner.clone(), tree_id)
+            .map(move |fs| ReadWriteFilesystem::new(idml2, fs, txg))
     }
 
     /// Asynchronously write this `Database`'s label to its `IDML`
@@ -66,7 +81,7 @@ impl Inner {
     {
         let mut labeller = LabelWriter::new();
         let idml2 = self.idml.clone();
-        self.forest.flush(txg)
+        Tree::flush(&self.forest, txg)
             .and_then(move |tod| {
                 let label = Label { forest: tod };
                 labeller.serialize(label).unwrap();
@@ -125,8 +140,8 @@ impl Database {
               B: IntoFuture<Item = R, Error = Error> + 'static,
               R: 'static
     {
-        let ds = self.inner.ro_filesystem(tree_id);
-        f(ds).into_future()
+        self.ro_filesystem(tree_id)
+            .and_then(|ds| f(ds).into_future())
     }
 
     fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>) -> Self {
@@ -147,6 +162,14 @@ impl Database {
         let l: Label = label_reader.deserialize().unwrap();
         let forest = Tree::open(idml.clone(), l.forest).unwrap();
         Database::new(idml, forest)
+    }
+
+    fn ro_filesystem(&self, tree_id: TreeID)
+        -> impl Future<Item=ReadOnlyFilesystem, Error=Error>
+    {
+        let idml2 = self.inner.idml.clone();
+        Inner::open_filesystem(self.inner.clone(), tree_id)
+            .map(|fs| ReadOnlyFilesystem::new(idml2, fs))
     }
 
     /// Finish the current transaction group and start a new one.
@@ -190,15 +213,15 @@ impl Database {
     /// recovery, either all will have completed, or none will have.
     pub fn fswrite<F, B, R>(&self, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
-        where F: FnOnce(ReadWriteFilesystem) -> B ,
+        where F: FnOnce(ReadWriteFilesystem) -> B,
               B: Future<Item = R, Error = Error>,
     {
-        let inner = self.inner.clone();
+        let inner2 = self.inner.clone();
         self.inner.idml.txg()
             .map_err(|_| Error::Sys(errno::Errno::EPIPE))
             .and_then(move |txg| {
-                let ds = inner.rw_filesystem(tree_id, *txg);
-                f(ds)
+                Inner::rw_filesystem(inner2, tree_id, *txg)
+                    .and_then(|ds| f(ds).into_future())
             })
     }
 }

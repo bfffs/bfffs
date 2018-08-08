@@ -79,7 +79,7 @@ fn create(args: &clap::ArgMatches) {
         })
     })).unwrap();
     rt.block_on(
-        db.sync_transaction()
+        db.new_fs().and_then(|_tree_id| db.sync_transaction())
     ).unwrap();
 }
 
