@@ -71,18 +71,23 @@ where T: Clone + Debug + DeserializeOwned + Send + Serialize + 'static {}
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned,
                              V: DeserializeOwned"))]
 pub(super) enum TreePtr<A: Addr, K: Key, V: Value> {
-    /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
-    /// RAM-resident, we don't need to store their checksums or lsizes.
-    #[cfg_attr(not(test), serde(skip_serializing))]
-    #[cfg_attr(not(test), serde(skip_deserializing))]
-    #[cfg_attr(test, serde(with = "node_serializer"))]
-    Mem(Box<Node<A, K, V>>),
     /// DML Addresses point to a disk location
+    // This is the only variant that gets serialized, so put it first.  That
+    // gives it discriminant 0, which is the most compressible.
     Addr(A),
     /// Used temporarily while syncing nodes to disk.  Should never be visible
     /// during a traversal, because the parent's xlock must be held at all times
     /// while the ptr is None.
+    #[serde(skip_serializing)]
     None,
+    /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
+    /// RAM-resident, we don't need to store their checksums or lsizes.
+    // This variant must come last, so other variants' discriminators don't
+    // change depending on #[cfg(test)]
+    #[cfg_attr(not(test), serde(skip_serializing))]
+    #[cfg_attr(not(test), serde(skip_deserializing))]
+    #[cfg_attr(test, serde(with = "node_serializer"))]
+    Mem(Box<Node<A, K, V>>),
 }
 
 impl<A: Addr, K: Key, V: Value> TreePtr<A, K, V> {
@@ -739,7 +744,7 @@ fn deserialize_int() {
         2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
            0, 0, 0, 0,              // K=0
            1, 0, 0, 0, 9, 0, 0, 0,  // TXG range 1..9
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
+           0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
            0, 0, 0, 0,              // enum variant 0 for Compression::None
@@ -748,7 +753,7 @@ fn deserialize_int() {
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
            0, 1, 0, 0,              // K=256
            2, 0, 0, 0, 8, 0, 0, 0,  // TXG range 1..9
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
+           0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
            1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
@@ -796,7 +801,7 @@ fn serialize_int() {
         2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
            0, 0, 0, 0,              // K=0
            1, 0, 0, 0, 9, 0, 0, 0,  // TXG range 1..9
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
+           0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
            0, 0, 0, 0,              // enum variant 0 for Compression::None
@@ -805,7 +810,7 @@ fn serialize_int() {
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
            0, 1, 0, 0,              // K=256
            2, 0, 0, 0, 8, 0, 0, 0,  // TXG range 1..9
-           1u8, 0, 0, 0,            // enum variant 1 for TreePtr::Addr
+           0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
            1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle

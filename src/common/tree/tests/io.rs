@@ -185,7 +185,7 @@ fn open() {
         0, 0, 0, 0,                             // root.key = 0
         0, 0, 0, 0,                             // root.txgs.start = 0
         42, 0, 0, 0,                            // root.txgs.end = 42
-        1, 0, 0, 0,                             // root.ptr is a TreePtr::Addr
+        0, 0, 0, 0,                             // root.ptr is a TreePtr::Addr
         2, 0,                                   // pba.cluster = 2
         8, 7, 6, 5, 4, 3, 2, 1,                 // pba.lba = 0x0102030405060708
         1, 0, 0, 0,                             // compression = ZstdL9NoShuffle
@@ -431,7 +431,7 @@ fn serialize_inner() {
         0, 0, 0, 0,                             // root.key = 0
         0, 0, 0, 0,                             // root.txgs.start = 0
         42, 0, 0, 0,                            // root.txgs.end = 42
-        1, 0, 0, 0,                             // root.ptr is a TreePtr::Addr
+        0, 0, 0, 0,                             // root.ptr is a TreePtr::Addr
         2, 0,                                   // pba.cluster = 2
         8, 7, 6, 5, 4, 3, 2, 1,                 // pba.lba = 0x0102030405060708
         1, 0, 0, 0,                             // compression = ZstdL9NoShuffle
