@@ -68,7 +68,7 @@ impl Fs {
 }
 
 impl Fs {
-    pub fn getattr(&self, ino: u64) -> Result<Attr, Error> {
+    pub fn getattr(&self, ino: u64) -> Result<Attr, i32> {
         let (tx, rx) = oneshot::channel();
         self.runtime.spawn(
             self.db.fsread(self.tree, move |dataset| {
@@ -96,10 +96,10 @@ impl Fs {
                             tx.send(Ok(attr))
                         },
                         Ok(None) => {
-                            tx.send(Err(Error::ENOENT))
+                            tx.send(Err(Error::ENOENT.into()))
                         },
                         Err(e) => {
-                            tx.send(Err(e))
+                            tx.send(Err(e.into()))
                         }
                     }.unwrap();
                     future::ok::<(), Error>(())

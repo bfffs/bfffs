@@ -65,7 +65,7 @@ impl Filesystem for FuseFs {
                 };
                 reply.attr(&ttl, &reply_attr)
             },
-            Err(e) => reply.error(e.into())
+            Err(e) => reply.error(e)
         }
     }
 
