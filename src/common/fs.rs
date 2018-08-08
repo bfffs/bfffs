@@ -1,6 +1,7 @@
 // vim: tw=80
 //! Common VFS implementation
 
+use common::Error;
 use common::database::*;
 use common::fs_tree::*;
 use futures::{
@@ -13,7 +14,6 @@ use futures::{
     sync::{mpsc, oneshot}
 };
 use libc;
-use nix::{Error, errno};
 use std::{mem, sync::Arc};
 use time::Timespec;
 use tokio_io_pool;
@@ -96,7 +96,7 @@ impl Fs {
                             tx.send(Ok(attr))
                         },
                         Ok(None) => {
-                            tx.send(Err(Error::Sys(errno::Errno::ENOENT)))
+                            tx.send(Err(Error::ENOENT))
                         },
                         Err(e) => {
                             tx.send(Err(e))
@@ -156,14 +156,14 @@ impl Fs {
                     });
                     let fut = s.fold(tx, |tx, dirent|
                         tx.send(Ok(dirent))
-                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                            .map_err(|_| Error::EPIPE)
                     ).map(|_| ());
                     Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
 
                 } else {
-                    let fut = tx.send(Err(errno::Errno::ENOENT as i32))
+                    let fut = tx.send(Err(Error::ENOENT.into()))
                         .map(|_| ())
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE));
+                        .map_err(|_| Error::EPIPE);
                     Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
                 }
             }).map_err(|e| panic!("{:?}", e))

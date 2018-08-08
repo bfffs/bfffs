@@ -19,7 +19,6 @@ use common::{
 };
 use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
-use nix::{Error, errno::Errno};
 use std::sync::{Arc, Mutex};
 
 #[cfg(not(test))]
@@ -226,7 +225,7 @@ impl<'a> IDML {
               B: IntoFuture<Item = (), Error = Error> + 'a
     {
         self.transaction.write()
-            .map_err(|_| Error::Sys(Errno::EPIPE))
+            .map_err(|_| Error::EPIPE)
             .and_then(move |mut txg_guard| {
                 let txg = *txg_guard;
                 f(txg).into_future()
@@ -274,7 +273,7 @@ impl DML for IDML {
         let fut = self.trees.ridt.get(rid)
             .and_then(|r| {
                 match r {
-                    None => Err(Error::Sys(Errno::ENOENT)).into_future(),
+                    None => Err(Error::ENOENT).into_future(),
                     Some(entry) => Ok(entry).into_future()
                 }
             }).and_then(move |mut entry| {
@@ -318,7 +317,7 @@ impl DML for IDML {
             let fut = self.trees.ridt.get(rid)
                 .and_then(|r| {
                     match r {
-                        None => Err(Error::Sys(Errno::ENOENT)).into_future(),
+                        None => Err(Error::ENOENT).into_future(),
                         Some(entry) => Ok(entry).into_future()
                     }
                 }).and_then(move |entry| {
@@ -344,7 +343,7 @@ impl DML for IDML {
         let fut = self.trees.ridt.get(rid)
             .and_then(|r| {
                 match r {
-                    None => Err(Error::Sys(Errno::ENOENT)).into_future(),
+                    None => Err(Error::ENOENT).into_future(),
                     Some(entry) => Ok(entry).into_future()
                 }
             }).and_then(move |mut entry| {

@@ -18,7 +18,6 @@ use futures::{
     stream::{self, Stream}
 };
 use futures_locks::*;
-use nix::{Error, errno};
 use serde::{Serializer, de::{Deserializer, DeserializeOwned}};
 #[cfg(test)] use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
@@ -1264,7 +1263,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn read_root(inner: &Inner<A, K, V>)
         -> impl Future<Item=RwLockReadGuard<IntElem<A, K, V>>, Error=Error>
     {
-        inner.root.read().map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        inner.root.read().map_err(|_| Error::EPIPE)
     }
 
     /// Lock the Tree for writing
@@ -1277,7 +1276,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn write_root(inner: &Inner<A, K, V>)
         -> impl Future<Item=RwLockWriteGuard<IntElem<A, K, V>>, Error=Error>
     {
-        inner.root.write().map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        inner.root.write().map_err(|_| Error::EPIPE)
     }
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
@@ -1293,7 +1292,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 guard.ptr.as_mem().0.write()
                      .map(move |child_guard| {
                           (guard, TreeWriteGuard::Mem(child_guard))
-                     }).map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                     }).map_err(|_| Error::EPIPE)
             )
         } else {
             let addr = *guard.ptr.as_addr();

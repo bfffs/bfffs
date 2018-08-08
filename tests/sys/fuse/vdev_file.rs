@@ -181,6 +181,7 @@ test_suite! {
 
     use bfffs::{
         common::{
+            *,
             label::*,
             vdev::*,
             vdev_leaf::*
@@ -195,7 +196,6 @@ test_suite! {
         path::PathBuf
     };
     use std;
-    use nix::{Error, errno};
     use tempdir::TempDir;
     use tokio::runtime::current_thread;
     use uuid::Uuid;
@@ -260,7 +260,7 @@ test_suite! {
         let e = current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             VdevFile::open(fixture.val.0)
         })).err().expect("Opening the file should've failed");
-        assert_eq!(e, Error::Sys(errno::Errno::EINVAL));
+        assert_eq!(e, Error::EINVAL);
     }
 
     // Write the label, and compare to a golden master

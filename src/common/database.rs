@@ -14,7 +14,6 @@ use common::label::*;
 use common::tree::*;
 use futures::{Future, IntoFuture, future};
 use libc;
-use nix::{Error, errno};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use time;
@@ -218,7 +217,7 @@ impl Database {
     {
         let inner2 = self.inner.clone();
         self.inner.idml.txg()
-            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+            .map_err(|_| Error::EPIPE)
             .and_then(move |txg| {
                 Inner::rw_filesystem(inner2, tree_id, *txg)
                     .and_then(|ds| f(ds).into_future())

@@ -1,6 +1,9 @@
 // vim: tw=80
 
 use divbuf::{DivBuf, DivBufMut, DivBufShared};
+use libc;
+use nix;
+use num_traits::{FromPrimitive, ToPrimitive};
 use std::{hash::Hasher, ops::{Add, AddAssign, Div, Sub}};
 
 pub mod cache;
@@ -64,6 +67,126 @@ pub type IoVecMut = DivBufMut;
 
 /// Indexes an LBA.  LBAs are always 4096 bytes
 pub type LbaT = u64;
+
+/// BFFFS's error type.  Basically just an errno
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Primitive)]
+pub enum Error {
+    // Standard errnos
+    EPERM           = libc::EPERM as isize,
+    ENOENT          = libc::ENOENT as isize,
+    ESRCH           = libc::ESRCH as isize,
+    EINTR           = libc::EINTR as isize,
+    EIO             = libc::EIO as isize,
+    ENXIO           = libc::ENXIO as isize,
+    E2BIG           = libc::E2BIG as isize,
+    ENOEXEC         = libc::ENOEXEC as isize,
+    EBADF           = libc::EBADF as isize,
+    ECHILD          = libc::ECHILD as isize,
+    EDEADLK         = libc::EDEADLK as isize,
+    ENOMEM          = libc::ENOMEM as isize,
+    EACCES          = libc::EACCES as isize,
+    EFAULT          = libc::EFAULT as isize,
+    ENOTBLK         = libc::ENOTBLK as isize,
+    EBUSY           = libc::EBUSY as isize,
+    EEXIST          = libc::EEXIST as isize,
+    EXDEV           = libc::EXDEV as isize,
+    ENODEV          = libc::ENODEV as isize,
+    ENOTDIR         = libc::ENOTDIR as isize,
+    EISDIR          = libc::EISDIR as isize,
+    EINVAL          = libc::EINVAL as isize,
+    ENFILE          = libc::ENFILE as isize,
+    EMFILE          = libc::EMFILE as isize,
+    ENOTTY          = libc::ENOTTY as isize,
+    ETXTBSY         = libc::ETXTBSY as isize,
+    EFBIG           = libc::EFBIG as isize,
+    ENOSPC          = libc::ENOSPC as isize,
+    ESPIPE          = libc::ESPIPE as isize,
+    EROFS           = libc::EROFS as isize,
+    EMLINK          = libc::EMLINK as isize,
+    EPIPE           = libc::EPIPE as isize,
+    EDOM            = libc::EDOM as isize,
+    ERANGE          = libc::ERANGE as isize,
+    EAGAIN          = libc::EAGAIN as isize,
+    EINPROGRESS     = libc::EINPROGRESS as isize,
+    EALREADY        = libc::EALREADY as isize,
+    ENOTSOCK        = libc::ENOTSOCK as isize,
+    EDESTADDRREQ    = libc::EDESTADDRREQ as isize,
+    EMSGSIZE        = libc::EMSGSIZE as isize,
+    EPROTOTYPE      = libc::EPROTOTYPE as isize,
+    ENOPROTOOPT     = libc::ENOPROTOOPT as isize,
+    EPROTONOSUPPORT = libc::EPROTONOSUPPORT as isize,
+    ESOCKTNOSUPPORT = libc::ESOCKTNOSUPPORT as isize,
+    ENOTSUP         = libc::ENOTSUP as isize,
+    EPFNOSUPPORT    = libc::EPFNOSUPPORT as isize,
+    EAFNOSUPPORT    = libc::EAFNOSUPPORT as isize,
+    EADDRINUSE      = libc::EADDRINUSE as isize,
+    EADDRNOTAVAIL   = libc::EADDRNOTAVAIL as isize,
+    ENETDOWN        = libc::ENETDOWN as isize,
+    ENETUNREACH     = libc::ENETUNREACH as isize,
+    ENETRESET       = libc::ENETRESET as isize,
+    ECONNABORTED    = libc::ECONNABORTED as isize,
+    ECONNRESET      = libc::ECONNRESET as isize,
+    ENOBUFS         = libc::ENOBUFS as isize,
+    EISCONN         = libc::EISCONN as isize,
+    ENOTCONN        = libc::ENOTCONN as isize,
+    ESHUTDOWN       = libc::ESHUTDOWN as isize,
+    ETOOMANYREFS    = libc::ETOOMANYREFS as isize,
+    ETIMEDOUT       = libc::ETIMEDOUT as isize,
+    ECONNREFUSED    = libc::ECONNREFUSED as isize,
+    ELOOP           = libc::ELOOP as isize,
+    ENAMETOOLONG    = libc::ENAMETOOLONG as isize,
+    EHOSTDOWN       = libc::EHOSTDOWN as isize,
+    EHOSTUNREACH    = libc::EHOSTUNREACH as isize,
+    ENOTEMPTY       = libc::ENOTEMPTY as isize,
+    EPROCLIM        = libc::EPROCLIM as isize,
+    EUSERS          = libc::EUSERS as isize,
+    EDQUOT          = libc::EDQUOT as isize,
+    ESTALE          = libc::ESTALE as isize,
+    EREMOTE         = libc::EREMOTE as isize,
+    EBADRPC         = libc::EBADRPC as isize,
+    ERPCMISMATCH    = libc::ERPCMISMATCH as isize,
+    EPROGUNAVAIL    = libc::EPROGUNAVAIL as isize,
+    EPROGMISMATCH   = libc::EPROGMISMATCH as isize,
+    EPROCUNAVAIL    = libc::EPROCUNAVAIL as isize,
+    ENOLCK          = libc::ENOLCK as isize,
+    ENOSYS          = libc::ENOSYS as isize,
+    EFTYPE          = libc::EFTYPE as isize,
+    EAUTH           = libc::EAUTH as isize,
+    ENEEDAUTH       = libc::ENEEDAUTH as isize,
+    EIDRM           = libc::EIDRM as isize,
+    ENOMSG          = libc::ENOMSG as isize,
+    EOVERFLOW       = libc::EOVERFLOW as isize,
+    ECANCELED       = libc::ECANCELED as isize,
+    EILSEQ          = libc::EILSEQ as isize,
+    ENOATTR         = libc::ENOATTR as isize,
+    EDOOFUS         = libc::EDOOFUS as isize,
+    EBADMSG         = libc::EBADMSG as isize,
+    EMULTIHOP       = libc::EMULTIHOP as isize,
+    ENOLINK         = libc::ENOLINK as isize,
+    EPROTO          = libc::EPROTO as isize,
+    ENOTCAPABLE     = libc::ENOTCAPABLE as isize,
+    ECAPMODE        = libc::ECAPMODE as isize,
+    ENOTRECOVERABLE = libc::ENOTRECOVERABLE as isize,
+    EOWNERDEAD      = libc::EOWNERDEAD as isize,
+
+    //// BFFFS custom error types below
+    EUNKNOWN        = 256,
+}
+
+impl From<nix::Error> for Error {
+    fn from(e: nix::Error) -> Self {
+        match e {
+            nix::Error::Sys(errno) => Error::from_i32(errno as i32).unwrap(),
+            _ => Error::EUNKNOWN
+        }
+    }
+}
+
+impl Into<i32> for Error {
+    fn into(self) -> i32 {
+        self.to_i32().unwrap()
+    }
+}
 
 /// Transaction numbers.
 // 32-bits is enough for 1 per second for 100 years

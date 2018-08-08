@@ -3,7 +3,6 @@
 use common::{*, label::*, vdev::*, vdev_leaf::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
-use nix;
 use std::{
     borrow::{Borrow, BorrowMut},
     io,
@@ -80,8 +79,11 @@ impl Vdev for VdevFile {
         self.size
     }
 
-    fn sync_all(&self) -> Box<Future<Item = (), Error = nix::Error>> {
-        Box::new(self.file.sync_all().unwrap().map(|_| ()))
+    fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
+        let fut = self.file.sync_all().unwrap()
+            .map(|_| ())
+            .map_err(|e| Error::from(e));
+        Box::new(fut)
     }
 
     fn uuid(&self) -> Uuid {
@@ -105,23 +107,26 @@ impl Vdev for VdevFile {
 impl VdevLeafApi for VdevFile {
     fn erase_zone(&self, _lba: LbaT) -> Box<VdevFut> {
         // ordinary files don't have Zone operations
-        Box::new(future::ok::<(), nix::Error>(()))
+        Box::new(future::ok::<(), Error>(()))
     }
 
     fn finish_zone(&self, _lba: LbaT) -> Box<VdevFut> {
         // ordinary files don't have Zone operations
-        Box::new(future::ok::<(), nix::Error>(()))
+        Box::new(future::ok::<(), Error>(()))
     }
 
     fn open_zone(&self, _lba: LbaT) -> Box<VdevFut> {
         // ordinary files don't have Zone operations
-        Box::new(future::ok::<(), nix::Error>(()))
+        Box::new(future::ok::<(), Error>(()))
     }
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecMutContainer(buf));
         let off = lba * (BYTES_PER_LBA as u64);
-        Box::new(self.file.read_at(container, off).unwrap().map(|_| ()))
+        let fut = self.file.read_at(container, off).unwrap()
+            .map_err(|e| Error::from(e))
+            .map(|_| ());
+        Box::new(fut)
     }
 
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
@@ -129,11 +134,14 @@ impl VdevLeafApi for VdevFile {
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecMutContainer(iovec)) as Box<BorrowMut<[u8]>>
         }).collect();
-        Box::new(self.file.readv_at(containers, off).unwrap().map(|lio_result| {
-            // We must drain the iterator to free the AioCb resources
-            lio_result.into_iter().map(|_| ()).count();
-            ()
-        }))
+        let fut = self.file.readv_at(containers, off).unwrap()
+            .map_err(|e| Error::from(e))
+            .map(|lio_result| {
+                // We must drain the iterator to free the AioCb resources
+                lio_result.into_iter().map(|_| ()).count();
+                ()
+            });
+        Box::new(fut)
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
@@ -158,10 +166,13 @@ impl VdevLeafApi for VdevFile {
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
         }).collect();
-        Box::new(self.file.writev_at(containers, off).unwrap().map(|result| {
-            result.into_iter().map(|_| ()).count();
-            ()
-        }))
+        let fut = self.file.writev_at(containers, off).unwrap()
+            .map_err(|e| Error::from(e))
+            .map(|result| {
+                result.into_iter().map(|_| ()).count();
+                ()
+            });
+        Box::new(fut)
     }
 }
 
@@ -196,7 +207,7 @@ impl VdevFile {
     ///
     /// * `path`    Pathname for the file.  It may be a device node.
     pub fn open<P: AsRef<Path>>(path: P)
-        -> impl Future<Item=(Self, LabelReader), Error=nix::Error>
+        -> impl Future<Item=(Self, LabelReader), Error=Error>
     {
         let handle = Handle::current();
         let f = File::open(path, handle.clone()).unwrap();
@@ -206,6 +217,7 @@ impl VdevFile {
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
         f.read_at(container, 0).unwrap()
+         .map_err(|e| Error::from(e))
          .and_then(move |aio_result| {
             drop(aio_result);   // release reference on dbs
             LabelReader::from_dbs(dbs).and_then(|mut label_reader| {
@@ -224,10 +236,13 @@ impl VdevFile {
         })
     }
 
-    fn write_at_unchecked(&self, buf: Box<Borrow<[u8]>>,
-                          lba: LbaT) -> impl Future<Item = (), Error = nix::Error> {
+    fn write_at_unchecked(&self, buf: Box<Borrow<[u8]>>, lba: LbaT)
+        -> impl Future<Item = (), Error = Error>
+    {
         let off = lba * (BYTES_PER_LBA as u64);
-        self.file.write_at(buf, off).unwrap().map(|_| ())
+        self.file.write_at(buf, off).unwrap()
+            .map(|_| ())
+            .map_err(|e| Error::from(e))
     }
 }
 

@@ -4,7 +4,6 @@ use common::{*, label::*, vdev::{Vdev, VdevFut}};
 #[cfg(not(test))] use common::vdev_raid::*;
 use futures::{ Future, IntoFuture, future};
 use itertools::multizip;
-use nix::{Error, errno};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
@@ -300,7 +299,7 @@ impl<'a> FreeSpaceMap {
         let space = end - start;
         assert!(self.is_empty(id), "Can only open empty zones");
         if space < lbas {
-            return Err(Error::from(errno::Errno::ENOSPC));
+            return Err(Error::ENOSPC);
         }
 
         if idx >= self.zones.len() {
@@ -668,7 +667,7 @@ impl<'a> Cluster {
             );
             fut = Box::new(future::join_all(finish_futs).join(owfut).map(|_| ()));
             (lba, fut)
-        }).ok_or(Error::Sys(errno::Errno::ENOSPC))
+        }).ok_or(Error::ENOSPC)
     }
 
     /// Asynchronously write this Vdev's label to all component devices
@@ -1035,7 +1034,7 @@ mod cluster {
         let result = rt.block_on(future::lazy(|| {
             cluster.write(dbs.try().unwrap(), TxgT::from(0))
         }));
-        assert_eq!(result.err().unwrap(), Error::Sys(errno::Errno::ENOSPC));
+        assert_eq!(result.err().unwrap(), Error::ENOSPC);
     }
 
     #[test]
@@ -1050,7 +1049,7 @@ mod cluster {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let result = cluster.write(dbs.try().unwrap(), TxgT::from(0));
-        assert_eq!(result.err().unwrap(), Error::Sys(errno::Errno::ENOSPC));
+        assert_eq!(result.err().unwrap(), Error::ENOSPC);
     }
 
     #[test]
@@ -1449,7 +1448,7 @@ mod free_space_map {
         let mut fsm = FreeSpaceMap::new(32768);
         let txg = TxgT::from(0);
         assert_eq!(fsm.open_zone(zid, 0, 1000, space, txg).unwrap_err(),
-            Error::Sys(errno::Errno::ENOSPC));
+            Error::ENOSPC);
         assert_eq!(fsm.zones.len(), 0);
     }
 

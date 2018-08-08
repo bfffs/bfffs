@@ -5,7 +5,6 @@ use common::database::*;
 use common::fs::Fs;
 use fuse::*;
 use libc;
-use nix::Error;
 use std::{
     ffi::OsStr,
     os::unix::ffi::OsStrExt,
@@ -66,13 +65,7 @@ impl Filesystem for FuseFs {
                 };
                 reply.attr(&ttl, &reply_attr)
             },
-            Err(e) => {
-                let errno = match e {
-                    Error::Sys(errno) => errno as i32,
-                    _ => libc::EINVAL
-                };
-                reply.error(errno)
-            }
+            Err(e) => reply.error(e.into())
         }
     }
 

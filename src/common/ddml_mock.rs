@@ -1,11 +1,10 @@
 // vim: tw=80
 // LCOV_EXCL_START
-use common::{LbaT, TxgT};
+use common::{Error, LbaT, TxgT};
 use common::dml::*;
 use common::ddml::*;
 use common::label::*;
 use futures::{Future, Stream};
-use nix::Error;
 use simulacrum::*;
 
 pub struct DDMLMock {

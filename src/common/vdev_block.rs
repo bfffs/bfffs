@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use futures::{Async, Future, Poll, sync::oneshot};
-use nix;
 use std::{
     cell::RefCell,
     cmp::{Ord, Ordering, PartialOrd},
@@ -281,7 +280,7 @@ impl Inner {
         // synchronously.  So we will poll it once before spawning it into the
         // reactor.
         match fut.poll() {
-            Err(nix::Error::Sys(nix::errno::Errno::EAGAIN)) => {
+            Err(Error::EAGAIN) => {
                 // Out of resources to issue this future.  Delay it
                 return Some((sender, fut));
             },
@@ -402,14 +401,14 @@ struct VdevBlockFut {
 
 impl Future for VdevBlockFut {
     type Item = ();
-    type Error = nix::Error;
+    type Error = Error;
 
-    fn poll(&mut self) -> Poll<(), nix::Error> {
+    fn poll(&mut self) -> Poll<(), Error> {
         if self.block_op.is_some() {
             let block_op = self.block_op.take().unwrap();
             self.inner.borrow_mut().sched_and_issue(block_op);
         }
-        self.receiver.poll().or(Err(nix::Error::Sys(nix::errno::Errno::EPIPE)))
+        self.receiver.poll().or(Err(Error::EPIPE))
     }
 }
 
@@ -463,7 +462,7 @@ impl VdevBlock {
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
     pub fn erase_zone(&self, start: LbaT, end: LbaT)
-        -> impl Future<Item=(), Error=nix::Error>
+        -> impl Future<Item=(), Error=Error>
     {
         // The zone must already be closed, but VdevBlock doesn't keep enough
         // information to assert that
@@ -490,7 +489,7 @@ impl VdevBlock {
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
     pub fn finish_zone(&self, start: LbaT, end: LbaT)
-        -> impl Future<Item=(), Error=nix::Error>
+        -> impl Future<Item=(), Error=Error>
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::finish_zone(start, end, sender);
@@ -524,7 +523,7 @@ impl VdevBlock {
     /// # Parameters
     /// - `start`:    The first LBA within the target zone
     pub fn open_zone(&self, start: LbaT)
-        -> impl Future<Item=(), Error=nix::Error>
+        -> impl Future<Item=(), Error=Error>
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::open_zone(start, sender);
@@ -579,7 +578,7 @@ impl VdevBlock {
     /// * `path`    Pathname for the backing file.  It may be a device node.
     #[cfg(not(test))]
     pub fn open<P: AsRef<Path>>(path: P)
-        -> impl Future<Item=(Self, LabelReader), Error=nix::Error> {
+        -> impl Future<Item=(Self, LabelReader), Error=Error> {
         VdevLeaf::open(path).map(|(leaf, label_reader)| {
             (VdevBlock::new(leaf), label_reader)
         })
@@ -589,7 +588,7 @@ impl VdevBlock {
     ///
     /// Return the number of bytes actually read.
     pub fn read_at(&self, buf: IoVecMut, lba: LbaT)
-        -> impl Future<Item=(), Error=nix::Error>
+        -> impl Future<Item=(), Error=Error>
     {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
@@ -606,7 +605,7 @@ impl VdevBlock {
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
     pub fn readv_at(&self, bufs: SGListMut, lba: LbaT)
-        -> impl Future<Item=(), Error=nix::Error>
+        -> impl Future<Item=(), Error=Error>
     {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
@@ -618,7 +617,7 @@ impl VdevBlock {
     ///
     /// Returns nothing on success, and on error on failure
     pub fn write_at(&self, buf: IoVec, lba: LbaT)
-        -> impl Future<Item=(), Error=nix::Error>
+        -> impl Future<Item=(), Error=Error>
     {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
@@ -629,7 +628,7 @@ impl VdevBlock {
     }
 
     pub fn write_label(&self, labeller: LabelWriter)
-        -> impl Future<Item=(), Error=nix::Error>
+        -> impl Future<Item=(), Error=Error>
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_label(labeller, sender);
@@ -645,7 +644,7 @@ impl VdevBlock {
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA at which to write
     pub fn writev_at(&self, bufs: SGList, lba: LbaT)
-        -> impl Future<Item=(), Error=nix::Error>
+        -> impl Future<Item=(), Error=Error>
     {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
@@ -742,7 +741,7 @@ test_suite! {
             fn optimum_queue_depth(&self) -> u32;
             fn size(&self) -> LbaT;
             fn sync_all(&self) -> Box<futures::Future<Item = (),
-                                      Error = nix::Error>>;
+                                      Error = Error>>;
             fn uuid(&self) -> Uuid;
             fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
             fn zones(&self) -> ZoneT;
@@ -765,7 +764,7 @@ test_suite! {
         futures,
         trait Future {
             type Item = ();
-            type Error = nix::Error;
+            type Error = Error;
             fn poll(&mut self) -> Poll<Item, Error>;
         }
     }
@@ -809,7 +808,7 @@ test_suite! {
         seq0.expect(leaf.read_at_call(ANY, 1)
             .and_call( move |_, _| {
                 let mut seq1 = Sequence::new();
-                let fut = s_handle.create_mock::<MockVdevFut<(), nix::Error>>();
+                let fut = s_handle.create_mock::<MockVdevFut<(), Error>>();
                 seq1.expect(fut.poll_call()
                     .and_return(Ok(Async::NotReady)));
                 seq1.expect(fut.poll_call().and_return(Ok(Async::Ready(()))));
@@ -820,10 +819,10 @@ test_suite! {
         seq0.expect(leaf.read_at_call(ANY, 2)
             .and_call( move |_, _| {
                 let mut seq1 = Sequence::new();
-                let fut = s_handle2.create_mock::<MockVdevFut<(), nix::Error>>();
+                let fut = s_handle2.create_mock::<MockVdevFut<(), Error>>();
                 seq1.expect(fut.poll_call()
                     .and_return(
-                        Err(nix::Error::Sys(nix::errno::Errno::EAGAIN))));
+                        Err(Error::EAGAIN)));
                 seq1.expect(fut.poll_call().and_return(Ok(Async::Ready(()))));
                 s_handle2.expect(seq1);
                 Box::new(fut)
@@ -853,10 +852,10 @@ test_suite! {
         seq0.expect(leaf.read_at_call(ANY, 1)
             .and_call( move |_, _| {
                 let mut seq1 = Sequence::new();
-                let fut = s_handle.create_mock::<MockVdevFut<(), nix::Error>>();
+                let fut = s_handle.create_mock::<MockVdevFut<(), Error>>();
                 seq1.expect(fut.poll_call()
                     .and_return(
-                        Err(nix::Error::Sys(nix::errno::Errno::EAGAIN))));
+                        Err(Error::EAGAIN)));
                 seq1.expect(fut.poll_call()
                     .and_return(Ok(Async::Ready(()))));
                 s_handle.expect(seq1);
@@ -876,7 +875,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
         seq.expect(leaf.erase_zone_call(1)
-                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+                       .and_return(Box::new(future::ok::<(), Error>(()))));
         scenario.expect(seq);
 
         let vdev = VdevBlock::new(leaf);
@@ -890,7 +889,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
         seq.expect(leaf.finish_zone_call(1)
-                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+                       .and_return(Box::new(future::ok::<(), Error>(()))));
         scenario.expect(seq);
 
         let vdev = VdevBlock::new(leaf);
@@ -904,7 +903,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
         seq.expect(leaf.open_zone_call(1)
-                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+                       .and_return(Box::new(future::ok::<(), Error>(()))));
         scenario.expect(seq);
 
         let vdev = VdevBlock::new(leaf);
@@ -919,7 +918,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
         seq.expect(leaf.read_at_call(ANY, 2)
-                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+                       .and_return(Box::new(future::ok::<(), Error>(()))));
         scenario.expect(seq);
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
@@ -936,7 +935,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
         seq.expect(leaf.readv_at_call(ANY, 2)
-                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+                       .and_return(Box::new(future::ok::<(), Error>(()))));
         scenario.expect(seq);
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
@@ -953,7 +952,7 @@ test_suite! {
         let leaf = mocks.val.1;
         let mut seq = Sequence::new();
         seq.expect(leaf.sync_all_call()
-                       .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+                       .and_return(Box::new(future::ok::<(), Error>(()))));
         scenario.expect(seq);
 
         let vdev = VdevBlock::new(leaf);
@@ -1209,9 +1208,9 @@ test_suite! {
         let mut seq = Sequence::new();
 
         let (sender, receiver) = oneshot::channel::<()>();
-        let e = nix::Error::from(nix::errno::Errno::EPIPE);
+        let e = Error::EPIPE;
         let fut0 = receiver.map_err(move |_| e);
-        let fut1 = future::ok::<(), nix::Error>(());
+        let fut1 = future::ok::<(), Error>(());
         seq.expect(leaf.read_at_call(ANY, 1)
                        .and_return(Box::new(fut0)));
         seq.expect(leaf.read_at_call(ANY, 2)
@@ -1244,7 +1243,7 @@ test_suite! {
 
         let channels = (0..num_ops - 2).map(|_| oneshot::channel::<()>());
         let (futs, senders) : (Vec<_>, Vec<_>) = channels.map(|chan| {
-            let e = nix::Error::from(nix::errno::Errno::EPIPE);
+            let e = Error::EPIPE;
             (chan.1.map_err(move |_| e), chan.0)
         })
         .unzip();
@@ -1254,12 +1253,12 @@ test_suite! {
         }
         // Schedule the final two operations in reverse LBA order, but verify
         // that they get issued in actual LBA order
-        let final_fut = future::ok::<(), nix::Error>(());
+        let final_fut = future::ok::<(), Error>(());
         seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 1)
                             .and_call(|_, _| {
                                 Box::new(final_fut)
                             }));
-        let penultimate_fut = future::ok::<(), nix::Error>(());
+        let penultimate_fut = future::ok::<(), Error>(());
         seq.expect(leaf.write_at_call(ANY, num_ops as LbaT)
                             .and_call(|_, _| {
                                 Box::new(penultimate_fut)
@@ -1302,7 +1301,7 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         scenario.expect(leaf.write_at_call(ANY, 1)
-                    .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+                    .and_return(Box::new(future::ok::<(), Error>(()))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try().unwrap();
@@ -1317,7 +1316,7 @@ test_suite! {
         let scenario = mocks.val.0;
         let leaf = mocks.val.1;
         scenario.expect(leaf.writev_at_call(ANY, 1)
-                    .and_return(Box::new(future::ok::<(), nix::Error>(()))));
+                    .and_return(Box::new(future::ok::<(), Error>(()))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = vec![dbs.try().unwrap()];

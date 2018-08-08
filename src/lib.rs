@@ -10,6 +10,8 @@ extern crate byteorder;
 extern crate divbuf;
 #[macro_use]
 extern crate downcast;
+#[macro_use]
+extern crate enum_primitive_derive;
 extern crate fixedbitset;
 extern crate fuse;
 extern crate futures;
@@ -28,6 +30,7 @@ extern crate metrohash;
 #[cfg(feature = "mocks")] extern crate mockers;
 #[cfg(feature = "mocks")] extern crate mockers_derive;
 extern crate modulo;
+extern crate num_traits;
 #[cfg(test)]
 extern crate permutohedron;
 #[cfg(test)]

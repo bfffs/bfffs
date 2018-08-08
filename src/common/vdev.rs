@@ -2,11 +2,10 @@
 
 use common::*;
 use futures;
-use nix;
 use uuid::Uuid;
 
 /// Future representing an operation on a vdev.
-pub type VdevFut = futures::Future<Item = (), Error = nix::Error>;
+pub type VdevFut = futures::Future<Item = (), Error = Error>;
 
 /// Vdev: Virtual Device
 ///

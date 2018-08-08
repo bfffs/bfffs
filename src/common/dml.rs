@@ -3,7 +3,6 @@
 use blosc;
 use common::*;
 use futures::Future;
-use nix::Error;
 
 pub use common::cache::{Cacheable, CacheRef};
 

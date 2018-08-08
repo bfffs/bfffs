@@ -2,10 +2,8 @@
 // LCOV_EXCL_START
 use common::*;
 use common::dml::*;
-//use common::ddml::*;
 use common::idml::*;
 use futures::{Future, Stream};
-use nix::Error;
 use simulacrum::*;
 
 pub struct IDMLMock {

@@ -4,7 +4,6 @@ use byteorder::{BigEndian, ByteOrder};
 use common::*;
 use divbuf::DivBufShared;
 use metrohash::MetroHash64;
-use nix::{Error, errno};
 use serde::{Deserialize, Serialize};
 use serde_cbor;
 use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
@@ -47,10 +46,10 @@ impl<'de> LabelReader {
     pub fn from_dbs(buffer: DivBufShared) -> Result<Self, Error> {
         let db = buffer.try().unwrap();
         if db.len() < MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN {
-            return Err(Error::Sys(errno::Errno::EINVAL));
+            return Err(Error::EINVAL);
         }
         if &MAGIC[..] != &db[0..MAGIC_LEN] {
-            return Err(Error::Sys(errno::Errno::EINVAL));
+            return Err(Error::EINVAL);
         }
 
         let checksum = BigEndian::read_u64(
@@ -67,7 +66,7 @@ impl<'de> LabelReader {
             hasher.write(contents);
         }
         if checksum != hasher.finish() {
-            return Err(Error::Sys(errno::Errno::EINVAL));
+            return Err(Error::EINVAL);
         }
 
         let mut cursor = io::Cursor::new(db);

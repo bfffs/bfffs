@@ -10,7 +10,6 @@ use futures::{
     future,
     sync::{mpsc, oneshot}
 };
-use nix::{Error, errno};
 use std::{
     ops::Range,
     rc::Rc,
@@ -171,7 +170,7 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<LbaT>();
         let rpc = Rpc::Allocated(tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        rx.map_err(|_| Error::EPIPE)
     }
 
     fn free(&self, lba: LbaT, length: LbaT)
@@ -180,7 +179,7 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::Free(lba, length, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        rx.map_err(|_| Error::EPIPE)
             .and_then(|result| result.into_future())
     }
 
@@ -190,14 +189,14 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Option<cluster::ClosedZone>>();
         let rpc = Rpc::FindClosedZone(zid, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        rx.map_err(|_| Error::EPIPE)
     }
 
     fn optimum_queue_depth(&self) -> impl Future<Item=u32, Error=Error> {
         let (tx, rx) = oneshot::channel::<u32>();
         let rpc = Rpc::OptimumQueueDepth(tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        rx.map_err(|_| Error::EPIPE)
     }
 
     /// Create a new ClusterServer/ClusterProxy pair, start the server, and
@@ -216,7 +215,7 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::Read(buf, lba, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        rx.map_err(|_| Error::EPIPE)
             .and_then(|result| result.into_future())
     }
 
@@ -224,14 +223,14 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<LbaT>();
         let rpc = Rpc::Size(tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        rx.map_err(|_| Error::EPIPE)
     }
 
     fn sync_all(&self) -> impl Future<Item = (), Error = Error> {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::SyncAll(tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        rx.map_err(|_| Error::EPIPE)
             .and_then(|result| result.into_future())
     }
 
@@ -245,7 +244,7 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Result<LbaT, Error>>();
         let rpc = Rpc::Write(buf, txg, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        rx.map_err(|_| Error::EPIPE)
             .and_then(|result| result.into_future())
     }
 
@@ -255,7 +254,7 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::WriteLabel(labeller, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        rx.map_err(|_| Error::EPIPE)
             .and_then(|result| result.into_future())
     }
 }
@@ -833,7 +832,7 @@ mod pool {
 
     #[test]
     fn read_error() {
-        let e = Error::from(errno::Errno::EIO);
+        let e = Error::EIO;
         let s = Scenario::new();
         let cluster = s.create_mock::<MockCluster>();
         s.expect(cluster.allocated_call().and_return(0));
@@ -915,7 +914,7 @@ mod pool {
     #[test]
     fn write_async_error() {
         let s = Scenario::new();
-        let e = Error::from(errno::Errno::EIO);
+        let e = Error::EIO;
         let cluster = s.create_mock::<MockCluster>();
             s.expect(cluster.allocated_call().and_return(0));
             s.expect(cluster.optimum_queue_depth_call().and_return(10));
@@ -940,7 +939,7 @@ mod pool {
     #[test]
     fn write_sync_error() {
         let s = Scenario::new();
-        let e = Error::from(errno::Errno::ENOSPC);
+        let e = Error::ENOSPC;
         let cluster = s.create_mock::<MockCluster>();
             s.expect(cluster.allocated_call().and_return(0));
             s.expect(cluster.optimum_queue_depth_call().and_return(10));

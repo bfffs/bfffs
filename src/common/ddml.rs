@@ -13,7 +13,6 @@ use common::{
 #[cfg(not(test))] use common::pool::*;
 use futures::{Future, Stream, future, stream};
 use metrohash::MetroHash64;
-use nix::{Error, errno};
 #[cfg(test)] use rand::{self, Rng};
 use std::{hash::Hasher, sync::{Arc, Mutex} };
 #[cfg(all(test, feature = "mocks"))] use simulacrum::*;
@@ -282,7 +281,7 @@ impl DDML {
                     })
                 } else {
                     // TODO: create a dedicated ECKSUM error type
-                    Err(Error::Sys(errno::Errno::EIO))
+                    Err(Error::EIO)
                 }
             })
         )
@@ -665,7 +664,7 @@ mod t {
         let err = rt.block_on(future::lazy(|| {
             ddml.get::<DivBufShared, DivBuf>(&drp)
         })).unwrap_err();
-        assert_eq!(err, Error::Sys(errno::Errno::EIO));
+        assert_eq!(err, Error::EIO);
     }
 
     #[test]
@@ -787,7 +786,7 @@ mod t {
         let err = rt.block_on(future::lazy(|| {
             ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
         })).unwrap_err();
-        assert_eq!(err, Error::Sys(errno::Errno::EIO));
+        assert_eq!(err, Error::EIO);
     }
 
     #[test]

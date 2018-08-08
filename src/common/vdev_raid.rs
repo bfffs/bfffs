@@ -6,7 +6,6 @@ use common::{null_raid::*, prime_s::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
-use nix::Error;
 use std::{
     cell::RefCell,
     cmp,

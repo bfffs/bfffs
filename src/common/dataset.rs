@@ -10,7 +10,6 @@ use common::*;
 use common::idml::*;
 use common::tree::*;
 use futures::Future;
-use nix::Error;
 use std::sync::Arc;
 
 pub type ITree<K, V> = Tree<RID, IDML, K, V>;

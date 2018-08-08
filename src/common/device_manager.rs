@@ -1,11 +1,10 @@
 // vim: tw=80
 
-use common::{ cluster, pool, vdev::Vdev, vdev_raid};
-#[cfg(not(test))] use common::{ cache, database, ddml, idml, vdev_block};
+use common::{cluster, pool, vdev::Vdev, vdev_raid};
+#[cfg(not(test))] use common::{Error, cache, database, ddml, idml, vdev_block};
 use futures::{Future, future};
 #[cfg(not(test))] use futures::{stream, sync::oneshot};
 #[cfg(not(test))] use futures::Stream;
-#[cfg(not(test))] use nix::{Error, errno};
 use std::{
     borrow::ToOwned,
     collections::BTreeMap,
@@ -78,7 +77,7 @@ impl DevManager {
             ).unwrap();
             rx
         });
-        future::join_all(proxies).map_err(|_| Error::Sys(errno::Errno::EPIPE))
+        future::join_all(proxies).map_err(|_| Error::EPIPE)
             .and_then(move |proxies| {
                 pool::Pool::open(Some(uuid), proxies)
             }).map(|(pool, label_reader)| {

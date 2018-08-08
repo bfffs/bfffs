@@ -15,6 +15,7 @@ blosc = "0.1"
 byteorder = "1.2.3"
 divbuf = { git = "https://github.com/asomers/divbuf/", rev = "9d9bc62" }
 downcast = "0.8"
+enum-primitive-derive = "^0.1"
 env_logger = "0.5"
 fixedbitset = "0.1.8"
 fuse = "0.3"
@@ -34,6 +35,7 @@ mockers_derive = { version = "=0.11.1", optional = true }
 # https://github.com/rust-lang/rust/issues/49048
 modulo = "0.1.2"
 nix = "0.11.0"
+num-traits = "^0.1"
 serde = "1.0.60"
 serde_cbor = "0.8"
 serde_derive = "1.0"

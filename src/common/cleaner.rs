@@ -6,7 +6,6 @@ use futures::{
     Future,
     stream::{self, Stream}
 };
-use nix::{Error, errno};
 use std::sync::Arc;
 
 #[cfg(not(test))] use common::idml::IDML;
@@ -44,7 +43,7 @@ impl<'a> Cleaner {
             .for_each(move |zone| {
                 let idml3 = idml2.clone();
                 idml2.txg()
-                    .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                    .map_err(|_| Error::EPIPE)
                     .and_then(move |txg_guard| {
                         idml3.clean_zone(zone, *txg_guard)
                         //self.clean_zone(zone, *txg_guard)
@@ -96,7 +95,6 @@ impl<'a> Cleaner {
 mod t {
 
 use futures::future;
-use nix::Error;
 use simulacrum::*;
 use super::*;
 use tokio::runtime::current_thread;

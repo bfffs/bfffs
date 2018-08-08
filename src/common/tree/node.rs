@@ -6,7 +6,6 @@ use common::*;
 use common::dml::*;
 use futures::Future;
 use futures_locks::*;
-use nix::{Error, errno};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     borrow::Borrow,
@@ -379,7 +378,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
                 Box::new(
                     node.0.read()
                         .map(|guard| TreeReadGuard::Mem(guard))
-                        .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                        .map_err(|_| Error::EPIPE)
                 )
             },
             TreePtr::Addr(ref addr) => {
@@ -390,7 +389,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
                             .map(move |guard| {
                                 TreeReadGuard::Addr(guard, node)
                             })
-                            .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                            .map_err(|_| Error::EPIPE)
                     })
                 )
             },
@@ -713,7 +712,7 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
         Box::new(
             self.0.write()
                 .map(|guard| TreeWriteGuard::Mem(guard))
-                .map_err(|_| Error::Sys(errno::Errno::EPIPE))
+                .map_err(|_| Error::EPIPE)
         )
     }
 

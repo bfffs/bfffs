@@ -5,7 +5,6 @@ use common::tree::*;
 use common::ddml_mock::*;
 #[cfg(test)] use common::ddml::DRP;
 use futures::future;
-use nix::Error;
 use simulacrum::*;
 use tokio::runtime::current_thread;
 
