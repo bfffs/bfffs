@@ -23,18 +23,8 @@ pub struct FuseFs {
 }
 
 impl FuseFs {
-    pub fn new(database: Arc<Database>, runtime: tokio_io_pool::Runtime,
-               tree: TreeID)
-        -> Self
-    {
-        let fs = Fs::new(database, runtime, tree);
-        FuseFs{fs}
-    }
-}
-
-impl Filesystem for FuseFs {
-    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        let ttl = Timespec { sec: 0, nsec: 0 };
+    /// Private helper for getattr-like operations
+    fn do_getattr(&self, ino: u64) -> Result<FileAttr, i32> {
         match self.fs.getattr(ino) {
             Ok(attr) => {
                 let kind = match attr.mode & libc::S_IFMT {
@@ -63,9 +53,48 @@ impl Filesystem for FuseFs {
                     rdev: attr.rdev,
                     flags: attr.flags as u32
                 };
-                reply.attr(&ttl, &reply_attr)
+                Ok(reply_attr)
             },
-            Err(e) => reply.error(e)
+            Err(e) => Err(e.into())
+        }
+    }
+
+    pub fn new(database: Arc<Database>, runtime: tokio_io_pool::Runtime,
+               tree: TreeID)
+        -> Self
+    {
+        let fs = Fs::new(database, runtime, tree);
+        FuseFs{fs}
+    }
+}
+
+impl Filesystem for FuseFs {
+    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+        let ttl = Timespec { sec: 0, nsec: 0 };
+        match self.do_getattr(ino) {
+            Ok(file_attr) => reply.attr(&ttl, &file_attr),
+            Err(errno) => reply.error(errno)
+        }
+    }
+
+    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr,
+               reply: ReplyEntry)
+    {
+        let ttl = Timespec { sec: 0, nsec: 0 };
+        // FUSE combines the functions of VOP_LOOKUP and VOP_GETATTR
+        // into one.
+        match self.fs.lookup(parent, name)
+            .and_then(|ino| self.do_getattr(ino)) {
+            Ok(file_attr) => {
+                // The generation number is only used for filesystems exported
+                // by NFS, and is only needed if the filesystem reuses deleted
+                // inodes.  BFFFS does not reuse deleted inodes.
+                let gen = 0;
+                reply.entry(&ttl, &file_attr, gen)
+            },
+            Err(e) => {
+                reply.error(e)
+            }
         }
     }
 

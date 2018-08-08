@@ -14,7 +14,14 @@ use futures::{
     sync::{mpsc, oneshot}
 };
 use libc;
-use std::{mem, sync::Arc};
+use metrohash::MetroHash64;
+use std::{
+    ffi::OsStr,
+    hash::Hasher,
+    mem,
+    os::unix::ffi::OsStrExt,
+    sync::Arc,
+};
 use time::Timespec;
 use tokio_io_pool;
 
@@ -94,6 +101,37 @@ impl Fs {
                                 flags: inode.flags,
                             };
                             tx.send(Ok(attr))
+                        },
+                        Ok(None) => {
+                            tx.send(Err(Error::ENOENT.into()))
+                        },
+                        Err(e) => {
+                            tx.send(Err(e.into()))
+                        }
+                    }.unwrap();
+                    future::ok::<(), Error>(())
+                })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
+    pub fn lookup(&self, parent: u64, name: &OsStr) -> Result<u64, i32>
+    {
+        let (tx, rx) = oneshot::channel();
+        let mut hasher = MetroHash64::new();
+        hasher.write(name.as_bytes());
+        // TODO: use cuckoo hashing to deal with collisions
+        // TODO: use some salt to defend against DOS attacks
+        let namehash = hasher.finish() & ( (1<<56) - 1);
+        self.runtime.spawn(
+            self.db.fsread(self.tree, move |dataset| {
+                let key = FSKey::new(parent, ObjKey::DirEntry(namehash));
+                dataset.get(key)
+                .then(move |r| {
+                    match r {
+                        Ok(Some(v)) => {
+                            tx.send(Ok(v.as_direntry().unwrap().ino))
                         },
                         Ok(None) => {
                             tx.send(Err(Error::ENOENT.into()))

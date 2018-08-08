@@ -127,6 +127,14 @@ pub enum FSValue {
 }
 
 impl FSValue {
+    pub fn as_direntry(&self) -> Option<&Dirent> {
+        if let FSValue::DirEntry(direntry) = self {
+            Some(direntry)
+        } else {
+            None
+        }
+    }
+
     pub fn as_inode(&self) -> Option<&Inode> {
         if let FSValue::Inode(inode) = self {
             Some(inode)
