@@ -15,6 +15,7 @@ use futures::{
 use libc;
 use nix::{Error, errno};
 use std::{mem, sync::Arc};
+use time::Timespec;
 use tokio_io_pool;
 
 /// Generic Filesystem layer.
@@ -28,6 +29,36 @@ pub struct Fs {
     tree: TreeID,
 }
 
+/// File attributes, as returned by `getattr`
+#[derive(Debug)]
+pub struct Attr {
+    pub ino:        u64,
+    /// File size in bytes
+    pub size:       u64,
+    /// File size in blocks
+    pub blocks:     u64,
+    /// access time
+    pub atime:      Timespec,
+    /// modification time
+    pub mtime:      Timespec,
+    /// change time
+    pub ctime:      Timespec,
+    /// birth time
+    pub birthtime:  Timespec,
+    /// File mode
+    pub mode:       u16,
+    /// Link count
+    pub nlink:      u64,
+    /// user id
+    pub uid:        u32,
+    /// Group id
+    pub gid:        u32,
+    /// Device number, for device nodes only
+    pub rdev:       u32,
+    /// File flags
+    pub flags:      u64,
+}
+
 impl Fs {
     pub fn new(database: Arc<Database>, runtime: tokio_io_pool::Runtime,
                tree: TreeID) -> Self
@@ -37,16 +68,32 @@ impl Fs {
 }
 
 impl Fs {
-    pub fn getattr(&self, ino: u64) -> Result<Inode, Error> {
+    pub fn getattr(&self, ino: u64) -> Result<Attr, Error> {
         let (tx, rx) = oneshot::channel();
         self.runtime.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let key = FSKey::new(ino, ObjKey::Inode);
                 dataset.get(key)
-                .then(|r| {
+                .then(move |r| {
                     match r {
                         Ok(Some(v)) => {
-                            tx.send(Ok(v.as_inode().unwrap().clone()))
+                            let inode = v.as_inode().unwrap();
+                            let attr = Attr {
+                                ino: ino,
+                                size: inode.size,
+                                blocks: 0,
+                                atime: inode.atime,
+                                mtime: inode.mtime,
+                                ctime: inode.ctime,
+                                birthtime: inode.birthtime,
+                                mode: inode.mode,
+                                nlink: inode.nlink,
+                                uid: inode.uid,
+                                gid: inode.gid,
+                                rdev: 0,
+                                flags: inode.flags,
+                            };
+                            tx.send(Ok(attr))
                         },
                         Ok(None) => {
                             tx.send(Err(Error::Sys(errno::Errno::ENOENT)))

@@ -37,8 +37,8 @@ impl Filesystem for FuseFs {
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let ttl = Timespec { sec: 0, nsec: 0 };
         match self.fs.getattr(ino) {
-            Ok(inode) => {
-                let kind = match inode.mode & libc::S_IFMT {
+            Ok(attr) => {
+                let kind = match attr.mode & libc::S_IFMT {
                     libc::S_IFIFO => FileType::NamedPipe,
                     libc::S_IFCHR => FileType::CharDevice,
                     libc::S_IFDIR => FileType::Directory,
@@ -46,25 +46,25 @@ impl Filesystem for FuseFs {
                     libc::S_IFREG => FileType::RegularFile,
                     libc::S_IFLNK => FileType::Symlink,
                     libc::S_IFSOCK => FileType::Socket,
-                    _ => panic!("Unknown file mode {:?}", inode.mode)
+                    _ => panic!("Unknown file mode {:?}", attr.mode)
                 };
-                let attr = FileAttr {
-                    ino,
-                    size: inode.size,
-                    blocks: 0,
-                    atime: inode.atime,
-                    mtime: inode.mtime,
-                    ctime: inode.ctime,
-                    crtime: inode.birthtime,
+                let reply_attr = FileAttr {
+                    ino: attr.ino,
+                    size: attr.size,
+                    blocks: attr.blocks,
+                    atime: attr.atime,
+                    mtime: attr.mtime,
+                    ctime: attr.ctime,
+                    crtime: attr.birthtime,
                     kind,
-                    perm: (inode.mode & 0o7777) as u16,
-                    nlink: inode.nlink as u32,
-                    uid: inode.uid,
-                    gid: inode.gid,
-                    rdev: 0,    // ???
-                    flags: inode.flags as u32
+                    perm: (attr.mode & 0o7777) as u16,
+                    nlink: attr.nlink as u32,
+                    uid: attr.uid,
+                    gid: attr.gid,
+                    rdev: attr.rdev,
+                    flags: attr.flags as u32
                 };
-                reply.attr(&ttl, &attr)
+                reply.attr(&ttl, &reply_attr)
             },
             Err(e) => {
                 let errno = match e {
