@@ -16,7 +16,7 @@ use futures::{
 };
 use libc;
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     mem,
     sync::Arc,
 };
@@ -175,20 +175,40 @@ impl Fs {
         };
         let inode_value = FSValue::Inode(inode);
 
-        let dirent = Dirent {
+        let parent_dirent = Dirent {
             ino,
             dtype:  libc::DT_DIR,
             name:   name.to_owned()
         };
-        let dirent_objkey = ObjKey::dir_entry(name);
-        let dirent_key = FSKey::new(parent, dirent_objkey);
-        let dirent_value = FSValue::DirEntry(dirent);
+        let parent_dirent_objkey = ObjKey::dir_entry(name);
+        let parent_dirent_key = FSKey::new(parent, parent_dirent_objkey);
+        let parent_dirent_value = FSValue::DirEntry(parent_dirent);
+
+        let dot_dirent = Dirent {
+            ino,
+            dtype: libc::DT_DIR,
+            name:  OsString::from(".")
+        };
+        let dot_dirent_objkey = ObjKey::dir_entry(name);
+        let dot_dirent_key = FSKey::new(ino, dot_dirent_objkey);
+        let dot_dirent_value = FSValue::DirEntry(dot_dirent);
+
+        let dotdot_dirent = Dirent {
+            ino: parent,
+            dtype: libc::DT_DIR,
+            name:  OsString::from("..")
+        };
+        let dotdot_dirent_objkey = ObjKey::dir_entry(name);
+        let dotdot_dirent_key = FSKey::new(ino, dotdot_dirent_objkey);
+        let dotdot_dirent_value = FSValue::DirEntry(dotdot_dirent);
 
         self.runtime.spawn(
             self.db.fswrite(self.tree, move |dataset| {
-                dataset.insert(inode_key, inode_value)
-                    .join(dataset.insert(dirent_key, dirent_value))
-                    .map(move |_| tx.send(Ok(ino)).unwrap())
+                dataset.insert(inode_key, inode_value).join4(
+                    dataset.insert(parent_dirent_key, parent_dirent_value),
+                    dataset.insert(dot_dirent_key, dot_dirent_value),
+                    dataset.insert(dotdot_dirent_key, dotdot_dirent_value),
+                ).map(move |_| tx.send(Ok(ino)).unwrap())
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()

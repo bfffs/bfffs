@@ -22,6 +22,7 @@ test_suite! {
     use futures::{Future, future};
     use libc;
     use std::{
+        ffi::OsString,
         fs,
         sync::{Arc, Mutex}
     };
@@ -69,6 +70,37 @@ test_suite! {
         assert_eq!(inode.gid, 0);
         assert_eq!(inode.mode & 0o7777, 0o755);
         assert_eq!(inode.mode & libc::S_IFMT, libc::S_IFDIR);
+    }
+
+    test mkdir(mocks) {
+        let ino = mocks.val.mkdir(1, &OsString::from("x"), 0o755).unwrap();
+        assert_eq!(mocks.val.lookup(1, &OsString::from("x")).unwrap(), ino);
+
+        // TODO: enable the below parts after readdir is fully working
+        // The new dir should have "." and ".." directory entries
+        //let mut entries = mocks.val.readdir(ino, 0, 0);
+        //let (dotdot, ofs) = entries.next().unwrap().unwrap();
+        //assert_eq!(dotdot.d_type, libc::DT_DIR);
+        //assert_eq!(&dotdot.d_name[0..3], [0x2e, 0x2e, 0x0]); // ".."
+        //assert_eq!(dotdot.d_fileno, 1);
+        //assert_eq!(ofs, 1);
+        //let (dot, ofs) = entries.next().unwrap().unwrap();
+        //assert_eq!(dot.d_type, libc::DT_DIR);
+        //assert_eq!(&dot.d_name[0..2], [0x2e, 0x0]); // "."
+        //assert_eq!(dot.d_fileno as u64, ino);
+        //assert_eq!(ofs, 2);
+
+        //// The parent dir should have an "x" directory entry
+        //let entries = mocks.val.readdir(ino, 0, 0);
+        //let (dirent, _ofs) = entries
+        //.map(|r| r.unwrap())
+        //.filter(|(dirent, _ofs)| {
+            //dirent.d_name[0] == 'x' as i8
+        //}).nth(0)
+        //.expect("'x' directory entry not found");
+        //assert_eq!(dirent.d_type, libc::DT_DIR);
+        //assert_eq!(&dirent.d_name[0..2], ['x' as i8, 0x0]); // "x"
+        //assert_eq!(dirent.d_fileno as u64, ino);
     }
 
     test readdir(mocks) {
