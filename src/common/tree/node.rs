@@ -178,6 +178,10 @@ impl<K: Key, V: Value> LeafData<K, V> {
         self.items.get(k).cloned()
     }
 
+    pub fn last_key(&self) -> Option<K> {
+        self.items.keys().next_back().cloned()
+    }
+
     pub fn new() -> Self {
         LeafData{items: BTreeMap::new()}
     }

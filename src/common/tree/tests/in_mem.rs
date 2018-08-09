@@ -733,6 +733,59 @@ fn get_nonexistent() {
     assert_eq!(r, Ok(None))
 }
 
+#[test]
+fn last_key_empty() {
+    let ddml = Arc::new(DDMLMock::new());
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.last_key());
+    assert_eq!(r, Ok(None))
+}
+
+#[test]
+fn last_key() {
+    let ddml = Arc::new(DDMLMock::new());
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            txgs:
+              start: 0
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.last_key());
+    assert_eq!(r, Ok(Some(4)))
+}
+
 // The range delete example from Figures 13-14 of B-Trees, Shadowing, and
 // Range-operations.  Our result is slightly different than in the paper,
 // however, because in the second pass:

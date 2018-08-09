@@ -689,6 +689,39 @@ impl<A, D, K, V> Tree<A, D, K, V>
         ) as Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>), Error=Error>>
     }
 
+    /// Return the highest valued key in the `Tree`
+    pub fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error> {
+        let dml2 = self.dml.clone();
+        let dml3 = self.dml.clone();
+        self.read()
+            .and_then(move |guard| {
+                guard.rlock(dml2)
+                     .and_then(move |guard| Tree::last_key_r(dml3, guard))
+            })
+    }
+
+    /// Find the last key amongst a node (which must already be locked), and its
+    /// children
+    fn last_key_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>)
+        -> Box<Future<Item=Option<K>, Error=Error> + Send>
+    {
+        let dml2 = dml.clone();
+        let next_node_fut = match *node {
+            NodeData::Leaf(ref leaf) => {
+                return Box::new(Ok(leaf.last_key()).into_future())
+            },
+            NodeData::Int(ref int) => {
+                let child_elem = &int.children[int.children.len() - 1];
+                child_elem.rlock(dml)
+            }
+        };
+        drop(node);
+        Box::new(
+            next_node_fut
+            .and_then(move |next_node| Tree::last_key_r(dml2, next_node))
+        )
+    }
+
     /// Merge the root node with its children, if necessary
     fn merge_root(inner: &Inner<A, K, V>,
                   root_guard: &mut TreeWriteGuard<A, K, V>)
