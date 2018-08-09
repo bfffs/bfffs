@@ -3,7 +3,12 @@
 //! Data types used by trees representing filesystems
 
 use common::tree::*;
-use std::ffi::OsString;
+use metrohash::MetroHash64;
+use std::{
+    ffi::{OsString, OsStr},
+    hash::Hasher,
+    os::unix::ffi::OsStrExt,
+};
 use time::Timespec;
 
 // time::Timespec doesn't derive Serde support.  Do it here.
@@ -36,6 +41,20 @@ pub enum ObjKey {
 }
 
 impl ObjKey {
+    /// Create a `ObjKey::DirEntry` object from a pathname
+    pub fn dir_entry(name: &OsStr) -> Self {
+        if name.as_bytes().contains(&('/' as u8)) {
+            panic!("Directory entries may not contain '/'");
+        }
+
+        let mut hasher = MetroHash64::new();
+        hasher.write(name.as_bytes());
+        // TODO: use cuckoo hashing to deal with collisions
+        // TODO: use some salt to defend against DOS attacks
+        let namehash = hasher.finish() & ( (1<<56) - 1);
+        ObjKey::DirEntry(namehash)
+    }
+
     fn discriminant(&self) -> u8 {
         let d = match self {
             ObjKey::DirEntry(_) => ObjKeyDiscriminant::DirEntry,

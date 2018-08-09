@@ -36,6 +36,11 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.tree.insert(k, v, txg)
     }
 
+    fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error>
+    {
+        self.tree.last_key()
+    }
+
     fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>) -> Self {
         Dataset{idml, tree}
     }
@@ -58,6 +63,11 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.dataset.get(k)
+    }
+
+    pub fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error>
+    {
+        self.dataset.last_key()
     }
 
     pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>) -> Self {

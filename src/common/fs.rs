@@ -1,6 +1,7 @@
 // vim: tw=80
 //! Common VFS implementation
 
+use atomic::*;
 use common::Error;
 use common::database::*;
 use common::fs_tree::*;
@@ -14,15 +15,12 @@ use futures::{
     sync::{mpsc, oneshot}
 };
 use libc;
-use metrohash::MetroHash64;
 use std::{
     ffi::OsStr,
-    hash::Hasher,
     mem,
-    os::unix::ffi::OsStrExt,
     sync::Arc,
 };
-use time::Timespec;
+use time;
 use tokio_io_pool;
 
 /// Generic Filesystem layer.
@@ -31,6 +29,7 @@ use tokio_io_pool;
 /// system-dependent filesystem interfaces.
 pub struct Fs {
     db: Arc<Database>,
+    next_object: Atomic<u64>,
     // TODO: wrap Runtime in ARC so it can be shared by multiple filesystems
     runtime: tokio_io_pool::Runtime,
     tree: TreeID,
@@ -45,13 +44,13 @@ pub struct Attr {
     /// File size in blocks
     pub blocks:     u64,
     /// access time
-    pub atime:      Timespec,
+    pub atime:      time::Timespec,
     /// modification time
-    pub mtime:      Timespec,
+    pub mtime:      time::Timespec,
     /// change time
-    pub ctime:      Timespec,
+    pub ctime:      time::Timespec,
     /// birth time
-    pub birthtime:  Timespec,
+    pub birthtime:  time::Timespec,
     /// File mode
     pub mode:       u16,
     /// Link count
@@ -67,10 +66,21 @@ pub struct Attr {
 }
 
 impl Fs {
-    pub fn new(database: Arc<Database>, runtime: tokio_io_pool::Runtime,
+    pub fn new(database: Arc<Database>, mut runtime: tokio_io_pool::Runtime,
                tree: TreeID) -> Self
     {
-        Fs{db: database, runtime, tree}
+        let last_key = runtime.block_on(
+            database.fsread(tree, |dataset| {
+                dataset.last_key()
+            })
+        ).unwrap();
+        let next_object = Atomic::new(last_key.unwrap().object() + 1);
+
+        Fs{db: database, next_object, runtime, tree}
+    }
+
+    fn next_object(&self) -> u64 {
+        self.next_object.fetch_add(1, Ordering::Relaxed)
     }
 }
 
@@ -119,14 +129,10 @@ impl Fs {
     pub fn lookup(&self, parent: u64, name: &OsStr) -> Result<u64, i32>
     {
         let (tx, rx) = oneshot::channel();
-        let mut hasher = MetroHash64::new();
-        hasher.write(name.as_bytes());
-        // TODO: use cuckoo hashing to deal with collisions
-        // TODO: use some salt to defend against DOS attacks
-        let namehash = hasher.finish() & ( (1<<56) - 1);
+        let objkey = ObjKey::dir_entry(name);
+        let key = FSKey::new(parent, objkey);
         self.runtime.spawn(
             self.db.fsread(self.tree, move |dataset| {
-                let key = FSKey::new(parent, ObjKey::DirEntry(namehash));
                 dataset.get(key)
                 .then(move |r| {
                     match r {
@@ -142,6 +148,47 @@ impl Fs {
                     }.unwrap();
                     future::ok::<(), Error>(())
                 })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
+    pub fn mkdir(&self, parent: u64, name: &OsStr, mode: u32)
+        -> Result<u64, i32>
+    {
+        // TODO: add directory entries for name/. and name/..
+        let (tx, rx) = oneshot::channel();
+        let ino = self.next_object();
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
+        let now = time::get_time();
+        let inode = Inode {
+            size: 0,
+            nlink: 1,
+            flags: 0,
+            atime: now,
+            mtime: now,
+            ctime: now,
+            birthtime: now,
+            uid: 0,
+            gid: 0,
+            mode: libc::S_IFDIR | (mode as u16)
+        };
+        let inode_value = FSValue::Inode(inode);
+
+        let dirent = Dirent {
+            ino,
+            dtype:  libc::DT_DIR,
+            name:   name.to_owned()
+        };
+        let dirent_objkey = ObjKey::dir_entry(name);
+        let dirent_key = FSKey::new(parent, dirent_objkey);
+        let dirent_value = FSValue::DirEntry(dirent);
+
+        self.runtime.spawn(
+            self.db.fswrite(self.tree, move |dataset| {
+                dataset.insert(inode_key, inode_value)
+                    .join(dataset.insert(dirent_key, dirent_value))
+                    .map(move |_| tx.send(Ok(ino)).unwrap())
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()

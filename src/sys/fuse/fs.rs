@@ -98,6 +98,27 @@ impl Filesystem for FuseFs {
         }
     }
 
+    fn mkdir(&mut self, _req: &Request, parent: u64, name: &OsStr, mode: u32,
+                 reply: ReplyEntry)
+    {
+        let ttl = Timespec { sec: 0, nsec: 0 };
+        // FUSE combines the functions of VOP_MKDIR and VOP_GETATTR
+        // into one.
+        match self.fs.mkdir(parent, name, mode)
+            .and_then(|ino| self.do_getattr(ino)) {
+            Ok(file_attr) => {
+                // The generation number is only used for filesystems exported
+                // by NFS, and is only needed if the filesystem reuses deleted
+                // inodes.  BFFFS does not reuse deleted inodes.
+                let gen = 0;
+                reply.entry(&ttl, &file_attr, gen)
+            },
+            Err(e) => {
+                reply.error(e)
+            }
+        }
+    }
+
     fn readdir(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64,
                mut reply: ReplyDirectory)
     {
