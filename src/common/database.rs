@@ -41,7 +41,7 @@ struct Label {
 }
 
 struct Inner {
-    filesystems: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue>>>>,
+    fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue>>>>,
     forest: ITree<TreeID, TreeOnDisk>,
     idml: Arc<IDML>,
 }
@@ -50,7 +50,7 @@ impl Inner {
     fn open_filesystem(inner: Arc<Inner>, tree_id: TreeID)
         -> Box<Future<Item=Arc<ITree<FSKey, FSValue>>, Error=Error> + Send>
     {
-        if let Some(fs) = inner.filesystems.lock().unwrap().get(&tree_id) {
+        if let Some(fs) = inner.fs_trees.lock().unwrap().get(&tree_id) {
             return Box::new(Ok(fs.clone()).into_future());
         }
 
@@ -59,7 +59,7 @@ impl Inner {
         let fut = inner.forest.get(tree_id)
             .map(move |tod| {
                 let tree = Arc::new(Tree::open(idml2, tod.unwrap()).unwrap());
-                inner2.filesystems.lock().unwrap()
+                inner2.fs_trees.lock().unwrap()
                     .insert(tree_id, tree.clone());
                 tree
             });
@@ -102,7 +102,7 @@ impl Database {
 
     /// Create a new, blank filesystem
     pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> {
-        let mut guard = self.inner.filesystems.lock().unwrap();
+        let mut guard = self.inner.fs_trees.lock().unwrap();
         let k = (0..=u32::max_value()).filter(|i| {
             !guard.contains_key(&TreeID::Fs(*i))
         }).nth(0).expect("Maximum number of filesystems reached");
@@ -144,8 +144,8 @@ impl Database {
     }
 
     fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>) -> Self {
-        let filesystems = Mutex::new(BTreeMap::new());
-        let inner = Arc::new(Inner{filesystems, idml, forest});
+        let fs_trees = Mutex::new(BTreeMap::new());
+        let inner = Arc::new(Inner{fs_trees, idml, forest});
         Database{inner}
     }
 
@@ -187,7 +187,7 @@ impl Database {
             let idml2 = inner2.idml.clone();
             let idml3 = inner2.idml.clone();
             let fsfuts = {
-                let guard = inner2.filesystems.lock().unwrap();
+                let guard = inner2.fs_trees.lock().unwrap();
                 guard.iter()
                     .map(move |(tree_id, itree)| {
                         let inner5 = inner4.clone();
