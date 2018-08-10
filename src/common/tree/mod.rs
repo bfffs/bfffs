@@ -111,7 +111,7 @@ pub struct RangeQuery<A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A>,
           K: Key + Borrow<T>,
-          T: Ord + Clone,
+          T: Ord + Clone + Send,
           V: Value
 {
     /// If Some, then there are more nodes in the Tree to query
@@ -120,7 +120,7 @@ pub struct RangeQuery<A, D, K, T, V>
     data: VecDeque<(K, V)>,
     end: Bound<T>,
     last_fut: Option<Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
-                       Error=Error>>>,
+                       Error=Error> + Send>>,
     /// Handle to the tree's inner
     inner: Arc<Inner<A, K, V>>,
     /// Handle to the tree's DML
@@ -131,7 +131,7 @@ impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A>,
           K: Key + Borrow<T>,
-          T: Ord + Clone,
+          T: Ord + Clone + Send,
           V: Value
     {
 
@@ -158,7 +158,7 @@ impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A> + 'static,
           K: Key + Borrow<T>,
-          T: Ord + Clone + 'static,
+          T: Ord + Clone + Send + 'static,
           V: Value
 {
     type Item = (K, V);
@@ -610,10 +610,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// the Bound is `None`, then the search is complete.
     fn get_range<R, T>(inner: &Inner<A, K, V>, dml: Arc<D>, range: R)
         -> impl Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
-                       Error=Error>
+                       Error=Error> + Send
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + 'static,
-              T: Ord + Clone + 'static
+              R: Clone + RangeBounds<T> + Send + 'static,
+              T: Ord + Clone + Send + 'static
     {
         Tree::<A, D, K, V>::read_root(&inner)
             .and_then(move |guard| {
@@ -626,12 +626,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// must be the node immediately to the right (and possibly up one or more
     /// levels) from `guard`.
     fn get_range_r<R, T>(dml: Arc<D>, guard: TreeReadGuard<A, K, V>,
-                            next_guard: Option<TreeReadGuard<A, K, V>>, range: R)
+                         next_guard: Option<TreeReadGuard<A, K, V>>, range: R)
         -> Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
-                      Error=Error>>
+                      Error=Error> + Send>
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + 'static,
-              T: Ord + Clone + 'static
+              R: Clone + RangeBounds<T> + Send + 'static,
+              T: Ord + Clone + Send + 'static
     {
         let dml2 = dml.clone();
         let (child_fut, next_fut) = match *guard {
@@ -670,11 +670,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         int.children[child_idx + 1].rlock(dml3)
                             .map(|guard| Some(guard))
                     ) as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
-                                    Error=Error>>
+                                    Error=Error> + Send>
                 } else {
                     Box::new(Ok(next_guard).into_future())
                         as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
-                                      Error=Error>>
+                                      Error=Error> + Send>
                 };
                 let child_fut = child_elem.rlock(dml2);
                 (child_fut, next_fut)
@@ -686,7 +686,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 .and_then(move |(child_guard, next_guard)| {
                 Tree::get_range_r(dml, child_guard, next_guard, range)
             })
-        ) as Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>), Error=Error>>
+        ) as Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
+                        Error=Error> + Send>
     }
 
     /// Return the highest valued key in the `Tree`
@@ -752,7 +753,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     pub fn range<R, T>(&self, range: R) -> RangeQuery<A, D, K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T>,
-              T: Ord + Clone
+              T: Ord + Clone + Send
     {
         RangeQuery::new(self.i.clone(), self.dml.clone(), range)
     }

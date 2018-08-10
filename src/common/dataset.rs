@@ -9,8 +9,12 @@
 use common::*;
 use common::idml::*;
 use common::tree::*;
-use futures::Future;
-use std::sync::Arc;
+use futures::{Future, Stream};
+use std::{
+    borrow::Borrow,
+    ops::RangeBounds,
+    sync::Arc
+};
 
 pub type ITree<K, V> = Tree<RID, IDML, K, V>;
 
@@ -45,6 +49,14 @@ impl<K: Key, V: Value> Dataset<K, V> {
         Dataset{idml, tree}
     }
 
+    fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
+        where K: Borrow<T>,
+              R: RangeBounds<T>,
+              T: Ord + Clone + Send + 'static
+    {
+        self.tree.range(range)
+    }
+
     fn size(&self) -> LbaT {
         self.idml.size()
     }
@@ -63,6 +75,14 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.dataset.get(k)
+    }
+
+    pub fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
+        where K: Borrow<T>,
+              R: RangeBounds<T>,
+              T: Ord + Clone + Send + 'static
+    {
+        self.dataset.range(range)
     }
 
     pub fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error>

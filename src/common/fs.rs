@@ -11,13 +11,13 @@ use futures::{
     Sink,
     Stream,
     future,
-    stream,
     sync::{mpsc, oneshot}
 };
 use libc;
 use std::{
     ffi::{OsStr, OsString},
     mem,
+    os::unix::ffi::OsStrExt,
     sync::Arc,
 };
 use time;
@@ -156,14 +156,13 @@ impl Fs {
     pub fn mkdir(&self, parent: u64, name: &OsStr, mode: u32)
         -> Result<u64, i32>
     {
-        // TODO: add directory entries for name/. and name/..
         let (tx, rx) = oneshot::channel();
         let ino = self.next_object();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         let now = time::get_time();
         let inode = Inode {
             size: 0,
-            nlink: 1,
+            nlink: 2,   // One for the parent dir, and one for "."
             flags: 0,
             atime: now,
             mtime: now,
@@ -189,7 +188,7 @@ impl Fs {
             dtype: libc::DT_DIR,
             name:  OsString::from(".")
         };
-        let dot_dirent_objkey = ObjKey::dir_entry(name);
+        let dot_dirent_objkey = ObjKey::dir_entry(OsStr::new("."));
         let dot_dirent_key = FSKey::new(ino, dot_dirent_objkey);
         let dot_dirent_value = FSValue::DirEntry(dot_dirent);
 
@@ -198,16 +197,27 @@ impl Fs {
             dtype: libc::DT_DIR,
             name:  OsString::from("..")
         };
-        let dotdot_dirent_objkey = ObjKey::dir_entry(name);
+        let dotdot_dirent_objkey = ObjKey::dir_entry(OsStr::new(".."));
         let dotdot_dirent_key = FSKey::new(ino, dotdot_dirent_objkey);
         let dotdot_dirent_value = FSValue::DirEntry(dotdot_dirent);
 
+        let parent_inode_key = FSKey::new(parent, ObjKey::Inode);
+
         self.runtime.spawn(
-            self.db.fswrite(self.tree, move |dataset| {
-                dataset.insert(inode_key, inode_value).join4(
+            self.db.fswrite(self.tree, move |ds| {
+                let dataset = Arc::new(ds);
+                let dataset2 = dataset.clone();
+                let nlink_fut = dataset.get(parent_inode_key)
+                    .and_then(move |r| {
+                        let mut value = r.unwrap();
+                        value.as_mut_inode().unwrap().nlink += 1;
+                        dataset2.insert(parent_inode_key, value)
+                    });
+                dataset.insert(inode_key, inode_value).join5(
                     dataset.insert(parent_dirent_key, parent_dirent_value),
                     dataset.insert(dot_dirent_key, dot_dirent_value),
                     dataset.insert(dotdot_dirent_key, dotdot_dirent_value),
+                    nlink_fut
                 ).map(move |_| tx.send(Ok(ino)).unwrap())
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
@@ -216,7 +226,7 @@ impl Fs {
 
     // TODO: instead of the full size struct libc::dirent, use a variable size
     // structure in the mpsc channel
-    pub fn readdir(&self, ino: u64, _fh: u64, offset: i64)
+    pub fn readdir(&self, ino: u64, _fh: u64, soffs: i64)
         -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>
     {
         // Big enough to fill a 4KB page with full-size dirents
@@ -225,52 +235,33 @@ impl Fs {
 
         let (tx, rx) = mpsc::channel(chansize);
         self.runtime.spawn(
-            self.db.fsread(self.tree, move |_dataset| {
-                if ino == 1 {
-                    // Create a stream of directory entries.  Overkill for this
-                    // stub, but it's similar to how a complete readdir
-                    // implementation will work
-                    let s = stream::unfold(offset, move |offs| {
-                        if offs < 2 {
-                            let (fut, next_offset) = if offs < 1 {
-                                let mut dirent = libc::dirent {
-                                    d_fileno: 9999,
-                                    d_reclen: dirent_size,
-                                    d_type: libc::DT_DIR,
-                                    d_namlen: 3,
-                                    d_name: unsafe{mem::zeroed()}
-                                };
-                                dirent.d_name[0] = '.' as i8;
-                                dirent.d_name[1] = '.' as i8;
-                                (Ok((dirent, 1)).into_future(), 1)
-                            } else {
-                                let mut dirent = libc::dirent {
-                                    d_fileno: 1,
-                                    d_reclen: dirent_size,
-                                    d_type: libc::DT_DIR,
-                                    d_namlen: 2,
-                                    d_name: unsafe{mem::zeroed()}
-                                };
-                                dirent.d_name[0] = '.' as i8;
-                                (Ok((dirent, 2)).into_future(), 2)
-                            };
-                            Some(fut.map(move |r| (r, next_offset)))
-                        } else {
-                            None
-                        }
-                    });
-                    let fut = s.fold(tx, |tx, dirent|
-                        tx.send(Ok(dirent))
+            self.db.fsread(self.tree, move |dataset| {
+                // NB: the next two lines can be replaced by
+                // u64::try_from(soffs) once that feature is stabilized
+                // https://github.com/rust-lang/rust/issues/33417
+                assert!(soffs >= 0);
+                let offs = soffs as u64;
+                let fut = dataset.range(FSKey::dirent_range(ino, offs))
+                    .fold(tx, move |tx, (k, v)| {
+                        let dirent = v.as_direntry().unwrap();
+                        let namlen = dirent.name.as_bytes().len();
+                        let mut reply = libc::dirent {
+                            d_fileno: dirent.ino as u32,
+                            d_reclen: dirent_size,
+                            d_type: dirent.dtype,
+                            d_namlen: namlen as u8,
+                            d_name: unsafe{mem::zeroed()}
+                        };
+                        // libc::dirent uses "char" when it should be using
+                        // "unsigned char", so we need an unsafe conversion
+                        let p = dirent.name.as_bytes()
+                            as *const [u8] as *const [i8];
+                        reply.d_name[0..namlen].copy_from_slice(unsafe{&*p});
+                        tx.send(Ok((reply, (k.offset() + 1) as i64)))
                             .map_err(|_| Error::EPIPE)
-                    ).map(|_| ());
-                    Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
 
-                } else {
-                    let fut = tx.send(Err(Error::ENOENT.into()))
-                        .map(|_| ())
-                        .map_err(|_| Error::EPIPE);
-                    Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
-                }
+                    }).map(|_| ());
+                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().map(|r| r.unwrap())

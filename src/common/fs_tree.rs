@@ -7,6 +7,7 @@ use metrohash::MetroHash64;
 use std::{
     ffi::{OsString, OsStr},
     hash::Hasher,
+    ops::Range,
     os::unix::ffi::OsStrExt,
 };
 use time::Timespec;
@@ -83,6 +84,15 @@ bitfield! {
 }
 
 impl FSKey {
+    /// Create a range of `FSKey` that will include all the directory entries
+    /// of directory `ino` beginning at `offset`
+    pub fn dirent_range(ino: u64, offset: u64) -> Range<Self> {
+        let objkey = ObjKey::DirEntry(0);
+        let start = FSKey::compose(ino, objkey.discriminant(), offset);
+        let end = FSKey::compose(ino, objkey.discriminant() + 1, 0);
+        Range{start, end}
+    }
+
     pub fn new(object: u64, objkey: ObjKey) -> Self {
         let objtype = objkey.discriminant();
         let offset = objkey.offset();
@@ -156,6 +166,14 @@ impl FSValue {
 
     pub fn as_inode(&self) -> Option<&Inode> {
         if let FSValue::Inode(inode) = self {
+            Some(inode)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_mut_inode(&mut self) -> Option<&mut Inode> {
+        if let FSValue::Inode(ref mut inode) = self {
             Some(inode)
         } else {
             None
