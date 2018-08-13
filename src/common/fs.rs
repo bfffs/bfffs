@@ -259,10 +259,16 @@ impl Fs {
                         reply.d_name[0..namlen].copy_from_slice(unsafe{&*p});
                         tx.send(Ok((reply, (k.offset() + 1) as i64)))
                             .map_err(|_| Error::EPIPE)
-
                     }).map(|_| ());
                 Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(|e| {
+                // An EPIPE here means that the caller dropped the iterator
+                // without reading all entries, probably because it found the
+                // entry that it wants.  Swallow the error.
+                if e != Error::EPIPE {
+                    panic!("{:?}", e)
+                }
+            })
         ).unwrap();
         rx.wait().map(|r| r.unwrap())
     }
