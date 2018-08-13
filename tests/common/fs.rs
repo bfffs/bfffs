@@ -60,7 +60,7 @@ test_suite! {
     /// getattr on the filesystem's root directory
     test getattr(mocks) {
         let inode = mocks.val.getattr(1).unwrap();
-        assert_eq!(inode.nlink, 0);
+        assert_eq!(inode.nlink, 1);
         assert_eq!(inode.flags, 0);
         assert!(inode.atime.sec > 0);
         assert!(inode.mtime.sec > 0);
@@ -108,15 +108,13 @@ test_suite! {
 
     test readdir(mocks) {
         let mut entries = mocks.val.readdir(1, 0, 0);
-        let (dotdot, ofs) = entries.next().unwrap().unwrap();
+        let (dotdot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dotdot.d_type, libc::DT_DIR);
         assert_eq!(&dotdot.d_name[0..3], [0x2e, 0x2e, 0x0]); // ".."
-        assert_eq!(ofs, 1);
-        let (dot, ofs) = entries.next().unwrap().unwrap();
+        let (dot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dot.d_type, libc::DT_DIR);
         assert_eq!(&dot.d_name[0..2], [0x2e, 0x0]); // "."
         assert_eq!(dot.d_fileno, 1);
-        assert_eq!(ofs, 2);
     }
 
     test statvfs(mocks) {

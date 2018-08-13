@@ -15,7 +15,10 @@ use common::tree::*;
 use futures::{Future, IntoFuture, future};
 use libc;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    ffi::{OsString, OsStr},
+    sync::{Arc, Mutex}
+};
 use time;
 
 type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
@@ -106,18 +109,18 @@ impl Database {
         let k = (0..=u32::max_value()).filter(|i| {
             !guard.contains_key(&TreeID::Fs(*i))
         }).nth(0).expect("Maximum number of filesystems reached");
-        let key = TreeID::Fs(k);
+        let tree_id = TreeID::Fs(k);
         let fs = Arc::new(ITree::create(self.inner.idml.clone()));
-        guard.insert(key, fs);
+        guard.insert(tree_id, fs);
 
         // Create the filesystem's root directory
-        self.fswrite(key, move |dataset| {
+        self.fswrite(tree_id, move |dataset| {
             let ino = 1;    // FUSE requires root dir to have inode 1
-            let key = FSKey::new(ino, ObjKey::Inode);
+            let inode_key = FSKey::new(ino, ObjKey::Inode);
             let now = time::get_time();
             let inode = Inode {
                 size: 0,
-                nlink: 0,
+                nlink: 1,   // for "."
                 flags: 0,
                 atime: now,
                 mtime: now,
@@ -127,9 +130,31 @@ impl Database {
                 gid: 0,
                 mode: libc::S_IFDIR | 0o755
             };
-            let value = FSValue::Inode(inode);
-            dataset.insert(key, value)
-        }).map(move |_| key)
+            let inode_value = FSValue::Inode(inode);
+
+            // Create the /. and /.. directory entries
+            let dot_dirent = Dirent {
+                ino,
+                dtype: libc::DT_DIR,
+                name:  OsString::from(".")
+            };
+            let dot_objkey = ObjKey::dir_entry(OsStr::new("."));
+            let dot_key = FSKey::new(ino, dot_objkey);
+            let dot_value = FSValue::DirEntry(dot_dirent);
+
+            let dotdot_dirent = Dirent {
+                ino: 1,     // The VFS replaces this
+                dtype: libc::DT_DIR,
+                name:  OsString::from("..")
+            };
+            let dotdot_objkey = ObjKey::dir_entry(OsStr::new(".."));
+            let dotdot_key = FSKey::new(ino, dotdot_objkey);
+            let dotdot_value = FSValue::DirEntry(dotdot_dirent);
+
+            dataset.insert(inode_key, inode_value)
+                .join3(dataset.insert(dot_key, dot_value),
+                       dataset.insert(dotdot_key, dotdot_value))
+        }).map(move |_| tree_id)
     }
 
     /// Perform a read-only operation on a Filesystem
