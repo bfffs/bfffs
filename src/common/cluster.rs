@@ -24,8 +24,9 @@ pub trait VdevRaidTrait : Vdev {
     fn erase_zone(&self, zone: ZoneT) -> Box<VdevFut>;
     fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut>;
     fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>);
-    fn open_zone(&self, zone: ZoneT, already_allocated: LbaT) -> Box<VdevFut>;
+    fn open_zone(&self, zone: ZoneT) -> Box<VdevFut>;
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+    fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> Box<VdevFut>;
     fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
 }
@@ -347,7 +348,7 @@ impl<'a> FreeSpaceMap {
                 if allocated == u32::max_value() as LbaT {
                     fsm.finish_zone(zid, txgs.end - 1);
                 } else if allocated > 0 {
-                    oz_futs.push(vdev.open_zone(zid, allocated));
+                    oz_futs.push(vdev.reopen_zone(zid, allocated));
                     assert_eq!(fsm.try_allocate(allocated).0.unwrap().0,
                                zid);
                 }
@@ -655,7 +656,7 @@ impl<'a> Cluster {
                 match e {
                     Ok(Some((zone_id, lba))) => {
                         let oz_fut = Box::new(
-                            vdev2.open_zone(zone_id, 0)
+                            vdev2.open_zone(zone_id)
                         ) as Box<VdevFut>;
                         Some((zone_id, lba, oz_fut))
                     },
@@ -725,9 +726,9 @@ mod cluster {
             fn erase_zone(&self, zone: ZoneT) -> Box<VdevFut>;
             fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut>;
             fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>);
-            fn open_zone(&self, zone: ZoneT, already_allocated: LbaT)
-                -> Box<VdevFut>;
+            fn open_zone(&self, zone: ZoneT) -> Box<VdevFut>;
             fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+            fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> Box<VdevFut>;
             fn write_at(&self, buf: IoVec, zone: ZoneT,
                         lba: LbaT) -> Box<VdevFut>;
             fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
@@ -742,13 +743,13 @@ mod cluster {
         s.expect(vr.zone_limits_call(0).and_return_clone((1, 2)).times(..));
         s.expect(vr.zone_limits_call(1).and_return_clone((2, 200)).times(..));
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.open_zone_call(0, 0)
+        s.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(matchers::ANY, 0, matchers::ANY)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.finish_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.open_zone_call(1, 0)
+        s.expect(vr.open_zone_call(1)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(matchers::ANY, 1, matchers::ANY)
             .and_return(Box::new( future::ok::<(), Error>(()))));
@@ -784,13 +785,13 @@ mod cluster {
         s.expect(vr.zone_limits_call(0).and_return_clone((1, 3)).times(..));
         s.expect(vr.zone_limits_call(1).and_return_clone((3, 200)).times(..));
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.open_zone_call(0, 0)
+        s.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(matchers::ANY, 0, matchers::ANY)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.finish_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.open_zone_call(1, 0)
+        s.expect(vr.open_zone_call(1)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(matchers::ANY, 1, matchers::ANY)
             .and_return(Box::new( future::ok::<(), Error>(()))));
@@ -827,7 +828,7 @@ mod cluster {
         s.expect(vr.zone_limits_call(0).and_return_clone((1, 3)).times(..));
         s.expect(vr.zone_limits_call(1).and_return_clone((3, 200)).times(..));
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.open_zone_call(0, 0)
+        s.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
 
         // .times can't be used with and_call
@@ -839,7 +840,7 @@ mod cluster {
 
         s.expect(vr.finish_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.open_zone_call(1, 0)
+        s.expect(vr.open_zone_call(1)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(matchers::ANY, 1, matchers::ANY)
             .and_return(Box::new( future::ok::<(), Error>(()))));
@@ -908,7 +909,7 @@ mod cluster {
     fn freespacemap_open() {
         let s = Scenario::new();
         let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.open_zone_call(2, 77).and_return(
+        s.expect(vr.reopen_zone_call(2, 77).and_return(
                 Box::new(Ok(()).into_future())
         ));
         s.expect(vr.zones_call().and_return_clone(4).times(..));
@@ -977,7 +978,7 @@ mod cluster {
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
-        s.expect(vr.open_zone_call(0, 0)
+        s.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
@@ -1001,7 +1002,7 @@ mod cluster {
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
-        s.expect(vr.open_zone_call(0, 0)
+        s.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
@@ -1066,7 +1067,7 @@ mod cluster {
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
-        s.expect(vr.open_zone_call(0, 0)
+        s.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
@@ -1094,7 +1095,7 @@ mod cluster {
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
-        s.expect(vr.open_zone_call(0, 0)
+        s.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
@@ -1136,7 +1137,7 @@ mod cluster {
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 3)).times(..));
         s.expect(vr.zone_limits_call(1).and_return_clone((3, 6)).times(..));
-        s.expect(vr.open_zone_call(0, 0)
+        s.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
                 buf.len() == 2 * BYTES_PER_LBA
@@ -1146,7 +1147,7 @@ mod cluster {
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.finish_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.open_zone_call(1, 0)
+        s.expect(vr.open_zone_call(1)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
                 buf.len() == 2 * BYTES_PER_LBA

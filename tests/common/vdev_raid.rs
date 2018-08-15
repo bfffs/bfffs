@@ -45,7 +45,7 @@ test_suite! {
             let mut vdev_raid = VdevRaid::create(*self.chunksize,
                 *self.n, *self.k, None, *self.f, &paths);
             current_thread::Runtime::new().unwrap().block_on(
-                vdev_raid.open_zone(0, 0)
+                vdev_raid.open_zone(0)
             ).expect("open_zone");
             (vdev_raid, tempdir, paths)
         }
@@ -380,7 +380,7 @@ test_suite! {
     test zone_erase_open(raid((3, 3, 1, 2))) {
         let zone = 1;
         current_thread::Runtime::new().unwrap().block_on( future::lazy(|| {
-            raid.val.0.open_zone(zone, 0)
+            raid.val.0.open_zone(zone)
             .and_then(|_| raid.val.0.erase_zone(0))
         })).expect("zone_erase_open");
     }
@@ -439,7 +439,7 @@ test_suite! {
         let wbuf1 = dbsw.try().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
         current_thread::Runtime::new().unwrap().block_on(
-            raid.val.0.open_zone(zone, 0)
+            raid.val.0.open_zone(zone)
             .and_then(|_| raid.val.0.finish_zone(zone))
         ).expect("open and finish");
         write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
@@ -466,7 +466,7 @@ test_suite! {
         let wbuf1 = dbsw.try().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
         current_thread::Runtime::new().unwrap().block_on(
-            raid.val.0.open_zone(zone, 0)
+            raid.val.0.open_zone(zone)
         ).expect("open_zone");
         write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
         assert_eq!(wbuf1, dbsr.try().unwrap());
@@ -483,7 +483,7 @@ test_suite! {
             let wbuf1 = dbsw.try().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
             current_thread::Runtime::new().unwrap().block_on(
-                vdev_raid.open_zone(zone, 0)
+                vdev_raid.open_zone(zone)
             ).expect("open_zone");
             write_read(&vdev_raid, vec![wbuf0], vec![rbuf], zone, start);
             assert_eq!(wbuf1, dbsr.try().unwrap());

@@ -454,10 +454,20 @@ impl VdevRaid {
     ///
     /// # Parameters
     /// - `zone`:              The target zone ID
+    pub fn open_zone(&self, zone: ZoneT)
+        -> impl Future<Item=(), Error=Error>
+    {
+        self.open_zone_priv(zone, 0)
+    }
+
+    /// Asynchronously open a zone on a RAID device
+    ///
+    /// # Parameters
+    /// - `zone`:              The target zone ID
     /// - `already_allocated`: The amount of data that was previously allocated
     ///                        in this zone, if the zone is being reopened.
     // Create a new StripeBuffer, and zero fill leading wasted space
-    pub fn open_zone(&self, zone: ZoneT, already_allocated: LbaT)
+    fn open_zone_priv(&self, zone: ZoneT, already_allocated: LbaT)
         -> impl Future<Item=(), Error=Error>
     {
         let f = self.codec.protection();
@@ -672,6 +682,21 @@ impl VdevRaid {
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
         Box::new(fut.map(|_| { () }))
+    }
+
+    /// Asynchronously reopen a zone on a RAID device
+    ///
+    /// The zone must've previously been opened and not closed before the device
+    /// was removed or the storage pool exported.
+    ///
+    /// # Parameters
+    /// - `zone`:              The target zone ID
+    /// - `already_allocated`: The amount of data that was previously allocated
+    ///                        in this zone.
+    pub fn reopen_zone(&self, zone: ZoneT, allocated: LbaT)
+        -> impl Future<Item=(), Error=Error>
+    {
+        self.open_zone_priv(zone, allocated)
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
@@ -1484,7 +1509,7 @@ fn read_at_one_stripe() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1, 0);
+        vdev_raid.open_zone(1);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
         vdev_raid.read_at(rbuf, 131072);
@@ -1569,7 +1594,7 @@ fn sync_all_unflushed() {
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
 
-    vdev_raid.open_zone(1, 0);
+    vdev_raid.open_zone(1);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try().unwrap();
     vdev_raid.write_at(wbuf, 1, 120_000);
@@ -1643,7 +1668,7 @@ fn write_at_one_stripe() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1, 0);
+        vdev_raid.open_zone(1);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try().unwrap();
         vdev_raid.write_at(wbuf, 1, 131072);
@@ -1712,7 +1737,7 @@ fn write_at_and_flush_zone() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1, 0);
+    vdev_raid.open_zone(1);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try().unwrap();
     vdev_raid.write_at(wbuf, 1, 120_000);
@@ -1833,7 +1858,7 @@ fn flush_zone_empty_stripe_buffer() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1, 0);
+    vdev_raid.open_zone(1);
     vdev_raid.flush_zone(1);
 }
 
@@ -1870,7 +1895,7 @@ fn open_zone_reopen() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::NullRaid,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1, 100);
+    vdev_raid.reopen_zone(1, 100);
     let dbs = DivBufShared::from(vec![0u8; 4096]);
     let wbuf = dbs.try().unwrap();
     vdev_raid.write_at(wbuf, 1, 4196);
@@ -1920,7 +1945,7 @@ fn open_zone_zero_fill_wasted_chunks() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1, 0);
+        vdev_raid.open_zone(1);
 }
 
 // Open a zone that has some leading wasted space.  Use mock VdevBlock objects
@@ -1975,7 +2000,7 @@ fn open_zone_zero_fill_wasted_stripes() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1, 0);
+        vdev_raid.open_zone(1);
 }
 }
 // LCOV_EXCL_START
