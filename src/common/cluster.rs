@@ -326,13 +326,16 @@ impl<'a> FreeSpaceMap {
 
     /// Open a FreeSpaceMap from a deserialized label.  The vdev is necessary
     /// too, to find zone information.
-    fn open(label: Label, vdev: &VdevRaidLike) -> Self {
+    fn open(label: Label, vdev: &VdevRaidLike)
+        -> impl Future<Item=Self, Error=Error>
+    {
         let total_zones = label.allocated_blocks.len() as ZoneT;
         let mut fsm = FreeSpaceMap::new(total_zones);
         assert_eq!(total_zones, label.freed_blocks.len() as ZoneT);
         let freed_iter = label.freed_blocks.into_iter();
         let allocated_iter = label.allocated_blocks.into_iter();
         let txgs_iter = label.txgs.into_iter();
+        let mut oz_futs = Vec::new();
         for v in multizip((allocated_iter, freed_iter, txgs_iter)).enumerate() {
             let zid = v.0 as ZoneT;
             let allocated = (v.1).0;
@@ -344,6 +347,7 @@ impl<'a> FreeSpaceMap {
                 if allocated == u32::max_value() {
                     fsm.finish_zone(zid, txgs.end - 1);
                 } else if allocated > 0 {
+                    oz_futs.push(vdev.open_zone(zid));
                     assert_eq!(fsm.try_allocate(allocated.into()).0.unwrap().0,
                                zid);
                 }
@@ -353,7 +357,8 @@ impl<'a> FreeSpaceMap {
                 fsm.zones[zid as usize].freed_blocks = freed;
             }
         }
-        fsm
+        future::join_all(oz_futs)
+            .map(|_| fsm)
     }
 
     /// Return an iterator over the zone IDs of all open zones
@@ -570,11 +575,11 @@ impl<'a> Cluster {
     /// Returns a new `Cluster` and a `LabelReader` that may be used to
     /// construct other vdevs stacked on top.
     pub fn open(vdev_raid: VdevRaidLike, mut reader: LabelReader)
-        -> (Self, LabelReader)
+        -> impl Future<Item=(Self, LabelReader), Error=Error>
     {
         let l: Label = reader.deserialize().unwrap();
-        let fsm = FreeSpaceMap::open(l, &vdev_raid);
-        (Cluster::new(fsm, vdev_raid), reader)
+        FreeSpaceMap::open(l, &vdev_raid)
+            .map(move |fsm| (Cluster::new(fsm, vdev_raid), reader))
     }
 
     /// Returns the "best" number of operations to queue to this `Cluster`.  A
@@ -902,6 +907,9 @@ mod cluster {
     fn freespacemap_open() {
         let s = Scenario::new();
         let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.open_zone_call(2).and_return(
+                Box::new(Ok(()).into_future())
+        ));
         s.expect(vr.zones_call().and_return_clone(4).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((4, 96)).times(..));
         s.expect(vr.zone_limits_call(1).and_return_clone((104, 196)).times(..));
@@ -916,7 +924,7 @@ mod cluster {
                        TxgT::from(0)..TxgT::from(0)]
         };
         let mock_vr: Box<VdevRaidTrait> = Box::new(vr);
-        let fsm = FreeSpaceMap::open(label, &mock_vr);
+        let fsm = FreeSpaceMap::open(label, &mock_vr).wait().unwrap();
         assert_eq!(fsm.zones.len(), 3);
         assert_eq!(fsm.zones[0].freed_blocks, 22);
         assert_eq!(fsm.zones[0].total_blocks, 92);
@@ -947,7 +955,6 @@ mod cluster {
         fsm.finish_zone(3, TxgT::from(3));
         fsm.open_zone(4, 4, 5, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(4, TxgT::from(0));
-        println!("FSM is {:?}", fsm);
         let cluster = Cluster::new(fsm, Box::new(vr));
         assert_eq!(cluster.find_closed_zone(0).unwrap(),
             ClosedZone{zid: 0, start: 0, freed_blocks: 1, total_blocks: 1,

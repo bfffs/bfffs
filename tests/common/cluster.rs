@@ -90,9 +90,10 @@ test_suite! {
         Runtime::new().unwrap().block_on(future::lazy(|| {
             VdevFile::open(objects.val.3.clone()).map(|(leaf, reader)| {
                 (VdevBlock::new(leaf), reader)
-            }).map(move |combined| {
+            }).and_then(move |combined| {
                 let (vdev_raid, reader) = VdevRaid::open(None, vec![combined]);
-                let (cluster, _reader) = Cluster::open(vdev_raid, reader);
+                 Cluster::open(vdev_raid, reader)
+            }).map(|(cluster, _reader)| {
                 assert_eq!(cluster.allocated(), 0);
             })
         })).unwrap();

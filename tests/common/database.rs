@@ -88,11 +88,11 @@ test_suite! {
         drop(old_db);
         let _db = rt.block_on(future::lazy(|| {
             VdevFile::open(path)
-                .map(|(leaf, reader)| {
+            .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
                     let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
                     cluster::Cluster::open(vr,lr)
-            }) .and_then(move |(cluster, reader)|{
+            }).and_then(move |(cluster, reader)|{
                 let proxy = ClusterProxy::new(cluster);
                 Pool::open(None, vec![(proxy, reader)])
             }).map(|(pool, reader)| {

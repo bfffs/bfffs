@@ -82,16 +82,16 @@ test_suite! {
         drop(old_pool);
         let (pool, _label_reader) = rt.block_on(future::lazy(|| {
             let c0_fut = VdevFile::open(paths[0].clone())
-                .map(|(leaf, reader)| {
+                .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
                     let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
                     cluster::Cluster::open(vr,lr)
             });
             let c1_fut = VdevFile::open(paths[1].clone())
-                .map(|(leaf, reader)| {
+                .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
                     let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
-                    cluster::Cluster::open(vr,lr)
+                    cluster::Cluster::open(vr, lr)
             });
             c0_fut.join(c1_fut)
                 .and_then(move |((c0, c0r), (c1,c1r))| {

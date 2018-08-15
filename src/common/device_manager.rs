@@ -61,11 +61,11 @@ impl DevManager {
                 }).map(|(leaf, reader)| {
                     (vdev_block::VdevBlock::new(leaf), reader)
                 }).collect()
-                .map(move |vdev_blocks| {
+                .and_then(move |vdev_blocks| {
                     let (vdev_raid, reader) =
                         vdev_raid::VdevRaid::open(Some(raid_uuid), vdev_blocks);
-                    let (cluster, reader) = cluster::Cluster::open(vdev_raid,
-                                                                   reader);
+                    cluster::Cluster::open(vdev_raid, reader)
+                }).map(|(cluster, reader)| {
                     let proxy = pool::ClusterProxy::new(cluster);
                     tx.send((proxy, reader))
                         .ok().expect("channel dropped too soon");
