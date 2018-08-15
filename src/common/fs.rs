@@ -298,4 +298,14 @@ impl Fs {
         ).unwrap();
         rx.wait().unwrap()
     }
+
+    pub fn sync(&self) {
+        let (tx, rx) = oneshot::channel::<()>();
+        self.runtime.spawn(
+            self.db.sync_transaction()
+            .map_err(|e| panic!("{:?}", e))
+            .map(|_| tx.send(()).unwrap())
+        ).unwrap();
+        rx.wait().unwrap()
+    }
 }

@@ -69,6 +69,10 @@ impl FuseFs {
 }
 
 impl Filesystem for FuseFs {
+    fn destroy(&mut self, _req: &Request) {
+        self.fs.sync()
+    }
+
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let ttl = Timespec { sec: 0, nsec: 0 };
         match self.do_getattr(ino) {
