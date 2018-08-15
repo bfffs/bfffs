@@ -66,6 +66,61 @@ pub struct Attr {
 }
 
 impl Fs {
+    fn do_create<F, B>(&self, parent: u64, dtype: u8, flags: u64, name: &OsStr,
+                 mode: u16, nlink: u64, f: F)
+        -> Result<u64, i32>
+        where F: FnOnce(&ReadWriteFilesystem, u64) -> B + Send + 'static,
+              B: Future<Item = (), Error = Error> + Send + 'static,
+    {
+        let (tx, rx) = oneshot::channel();
+        let ino = self.next_object();
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
+        let now = time::get_time();
+        let inode = Inode {
+            size: 0,
+            nlink,
+            flags,
+            atime: now,
+            mtime: now,
+            ctime: now,
+            birthtime: now,
+            uid: 0,
+            gid: 0,
+            mode
+        };
+        let inode_value = FSValue::Inode(inode);
+
+        let parent_dirent = Dirent {
+            ino,
+            dtype,
+            name:   name.to_owned()
+        };
+        let parent_dirent_objkey = ObjKey::dir_entry(name);
+        let parent_dirent_key = FSKey::new(parent, parent_dirent_objkey);
+        let parent_dirent_value = FSValue::DirEntry(parent_dirent);
+        let parent_inode_key = FSKey::new(parent, ObjKey::Inode);
+
+        self.runtime.spawn(
+            self.db.fswrite(self.tree, move |ds| {
+                let dataset = Arc::new(ds);
+                let dataset2 = dataset.clone();
+                let nlink_fut = dataset.get(parent_inode_key)
+                    .and_then(move |r| {
+                        let mut value = r.unwrap();
+                        value.as_mut_inode().unwrap().nlink += 1;
+                        dataset2.insert(parent_inode_key, value)
+                    });
+                let extra_fut = f(&*dataset, ino);
+                dataset.insert(inode_key, inode_value).join4(
+                    dataset.insert(parent_dirent_key, parent_dirent_value),
+                    nlink_fut,
+                    extra_fut
+                ).map(move |_| tx.send(Ok(ino)).unwrap())
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     pub fn new(database: Arc<Database>, mut runtime: tokio_io_pool::Runtime,
                tree: TreeID) -> Self
     {
@@ -156,72 +211,34 @@ impl Fs {
     pub fn mkdir(&self, parent: u64, name: &OsStr, mode: u32)
         -> Result<u64, i32>
     {
-        let (tx, rx) = oneshot::channel();
-        let ino = self.next_object();
-        let inode_key = FSKey::new(ino, ObjKey::Inode);
-        let now = time::get_time();
-        let inode = Inode {
-            size: 0,
-            nlink: 2,   // One for the parent dir, and one for "."
-            flags: 0,
-            atime: now,
-            mtime: now,
-            ctime: now,
-            birthtime: now,
-            uid: 0,
-            gid: 0,
-            mode: libc::S_IFDIR | (mode as u16)
+        let nlink = 2;  // One for the parent dir, and one for "."
+
+        let f = move |dataset: &ReadWriteFilesystem, ino| {
+            let dot_dirent = Dirent {
+                ino,
+                dtype: libc::DT_DIR,
+                name:  OsString::from(".")
+            };
+            let dot_dirent_objkey = ObjKey::dir_entry(OsStr::new("."));
+            let dot_dirent_key = FSKey::new(ino, dot_dirent_objkey);
+            let dot_dirent_value = FSValue::DirEntry(dot_dirent);
+
+            let dotdot_dirent = Dirent {
+                ino: parent,
+                dtype: libc::DT_DIR,
+                name:  OsString::from("..")
+            };
+            let dotdot_dirent_objkey = ObjKey::dir_entry(OsStr::new(".."));
+            let dotdot_dirent_key = FSKey::new(ino, dotdot_dirent_objkey);
+            let dotdot_dirent_value = FSValue::DirEntry(dotdot_dirent);
+
+            dataset.insert(dot_dirent_key, dot_dirent_value)
+            .join(dataset.insert(dotdot_dirent_key, dotdot_dirent_value))
+            .map(|_| ())
         };
-        let inode_value = FSValue::Inode(inode);
 
-        let parent_dirent = Dirent {
-            ino,
-            dtype:  libc::DT_DIR,
-            name:   name.to_owned()
-        };
-        let parent_dirent_objkey = ObjKey::dir_entry(name);
-        let parent_dirent_key = FSKey::new(parent, parent_dirent_objkey);
-        let parent_dirent_value = FSValue::DirEntry(parent_dirent);
-
-        let dot_dirent = Dirent {
-            ino,
-            dtype: libc::DT_DIR,
-            name:  OsString::from(".")
-        };
-        let dot_dirent_objkey = ObjKey::dir_entry(OsStr::new("."));
-        let dot_dirent_key = FSKey::new(ino, dot_dirent_objkey);
-        let dot_dirent_value = FSValue::DirEntry(dot_dirent);
-
-        let dotdot_dirent = Dirent {
-            ino: parent,
-            dtype: libc::DT_DIR,
-            name:  OsString::from("..")
-        };
-        let dotdot_dirent_objkey = ObjKey::dir_entry(OsStr::new(".."));
-        let dotdot_dirent_key = FSKey::new(ino, dotdot_dirent_objkey);
-        let dotdot_dirent_value = FSValue::DirEntry(dotdot_dirent);
-
-        let parent_inode_key = FSKey::new(parent, ObjKey::Inode);
-
-        self.runtime.spawn(
-            self.db.fswrite(self.tree, move |ds| {
-                let dataset = Arc::new(ds);
-                let dataset2 = dataset.clone();
-                let nlink_fut = dataset.get(parent_inode_key)
-                    .and_then(move |r| {
-                        let mut value = r.unwrap();
-                        value.as_mut_inode().unwrap().nlink += 1;
-                        dataset2.insert(parent_inode_key, value)
-                    });
-                dataset.insert(inode_key, inode_value).join5(
-                    dataset.insert(parent_dirent_key, parent_dirent_value),
-                    dataset.insert(dot_dirent_key, dot_dirent_value),
-                    dataset.insert(dotdot_dirent_key, dotdot_dirent_value),
-                    nlink_fut
-                ).map(move |_| tx.send(Ok(ino)).unwrap())
-            }).map_err(|e| panic!("{:?}", e))
-        ).unwrap();
-        rx.wait().unwrap()
+        self.do_create(parent, libc::DT_DIR, 0, name,
+                       libc::S_IFDIR | (mode as u16), nlink, f)
     }
 
     // TODO: instead of the full size struct libc::dirent, use a variable size

@@ -21,8 +21,8 @@ use std::{
 };
 use time;
 
-type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
-type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
+pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
+pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
 
 /// Keys into the Forest
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
