@@ -423,6 +423,7 @@ impl VdevRaid {
     /// Asynchronously flush the `StripeBuffer` for the given zone.
     ///
     /// # Returns
+    ///
     /// The number of LBAs that were zero-filled, and `Future` that will
     /// complete when the zone's contents are fully written
     pub fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>) {
@@ -452,14 +453,18 @@ impl VdevRaid {
     /// Asynchronously open a zone on a RAID device
     ///
     /// # Parameters
-    /// - `zone`:    The target zone ID
-    // Create a new StripeBuffer, and zero fill and leading wasted space
-    pub fn open_zone(&self, zone: ZoneT) -> impl Future<Item=(), Error=Error> {
+    /// - `zone`:              The target zone ID
+    /// - `already_allocated`: The amount of data that was previously allocated
+    ///                        in this zone, if the zone is being reopened.
+    // Create a new StripeBuffer, and zero fill leading wasted space
+    pub fn open_zone(&self, zone: ZoneT, already_allocated: LbaT)
+        -> impl Future<Item=(), Error=Error>
+    {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         let stripe_lbas = m * self.chunksize as LbaT;
         let (start_lba, _) = self.zone_limits(zone);
-        let sb = StripeBuffer::new(start_lba, stripe_lbas);
+        let sb = StripeBuffer::new(start_lba + already_allocated, stripe_lbas);
         assert!(self.stripe_buffers.borrow_mut().insert(zone, sb).is_none());
 
         let (first_disk_lba, _) = self.blockdevs[0].zone_limits(zone);
@@ -1230,6 +1235,7 @@ mod t {
 
 use super::*;
 use futures::future;
+use mockers::matchers::ANY;
 use mockers::Scenario;
 use mockers_derive::mock;
 
@@ -1478,7 +1484,7 @@ fn read_at_one_stripe() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1);
+        vdev_raid.open_zone(1, 0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
         vdev_raid.read_at(rbuf, 131072);
@@ -1563,7 +1569,7 @@ fn sync_all_unflushed() {
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
 
-    vdev_raid.open_zone(1);
+    vdev_raid.open_zone(1, 0);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try().unwrap();
     vdev_raid.write_at(wbuf, 1, 120_000);
@@ -1637,7 +1643,7 @@ fn write_at_one_stripe() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1);
+        vdev_raid.open_zone(1, 0);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try().unwrap();
         vdev_raid.write_at(wbuf, 1, 131072);
@@ -1706,7 +1712,7 @@ fn write_at_and_flush_zone() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1);
+    vdev_raid.open_zone(1, 0);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try().unwrap();
     vdev_raid.write_at(wbuf, 1, 120_000);
@@ -1827,8 +1833,47 @@ fn flush_zone_empty_stripe_buffer() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1);
+    vdev_raid.open_zone(1, 0);
     vdev_raid.flush_zone(1);
+}
+
+// Reopen a zone that was previously used and unmounted without being closed.
+// There will be some already-allocated space.  After opening, the raid device
+// should accept a write at the true write pointer, not the beginning of the
+// zone.
+#[test]
+fn open_zone_reopen() {
+    let k = 1;
+    let f = 0;
+    const CHUNKSIZE: LbaT = 1;
+    let zl0 = (1, 4096);
+    let zl1 = (4096, 8192);
+
+    let s = Scenario::new();
+    let bd = s.create_mock::<MockVdevBlock>();
+    s.expect(bd.size_call().and_return_clone(262144).times(..));
+    s.expect(bd.lba2zone_call(1).and_return_clone(Some(0)).times(..));
+    s.expect(bd.lba2zone_call(4196).and_return_clone(Some(1)).times(..));
+    s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
+    s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
+    s.expect(bd.open_zone_call(4096)
+             .and_return(Box::new(future::ok::<(), Error>(())))
+    );
+    s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
+             .times(..));
+    s.expect(bd.write_at_call(ANY, 4196)
+        .and_return( Box::new( future::ok::<(), Error>(())))
+    );
+    let blockdevs: Vec<Box<VdevBlockTrait + 'static>> = vec![Box::new(bd)];
+
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                  Uuid::new_v4(),
+                                  LayoutAlgorithm::NullRaid,
+                                  blockdevs.into_boxed_slice());
+    vdev_raid.open_zone(1, 100);
+    let dbs = DivBufShared::from(vec![0u8; 4096]);
+    let wbuf = dbs.try().unwrap();
+    vdev_raid.write_at(wbuf, 1, 4196);
 }
 
 // Open a zone that has wasted leading space due to a chunksize misaligned with
@@ -1875,7 +1920,7 @@ fn open_zone_zero_fill_wasted_chunks() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1);
+        vdev_raid.open_zone(1, 0);
 }
 
 // Open a zone that has some leading wasted space.  Use mock VdevBlock objects
@@ -1930,7 +1975,7 @@ fn open_zone_zero_fill_wasted_stripes() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1);
+        vdev_raid.open_zone(1, 0);
 }
 }
 // LCOV_EXCL_START
