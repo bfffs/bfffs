@@ -69,6 +69,27 @@ impl FuseFs {
 }
 
 impl Filesystem for FuseFs {
+    fn create(&mut self, _req: &Request, parent: u64, name: &OsStr,
+              mode: u32, _flags: u32, reply: ReplyCreate) {
+        let ttl = Timespec { sec: 0, nsec: 0 };
+
+        // FUSE combines the functions of VOP_CREATE and VOP_GETATTR
+        // into one.
+        match self.fs.create(parent, name, mode)
+            .and_then(|ino| self.do_getattr(ino)) {
+            Ok(file_attr) => {
+                // The generation number is only used for filesystems exported
+                // by NFS, and is only needed if the filesystem reuses deleted
+                // inodes.  BFFFS does not reuse deleted inodes.
+                let gen = 0;
+                reply.created(&ttl, &file_attr, gen, 0, 0)
+            },
+            Err(e) => {
+                reply.error(e)
+            }
+        }
+    }
+
     fn destroy(&mut self, _req: &Request) {
         self.fs.sync()
     }

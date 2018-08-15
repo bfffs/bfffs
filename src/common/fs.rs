@@ -140,6 +140,16 @@ impl Fs {
 }
 
 impl Fs {
+    pub fn create(&self, parent: u64, name: &OsStr, mode: u32)
+        -> Result<u64, i32>
+    {
+        let f = |_: &ReadWriteFilesystem, _| {
+            Ok(()).into_future()
+        };
+        self.do_create(parent, libc::DT_REG, 0, name,
+                       libc::S_IFREG | (mode as u16), 1, f)
+    }
+
     pub fn getattr(&self, ino: u64) -> Result<Attr, i32> {
         let (tx, rx) = oneshot::channel();
         self.runtime.spawn(

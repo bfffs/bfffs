@@ -57,6 +57,27 @@ test_suite! {
         }
     });
 
+    test create(mocks) {
+        let ino = mocks.val.create(1, &OsString::from("x"), 0o644).unwrap();
+        assert_eq!(mocks.val.lookup(1, &OsString::from("x")).unwrap(), ino);
+
+        // The parent dir should have an "x" directory entry
+        let entries = mocks.val.readdir(1, 0, 0);
+        let (dirent, _ofs) = entries
+        .map(|r| r.unwrap())
+        .filter(|(dirent, _ofs)| {
+            dirent.d_name[0] == 'x' as i8
+        }).nth(0)
+        .expect("'x' directory entry not found");
+        assert_eq!(dirent.d_type, libc::DT_REG);
+        assert_eq!(&dirent.d_name[0..2], ['x' as i8, 0x0]); // "x"
+        assert_eq!(dirent.d_fileno as u64, ino);
+
+        // The parent dir's link count should've increased
+        let parent_attr = mocks.val.getattr(1).unwrap();
+        assert_eq!(parent_attr.nlink, 2);
+    }
+
     /// getattr on the filesystem's root directory
     test getattr(mocks) {
         let inode = mocks.val.getattr(1).unwrap();
@@ -77,7 +98,6 @@ test_suite! {
         let ino = mocks.val.mkdir(1, &OsString::from("x"), 0o755).unwrap();
         assert_eq!(mocks.val.lookup(1, &OsString::from("x")).unwrap(), ino);
 
-        // TODO: enable the below parts after readdir is fully working
         // The new dir should have "." and ".." directory entries
         let mut entries = mocks.val.readdir(ino, 0, 0);
         let (dotdot, _) = entries.next().unwrap().unwrap();
