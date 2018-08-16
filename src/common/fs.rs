@@ -30,8 +30,7 @@ use tokio_io_pool;
 pub struct Fs {
     db: Arc<Database>,
     next_object: Atomic<u64>,
-    // TODO: wrap Runtime in ARC so it can be shared by multiple filesystems
-    runtime: tokio_io_pool::Runtime,
+    runtime: Arc<tokio_io_pool::Runtime>,
     tree: TreeID,
 }
 
@@ -121,14 +120,17 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn new(database: Arc<Database>, mut runtime: tokio_io_pool::Runtime,
+    pub fn new(database: Arc<Database>, runtime: Arc<tokio_io_pool::Runtime>,
                tree: TreeID) -> Self
     {
-        let last_key = runtime.block_on(
+        let (tx, rx) = oneshot::channel::<Option<FSKey>>();
+        runtime.spawn(
             database.fsread(tree, |dataset| {
                 dataset.last_key()
-            })
+                    .map(move |k| tx.send(k).unwrap())
+            }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
+        let last_key = rx.wait().unwrap();
         let next_object = Atomic::new(last_key.unwrap().object() + 1);
 
         Fs{db: database, next_object, runtime, tree}
