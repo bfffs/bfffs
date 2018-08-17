@@ -30,8 +30,8 @@ pub struct DevManager {
 impl DevManager {
     /// Import a pool by its UUID
     #[cfg(not(test))]
-    pub fn import(&self, uuid: Uuid)
-        -> impl Future<Item = database::Database, Error = Error>
+    pub fn import<E: Executor + 'static>(&self, uuid: Uuid, handle: E)
+        -> impl Future<Item = database::Database<E>, Error = Error>
     {
         let (_pool, raids, mut leaves) = {
             let mut inner = self.inner.lock().unwrap();
@@ -86,7 +86,7 @@ impl DevManager {
                 let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
                 let (idml, label_reader) = idml::IDML::open(ddml, arc_cache,
                                                             label_reader);
-                database::Database::open(Arc::new(idml), label_reader)
+                database::Database::open(Arc::new(idml), handle, label_reader)
             })
     }
 

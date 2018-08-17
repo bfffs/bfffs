@@ -13,7 +13,10 @@ use bfffs::common::pool::{ClusterProxy, Pool};
 use futures::{Future, future};
 use std::sync::{Arc, Mutex};
 use super::*;
-use tokio::runtime::current_thread::Runtime;
+use tokio::{
+    executor::current_thread::TaskExecutor,
+    runtime::current_thread::Runtime
+};
 
 // TODO: specify CHUNKSIZE on the command line
 const CHUNKSIZE: LbaT = 16;
@@ -75,7 +78,8 @@ fn create(args: &clap::ArgMatches) {
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
-            Database::create(idml)
+            let task_executor = TaskExecutor::current();
+            Database::create(idml, task_executor)
         })
     })).unwrap();
     rt.block_on(

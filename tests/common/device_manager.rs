@@ -25,7 +25,10 @@ test_suite! {
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
-    use tokio::runtime::current_thread::Runtime;
+    use tokio::{
+        executor::current_thread::TaskExecutor,
+        runtime::current_thread::Runtime
+    };
 
     fixture!( mocks() -> (Runtime, DevManager, Vec<String>, TempDir) {
         setup(&mut self) {
@@ -48,7 +51,8 @@ test_suite! {
                     let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
                     let ddml = Arc::new(DDML::new(pool, cache.clone()));
                     let idml = Arc::new(IDML::create(ddml, cache));
-                    Database::create(idml)
+                    let te = TaskExecutor::current();
+                    Database::create(idml, te)
                 })
             })).unwrap();
             rt.block_on(
@@ -73,7 +77,8 @@ test_suite! {
         let (name, uuid) = dm.importable_pools().pop().unwrap();
         assert_eq!(name, "test_device_manager");
         let _idml = rt.block_on(future::lazy(move || {
-            dm.import(uuid)
+            let te = TaskExecutor::current();
+            dm.import(uuid, te)
         })).unwrap();
     }
 }

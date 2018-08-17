@@ -28,7 +28,10 @@ test_suite! {
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
-    use tokio::runtime::current_thread::Runtime;
+    use tokio::{
+        executor::current_thread::TaskExecutor,
+        runtime::current_thread::Runtime
+    };
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -46,7 +49,7 @@ test_suite! {
 
     const POOLNAME: &str = &"TestPool";
 
-    fixture!( objects() -> (Runtime, Database, TempDir, PathBuf) {
+    fixture!( objects() -> (Runtime, Database<TaskExecutor>, TempDir, PathBuf) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
             let tempdir = t!(TempDir::new("test_idml_persistence"));
@@ -69,7 +72,11 @@ test_suite! {
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
-            let db = Database::create(idml);
+            let db = rt.block_on(future::lazy(|| {
+                let te = TaskExecutor::current();
+                let db = Database::create(idml, te);
+                future::ok::<Database<TaskExecutor>, ()>(db)
+            })).unwrap();
             // Due to bincode's variable-length encoding and the
             // unpredictability of the root filesystem's timestamp, writing the
             // label will have unpredictable results if we create a root
@@ -100,7 +107,8 @@ test_suite! {
                 let arc_cache = Arc::new(Mutex::new(cache));
                 let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
                 let (idml, reader) = idml::IDML::open(ddml, arc_cache, reader);
-                Database::open(Arc::new(idml), reader)
+                let te = TaskExecutor::current();
+                Database::open(Arc::new(idml), te, reader)
             })
         })).unwrap();
     }

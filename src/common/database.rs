@@ -12,14 +12,17 @@ use common::fs_tree::*;
 use common::idml::*;
 use common::label::*;
 use common::tree::*;
-use futures::{Future, IntoFuture, future};
+use futures::{Future, IntoFuture, Stream, future};
 use libc;
 use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
-    sync::{Arc, Mutex}
+    sync::{Arc, Mutex},
+    time::{Duration, Instant}
 };
 use time;
+use tokio::executor::Executor;
+use tokio::timer;
 
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
@@ -35,6 +38,28 @@ pub enum TreeID {
 impl MinValue for TreeID {
     fn min_value() -> Self {
         TreeID::Fs(u32::min_value())
+    }
+}
+
+struct Syncer<E: Executor> {
+    handle: E,
+    inner: Arc<Inner>
+}
+
+impl<E: Executor + 'static> Syncer<E> {
+    fn run(&mut self) {
+        let duration = Duration::new(5, 0);
+        let first = Instant::now() + duration;
+        let sync_interval = timer::Interval::new(first, duration);
+        let inner = self.inner.clone();
+        self.handle.spawn(
+            Box::new(
+                sync_interval.map_err(|e| panic!("{:?}", e))
+                .for_each(move |_| {
+                    Database::<E>::sync_transaction_priv(&inner)
+                }).map_err(|e| panic!("{:?}", e))
+            )
+        ).unwrap();
     }
 }
 
@@ -92,15 +117,16 @@ impl Inner {
     }
 }
 
-pub struct Database {
+pub struct Database<E: Executor> {
     inner: Arc<Inner>,
+    _syncer: Syncer<E>
 }
 
-impl Database {
+impl<E: Executor + 'static> Database<E> {
     /// Construct a new `Database` from its `IDML`.
-    pub fn create(idml: Arc<IDML>) -> Self {
+    pub fn create(idml: Arc<IDML>, handle: E) -> Self {
         let forest = ITree::create(idml.clone());
-        Database::new(idml, forest)
+        Database::new(idml, forest, handle)
     }
 
     /// Create a new, blank filesystem
@@ -168,10 +194,14 @@ impl Database {
             .and_then(|ds| f(ds).into_future())
     }
 
-    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>) -> Self {
+    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>,
+           handle: E) -> Self
+    {
         let fs_trees = Mutex::new(BTreeMap::new());
         let inner = Arc::new(Inner{fs_trees, idml, forest});
-        Database{inner}
+        let mut syncer = Syncer{handle, inner: inner.clone()};
+        syncer.run();
+        Database{inner, _syncer: syncer}
     }
 
     /// Open an existing `Database`
@@ -181,11 +211,12 @@ impl Database {
     /// * `idml`:           An already-opened `IDML`
     /// * `label_reader`:   A `LabelReader` that has already consumed all labels
     ///                     prior to this layer.
-    pub fn open(idml: Arc<IDML>, mut label_reader: LabelReader) -> Self
+    pub fn open(idml: Arc<IDML>, handle: E, mut label_reader: LabelReader)
+        -> Self
     {
         let l: Label = label_reader.deserialize().unwrap();
         let forest = Tree::open(idml.clone(), l.forest).unwrap();
-        Database::new(idml, forest)
+        Database::new(idml, forest, handle)
     }
 
     fn ro_filesystem(&self, tree_id: TreeID)
@@ -197,7 +228,12 @@ impl Database {
     }
 
     /// Finish the current transaction group and start a new one.
-    pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error>
+    pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> {
+        Database::<E>::sync_transaction_priv(&self.inner)
+    }
+
+    fn sync_transaction_priv(inner: &Arc<Inner>)
+        -> impl Future<Item=(), Error=Error>
     {
         // Outline:
         // 1) Flush the trees
@@ -206,8 +242,8 @@ impl Database {
         // 4) Sync the pool again
         // TODO: use two labels, so the pool will be recoverable even if power
         // is lost while writing a label.
-        let inner2 = self.inner.clone();
-        self.inner.idml.advance_transaction(move |txg|{
+        let inner2 = inner.clone();
+        inner.idml.advance_transaction(move |txg| {
             let inner4 = inner2.clone();
             let idml2 = inner2.idml.clone();
             let idml3 = inner2.idml.clone();
@@ -263,7 +299,10 @@ mod t {
     use futures::future;
     use simulacrum::validators::trivial::any;
     use std::sync::Mutex;
-    use tokio::runtime::current_thread;
+    use tokio::{
+        executor::current_thread::TaskExecutor,
+        runtime::current_thread
+    };
 
     #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test https://github.com/pcsm/simulacrum/issues/55"]
     #[test]
@@ -303,9 +342,12 @@ mod t {
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
-        let db = Database::create(Arc::new(idml));
         let mut rt = current_thread::Runtime::new().unwrap();
 
-        rt.block_on(db.sync_transaction()).unwrap();
+        rt.block_on(future::lazy(|| {
+            let task_executor = TaskExecutor::current();
+            let db = Database::create(Arc::new(idml), task_executor);
+            db.sync_transaction()
+        })).unwrap();
     }
 }

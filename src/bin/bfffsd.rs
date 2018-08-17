@@ -42,8 +42,9 @@ fn main() {
         }).nth(0).unwrap().1;
 
     let mut rt = tokio_io_pool::Runtime::new();
+    let handle = rt.handle().clone();
     let db = rt.block_on(future::lazy(move || {
-        dev_manager.import(uuid)
+        dev_manager.import(uuid, handle)
     })).unwrap();
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
