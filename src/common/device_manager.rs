@@ -31,7 +31,7 @@ impl DevManager {
     /// Import a pool by its UUID
     #[cfg(not(test))]
     pub fn import<E: Executor + 'static>(&self, uuid: Uuid, handle: E)
-        -> impl Future<Item = database::Database<E>, Error = Error>
+        -> impl Future<Item = database::Database, Error = Error>
     {
         let (_pool, raids, mut leaves) = {
             let mut inner = self.inner.lock().unwrap();

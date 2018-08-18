@@ -12,7 +12,14 @@ use common::fs_tree::*;
 use common::idml::*;
 use common::label::*;
 use common::tree::*;
-use futures::{Future, IntoFuture, Stream, future};
+use futures::{
+    Future,
+    IntoFuture,
+    Stream,
+    future,
+    stream,
+    sync::mpsc
+};
 use libc;
 use std::collections::BTreeMap;
 use std::{
@@ -41,25 +48,82 @@ impl MinValue for TreeID {
     }
 }
 
-struct Syncer<E: Executor> {
-    handle: E,
-    inner: Arc<Inner>
+struct Syncer {
+    _tx: mpsc::Sender<()>
 }
 
-impl<E: Executor + 'static> Syncer<E> {
-    fn run(&mut self) {
+impl Syncer {
+    fn new<E: Executor + 'static>(handle: E, inner: Arc<Inner>) -> Self {
+        let (tx, rx) = mpsc::channel(1);
+        Syncer::run(handle, inner, rx);
+        Syncer{_tx: tx}
+    }
+
+    // Start a task that will sync the database at a fixed interval, but will
+    // reset the timer if it gets a message on a channel.  While conceptually
+    // simple, this is very hard to express in the world of Futures.
+    fn run<E>(mut handle: E, inner: Arc<Inner>, rx: mpsc::Receiver<()>)
+        where E: Executor + 'static
+    {
+        // The Future type used for the accumulator in the fold loop
+        type LoopFut = Box<Future<Item=(Option<()>, mpsc::Receiver<()>),
+                                  Error=()> + Send>;
+
+        // Fixed 5-second duration
         let duration = Duration::new(5, 0);
-        let first = Instant::now() + duration;
-        let sync_interval = timer::Interval::new(first, duration);
-        let inner = self.inner.clone();
-        self.handle.spawn(
-            Box::new(
-                sync_interval.map_err(|e| panic!("{:?}", e))
-                .for_each(move |_| {
-                    Database::<E>::sync_transaction_priv(&inner)
-                }).map_err(|e| panic!("{:?}", e))
-            )
-        ).unwrap();
+        let initial = Box::new(
+            rx.into_future()
+              .map_err(|e| panic!("{:?}", e))
+        ) as LoopFut;
+
+        let taskfut = stream::repeat(())
+        .fold(initial, move |rif, _| {
+            let i2 = inner.clone();
+            let wakeup_time = Instant::now() + duration;
+            let delay = timer::Delay::new(wakeup_time);
+            let delay_fut = delay
+                .map(|_| None)
+                .map_err(|e| panic!("{:?}", e));
+
+            let rx_fut = rif
+                .map_err(|e| panic!("{:?}", e))
+                .and_then(|(rvalue, remainder)| {
+                    if rvalue.is_some() {
+                        Ok(Some(remainder)).into_future()
+                    } else {
+                        // The Sender got dropped, which implies that
+                        // the Database got dropped.  Error out of the
+                        // loop.
+                        Err(()).into_future()
+                    }
+                });
+
+            delay_fut.select(rx_fut)
+                .map_err(|_| ())
+                .and_then(move |(remainder, other)| {
+                    type LoopFutFut = Box<Future<Item=(LoopFut),
+                                                 Error=()> + Send>;
+                    if let Some(s) = remainder {
+                        // We got kicked.  Restart the wait
+                        let b = Box::new(
+                            s.into_future()
+                             .map_err(|e| panic!("{:?}", e))
+                        ) as LoopFut;
+                        Box::new(Ok(b).into_future()) as LoopFutFut
+                    } else {
+                        // Time's up.  Sync the database
+                        Box::new(
+                            Database::sync_transaction_priv(&i2)
+                            .map_err(|e| panic!("{:?}", e))
+                            .map(move |_| Box::new(
+                                    other.map(|o| (None, o.unwrap()))
+                                ) as LoopFut
+                            )
+                        ) as LoopFutFut
+                    }
+                })
+        }).map(|_| ());
+        handle.spawn(Box::new(taskfut)).unwrap();
     }
 }
 
@@ -117,14 +181,14 @@ impl Inner {
     }
 }
 
-pub struct Database<E: Executor> {
+pub struct Database {
     inner: Arc<Inner>,
-    _syncer: Syncer<E>
+    _syncer: Syncer
 }
 
-impl<E: Executor + 'static> Database<E> {
+impl Database {
     /// Construct a new `Database` from its `IDML`.
-    pub fn create(idml: Arc<IDML>, handle: E) -> Self {
+    pub fn create<E: Executor + 'static>(idml: Arc<IDML>, handle: E) -> Self {
         let forest = ITree::create(idml.clone());
         Database::new(idml, forest, handle)
     }
@@ -194,13 +258,13 @@ impl<E: Executor + 'static> Database<E> {
             .and_then(|ds| f(ds).into_future())
     }
 
-    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>,
-           handle: E) -> Self
+    fn new<E>(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>, handle: E)
+        -> Self
+        where E: Executor + 'static
     {
         let fs_trees = Mutex::new(BTreeMap::new());
         let inner = Arc::new(Inner{fs_trees, idml, forest});
-        let mut syncer = Syncer{handle, inner: inner.clone()};
-        syncer.run();
+        let syncer = Syncer::new(handle, inner.clone());
         Database{inner, _syncer: syncer}
     }
 
@@ -211,8 +275,9 @@ impl<E: Executor + 'static> Database<E> {
     /// * `idml`:           An already-opened `IDML`
     /// * `label_reader`:   A `LabelReader` that has already consumed all labels
     ///                     prior to this layer.
-    pub fn open(idml: Arc<IDML>, handle: E, mut label_reader: LabelReader)
+    pub fn open<E>(idml: Arc<IDML>, handle: E, mut label_reader: LabelReader)
         -> Self
+        where E: Executor + 'static
     {
         let l: Label = label_reader.deserialize().unwrap();
         let forest = Tree::open(idml.clone(), l.forest).unwrap();
@@ -229,7 +294,7 @@ impl<E: Executor + 'static> Database<E> {
 
     /// Finish the current transaction group and start a new one.
     pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> {
-        Database::<E>::sync_transaction_priv(&self.inner)
+        Database::sync_transaction_priv(&self.inner)
     }
 
     fn sync_transaction_priv(inner: &Arc<Inner>)

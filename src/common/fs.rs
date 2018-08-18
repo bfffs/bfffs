@@ -28,7 +28,7 @@ use tokio_io_pool;
 /// Bridges the synchronous with Tokio domains, and the system-independent with
 /// system-dependent filesystem interfaces.
 pub struct Fs {
-    db: Arc<Database<tokio_io_pool::Handle>>,
+    db: Arc<Database>,
     next_object: Atomic<u64>,
     runtime: Arc<tokio_io_pool::Runtime>,
     tree: TreeID,
@@ -120,8 +120,8 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn new(database: Arc<Database<tokio_io_pool::Handle>>,
-               runtime: Arc<tokio_io_pool::Runtime>, tree: TreeID) -> Self
+    pub fn new(database: Arc<Database>, runtime: Arc<tokio_io_pool::Runtime>,
+               tree: TreeID) -> Self
     {
         let (tx, rx) = oneshot::channel::<Option<FSKey>>();
         runtime.spawn(

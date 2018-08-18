@@ -49,7 +49,7 @@ test_suite! {
 
     const POOLNAME: &str = &"TestPool";
 
-    fixture!( objects() -> (Runtime, Database<TaskExecutor>, TempDir, PathBuf) {
+    fixture!( objects() -> (Runtime, Database, TempDir, PathBuf) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
             let tempdir = t!(TempDir::new("test_idml_persistence"));
@@ -75,7 +75,7 @@ test_suite! {
             let db = rt.block_on(future::lazy(|| {
                 let te = TaskExecutor::current();
                 let db = Database::create(idml, te);
-                future::ok::<Database<TaskExecutor>, ()>(db)
+                future::ok::<Database, ()>(db)
             })).unwrap();
             // Due to bincode's variable-length encoding and the
             // unpredictability of the root filesystem's timestamp, writing the
