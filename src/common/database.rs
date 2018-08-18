@@ -15,6 +15,7 @@ use common::tree::*;
 use futures::{
     Future,
     IntoFuture,
+    Sink,
     Stream,
     future,
     stream,
@@ -49,14 +50,21 @@ impl MinValue for TreeID {
 }
 
 struct Syncer {
-    _tx: mpsc::Sender<()>
+    tx: mpsc::Sender<()>
 }
 
 impl Syncer {
+    fn kick(&self) -> impl Future<Item=(), Error=Error> {
+        self.tx.clone()
+            .send(())
+            .map(|_| ())
+            .map_err(|e| panic!("{:?}", e))
+    }
+
     fn new<E: Executor + 'static>(handle: E, inner: Arc<Inner>) -> Self {
         let (tx, rx) = mpsc::channel(1);
         Syncer::run(handle, inner, rx);
-        Syncer{_tx: tx}
+        Syncer{tx: tx}
     }
 
     // Start a task that will sync the database at a fixed interval, but will
@@ -183,7 +191,7 @@ impl Inner {
 
 pub struct Database {
     inner: Arc<Inner>,
-    _syncer: Syncer
+    syncer: Syncer
 }
 
 impl Database {
@@ -265,7 +273,7 @@ impl Database {
         let fs_trees = Mutex::new(BTreeMap::new());
         let inner = Arc::new(Inner{fs_trees, idml, forest});
         let syncer = Syncer::new(handle, inner.clone());
-        Database{inner, _syncer: syncer}
+        Database{inner, syncer}
     }
 
     /// Open an existing `Database`
@@ -294,7 +302,8 @@ impl Database {
 
     /// Finish the current transaction group and start a new one.
     pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> {
-        Database::sync_transaction_priv(&self.inner)
+        self.syncer.kick().join(Database::sync_transaction_priv(&self.inner))
+            .map(|_| ())
     }
 
     fn sync_transaction_priv(inner: &Arc<Inner>)
