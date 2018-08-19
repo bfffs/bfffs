@@ -90,6 +90,47 @@ impl DevManager {
             })
     }
 
+    /// Import all of the clusters from a Pool.  For debugging purposes only.
+    #[doc(hidden)]
+    #[cfg(not(test))]
+    pub fn import_clusters(&self, uuid: Uuid)
+        -> impl Future<Item = Vec<cluster::Cluster>, Error = Error>
+    {
+        let (_pool, raids, mut leaves) = {
+            let mut inner = self.inner.lock().unwrap();
+            let pool = inner.pools.remove(&uuid).unwrap();
+            let raids = pool.children.iter()
+                .map(|child_uuid| inner.raids.remove(child_uuid).unwrap())
+                .collect::<Vec<_>>();
+            let leaves = raids.iter().map(|raid| {
+                let leaves = raid.children.iter().map(|uuid| {
+                    inner.leaves.remove(&uuid).unwrap()
+                }).collect::<Vec<_>>();
+                (raid.uuid.clone(), leaves)
+            }).collect::<BTreeMap<_, _>>();
+            // Drop the self.inner mutex
+            (pool, raids, leaves)
+        };
+        let cfuts = raids.into_iter().map(move |raid| {
+            let raid_uuid = raid.uuid.clone();
+            let leaf_paths = leaves.remove(&raid_uuid).unwrap();
+            stream::iter_ok(leaf_paths.into_iter())
+                .and_then(|path| {
+                vdev_file::VdevFile::open(path)
+            }).map(|(leaf, reader)| {
+                (vdev_block::VdevBlock::new(leaf), reader)
+            }).collect()
+            .and_then(move |vdev_blocks| {
+                let (vdev_raid, reader) =
+                    vdev_raid::VdevRaid::open(Some(raid_uuid), vdev_blocks);
+                cluster::Cluster::open(vdev_raid, reader)
+            }).map(|(cluster, _reader)| {
+                cluster
+            })
+        });
+        future::join_all(cfuts)
+    }
+
     /// List every pool that hasn't been imported, but can be
     pub fn importable_pools(&self) -> Vec<(String, Uuid)> {
         let inner = self.inner.lock().unwrap();

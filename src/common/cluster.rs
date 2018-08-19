@@ -612,6 +612,12 @@ impl<'a> Cluster {
         Cluster::new(fsm, vdev)
     }
 
+    /// Dump the FreeSpaceMap in human-readable form, for debugging purposes
+    #[doc(hidden)]
+    pub fn dump_fsm(&self) -> String {
+        format!("{}", self.fsm.borrow())
+    }
+
     /// Delete the underlying storage for a Zone.
     fn erase_zone(&self, zone: ZoneT)
         -> impl Future<Item=(), Error=Error>

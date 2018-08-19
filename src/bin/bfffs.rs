@@ -3,6 +3,45 @@ extern crate bfffs;
 extern crate futures;
 extern crate tokio;
 
+mod debug {
+use bfffs::common::device_manager::DevManager;
+use futures::future;
+use super::*;
+use tokio::runtime::current_thread::Runtime;
+
+fn dump(args: &clap::ArgMatches) {
+    let poolname = args.value_of("name").unwrap();
+    let disks = args.values_of("disks").unwrap();
+
+    let dev_manager = DevManager::new();
+    for disk in disks {
+        dev_manager.taste(disk);
+    }
+    let uuid = dev_manager.importable_pools().iter()
+        .filter(|(name, _uuid)| {
+            *name == poolname
+        }).nth(0).unwrap().1;
+    let mut rt = Runtime::new().unwrap();
+    let clusters = rt.block_on(future::lazy(move || {
+        dev_manager.import_clusters(uuid)
+    })).unwrap();
+    for c in clusters {
+        println!("{}", c.dump_fsm());
+    }
+}
+
+pub fn main(args: &clap::ArgMatches) {
+    match args.subcommand() {
+        ("dump", Some(args)) => dump(args),
+        _ => {
+            println!("Error: subcommand required\n{}", args.usage());
+            std::process::exit(2);
+        },
+    }
+}
+
+}
+
 mod pool{
 use bfffs::common::LbaT;
 use bfffs::common::cache::Cache;
@@ -151,10 +190,23 @@ fn main() {
                       .required(true)
                 )
             )
+        ).subcommand(clap::SubCommand::with_name("debug")
+            .about("Debugging tools")
+            .subcommand(clap::SubCommand::with_name("dump")
+                .about("Dump internal filesystem information")
+                .arg(clap::Arg::with_name("name")
+                     .help("Pool name")
+                     .required(true)
+                ).arg(clap::Arg::with_name("disks")
+                      .multiple(true)
+                      .required(true)
+                )
+            )
         );
     let matches = app.get_matches();
     match matches.subcommand() {
         ("pool", Some(args)) => pool::main(args),
+        ("debug", Some(args)) => debug::main(args),
         _ => {
             println!("Error: subcommand required\n{}", matches.usage());
             std::process::exit(2);
