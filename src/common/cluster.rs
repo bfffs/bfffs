@@ -6,7 +6,9 @@ use futures::{ Future, IntoFuture, future};
 use itertools::multizip;
 use std::{
     cell::RefCell,
+    cmp,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
+    fmt::{self, Display, Formatter},
     rc::Rc,
     ops::Range
 };
@@ -157,7 +159,7 @@ impl<'a> FreeSpaceMap {
     /// Return Zone `zone_id` to an Empty state
     fn erase_zone(&mut self, zone_id: ZoneT) {
         let zone_idx = zone_id as usize;
-        assert!(!self.open_zones.contains_key(&zone_id),
+        assert!(!self.is_open(zone_id),
             "Can't erase an open zone");
         assert!(zone_idx < self.zones.len(),
             "Can't erase an empty zone");
@@ -241,6 +243,11 @@ impl<'a> FreeSpaceMap {
     fn is_empty(&self, zone_id: ZoneT) -> bool {
         zone_id >= self.zones.len() as ZoneT ||
             self.empty_zones.contains(&zone_id)
+    }
+
+    /// Is the Zone with the given id open?
+    fn is_open(&self, zone_id: ZoneT) -> bool {
+        self.open_zones.contains_key(&zone_id)
     }
 
     /// Find the next closed zone including or after `start`
@@ -435,6 +442,92 @@ impl<'a> FreeSpaceMap {
         oz.waste_space(space);
         self.zones[zid as usize].freed_blocks += space as u32;
         assert!(oz.allocated_blocks <= self.zones[zid as usize].total_blocks);
+    }
+}
+
+impl Display for FreeSpaceMap {
+    /// Print a human-readable summary of the FreeSpaceMap
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        let t = self.total_zones;
+        let le = self.empty_zones.len();
+        let o = self.open_zones.len();
+        let c = self.zones.len() - o - le;
+        let e = (t as usize) - c - o;
+        let max_txg: u32 = (0..self.zones.len())
+            .map(|idx| idx as ZoneT)
+            .filter(|zid| !self.is_empty(*zid))
+            .map(|zid| {
+                let z = &self.zones[zid as usize];
+                if self.is_open(zid) {
+                    z.txgs.start
+                } else {
+                    cmp::max(z.txgs.start, z.txgs.end)
+                }.into()
+            }).max()
+            .unwrap();
+
+        // First print the header
+        write!(f, "FreeSpaceMap: {} Zones: {} Closed, {} Empty, {} Open\n",
+            t, c, e, o)?;
+        let zone_width = cmp::max(5, (t as f64).log(16.0).ceil() as usize);
+        let txg_width = cmp::max(1, (max_txg as f64).log(16.0).ceil() as usize);
+        let space_width = 80 - zone_width - txg_width - 8;
+        let sw64 = space_width as f64;
+        write!(f, "{0:^1$}|{2:^3$}|{4:^5$}|\n", "Zone", zone_width + 1,
+               "TXG", txg_width * 2 + 3, "Space", space_width)?;
+        write!(f, "{0:-^1$}|{2:-^3$}|{4:-^5$}|\n", "", zone_width + 1,
+               "", txg_width * 2 + 3, "", space_width)?;
+
+        // Now loop over the zones
+        let mut last_row: Option<String> = None;
+        for i in 0..self.zones.len() {
+            let total = self.zones[i].total_blocks as f64;
+            let used_width = if self.is_empty(i as ZoneT) {
+                0
+            } else {
+                let used = self.in_use(i as ZoneT) as f64;
+                (used / total * sw64).round() as usize
+            };
+            let free_width = if self.is_empty(i as ZoneT) {
+                0
+            } else {
+                let free = self.zones[i].freed_blocks as f64;
+                (free / total * sw64).round() as usize
+            };
+            let avail_width = space_width - free_width - used_width;
+            let start = if self.is_empty(i as ZoneT) {
+                format!("{0:1$}", "", txg_width)
+            } else {
+                let x: u32 = self.zones[i].txgs.start.into();
+                format!("{0:>1$}", x, txg_width)
+            };
+            let end = if self.is_closed(i as ZoneT) {
+                let x: u32 = self.zones[i].txgs.end.into();
+                format!("{0:>1$}", x, txg_width)
+            } else {
+                format!("{0:1$}", "", txg_width)
+            };
+            // Repeated row compression: if two or more rows are identical but
+            // for the zone number, only print the first
+            let this_row = format!("{0}-{1} |{2:3$}{4:=>5$}{6:7$}", start, end,
+                                   "", free_width, "", used_width,
+                                   "", avail_width);
+            if let Some(ref row) = last_row {
+                if *row == this_row {
+                    continue;
+                }
+            }
+            write!(f, "{0:>1$} | {2}|\n", i, zone_width, this_row)?;
+            last_row = Some(this_row);
+        }
+
+        // Print a single row for trailing empty zones, if any
+        if t > self.zones.len() as u32 {
+            write!(f, "{0:>1$} | {2:^3$} |{4:5$}|\n",
+                   self.zones.len(), zone_width, "-", 2 * txg_width + 1,
+                   "", space_width)?;
+        }
+        Ok(())
     }
 }
 
@@ -1212,6 +1305,32 @@ mod free_space_map {
         fsm.finish_zone(4, TxgT::from(0));
         assert_eq!(3700, fsm.allocated());
     }
+
+    // FreeSpaceMap::display with the following conditions:
+    // A full zone with some freed blocks
+    // Two empty zones before the maximum open or full zone
+    // An open zone with some freed blocks
+    // One million trailing empty zones
+    #[test]
+    fn display() {
+        let mut fsm = FreeSpaceMap::new(1000004);
+        fsm.open_zone(0, 4, 96, 88, TxgT::from(1)).unwrap();
+        fsm.finish_zone(0, TxgT::from(2));
+        fsm.free(0, 22);
+        fsm.open_zone(3, 204, 296, 77, TxgT::from(2)).unwrap();
+        fsm.free(3, 33);
+        let expected =
+r#"FreeSpaceMap: 1000004 Zones: 1 Closed, 1000002 Empty, 1 Open
+ Zone | TXG |                              Space                               |
+------|-----|------------------------------------------------------------------|
+    0 | 1-3 |                   ===============================================|
+    1 |  -  |                                                                  |
+    3 | 2-  |                        ================================          |
+    4 |  -  |                                                                  |
+"#;
+        assert_eq!(expected, format!("{}", fsm));
+    }
+
 
     #[test]
     fn erase_closed_zone() {

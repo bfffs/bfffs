@@ -214,6 +214,12 @@ impl From<u32> for TxgT {
     }
 }
 
+impl Into<u32> for TxgT {
+    fn into(self) -> u32 {
+        self.0
+    }
+}
+
 impl Sub<u32> for TxgT {
     type Output = Self;
 
