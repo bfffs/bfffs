@@ -59,10 +59,10 @@ impl FuseFs {
         }
     }
 
-    pub fn new(database: Arc<Database>, runtime: Arc<tokio_io_pool::Runtime>,
+    pub fn new(database: Arc<Database>, handle: tokio_io_pool::Handle,
                tree: TreeID) -> Self
     {
-        let fs = Fs::new(database, runtime, tree);
+        let fs = Fs::new(database, handle, tree);
         FuseFs{fs}
     }
 }

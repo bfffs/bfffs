@@ -52,9 +52,9 @@ fn main() {
     })).unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
-    let handle = thread::spawn(move || {
-        let fs = FuseFs::new(db, Arc::new(rt), tree_id);
+    let thr_handle = thread::spawn(move || {
+        let fs = FuseFs::new(db, rt.handle().clone(), tree_id);
         fuse::mount(fs, &mountpoint, &[]).unwrap();
     });
-    handle.join().unwrap()
+    thr_handle.join().unwrap()
 }

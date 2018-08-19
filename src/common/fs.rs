@@ -30,7 +30,7 @@ use tokio_io_pool;
 pub struct Fs {
     db: Arc<Database>,
     next_object: Atomic<u64>,
-    runtime: Arc<tokio_io_pool::Runtime>,
+    handle: tokio_io_pool::Handle,
     tree: TreeID,
 }
 
@@ -99,7 +99,7 @@ impl Fs {
         let parent_dirent_value = FSValue::DirEntry(parent_dirent);
         let parent_inode_key = FSKey::new(parent, ObjKey::Inode);
 
-        self.runtime.spawn(
+        self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
                 let dataset = Arc::new(ds);
                 let dataset2 = dataset.clone();
@@ -120,11 +120,11 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn new(database: Arc<Database>, runtime: Arc<tokio_io_pool::Runtime>,
+    pub fn new(database: Arc<Database>, handle: tokio_io_pool::Handle,
                tree: TreeID) -> Self
     {
         let (tx, rx) = oneshot::channel::<Option<FSKey>>();
-        runtime.spawn(
+        handle.spawn(
             database.fsread(tree, |dataset| {
                 dataset.last_key()
                     .map(move |k| tx.send(k).unwrap())
@@ -132,7 +132,7 @@ impl Fs {
         ).unwrap();
         let last_key = rx.wait().unwrap();
         let next_object = Atomic::new(last_key.unwrap().object() + 1);
-        Fs{db: database, next_object, runtime, tree}
+        Fs{db: database, next_object, handle, tree}
     }
 
     fn next_object(&self) -> u64 {
@@ -153,7 +153,7 @@ impl Fs {
 
     pub fn getattr(&self, ino: u64) -> Result<Attr, i32> {
         let (tx, rx) = oneshot::channel();
-        self.runtime.spawn(
+        self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let key = FSKey::new(ino, ObjKey::Inode);
                 dataset.get(key)
@@ -197,7 +197,7 @@ impl Fs {
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::dir_entry(name);
         let key = FSKey::new(parent, objkey);
-        self.runtime.spawn(
+        self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 dataset.get(key)
                 .then(move |r| {
@@ -262,7 +262,7 @@ impl Fs {
         let dirent_size = mem::size_of::<libc::dirent>() as u16;
 
         let (tx, rx) = mpsc::channel(chansize);
-        self.runtime.spawn(
+        self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 // NB: the next two lines can be replaced by
                 // u64::try_from(soffs) once that feature is stabilized
@@ -303,7 +303,7 @@ impl Fs {
 
     pub fn statvfs(&self) -> libc::statvfs {
         let (tx, rx) = oneshot::channel::<libc::statvfs>();
-        self.runtime.spawn(
+        self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let blocks = dataset.size();
                 let allocated = dataset.allocated();
@@ -329,7 +329,7 @@ impl Fs {
 
     pub fn sync(&self) {
         let (tx, rx) = oneshot::channel::<()>();
-        self.runtime.spawn(
+        self.handle.spawn(
             self.db.sync_transaction()
             .map_err(|e| panic!("{:?}", e))
             .map(|_| tx.send(()).unwrap())

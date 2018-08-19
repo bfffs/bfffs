@@ -29,7 +29,7 @@ test_suite! {
     use tempdir::TempDir;
     use tokio_io_pool::Runtime;
 
-    fixture!( mocks() -> Fs {
+    fixture!( mocks() -> (Fs, Runtime) {
         setup(&mut self) {
             let mut rt = Runtime::new();
             let handle = rt.handle().clone();
@@ -53,17 +53,17 @@ test_suite! {
                 })
             })).unwrap();
             let tree_id = rt.block_on(db.new_fs()).unwrap();
-            let fs = Fs::new(Arc::new(db), Arc::new(rt), tree_id);
-            fs
+            let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+            (fs, rt)
         }
     });
 
     test create(mocks) {
-        let ino = mocks.val.create(1, &OsString::from("x"), 0o644).unwrap();
-        assert_eq!(mocks.val.lookup(1, &OsString::from("x")).unwrap(), ino);
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        assert_eq!(mocks.val.0.lookup(1, &OsString::from("x")).unwrap(), ino);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(1, 0, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -75,13 +75,13 @@ test_suite! {
         assert_eq!(dirent.d_fileno as u64, ino);
 
         // The parent dir's link count should've increased
-        let parent_attr = mocks.val.getattr(1).unwrap();
+        let parent_attr = mocks.val.0.getattr(1).unwrap();
         assert_eq!(parent_attr.nlink, 2);
     }
 
     /// getattr on the filesystem's root directory
     test getattr(mocks) {
-        let inode = mocks.val.getattr(1).unwrap();
+        let inode = mocks.val.0.getattr(1).unwrap();
         assert_eq!(inode.nlink, 1);
         assert_eq!(inode.flags, 0);
         assert!(inode.atime.sec > 0);
@@ -96,11 +96,11 @@ test_suite! {
     }
 
     test mkdir(mocks) {
-        let ino = mocks.val.mkdir(1, &OsString::from("x"), 0o755).unwrap();
-        assert_eq!(mocks.val.lookup(1, &OsString::from("x")).unwrap(), ino);
+        let ino = mocks.val.0.mkdir(1, &OsString::from("x"), 0o755).unwrap();
+        assert_eq!(mocks.val.0.lookup(1, &OsString::from("x")).unwrap(), ino);
 
         // The new dir should have "." and ".." directory entries
-        let mut entries = mocks.val.readdir(ino, 0, 0);
+        let mut entries = mocks.val.0.readdir(ino, 0, 0);
         let (dotdot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dotdot.d_type, libc::DT_DIR);
         assert_eq!(&dotdot.d_name[0..3], [0x2e, 0x2e, 0x0]); // ".."
@@ -111,7 +111,7 @@ test_suite! {
         assert_eq!(dot.d_fileno as u64, ino);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(1, 0, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -123,12 +123,12 @@ test_suite! {
         assert_eq!(dirent.d_fileno as u64, ino);
 
         // The parent dir's link count should've increased
-        let parent_attr = mocks.val.getattr(1).unwrap();
+        let parent_attr = mocks.val.0.getattr(1).unwrap();
         assert_eq!(parent_attr.nlink, 2);
     }
 
     test readdir(mocks) {
-        let mut entries = mocks.val.readdir(1, 0, 0);
+        let mut entries = mocks.val.0.readdir(1, 0, 0);
         let (dotdot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dotdot.d_type, libc::DT_DIR);
         assert_eq!(&dotdot.d_name[0..3], [0x2e, 0x2e, 0x0]); // ".."
@@ -139,7 +139,7 @@ test_suite! {
     }
 
     test statvfs(mocks) {
-        let statvfs = mocks.val.statvfs();
+        let statvfs = mocks.val.0.statvfs();
         assert_eq!(statvfs.f_blocks, 262144);
     }
 
