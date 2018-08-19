@@ -453,7 +453,7 @@ impl Display for FreeSpaceMap {
         let o = self.open_zones.len();
         let c = self.zones.len() - o - le;
         let e = (t as usize) - c - o;
-        let max_txg: u32 = (0..self.zones.len())
+        let max_txg: u32 = cmp::max(1, (0..self.zones.len())
             .map(|idx| idx as ZoneT)
             .filter(|zid| !self.is_empty(*zid))
             .map(|zid| {
@@ -464,7 +464,7 @@ impl Display for FreeSpaceMap {
                     cmp::max(z.txgs.start, z.txgs.end)
                 }.into()
             }).max()
-            .unwrap();
+            .unwrap());
 
         // First print the header
         write!(f, "FreeSpaceMap: {} Zones: {} Closed, {} Empty, {} Open\n",
@@ -1331,6 +1331,21 @@ r#"FreeSpaceMap: 1000004 Zones: 1 Closed, 1000002 Empty, 1 Open
         assert_eq!(expected, format!("{}", fsm));
     }
 
+    // FreeSpaceMap::display with no closed zones.  Just an empty and an open
+    #[test]
+    fn display_no_closed_zones() {
+        let mut fsm = FreeSpaceMap::new(2);
+        fsm.open_zone(0, 4, 96, 88, TxgT::from(0)).unwrap();
+        fsm.free(0, 22);
+        let expected =
+r#"FreeSpaceMap: 2 Zones: 0 Closed, 1 Empty, 1 Open
+ Zone | TXG |                              Space                               |
+------|-----|------------------------------------------------------------------|
+    0 | 0-  |                ===============================================   |
+    1 |  -  |                                                                  |
+"#;
+        assert_eq!(expected, format!("{}", fsm));
+    }
 
     #[test]
     fn erase_closed_zone() {
