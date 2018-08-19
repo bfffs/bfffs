@@ -164,7 +164,10 @@ impl Filesystem for FuseFs {
                     let name = unsafe{slice::from_raw_parts(nameptr, namelen)};
                     let r = reply.add(dirent.d_fileno.into(), offset, ft,
                         OsStr::from_bytes(name));
-                    assert!(!r, "TODO: deal with full FUSE ReplyDirectory buffers");
+                    if r {
+                        // Out of space in the reply buffer.  
+                        break
+                    }
                 },
                 Err(e) => {
                     reply.error(e);
