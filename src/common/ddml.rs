@@ -36,8 +36,6 @@ pub trait PoolTrait {
                       Error=Error>>;
     fn free(&self, pba: PBA, length: LbaT)
         -> Box<Future<Item=(), Error=Error> + Send>;
-    fn list_closed_zones(&self)
-        -> Box<Stream<Item=ClosedZone, Error=Error> + Send>;
     fn name(&self) -> &str;
     fn read(&self, buf: IoVecMut, pba: PBA)
         -> Box<Future<Item=(), Error=Error> + Send>;
@@ -69,11 +67,6 @@ impl PoolTrait for MockPoolWrapper {
         -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.0.free(pba, length)
-    }
-    fn list_closed_zones(&self)
-        -> Box<Stream<Item=ClosedZone, Error=Error> + Send>
-    {
-        self.0.list_closed_zones()
     }
     fn name(&self) -> &str {
         self.0.name()
@@ -498,8 +491,6 @@ mod t {
                               Error=Error>>;
             fn free(&self, pba: PBA, length: LbaT)
                 -> Box<Future<Item=(), Error=Error> + Send>;
-            fn list_closed_zones(&self)
-                -> Box<Stream<Item=ClosedZone, Error=Error> + Send>;
             fn name(&self) -> &str;
             fn read(&self, buf: IoVecMut, pba: PBA)
                 -> Box<Future<Item=(), Error=Error> + Send>;
