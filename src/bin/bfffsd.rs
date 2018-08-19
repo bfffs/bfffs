@@ -3,6 +3,7 @@ extern crate bfffs;
 extern crate env_logger;
 extern crate fuse;
 extern crate futures;
+extern crate nix;
 extern crate tokio;
 extern crate tokio_io_pool;
 
@@ -10,7 +11,10 @@ use bfffs::common::database::*;
 use bfffs::common::device_manager::DevManager;
 use bfffs::sys::fs::FuseFs;
 use futures::future;
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    thread
+};
 
 fn main() {
     env_logger::init();
@@ -27,7 +31,7 @@ fn main() {
          );
     let matches = app.get_matches();
     let poolname = matches.value_of("name").unwrap().to_string();
-    let mountpoint = &matches.value_of("mountpoint").unwrap();
+    let mountpoint = matches.value_of("mountpoint").unwrap().to_string();
     let devices = matches.values_of("devices").unwrap()
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
@@ -43,11 +47,14 @@ fn main() {
 
     let mut rt = tokio_io_pool::Runtime::new();
     let handle = rt.handle().clone();
-    let db = rt.block_on(future::lazy(move || {
+    let db = Arc::new(rt.block_on(future::lazy(move || {
         dev_manager.import(uuid, handle)
-    })).unwrap();
+    })).unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
-    let fs = FuseFs::new(Arc::new(db), Arc::new(rt), tree_id);
-    fuse::mount(fs, mountpoint, &[]).unwrap();
+    let handle = thread::spawn(move || {
+        let fs = FuseFs::new(db, Arc::new(rt), tree_id);
+        fuse::mount(fs, &mountpoint, &[]).unwrap();
+    });
+    handle.join().unwrap()
 }
