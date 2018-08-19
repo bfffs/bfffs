@@ -94,7 +94,6 @@ impl Syncer {
                 .map_err(|e| panic!("{:?}", e));
 
             let rx_fut = rif
-                .map_err(|e| panic!("{:?}", e))
                 .and_then(|(rvalue, remainder)| {
                     if rvalue.is_some() {
                         Ok(Some(remainder)).into_future()
