@@ -471,7 +471,7 @@ impl Display for FreeSpaceMap {
             t, c, e, o)?;
         let zone_width = cmp::max(5, (t as f64).log(16.0).ceil() as usize);
         let txg_width = cmp::max(1, (max_txg as f64).log(16.0).ceil() as usize);
-        let space_width = 80 - zone_width - txg_width - 8;
+        let space_width = 80 - zone_width - 2 * txg_width - 7;
         let sw64 = space_width as f64;
         write!(f, "{0:^1$}|{2:^3$}|{4:^5$}|\n", "Zone", zone_width + 1,
                "TXG", txg_width * 2 + 3, "Space", space_width)?;
@@ -499,11 +499,11 @@ impl Display for FreeSpaceMap {
                 format!("{0:1$}", "", txg_width)
             } else {
                 let x: u32 = self.zones[i].txgs.start.into();
-                format!("{0:>1$}", x, txg_width)
+                format!("{0:>1$x}", x, txg_width)
             };
             let end = if self.is_closed(i as ZoneT) {
                 let x: u32 = self.zones[i].txgs.end.into();
-                format!("{0:>1$}", x, txg_width)
+                format!("{0:>1$x}", x, txg_width)
             } else {
                 format!("{0:1$}", "", txg_width)
             };
@@ -517,7 +517,7 @@ impl Display for FreeSpaceMap {
                     continue;
                 }
             }
-            write!(f, "{0:>1$} | {2}|\n", i, zone_width, this_row)?;
+            write!(f, "{0:>1$x} | {2}|\n", i, zone_width, this_row)?;
             last_row = Some(this_row);
         }
 
@@ -1323,7 +1323,7 @@ mod free_space_map {
         fsm.open_zone(0, 4, 96, 88, TxgT::from(1)).unwrap();
         fsm.finish_zone(0, TxgT::from(2));
         fsm.free(0, 22);
-        fsm.open_zone(3, 204, 296, 77, TxgT::from(2)).unwrap();
+        fsm.open_zone(3, 204, 296, 77, TxgT::from(10)).unwrap();
         fsm.free(3, 33);
         let expected =
 r#"FreeSpaceMap: 1000004 Zones: 1 Closed, 1000002 Empty, 1 Open
@@ -1331,7 +1331,7 @@ r#"FreeSpaceMap: 1000004 Zones: 1 Closed, 1000002 Empty, 1 Open
 ------|-----|------------------------------------------------------------------|
     0 | 1-3 |                   ===============================================|
     1 |  -  |                                                                  |
-    3 | 2-  |                        ================================          |
+    3 | a-  |                        ================================          |
     4 |  -  |                                                                  |
 "#;
         assert_eq!(expected, format!("{}", fsm));
