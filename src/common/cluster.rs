@@ -525,7 +525,7 @@ impl Display for FreeSpaceMap {
 
         // Print a single row for trailing empty zones, if any
         if t > self.zones.len() as u32 {
-            write!(f, "{0:>1$} | {2:^3$} |{4:5$}|\n",
+            write!(f, "{0:>1$x} | {2:^3$} |{4:5$}|\n",
                    self.zones.len(), zone_width, "-", 2 * txg_width + 1,
                    "", space_width)?;
         }
