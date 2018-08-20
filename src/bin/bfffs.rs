@@ -43,6 +43,7 @@ pub fn main(args: &clap::ArgMatches) {
 }
 
 mod pool {
+use bfffs::common::BYTES_PER_LBA;
 use bfffs::common::LbaT;
 use bfffs::common::cache::Cache;
 use bfffs::common::database::*;
@@ -50,7 +51,11 @@ use bfffs::common::ddml::DDML;
 use bfffs::common::idml::IDML;
 use bfffs::common::pool::{ClusterProxy, Pool};
 use futures::{Future, future};
-use std::sync::{Arc, Mutex};
+use std::{
+    num::NonZeroU64,
+    str::FromStr,
+    sync::{Arc, Mutex}
+};
 use super::*;
 use tokio::{
     executor::current_thread::TaskExecutor,
@@ -63,7 +68,14 @@ const CHUNKSIZE: LbaT = 16;
 fn create(args: &clap::ArgMatches) {
     let rt = Runtime::new().unwrap();
     let name = args.value_of("name").unwrap().to_owned();
-    let mut builder = Builder::new(name, rt);
+     let zone_size = args.value_of("zone_size")
+        .map(|s| {
+            let lbas = u64::from_str(s)
+             .expect("zone_size must be a decimal integer")
+             * 1024 * 1024 / (BYTES_PER_LBA as u64);
+            NonZeroU64::new(lbas).expect("zone_size may not be zero")
+        });
+    let mut builder = Builder::new(name, zone_size, rt);
     let mut values = args.values_of("vdev").unwrap();
     let mut cluster_type = None;
     let mut devs = vec![];
@@ -114,12 +126,15 @@ struct Builder {
     clusters: Vec<ClusterProxy>,
     name: String,
     rt: Runtime,
+    zone_size: Option<NonZeroU64>
 }
 
 impl Builder {
-    pub fn new(name: String, rt: Runtime) -> Self {
+    pub fn new(name: String, zone_size: Option<NonZeroU64>, rt: Runtime)
+        -> Self
+    {
         let clusters = Vec::new();
-        Builder{clusters, name, rt}
+        Builder{clusters, name, rt, zone_size}
     }
 
     pub fn create_cluster(&mut self, vtype: &str, devs: &[&str]) {
@@ -153,8 +168,9 @@ impl Builder {
 
     fn do_create_cluster(&mut self, n: i16, k: i16, f: i16, devs: &[&str])
     {
+        let zone_size = self.zone_size;
         let c = self.rt.block_on(future::lazy(move || {
-            Pool::create_cluster(CHUNKSIZE, n, k, None, f, devs)
+            Pool::create_cluster(CHUNKSIZE, n, k, zone_size, f, devs)
         })).unwrap();
         self.clusters.push(c);
     }
@@ -198,7 +214,11 @@ fn main() {
             .about("create, destroy, and modify storage pools")
             .subcommand(clap::SubCommand::with_name("create")
                 .about("create a new storage pool")
-                .arg(clap::Arg::with_name("name")
+                .arg(clap::Arg::with_name("zone_size")
+                     .help("Simulated Zone size in MB")
+                     .long("zone_size")
+                     .takes_value(true)
+                ).arg(clap::Arg::with_name("name")
                      .help("Pool name")
                      .required(true)
                 ).arg(clap::Arg::with_name("vdev")
