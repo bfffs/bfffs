@@ -482,17 +482,18 @@ impl Display for FreeSpaceMap {
         let mut last_row: Option<String> = None;
         for i in 0..self.zones.len() {
             let total = self.zones[i].total_blocks as f64;
-            let used_width = if self.is_empty(i as ZoneT) {
-                0
+            // We want to round used + free up so the graph won't overestimate
+            // available space, but we want to display used and free separately.
+            let (used_width, free_width) = if self.is_empty(i as ZoneT) {
+                (0, 0)
             } else {
                 let used = self.in_use(i as ZoneT) as f64;
-                (used / total * sw64).round() as usize
-            };
-            let free_width = if self.is_empty(i as ZoneT) {
-                0
-            } else {
                 let free = self.zones[i].freed_blocks as f64;
-                (free / total * sw64).round() as usize
+                let not_avail_width = ((used + free) / total * sw64).round()
+                    as usize;
+                let used_width = (used / total * sw64).round() as usize;
+                let free_width = not_avail_width - used_width;
+                (used_width, free_width)
             };
             let avail_width = space_width - free_width - used_width;
             let start = if self.is_empty(i as ZoneT) {
@@ -1331,7 +1332,7 @@ r#"FreeSpaceMap: 1000004 Zones: 1 Closed, 1000002 Empty, 1 Open
 ------|-----|------------------------------------------------------------------|
     0 | 1-3 |                   ===============================================|
     1 |  -  |                                                                  |
-    3 | a-  |                        ================================          |
+    3 | a-  |                       ================================           |
     4 |  -  |                                                                  |
 "#;
         assert_eq!(expected, format!("{}", fsm));
@@ -1349,6 +1350,22 @@ r#"FreeSpaceMap: 2 Zones: 0 Closed, 1 Empty, 1 Open
 ------|-----|------------------------------------------------------------------|
     0 | 0-  |                ===============================================   |
     1 |  -  |                                                                  |
+"#;
+        assert_eq!(expected, format!("{}", fsm));
+    }
+
+    // FreeSpaceMap::display where the used and free space both want to round
+    // up.
+    #[test]
+    fn display_used_free_half_columns() {
+        let mut fsm = FreeSpaceMap::new(1);
+        fsm.open_zone(0, 0, 2048, 1648, TxgT::from(0)).unwrap();
+        fsm.finish_zone(0, TxgT::from(17));
+        let expected =
+r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
+ Zone |  TXG  |                             Space                              |
+------|-------|----------------------------------------------------------------|
+    0 |  0-12 |            ====================================================|
 "#;
         assert_eq!(expected, format!("{}", fsm));
     }
