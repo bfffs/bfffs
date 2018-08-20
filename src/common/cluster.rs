@@ -469,8 +469,9 @@ impl Display for FreeSpaceMap {
         // First print the header
         write!(f, "FreeSpaceMap: {} Zones: {} Closed, {} Empty, {} Open\n",
             t, c, e, o)?;
-        let zone_width = cmp::max(5, (t as f64).log(16.0).ceil() as usize);
-        let txg_width = cmp::max(1, (max_txg as f64).log(16.0).ceil() as usize);
+        let zone_width = cmp::max(5, ((t + 1) as f64).log(16.0).ceil() as usize);
+        let txg_width = cmp::max(1,
+            ((max_txg + 1) as f64).log(16.0).ceil() as usize);
         let space_width = 80 - zone_width - 2 * txg_width - 7;
         let sw64 = space_width as f64;
         write!(f, "{0:^1$}|{2:^3$}|{4:^5$}|\n", "Zone", zone_width + 1,
@@ -1360,12 +1361,12 @@ r#"FreeSpaceMap: 2 Zones: 0 Closed, 1 Empty, 1 Open
     fn display_used_free_half_columns() {
         let mut fsm = FreeSpaceMap::new(1);
         fsm.open_zone(0, 0, 2048, 1648, TxgT::from(0)).unwrap();
-        fsm.finish_zone(0, TxgT::from(17));
+        fsm.finish_zone(0, TxgT::from(15));
         let expected =
 r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
  Zone |  TXG  |                             Space                              |
 ------|-------|----------------------------------------------------------------|
-    0 |  0-12 |            ====================================================|
+    0 |  0-10 |            ====================================================|
 "#;
         assert_eq!(expected, format!("{}", fsm));
     }
