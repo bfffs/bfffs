@@ -18,7 +18,9 @@ use futures::{
     stream::{self, Stream}
 };
 use futures_locks::*;
-use serde::{Serializer, de::{Deserializer, DeserializeOwned}};
+#[cfg(test)]
+use serde::Serializer;
+use serde::de::{Deserializer, DeserializeOwned};
 #[cfg(test)] use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
 use std::{
@@ -67,6 +69,7 @@ mod atomic_u64_serializer {
             .map(|u| Atomic::new(u))
     }
 
+    #[cfg(test)]
     pub fn serialize<S>(x: &Atomic<u64>, s: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
@@ -86,7 +89,9 @@ struct NodeId<K: Key> {
 
 mod tree_root_serializer {
     use super::*;
-    use serde::{Deserialize, Serialize, ser::Error};
+    #[cfg(test)]
+    use serde::{Serialize, ser::Error};
+    use serde::Deserialize;
 
     pub(super) fn deserialize<'de, A, DE, K, V>(d: DE)
         -> Result<RwLock<IntElem<A, K, V>>, DE::Error>
@@ -96,6 +101,7 @@ mod tree_root_serializer {
             .map(|int_elem| RwLock::new(int_elem))
     }
 
+    #[cfg(test)]
     pub(super) fn serialize<A, K, S, V>(x: &RwLock<IntElem<A, K, V>>, s: S)
         -> Result<S::Ok, S::Error>
         where A: Addr, K: Key, S: Serializer, V: Value
@@ -324,7 +330,8 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
 }
 
 #[derive(Debug)]
-#[derive(Deserialize, Serialize)]
+#[cfg_attr(test, derive(Deserialize, Serialize))]
+#[cfg_attr(not(test), derive(Deserialize))]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 struct Inner<A: Addr, K: Key, V: Value> {
     /// Tree height.  1 if the Tree consists of a single Leaf node.
@@ -343,6 +350,18 @@ struct Inner<A: Addr, K: Key, V: Value> {
     /// Root node
     #[serde(with = "tree_root_serializer")]
     root: RwLock<IntElem<A, K, V>>
+}
+
+/// A version of `Inner` that is serializable
+#[derive(Debug)]
+#[derive(Serialize)]
+#[serde(bound(deserialize = "K: DeserializeOwned"))]
+struct InnerOnDisk<A: Addr, K: Key, V: Value> {
+    height: u64,
+    min_fanout: u64,
+    max_fanout: u64,
+    _max_size: u64,
+    root: IntElem<A, K, V>
 }
 
 /// In-memory representation of a COW B+-Tree
@@ -1205,20 +1224,33 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 {
                     drop(child_guard);
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
-                    Box::new(
-                        Tree::flush_r(dml3, ptr.into_node(), txg)
-                            .map(move |(addr, txgs)| {
-                                root_guard.ptr = TreePtr::Addr(addr);
-                                root_guard.txgs = txgs;
-                            })
-                    )
+                    Tree::flush_r(dml3, ptr.into_node(), txg)
+                        .map(move |(addr, txgs)| {
+                            root_guard.ptr = TreePtr::Addr(addr);
+                            root_guard.txgs = txgs;
+                            root_guard
+                        })
                 });
-                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+                Box::new(fut) as Box<Future<Item=_, Error=Error> + Send>
             } else {
-                Box::new(future::ok::<(), Error>(()))
+                Box::new(future::ok::<_, Error>(root_guard))
             }
         })
-        .map(move |_| TreeOnDisk(bincode::serialize(&*inner2).unwrap()))
+        .map(move |root_guard| {
+            let root = IntElem::<A, K, V>{
+                key: root_guard.key.clone(),
+                txgs: root_guard.txgs.clone(),
+                ptr: TreePtr::Addr(root_guard.ptr.as_addr().clone())
+            };
+            let iod = InnerOnDisk{
+                height: inner2.height.load(Ordering::Relaxed),
+                min_fanout: inner2.min_fanout,
+                max_fanout: inner2.max_fanout,
+                _max_size: inner2._max_size,
+                root
+            };
+            TreeOnDisk(bincode::serialize(&iod).unwrap())
+        })
     }
 
     fn write_leaf(dml: Arc<D>, node: Box<Node<A, K, V>>, txg: TxgT)
