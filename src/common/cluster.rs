@@ -441,7 +441,11 @@ impl<'a> FreeSpaceMap {
         let oz = self.open_zones.get_mut(&zid).unwrap();
         oz.waste_space(space);
         self.zones[zid as usize].freed_blocks += space as u32;
-        assert!(oz.allocated_blocks <= self.zones[zid as usize].total_blocks);
+        assert!(oz.allocated_blocks <= self.zones[zid as usize].total_blocks,
+            concat!("waste_space: Wasted too much space!",
+                    "zid={} space={} allocated_blocks={} total_blocks={}\n"),
+            zid, space, oz.allocated_blocks,
+            self.zones[zid as usize].total_blocks);
     }
 }
 
