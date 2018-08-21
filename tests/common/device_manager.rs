@@ -81,5 +81,18 @@ test_suite! {
             dm.import(uuid, te)
         })).unwrap();
     }
-}
 
+    /// DeviceManager::import_clusters on a single pool
+    test import_clusters(mocks) {
+        let (mut rt, dm, paths, _tempdir) = mocks.val;
+        dm.taste(&paths[2]);
+        dm.taste(&paths[1]);
+        dm.taste(&paths[0]);
+        let (name, uuid) = dm.importable_pools().pop().unwrap();
+        assert_eq!(name, "test_device_manager");
+        let clusters = rt.block_on(future::lazy(move || {
+            dm.import_clusters(uuid)
+        })).unwrap();
+        assert_eq!(clusters.len(), 1);
+    }
+}
