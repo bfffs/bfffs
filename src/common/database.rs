@@ -9,9 +9,8 @@ use common::*;
 use common::dataset::*;
 use common::dml::DML;
 use common::fs_tree::*;
-use common::idml::*;
 use common::label::*;
-use common::tree::*;
+use common::tree::{MinValue, TreeOnDisk};
 use futures::{
     Future,
     IntoFuture,
@@ -31,6 +30,11 @@ use std::{
 use time;
 use tokio::executor::Executor;
 use tokio::timer;
+
+#[cfg(not(test))] use common::idml::IDML;
+#[cfg(test)] use common::idml_mock::IDMLMock as IDML;
+#[cfg(not(test))] use common::tree::Tree;
+#[cfg(test)] use common::tree_mock::TreeMock as Tree;
 
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
@@ -157,7 +161,7 @@ impl Inner {
         let inner2 = inner.clone();
         let fut = inner.forest.get(tree_id)
             .map(move |tod| {
-                let tree = Arc::new(Tree::open(idml2, tod.unwrap()).unwrap());
+                let tree = Arc::new(ITree::open(idml2, tod.unwrap()).unwrap());
                 inner2.fs_trees.lock().unwrap()
                     .insert(tree_id, tree.clone());
                 tree
@@ -365,61 +369,50 @@ impl Database {
 #[cfg(feature = "mocks")]
 mod t {
     use super::*;
-    use common::cache_mock::CacheMock as Cache;
-    use common::dml::*;
-    use common::ddml::DRP;
-    use common::ddml_mock::DDMLMock as DDML;
     use futures::future;
-    use simulacrum::validators::trivial::any;
-    use std::sync::Mutex;
     use tokio::{
         executor::current_thread::TaskExecutor,
         runtime::current_thread
     };
 
-    #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test https://github.com/pcsm/simulacrum/issues/55"]
     #[test]
     fn sync_transaction() {
-        let cache = Cache::new();
-        let mut ddml = DDML::new();
-        ddml.expect_put::<Arc<tree::Node<RID, FSKey, FSValue>>>()
-            .called_any()
-            .returning(move |(_, _, _)| {
-                let drp = DRP::random(Compression::None, 4096);
-                 Box::new(future::ok::<DRP, Error>(drp))
-            });
-        // Can't set this expectation, because RidtEntry isn't pubic
-        //ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
-            //.called_any()
-            //.returning(move |(_, _, _)| {
-                //let drp = DRP::random(Compression::None, 4096);
-                 //Box::new(future::ok::<DRP, Error>(drp)))
-            //});
-        ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
-            .called_any()
-            .returning(move |(_, _, _)| {
-                let drp = DRP::random(Compression::None, 4096);
-                 Box::new(future::ok::<DRP, Error>(drp))
-            });
-        ddml.expect_sync_all()
-            .called_once()
-            .with(TxgT::from(0))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
-        ddml.expect_write_label()
-            .called_once()
-            .with(any())
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
-        ddml.expect_sync_all()
-            .called_once()
-            .with(TxgT::from(0))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
-        let arc_ddml = Arc::new(ddml);
-        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut idml = IDML::new();
+        let mut forest = Tree::new();
+
         let mut rt = current_thread::Runtime::new().unwrap();
+
+        idml.expect_advance_transaction()
+            .called_once()
+            .returning(|_| TxgT::from(0));
+
+        idml.expect_sync_all()
+            .called_once()
+            .with(TxgT::from(0))
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+
+        // forest.flush should be called inbetween the two sync_all()s, but
+        // Simulacrum isn't able to verify the order of calls to different
+        // objects
+        forest.expect_flush()
+            .called_once()
+            .with(TxgT::from(0))
+            .returning(|_| {
+                let tod = TreeOnDisk::default();
+                Box::new(future::ok::<TreeOnDisk, Error>(tod))
+            });
+
+        idml.then().expect_write_label()
+            .called_once()
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+        idml.expect_sync_all()
+            .called_once()
+            .with(TxgT::from(0))
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
 
         rt.block_on(future::lazy(|| {
             let task_executor = TaskExecutor::current();
-            let db = Database::create(Arc::new(idml), task_executor);
+            let db = Database::new(Arc::new(idml), forest, task_executor);
             db.sync_transaction()
         })).unwrap();
     }

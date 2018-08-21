@@ -39,7 +39,7 @@ use self::node::*;
 // Node must be visible for the IDML's unit tests
 pub(super) use self::node::Node;
 
-pub use self::node::{Key, MinValue, Value};
+pub use self::node::{Addr, Key, MinValue, Value};
 
 /// Are there any elements in common between the two Ranges?
 #[cfg_attr(feature = "cargo-clippy", allow(if_same_then_else))]
@@ -1616,6 +1616,13 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
 /// The serialized, on-disk representation of a `Tree`
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TreeOnDisk(Vec<u8>);
+
+#[cfg(test)]
+impl Default for TreeOnDisk {
+    fn default() -> Self {
+        TreeOnDisk(Vec::new())
+    }
+}
 
 #[cfg(test)] mod tests;
 

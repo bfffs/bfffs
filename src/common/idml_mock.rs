@@ -3,7 +3,8 @@
 use common::*;
 use common::dml::*;
 use common::idml::*;
-use futures::{Future, Stream};
+use common::label::*;
+use futures::{Future, IntoFuture, Stream};
 use simulacrum::*;
 
 pub struct IDMLMock {
@@ -11,6 +12,34 @@ pub struct IDMLMock {
 }
 
 impl IDMLMock {
+    // This method is impossible to perfectly mock with Simulacrum, because f is
+    // typically a closure, and closures cannot be named.  If f were Boxed, then
+    // it would work.  But I don't want to impose that limitation on the
+    // production code.  Instead, we'll use special logic in advance_transaction
+    // and only mock the txg used.
+    pub fn advance_transaction<B, F>(&self, f: F)
+        -> impl Future<Item=(), Error=Error>
+        where F: FnOnce(TxgT) -> B + Send + 'static,
+              B: IntoFuture<Item = (), Error = Error>
+    {
+         let txg = self.e.was_called_returning::<(), TxgT>
+             ("advance_transaction", ());
+         f(txg).into_future()
+    }
+
+    pub fn expect_advance_transaction(&mut self) -> Method<(), TxgT>
+    {
+        self.e.expect::<(), TxgT>("advance_transaction")
+    }
+
+    pub fn allocated(&self) -> LbaT {
+         self.e.was_called_returning::<(), LbaT> ("allocated", ())
+    }
+
+    pub fn expect_allocated(&mut self) -> Method<(), LbaT> {
+        self.e.expect::<(), LbaT>("allocated")
+    }
+
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Item=(), Error=Error>
     {
@@ -65,9 +94,10 @@ impl IDMLMock {
     }
 
     pub fn expect_sync_all(&mut self)
-        -> Method<TxgT, Box<Future<Item=(), Error=Error>>>
+        -> Method<TxgT, Box<Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<TxgT, Box<Future<Item=(), Error=Error>>>("sync_all")
+        self.e.expect::<TxgT, Box<Future<Item=(), Error=Error> + Send>>
+            ("sync_all")
     }
 
     pub fn expect_sync_transaction(&mut self)
@@ -78,9 +108,10 @@ impl IDMLMock {
     }
 
     pub fn expect_txg(&mut self)
-        -> Method<(), Box<Future<Item=&'static TxgT, Error=Error>>>
+        -> Method<(), Box<Future<Item=&'static TxgT, Error=Error> + Send>>
     {
-        self.e.expect::<(), Box<Future<Item=&'static TxgT, Error=Error>>>("txg")
+        self.e.expect::<(), Box<Future<Item=&'static TxgT, Error=Error> + Send>>
+            ("txg")
     }
 
     pub fn list_closed_zones(&self)
@@ -97,9 +128,17 @@ impl IDMLMock {
         }
     }
 
-    pub fn txg(&self) -> Box<Future<Item=&'static TxgT, Error=Error>> {
+    pub fn size(&self) -> LbaT {
+         self.e.was_called_returning::<(), LbaT> ("size", ())
+    }
+
+    pub fn expect_size(&mut self) -> Method<(), LbaT> {
+        self.e.expect::<(), LbaT>("size")
+    }
+
+    pub fn txg(&self) -> Box<Future<Item=&'static TxgT, Error=Error> + Send> {
         self.e.was_called_returning::<(),
-            Box<Future<Item=&'static TxgT, Error=Error>>>
+            Box<Future<Item=&'static TxgT, Error=Error> + Send>>
             ("txg", ())
     }
 
@@ -112,6 +151,23 @@ impl IDMLMock {
         self.e.then();
         self
     }
+
+    pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        self.e.was_called_returning::<(LabelWriter, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>
+            ("write_label", (labeller, txg))
+    }
+
+    pub fn expect_write_label(&mut self)
+        -> Method<(LabelWriter, TxgT), Box<Future<Item=(), Error=Error> + Send>>
+    {
+        self.e.expect::<(LabelWriter, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>
+            ("write_label")
+    }
+
 }
 
 impl DML for IDMLMock {

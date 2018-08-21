@@ -7,14 +7,18 @@
 //! and snapshotted.  The also support the same CRUD operations as Trees.
 
 use common::*;
-use common::idml::*;
-use common::tree::*;
+use common::tree::{Key, Value};
 use futures::{Future, Stream};
 use std::{
     borrow::Borrow,
     ops::RangeBounds,
     sync::Arc
 };
+
+#[cfg(not(test))] use common::tree::Tree;
+#[cfg(test)] use common::tree_mock::TreeMock as Tree;
+#[cfg(not(test))] use common::idml::IDML;
+#[cfg(test)] use common::idml_mock::IDMLMock as IDML;
 
 pub type ITree<K, V> = Tree<RID, IDML, K, V>;
 
@@ -51,7 +55,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
 
     fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
         where K: Borrow<T>,
-              R: RangeBounds<T>,
+              R: RangeBounds<T> + 'static,
               T: Ord + Clone + Send + 'static
     {
         self.tree.range(range)
@@ -79,7 +83,7 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
 
     pub fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
         where K: Borrow<T>,
-              R: RangeBounds<T>,
+              R: RangeBounds<T> + 'static,
               T: Ord + Clone + Send + 'static
     {
         self.dataset.range(range)
