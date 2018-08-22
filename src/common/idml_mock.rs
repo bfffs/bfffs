@@ -41,17 +41,18 @@ impl IDMLMock {
     }
 
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
          self.e.was_called_returning::<(ClosedZone, TxgT),
-            Box<Future<Item=(), Error=Error>>>
+            Box<Future<Item=(), Error=Error> + Send>>
             ("clean_zone", (zone, txg))
     }
 
     pub fn expect_clean_zone(&mut self) -> Method<(ClosedZone, TxgT),
-        Box<Future<Item=(), Error=Error>>>
+        Box<Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<(ClosedZone, TxgT), Box<Future<Item=(), Error=Error>>>
+        self.e.expect::<(ClosedZone, TxgT),
+                        Box<Future<Item=(), Error=Error> + Send>>
             ("clean_zone")
     }
 
@@ -71,9 +72,9 @@ impl IDMLMock {
     }
 
     pub fn expect_list_closed_zones(&mut self)
-        -> Method<(), Box<Stream<Item=ClosedZone, Error=Error>>>
+        -> Method<(), Box<Stream<Item=ClosedZone, Error=Error> + Send>>
     {
-        self.e.expect::<(), Box<Stream<Item=ClosedZone, Error=Error>>>
+        self.e.expect::<(), Box<Stream<Item=ClosedZone, Error=Error> + Send>>
             ("list_closed_zones")
     }
 
@@ -115,10 +116,10 @@ impl IDMLMock {
     }
 
     pub fn list_closed_zones(&self)
-        -> Box<Stream<Item=ClosedZone, Error=Error>>
+        -> Box<Stream<Item=ClosedZone, Error=Error> + Send>
     {
         self.e.was_called_returning::<(),
-            Box<Stream<Item=ClosedZone, Error=Error>>>
+            Box<Stream<Item=ClosedZone, Error=Error> + Send>>
             ("list_closed_zones", ())
     }
 

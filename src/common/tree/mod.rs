@@ -217,7 +217,7 @@ struct CleanZonePass1Inner<D, K, V>
 
     /// Used when an operation must block
     last_fut: Option<Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
-                       Error=Error>>>,
+                       Error=Error> + Send>>,
 
     /// Range of addresses to move
     pbas: Range<PBA>,
@@ -1394,7 +1394,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
 {
     /// Clean `zone` by moving all of its records to other zones.
     pub fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         // We can't rewrite children before their parents while sticking to a
         // lock-coupling discipline.  And we can't rewrite parents before their
@@ -1461,7 +1461,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                     };
                     Box::new(future::ok((dirty, None)))
                         as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
-                                      Error=Error>>
+                                      Error=Error> + Send>
                 } else {
                     let fut = guard.rlock(dml.clone())
                          .and_then(move |guard| {
@@ -1470,7 +1470,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                          });
                     Box::new(fut)
                         as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
-                                      Error=Error>>
+                                      Error=Error> + Send>
                 }
             })
     }
@@ -1484,7 +1484,8 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                          next_key: Option<K>,
                          key: K, pbas: Range<PBA>, txgs: Range<TxgT>,
                          echelon: u8)
-        -> Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>>
+        -> Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
+                      Error=Error> + Send>
     {
         if height == echelon + 1 {
             let nodes = guard.as_int().children.iter().filter_map(|child| {
@@ -1527,7 +1528,8 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                     Tree::get_dirty_nodes_r(dml, child_guard, height - 1,
                                             next_key, key, pbas, txgs, echelon)
                 })
-            ) as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>>
+            ) as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
+                            Error=Error> + Send>
         } else {
             Box::new(future::ok((VecDeque::new(), next_key)))
         }
@@ -1536,7 +1538,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     /// Rewrite `node`, without modifying its contents
     fn rewrite_node(inner: Arc<Inner<ddml::DRP, K, V>>, dml: Arc<D>,
                     node: NodeId<K>, txg: TxgT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         let dml2 = dml.clone();
         Tree::<ddml::DRP, D, K, V>::write_root(&*inner)
@@ -1548,7 +1550,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                     // Another thread has already dirtied the root.  Nothing to
                     // do!
                     let fut = Box::new(future::ok(()));
-                    return fut as Box<Future<Item=(), Error=Error>>;
+                    return fut as Box<Future<Item=(), Error=Error> + Send>;
                 }
                 let fut = dml.pop::<Arc<Node<ddml::DRP, K, V>>,
                                      Arc<Node<ddml::DRP, K, V>>>(
@@ -1559,21 +1561,21 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                         let new = TreePtr::Addr(addr);
                         guard.ptr = new;
                     });
-                Box::new(fut) as Box<Future<Item=(), Error=Error>>
+                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
             } else {
                 let fut = Tree::xlock_root(dml, guard, txg)
                      .and_then(move |(_root_guard, child_guard)| {
                          Tree::rewrite_node_r(dml2, child_guard, h - 1, node,
                                               txg)
                      });
-                Box::new(fut) as Box<Future<Item=(), Error=Error>>
+                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
             }
         })
     }
 
     fn rewrite_node_r(dml: Arc<D>, mut guard: TreeWriteGuard<ddml::DRP, K, V>,
                       height: u8, node: NodeId<K>, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error>>
+        -> Box<Future<Item=(), Error=Error> + Send>
     {
         debug_assert!(height > 0);
         let child_idx = guard.as_int().position(&node.key);

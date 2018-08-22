@@ -86,7 +86,7 @@ impl<'a> IDML {
 
     /// Clean `zone` by moving all of its records to other zones.
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         // Outline:
         // 1) Lookup the Zone's PBA range in the Allocation Table.  Rewrite each
@@ -120,7 +120,7 @@ impl<'a> IDML {
     }
 
     pub fn list_closed_zones(&self)
-        -> impl Stream<Item=ClosedZone, Error=Error>
+        -> impl Stream<Item=ClosedZone, Error=Error> + Send
     {
         self.ddml.list_closed_zones()
     }
@@ -130,7 +130,7 @@ impl<'a> IDML {
     ///
     /// This list should be persistent across reboots.
     fn list_indirect_records(&self, zone: &ClosedZone)
-        -> impl Stream<Item=RID, Error=Error>
+        -> impl Stream<Item=RID, Error=Error> + Send
     {
         // Iterate through the AllocT to get indirect records from the target
         // zone.
@@ -163,8 +163,10 @@ impl<'a> IDML {
     /// Rewrite the given direct Record and update its metadata.
     fn move_record(cache: Arc<Mutex<Cache>>, trees: Arc<Trees>, ddml: Arc<DDML>,
                    rid: RID, txg: TxgT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
+        type MyFut = Box<Future<Item=Box<DivBufShared>, Error=Error> + Send>;
+
         // Even if the cache contains the target record, we must also do an RIDT
         // lookup because we're going to rewrite the RIDT
         let cache2 = cache.clone();
@@ -184,12 +186,12 @@ impl<'a> IDML {
                             .unwrap();
                         Box::new(
                             future::ok::<Box<DivBufShared>, Error>(r)
-                        ) as Box<Future<Item=Box<DivBufShared>, Error=Error>>
+                        ) as MyFut
                     })
                     .unwrap_or_else(|| {
                         Box::new(
                             ddml2.get_direct::<DivBufShared>(&entry.drp)
-                        ) as Box<Future<Item=Box<DivBufShared>, Error=Error>>
+                        ) as MyFut
                     }).map(move |buf| (entry, buf))
             }).and_then(move |(entry, buf)| {
                 // NB: on a cache miss, this will result in decompressing and

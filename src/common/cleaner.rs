@@ -4,17 +4,18 @@ use common::*;
 use common::idml::ClosedZone;
 use futures::{
     Future,
-    stream::{self, Stream}
+    Sink,
+    future,
+    stream::{self, Stream},
+    sync::mpsc
 };
 use std::sync::Arc;
+use tokio::executor::Executor;
 
 #[cfg(not(test))] use common::idml::IDML;
 #[cfg(test)] use common::idml_mock::IDMLMock as IDML;
 
-/// Garbage collector.
-///
-/// Cleans old Zones by moving their data to empty zones and erasing them.
-pub struct Cleaner {
+struct SyncCleaner {
     /// Handle to the DML.
     idml: Arc<IDML>,
 
@@ -23,11 +24,9 @@ pub struct Cleaner {
     threshold: f32,
 }
 
-impl<'a> Cleaner {
-    const DEFAULT_THRESHOLD: f32 = 0.5;
-
+impl SyncCleaner {
     /// Clean zones in the foreground, blocking the task
-    pub fn clean_now(&self) -> impl Future<Item=(), Error=Error> {
+    pub fn clean_now(&self) -> impl Future<Item=(), Error=Error> + Send {
         // Outline:
         // 1) Get a list of mostly-free zones
         // 2) For each zone:
@@ -46,27 +45,19 @@ impl<'a> Cleaner {
                     .map_err(|_| Error::EPIPE)
                     .and_then(move |txg_guard| {
                         idml3.clean_zone(zone, *txg_guard)
-                        //self.clean_zone(zone, *txg_guard)
                     })
             })
         })
     }
 
-    /// Immediately clean the given zone in the foreground
-    pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
-        -> impl Future<Item=(), Error=Error>
-    {
-        self.idml.clean_zone(zone, txg)
-    }
-
-    pub fn new(idml: Arc<IDML>, thresh: Option<f32>) -> Self {
-        Cleaner{idml, threshold: thresh.unwrap_or(Cleaner::DEFAULT_THRESHOLD)}
+    pub fn new(idml: Arc<IDML>, threshold: f32) -> Self {
+        SyncCleaner{idml, threshold}
     }
 
     /// Select which zones to clean and return them sorted by cleanliness:
     /// dirtiest zones first.
     fn select_zones(&self)
-        -> impl Future<Item=Vec<ClosedZone>, Error=Error>
+        -> impl Future<Item=Vec<ClosedZone>, Error=Error> + Send
     {
         let threshold = self.threshold;
         self.idml.list_closed_zones()
@@ -90,6 +81,48 @@ impl<'a> Cleaner {
     }
 }
 
+/// Garbage collector.
+///
+/// Cleans old Zones by moving their data to empty zones and erasing them.
+pub struct Cleaner {
+    tx: mpsc::Sender<()>
+}
+
+impl Cleaner {
+    const DEFAULT_THRESHOLD: f32 = 0.5;
+
+    pub fn clean(&self) -> impl Future<Item=(), Error=Error> {
+        self.tx.clone()
+            .send(())
+            .map(|_| ())
+            .map_err(|e| panic!("{:?}", e))
+    }
+
+    pub fn new<E>(handle: E, idml: Arc<IDML>, thresh: Option<f32>) -> Self
+        where E: Executor + 'static
+    {
+        let (tx, rx) = mpsc::channel(1);
+        Cleaner::run(handle, idml, thresh.unwrap_or(Cleaner::DEFAULT_THRESHOLD),
+                     rx);
+        Cleaner{tx}
+    }
+
+    // Start a task that will clean the system in the background, whenever
+    // requested.
+    fn run<E>(mut handle: E, idml: Arc<IDML>, thresh: f32,
+              rx: mpsc::Receiver<()>)
+        where E: Executor + 'static
+    {
+        handle.spawn(Box::new(future::lazy(move || {
+            let sync_cleaner = SyncCleaner::new(idml, thresh);
+            rx.for_each(move |_| {
+                sync_cleaner.clean_now()
+                    .map_err(|e| panic!("{:?}", e))
+            })
+        }))).unwrap()
+    }
+}
+
 // LCOV_EXCL_START
 #[cfg(test)]
 mod t {
@@ -98,6 +131,33 @@ use futures::future;
 use simulacrum::*;
 use super::*;
 use tokio::runtime::current_thread;
+use tokio::executor::current_thread::TaskExecutor;
+
+/// Clean in the background
+#[test]
+fn background() {
+    let mut idml = IDML::new();
+    idml.expect_list_closed_zones()
+        .called_once()
+        .returning(|_| {
+            let czs = vec![
+                ClosedZone{freed_blocks: 0, total_blocks: 100,
+                    pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
+            ];
+            Box::new(stream::iter_ok(czs.into_iter()))
+        });
+    idml.expect_txg().called_never();
+    idml.expect_clean_zone().called_never();
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    rt.spawn(future::lazy(|| {
+        let te = TaskExecutor::current();
+        let cleaner = Cleaner::new(te, Arc::new(idml), None);
+        cleaner.clean()
+            .map_err(|e| panic!("{:?}", e))
+    }));
+    rt.run().unwrap();
+}
 
 /// No zone is less dirty than the threshold
 #[test]
@@ -114,7 +174,7 @@ fn no_sufficiently_dirty_zones() {
         });
     idml.expect_txg().called_never();
     idml.expect_clean_zone().called_never();
-    let cleaner = Cleaner::new(Arc::new(idml), Some(0.5));
+    let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
     current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
         cleaner.clean_now()
     })).unwrap();
@@ -144,7 +204,7 @@ fn one_sufficiently_dirty_zone() {
             args.1 == TXG
         }))
         .returning(|_| Box::new(future::ok::<(), Error>(())));
-    let cleaner = Cleaner::new(Arc::new(idml), Some(0.5));
+    let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
     current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
         cleaner.clean_now()
     })).unwrap();
@@ -188,7 +248,7 @@ fn two_sufficiently_dirty_zones() {
             args.1 == TXG
         }))
         .returning(|_| Box::new(future::ok::<(), Error>(())));
-    let cleaner = Cleaner::new(Arc::new(idml), Some(0.5));
+    let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
     current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
         cleaner.clean_now()
     })).unwrap();
