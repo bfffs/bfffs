@@ -1,0 +1,421 @@
+# Lines starting with '#' and sections without content
+# are not displayed by a call to 'details'
+#
+[paths]
+# Paths related to this bug.
+# suggested format: REPO_PATH:LINENUMBERS
+
+
+[details]
+The downcast crate returns an "ONLY ON NIGHTLY" error when I try to downcast a
+Box<Cacheable> to the wrong concrete type.  It may just be a bad error message,
+because it seems to work correctly when I downcast to the right type.
+
+
+[expected]
+# The expected result
+
+
+[actual]
+thread '<unnamed>' panicked at 'called `Result::unwrap()` on an `Err` value:
+DowncastError { mismatch: TypeMismatch { expected: "[ONLY ON NIGHTLY]", found:
+"[ONLY ON NIGHTLY]" } }', libcore/result.rs:945:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose
+backtrace.
+stack backtrace:
+   0: std::sys::unix::backtrace::tracing::imp::unwind_backtrace
+   1: std::sys_common::backtrace::print
+   2: std::panicking::default_hook::{{closure}}
+   3: std::panicking::default_hook
+   4: std::panicking::rust_panic_with_hook
+   5: std::panicking::continue_panic_fmt
+   6: rust_begin_unwind
+   7: core::panicking::panic_fmt
+   8: core::result::unwrap_failed
+   9: <core::result::Result<T, E>>::unwrap
+             at /checkout/src/libcore/result.rs:782
+  10: bfffs::common::cache::Cache::get::{{closure}}
+             at ./src/common/cache.rs:157
+  11: <core::option::Option<T>>::map
+             at /checkout/src/libcore/option.rs:414
+  12: bfffs::common::cache::Cache::get
+             at ./src/common/cache.rs:152
+  13: bfffs::common::idml::IDML::move_record::{{closure}}
+             at ./src/common/idml.rs:182
+  14: <futures::future::and_then::AndThen<A, B, F> as
+futures::future::Future>::poll::{{closure}}::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:34
+  15: <core::result::Result<T, E>>::map
+             at /checkout/src/libcore/result.rs:468
+  16: <futures::future::and_then::AndThen<A, B, F> as
+futures::future::Future>::poll::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:33
+  17: <futures::future::chain::Chain<A, B, C>>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/chain.rs:39
+  18: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  19: <futures::future::chain::Chain<A, B, C>>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/chain.rs:26
+  20: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  21: <futures::future::chain::Chain<A, B, C>>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/chain.rs:26
+  22: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  23: <futures::future::map::Map<A, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/map.rs:30
+  24: <futures::stream::for_each::ForEach<S, F, U> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/stream/for_each.rs:39
+  25: <futures::future::chain::Chain<A, B, C>>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/chain.rs:26
+  26: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  27: <futures::future::chain::Chain<A, B, C>>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/chain.rs:42
+  28: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  29: <futures::stream::for_each::ForEach<S, F, U> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/stream/for_each.rs:39
+  30: <futures::future::chain::Chain<A, B, C>>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/chain.rs:42
+  31: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  32: <futures::future::map_err::MapErr<A, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/map_err.rs:30
+  33: <futures::stream::for_each::ForEach<S, F, U> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/stream/for_each.rs:39
+  34: <futures::future::lazy::Lazy<F, R> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/lazy.rs:82
+  35: <alloc::boxed::Box<F> as futures::future::Future>::poll
+  36: <alloc::boxed::Box<F> as futures::future::Future>::poll
+  37: <futures::task_impl::Spawn<T>>::poll_future_notify::{{closure}}
+  38: <futures::task_impl::Spawn<T>>::enter::{{closure}}
+  39: futures::task_impl::std::set
+  40: <futures::task_impl::Spawn<T>>::enter
+  41: <futures::task_impl::Spawn<T>>::poll_future_notify
+  42: <tokio::executor::current_thread::scheduler::Scheduled<'a, U>>::tick
+  43: <tokio::executor::current_thread::scheduler::Scheduler<U>>::tick::{{closure}}
+  44: <tokio::executor::current_thread::Borrow<'a,
+U>>::enter::{{closure}}::{{closure}}
+  45: tokio::executor::current_thread::CurrentRunner::set_spawn
+  46: <tokio::executor::current_thread::Borrow<'a, U>>::enter::{{closure}}
+  47: <std::thread::local::LocalKey<T>>::try_with
+  48: <std::thread::local::LocalKey<T>>::with
+  49: <tokio::executor::current_thread::Borrow<'a, U>>::enter
+  50: <tokio::executor::current_thread::scheduler::Scheduler<U>>::tick
+  51: <tokio::executor::current_thread::Entered<'a, P>>::tick
+  52: <tokio::executor::current_thread::Entered<'a, P>>::block_on
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/executor/current_thread/mod.rs:495
+  53: tokio::runtime::current_thread::runtime::Runtime::block_on::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:138
+  54:
+tokio::runtime::current_thread::runtime::Runtime::enter::{{closure}}::{{closure}}::{{closure}}::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:179
+  55: tokio_executor::global::with_default::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-executor-0.1.2/src/global.rs:176
+  56: <std::thread::local::LocalKey<T>>::try_with
+             at /checkout/src/libstd/thread/local.rs:294
+  57: <std::thread::local::LocalKey<T>>::with
+             at /checkout/src/libstd/thread/local.rs:248
+  58: tokio_executor::global::with_default
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-executor-0.1.2/src/global.rs:150
+  59:
+tokio::runtime::current_thread::runtime::Runtime::enter::{{closure}}::{{closure}}::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:177
+  60: tokio_timer::timer::handle::with_default::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-timer-0.2.4/src/timer/handle.rs:64
+  61: <std::thread::local::LocalKey<T>>::try_with
+             at /checkout/src/libstd/thread/local.rs:294
+  62: <std::thread::local::LocalKey<T>>::with
+             at /checkout/src/libstd/thread/local.rs:248
+  63: tokio_timer::timer::handle::with_default
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-timer-0.2.4/src/timer/handle.rs:56
+  64:
+tokio::runtime::current_thread::runtime::Runtime::enter::{{closure}}::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:170
+  65: tokio_timer::clock::clock::with_default::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-timer-0.2.4/src/clock/clock.rs:136
+  66: <std::thread::local::LocalKey<T>>::try_with
+             at /checkout/src/libstd/thread/local.rs:294
+  67: <std::thread::local::LocalKey<T>>::with
+             at /checkout/src/libstd/thread/local.rs:248
+  68: tokio_timer::clock::clock::with_default
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-timer-0.2.4/src/clock/clock.rs:119
+  69: tokio::runtime::current_thread::runtime::Runtime::enter::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:169
+  70: tokio_reactor::with_default::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-reactor-0.1.2/src/lib.rs:231
+  71: <std::thread::local::LocalKey<T>>::try_with
+             at /checkout/src/libstd/thread/local.rs:294
+  72: <std::thread::local::LocalKey<T>>::with
+             at /checkout/src/libstd/thread/local.rs:248
+  73: tokio_reactor::with_default
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-reactor-0.1.2/src/lib.rs:214
+  74: tokio::runtime::current_thread::runtime::Runtime::enter
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:168
+  75: tokio::runtime::current_thread::runtime::Runtime::block_on
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:136
+  76: tokio_io_pool::Builder::build::{{closure}}
+thread '<unnamed>' panicked at 'called `Result::unwrap()` on an `Err` value:
+"PoisonError { inner: .. }"', libcore/result.rs:945:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose
+backtrace.
+stack backtrace:
+   0: std::sys::unix::backtrace::tracing::imp::unwind_backtrace
+   1: std::sys_common::backtrace::print
+   2: std::panicking::default_hook::{{closure}}
+   3: std::panicking::default_hook
+   4: std::panicking::rust_panic_with_hook
+   5: std::panicking::continue_panic_fmt
+   6: rust_begin_unwind
+   7: core::panicking::panic_fmt
+   8: core::result::unwrap_failed
+   9: <core::result::Result<T, E>>::unwrap
+  10: <bfffs::common::ddml::DDML as bfffs::common::dml::DML>::get
+  11: <bfffs::common::tree::node::IntElem<A, K, V>>::rlock
+  12: <bfffs::common::tree::Tree<A, D, K, V>>::get::{{closure}}
+  13: <futures::future::and_then::AndThen<A, B, F> as
+futures::future::Future>::poll::{{closure}}::{{closure}}
+  14: <core::result::Result<T, E>>::map
+  15: <futures::future::and_then::AndThen<A, B, F> as
+futures::future::Future>::poll::{{closure}}
+  16: <futures::future::chain::Chain<A, B, C>>::poll
+  17: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+  18: <futures::future::chain::Chain<A, B, C>>::poll
+  19: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  20: <futures::future::chain::Chain<A, B, C>>::poll
+  21: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+  22: <alloc::boxed::Box<F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/mod.rs:113
+  23: <futures::future::map::Map<A, F> as futures::future::Future>::poll
+  24: <alloc::boxed::Box<F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/mod.rs:113
+  25: <futures::future::chain::Chain<A, B, C>>::poll
+  26: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  27: <futures::future::chain::Chain<A, B, C>>::poll
+  28: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  29: <futures::future::chain::Chain<A, B, C>>::poll
+  30: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  31: <futures::future::join_all::JoinAll<I> as futures::future::Future>::poll
+  32: <futures::future::chain::Chain<A, B, C>>::poll
+  33: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+  34: <futures::future::chain::Chain<A, B, C>>::poll
+  35: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+  36: <futures::future::chain::Chain<A, B, C>>::poll
+  37: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  38: <futures::future::map::Map<A, F> as futures::future::Future>::poll
+  39: <futures::future::chain::Chain<A, B, C>>::poll
+  40: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  41: <futures::future::map_err::MapErr<A, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/map_err.rs:30
+  42: <futures::future::map::Map<A, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/map.rs:30
+  43: <alloc::boxed::Box<F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/mod.rs:113
+  44: <futures::future::chain::Chain<A, B, C>>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/chain.rs:42
+  45: <futures::future::and_then::AndThen<A, B, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/and_then.rs:32
+  46: <futures::stream::fold::Fold<S, F, Fut, T> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/stream/fold.rs:70
+  47: <futures::future::map::Map<A, F> as futures::future::Future>::poll
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/futures-0.1.21/src/future/map.rs:30
+  48: <alloc::boxed::Box<F> as futures::future::Future>::poll
+  49: <alloc::boxed::Box<F> as futures::future::Future>::poll
+  50: <futures::task_impl::Spawn<T>>::poll_future_notify::{{closure}}
+  51: <futures::task_impl::Spawn<T>>::enter::{{closure}}
+  52: futures::task_impl::std::set
+  53: <futures::task_impl::Spawn<T>>::enter
+  54: <futures::task_impl::Spawn<T>>::poll_future_notify
+  55: <tokio::executor::current_thread::scheduler::Scheduled<'a, U>>::tick
+  56: <tokio::executor::current_thread::scheduler::Scheduler<U>>::tick::{{closure}}
+  57: <tokio::executor::current_thread::Borrow<'a,
+U>>::enter::{{closure}}::{{closure}}
+  58: tokio::executor::current_thread::CurrentRunner::set_spawn
+  59: <tokio::executor::current_thread::Borrow<'a, U>>::enter::{{closure}}
+  60: <std::thread::local::LocalKey<T>>::try_with
+  61: <std::thread::local::LocalKey<T>>::with
+  62: <tokio::executor::current_thread::Borrow<'a, U>>::enter
+  63: <tokio::executor::current_thread::scheduler::Scheduler<U>>::tick
+  64: <tokio::executor::current_thread::Entered<'a, P>>::tick
+  65: <tokio::executor::current_thread::Entered<'a, P>>::block_on
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/executor/current_thread/mod.rs:495
+  66: tokio::runtime::current_thread::runtime::Runtime::block_on::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:138
+  67:
+tokio::runtime::current_thread::runtime::Runtime::enter::{{closure}}::{{closure}}::{{closure}}::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:179
+  68: tokio_executor::global::with_default::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-executor-0.1.2/src/global.rs:176
+  69: <std::thread::local::LocalKey<T>>::try_with
+             at /checkout/src/libstd/thread/local.rs:294
+  70: <std::thread::local::LocalKey<T>>::with
+             at /checkout/src/libstd/thread/local.rs:248
+  71: tokio_executor::global::with_default
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-executor-0.1.2/src/global.rs:150
+  72:
+tokio::runtime::current_thread::runtime::Runtime::enter::{{closure}}::{{closure}}::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:177
+  73: tokio_timer::timer::handle::with_default::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-timer-0.2.4/src/timer/handle.rs:64
+  74: <std::thread::local::LocalKey<T>>::try_with
+             at /checkout/src/libstd/thread/local.rs:294
+  75: <std::thread::local::LocalKey<T>>::with
+             at /checkout/src/libstd/thread/local.rs:248
+  76: tokio_timer::timer::handle::with_default
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-timer-0.2.4/src/timer/handle.rs:56
+  77:
+tokio::runtime::current_thread::runtime::Runtime::enter::{{closure}}::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:170
+  78: tokio_timer::clock::clock::with_default::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-timer-0.2.4/src/clock/clock.rs:136
+  79: <std::thread::local::LocalKey<T>>::try_with
+             at /checkout/src/libstd/thread/local.rs:294
+  80: <std::thread::local::LocalKey<T>>::with
+             at /checkout/src/libstd/thread/local.rs:248
+  81: tokio_timer::clock::clock::with_default
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-timer-0.2.4/src/clock/clock.rs:119
+  82: tokio::runtime::current_thread::runtime::Runtime::enter::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:169
+  83: tokio_reactor::with_default::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-reactor-0.1.2/src/lib.rs:231
+  84: <std::thread::local::LocalKey<T>>::try_with
+             at /checkout/src/libstd/thread/local.rs:294
+  85: <std::thread::local::LocalKey<T>>::with
+             at /checkout/src/libstd/thread/local.rs:248
+  86: tokio_reactor::with_default
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-reactor-0.1.2/src/lib.rs:214
+  87: tokio::runtime::current_thread::runtime::Runtime::enter
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:168
+  88: tokio::runtime::current_thread::runtime::Runtime::block_on
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:136
+  89: tokio_io_pool::Builder::build::{{closure}}
+thread '<unnamed>' panicked at 'CurrentThread does not exist anymore:
+"SendError(..)"', libcore/result.rs:945:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose
+backtrace.
+stack backtrace:
+   0: std::sys::unix::backtrace::tracing::imp::unwind_backtrace
+   1: std::sys_common::backtrace::print
+   2: std::panicking::default_hook::{{closure}}
+   3: std::panicking::default_hook
+   4: std::panicking::rust_panic_with_hook
+   5: std::panicking::continue_panic_fmt
+   6: rust_begin_unwind
+   7: core::panicking::panic_fmt
+   8: core::result::unwrap_failed
+             at /checkout/src/libcore/macros.rs:26
+   9: <core::result::Result<T, E>>::expect
+             at /checkout/src/libcore/result.rs:809
+  10: tokio::executor::current_thread::Handle::spawn
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/executor/current_thread/mod.rs:652
+  11: tokio::runtime::current_thread::runtime::Handle::spawn
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-0.1.7/src/runtime/current_thread/runtime.rs:41
+  12: tokio_io_pool::Handle::spawn
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-io-pool-0.1.3/src/lib.rs:301
+  13: bfffs::common::fs::Fs::sync
+             at src/common/fs.rs:332
+  14: <bfffs::sys::fuse::fs::FuseFs as fuse::Filesystem>::destroy
+             at src/sys/fuse/fs.rs:93
+  15: fuse::request::Request::dispatch
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/fuse-0.3.1/src/request.rs:127
+  16: fuse::request::dispatch
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/fuse-0.3.1/src/request.rs:34
+  17: <fuse::session::Session<FS>>::run
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/fuse-0.3.1/src/session.rs:79
+  18: fuse::mount::{{closure}}
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/fuse-0.3.1/src/lib.rs:376
+  19: <core::result::Result<T, E>>::and_then
+             at /checkout/src/libcore/result.rs:621
+  20: fuse::mount
+             at
+/usr/home/somers/.cargo/registry/src/github.com-1ecc6299db9ec823/fuse-0.3.1/src/lib.rs:376
+  21: bfffsd::main::{{closure}}
+             at src/bin/bfffsd.rs:61
+
+[reproduce]
+# Reproduction steps
+
+
+[comments]
+# Comments and updates - leave your name
