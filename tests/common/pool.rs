@@ -17,7 +17,11 @@ test_suite! {
     use bfffs::common::label::*;
     use bfffs::common::pool::*;
     use futures::{Future, future};
-    use std::{fs, io::{Read, Seek, SeekFrom}};
+    use std::{
+        fs,
+        io::{Read, Seek, SeekFrom},
+        num::NonZeroU64
+    };
     use tempdir::TempDir;
     use tokio::runtime::current_thread::Runtime;
 
@@ -58,7 +62,8 @@ test_suite! {
             let mut rt = Runtime::new().unwrap();
             let pool = rt.block_on(future::lazy(|| {
                 let clusters = paths.iter().map(|p| {
-                    Pool::create_cluster(1, 1, 1, None, 0, &[p][..])
+                    let cs = NonZeroU64::new(1);
+                    Pool::create_cluster(cs, 1, 1, None, 0, &[p][..])
                 }).collect::<Vec<_>>();
                 future::join_all(clusters)
                     .map_err(|_| unreachable!())

@@ -15,7 +15,10 @@ test_suite! {
     use divbuf::DivBufShared;
     use futures::{Future, future};
     use rand::{Rng, thread_rng};
-    use std::fs;
+    use std::{
+        fs,
+        num::NonZeroU64
+    };
     use tempdir::TempDir;
     use tokio::runtime::current_thread;
 
@@ -42,7 +45,8 @@ test_suite! {
                 t!(file.set_len(len));
                 fname
             }).collect::<Vec<_>>();
-            let mut vdev_raid = VdevRaid::create(*self.chunksize,
+            let cs = NonZeroU64::new(*self.chunksize);
+            let mut vdev_raid = VdevRaid::create(cs,
                 *self.n, *self.k, None, *self.f, &paths);
             current_thread::Runtime::new().unwrap().block_on(
                 vdev_raid.open_zone(0)
@@ -497,7 +501,11 @@ test_suite! {
     use bfffs::common::{label::*, vdev_block::*, vdev_raid::*, vdev::Vdev};
     use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
-    use std::{fs, io::{Read, Seek, SeekFrom}};
+    use std::{
+        fs,
+        io::{Read, Seek, SeekFrom},
+        num::NonZeroU64
+    };
     use tempdir::TempDir;
     use tokio::runtime::current_thread;
 
@@ -546,7 +554,8 @@ test_suite! {
                 t!(file.set_len(len));
                 fname
             }).collect::<Vec<_>>();
-            let mut vdev_raid = VdevRaid::create(2, num_disks, 3, None, 1,
+            let cs = NonZeroU64::new(2);
+            let mut vdev_raid = VdevRaid::create(cs, num_disks, 3, None, 1,
                                                  &paths);
             (vdev_raid, tempdir, paths)
         }

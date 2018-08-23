@@ -23,4 +23,4 @@ when CHUNKSIZE > 1.  Eliminate it.
 
 
 [comments]
-# Comments and updates - leave your name
+Fixed by always using chunksize=1 for single disk configurations.

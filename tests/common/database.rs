@@ -24,6 +24,7 @@ test_suite! {
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
+        num::NonZeroU64,
         path::PathBuf,
         sync::{Arc, Mutex}
     };
@@ -61,7 +62,8 @@ test_suite! {
             let paths = [filename.clone()];
             let mut rt = Runtime::new().unwrap();
             let pool = rt.block_on(future::lazy(|| {
-                let cluster = Pool::create_cluster(1, 1, 1, None, 0, &paths);
+                let cs = NonZeroU64::new(1);
+                let cluster = Pool::create_cluster(cs, 1, 1, None, 0, &paths);
                 let clusters = vec![cluster];
                 future::join_all(clusters)
                     .map_err(|_| unreachable!())

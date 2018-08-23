@@ -74,7 +74,7 @@ test_suite! {
             t!(file.set_len(len));
             let mut rt = Runtime::new().unwrap();
             let lpz = NonZeroU64::new(65536);
-            let cluster = Cluster::create(16, 1, 1, lpz, 0, &[fname.clone()]);
+            let cluster = Cluster::create(None, 1, 1, lpz, 0, &[fname.clone()]);
             (rt, cluster, tempdir, fname)
         }
     });

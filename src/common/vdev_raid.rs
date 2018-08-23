@@ -247,24 +247,30 @@ macro_rules! issue_1stripe_ops {
 }
 
 impl VdevRaid {
+    #[cfg(not(test))]
+    const DEFAULT_CHUNKSIZE: LbaT = 16;
+
     /// Choose the best declustering layout for the requirements given.
     #[cfg(not(test))]
-    fn choose_layout(num_disks: i16, _disks_per_stripe: i16,
-                     _redundancy: i16) -> LayoutAlgorithm {
-
+    fn choose_layout(num_disks: i16, _disks_per_stripe: i16, _redundancy: i16,
+                     chunksize: Option<NonZeroU64>)
+        -> (LayoutAlgorithm, LbaT)
+    {
         if num_disks == 1 {
-            LayoutAlgorithm::NullRaid
+            (LayoutAlgorithm::NullRaid, 1)
         } else {
-            LayoutAlgorithm::PrimeS
+            let chunksize = chunksize.map(|cs| cs.get())
+                .unwrap_or(VdevRaid::DEFAULT_CHUNKSIZE);
+            (LayoutAlgorithm::PrimeS, chunksize)
         }
     }
 
     /// Create a new VdevRaid from unused files or devices
     ///
-    /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
-    ///                         amount of data that will be read/written to a
-    ///                         single device before the `Locator` switches to
-    ///                         the next device.
+    /// * `chunksize`:          RAID chunksize in LBAs, if specified.  This is
+    ///                         the largest amount of data that will be
+    ///                         read/written to a single device before the
+    ///                         `Locator` switches to the next device.
     /// * `num_disks`:          Total number of disks in the array
     /// * `disks_per_stripe`:   Number of data plus parity chunks in each
     ///                         self-contained RAID stripe.  Must be less than
@@ -277,21 +283,21 @@ impl VdevRaid {
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
     #[cfg(not(test))]
-    pub fn create<P: AsRef<Path>>(chunksize: LbaT,
+    pub fn create<P: AsRef<Path>>(chunksize: Option<NonZeroU64>,
                                   num_disks: i16,
                                   disks_per_stripe: i16,
                                   lbas_per_zone: Option<NonZeroU64>,
                                   redundancy: i16,
                                   paths: &[P]) -> Self
     {
-        let layout_algo = VdevRaid::choose_layout(num_disks, disks_per_stripe,
-                                                  redundancy);
+        let (layout, chunksize) = VdevRaid::choose_layout(num_disks,
+            disks_per_stripe, redundancy, chunksize);
         let uuid = Uuid::new_v4();
         let blockdevs = paths.iter().map(|path| {
             VdevBlock::create(path, lbas_per_zone).unwrap()
         }).collect::<Vec<_>>();
         VdevRaid::new(chunksize, disks_per_stripe, redundancy, uuid,
-                      layout_algo, blockdevs.into_boxed_slice())
+                      layout, blockdevs.into_boxed_slice())
     }
 
     fn new(chunksize: LbaT,

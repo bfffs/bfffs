@@ -588,10 +588,10 @@ impl<'a> Cluster {
 
     /// Create a new `Cluster` from unused files or devices
     ///
-    /// * `chunksize`:          RAID chunksize in LBAs.  This is the largest
-    ///                         amount of data that will be read/written to a
-    ///                         single device before the `Locator` switches to
-    ///                         the next device.
+    /// * `chunksize`:          RAID chunksize in LBAs, if specified.  This is
+    ///                         the largest amount of data that will be
+    ///                         read/written to a single device before the
+    ///                         `Locator` switches to the next device.
     /// * `num_disks`:          Total number of disks in the array
     /// * `disks_per_stripe`:   Number of data plus parity chunks in each
     ///                         self-contained RAID stripe.  Must be less than
@@ -604,7 +604,7 @@ impl<'a> Cluster {
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
     #[cfg(not(test))]
-    pub fn create<P: AsRef<Path>>(chunksize: LbaT,
+    pub fn create<P: AsRef<Path>>(chunksize: Option<NonZeroU64>,
                                   num_disks: i16,
                                   disks_per_stripe: i16,
                                   lbas_per_zone: Option<NonZeroU64>,

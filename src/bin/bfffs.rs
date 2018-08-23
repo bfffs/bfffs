@@ -44,7 +44,6 @@ pub fn main(args: &clap::ArgMatches) {
 
 mod pool {
 use bfffs::common::BYTES_PER_LBA;
-use bfffs::common::LbaT;
 use bfffs::common::cache::Cache;
 use bfffs::common::database::*;
 use bfffs::common::ddml::DDML;
@@ -61,9 +60,6 @@ use tokio::{
     executor::current_thread::TaskExecutor,
     runtime::current_thread::Runtime
 };
-
-// TODO: specify CHUNKSIZE on the command line
-const CHUNKSIZE: LbaT = 16;
 
 fn create(args: &clap::ArgMatches) {
     let rt = Runtime::new().unwrap();
@@ -170,7 +166,7 @@ impl Builder {
     {
         let zone_size = self.zone_size;
         let c = self.rt.block_on(future::lazy(move || {
-            Pool::create_cluster(CHUNKSIZE, n, k, zone_size, f, devs)
+            Pool::create_cluster(None, n, k, zone_size, f, devs)
         })).unwrap();
         self.clusters.push(c);
     }
