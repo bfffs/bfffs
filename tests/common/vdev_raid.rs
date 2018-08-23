@@ -336,6 +336,50 @@ test_suite! {
                    &dbsr.try().unwrap()[0..BYTES_PER_LBA]);
     }
 
+    // Write less than an LBA at the start of a stripe
+    test write_tiny_at_start_of_stripe(raid((1, 1, 0, 1))) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 1);
+        let wbuf = dbsw.try().unwrap();
+        let wbuf_short = wbuf.slice_to(BYTES_PER_LBA * 3 / 4);
+        {
+            let mut rbuf = dbsr.try_mut().unwrap();
+            let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
+            write_read0(raid.val.0, vec![wbuf_short], vec![rbuf_short]);
+            // After write returns, the DivBufShared should no longer be needed.
+            drop(dbsw);
+        }
+        assert_eq!(&wbuf[0..BYTES_PER_LBA * 3 / 4],
+                   &dbsr.try().unwrap()[0..BYTES_PER_LBA * 3 / 4]);
+        // The remainder of the LBA should've been zero-filled
+        let zbuf = vec![0u8; BYTES_PER_LBA * 1 / 4];
+        assert_eq!(&zbuf[..],
+                   &dbsr.try().unwrap()[BYTES_PER_LBA * 3 / 4..]);
+    }
+
+    // Write a whole stripe plus a fraction of an LBA more
+    test write_stripe_and_a_bit_more(raid((1, 1, 0, 1))) {
+        let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
+                                     *raid.params.f, 2);
+        let wbuf = dbsw.try().unwrap();
+        let wcut = wbuf.len() / 2 + 1024;
+        let rcut = wbuf.len() / 2 + BYTES_PER_LBA;
+        let wbuf_short = wbuf.slice_to(wcut);
+        {
+            let mut rbuf = dbsr.try_mut().unwrap();
+            let rbuf_short = rbuf.split_to(rcut);
+            write_read0(raid.val.0, vec![wbuf_short], vec![rbuf_short]);
+            // After write returns, the DivBufShared should no longer be needed.
+            drop(dbsw);
+        }
+        assert_eq!(&wbuf[0..wcut],
+                   &dbsr.try().unwrap()[0..wcut]);
+        // The remainder of the LBA should've been zero-filled
+        let zbuf = vec![0u8; rcut - wcut];
+        assert_eq!(&zbuf[..],
+                   &dbsr.try().unwrap()[wcut..]);
+    }
+
     // Test that write_at works when directed at the middle of the StripeBuffer.
     // This test requires a chunksize > 2
     test write_partial_at_middle_of_stripe(raid((3, 3, 1, 16))) {

@@ -72,15 +72,23 @@ struct StripeBuffer {
 }
 
 impl StripeBuffer {
-    /// Store more data into this `StripeBuffer`, but don't overflow one row.
+    /// Store more data into this `StripeBuffer`.
     ///
-    /// Return the unused part of the `IoVec`
+    /// Don't overflow one row.  Do zero-pad up to the next full LBA.  Return
+    /// the unused part of the `IoVec`
     pub fn fill(&mut self, mut iovec: IoVec) -> IoVec {
         let want_bytes = self.stripesize - self.len();
         let have_bytes = iovec.len();
         let get_bytes = cmp::min(want_bytes, have_bytes);
         if get_bytes > 0 {
             self.buf.push(iovec.split_to(get_bytes));
+            let partial = get_bytes % BYTES_PER_LBA;
+            if partial != 0 {
+                debug_assert_eq!(iovec.len(), 0);
+                let remainder = BYTES_PER_LBA - partial;
+                let zbuf = ZERO_REGION.try().unwrap().slice_to(remainder);
+                self.buf.push(zbuf);
+            }
         }
         iovec
     }
@@ -710,19 +718,19 @@ impl VdevRaid {
     ///
     /// Returns `()` on success, or an error on failure
     pub fn write_at(&self, buf: IoVec, zone: ZoneT,
-                    mut lba: LbaT) -> Box<VdevFut> {
+                    mut lba: LbaT) -> impl Future<Item=(), Error=Error>
+    {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
         let stripe_len = col_len * m;
-        assert_eq!(buf.len() % BYTES_PER_LBA, 0, "Writes must be LBA-aligned");
         debug_assert_eq!(zone, self.lba2zone(lba).unwrap());
         let mut sb_ref = self.stripe_buffers.borrow_mut();
         let stripe_buffer = sb_ref.get_mut(&zone)
                                   .expect("Can't write to a closed zone");
         assert_eq!(stripe_buffer.next_lba(), lba);
 
-        let mut sb_fut = None;
+        let mut futs = Vec::<Box<Future<Item=(), Error=Error>>>::new();
         let mut buf3 = if !stripe_buffer.is_empty() ||
             buf.len() < stripe_len {
 
@@ -732,41 +740,36 @@ impl VdevRaid {
                 let stripe_lba = stripe_buffer.lba();
                 let sglist = stripe_buffer.pop();
                 lba += ((buflen - buf2.len()) / BYTES_PER_LBA) as LbaT;
-                sb_fut = Some(self.writev_at_one(&sglist, stripe_lba));
-                if buf2.is_empty() {
-                    //Special case: if we fully consumed buf, then return
-                    //immediately
-                    return Box::new(sb_fut.unwrap());
-                } else {
-                    buf2
-                }
-            } else {
-                // We didn't have enough data to fill the StripeBuffer, so
-                // return early
-                return Box::new(future::ok(()));
+                futs.push(Box::new(self.writev_at_one(&sglist, stripe_lba)));
             }
+            buf2
         } else {
             buf
         };
-        debug_assert!(stripe_buffer.is_empty());
-        let nstripes = buf3.len() / stripe_len;
-        let writable_buf = buf3.split_to(nstripes * stripe_len);
-        stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
-        if ! buf3.is_empty() {
-            let buf4 = stripe_buffer.fill(buf3);
-            debug_assert!(!stripe_buffer.is_full());
-            debug_assert!(buf4.is_empty());
+        if !buf3.is_empty() {
+            debug_assert!(stripe_buffer.is_empty());
+            let nstripes = buf3.len() / stripe_len;
+            let writable_buf = buf3.split_to(nstripes * stripe_len);
+            stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
+            if ! buf3.is_empty() {
+                let buf4 = stripe_buffer.fill(buf3);
+                if stripe_buffer.is_full() {
+                    // We can only get here if buf was within < 1 LBA of
+                    // completing a stripe
+                    let slba = stripe_buffer.lba();
+                    let sglist = stripe_buffer.pop();
+                    futs.push(Box::new(self.writev_at_one(&sglist, slba)));
+                }
+                debug_assert!(!stripe_buffer.is_full());
+                debug_assert!(buf4.is_empty());
+            }
+            futs.push(if nstripes == 1 {
+                Box::new(self.write_at_one(writable_buf, lba))
+            } else {
+                Box::new(self.write_at_multi(writable_buf, lba))
+            });
         }
-        let fut = if nstripes == 1 {
-            self.write_at_one(writable_buf, lba)
-        } else {
-            self.write_at_multi(writable_buf, lba)
-        };
-        if sb_fut.is_some() {
-            Box::new(sb_fut.unwrap().join(fut).map(|_| ()))
-        } else {
-            Box::new(fut)
-        }
+        future::join_all(futs).map(|_| ())
     }
 
     /// Write two or more whole stripes
