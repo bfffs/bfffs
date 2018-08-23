@@ -67,8 +67,8 @@ struct StripeBuffer {
     /// The LBA of the beginning of the cached stripe
     lba: LbaT,
 
-    /// Amount of data in a full stripe, in LBAs
-    stripe_lbas: LbaT,
+    /// Amount of data in a full stripe, in bytes
+    stripesize: usize,
 }
 
 impl StripeBuffer {
@@ -76,8 +76,7 @@ impl StripeBuffer {
     ///
     /// Return the unused part of the `IoVec`
     pub fn fill(&mut self, mut iovec: IoVec) -> IoVec {
-        let want_lbas = self.stripe_lbas - self.len();
-        let want_bytes = want_lbas as usize * BYTES_PER_LBA as usize;
+        let want_bytes = self.stripesize - self.len();
         let have_bytes = iovec.len();
         let get_bytes = cmp::min(want_bytes, have_bytes);
         if get_bytes > 0 {
@@ -88,8 +87,8 @@ impl StripeBuffer {
 
     /// Is the stripe buffer full?
     pub fn is_full(&self) -> bool {
-        debug_assert!(self.len() <= self.stripe_lbas);
-        self.len() == self.stripe_lbas
+        debug_assert!(self.len() <= self.stripesize);
+        self.len() == self.stripesize
     }
 
     /// The usual `is_empty` function
@@ -102,26 +101,27 @@ impl StripeBuffer {
         self.lba
     }
 
-    /// Number of LBAs worth of data contained in the buffer
-    fn len(&self) -> LbaT {
+    /// Number of bytes worth of data contained in the buffer
+    fn len(&self) -> usize {
         let bytes: usize = self.buf.iter().map(|iovec| iovec.len()).sum();
-        (bytes / BYTES_PER_LBA as usize) as LbaT
+        bytes
     }
 
     pub fn new(lba: LbaT, stripe_lbas: LbaT) -> Self {
-        StripeBuffer{ buf: SGList::new(), lba, stripe_lbas}
+        let stripesize = stripe_lbas as usize * BYTES_PER_LBA;
+        StripeBuffer{ buf: SGList::new(), lba, stripesize}
     }
 
     /// Return the value of the next LBA should be written into this buffer
     pub fn next_lba(&self) -> LbaT {
-        self.lba + self.len()
+        debug_assert_eq!(self.len() % BYTES_PER_LBA, 0);
+        self.lba + (self.len() / BYTES_PER_LBA) as LbaT
     }
 
     /// Fill the `StripeBuffer` with zeros and return the number of LBAs worth
     /// of padding.
     pub fn pad(&mut self) -> LbaT {
-        let pad_lbas = self.stripe_lbas - self.len();
-        let padlen = pad_lbas as usize * BYTES_PER_LBA;
+        let padlen = self.stripesize - self.len();
         let zero_region_len = ZERO_REGION.len();
         let zero_bufs = div_roundup(padlen, zero_region_len);
         for _ in 0..(zero_bufs - 1) {
@@ -130,7 +130,8 @@ impl StripeBuffer {
         self.fill(ZERO_REGION.try().unwrap().slice_to(
                 padlen - (zero_bufs - 1) * zero_region_len));
         debug_assert!(self.is_full());
-        pad_lbas
+        debug_assert_eq!(padlen % BYTES_PER_LBA, 0);
+        (padlen / BYTES_PER_LBA) as LbaT
     }
 
     /// Get a reference to the data contained by the `StripeBuffer`
@@ -1149,7 +1150,7 @@ fn stripe_buffer_fill_when_full() {
         assert!(sb.is_full());
         assert_eq!(sb.lba(), 99);
         assert_eq!(sb.next_lba(), 105);
-        assert_eq!(sb.len(), 6);
+        assert_eq!(sb.len(), 24576);
     }
 }
 
@@ -1163,7 +1164,7 @@ fn stripe_buffer_one_iovec() {
     assert!(!sb.is_empty());
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 100);
-    assert_eq!(sb.len(), 1);
+    assert_eq!(sb.len(), 4096);
     {
         let sglist = sb.peek();
         assert_eq!(sglist.len(), 1);
@@ -1221,7 +1222,7 @@ fn stripe_buffer_two_iovecs() {
     assert!(!sb.is_empty());
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 102);
-    assert_eq!(sb.len(), 3);
+    assert_eq!(sb.len(), 12288);
     {
         let sglist = sb.peek();
         assert_eq!(sglist.len(), 2);
@@ -1247,7 +1248,7 @@ fn stripe_buffer_two_iovecs_overflow() {
     assert!(!sb.is_empty());
     assert_eq!(sb.lba(), 99);
     assert_eq!(sb.next_lba(), 105);
-    assert_eq!(sb.len(), 6);
+    assert_eq!(sb.len(), 24576);
     {
         let sglist = sb.peek();
         assert_eq!(sglist.len(), 2);
