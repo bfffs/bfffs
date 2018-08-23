@@ -1602,6 +1602,19 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                 }).map(move |addr| {
                     let new = TreePtr::Addr(addr);
                     guard.as_int_mut().children[child_idx].ptr = new;
+                    let start = if height == 1 {
+                        // For leaves, there's only one TXG in the range
+                        txg
+                    } else {
+                        // For interior nodes, we would ideally need to check
+                        // all of the target node's children.  But that would
+                        // require a read from disk.  For now, the best we can
+                        // do is to not update the start txg.
+                        // TODO: accurately update the start txg
+                        guard.as_int().children[child_idx].txgs.start
+                    };
+                    let txgs = Range{start, end: txg + 1};
+                    guard.as_int_mut().children[child_idx].txgs = txgs;
                 });
             Box::new(fut)
         } else {

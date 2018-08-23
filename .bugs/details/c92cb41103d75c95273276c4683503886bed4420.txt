@@ -252,4 +252,8 @@ tokio::runtime::current_thread::runtime::Runtime::enter::{{closure}}::{{closure}
 
 
 [comments]
-# Comments and updates - leave your name
+By: "hg.user"
+On: Thursday, August 23 2018 03:02PM
+
+Half fixed the bug.  Now leaf nodes' txg ranges will be correctly updated.  Int
+node's TXG ends will be correctly updated, but not their starts.

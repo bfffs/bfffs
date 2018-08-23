@@ -19,12 +19,12 @@ fn basic() {
     let drpl3 = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
     // We must make two copies of in1, one for DDMLMock::get and one for ::pop
     let children1 = vec![
-        IntElem::new(4u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl2)),
+        IntElem::new(4u32, TxgT::from(31)..TxgT::from(32), TreePtr::Addr(drpl2)),
         IntElem::new(6u32, TxgT::from(20)..TxgT::from(21),
                      TreePtr::Addr(drpl3)),
     ];
     let children1_c = vec![
-        IntElem::new(4u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl2)),
+        IntElem::new(4u32, TxgT::from(31)..TxgT::from(32), TreePtr::Addr(drpl2)),
         IntElem::new(6u32, TxgT::from(20)..TxgT::from(21),
                      TreePtr::Addr(drpl3)),
     ];
@@ -148,8 +148,8 @@ root:
                 checksum: 0
           - key: 4
             txgs:
-              start: 8
-              end: 21
+              start: 20
+              end: 32
             ptr:
               Addr:
                 pba:
@@ -241,7 +241,7 @@ root:
                 checksum: 0
           - key: 4
             txgs:
-              start: 8
+              start: 20
               end: 43
             ptr:
               Mem:
@@ -249,8 +249,8 @@ root:
                   children:
                     - key: 4
                       txgs:
-                        start: 8
-                        end: 9
+                        start: 31
+                        end: 32
                       ptr:
                         Addr:
                           pba:
@@ -262,8 +262,8 @@ root:
                           checksum: 0
                     - key: 6
                       txgs:
-                        start: 20
-                        end: 21
+                        start: 42
+                        end: 43
                       ptr:
                         Addr:
                           pba:
@@ -276,7 +276,7 @@ root:
           - key: 8
             txgs:
               start: 8
-              end: 24
+              end: 43
             ptr:
               Addr:
                 pba:
@@ -306,8 +306,8 @@ root:
                               7: 7.0
                     - key: 16
                       txgs:
-                        start: 21
-                        end: 22
+                        start: 42
+                        end: 43
                       ptr:
                         Addr:
                           pba:
