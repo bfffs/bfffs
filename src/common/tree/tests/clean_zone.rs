@@ -1,6 +1,7 @@
 //! Tests regarding Tree::clean_zone
 // LCOV_EXCL_START
 
+use atomic::{Atomic, Ordering};
 use common::tree::*;
 use common::ddml_mock::*;
 use common::ddml::DRP;
@@ -106,11 +107,14 @@ fn basic() {
             });
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
         });
+    let next_lba = Atomic::<u64>::new(0);
     mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
         .called_times(3)
         .with(passes(|args: &(_, _, TxgT)| args.2 == TxgT::from(42)))
-        .returning(move |(_cacheable, _compression, _txg)| {
-            let drp = DRP::random(Compression::None, 1024);
+        .returning(move |(_cacheable, compression, _txg)| {
+            let lba = next_lba.fetch_add(1, Ordering::Relaxed);
+            let drp = DRP::new(PBA{cluster: 1, lba}, compression, 0, 0, 0);
+            //let drp = DRP::random(Compression::None, 1024);
             Box::new(Ok(drp).into_future())
         });
     let ddml = Arc::new(mock);
@@ -206,6 +210,113 @@ root:
     let end = PBA::new(0, 200);
     let txgs = TxgT::from(20)..TxgT::from(30);
     rt.block_on(tree.clean_zone(start..end, txgs, TxgT::from(42))).unwrap();
+    let clean_tree = format!("{}", tree);
+    assert_eq!(clean_tree,
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 8
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 8
+              end: 9
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 2
+                compression: None
+                lsize: 0
+                csize: 0
+                checksum: 0
+          - key: 4
+            txgs:
+              start: 8
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 4
+                      txgs:
+                        start: 8
+                        end: 9
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 3
+                          compression: None
+                          lsize: 0
+                          csize: 0
+                          checksum: 0
+                    - key: 6
+                      txgs:
+                        start: 20
+                        end: 21
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 1
+                            lba: 0
+                          compression: None
+                          lsize: 0
+                          csize: 0
+                          checksum: 0
+          - key: 8
+            txgs:
+              start: 8
+              end: 24
+            ptr:
+              Addr:
+                pba:
+                  cluster: 1
+                  lba: 2
+                compression: None
+                lsize: 0
+                csize: 0
+                checksum: 0
+          - key: 12
+            txgs:
+              start: 21
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 12
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              6: 6.0
+                              7: 7.0
+                    - key: 16
+                      txgs:
+                        start: 21
+                        end: 22
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 1
+                            lba: 1
+                          compression: None
+                          lsize: 0
+                          csize: 0
+                          checksum: 0"#);
 }
 
 // The Root node lies in the dirty zone
