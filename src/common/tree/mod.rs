@@ -684,12 +684,23 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 };
                 let child_elem = &int.children[child_idx];
                 let next_fut = if child_idx < int.nchildren() - 1 {
-                    let dml3 = dml2.clone();
-                    Box::new(
-                        int.children[child_idx + 1].rlock(dml3)
-                            .map(|guard| Some(guard))
-                    ) as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
-                                    Error=Error> + Send>
+                    let next_key = int.children[child_idx + 1].key;
+                    if match range.end_bound() {
+                        Bound::Included(x) => next_key.borrow() <= x,
+                        Bound::Excluded(x) => next_key.borrow() < x,
+                        Bound::Unbounded => true
+                    } {
+                        let dml3 = dml2.clone();
+                        Box::new(
+                            int.children[child_idx + 1].rlock(dml3)
+                                .map(|guard| Some(guard))
+                        ) as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
+                                        Error=Error> + Send>
+                    } else {
+                        Box::new(Ok(None).into_future())
+                            as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
+                                          Error=Error> + Send>
+                    }
                 } else {
                     Box::new(Ok(next_guard).into_future())
                         as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
