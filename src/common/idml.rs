@@ -197,8 +197,9 @@ impl<'a> IDML {
                 // NB: on a cache miss, this will result in decompressing and
                 // recompressing the record, which is inefficient.
                 let compression = entry.drp.compression();
-                ddml3.put_direct(*buf, compression, txg)
-                    .map(move |(drp, _cacheable)| (entry, drp))
+                let db = buf.try().unwrap();
+                ddml3.put_direct(&db, compression, txg)
+                    .map(move |drp| (entry, drp))
             }).and_then(move |(mut entry, drp)| {
                 entry.drp = drp;
                 let ridt_fut = trees2.ridt.insert(rid, entry, txg);
@@ -393,9 +394,9 @@ impl DML for IDML {
         Box::new(fut)
     }
 
-    fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
-                             txg: TxgT)
+    fn put<T>(&self, cacheable: T, compression: Compression, txg: TxgT)
         -> Box<Future<Item=Self::Addr, Error=Error> + Send>
+        where T: Cacheable
     {
         // Outline:
         // 1) Write to the DDML
@@ -406,8 +407,8 @@ impl DML for IDML {
         let trees2 = self.trees.clone();
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
 
-        let fut = self.ddml.put_direct(cacheable, compression, txg)
-        .and_then(move|(drp, cacheable)| {
+        let fut = self.ddml.put_direct(&cacheable.make_ref(), compression, txg)
+        .and_then(move|drp| {
             let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
             let rid_entry = RidtEntry::new(drp);
             let ridt_fut = trees2.ridt.insert(rid, rid_entry, txg);
@@ -669,10 +670,10 @@ mod t {
                 let r = DivBufShared::from(&dbs.try().unwrap()[..]);
                 Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
             });
-        ddml.expect_put_direct::<DivBufShared>()
+        ddml.expect_put_direct::<DivBuf>()
             .called_once()
-            .returning(move |(buf, _, _)|
-                       Box::new(Ok((drp1, buf)).into_future())
+            .returning(move |(_, _, _)|
+                       Box::new(Ok(drp1).into_future())
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -708,10 +709,10 @@ mod t {
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
-        ddml.expect_put_direct::<DivBufShared>()
+        ddml.expect_put_direct::<DivBuf>()
             .called_once()
-            .returning(move |(buf, _, _)|
-                       Box::new(Ok((drp1, buf)).into_future())
+            .returning(move |(_, _, _)|
+                       Box::new(Ok(drp1).into_future())
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -868,10 +869,10 @@ mod t {
             .called_once()
             .with(params!(Key::Rid(rid), any()))
             .returning(|_| ());
-        ddml.expect_put_direct::<DivBufShared>()
+        ddml.expect_put_direct::<Box<CacheRef>>()
             .called_once()
-            .returning(move |(buf, _, _)|
-                       Box::new(Ok((drp, buf)).into_future())
+            .returning(move |(_, _, _)|
+                       Box::new(Ok(drp).into_future())
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));

@@ -1,11 +1,13 @@
 // vim: tw=80
 // LCOV_EXCL_START
 use common::{Error, LbaT, TxgT};
+use common::cache::{Cacheable, CacheRef};
 use common::dml::*;
 use common::ddml::*;
 use common::label::*;
 use futures::{Future, Stream};
 use simulacrum::*;
+use std::borrow::Borrow;
 
 pub struct DDMLMock {
     e: Expectations
@@ -113,21 +115,23 @@ impl DDMLMock {
             ("pop_direct")
     }
 
-    pub fn put_direct<T: Cacheable>(&self, cacheable: T,
-                                    compression: Compression, txg: TxgT)
-        -> Box<Future<Item=(DRP, T), Error=Error> + Send>
+    pub fn put_direct<T>(&self, cacheref: &T, compression: Compression,
+                         txg: TxgT)
+        -> Box<Future<Item=DRP, Error=Error> + Send>
+        where T: Borrow<CacheRef> + 'static
     {
-        self.e.was_called_returning::<(T, Compression, TxgT),
-            Box<Future<Item=(DRP, T), Error=Error> + Send>>
-            ("put_direct", (cacheable, compression, txg))
+        let ptr = cacheref as *const T;
+        self.e.was_called_returning::<(*const T, Compression, TxgT),
+            Box<Future<Item=DRP, Error=Error> + Send>>
+            ("put_direct", (ptr, compression, txg))
     }
 
-    pub fn expect_put_direct<T: Cacheable>(&mut self)
-        -> Method<(T, Compression, TxgT),
-        Box<Future<Item=(DRP, T), Error=Error> + Send>>
+    pub fn expect_put_direct<T>(&mut self) -> Method<(*const T, Compression, TxgT),
+        Box<Future<Item=DRP, Error=Error> + Send>>
+        where T: Borrow<CacheRef> + 'static
     {
-        self.e.expect::<(T, Compression, TxgT),
-                        Box<Future<Item=(DRP, T), Error=Error> + Send>>
+        self.e.expect::<(*const T, Compression, TxgT),
+                        Box<Future<Item=DRP, Error=Error> + Send>>
             ("put_direct")
     }
 

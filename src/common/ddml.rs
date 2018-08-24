@@ -14,7 +14,11 @@ use common::{
 use futures::{Future, Stream, future, stream};
 use metrohash::MetroHash64;
 #[cfg(test)] use rand::{self, Rng};
-use std::{hash::Hasher, sync::{Arc, Mutex} };
+use std::{
+    borrow,
+    hash::Hasher,
+    sync::{Arc, Mutex}
+};
 #[cfg(all(test, feature = "mocks"))] use simulacrum::*;
 #[cfg(test)] use uuid::Uuid;
 
@@ -305,10 +309,10 @@ impl DDML {
     }
 
     /// Does most of the work of DDML::put
-    fn put_common<T>(&self, cacheable: T, compression: Compression,
+    fn put_common<T>(&self, cacheref: &T, compression: Compression,
                      txg: TxgT)
-        -> impl Future<Item=(DRP, T), Error=Error>
-        where T:Cacheable
+        -> impl Future<Item=DRP, Error=Error>
+        where T: borrow::Borrow<CacheRef>
     {
         // Outline:
         // 1) Serialize
@@ -318,7 +322,7 @@ impl DDML {
         // 5) Cache
 
         // Serialize
-        let serialized = cacheable.serialize();
+        let serialized = cacheref.borrow().serialize();
         assert!(serialized.len() < u32::max_value() as usize,
             "Record exceeds maximum allowable length");
         let lsize = serialized.len() as u32;
@@ -343,18 +347,17 @@ impl DDML {
         // Write
         self.pool.write(compressed_db, txg)
         .map(move |pba| {
-            let drp = DRP { pba, compression, lsize, csize, checksum };
-            (drp, cacheable)
+            DRP { pba, compression, lsize, csize, checksum }
         })
     }
 
     /// Write a buffer bypassing cache.  Return the same buffer
-    pub fn put_direct<T>(&self, cacheable: T, compression: Compression,
+    pub fn put_direct<T>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
-        -> impl Future<Item=(DRP, T), Error=Error>
-        where T:Cacheable
+        -> impl Future<Item=DRP, Error=Error>
+        where T: borrow::Borrow<CacheRef>
     {
-        self.put_common(cacheable, compression, txg)
+        self.put_common(cacheref, compression, txg)
     }
 
     /// Return approximately the usable storage space in LBAs.
@@ -426,8 +429,9 @@ impl DML for DDML {
         -> Box<Future<Item=DRP, Error=Error> + Send>
     {
         let cache2 = self.cache.clone();
-        let fut = self.put_common(cacheable, compression, txg)
-            .map(move |(drp, cacheable)|{
+        let db = cacheable.make_ref();//.downcast::<DivBuf>().unwrap();
+        let fut = self.put_common(&db, compression, txg)
+            .map(move |drp|{
                 let pba = drp.pba();
                 cache2.lock().unwrap()
                     .insert(Key::PBA(pba), Box::new(cacheable));
@@ -847,9 +851,10 @@ mod t {
         let pool_wrapper = MockPoolWrapper(Box::new(pool));
         let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let db = Box::new(dbs.try().unwrap()) as Box<CacheRef>;
         let mut rt = current_thread::Runtime::new().unwrap();
-        let (drp, _cacheable) = rt.block_on(
-            ddml.put_direct(dbs, Compression::None, txg)
+        let drp = rt.block_on(
+            ddml.put_direct(&db, Compression::None, txg)
         ).unwrap();
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);

@@ -2,8 +2,12 @@
 use common::*;
 use downcast::Any;
 use metrohash::{MetroBuildHasher, MetroHash64};
-use std::{collections::HashMap, fmt::Debug, hash::BuildHasherDefault};
-
+use std::{
+    borrow::Borrow,
+    collections::HashMap,
+    fmt::Debug,
+    hash::BuildHasherDefault
+};
 
 /// Key types used by `Cache`
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -33,9 +37,6 @@ pub trait Cacheable: Any + Debug + Send + Sync {
     /// The cache must be locked between calling `safe_to_expire` and `expire`
     fn safe_to_expire(&self) -> bool;
 
-    /// Serialize to a `DivBuf`.
-    fn serialize(&self) -> DivBuf;
-
     /// Truncate this `Cacheable` down to the given size.
     ///
     /// This is mainly useful to correct padding that had to be added before
@@ -50,6 +51,9 @@ pub trait CacheRef: Any + Send {
     /// Deserialize a buffer into the kind of `Cacheable` that's associated with
     /// this `CacheRef`.  Will panic if deserialization fails.
     fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized;
+
+    /// Serialize to a `DivBuf`.
+    fn serialize(&self) -> DivBuf;
 
     /// Convert this shared `CacheRef` into an owned `Cacheable`, which may or
     /// may not involve copying
@@ -75,10 +79,6 @@ impl Cacheable for DivBufShared {
         self.try_mut().is_ok()
     }
 
-    fn serialize(&self) -> DivBuf {
-        self.try().unwrap()
-    }
-
     fn truncate(&self, len: usize) {
         self.try_mut().unwrap().try_truncate(len).unwrap();
     }
@@ -89,8 +89,18 @@ impl CacheRef for DivBuf {
         Box::new(dbs)
     }
 
+    fn serialize(&self) -> DivBuf {
+        self.clone()
+    }
+
     fn to_owned(self) -> Box<Cacheable> {
         Box::new(DivBufShared::from(self[..].to_vec()))
+    }
+}
+
+impl Borrow<CacheRef> for DivBuf {
+    fn borrow(&self) -> &CacheRef {
+        self as &CacheRef
     }
 }
 

@@ -674,15 +674,6 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
         true    // The Arc guarantees that we can expire at any time
     }
 
-    fn serialize(&self) -> DivBuf {
-        let g = self.0.try_read().expect(
-            "Shouldn't be serializing a Node that's locked for writing");
-        let v = bincode::serialize(&g.deref()).unwrap();
-        let dbs = DivBufShared::from(v);
-        let db = dbs.try().unwrap();
-        db
-    }
-
     fn truncate(&self, _len: usize) {
         panic!("Can't truncate or resize an unserialized Node");
     }
@@ -694,6 +685,15 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
         let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
         let node = Arc::new(Node(RwLock::new(node_data)));
         Box::new(node)
+    }
+
+    fn serialize(&self) -> DivBuf {
+        let g = self.0.try_read().expect(
+            "Shouldn't be serializing a Node that's locked for writing");
+        let v = bincode::serialize(&g.deref()).unwrap();
+        let dbs = DivBufShared::from(v);
+        let db = dbs.try().unwrap();
+        db
     }
 
     fn to_owned(self) -> Box<Cacheable> {
