@@ -314,12 +314,11 @@ impl DDML {
         // 1) Serialize
         // 2) Compress
         // 3) Checksum
-        // 4) Pad
-        // 5) Write
-        // 6) Cache
+        // 4) Write
+        // 5) Cache
 
         // Serialize
-        let (serialized, zero_copy) = cacheable.serialize();
+        let serialized = cacheable.serialize();
         assert!(serialized.len() < u32::max_value() as usize,
             "Record exceeds maximum allowable length");
         let lsize = serialized.len() as u32;
@@ -341,29 +340,9 @@ impl DDML {
         checksum_iovec(&compressed_db, &mut hasher);
         let checksum = hasher.finish();
 
-        // Pad
-        let asize = div_roundup(csize as usize, BYTES_PER_LBA);
-        let compressed_db = if asize * BYTES_PER_LBA != csize as usize {
-            let mut dbm = compressed_db.try_mut().unwrap();
-            dbm.try_resize(asize * BYTES_PER_LBA, 0).unwrap();
-            dbm.freeze()
-        } else {
-            compressed_db
-        };
-
         // Write
         self.pool.write(compressed_db, txg)
         .map(move |pba| {
-            if compression == Compression::None {
-                // Truncate uncompressed DivBufShareds.  We padded them in the
-                // previous step
-                if zero_copy {
-                    // Unpad the cacheable before we cache it.
-                    cacheable.truncate(csize as usize);
-                } else {
-                    // The serialized buffer is temporary.  No need to unpad it.
-                }
-            }
             let drp = DRP { pba, compression, lsize, csize, checksum };
             (drp, cacheable)
         })
@@ -826,6 +805,32 @@ mod t {
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
+    }
+
+    #[test]
+    fn put_partial_lba() {
+        let s = Scenario::new();
+        let mut cache = Cache::new();
+        let pba = PBA::default();
+        cache.expect_insert()
+            .called_once()
+            .with(params!(Key::PBA(pba), any()))
+            .returning(|_| ());
+        let pool = s.create_mock::<MockPool>();
+        s.expect(pool.write_call(ANY, TxgT::from(42))
+            .and_return(Box::new(future::ok::<PBA, Error>(pba)))
+        );
+
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
+        let dbs = DivBufShared::from(vec![42u8; 1024]);
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let drp = rt.block_on(
+            ddml.put(dbs, Compression::None, TxgT::from(42))
+        ).unwrap();
+        assert_eq!(drp.pba, pba);
+        assert_eq!(drp.csize, 1024);
+        assert_eq!(drp.lsize, 1024);
     }
 
     #[test]

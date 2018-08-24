@@ -742,7 +742,7 @@ impl<'a> Cluster {
         //    that
         // 3) If that doesn't work, return ENOSPC
         // 4) write to the vdev
-        let space = (buf.len() / BYTES_PER_LBA) as LbaT;
+        let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
         let (alloc_result, nearly_full_zones) =
             self.fsm.borrow_mut().try_allocate(space);
         let finish_futs = close_zones!(self, &nearly_full_zones, txg);

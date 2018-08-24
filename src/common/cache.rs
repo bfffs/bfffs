@@ -33,10 +33,8 @@ pub trait Cacheable: Any + Debug + Send + Sync {
     /// The cache must be locked between calling `safe_to_expire` and `expire`
     fn safe_to_expire(&self) -> bool;
 
-    /// Serialize to a `DivBuf`.  If serialization was a zero-copy operation,
-    /// then the second return value will be `true`.  Otherwise, the second
-    /// value will be `false`.
-    fn serialize(&self) -> (DivBuf, bool);
+    /// Serialize to a `DivBuf`.
+    fn serialize(&self) -> DivBuf;
 
     /// Truncate this `Cacheable` down to the given size.
     ///
@@ -77,8 +75,8 @@ impl Cacheable for DivBufShared {
         self.try_mut().is_ok()
     }
 
-    fn serialize(&self) -> (DivBuf, bool) {
-        (self.try().unwrap(), true)
+    fn serialize(&self) -> DivBuf {
+        self.try().unwrap()
     }
 
     fn truncate(&self, len: usize) {

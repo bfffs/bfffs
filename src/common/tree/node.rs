@@ -674,13 +674,13 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
         true    // The Arc guarantees that we can expire at any time
     }
 
-    fn serialize(&self) -> (DivBuf, bool) {
+    fn serialize(&self) -> DivBuf {
         let g = self.0.try_read().expect(
             "Shouldn't be serializing a Node that's locked for writing");
         let v = bincode::serialize(&g.deref()).unwrap();
         let dbs = DivBufShared::from(v);
         let db = dbs.try().unwrap();
-        (db, false)
+        db
     }
 
     fn truncate(&self, _len: usize) {
@@ -831,7 +831,7 @@ fn serialize_int() {
     ];
     let node_data = NodeData::Int(IntData::new(children));
     let node: Node<DRP, u32, u32> = Node(RwLock::new(node_data));
-    let (db, _dbs) = Arc::new(node).serialize();
+    let db = Arc::new(node).serialize();
     assert_eq!(&expected[..], &db[..]);
     drop(db);
 }
@@ -850,7 +850,7 @@ fn serialize_leaf() {
     items.insert(99, 50_000);
     let node: Arc<Node<DRP, u32, u32>> =
         Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
-    let (db, _dbs) = node.serialize();
+    let db = node.serialize();
     assert_eq!(&expected[..], &db[..]);
     drop(db);
 }
