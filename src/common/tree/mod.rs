@@ -1493,18 +1493,11 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                     child.ptr.as_addr().pba() >= pbas.start &&
                     child.ptr.as_addr().pba() < pbas.end
                 {
-                    if height == 1 {
-                        assert!(ranges_overlap(&txgs, &child.txgs),
-                            "Child node's TXG range {:?} did not overlap the query range {:?}",
-                            &child.txgs, &txgs);
-                    }
+                    assert!(ranges_overlap(&txgs, &child.txgs),
+                        "Node's PBA {:?} resides in the query range {:?} but its TXG range {:?} does not overlap the query range {:?}",
+                        child.ptr.as_addr().pba(), &pbas, &child.txgs, &txgs);
                     Some(NodeId{height: height - 1, key: child.key})
                 } else {
-                    if height == 1 {
-                        assert!(!ranges_overlap(&txgs, &child.txgs),
-                        "Child node's TXG range {:?} overlapped the query range {:?}, but did not have blocks in the PBA range {:?}",
-                            &child.txgs, &txgs, &pbas);
-                    }
                     None
                 }
             }).collect::<VecDeque<_>>();

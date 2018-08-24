@@ -203,6 +203,19 @@ root:
                           lsize: 0
                           csize: 0
                           checksum: 0
+                    - key: 20   # Leaf node in TXG range but not in PBA range
+                      txgs:
+                        start: 29
+                        end: 30
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 200
+                          compression: None
+                          lsize: 0
+                          csize: 0
+                          checksum: 0
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -313,6 +326,19 @@ root:
                           pba:
                             cluster: 1
                             lba: 1
+                          compression: None
+                          lsize: 0
+                          csize: 0
+                          checksum: 0
+                    - key: 20
+                      txgs:
+                        start: 29
+                        end: 30
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 200
                           compression: None
                           lsize: 0
                           csize: 0
