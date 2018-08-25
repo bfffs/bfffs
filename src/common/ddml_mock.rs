@@ -37,6 +37,22 @@ impl DDMLMock {
             ("delete")
     }
 
+    pub fn delete_direct(&self, drp: &DRP, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        self.e.was_called_returning::<(*const DRP, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>
+            ("delete_direct", (drp as *const DRP, txg))
+    }
+
+    pub fn expect_delete_direct(&mut self) -> Method<(*const DRP, TxgT),
+        Box<Future<Item=(), Error=Error> + Send>>
+    {
+        self.e.expect::<(*const DRP, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>
+            ("delete_direct")
+    }
+
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const DRP,
         Box<Future<Item=Box<R>, Error=Error> + Send>>
     {

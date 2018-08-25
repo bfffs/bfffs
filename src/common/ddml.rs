@@ -198,6 +198,13 @@ impl DDML {
         self.pool.allocated()
     }
 
+    /// Free a record's storage, ignoring the Cache
+    pub fn delete_direct(&self, drp: &DRP, _txg: TxgT)
+        -> impl Future<Item=(), Error=Error> + Send
+    {
+        self.pool.free(drp.pba, drp.asize())
+    }
+
     pub fn new(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
         DDML{pool: Arc::new(pool), cache}
     }

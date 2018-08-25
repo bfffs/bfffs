@@ -182,7 +182,8 @@ impl<'a> IDML {
                     .map(|t: Box<CacheRef>| {
                         let r = Box::new(t.serialize());
                         Box::new(
-                            future::ok::<Box<DivBuf>, Error>(r)
+                            ddml2.delete_direct(&entry.drp, txg)
+                                .map(|_| r)
                         ) as MyFut
                     })
                     .unwrap_or_else(|| {
@@ -190,7 +191,7 @@ impl<'a> IDML {
                         // it were a DivBufShared.  This skips deserialization
                         // and works perfectly fine with put_direct
                         Box::new(
-                            ddml2.get_direct::<DivBufShared>(&entry.drp)
+                            ddml2.pop_direct::<DivBufShared>(&entry.drp)
                             .map(|dbs| Box::new(dbs.try().unwrap()))
                         ) as MyFut
                     }).map(move |buf| (entry, buf))
@@ -206,7 +207,7 @@ impl<'a> IDML {
                 let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
                 ridt_fut.join(alloct_fut)
             }).map(|_| ())
-            // TODO: free the old record
+            // TODO: remove the old record from the alloct
     }
 
     /// Return approximately the usable storage space in LBAs.
@@ -663,7 +664,7 @@ mod t {
             })).returning(move |_| {
                 None
             });
-        ddml.expect_get_direct()
+        ddml.expect_pop_direct()
             .called_once()
             .with(passes(move |key: &*const DRP| {
                 unsafe {**key == drp0}
@@ -715,6 +716,13 @@ mod t {
             .returning(move |(_, _, _)|
                        Box::new(Ok(drp1).into_future())
             );
+        ddml.expect_delete_direct()
+            .called_once()
+            .with(passes(move |(key, _txg): &(*const DRP, TxgT)| {
+                unsafe {**key == drp0}
+            })).returning(move |_| {
+                Box::new(future::ok::<(), Error>(()))
+            });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
