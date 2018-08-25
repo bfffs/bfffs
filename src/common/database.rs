@@ -6,6 +6,7 @@
 //! also owns the Forest and manages Transactions.
 
 use common::*;
+use common::cleaner::*;
 use common::dataset::*;
 use common::dml::DML;
 use common::fs_tree::*;
@@ -193,13 +194,21 @@ impl Inner {
 }
 
 pub struct Database {
+    cleaner: Cleaner,
     inner: Arc<Inner>,
     syncer: Syncer
 }
 
 impl Database {
+    /// Immediately clean closed zones, in the background
+    pub fn clean(&self) -> impl Future<Item=(), Error=Error> {
+        self.cleaner.clean()
+    }
+
     /// Construct a new `Database` from its `IDML`.
-    pub fn create<E: Executor + 'static>(idml: Arc<IDML>, handle: E) -> Self {
+    pub fn create<E>(idml: Arc<IDML>, handle: E) -> Self
+        where E: Clone + Executor + 'static
+    {
         let forest = ITree::create(idml.clone());
         Database::new(idml, forest, handle)
     }
@@ -271,12 +280,13 @@ impl Database {
 
     fn new<E>(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>, handle: E)
         -> Self
-        where E: Executor + 'static
+        where E: Clone + Executor + 'static
     {
+        let cleaner = Cleaner::new(handle.clone(), idml.clone(), None);
         let fs_trees = Mutex::new(BTreeMap::new());
         let inner = Arc::new(Inner{fs_trees, idml, forest});
         let syncer = Syncer::new(handle, inner.clone());
-        Database{inner, syncer}
+        Database{cleaner, inner, syncer}
     }
 
     /// Open an existing `Database`
@@ -288,7 +298,7 @@ impl Database {
     ///                     prior to this layer.
     pub fn open<E>(idml: Arc<IDML>, handle: E, mut label_reader: LabelReader)
         -> Self
-        where E: Executor + 'static
+        where E: Clone + Executor + 'static
     {
         let l: Label = label_reader.deserialize().unwrap();
         let forest = Tree::open(idml.clone(), l.forest).unwrap();

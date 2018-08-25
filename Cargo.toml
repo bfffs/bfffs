@@ -43,6 +43,7 @@ time = "0.1"	# needed for FUSE
 tokio = "0.1.7"
 tokio-file = "0.3.0"
 tokio-io-pool = "0.1"
+tokio-signal = "0.2.2"
 uuid = { version = "0.6", features = ["serde", "v4"]}
 
 [dependencies.clap]
@@ -72,3 +73,4 @@ members = ["isa-l"]
 [patch.crates-io]
 simulacrum_mock = { git = "https://github.com/asomers/simulacrum/", rev = "4be48c4" }
 bitfield = { git = "https://github.com/dzamlo/rust-bitfield.git", rev = "233c81a" }
+tokio-signal = { git = "https://github.com/asomers/tokio-signal.git", rev = "0fcca68"}

@@ -30,7 +30,7 @@ pub struct DevManager {
 impl DevManager {
     /// Import a pool by its UUID
     #[cfg(not(test))]
-    pub fn import<E: Executor + 'static>(&self, uuid: Uuid, handle: E)
+    pub fn import<E: Clone + Executor + 'static>(&self, uuid: Uuid, handle: E)
         -> impl Future<Item = database::Database, Error = Error>
     {
         let (_pool, raids, mut leaves) = {
