@@ -105,6 +105,8 @@ impl<'a> IDML {
         }).and_then(move |_| {
             let txgs2 = zone.txgs.clone();
             let czfut = trees3.ridt.clean_zone(zone.pba..end, txgs2, txg);
+            //TODO: delete the old range of PBAs from the alloct, before
+            //cleaning the alloct
             let atfut = trees3.alloct.clean_zone(zone.pba..end, zone.txgs, txg);
             czfut.join(atfut).map(|_| ())
         })
@@ -207,7 +209,6 @@ impl<'a> IDML {
                 let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
                 ridt_fut.join(alloct_fut)
             }).map(|_| ())
-            // TODO: remove the old record from the alloct
     }
 
     /// Return approximately the usable storage space in LBAs.
@@ -272,8 +273,6 @@ impl DML for IDML {
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
         let trees2 = self.trees.clone();
-        //let alloct2 = self.alloct.clone();
-        //let ridt2 = self.ridt.clone();
         let rid = *ridp;
         let fut = self.trees.ridt.get(rid)
             .and_then(|r| {
@@ -285,8 +284,7 @@ impl DML for IDML {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
                     cache2.lock().unwrap().remove(&Key::Rid(rid));
-                    // TODO: usd ddml.delete_direct
-                    let ddml_fut = ddml2.delete(&entry.drp, txg);
+                    let ddml_fut = ddml2.delete_direct(&entry.drp, txg);
                     let alloct_fut = trees2.alloct.remove(entry.drp.pba(), txg);
                     let ridt_fut = trees2.ridt.remove(rid, txg);
                     Box::new(
@@ -496,7 +494,7 @@ mod t {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
         let mut ddml = DDML::new();
-        ddml.expect_delete()
+        ddml.expect_delete_direct()
             .called_once()
             .with(passes(move |args: &(*const DRP, TxgT)|
                          unsafe {*args.0 == drp} && args.1 == TxgT::from(42))
