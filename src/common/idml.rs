@@ -167,7 +167,7 @@ impl<'a> IDML {
                    rid: RID, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
     {
-        type MyFut = Box<Future<Item=Box<DivBuf>, Error=Error> + Send>;
+        type MyFut = Box<Future<Item=DRP, Error=Error> + Send>;
 
         // Even if the cache contains the target record, we must also do an RIDT
         // lookup because we're going to rewrite the RIDT
@@ -177,38 +177,42 @@ impl<'a> IDML {
         let trees2 = trees.clone();
         trees.ridt.get(rid)
             .and_then(move |v| {
-                let entry = v.expect(
+                let mut entry = v.expect(
                     "Inconsistency in alloct.  Entry not found in RIDT");
+                let compression = entry.drp.compression();
                 let guard = cache2.lock().unwrap();
-                guard.get_ref(&Key::Rid(rid))
+                let fut = guard.get_ref(&Key::Rid(rid))
                     .map(|t: Box<CacheRef>| {
-                        let r = Box::new(t.serialize());
-                        Box::new(
-                            ddml2.delete_direct(&entry.drp, txg)
-                                .map(|_| r)
-                        ) as MyFut
+                        // Cache hit: delete the old record while writing the
+                        // new one.
+                        let delete_fut = ddml2.delete_direct(&entry.drp, txg);
+                        let db = t.serialize();
+                        let put_fut = ddml2.put_direct(&db, compression, txg);
+                        let fut = delete_fut.join(put_fut).map(|(_, drp)| drp);
+                        Box::new(fut) as MyFut
                     })
-                    .unwrap_or_else(|| {
+                    .unwrap_or_else(move || {
+                        // Cache miss: pop the old record, then write the new
+                        // one.
                         // Even if the record is a Tree node, get it as though
                         // it were a DivBufShared.  This skips deserialization
                         // and works perfectly fine with put_direct
-                        Box::new(
-                            ddml2.pop_direct::<DivBufShared>(&entry.drp)
-                            .map(|dbs| Box::new(dbs.try().unwrap()))
-                        ) as MyFut
-                    }).map(move |buf| (entry, buf))
-            }).and_then(move |(entry, buf): (RidtEntry, Box<DivBuf>)| {
-                // NB: on a cache miss, this will result in decompressing and
-                // recompressing the record, which is inefficient.
-                let compression = entry.drp.compression();
-                ddml3.put_direct(&*buf, compression, txg)
-                    .map(move |drp| (entry, drp))
-            }).and_then(move |(mut entry, drp)| {
-                entry.drp = drp;
-                let ridt_fut = trees2.ridt.insert(rid, entry, txg);
-                let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
-                ridt_fut.join(alloct_fut)
-            }).map(|_| ())
+                        // NB: this will result in decompressing and
+                        // recompressing the record, which is inefficient.
+                        let fut = ddml2.pop_direct::<DivBufShared>(&entry.drp)
+                            .and_then(move |dbs| {
+                                let db = dbs.try().unwrap();
+                                ddml3.put_direct(&db, compression, txg)
+                            });
+                        Box::new(fut) as MyFut
+                    });
+                fut.and_then(move |drp: DRP| {
+                    entry.drp = drp;
+                    let ridt_fut = trees2.ridt.insert(rid, entry, txg);
+                    let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
+                    ridt_fut.join(alloct_fut)
+                }).map(|_| ())
+            })
     }
 
     /// Return approximately the usable storage space in LBAs.
