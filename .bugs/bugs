@@ -3,5 +3,5 @@ IDML::move_record shouldn't decompress records read from disk | owner:"hg.user",
 Eliminate StripeBuffer for NullRaid                          | owner:"hg.user", open:False, id:2de8809213ad39011fc4244722cd80db2d73a48a, time:1535047502.28
 DowncastError ONLY ON NIGHTLY                                | owner:"hg.user", open:True, id:529defe6770c6591f6a7a1d8ff32d259993917a4, time:1535047452.46
 DDML::put_common tries to truncate DivBufShares that are still referenced | owner:"hg.user", open:False, id:709377ba5f51040cacb7f3e922d469400bfe422a, time:1535047528.71
-IDML::move_record tries to read cache values as wrong type   | owner:"hg.user", open:True, id:ba2b5032c8b6c39c47e347b8ca78a7d16b5841b6, time:1535047396.36
+IDML::move_record tries to read cache values as wrong type   | owner:"hg.user", open:False, id:ba2b5032c8b6c39c47e347b8ca78a7d16b5841b6, time:1535047396.36
 Tree::rewrite_node doesn't update node's TXG range           | owner:"hg.user", open:True, id:c92cb41103d75c95273276c4683503886bed4420, time:1535045181.12

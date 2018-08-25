@@ -22,6 +22,17 @@ impl CacheMock {
         self.e.expect::<*const Key, Option<Box<T>>>("get")
     }
 
+    pub fn get_ref(&self, key: &Key) -> Option<Box<CacheRef>> {
+        self.e.was_called_returning::<*const Key, Option<Box<CacheRef>>>
+            ("get_ref", key as *const Key)
+    }
+
+    pub fn expect_get_ref(&mut self)
+        -> Method<*const Key, Option<Box<CacheRef>>>
+    {
+        self.e.expect::<*const Key, Option<Box<CacheRef>>>("get_ref")
+    }
+
     pub fn insert(&mut self, key: Key, buf: Box<Cacheable>) {
         self.e.was_called_returning::<(Key, Box<Cacheable>), ()>
             ("insert", (key, buf))

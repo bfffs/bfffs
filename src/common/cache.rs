@@ -180,6 +180,17 @@ impl Cache {
         }
     }
 
+    /// Get a read-only generic reference to a cached block.
+    ///
+    /// The returned reference will not be downcastted to a concrete type, and
+    /// the cache's internal state will not be updated.  That is, this method
+    /// does not count as an access for the cache replacement algorithm.
+    pub fn get_ref(&self, key: &Key) -> Option<Box<CacheRef>> {
+        self.store.get(key).map(|v| {
+            v.buf.make_ref()
+        })
+    }
+
     /// Add a new block to the cache.
     ///
     /// The block will be marked as the most recently used.
@@ -403,6 +414,47 @@ fn test_get_nonexistent() {
     let mut cache = Cache::with_capacity(100);
     let key = Key::Rid(RID(0));
     assert!(cache.get::<DivBuf>(&key).is_none());
+}
+
+/// Cache::get_ref on an entry in the middle.  Its position in the list should
+/// not be changed.
+#[test]
+fn test_get_ref_middle() {
+    let mut cache = Cache::with_capacity(100);
+    let key1 = Key::Rid(RID(1));
+    let key2 = Key::Rid(RID(2));
+    let key3 = Key::Rid(RID(3));
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
+    cache.insert(key1, dbs);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
+    cache.insert(key2, dbs);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 11]));
+    cache.insert(key3, dbs);
+
+    let r = cache.get_ref(&key2).unwrap().downcast::<DivBuf>().unwrap();
+    assert_eq!(r.len(), 7);
+    assert_eq!(cache.mru, Some(key3));
+    assert_eq!(cache.lru, Some(key1));
+    {
+        let v = cache.store.get(&key1).unwrap();
+        assert_eq!(v.mru, Some(key2));
+    }
+    {
+        let v = cache.store.get(&key2).unwrap();
+        assert_eq!(v.lru, Some(key1));
+        assert_eq!(v.mru, Some(key3));
+    }
+    {
+        let v = cache.store.get(&key3).unwrap();
+        assert_eq!(v.lru, Some(key2));
+    }
+}
+
+#[test]
+fn test_get_ref_nonexistent() {
+    let cache = Cache::with_capacity(100);
+    let key = Key::Rid(RID(0));
+    assert!(cache.get_ref(&key).is_none());
 }
 
 /// Insert a duplicate value
