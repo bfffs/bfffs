@@ -454,7 +454,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn fix_if_in_danger<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
         parent: TreeWriteGuard<A, K, V>, child_idx: usize,
         child: TreeWriteGuard<A, K, V>, range: R, ubound: Option<K>, txg: TxgT)
-        -> Box<Future<Item=(TreeWriteGuard<A, K, V>, i8, i8), Error=Error>>
+        -> Box<Future<Item=(TreeWriteGuard<A, K, V>, i8, i8), Error=Error> +
+               Send>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + 'static,
               T: Ord + Clone + 'static + Debug
@@ -790,9 +791,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Delete a range of keys
     pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + 'static,
+              R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
         // Outline:
@@ -904,15 +905,15 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// this one, unless this is the rightmost Node on its level.
     fn range_delete_pass1<R, T>(dml: Arc<D>, mut guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>, txg: TxgT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + 'static,
+              R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
         if guard.is_leaf() {
             guard.as_leaf_mut().range_delete(range);
             return Box::new(Ok(()).into_future())
-                as Box<Future<Item=(), Error=Error>>;
+                as Box<Future<Item=(), Error=Error> + Send>;
         }
 
         // We must recurse into at most two children (at the limits of the
@@ -924,7 +925,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                                           ubound);
         let dml2 = dml.clone();
         let dml3 = dml.clone();
-        let fut: Box<Future<Item=TreeWriteGuard<A, K, V>, Error=Error>>
+        let fut: Box<Future<Item=TreeWriteGuard<A, K, V>, Error=Error> + Send>
             = match (start_idx_bound, end_idx_bound) {
             (Bound::Included(_), Bound::Excluded(_)) => {
                 // Don't recurse
@@ -1024,9 +1025,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn range_delete_pass2<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
                                 guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error>>
+        -> Box<Future<Item=(), Error=Error> + Send>
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + 'static,
+              R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
         // Outline:
@@ -1089,18 +1090,20 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                              child_ubound, txg)
                         .map(move |_| (parent_guard, merged))
                 })
-            ) as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8), Error=Error>>
+            ) as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8),
+                            Error=Error> + Send>
         };
         let fut = match children_to_fix.0 {
             None => Box::new(Ok((guard, 0i8)).into_future())
-                as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8), Error=Error>>,
+                as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8),
+                              Error=Error> + Send>,
             Some(idx) => fixit(guard, idx, range2)
         }
         .and_then(move |(parent_guard, merged)|
             match children_to_fix.1 {
                 None => Box::new(Ok((parent_guard, merged)).into_future())
                     as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8),
-                                  Error=Error>>,
+                                  Error=Error> + Send>,
                 Some(idx) => fixit(parent_guard, idx - merged as usize, range3)
             }
         ).map(|_| ());

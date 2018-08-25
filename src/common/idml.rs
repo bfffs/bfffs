@@ -104,10 +104,15 @@ impl<'a> IDML {
                               record, txg)
         }).and_then(move |_| {
             let txgs2 = zone.txgs.clone();
-            let czfut = trees3.ridt.clean_zone(zone.pba..end, txgs2, txg);
-            //TODO: delete the old range of PBAs from the alloct, before
-            //cleaning the alloct
-            let atfut = trees3.alloct.clean_zone(zone.pba..end, zone.txgs, txg);
+            let pba_range = zone.pba..end;
+            let czfut = trees3.ridt.clean_zone(pba_range.clone(), txgs2, txg);
+            // Finish alloct.range_delete before alloct.clean_zone, because the
+            // range delete is likely to eliminate most of not all nodes that
+            // need to be moved by clean_zone
+            let atfut = trees3.alloct.range_delete(pba_range.clone(), txg)
+                .and_then(move |_| {
+                    trees3.alloct.clean_zone(pba_range, zone.txgs, txg)
+                });
             czfut.join(atfut).map(|_| ())
         })
     }
