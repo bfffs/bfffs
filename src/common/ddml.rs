@@ -137,15 +137,36 @@ pub struct DRP {
 }
 
 impl DRP {
+    /// Return a new DRP that refers to the same record as though it were
+    /// uncompressed.
+    pub fn as_uncompressed(&self) -> DRP {
+        DRP {
+            pba: self.pba,
+            compression: Compression::None,
+            lsize: self.csize,
+            csize: self.csize,
+            checksum: self.checksum
+        }
+    }
+
     /// Return the storage space actually allocated for this record
     fn asize(&self) -> LbaT {
         div_roundup(self.csize as usize, BYTES_PER_LBA) as LbaT
     }
 
-    /// Return the [`Compression`](../dml/enum.Compression.html) function that was used
-    /// to write this record.
+    /// Return the [`Compression`](../dml/enum.Compression.html) function that
+    /// was used to write this record.
     pub fn compression(&self) -> Compression {
         self.compression
+    }
+
+    /// Transform this DRP into one that has the same compression function as
+    /// `old_compressed`.  This is basically the opposite of
+    /// [`as_uncompressed`](#method.as_uncompressed)
+    pub fn into_compressed(mut self, old_compressed: &DRP) -> DRP {
+        self.compression = old_compressed.compression;
+        self.lsize = old_compressed.lsize;
+        self
     }
 
     // LCOV_EXCL_START
@@ -166,7 +187,13 @@ impl DRP {
     /// Useful for testing purposes.
     #[cfg(test)]
     pub fn random(compression: Compression, lsize: usize) -> DRP {
+
         let mut rng = rand::thread_rng();
+        let csize = if compression == Compression::None {
+            lsize as u32
+        } else {
+            rng.gen_range(0, lsize as u32)
+        };
         DRP {
             pba: PBA {
                 cluster: rng.gen(),
@@ -174,7 +201,7 @@ impl DRP {
             },
             compression,
             lsize: lsize as u32,
-            csize: rng.gen_range(0, lsize as u32),
+            csize,
             checksum: rng.gen()
         }
     }
@@ -493,6 +520,29 @@ mod t {
             fn write_label(&self, mut labeller: LabelWriter)
                 -> Box<Future<Item=(), Error=Error> + Send>;
         }
+    }
+
+    #[test]
+    fn as_uncompressed(){
+        let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 5000);
+        let drp0_nc = drp0.as_uncompressed();
+        assert_eq!(drp0_nc.compression, Compression::None);
+        assert_eq!(drp0_nc.lsize, drp0_nc.csize);
+        assert_eq!(drp0_nc.csize, drp0.csize);
+        assert_eq!(drp0_nc.pba, drp0.pba);
+        assert_eq!(drp0_nc.compression, Compression::None);
+
+        //drp1 is what DDML::put_direct will return after writing drp0_nc's
+        //contents as uncompressed
+        let mut drp1 = DRP::random(Compression::None, drp0.csize as usize);
+        drp1.checksum = drp0_nc.checksum;
+
+        let drp1_c = drp1.into_compressed(&drp0);
+        assert_eq!(drp1_c.compression, Compression::ZstdL9NoShuffle);
+        assert_eq!(drp1_c.lsize, drp0.lsize);
+        assert_eq!(drp1_c.csize, drp0.csize);
+        assert_eq!(drp1_c.pba, drp1.pba);
+        assert_eq!(drp1_c.checksum, drp0.checksum);
     }
 
     #[test]

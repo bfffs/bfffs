@@ -202,12 +202,14 @@ impl<'a> IDML {
                         // Even if the record is a Tree node, get it as though
                         // it were a DivBufShared.  This skips deserialization
                         // and works perfectly fine with put_direct
-                        // NB: this will result in decompressing and
-                        // recompressing the record, which is inefficient.
-                        let fut = ddml2.pop_direct::<DivBufShared>(&entry.drp)
+                        // Read the record as though it were uncompressed, to
+                        // avoid the CPU cost of decompression/compression.
+                        let drp_uc = entry.drp.as_uncompressed();
+                        let fut = ddml2.pop_direct::<DivBufShared>(&drp_uc)
                             .and_then(move |dbs| {
                                 let db = dbs.try().unwrap();
-                                ddml3.put_direct(&db, compression, txg)
+                                ddml3.put_direct(&db, Compression::None, txg)
+                                .map(move |drp| drp.into_compressed(&entry.drp))
                             });
                         Box::new(fut) as MyFut
                     });
@@ -659,9 +661,9 @@ mod t {
         let v = vec![42u8; 4096];
         let dbs = DivBufShared::from(v.clone());
         let rid = RID(1);
-        let drp0 = DRP::random(Compression::None, 4096);
-        let drp1 = DRP::random(Compression::None, 4096);
-        let drp2 = drp1.clone();
+        let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
+        let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
+        let drp1_c = drp1.clone();
         let mut cache = Cache::new();
         let mut ddml = DDML::new();
         cache.expect_get_ref()
@@ -674,15 +676,20 @@ mod t {
         ddml.expect_pop_direct()
             .called_once()
             .with(passes(move |key: &*const DRP| {
-                unsafe {**key == drp0}
+                unsafe {
+                    (**key).pba() == drp0.pba() &&
+                    (**key).compression() == Compression::None
+                }
             })).returning(move |_| {
                 let r = DivBufShared::from(&dbs.try().unwrap()[..]);
                 Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
             });
         ddml.expect_put_direct::<DivBuf>()
             .called_once()
-            .returning(move |(_, _, _)|
-                       Box::new(Ok(drp1).into_future())
+            .with(passes(move |(_, c, _): &(*const DivBuf, Compression, TxgT)| {
+                *c == Compression::None
+            })).returning(move |(_, _, _)|
+                Box::new(Ok(drp1).into_future())
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -696,8 +703,8 @@ mod t {
         // Now verify the RIDT and alloct entries
         let entry = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
-        assert_eq!(entry.drp, drp2);
-        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp2.pba())).unwrap();
+        assert_eq!(entry.drp, drp1_c);
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp1_c.pba())).unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
 

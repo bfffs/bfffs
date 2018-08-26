@@ -1,5 +1,5 @@
 assertion failed: oz.allocated_blocks <= self.zones[zid as usize].total_blocks | owner:"hg.user", open:True, id:0c22a4f9010682df3c95aaab750b829d6b82cb1e, time:1535047256.47
-IDML::move_record shouldn't decompress records read from disk | owner:"hg.user", open:True, id:0dfcdd017a57e529a9a8f74e2aa6219e030713be, time:1535047563.98
+IDML::move_record shouldn't decompress records read from disk | owner:"hg.user", open:False, id:0dfcdd017a57e529a9a8f74e2aa6219e030713be, time:1535047563.98
 Eliminate StripeBuffer for NullRaid                          | owner:"hg.user", open:False, id:2de8809213ad39011fc4244722cd80db2d73a48a, time:1535047502.28
 DowncastError ONLY ON NIGHTLY                                | owner:"hg.user", open:True, id:529defe6770c6591f6a7a1d8ff32d259993917a4, time:1535047452.46
 DDML::put_common tries to truncate DivBufShares that are still referenced | owner:"hg.user", open:False, id:709377ba5f51040cacb7f3e922d469400bfe422a, time:1535047528.71
