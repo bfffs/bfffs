@@ -597,7 +597,7 @@ impl<'a> Pool {
         let cluster = self.stats.choose_cluster();
         let cidx = cluster as usize;
         self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
-        let space = (buf.len() / BYTES_PER_LBA) as LbaT;
+        let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
         let stats2 = self.stats.clone();
         let stats3 = self.stats.clone();
         self.clusters[cidx].write(buf, txg)
@@ -958,6 +958,34 @@ mod pool {
         let db0 = dbs.try().unwrap();
         let result = rt.block_on( pool.write(db0, TxgT::from(42)));
         assert_eq!(result.unwrap_err(), e);
+    }
+
+    // Make sure allocated space accounting is symmetric
+    #[test]
+    fn write_and_free() {
+        let s = Scenario::new();
+        let cluster = s.create_mock::<MockCluster>();
+        s.expect(cluster.allocated_call().and_return(0));
+        s.expect(cluster.optimum_queue_depth_call().and_return(10));
+        s.expect(cluster.size_call().and_return(32768000));
+        s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
+        s.expect(cluster.write_call(matchers::ANY, matchers::ANY)
+            .and_return(Ok((0, Box::new(future::ok::<(), Error>(()))))));
+        s.expect(cluster.free_call(matchers::ANY, matchers::ANY)
+            .and_return(Box::new(Ok(()).into_future())));
+
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let pool = rt.block_on(future::lazy(|| {
+            Pool::new("foo".to_string(), Uuid::new_v4(),
+                      vec![ClusterProxy::new(Box::new(cluster))])
+        })).unwrap();
+
+        let dbs = DivBufShared::from(vec![0u8; 1024]);
+        let db0 = dbs.try().unwrap();
+        let drp = rt.block_on( pool.write(db0, TxgT::from(42))).unwrap();
+        assert!(pool.stats.allocated_space[0].load(Ordering::Relaxed) > 0);
+        rt.block_on( pool.free(drp, 1)).unwrap();
+        assert_eq!(pool.stats.allocated_space[0].load(Ordering::Relaxed), 0);
     }
 }
 
