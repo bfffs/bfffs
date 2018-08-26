@@ -22,17 +22,18 @@ test_suite! {
     use tempdir::TempDir;
     use tokio::runtime::current_thread;
 
-    fixture!( raid(n: i16, k: i16, f: i16, chunksize: LbaT) ->
+    fixture!( raid(n: i16, k: i16, f: i16, chunksize: LbaT,
+                   zone_size: Option<NonZeroU64>) ->
               (VdevRaid, TempDir, Vec<String>) {
 
         params {
-            vec![(1, 1, 0, 1),      // NullRaid configuration
-                 (3, 3, 1, 2),      // Smallest possible PRIMES configuration
-                 (5, 4, 1, 2),      // Smallest PRIMES declustered configuration
-                 (5, 5, 2, 2),      // Smallest double-parity configuration
-                 (7, 4, 1, 2),      // Smallest non-ideal PRIME-S configuration
-                 (7, 7, 3, 2),      // Smallest triple-parity configuration
-                 (11, 9, 4, 2),     // Smallest quad-parity configuration
+            vec![(1, 1, 0, 1, None),// NullRaid configuration
+                 (3, 3, 1, 2, None),// Smallest possible PRIMES configuration
+                 (5, 4, 1, 2, None),// Smallest PRIMES declustered configuration
+                 (5, 5, 2, 2, None),// Smallest double-parity configuration
+                 (7, 4, 1, 2, None),// Smallest non-ideal PRIME-S configuration
+                 (7, 7, 3, 2, None),// Smallest triple-parity configuration
+                 (11, 9, 4, 2, None),// Smallest quad-parity configuration
             ].into_iter()
         }
         setup(&mut self) {
@@ -47,7 +48,7 @@ test_suite! {
             }).collect::<Vec<_>>();
             let cs = NonZeroU64::new(*self.chunksize);
             let mut vdev_raid = VdevRaid::create(cs,
-                *self.n, *self.k, None, *self.f, &paths);
+                *self.n, *self.k, *self.zone_size, *self.f, &paths);
             current_thread::Runtime::new().unwrap().block_on(
                 vdev_raid.open_zone(0)
             ).expect("open_zone");
@@ -131,7 +132,7 @@ test_suite! {
     }
 
     // read_at should work when directed at the middle of the stripe buffer
-    test read_partial_at_middle_of_stripe(raid((3, 3, 1, 16))) {
+    test read_partial_at_middle_of_stripe(raid((3, 3, 1, 16, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let mut wbuf = dbsw.try().unwrap().slice_to(2 * BYTES_PER_LBA);
@@ -150,7 +151,7 @@ test_suite! {
     }
 
     // Read a stripe in several pieces, from disk
-    test read_parts_of_stripe(raid((7, 7, 1, 16))) {
+    test read_parts_of_stripe(raid((7, 7, 1, 16, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let cs = *raid.params.chunksize as usize;
@@ -177,7 +178,7 @@ test_suite! {
     }
 
     // Read the end of one stripe and the beginning of another
-    test read_partial_stripes(raid((3, 3, 1, 2))) {
+    test read_partial_stripes(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
         let wbuf = dbsw.try().unwrap();
@@ -193,7 +194,7 @@ test_suite! {
     }
 
     #[should_panic]
-    test read_past_end_of_stripe_buffer(raid((3, 3, 1, 2))) {
+    test read_past_end_of_stripe_buffer(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -203,7 +204,7 @@ test_suite! {
     }
 
     #[should_panic]
-    test read_starts_past_end_of_stripe_buffer(raid((3, 3, 1, 2))) {
+    test read_starts_past_end_of_stripe_buffer(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -213,13 +214,31 @@ test_suite! {
         write_read0(raid.val.0, vec![wbuf_short], vec![rbuf_r]);
     }
 
+    // Sync the device when the write pointer is close to the end of the zone
+    test sync_at_end_of_zone(raid((3, 3, 1, 16, NonZeroU64::new(64)))) {
+        let count = 98;
+        let dbsw = DivBufShared::from(vec![0u8; 4096 * count]);
+        let wb = dbsw.try().unwrap();
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+            let zl = raid.val.0.zone_limits(0);
+            println!("zl = {:?}", zl);
+            raid.val.0.write_at(wb, 0, zl.0)
+                .and_then(|_| {
+                    let (lbas, fut) = raid.val.0.flush_zone(0);
+                    println!("flush gap = {}",lbas);
+                    //println!("next lba = {}", zl.0 + count as u64+ lbas);
+                    fut
+                }) .and_then(|_| raid.val.0.sync_all())
+        })).unwrap();
+    }
+
     test write_read_one_stripe(raid) {
         write_read_n_stripes(raid.val.0, *raid.params.chunksize,
                              *raid.params.k, *raid.params.f, 1);
     }
 
     // read_at_one/write_at_one with a large configuration
-    test write_read_one_stripe_jumbo(raid((41, 19, 3, 2))) {
+    test write_read_one_stripe_jumbo(raid((41, 19, 3, 2, None))) {
         write_read_n_stripes(raid.val.0, *raid.params.chunksize,
                              *raid.params.k, *raid.params.f, 1);
     }
@@ -230,7 +249,7 @@ test_suite! {
     }
 
     // read_at_multi/write_at_multi with a large configuration
-    test write_read_two_stripes_jumbo(raid((41, 19, 3, 2))) {
+    test write_read_two_stripes_jumbo(raid((41, 19, 3, 2, None))) {
         write_read_n_stripes(raid.val.0, *raid.params.chunksize,
                              *raid.params.k, *raid.params.f, 2);
     }
@@ -247,7 +266,7 @@ test_suite! {
                              *raid.params.k, *raid.params.f, stripes);
     }
 
-    test write_completes_a_partial_stripe(raid((3, 3, 1, 2))) {
+    test write_completes_a_partial_stripe(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -258,7 +277,7 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
-    test write_completes_a_partial_stripe_and_writes_a_bit_more(raid((3, 3, 1, 2))) {
+    test write_completes_a_partial_stripe_and_writes_a_bit_more(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
         {
@@ -278,7 +297,7 @@ test_suite! {
         assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
     }
 
-    test write_completes_a_partial_stripe_and_writes_another(raid((3, 3, 1, 2))) {
+    test write_completes_a_partial_stripe_and_writes_another(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
         let wbuf = dbsw.try().unwrap();
@@ -289,7 +308,7 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
-    test write_completes_a_partial_stripe_and_writes_two_more(raid((3, 3, 1, 2))) {
+    test write_completes_a_partial_stripe_and_writes_two_more(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 3);
         let wbuf = dbsw.try().unwrap();
@@ -300,7 +319,7 @@ test_suite! {
         assert_eq!(wbuf, dbsr.try().unwrap());
     }
 
-    test write_completes_a_partial_stripe_and_writes_two_more_with_leftovers(raid((3, 3, 1, 2))) {
+    test write_completes_a_partial_stripe_and_writes_two_more_with_leftovers(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 4);
         {
@@ -320,7 +339,7 @@ test_suite! {
         assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
     }
 
-    test write_partial_at_start_of_stripe(raid((3, 3, 1, 2))) {
+    test write_partial_at_start_of_stripe(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -337,7 +356,7 @@ test_suite! {
     }
 
     // Write less than an LBA at the start of a stripe
-    test write_tiny_at_start_of_stripe(raid((1, 1, 0, 1))) {
+    test write_tiny_at_start_of_stripe(raid((1, 1, 0, 1, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap();
@@ -358,7 +377,7 @@ test_suite! {
     }
 
     // Write a whole stripe plus a fraction of an LBA more
-    test write_stripe_and_a_bit_more(raid((1, 1, 0, 1))) {
+    test write_stripe_and_a_bit_more(raid((1, 1, 0, 1, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
         let wbuf = dbsw.try().unwrap();
@@ -382,7 +401,7 @@ test_suite! {
 
     // Test that write_at works when directed at the middle of the StripeBuffer.
     // This test requires a chunksize > 2
-    test write_partial_at_middle_of_stripe(raid((3, 3, 1, 16))) {
+    test write_partial_at_middle_of_stripe(raid((3, 3, 1, 16, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try().unwrap().slice_to(2 * BYTES_PER_LBA);
@@ -399,7 +418,7 @@ test_suite! {
                    &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA]);
     }
 
-    test write_two_stripes_with_leftovers(raid((3, 3, 1, 2))) {
+    test write_two_stripes_with_leftovers(raid((3, 3, 1, 2, None))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 3);
         {
@@ -425,7 +444,7 @@ test_suite! {
 
     // Erasing an open zone should fail
     #[should_panic]
-    test zone_erase_open(raid((3, 3, 1, 2))) {
+    test zone_erase_open(raid((3, 3, 1, 2, None))) {
         let zone = 1;
         current_thread::Runtime::new().unwrap().block_on( future::lazy(|| {
             raid.val.0.open_zone(zone)
@@ -433,7 +452,7 @@ test_suite! {
         })).expect("zone_erase_open");
     }
 
-    test zone_read_closed(raid((3, 3, 1, 2))) {
+    test zone_read_closed(raid((3, 3, 1, 2, None))) {
         let zone = 0;
         let zl = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
@@ -453,7 +472,7 @@ test_suite! {
     }
 
     // Close a zone with an incomplete StripeBuffer, then read back from it
-    test zone_read_closed_partial(raid((3, 3, 1, 2))) {
+    test zone_read_closed_partial(raid((3, 3, 1, 2, None))) {
         let zone = 0;
         let zl = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
@@ -478,7 +497,7 @@ test_suite! {
 
     #[should_panic]
     // Writing to an explicitly closed a zone fails
-    test zone_write_explicitly_closed(raid((3, 3, 1, 2))) {
+    test zone_write_explicitly_closed(raid((3, 3, 1, 2, None))) {
         let zone = 1;
         let (start, _) = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
@@ -496,7 +515,7 @@ test_suite! {
 
     #[should_panic]
     // Writing to a closed zone should fail
-    test zone_write_implicitly_closed(raid((3, 3, 1, 2))) {
+    test zone_write_implicitly_closed(raid((3, 3, 1, 2, None))) {
         let zone = 1;
         let (start, _) = raid.val.0.zone_limits(zone);
         let dbsw = DivBufShared::from(vec![0;4096]);
@@ -505,7 +524,7 @@ test_suite! {
     }
 
     // Opening a closed zone should allow writing
-    test zone_write_open(raid((3, 3, 1, 2))) {
+    test zone_write_open(raid((3, 3, 1, 2, None))) {
         let zone = 1;
         let (start, _) = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
@@ -521,7 +540,7 @@ test_suite! {
     }
 
     // Two zones can be open simultaneously
-    test zone_write_two_zones(raid((3, 3, 1, 2))) {
+    test zone_write_two_zones(raid((3, 3, 1, 2, None))) {
         let vdev_raid = raid.val.0;
         for zone in 1..3 {
             let (start, _) = vdev_raid.zone_limits(zone);
