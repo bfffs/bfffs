@@ -113,7 +113,7 @@ impl MinValue for FSKey {
 }
 
 /// In-memory representation of a directory entry
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Dirent {
     pub ino:    u64,
     pub dtype:  u8,
@@ -121,7 +121,7 @@ pub struct Dirent {
 }
 
 /// In-memory representation of an Inode
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Inode {
     /// File size in bytes
     pub size:       u64,
@@ -149,7 +149,7 @@ pub struct Inode {
     pub mode:       u16,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum FSValue {
     DirEntry(Dirent),
     Inode(Inode),

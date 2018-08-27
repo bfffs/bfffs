@@ -48,23 +48,26 @@ impl MinValue for TxgT {
     }
 }
 
-pub trait Addr: Copy + Debug + DeserializeOwned + Send + Serialize + 'static {}
-
-impl<T> Addr for T
-where T: Copy + Debug + DeserializeOwned + Send + Serialize + 'static {}
-
-pub trait Key: Copy + Debug + DeserializeOwned + Ord + MinValue + Send +
-    Serialize + 'static {}
-
-impl<T> Key for T
-where T: Copy + Debug + DeserializeOwned + Ord + MinValue + Send + Serialize
-    + 'static {}
-
-pub trait Value: Clone + Debug + DeserializeOwned + Send + Serialize +
+pub trait Addr: Copy + Debug + DeserializeOwned + PartialEq + Send + Serialize +
     'static {}
 
+impl<T> Addr for T
+where T: Copy + Debug + DeserializeOwned + PartialEq + Send + Serialize +
+    'static {}
+
+pub trait Key: Copy + Debug + DeserializeOwned + Ord + PartialEq + MinValue +
+    Send + Serialize + 'static {}
+
+impl<T> Key for T
+where T: Copy + Debug + DeserializeOwned + Ord + MinValue + PartialEq + Send +
+    Serialize + 'static {}
+
+pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
+    Serialize + 'static {}
+
 impl<T> Value for T
-where T: Clone + Debug + DeserializeOwned + Send + Serialize + 'static {}
+where T: Clone + Debug + DeserializeOwned + PartialEq + Send + Serialize +
+    'static {}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned,
@@ -135,6 +138,18 @@ impl<A: Addr, K: Key, V: Value> TreePtr<A, K, V> {
     }
 }
 
+impl<A: Addr, K: Key, V: Value> PartialEq  for TreePtr<A, K, V> {
+    fn eq(&self, other: &TreePtr<A, K, V>) -> bool {
+        match (self, other) {
+            (TreePtr::Addr(a1), TreePtr::Addr(a2)) => a1 == a2,
+            (TreePtr::None, TreePtr::None) => true,
+            (TreePtr::Mem(_), _) | (_, TreePtr::Mem(_)) => 
+                panic!("Can't compare Nodes recursively"),
+            _ => false
+        }
+    }
+}
+
 // LCOV_EXCL_START
 #[cfg(test)]
 mod node_serializer {
@@ -161,7 +176,7 @@ mod node_serializer {
 }
 // LCOV_EXCL_STOP
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned, V: DeserializeOwned"))]
 pub(super) struct LeafData<K: Key, V> {
     items: BTreeMap<K, V>
@@ -347,7 +362,7 @@ impl<A: Addr, K: Key, V: Value> DerefMut for TreeWriteGuard<A, K, V> {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 pub(super) struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
     pub key: K,
@@ -404,7 +419,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned"))]
 pub(super) struct IntData<A: Addr, K: Key, V: Value> {
     pub children: Vec<IntElem<A, K, V>>
@@ -457,7 +472,7 @@ impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 pub(super) enum NodeData<A: Addr, K: Key, V: Value> {
     Leaf(LeafData<K, V>),
@@ -629,6 +644,20 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
         let db = dbs.try().unwrap();
         let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
         Arc::new(Node(RwLock::new(node_data)))
+    }
+
+    fn eq(&self, o: &Cacheable) -> bool {
+        if let Some(other) = o.downcast_ref::<Arc<Node<A, K, V>>>().ok() {
+            // Since the cache is strictly read-only, try_read is guaranteed to
+            // work if both values are cached, which is probably the only
+            // context that should be using this method.
+            let self_data = self.0.try_read().unwrap();
+            let other_data = other.0.try_read().unwrap();
+            self_data.eq(&*other_data)
+        } else {
+            // other isn't even the same concrete type
+            false
+        }
     }
 
     fn len(&self) -> usize {

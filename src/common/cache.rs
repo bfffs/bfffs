@@ -23,6 +23,11 @@ pub trait Cacheable: Any + Debug + Send + Sync {
     /// Deserialize a buffer into Self.  Will panic if deserialization fails.
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized;
 
+    /// Returns true if the two `Cacheable`s' contents are equal
+    // This doesn't implement PartialEq because the rhs is &Cacheable instead of
+    // &Self.
+    fn eq(&self, other: &Cacheable) -> bool;
+
     /// How much space does this object use in the Cache?
     fn len(&self) -> usize;
 
@@ -65,6 +70,15 @@ downcast!(CacheRef);
 impl Cacheable for DivBufShared {
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized {
         dbs
+    }
+
+    fn eq(&self, other: &Cacheable) -> bool {
+        if let Some(other_dbs) = other.downcast_ref::<DivBufShared>().ok() {
+            &self.try().unwrap()[..] == &other_dbs.try().unwrap()[..]
+        } else {
+            // other isn't even the same concrete type
+            false
+        }
     }
 
     fn len(&self) -> usize {
@@ -200,7 +214,16 @@ impl Cache {
         }
         self.size += buf.len();
         let entry = LruEntry { buf, mru: None, lru: self.mru};
-        assert!(self.store.insert(key, entry).is_none());
+        self.store.insert(key, entry)
+            .map(|old_entry| {
+                // Inserting two different values with the same key is a bug,
+                // but inserting two identical values is merely bad timing.  We
+                // must compare the buffers to verify.
+                if let Some(new_entry) = self.store.get(&key) {
+                    assert!(old_entry.buf.eq(&*new_entry.buf),
+                        "Conflicting value cached with key={:?}", key);
+                }
+            });
         if self.mru.is_some() {
             if let Some(v) = self.store.get_mut(&self.mru.unwrap()) {
                 debug_assert!(v.mru.is_none());
@@ -457,16 +480,30 @@ fn test_get_ref_nonexistent() {
     assert!(cache.get_ref(&key).is_none());
 }
 
-/// Insert a duplicate value
+/// Insert a different value for an existing key
 #[test]
-#[should_panic]
-fn test_insert_dup() {
+#[should_panic(expected = "Conflicting value cached with key=Rid(RID(0))")]
+fn test_insert_dup_key() {
     let mut cache = Cache::with_capacity(100);
     let dbs1 = Box::new(DivBufShared::from(vec![0u8; 6]));
     let dbs2 = Box::new(DivBufShared::from(vec![0u8; 11]));
     let key = Key::Rid(RID(0));
     cache.insert(key, dbs1);
     cache.insert(key, dbs2);
+}
+
+/// Insert the same key/value pair twice
+#[test]
+fn test_insert_dup_value() {
+    let mut cache = Cache::with_capacity(100);
+    let dbs1 = Box::new(DivBufShared::from(vec![0u8; 6]));
+    let dbs2 = Box::new(DivBufShared::from(vec![0u8; 6]));
+    let db1 = dbs1.try().unwrap();
+    let key = Key::Rid(RID(0));
+    cache.insert(key, dbs1);
+    cache.insert(key, dbs2);
+    let db3 = cache.get::<DivBuf>(&key).unwrap();
+    assert_eq!(&db1[..], &db3[..]);
 }
 
 /// Insert the first value into an empty cache

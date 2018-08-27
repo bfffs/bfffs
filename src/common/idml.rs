@@ -32,7 +32,7 @@ use common::ddml_mock::DDMLMock as DDML;
 
 pub use common::ddml::ClosedZone;
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 struct RidtEntry {
     drp: DRP,
     refcount: u64
