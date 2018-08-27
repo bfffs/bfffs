@@ -116,6 +116,9 @@ impl StripeBuffer {
     }
 
     pub fn new(lba: LbaT, stripe_lbas: LbaT) -> Self {
+        assert!(lba % stripe_lbas == 0,
+                "Can't create a non-stripe-aligned StripeBuffer at lba {:?}",
+                lba);
         let stripesize = stripe_lbas as usize * BYTES_PER_LBA;
         StripeBuffer{ buf: SGList::new(), lba, stripesize}
     }
@@ -724,7 +727,11 @@ impl VdevRaid {
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
         let stripe_len = col_len * m;
-        debug_assert_eq!(zone, self.lba2zone(lba).unwrap());
+        debug_assert_eq!(zone, self.lba2zone(lba).unwrap(),
+            "Write to wrong zone");
+        debug_assert_eq!(zone, self.lba2zone(lba +
+                ((buf.len() - 1) / BYTES_PER_LBA) as LbaT).unwrap(),
+            "Write spanned a zone boundary");
         let mut sb_ref = self.stripe_buffers.borrow_mut();
         let stripe_buffer = sb_ref.get_mut(&zone)
                                   .expect("Can't write to a closed zone");
@@ -1116,11 +1123,11 @@ fn test_min_max() {
 
 #[test]
 fn stripe_buffer_empty() {
-    let mut sb = StripeBuffer::new(99, 6);
+    let mut sb = StripeBuffer::new(96, 6);
     assert!(!sb.is_full());
     assert!(sb.is_empty());
-    assert_eq!(sb.lba(), 99);
-    assert_eq!(sb.next_lba(), 99);
+    assert_eq!(sb.lba(), 96);
+    assert_eq!(sb.next_lba(), 96);
     assert_eq!(sb.len(), 0);
     assert!(sb.peek().is_empty());
     let sglist = sb.pop();
@@ -1132,8 +1139,8 @@ fn stripe_buffer_empty() {
     assert!(sb.fill(db0).is_empty());
     assert!(!sb.is_full());
     assert!(sb.is_empty());
-    assert_eq!(sb.lba(), 99);
-    assert_eq!(sb.next_lba(), 99);
+    assert_eq!(sb.lba(), 96);
+    assert_eq!(sb.next_lba(), 96);
     assert_eq!(sb.len(), 0);
     assert!(sb.peek().is_empty());
     let sglist = sb.pop();
@@ -1147,26 +1154,26 @@ fn stripe_buffer_fill_when_full() {
     let dbs1 = DivBufShared::from(vec![1; 4096]);
     let db1 = dbs1.try().unwrap();
     {
-        let mut sb = StripeBuffer::new(99, 6);
+        let mut sb = StripeBuffer::new(96, 6);
         assert!(sb.fill(db0).is_empty());
         assert_eq!(sb.fill(db1).len(), 4096);
         assert!(sb.is_full());
-        assert_eq!(sb.lba(), 99);
-        assert_eq!(sb.next_lba(), 105);
+        assert_eq!(sb.lba(), 96);
+        assert_eq!(sb.next_lba(), 102);
         assert_eq!(sb.len(), 24576);
     }
 }
 
 #[test]
 fn stripe_buffer_one_iovec() {
-    let mut sb = StripeBuffer::new(99, 6);
+    let mut sb = StripeBuffer::new(96, 6);
     let dbs = DivBufShared::from(vec![0; 4096]);
     let db = dbs.try().unwrap();
     assert!(sb.fill(db).is_empty());
     assert!(!sb.is_full());
     assert!(!sb.is_empty());
-    assert_eq!(sb.lba(), 99);
-    assert_eq!(sb.next_lba(), 100);
+    assert_eq!(sb.lba(), 96);
+    assert_eq!(sb.next_lba(), 97);
     assert_eq!(sb.len(), 4096);
     {
         let sglist = sb.peek();
@@ -1183,7 +1190,7 @@ fn stripe_buffer_one_iovec() {
 fn stripe_buffer_pad() {
     let zero_region_lbas = (ZERO_REGION.len() / BYTES_PER_LBA) as LbaT;
     let stripesize = 2 * zero_region_lbas + 1;
-    let mut sb = StripeBuffer::new(99, stripesize);
+    let mut sb = StripeBuffer::new(102, stripesize);
     let dbs = DivBufShared::from(vec![0; BYTES_PER_LBA]);
     let db = dbs.try().unwrap();
     assert!(sb.fill(db).is_empty());
@@ -1196,25 +1203,25 @@ fn stripe_buffer_pad() {
 
 #[test]
 fn stripe_buffer_reset() {
-    let mut sb = StripeBuffer::new(99, 6);
-    assert_eq!(sb.lba(), 99);
-    sb.reset(111);
-    assert_eq!(sb.lba(), 111);
+    let mut sb = StripeBuffer::new(96, 6);
+    assert_eq!(sb.lba(), 96);
+    sb.reset(108);
+    assert_eq!(sb.lba(), 108);
 }
 
 #[test]
 #[should_panic(expected = "A StripeBuffer with data cannot be moved")]
 fn stripe_buffer_reset_nonempty() {
-    let mut sb = StripeBuffer::new(99, 6);
+    let mut sb = StripeBuffer::new(96, 6);
     let dbs = DivBufShared::from(vec![0; 4096]);
     let db = dbs.try().unwrap();
     let _ = sb.fill(db);
-    sb.reset(111);
+    sb.reset(108);
 }
 
 #[test]
 fn stripe_buffer_two_iovecs() {
-    let mut sb = StripeBuffer::new(99, 6);
+    let mut sb = StripeBuffer::new(96, 6);
     let dbs0 = DivBufShared::from(vec![0; 8192]);
     let db0 = dbs0.try().unwrap();
     assert!(sb.fill(db0).is_empty());
@@ -1223,8 +1230,8 @@ fn stripe_buffer_two_iovecs() {
     assert!(sb.fill(db1).is_empty());
     assert!(!sb.is_full());
     assert!(!sb.is_empty());
-    assert_eq!(sb.lba(), 99);
-    assert_eq!(sb.next_lba(), 102);
+    assert_eq!(sb.lba(), 96);
+    assert_eq!(sb.next_lba(), 99);
     assert_eq!(sb.len(), 12288);
     {
         let sglist = sb.peek();
@@ -1240,7 +1247,7 @@ fn stripe_buffer_two_iovecs() {
 
 #[test]
 fn stripe_buffer_two_iovecs_overflow() {
-    let mut sb = StripeBuffer::new(99, 6);
+    let mut sb = StripeBuffer::new(96, 6);
     let dbs0 = DivBufShared::from(vec![0; 16384]);
     let db0 = dbs0.try().unwrap();
     assert!(sb.fill(db0).is_empty());
@@ -1249,8 +1256,8 @@ fn stripe_buffer_two_iovecs_overflow() {
     assert_eq!(sb.fill(db1).len(), 8192);
     assert!(sb.is_full());
     assert!(!sb.is_empty());
-    assert_eq!(sb.lba(), 99);
-    assert_eq!(sb.next_lba(), 105);
+    assert_eq!(sb.lba(), 96);
+    assert_eq!(sb.next_lba(), 102);
     assert_eq!(sb.len(), 24576);
     {
         let sglist = sb.peek();

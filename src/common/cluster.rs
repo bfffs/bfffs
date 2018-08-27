@@ -212,7 +212,8 @@ impl<'a> FreeSpaceMap {
         assert!(length < LbaT::from(u32::max_value()));
         zone.freed_blocks += length as u32;
         assert!(zone.freed_blocks <= zone.total_blocks,
-                "Double free detected");
+                "Double free detected.  freed={:?}, total={:?}",
+                zone.freed_blocks, zone.total_blocks);
         if let Some(oz) = self.open_zones.get(&zone_id) {
             assert!(oz.allocated_blocks >= zone.freed_blocks,
                     "Double free detected in an open zone");

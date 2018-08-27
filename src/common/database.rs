@@ -179,17 +179,13 @@ impl Inner {
     }
 
     /// Asynchronously write this `Database`'s label to its `IDML`
-    fn write_label(&self, txg: TxgT)
+    fn write_label(&self, tod: TreeOnDisk, txg: TxgT)
         -> impl Future<Item=(), Error=Error>
     {
         let mut labeller = LabelWriter::new();
-        let idml2 = self.idml.clone();
-        Tree::flush(&self.forest, txg)
-            .and_then(move |tod| {
-                let label = Label { forest: tod };
-                labeller.serialize(label).unwrap();
-                idml2.write_label(labeller, txg)
-            })
+        let label = Label { forest: tod };
+        labeller.serialize(label).unwrap();
+        self.idml.write_label(labeller, txg)
     }
 }
 
@@ -330,6 +326,7 @@ impl Database {
         // TODO: use two labels, so the pool will be recoverable even if power
         // is lost while writing a label.
         let inner2 = inner.clone();
+        let inner3 = inner.clone();
         inner.idml.advance_transaction(move |txg| {
             let inner4 = inner2.clone();
             let idml2 = inner2.idml.clone();
@@ -347,8 +344,9 @@ impl Database {
                     }).collect::<Vec<_>>()
             };
             future::join_all(fsfuts)
-            .and_then(move |_| idml2.sync_all(txg))
-            .and_then(move |_| inner2.write_label(txg))
+            .and_then(move |_| Tree::flush(&inner3.forest, txg))
+            .and_then(move |tod| idml2.sync_all(txg).map(move |_| tod))
+            .and_then(move |tod| inner2.write_label(tod, txg))
             .and_then(move |_| idml3.sync_all(txg))
         })
     }
