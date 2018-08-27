@@ -692,9 +692,28 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         Bound::Unbounded => true
                     } {
                         let dml3 = dml2.clone();
+                        let eb: Bound<T> = match range.end_bound() {
+                            Bound::Included(x) => Bound::Included(x.clone()),
+                            Bound::Excluded(x) => Bound::Excluded(x.clone()),
+                            Bound::Unbounded => Bound::Unbounded
+                        };
                         Box::new(
                             int.children[child_idx + 1].rlock(dml3)
-                                .map(|guard| Some(guard))
+                            .map(move |g| {
+                                // The minimum key rule means that even though
+                                // we checked the bounds above, we must also
+                                // check them after rlock()ing, as the guard's
+                                // key may be higher than its parent pointer's
+                                if match eb {
+                                    Bound::Included(x) => *g.key().borrow() <= x,
+                                    Bound::Excluded(x) => *g.key().borrow() < x,
+                                    Bound::Unbounded => true
+                                } {
+                                    Some(g)
+                                } else {
+                                    None
+                                }
+                            })
                         ) as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
                                         Error=Error> + Send>
                     } else {

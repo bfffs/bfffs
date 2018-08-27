@@ -2312,6 +2312,53 @@ root:
 }
 
 #[test]
+fn range_ends_before_node_but_after_parent_pointer() {
+    let ddml = Arc::new(DDMLMock::new());
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 4
+            txgs:
+              start: 0
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    6: 6.0
+                    7: 7.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range(0..5)
+            .collect()
+    );
+    assert_eq!(r, Ok(vec![(0, 0.0), (1, 1.0)]));
+}
+
+#[test]
 fn range_starts_between_two_leaves() {
     let ddml = Arc::new(DDMLMock::new());
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
