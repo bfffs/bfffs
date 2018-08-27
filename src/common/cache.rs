@@ -5,7 +5,7 @@ use metrohash::{MetroBuildHasher, MetroHash64};
 use std::{
     borrow::Borrow,
     collections::HashMap,
-    fmt::Debug,
+    fmt::{self, Debug},
     hash::BuildHasherDefault
 };
 
@@ -127,11 +127,18 @@ struct LruEntry {
     mru: Option<Key>,
 }
 
+impl Debug for LruEntry {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "LruEntry {{ lru: {:?}, mru: {:?} }}", self.lru, self.mru)
+    }
+}
+
 /// Basic read-only block cache.
 ///
 /// Caches on-disk blocks by either their address (cluster and LBA pair), or
 /// their Record ID.  The cache is read-only because any attempt to change a
 /// block would also require changing either its address or record ID.
+#[derive(Debug)]
 pub struct Cache {
     /// Capacity of the `Cache` in bytes, not number of entries
     capacity: usize,
@@ -214,16 +221,19 @@ impl Cache {
         }
         self.size += buf.len();
         let entry = LruEntry { buf, mru: None, lru: self.mru};
-        self.store.insert(key, entry)
-            .map(|old_entry| {
-                // Inserting two different values with the same key is a bug,
-                // but inserting two identical values is merely bad timing.  We
-                // must compare the buffers to verify.
-                if let Some(new_entry) = self.store.get(&key) {
-                    assert!(old_entry.buf.eq(&*new_entry.buf),
-                        "Conflicting value cached with key={:?}", key);
-                }
-            });
+        if let Some(old_entry) = self.store.insert(key, entry) {
+            // Inserting two different values with the same key is a bug, but
+            // inserting two identical values is merely bad timing.  We must
+            // compare the buffers to verify.
+            {
+                let new_entry = self.store.get(&key).unwrap();
+                assert!(old_entry.buf.eq(&*new_entry.buf),
+                    "Conflicting value cached with key={:?}", key);
+            }
+            // Just put the old entry back so we don't have to fix the linkages
+            self.store.insert(key, old_entry);
+            return;
+        }
         if self.mru.is_some() {
             if let Some(v) = self.store.get_mut(&self.mru.unwrap()) {
                 debug_assert!(v.mru.is_none());
@@ -504,6 +514,13 @@ fn test_insert_dup_value() {
     cache.insert(key, dbs2);
     let db3 = cache.get::<DivBuf>(&key).unwrap();
     assert_eq!(&db1[..], &db3[..]);
+
+    // Check that the mru/lru entries are consistent
+    assert_eq!(cache.mru, Some(key));
+    assert_eq!(cache.lru, Some(key));
+    let entry = cache.store.get(&key).unwrap();
+    assert_eq!(entry.mru, None);
+    assert_eq!(entry.lru, None);
 }
 
 /// Insert the first value into an empty cache
