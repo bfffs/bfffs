@@ -146,6 +146,12 @@ impl<'a> FreeSpaceMap {
         }).sum()
     }
 
+    /// Assert that the given zone was clean as of the given transaction
+    fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT) {
+        assert!(self.is_empty(zone) ||
+                self.zones[zone as usize].txgs.start >= txg);
+    }
+
     /// How many blocks are available to be immediately written in the Zone?
     fn available(&self, zone_id: ZoneT) -> LbaT {
         if let Some(oz) = self.open_zones.get(&zone_id) {
@@ -586,6 +592,11 @@ impl<'a> Cluster {
     pub fn allocated(&self) -> LbaT {
         self.fsm.borrow().allocated()
     }   // LCOV_EXCL_LINE   kcov false negative
+
+    /// Assert that the given zone was clean as of the given transaction
+    pub fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT) {
+        self.fsm.borrow().assert_clean_zone(zone, txg)
+    }
 
     /// Create a new `Cluster` from unused files or devices
     ///

@@ -99,6 +99,8 @@ impl<'a> IDML {
         let trees2 = self.trees.clone();
         let trees3 = self.trees.clone();
         let ddml2 = self.ddml.clone();
+        let ddml3 = self.ddml.clone();
+        let zone2 = zone.clone();
         self.list_indirect_records(&zone).for_each(move |record| {
             IDML::move_record(cache2.clone(), trees2.clone(), ddml2.clone(),
                               record, txg)
@@ -114,6 +116,8 @@ impl<'a> IDML {
                     trees3.alloct.clean_zone(pba_range, zone.txgs, txg)
                 });
             czfut.join(atfut).map(|_| ())
+        }).map(move |_| {
+            ddml3.assert_clean_zone(zone2.pba.cluster, zone2.zid, txg)
         })
     }
 
@@ -622,7 +626,7 @@ mod t {
     #[test]
     fn list_indirect_records() {
         let txgs = TxgT::from(0)..TxgT::from(2);
-        let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100,
+        let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100, zid: 0,
                             freed_blocks: 50, txgs};
         let cache = Cache::new();
         let ddml = DDML::new();

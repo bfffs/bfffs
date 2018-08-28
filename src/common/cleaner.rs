@@ -141,7 +141,7 @@ fn background() {
         .called_once()
         .returning(|_| {
             let czs = vec![
-                ClosedZone{freed_blocks: 0, total_blocks: 100,
+                ClosedZone{freed_blocks: 0, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
             Box::new(stream::iter_ok(czs.into_iter()))
@@ -167,7 +167,7 @@ fn no_sufficiently_dirty_zones() {
         .called_once()
         .returning(|_| {
             let czs = vec![
-                ClosedZone{freed_blocks: 1, total_blocks: 100,
+                ClosedZone{freed_blocks: 1, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
             Box::new(stream::iter_ok(czs.into_iter()))
@@ -189,7 +189,7 @@ fn one_sufficiently_dirty_zone() {
         .called_once()
         .returning(|_| {
             let czs = vec![
-                ClosedZone{freed_blocks: 55, total_blocks: 100,
+                ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
             Box::new(stream::iter_ok(czs.into_iter()))
@@ -219,11 +219,11 @@ fn two_sufficiently_dirty_zones() {
         .called_once()
         .returning(|_| {
             let czs = vec![
-                ClosedZone{freed_blocks: 55, total_blocks: 100,
+                ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)},
-                ClosedZone{freed_blocks: 25, total_blocks: 100,
+                ClosedZone{freed_blocks: 25, total_blocks: 100, zid: 1,
                     pba: PBA::new(1, 0), txgs: TxgT::from(0)..TxgT::from(1)},
-                ClosedZone{freed_blocks: 75, total_blocks: 100,
+                ClosedZone{freed_blocks: 75, total_blocks: 100, zid: 2,
                     pba: PBA::new(2, 0), txgs: TxgT::from(1)..TxgT::from(2)},
             ];
             Box::new(stream::iter_ok(czs.into_iter()))

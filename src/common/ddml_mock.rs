@@ -1,6 +1,6 @@
 // vim: tw=80
 // LCOV_EXCL_START
-use common::{Error, LbaT, TxgT};
+use common::{ClusterT, Error, LbaT, TxgT, ZoneT};
 use common::cache::{Cacheable, CacheRef};
 use common::dml::*;
 use common::ddml::*;
@@ -21,6 +21,17 @@ impl DDMLMock {
 
     pub fn expect_allocated(&mut self) -> Method<(), LbaT> {
         self.e.expect::<(), LbaT>("allocated")
+    }
+
+    pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) {
+        self.e.was_called_returning::<(ClusterT, ZoneT, TxgT), ()>
+            ("assert_clean_zone", (cluster, zone, txg))
+    }
+
+    pub fn expect_assert_clean_zone(&mut self)
+        -> Method<(ClusterT, ZoneT, TxgT), ()>
+    {
+        self.e.expect::<(ClusterT, ZoneT, TxgT), ()>("assert_clean_zone")
     }
 
     pub fn new() -> Self {

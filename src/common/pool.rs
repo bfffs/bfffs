@@ -33,6 +33,7 @@ pub type PoolFut = Future<Item = (), Error = Error>;
 /// work with parameterized traits.
 pub trait ClusterTrait {
     fn allocated(&self) -> LbaT;
+    fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT);
     fn find_closed_zone(&self, zid: ZoneT) -> Option<cluster::ClosedZone>;
     fn free(&self, lba: LbaT, length: LbaT) -> Box<PoolFut>;
     fn optimum_queue_depth(&self) -> u32;
@@ -54,6 +55,7 @@ pub type ClusterLike = cluster::Cluster;
 #[derive(Debug)]
 enum Rpc {
     Allocated(oneshot::Sender<LbaT>),
+    AssertCleanZone(ZoneT, TxgT),
     FindClosedZone(ZoneT, oneshot::Sender<Option<cluster::ClosedZone>>),
     Free(LbaT, LbaT, oneshot::Sender<Result<(), Error>>),
     OptimumQueueDepth(oneshot::Sender<u32>),
@@ -94,6 +96,11 @@ impl<'a> ClusterServer {
     fn dispatch(&self, rpc: Rpc) -> impl Future<Item=(), Error=()>
     {
         match rpc {
+            Rpc::AssertCleanZone(zone, txg) => {
+                self.cluster.assert_clean_zone(zone, txg);
+                Box::new(future::ok::<(), ()>(()))
+                    as Box<Future<Item=(), Error=()>>
+            },
             Rpc::Allocated(tx) => {
                 tx.send(self.cluster.allocated()).unwrap();
                 Box::new(future::ok::<(), ()>(()))
@@ -171,6 +178,14 @@ impl<'a> ClusterProxy {
         let rpc = Rpc::Allocated(tx);
         self.server.unbounded_send(rpc).unwrap();
         rx.map_err(|_| Error::EPIPE)
+    }
+
+    fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT) {
+        #[cfg(debug_assertions)]
+        {
+            let rpc = Rpc::AssertCleanZone(zone, txg);
+            self.server.unbounded_send(rpc).unwrap();
+        }
     }
 
     fn free(&self, lba: LbaT, length: LbaT)
@@ -272,7 +287,10 @@ pub struct ClosedZone {
     pub total_blocks: LbaT,
 
     /// Range of transactions included in this zone
-    pub txgs: Range<TxgT>
+    pub txgs: Range<TxgT>,
+
+    /// Index of the closed zone
+    pub zid: ZoneT
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -365,6 +383,11 @@ impl<'a> Pool {
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {
         self.stats.allocated()
+    }
+
+    /// Assert that the given zone was clean as of the given transaction
+    pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) {
+        self.clusters[cluster as usize].assert_clean_zone(zone, txg)
     }
 
     /// Create a new `Cluster` from unused files or devices.
@@ -497,7 +520,8 @@ impl<'a> Pool {
                         freed_blocks: cclz.freed_blocks,
                         pba: PBA::new(clust, cclz.start),
                         total_blocks: cclz.total_blocks,
-                        txgs: cclz.txgs};
+                        txgs: cclz.txgs,
+                        zid: cclz.zid};
                     (Some(pclz), Some((clust, cclz.zid + 1)))
                 } else {
                     // No more closed zones on this cluster
@@ -662,6 +686,7 @@ mod pool {
         self,
         trait ClusterTrait {
             fn allocated(&self) -> LbaT;
+            fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT);
             fn find_closed_zone(&self, zid: ZoneT)
                 -> Option<cluster::ClosedZone>;
             fn free(&self, lba: LbaT, length: LbaT)
@@ -716,12 +741,12 @@ mod pool {
 
         let r0 = rt.block_on(pool.find_closed_zone(0, 0)).unwrap();
         assert_eq!(r0.0, Some(ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5,
-            total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1)}));
+            total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1), zid: 1}));
 
         let (clust, zid) = r0.1.unwrap();
         let r1 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();
         assert_eq!(r1.0, Some(ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6,
-            total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3)}));
+            total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3), zid: 3}));
 
         let (clust, zid) = r1.1.unwrap();
         let r2 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();
@@ -730,12 +755,12 @@ mod pool {
         let (clust, zid) = r2.1.unwrap();
         let r3 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();
         assert_eq!(r3.0, Some(ClosedZone{pba: PBA::new(1, 10), freed_blocks: 5,
-            total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1)}));
+            total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1), zid: 1}));
 
         let (clust, zid) = r3.1.unwrap();
         let r4 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();
         assert_eq!(r4.0, Some(ClosedZone{pba: PBA::new(1, 30), freed_blocks: 6,
-            total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3)}));
+            total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3), zid: 3}));
 
         let (clust, zid) = r4.1.unwrap();
         let r5 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();

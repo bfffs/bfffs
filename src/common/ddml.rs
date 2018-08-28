@@ -35,6 +35,7 @@ use common::cache_mock::CacheMock as Cache;
 /// Only exists so mockers can replace Pool
 pub trait PoolTrait {
     fn allocated(&self) -> LbaT;
+    fn assert_clean_zone(&self, clust: ClusterT, zid: ZoneT, txg: TxgT);
     fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
         -> Box<Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
                       Error=Error>>;
@@ -60,6 +61,9 @@ pub struct MockPoolWrapper(Box<PoolTrait>);
 impl PoolTrait for MockPoolWrapper {
     fn allocated(&self) -> LbaT {
         self.0.allocated()
+    }
+    fn assert_clean_zone(&self, clust: ClusterT, zid: ZoneT, txg: TxgT) {
+        self.0.assert_clean_zone(clust, zid, txg)
     }
     fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
         -> Box<Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
@@ -223,6 +227,11 @@ impl DDML {
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {
         self.pool.allocated()
+    }
+
+    /// Assert that the given zone was clean as of the given transaction
+    pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) {
+        self.pool.assert_clean_zone(cluster, zone, txg)
     }
 
     /// Free a record's storage, ignoring the Cache
@@ -502,6 +511,7 @@ mod t {
         self,
         trait PoolTrait {
             fn allocated(&self) -> LbaT;
+            fn assert_clean_zone(&self, clust: ClusterT, zid: ZoneT, txg: TxgT);
             fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
                 -> Box<Future<Item=(Option<ClosedZone>,
                                     Option<(ClusterT, ZoneT)>),
@@ -705,12 +715,12 @@ mod t {
         let pool = s.create_mock::<MockPool>();
 
         // The first cluster has two closed zones
-        let clz0 = ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5,
+        let clz0 = ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5, zid: 0,
             total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1)};
         s.expect(pool.find_closed_zone_call(0, 0).and_return(
             Box::new(Ok((Some(clz0.clone()), Some((0, 11)))).into_future())));
 
-        let clz1 = ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6,
+        let clz1 = ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6, zid: 1,
             total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3)};
         s.expect(pool.find_closed_zone_call(0, 11).and_return(
             Box::new(Ok((Some(clz1.clone()), Some((0, 31)))).into_future())));
@@ -723,7 +733,7 @@ mod t {
             Box::new(Ok((None, Some((2, 0)))).into_future())));
 
         // The third cluster has one closed zone
-        let clz2 = ClosedZone{pba: PBA::new(2, 10), freed_blocks: 5,
+        let clz2 = ClosedZone{pba: PBA::new(2, 10), freed_blocks: 5, zid: 2,
             total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1)};
         s.expect(pool.find_closed_zone_call(2, 0).and_return(
             Box::new(Ok((Some(clz2.clone()), Some((2, 11)))).into_future())));
