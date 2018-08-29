@@ -149,7 +149,9 @@ impl<'a> FreeSpaceMap {
     /// Assert that the given zone was clean as of the given transaction
     fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT) {
         assert!(self.is_empty(zone) ||
-                self.zones[zone as usize].txgs.start >= txg);
+                self.zones[zone as usize].txgs.start >= txg,
+                "Zone {} did not get fully cleaned: {:?}", zone,
+                self.zones[zone as usize]);
     }
 
     /// How many blocks are available to be immediately written in the Zone?
