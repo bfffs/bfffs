@@ -1987,6 +1987,210 @@ root:
                     22: 22.0"#);
 }
 
+// Range delete pass2 steals an empty leaf node to the left
+#[test]
+fn range_delete_pass2_steal_left() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 2
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 11
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0
+                    - key: 3
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+          - key: 20
+            txgs:
+              start: 0
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 20
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              21: 21.0
+                    - key: 26
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              26: 26.0
+                              27: 27.0
+                              28: 28.0
+                    - key: 29
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 32
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0
+                    - key: 30
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 33
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(5..22, TxgT::from(2))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 3
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 11
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0
+                    - key: 3
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+          - key: 26
+            txgs:
+              start: 0
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 26
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              26: 26.0
+                              27: 27.0
+                              28: 28.0
+                    - key: 29
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 32
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0
+                    - key: 30
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 33
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0"#);
+}
 
 // Unbounded range lookup
 #[test]

@@ -427,7 +427,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         children[sib_idx].key = *sibling.key();
                         children[sib_idx].txgs.start = sibling.start_txg(txg);
                         children[child_idx].txgs.start = child.start_txg(txg);
-                        (0, 0)
+                        (0, 1)
                     }
                 } else {
                     if sibling.can_merge(&child, inner.max_fanout) {
@@ -440,7 +440,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         children[child_idx].key = *child.key();
                         children[sib_idx].txgs.start = sibling.start_txg(txg);
                         children[child_idx].txgs.start = child.start_txg(txg);
-                        (1, 1)
+                        (1, 0)
                     }
                 }
             };
