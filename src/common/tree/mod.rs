@@ -844,12 +844,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml7 = self.dml.clone();
         let inner2 = self.i.clone();
         let inner3 = self.i.clone();
+        let height = self.i.height.load(Ordering::Relaxed) as u8;
         self.write()
             .and_then(move |guard| {
                 Tree::xlock_root(dml2, guard, txg)
                      .and_then(move |(tree_guard, root_guard)| {
-                         Tree::range_delete_pass1(dml6, root_guard, range, None,
-                                                  txg)
+                         Tree::range_delete_pass1(dml6, height - 1, root_guard,
+                                                  range, None, txg)
                              .map(|_| tree_guard)
                      })
             })
@@ -937,18 +938,23 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Depth-first traversal deleting keys without reshaping tree
     /// `ubound` is the first key in the Node immediately to the right of
-    /// this one, unless this is the rightmost Node on its level.
-    fn range_delete_pass1<R, T>(dml: Arc<D>, mut guard: TreeWriteGuard<A, K, V>,
+    /// this one, unless this is the rightmost Node on its level.  `height` is
+    /// the height of `guard`, where leaves are 0.
+    fn range_delete_pass1<R, T>(dml: Arc<D>, height: u8,
+                                mut guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
-        if guard.is_leaf() {
+        if height == 0 {
+            debug_assert!(guard.is_leaf());
             guard.as_leaf_mut().range_delete(range);
             return Box::new(Ok(()).into_future())
                 as Box<Future<Item=(), Error=Error> + Send>;
+        } else {
+            debug_assert!(!guard.is_leaf());
         }
 
         // We must recurse into at most two children (at the limits of the
@@ -960,6 +966,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                                           ubound);
         let dml2 = dml.clone();
         let dml3 = dml.clone();
+        let dml6 = dml.clone();
         let fut: Box<Future<Item=TreeWriteGuard<A, K, V>, Error=Error> + Send>
             = match (start_idx_bound, end_idx_bound) {
             (Bound::Included(_), Bound::Excluded(_)) => {
@@ -975,8 +982,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 };
                 Box::new(guard.xlock(dml2, j, txg)
                     .and_then(move |(parent_guard, child_guard)| {
-                        Tree::range_delete_pass1(dml3, child_guard, range,
-                                                 ubound, txg)
+                        Tree::range_delete_pass1(dml3, height - 1, child_guard,
+                                                 range, ubound, txg)
                             .map(move |_| parent_guard)
                     }))
             },
@@ -989,8 +996,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 };
                 Box::new(guard.xlock(dml2, i, txg)
                     .and_then(move |(parent_guard, child_guard)| {
-                        Tree::range_delete_pass1(dml3, child_guard, range,
-                                                 ubound, txg)
+                        Tree::range_delete_pass1(dml3, height - 1, child_guard,
+                                                 range, ubound, txg)
                             .map(move |_| parent_guard)
                     }))
             },
@@ -1007,14 +1014,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 let dml5 = dml.clone();
                 Box::new(guard.xlock(dml2, i, txg)
                     .and_then(move |(parent_guard, child_guard)| {
-                        Tree::range_delete_pass1(dml3, child_guard, range, ub_l,
-                                                 txg)
+                        Tree::range_delete_pass1(dml3, height - 1, child_guard,
+                                                 range, ub_l, txg)
                             .map(|_| parent_guard)
                     }).and_then(move |parent_guard| {
                         parent_guard.xlock(dml4, j, txg)
                     }).and_then(move |(parent_guard, child_guard)| {
-                        Tree::range_delete_pass1(dml5, child_guard, range2,
-                                                 ub_h, txg)
+                        Tree::range_delete_pass1(dml5, height- 1, child_guard,
+                                                 range2, ub_h, txg)
                             .map(|_| parent_guard)
                     }))
             },
@@ -1027,8 +1034,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 };
                 Box::new(guard.xlock(dml2, i, txg)
                     .and_then(move |(parent_guard, child_guard)| {
-                        Tree::range_delete_pass1(dml3, child_guard, range,
-                                                 ubound, txg)
+                        Tree::range_delete_pass1(dml3, height - 1, child_guard,
+                                                 range, ubound, txg)
                             .map(move |_| parent_guard)
                     }))
             },
@@ -1039,18 +1046,52 @@ impl<A, D, K, V> Tree<A, D, K, V>
         };
 
         // Finally, remove nodes in the middle
-        Box::new(fut.map(move |mut guard| {
+        Box::new(fut.and_then(move |mut guard| {
             let low = match start_idx_bound {
                 Bound::Excluded(i) => i + 1,
                 Bound::Included(i) => i,
                 Bound::Unbounded => unreachable!()  // LCOV_EXCL_LINE
             };
             let high = match end_idx_bound {
-                Bound::Excluded(j) | Bound::Included(j) => j,
+                Bound::Excluded(j) | Bound::Included(j) => j.min(l),
                 Bound::Unbounded => unreachable!()  // LCOV_EXCL_LINE
             };
             if high > low {
-                guard.as_int_mut().children.drain(low..high);
+                if height == 1 {
+                    // If the IntElems point to leaves, just delete them.
+                    let futs = guard.as_int_mut().children.drain(low..high)
+                    .map(move |elem| {
+                        // If it points to an IntNode, recurse into it.
+                        if let TreePtr::Addr(addr) = elem.ptr {
+                            dml6.delete(&addr, txg)
+                        } else {
+                            Box::new(Ok(()).into_future())
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        }
+                    }).collect::<Vec<_>>();
+                    Box::new(future::join_all(futs).map(|_| ()))
+                                as Box<Future<Item=(), Error=Error> + Send>
+                } else {
+                    // If the IntElems point to IntNodes, we must recurse
+                    let fut = stream::iter_ok(low..high)
+                        .fold(guard, move |guard, i| {
+                        let dml7 = dml6.clone();
+                        guard.xlock(dml6.clone(), i, txg)
+                            .and_then(move |(parent_guard, child_guard)| {
+                                Tree::range_delete_pass1(dml7, height - 1,
+                                    child_guard, .., None, txg)
+                                    .map(move |_| parent_guard)
+                            })
+                    }).map(move |mut parent_guard| {
+                        // With the children deleted, we can drop the IntElems
+                        parent_guard.as_int_mut().children.drain(low..high);
+                    });
+                    Box::new(fut.map(|_| ()))
+                                as Box<Future<Item=(), Error=Error> + Send>
+                }
+            } else {
+                Box::new(Ok(()).into_future())
+                    as Box<Future<Item=(), Error=Error> + Send>
             }
         }))
     }

@@ -1,3 +1,4 @@
+// vim: tw=80
 //! Tests regarding disk I/O for Trees
 // LCOV_EXCL_START
 
@@ -212,6 +213,278 @@ fn open() {
     assert_eq!(root_elem_guard.txgs, TxgT::from(0)..TxgT::from(42));
     let drp = root_elem_guard.ptr.as_addr();
     assert_eq!(*drp, expected_drp);
+}
+
+// A Tree with 3 IntNodes, each with 3-4 children.  The range_delete will totally
+// delete the middle IntNode and partially delete the other two.
+#[test]
+fn range_delete() {
+    let drpl0 = DRP::new(PBA{cluster: 0, lba: 10}, Compression::None, 36, 36, 0);
+    let drpl1 = DRP::new(PBA{cluster: 0, lba: 11}, Compression::None, 36, 36, 0);
+    let drpl2 = DRP::new(PBA{cluster: 0, lba: 12}, Compression::None, 36, 36, 0);
+    let drpl3 = DRP::new(PBA{cluster: 0, lba: 13}, Compression::None, 36, 36, 0);
+    let children0 = vec![
+        IntElem::new(0u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl0)),
+        IntElem::new(1u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl1)),
+        IntElem::new(3u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl2)),
+        IntElem::new(6u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl3)),
+    ];
+    let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
+    let opt_intnode0 = Some(intnode0);
+    let drpi0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
+
+    let drpl4 = DRP::new(PBA{cluster: 0, lba: 20}, Compression::None, 36, 36, 0);
+    let drpl5 = DRP::new(PBA{cluster: 0, lba: 21}, Compression::None, 36, 36, 0);
+    let drpl6 = DRP::new(PBA{cluster: 0, lba: 22}, Compression::None, 36, 36, 0);
+    let children0 = vec![
+        IntElem::new(10u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl4)),
+        IntElem::new(13u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl5)),
+        IntElem::new(16u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl6)),
+    ];
+    let intnode1 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
+    let opt_intnode1 = Some(intnode1);
+    let drpi1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 36, 36, 0);
+
+    let drpl7 = DRP::new(PBA{cluster: 0, lba: 30}, Compression::None, 36, 36, 0);
+    let drpl8 = DRP::new(PBA{cluster: 0, lba: 31}, Compression::None, 36, 36, 0);
+    let drpl9 = DRP::new(PBA{cluster: 0, lba: 32}, Compression::None, 36, 36, 0);
+    let drpl10 = DRP::new(PBA{cluster: 0, lba: 33}, Compression::None, 36, 36, 0);
+    let children0 = vec![
+        IntElem::new(20u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl7)),
+        IntElem::new(26u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl8)),
+        IntElem::new(29u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl9)),
+        IntElem::new(30u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl10)),
+    ];
+    let intnode2 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
+    let opt_intnode2 = Some(intnode2);
+    let drpi2 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 36, 36, 0);
+
+    let mut ld2 = LeafData::new();
+    ld2.insert(3, 3.0);
+    ld2.insert(4, 4.0);
+    ld2.insert(5, 5.0);
+    let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
+    let opt_leafnode2 = Some(leafnode2);
+
+    let mut ld7 = LeafData::new();
+    ld7.insert(20, 20.0);
+    ld7.insert(21, 21.0);
+    ld7.insert(22, 22.0);
+    let leafnode7 = Arc::new(Node::new(NodeData::Leaf(ld7)));
+    let opt_leafnode7 = Some(leafnode7);
+
+    let mut ld8 = LeafData::new();
+    ld8.insert(26, 26.0);
+    ld8.insert(27, 27.0);
+    ld8.insert(28, 28.0);
+    let leafnode8 = Arc::new(Node::new(NodeData::Leaf(ld8)));
+    let opt_leafnode8 = Some(leafnode8);
+
+    let mut mock = DDMLMock::new();
+
+    fn expect_delete(mock: &mut DDMLMock, drp: DRP) {
+        mock.then().expect_delete()
+            .called_once()
+            .with(passes(move |(arg, _): &(*const DRP, TxgT)| {
+                unsafe {**arg == drp}
+            })).returning(move |_| {
+                Box::new(future::ok::<(), Error>(()))
+            });
+    }
+
+    fn expect_pop(mock: &mut DDMLMock, drp: DRP,
+                  mut node: Option<Arc<Node<DRP, u32, f32>>>)
+    {
+        mock.then().expect_pop::<Arc<Node<DRP, u32, f32>>,
+                                 Arc<Node<DRP, u32, f32>>>()
+            .called_once()
+            .with(passes(move |(arg, _): &(*const DRP, TxgT)| {
+                unsafe {**arg == drp}
+            })).returning(move |_| {
+                let res = Box::new(node.take().unwrap());
+                Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+            });
+    }
+
+    // Simulacrum requires us to define the expectations in their exact call
+    // order, even though we don't really care about it.
+    // These nodes are popped or deleted in pass1
+    expect_pop(&mut mock, drpi0.clone(), opt_intnode0);
+    expect_pop(&mut mock, drpl2.clone(), opt_leafnode2);
+    expect_delete(&mut mock, drpl3.clone());
+    expect_pop(&mut mock, drpi2.clone(), opt_intnode2);
+    expect_pop(&mut mock, drpl7.clone(), opt_leafnode7);
+    expect_pop(&mut mock, drpi1.clone(), opt_intnode1);
+    expect_delete(&mut mock, drpl4.clone());
+    expect_delete(&mut mock, drpl5.clone());
+    expect_delete(&mut mock, drpl6.clone());
+    // leafnode8 is popped as part of the fixup in pass 2
+    expect_pop(&mut mock, drpl8.clone(), opt_leafnode8);
+
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 8
+              end: 9
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 0
+                compression: None
+                lsize: 36
+                csize: 36
+                checksum: 0
+          - key: 10
+            txgs:
+              start: 20
+              end: 32
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 1
+                compression: None
+                lsize: 36
+                csize: 36
+                checksum: 0
+          - key: 20
+            txgs:
+              start: 8
+              end: 24
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 2
+                compression: None
+                lsize: 36
+                csize: 36
+                checksum: 0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    rt.block_on(
+        tree.range_delete(5..25, TxgT::from(42))
+    ).unwrap();
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 10
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0
+                    - key: 1
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 11
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0
+                    - key: 3
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+          - key: 20
+            txgs:
+              start: 0
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 20
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              26: 26.0
+                              27: 27.0
+                              28: 28.0
+                    - key: 29
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 32
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0
+                    - key: 30
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 33
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0"#);
 }
 
 #[test]
