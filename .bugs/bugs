@@ -1,4 +1,4 @@
-regular files shouldn't affect parent's nlink                | owner:"hg.user", open:True, id:05f76904adec5bc211aba7f53363fa1f9766751f, time:1535601275.36
+regular files shouldn't affect parent's nlink                | owner:"hg.user", open:False, id:05f76904adec5bc211aba7f53363fa1f9766751f, time:1535601275.36
 assertion failed: oz.allocated_blocks <= self.zones[zid as usize].total_blocks | owner:"hg.user", open:False, id:0c22a4f9010682df3c95aaab750b829d6b82cb1e, time:1535047256.47
 IDML::move_record shouldn't decompress records read from disk | owner:"hg.user", open:False, id:0dfcdd017a57e529a9a8f74e2aa6219e030713be, time:1535047563.98
 Eliminate StripeBuffer for NullRaid                          | owner:"hg.user", open:False, id:2de8809213ad39011fc4244722cd80db2d73a48a, time:1535047502.28

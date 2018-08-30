@@ -68,7 +68,7 @@ impl Fs {
     fn do_create<F, B>(&self, parent: u64, dtype: u8, flags: u64, name: &OsStr,
                  mode: u16, nlink: u64, f: F)
         -> Result<u64, i32>
-        where F: FnOnce(&ReadWriteFilesystem, u64) -> B + Send + 'static,
+        where F: FnOnce(&Arc<ReadWriteFilesystem>, u64) -> B + Send + 'static,
               B: Future<Item = (), Error = Error> + Send + 'static,
     {
         let (tx, rx) = oneshot::channel();
@@ -97,22 +97,13 @@ impl Fs {
         let parent_dirent_objkey = ObjKey::dir_entry(name);
         let parent_dirent_key = FSKey::new(parent, parent_dirent_objkey);
         let parent_dirent_value = FSValue::DirEntry(parent_dirent);
-        let parent_inode_key = FSKey::new(parent, ObjKey::Inode);
 
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
                 let dataset = Arc::new(ds);
-                let dataset2 = dataset.clone();
-                let nlink_fut = dataset.get(parent_inode_key)
-                    .and_then(move |r| {
-                        let mut value = r.unwrap();
-                        value.as_mut_inode().unwrap().nlink += 1;
-                        dataset2.insert(parent_inode_key, value)
-                    });
-                let extra_fut = f(&*dataset, ino);
-                dataset.insert(inode_key, inode_value).join4(
+                let extra_fut = f(&dataset, ino);
+                dataset.insert(inode_key, inode_value).join3(
                     dataset.insert(parent_dirent_key, parent_dirent_value),
-                    nlink_fut,
                     extra_fut
                 ).map(move |_| tx.send(Ok(ino)).unwrap())
             }).map_err(|e| panic!("{:?}", e))
@@ -144,7 +135,7 @@ impl Fs {
     pub fn create(&self, parent: u64, name: &OsStr, mode: u32)
         -> Result<u64, i32>
     {
-        let f = |_: &ReadWriteFilesystem, _| {
+        let f = |_: &Arc<ReadWriteFilesystem>, _| {
             Ok(()).into_future()
         };
         self.do_create(parent, libc::DT_REG, 0, name,
@@ -224,7 +215,7 @@ impl Fs {
     {
         let nlink = 2;  // One for the parent dir, and one for "."
 
-        let f = move |dataset: &ReadWriteFilesystem, ino| {
+        let f = move |dataset: &Arc<ReadWriteFilesystem>, ino| {
             let dot_dirent = Dirent {
                 ino,
                 dtype: libc::DT_DIR,
@@ -243,8 +234,18 @@ impl Fs {
             let dotdot_dirent_key = FSKey::new(ino, dotdot_dirent_objkey);
             let dotdot_dirent_value = FSValue::DirEntry(dotdot_dirent);
 
-            dataset.insert(dot_dirent_key, dot_dirent_value)
-            .join(dataset.insert(dotdot_dirent_key, dotdot_dirent_value))
+            let parent_inode_key = FSKey::new(parent, ObjKey::Inode);
+            let dataset2 = dataset.clone();
+            let nlink_fut = dataset.get(parent_inode_key)
+                .and_then(move |r| {
+                    let mut value = r.unwrap();
+                    value.as_mut_inode().unwrap().nlink += 1;
+                    dataset2.insert(parent_inode_key, value)
+                });
+
+            dataset.insert(dot_dirent_key, dot_dirent_value).join3(
+                dataset.insert(dotdot_dirent_key, dotdot_dirent_value),
+                nlink_fut)
             .map(|_| ())
         };
 

@@ -78,9 +78,9 @@ test_suite! {
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
         assert_eq!(dirent.d_fileno as u64, ino);
 
-        // The parent dir's link count should've increased
+        // The parent dir's link count should not have increased
         let parent_attr = mocks.val.0.getattr(1).unwrap();
-        assert_eq!(parent_attr.nlink, 2);
+        assert_eq!(parent_attr.nlink, 1);
     }
 
     /// getattr on the filesystem's root directory
