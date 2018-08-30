@@ -301,6 +301,92 @@ impl Fs {
         rx.wait().map(|r| r.unwrap())
     }
 
+    pub fn rmdir(&self, parent: u64, name: &OsStr) -> Result<(), i32> {
+        // Outline:
+        // 1) Lookup the directory
+        // 2) Check that the directory is empty
+        // 3) range_delete its key range
+        // 4) Remove the parent dir's dir_entry
+        // 5) Decrement the parent dir's link count
+        let (tx, rx) = oneshot::channel();
+        let owned_name = name.to_os_string();
+        let objkey = ObjKey::dir_entry(&owned_name);
+        self.handle.spawn(
+            self.db.fswrite(self.tree, move |dataset| {
+                let ds = Arc::new(dataset);
+                let ds2 = ds.clone();
+                // 1) Lookup the directory
+                let key = FSKey::new(parent, objkey);
+                ds.get(key)
+                .then(|r| {
+                    match r {
+                        Ok(opt) => match opt {
+                            Some(v) => {
+                                let de = v.as_direntry().unwrap();
+                                Ok(de.ino).into_future()
+                            },
+                            None => Err(Error::ENOENT).into_future()
+                        },
+                        Err(e) => Err(e).into_future()
+                    }
+                }).and_then(move |ino| {
+                    // 2) Check that the directory is empty
+                    ds.range(FSKey::obj_range(ino))
+                    .fold(false, |found_inode, (_, v)| {
+                        if let Some(dirent) = v.as_direntry() {
+                            if dirent.name != OsStr::new(".") &&
+                               dirent.name != OsStr::new("..") {
+                                Err(Error::ENOTEMPTY).into_future()
+                            } else {
+                                Ok(found_inode).into_future()
+                            }
+                        } else if let Some(inode) = v.as_inode() {
+                            // TODO: check permissions, file flags, etc
+                            assert_eq!(inode.nlink, 2,
+                                concat!("Hard links to directories are ",
+                                        "forbidden.  nlink={}"), inode.nlink);
+                            Ok(true).into_future()
+                        } else {
+                            Ok(found_inode).into_future()
+                        }
+                    }).map(move |found_inode| {
+                        if ! found_inode {
+                            panic!(concat!("Inode {} not found, but parent ",
+                                           "direntry {}:{:?} exists!"),
+                                    ino, parent, owned_name);
+                        }
+                        ino
+                    })
+                }).and_then(move |ino| {
+                    // 3) range_delete its key range
+                    let ino_fut = ds2.range_delete(FSKey::obj_range(ino));
+
+                    // 4) Remove the parent dir's dir_entry
+                    //let objkey = ObjKey::dir_entry(&name);
+                    let de_key = FSKey::new(parent, objkey);
+                    let dirent_fut = ds2.remove(de_key);
+
+                    // 5) Decrement the parent dir's link count
+                    let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
+                    let nlink_fut = ds2.get(parent_ino_key)
+                    .and_then(move |r| {
+                        let mut value = r.unwrap();
+                        value.as_mut_inode().unwrap().nlink -= 1;
+                        ds2.insert(parent_ino_key, value)
+                    });
+                    ino_fut.join3(dirent_fut, nlink_fut)
+                }).then(move |r| {
+                    match r {
+                        Ok(_) => tx.send(Ok(()).into()),
+                        Err(e) => tx.send(Err(e.into()))
+                    }.ok().expect("FS::rmdir: send failed");
+                    Ok(()).into_future()
+                })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     pub fn statvfs(&self) -> libc::statvfs {
         let (tx, rx) = oneshot::channel::<libc::statvfs>();
         self.handle.spawn(

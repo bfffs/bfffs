@@ -11,6 +11,7 @@ use common::tree::{Key, Value};
 use futures::{Future, Stream};
 use std::{
     borrow::Borrow,
+    fmt::Debug,
     ops::RangeBounds,
     sync::Arc
 };
@@ -59,6 +60,21 @@ impl<K: Key, V: Value> Dataset<K, V> {
               T: Ord + Clone + Send + 'static
     {
         self.tree.range(range)
+    }
+
+    pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
+        -> impl Future<Item=(), Error=Error> + Send
+        where K: Borrow<T>,
+              R: Clone + RangeBounds<T> + Send + 'static,
+              T: Debug + Ord + Clone + Send + 'static
+    {
+        self.tree.range_delete(range, txg)
+    }
+
+    fn remove(&self, k: K, txg: TxgT)
+        -> impl Future<Item=Option<V>, Error=Error> + Send
+    {
+        self.tree.remove(k, txg)
     }
 
     fn size(&self) -> LbaT {
@@ -127,5 +143,28 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
 
     pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT) -> Self {
         ReadWriteDataset{dataset: Dataset::new(idml, tree), txg}
+    }
+
+    pub fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
+        where K: Borrow<T>,
+              R: RangeBounds<T> + 'static,
+              T: Ord + Clone + Send + 'static
+    {
+        self.dataset.range(range)
+    }
+
+    pub fn range_delete<R, T>(&self, range: R)
+        -> impl Future<Item=(), Error=Error> + Send
+        where K: Borrow<T>,
+              R: Clone + RangeBounds<T> + Send + 'static,
+              T: Debug + Ord + Clone + Send + 'static
+    {
+        self.dataset.range_delete(range, self.txg)
+    }
+
+    pub fn remove(&self, k: K)
+        -> impl Future<Item=Option<V>, Error=Error> + Send
+    {
+        self.dataset.remove(k, self.txg)
     }
 }

@@ -159,6 +159,27 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
         self.e.expect::<R, RangeQueryMock<A, D, K, T, V>>("range")
     }
 
+    pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
+        -> Box<Future<Item=(), Error=Error> + Send>
+        where K: Borrow<T>,
+              R: RangeBounds<T> + 'static,
+              T: Ord + Clone + Send + 'static
+    {
+        self.e.was_called_returning::<(R, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>
+            ("range_delete", (range, txg))
+    }
+
+    pub fn expect_range_delete<R, T>(&mut self)
+        -> Method<(R, TxgT), Box<Future<Item=(), Error=Error> + Send>>
+        where K: Borrow<T>,
+              R: RangeBounds<T> + 'static,
+              T: Ord + Clone + Send + 'static
+    {
+        self.e.expect::<(R, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>("range_delete")
+    }
+
     pub fn remove(&self, k: K, txg: TxgT)
         -> Box<Future<Item=Option<V>, Error=Error> + Send>
     {

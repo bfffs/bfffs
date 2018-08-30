@@ -157,6 +157,36 @@ test_suite! {
         assert_eq!(dot.d_fileno, 1);
     }
 
+    test rmdir(mocks) {
+        let dirname = OsString::from("x");
+        let ino = mocks.val.0.mkdir(1, &dirname, 0o755).unwrap();
+        mocks.val.0.rmdir(1, &dirname).unwrap();
+
+        // Make sure it's gone
+        assert_eq!(mocks.val.0.getattr(ino).unwrap_err(), libc::ENOENT);
+        assert!(mocks.val.0.readdir(1, 0, 0)
+            .filter(|r| {
+                let dirent = r.unwrap().0;
+                dirent.d_name[0] == 'x' as i8
+            }).nth(0).is_none());
+
+        // Make sure the parent dir's refcount dropped
+        let inode = mocks.val.0.getattr(1).unwrap();
+        assert_eq!(inode.nlink, 1);
+    }
+
+    test rmdir_enoent(mocks) {
+        let dirname = OsString::from("x");
+        assert_eq!(mocks.val.0.rmdir(1, &dirname).unwrap_err(), libc::ENOENT);
+    }
+
+    test rmdir_enotempty(mocks) {
+        let dirname = OsString::from("x");
+        let ino = mocks.val.0.mkdir(1, &dirname, 0o755).unwrap();
+        mocks.val.0.mkdir(ino, &dirname, 0o755).unwrap();
+        assert_eq!(mocks.val.0.rmdir(1, &dirname).unwrap_err(), libc::ENOTEMPTY);
+    }
+
     test statvfs(mocks) {
         let statvfs = mocks.val.0.statvfs();
         assert_eq!(statvfs.f_blocks, 262144);

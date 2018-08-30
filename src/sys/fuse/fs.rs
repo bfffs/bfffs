@@ -178,6 +178,14 @@ impl Filesystem for FuseFs {
         reply.ok();
     }
 
+    fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr,
+             reply: ReplyEmpty) {
+        match self.fs.rmdir(parent, name) {
+            Ok(()) => reply.ok(),
+            Err(errno) => reply.error(errno)
+        }
+    }
+
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
         let statvfs = self.fs.statvfs();
         reply.statfs(statvfs.f_blocks, statvfs.f_bfree, statvfs.f_bavail,

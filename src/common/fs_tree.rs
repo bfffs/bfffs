@@ -99,6 +99,14 @@ impl FSKey {
         FSKey::compose(object, objtype, offset)
     }
 
+    /// Create a range of `FSKey` that will include every item related to the
+    /// given object.
+    pub fn obj_range(ino: u64) -> Range<Self> {
+        let start = FSKey::compose(ino, 0, 0);
+        let end = FSKey::compose(ino + 1, 0, 0);
+        start..end
+    }
+
     fn compose(object: u64, objtype: u8, offset: u64) -> Self {
         FSKey(((object as u128) << 64)
               | ((objtype as u128) << 56)
