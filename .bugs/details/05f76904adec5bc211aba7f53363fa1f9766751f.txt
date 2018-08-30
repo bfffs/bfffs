@@ -1,0 +1,28 @@
+# Lines starting with '#' and sections without content
+# are not displayed by a call to 'details'
+#
+[paths]
+Found in 656:5deec3e9e6e1
+
+[details]
+Creating a regular file shouldn't affect its parent dir's nlink count.  But it
+does.
+
+
+[expected]
+# The expected result
+
+
+[actual]
+# What happened instead
+
+
+[reproduce]
+1) mkdir t
+2) cd c
+3) ls -lad .	# will show nlink 2
+4) touch foo
+5) ls -lad .	# will show nlink 3
+
+[comments]
+# Comments and updates - leave your name
