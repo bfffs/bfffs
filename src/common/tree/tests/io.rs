@@ -693,6 +693,78 @@ root:
     assert_eq!(Ok(Some(200)), r);
 }
 
+#[test]
+fn remove_and_merge_down() {
+    let mut mock = DDMLMock::new();
+
+    let mut ld = LeafData::new();
+    ld.insert(3, 3.0);
+    ld.insert(4, 4.0);
+    ld.insert(5, 5.0);
+    let leafnode = Arc::new(Node::new(NodeData::Leaf(ld)));
+    let mut opt_leafnode = Some(leafnode);
+    let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
+    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
+        .called_once()
+        .with(passes(move |args: &(*const DRP, TxgT)| unsafe {*args.0 == drpl}))
+        .returning(move |_| {
+            let res = Box::new(opt_leafnode.take().unwrap());
+            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+        });
+
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 0
+                compression: None
+                lsize: 36
+                csize: 36
+                checksum: 0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.remove(1, TxgT::from(42)));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 43
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          3: 3.0
+          4: 4.0
+          5: 5.0"#);
+}
+
 // Tree::flush should serialize the Tree::Inner object
 #[test]
 fn serialize_inner() {
