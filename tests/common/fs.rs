@@ -22,8 +22,9 @@ test_suite! {
     use futures::{Future, future};
     use libc;
     use std::{
-        ffi::OsString,
+        ffi::{CString, CStr, OsString},
         fs,
+        os::raw::c_char,
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
@@ -71,7 +72,10 @@ test_suite! {
         }).nth(0)
         .expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_REG);
-        assert_eq!(&dirent.d_name[0..2], ['x' as i8, 0x0]); // "x"
+        let dirent_name = unsafe{
+            CStr::from_ptr(&dirent.d_name as *const c_char)
+        };
+        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
         assert_eq!(dirent.d_fileno as u64, ino);
 
         // The parent dir's link count should've increased
@@ -103,11 +107,17 @@ test_suite! {
         let mut entries = mocks.val.0.readdir(ino, 0, 0);
         let (dotdot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dotdot.d_type, libc::DT_DIR);
-        assert_eq!(&dotdot.d_name[0..3], [0x2e, 0x2e, 0x0]); // ".."
+        let dotdot_name = unsafe{
+            CStr::from_ptr(&dotdot.d_name as *const c_char)
+        };
+        assert_eq!(dotdot_name, CString::new("..").unwrap().as_c_str());
         assert_eq!(dotdot.d_fileno, 1);
         let (dot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dot.d_type, libc::DT_DIR);
-        assert_eq!(&dot.d_name[0..2], [0x2e, 0x0]); // "."
+        let dot_name = unsafe{
+            CStr::from_ptr(&dot.d_name as *const c_char)
+        };
+        assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
         assert_eq!(dot.d_fileno as u64, ino);
 
         // The parent dir should have an "x" directory entry
@@ -119,7 +129,10 @@ test_suite! {
         }).nth(0)
         .expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_DIR);
-        assert_eq!(&dirent.d_name[0..2], ['x' as i8, 0x0]); // "x"
+        let dirent_name = unsafe{
+            CStr::from_ptr(&dirent.d_name as *const c_char)
+        };
+        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
         assert_eq!(dirent.d_fileno as u64, ino);
 
         // The parent dir's link count should've increased
@@ -131,10 +144,16 @@ test_suite! {
         let mut entries = mocks.val.0.readdir(1, 0, 0);
         let (dotdot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dotdot.d_type, libc::DT_DIR);
-        assert_eq!(&dotdot.d_name[0..3], [0x2e, 0x2e, 0x0]); // ".."
+        let dotdot_name = unsafe{
+            CStr::from_ptr(&dotdot.d_name as *const c_char)
+        };
+        assert_eq!(dotdot_name, CString::new("..").unwrap().as_c_str());
         let (dot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dot.d_type, libc::DT_DIR);
-        assert_eq!(&dot.d_name[0..2], [0x2e, 0x0]); // "."
+        let dot_name = unsafe{
+            CStr::from_ptr(&dot.d_name as *const c_char)
+        };
+        assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
         assert_eq!(dot.d_fileno, 1);
     }
 
