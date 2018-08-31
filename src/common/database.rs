@@ -19,7 +19,7 @@ use futures::{
     Stream,
     future,
     stream,
-    sync::mpsc
+    sync::{mpsc, oneshot}
 };
 use libc;
 use std::collections::BTreeMap;
@@ -196,8 +196,12 @@ pub struct Database {
 }
 
 impl Database {
-    /// Immediately clean closed zones, in the background
-    pub fn clean(&self) -> impl Future<Item=(), Error=Error> {
+    /// Clean zones immediately.  Does not wait for the result to be polled!
+    ///
+    /// The returned `Receiver` will deliver notification when cleaning is
+    /// complete.  However, there is no requirement to poll it.  The client may
+    /// drop it, and cleaning will continue in the background.
+    pub fn clean(&self) -> oneshot::Receiver<()> {
         self.cleaner.clean()
     }
 

@@ -4,10 +4,9 @@ use common::*;
 use common::idml::ClosedZone;
 use futures::{
     Future,
-    Sink,
     future,
     stream::{self, Stream},
-    sync::mpsc
+    sync::{mpsc, oneshot}
 };
 use std::sync::Arc;
 use tokio::executor::Executor;
@@ -85,17 +84,27 @@ impl SyncCleaner {
 ///
 /// Cleans old Zones by moving their data to empty zones and erasing them.
 pub struct Cleaner {
-    tx: mpsc::Sender<()>
+    tx: mpsc::Sender<oneshot::Sender<()>>
 }
 
 impl Cleaner {
     const DEFAULT_THRESHOLD: f32 = 0.5;
 
-    pub fn clean(&self) -> impl Future<Item=(), Error=Error> {
-        self.tx.clone()
-            .send(())
-            .map(|_| ())
-            .map_err(|e| panic!("{:?}", e))
+    /// Clean zones immediately.  Does not wait for the result to be polled!
+    ///
+    /// The returned `Receiver` will deliver notification when cleaning is
+    /// complete.  However, there is no requirement to poll it.  The client may
+    /// drop it, and cleaning will continue in the background.
+    pub fn clean(&self) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        if let Err(e) = self.tx.clone().try_send(tx) {
+            if e.is_full() {
+                // No worries; cleaning is idempotent
+            } else {
+                panic!("{:?}", e);
+            }
+        }
+        rx
     }
 
     pub fn new<E>(handle: E, idml: Arc<IDML>, thresh: Option<f32>) -> Self
@@ -110,14 +119,19 @@ impl Cleaner {
     // Start a task that will clean the system in the background, whenever
     // requested.
     fn run<E>(mut handle: E, idml: Arc<IDML>, thresh: f32,
-              rx: mpsc::Receiver<()>)
+              rx: mpsc::Receiver<oneshot::Sender<()>>)
         where E: Executor + 'static
     {
         handle.spawn(Box::new(future::lazy(move || {
             let sync_cleaner = SyncCleaner::new(idml, thresh);
-            rx.for_each(move |_| {
+            rx.for_each(move |tx| {
                 sync_cleaner.clean_now()
                     .map_err(|e| panic!("{:?}", e))
+                    .map(move |_| {
+                        // Ignore errors.  An error here indicates that the
+                        // client doesn't want to be notified.
+                        let _result = tx.send(());
+                    })
             })
         }))).unwrap()
     }
