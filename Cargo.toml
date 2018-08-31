@@ -42,7 +42,7 @@ serde_derive = "1.0"
 time = "0.1"	# needed for FUSE
 tokio = "0.1.7"
 tokio-file = "0.3.0"
-tokio-io-pool = "0.1"
+tokio-io-pool = "0.1.4"
 tokio-signal = "0.2.2"
 uuid = { version = "0.6", features = ["serde", "v4"]}
 
