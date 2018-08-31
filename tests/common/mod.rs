@@ -1,3 +1,4 @@
+mod clean_zone;
 mod cluster;
 mod database;
 mod device_manager;
