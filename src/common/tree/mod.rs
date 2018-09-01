@@ -641,9 +641,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
               T: Ord + Clone + Send + 'static
     {
         Tree::<A, D, K, V>::read_root(&inner)
-            .and_then(move |guard| {
-                guard.rlock(dml.clone())
-                     .and_then(move |g| Tree::get_range_r(dml, g, None, range))
+            .and_then(move |tree_guard| {
+                tree_guard.rlock(dml.clone())
+                     .and_then(move |g| {
+                         drop(tree_guard);
+                         Tree::get_range_r(dml, g, None, range)
+                     })
             })
     }
 
@@ -735,12 +738,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 (child_fut, next_fut)
             } // LCOV_EXCL_LINE kcov false negative
         };
-        drop(guard);
         Box::new(
             child_fut.join(next_fut)
                 .and_then(move |(child_guard, next_guard)| {
-                Tree::get_range_r(dml, child_guard, next_guard, range)
-            })
+                    drop(guard);
+                    Tree::get_range_r(dml, child_guard, next_guard, range)
+                })
         ) as Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
                         Error=Error> + Send>
     }
@@ -750,9 +753,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml2 = self.dml.clone();
         let dml3 = self.dml.clone();
         self.read()
-            .and_then(move |guard| {
-                guard.rlock(dml2)
-                     .and_then(move |guard| Tree::last_key_r(dml3, guard))
+            .and_then(move |tree_guard| {
+                tree_guard.rlock(dml2)
+                     .and_then(move |guard| {
+                         drop(tree_guard);
+                         Tree::last_key_r(dml3, guard)
+                     })
             })
     }
 
@@ -771,10 +777,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 child_elem.rlock(dml)
             }
         };
-        drop(node);
         Box::new(
             next_node_fut
-            .and_then(move |next_node| Tree::last_key_r(dml2, next_node))
+            .and_then(move |next_node| {
+                drop(node);
+                Tree::last_key_r(dml2, next_node)
+            })
         )
     }
 
@@ -1555,15 +1563,16 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
         -> impl Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>
     {
         Tree::<ddml::DRP, D, K, V>::read_root(&*inner)
-            .and_then(move |guard| {
+            .and_then(move |tree_guard| {
                 let h = inner.height.load(Ordering::Relaxed) as u8;
                 if h == echelon + 1 {
                     // Clean the tree root
-                    let dirty = if guard.ptr.is_addr() &&
-                        guard.ptr.as_addr().pba() >= pbas.start &&
-                        guard.ptr.as_addr().pba() < pbas.end {
+                    let dirty = if tree_guard.ptr.is_addr() &&
+                        tree_guard.ptr.as_addr().pba() >= pbas.start &&
+                        tree_guard.ptr.as_addr().pba() < pbas.end {
                         let mut v = VecDeque::new();
-                        v.push_back(NodeId{height: echelon, key: guard.key});
+                        v.push_back(NodeId{height: echelon,
+                            key: tree_guard.key});
                         v
                     } else {   // LCOV_EXCL_LINE   kcov false negative
                         VecDeque::new()
@@ -1572,8 +1581,9 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                         as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
                                       Error=Error> + Send>
                 } else {
-                    let fut = guard.rlock(dml.clone())
+                    let fut = tree_guard.rlock(dml.clone())
                          .and_then(move |guard| {
+                             drop(tree_guard);
                              Tree::get_dirty_nodes_r(dml, guard, h - 1, None,
                                                      key, pbas, txgs, echelon)
                          });
@@ -1624,9 +1634,9 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                 next_key
             };
             let child_fut = guard.as_int().children[idx].rlock(dml.clone());
-            drop(guard);
             Box::new(
                 child_fut.and_then(move |child_guard| {
+                    drop(guard);
                     Tree::get_dirty_nodes_r(dml, child_guard, height - 1,
                                             next_key, key, pbas, txgs, echelon)
                 })

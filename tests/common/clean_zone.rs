@@ -64,15 +64,15 @@ test_suite! {
     });
 
     #[ignore = "Test is slow and intermittent" ]
-    test clean_zone(mocks(256)) {
+    test clean_zone(mocks(512)) {
         let (db, fs, _rt) = mocks.val;
-        for i in 0..6000 {
+        for i in 0..16384 {
             let fname = format!("f.{}", i);
             fs.mkdir(1, &OsString::from(fname), 0o755).unwrap();
         }
         fs.sync();
-        for i in 0..3000 {
-            let fname = format!("f.{}", 2 * i);
+        for i in 0..8000 {
+            let fname = format!("f.{}", i);
             fs.rmdir(1, &OsString::from(fname)).unwrap();
         }
         fs.sync();
