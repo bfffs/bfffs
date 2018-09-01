@@ -597,9 +597,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml2 = self.dml.clone();
         let dml3 = self.dml.clone();
         self.read()
-            .and_then(move |guard| {
-                guard.rlock(dml2)
-                     .and_then(move |guard| Tree::get_r(dml3, guard, k))
+            .and_then(move |tree_guard| {
+                tree_guard.rlock(dml2)
+                     .and_then(move |guard| {
+                         drop(tree_guard);
+                         Tree::get_r(dml3, guard, k)
+                     })
             })
     }
 
@@ -617,10 +620,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 child_elem.rlock(dml)
             }
         };
-        drop(node);
         Box::new(
             next_node_fut
-            .and_then(move |next_node| Tree::get_r(dml2, next_node, k))
+            .and_then(move |next_node| {
+                drop(node);
+                Tree::get_r(dml2, next_node, k)
+            })
         )
     }
 
@@ -1328,14 +1333,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn flush_r(dml: Arc<D>, mut node: Box<Node<A, K, V>>, txg: TxgT)
         -> Box<Future<Item=(D::Addr, Range<TxgT>), Error=Error> + Send>
     {
-        if node.0.get_mut().unwrap().is_leaf() {
+        if node.0.get_mut().expect("node.0.get_mut").is_leaf() {
             let fut = Tree::write_leaf(dml, node, txg)
                 .map(move |addr| {
                     (addr, txg..txg + 1)
                 });
             return Box::new(fut);
         }
-        let mut ndata = node.0.try_write().unwrap();
+        let mut ndata = node.0.try_write().ok().expect("node.0.try_write");
 
         // We need to flush each dirty child, rewrite its TreePtr, and update
         // the Node's txg range.  Satisfying the borrow checker requires that

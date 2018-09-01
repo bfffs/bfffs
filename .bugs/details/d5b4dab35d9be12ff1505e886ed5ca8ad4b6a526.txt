@@ -385,8 +385,8 @@ stack backtrace:
 thread panicked while panicking. aborting.
 
 [reproduce]
-# Reproduction steps
-
+The bug is intermittent, but can often be reproduced with this test case.  As of revision 663:05e9785844a8, it reproduced on 2 out of 6 attempts.
+cargo +nightly test --all-features   common::clean_zone::t::get_mut -- --ignored
 
 [comments]
 # Comments and updates - leave your name

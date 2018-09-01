@@ -29,7 +29,7 @@ test_suite! {
     use tempdir::TempDir;
     use tokio_io_pool::Runtime;
 
-    fixture!( mocks() -> (Arc<Database>, Fs, Runtime) {
+    fixture!( mocks(zone_size: u64) -> (Arc<Database>, Fs, Runtime) {
         setup(&mut self) {
             let mut rt = Runtime::new();
             let handle = rt.handle().clone();
@@ -39,8 +39,8 @@ test_suite! {
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
             drop(file);
+            let zone_size = NonZeroU64::new(*self.zone_size);
             let db = rt.block_on(future::lazy(move || {
-                let zone_size = NonZeroU64::new(256);
                 Pool::create_cluster(None, 1, 1, zone_size, 0, &[filename])
                 .map_err(|_| unreachable!())
                 .and_then(|cluster| {
@@ -64,7 +64,7 @@ test_suite! {
     });
 
     #[ignore = "Test is slow and intermittent" ]
-    test clean_zone(mocks) {
+    test clean_zone(mocks(256)) {
         let (db, fs, _rt) = mocks.val;
         for i in 0..6000 {
             let fname = format!("f.{}", i);
@@ -72,7 +72,31 @@ test_suite! {
         }
         fs.sync();
         for i in 0..3000 {
+            let fname = format!("f.{}", 2 * i);
+            fs.rmdir(1, &OsString::from(fname)).unwrap();
+        }
+        fs.sync();
+        let statvfs = fs.statvfs();
+        println!("Before cleaning: {:?} free out of {:?}",
+                 statvfs.f_bfree, statvfs.f_blocks);
+        db.clean().wait().unwrap();
+        println!("After cleaning: {:?} free out of {:?}",
+                 statvfs.f_bfree, statvfs.f_blocks);
+    }
+
+    /// A regression test for bug d5b4dab35d9be12ff1505e886ed5ca8ad4b6a526
+    /// (node.0.get_mut() fails in Tree::flush_r).  As of 664:7ce31a1d42db, it
+    /// fails about 30% of the time.
+    #[ignore = "Test is slow and intermittent" ]
+    test get_mut(mocks(512)) {
+        let (db, fs, _rt) = mocks.val;
+        for i in 0..16384 {
             let fname = format!("f.{}", i);
+            fs.mkdir(1, &OsString::from(fname), 0o755).unwrap();
+        }
+        fs.sync();
+        for i in 0..8192 {
+            let fname = format!("f.{}", 2 * i);
             fs.rmdir(1, &OsString::from(fname)).unwrap();
         }
         fs.sync();
