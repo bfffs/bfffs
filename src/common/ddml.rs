@@ -472,7 +472,7 @@ impl DML for DDML {
         -> Box<Future<Item=DRP, Error=Error> + Send>
     {
         let cache2 = self.cache.clone();
-        let db = cacheable.make_ref();//.downcast::<DivBuf>().unwrap();
+        let db = cacheable.make_ref();
         let fut = self.put_common(&db, compression, txg)
             .map(move |drp|{
                 let pba = drp.pba();
