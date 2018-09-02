@@ -13,15 +13,17 @@ sed '
 /::t"/d
 #
 # Exclude boring modules
-/"::arkfs"/d
+/"::bfffs"/d
 /"::common"/d
 /"::common::cache_mock"/d
 /"::common::ddml_mock"/d
 /"::common::idml_mock"/d
+/"::common::tree_mock"/d
 /"::common::dva"/d
 /"::common::sgcursor"/d
 /"::common::tree::atomic_u64_serializer"/d
 /"::common::tree::tree_root_serializer"/d
+/"::common::fs_tree::dbs_serializer"/d
 /"::common::vdev"/d
 #
 # Exclude submodule edges, leaving just the use edges
