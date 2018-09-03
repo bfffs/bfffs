@@ -46,7 +46,11 @@ test_suite! {
                 .and_then(|cluster| {
                     Pool::create(String::from("test_fs"), vec![cluster])
                     .map(|pool| {
-                        let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+                        let cache = Arc::new(
+                            Mutex::new(
+                                Cache::with_capacity(1_000_000)
+                            )
+                        );
                         let ddml = Arc::new(DDML::new(pool, cache.clone()));
                         let idml = IDML::create(ddml, cache);
                         Database::create(Arc::new(idml), handle)
@@ -190,6 +194,22 @@ test_suite! {
     test statvfs(mocks) {
         let statvfs = mocks.val.0.statvfs();
         assert_eq!(statvfs.f_blocks, 262144);
+    }
+
+    // A very simple 4KB write to an empty file
+    test write(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let buf = vec![42u8; 4096];
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(4096), r);
+
+        // Check the file size
+        let inode = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(inode.size, 4096);
+
+        // TODO: read the data back
+        let db = mocks.val.0.read(ino, 0, 4096).unwrap();
+        assert_eq!(&db[..], &buf[..]);
     }
 
 }

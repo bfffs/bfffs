@@ -2,13 +2,18 @@
 
 //! Data types used by trees representing filesystems
 
-use common::tree::*;
+use common::{
+    RID,
+    tree::*
+};
+use divbuf::DivBufShared;
 use metrohash::MetroHash64;
 use std::{
     ffi::{OsString, OsStr},
     hash::Hasher,
     ops::Range,
     os::unix::ffi::OsStrExt,
+    sync::Arc
 };
 use time::Timespec;
 
@@ -26,6 +31,7 @@ struct TimespecDef {
 enum ObjKeyDiscriminant {
     DirEntry = 0,
     Inode = 1,
+    Extent = 2,
 }
 
 /// The per-object portion of a `FSKey`
@@ -39,6 +45,11 @@ pub enum ObjKey {
     /// refers to one of the file's extended attributes.
     DirEntry(u64),
     Inode,
+    /// File extent
+    ///
+    /// The value is the logical size of the extent, in bytes.  This key is only
+    /// valid if the object is a file or an extended attribute.
+    Extent(u64)
 }
 
 impl ObjKey {
@@ -60,6 +71,7 @@ impl ObjKey {
         let d = match self {
             ObjKey::DirEntry(_) => ObjKeyDiscriminant::DirEntry,
             ObjKey::Inode => ObjKeyDiscriminant::Inode,
+            ObjKey::Extent(_) => ObjKeyDiscriminant::Extent
         };
         d as u8
     }
@@ -67,7 +79,8 @@ impl ObjKey {
     fn offset(&self) -> u64 {
         match self {
             ObjKey::DirEntry(x) => *x,
-            ObjKey::Inode => 0
+            ObjKey::Inode => 0,
+            ObjKey::Extent(x) => *x,
         }
     }
 }
@@ -157,13 +170,68 @@ pub struct Inode {
     pub mode:       u16,
 }
 
+mod dbs_serializer {
+    use super::*;
+    use serde::{de::Deserializer, Serializer};
+
+    pub(super) fn deserialize<'de, DE>(_deserializer: DE)
+        -> Result<Arc<DivBufShared>, DE::Error>
+        where DE: Deserializer<'de>
+    {
+        panic!("InlineExtents should be converted to OnDiskExtents before serializing")
+    }
+
+    pub(super) fn serialize<S>(_dbs: &Arc<DivBufShared>, _serializer: S)
+        -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        panic!("InlineExtents should be converted to OnDiskExtents before serializing")
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InlineExtent {
+    #[serde(with = "dbs_serializer")]
+    buf: Arc<DivBufShared>
+}
+
+impl PartialEq for InlineExtent {
+    fn eq(self: &Self, other: &Self) -> bool {
+        self.buf.try().unwrap() == other.buf.try().unwrap()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct OnDiskExtent {
+    pub lsize: u32,
+    pub rid: RID,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Extent<'a> {
+    Inline(&'a InlineExtent),
+    OnDisk(&'a OnDiskExtent)
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum FSValue {
     DirEntry(Dirent),
     Inode(Inode),
+    InlineExtent(InlineExtent),
+    OnDiskExtent(OnDiskExtent),
 }
 
 impl FSValue {
+    pub fn as_extent(&self) -> Option<Extent> {
+        if let FSValue::InlineExtent(extent) = self {
+            Some(Extent::Inline(extent))
+        } else if let FSValue::OnDiskExtent(extent) = self {
+            Some(Extent::OnDisk(extent))
+        } else {
+            None
+        }
+    }
+
     pub fn as_direntry(&self) -> Option<&Dirent> {
         if let FSValue::DirEntry(direntry) = self {
             Some(direntry)

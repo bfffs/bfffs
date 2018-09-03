@@ -143,6 +143,15 @@ impl Filesystem for FuseFs {
         }
     }
 
+    fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
+            size: u32, reply: ReplyData)
+    {
+        match self.fs.read(ino, offset as u64, size as usize) {
+            Ok(db) => reply.data(&db[..]),
+            Err(errno) => reply.error(errno)
+        }
+    }
+
     fn readdir(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64,
                mut reply: ReplyDirectory)
     {
@@ -191,5 +200,14 @@ impl Filesystem for FuseFs {
         reply.statfs(statvfs.f_blocks, statvfs.f_bfree, statvfs.f_bavail,
                      statvfs.f_files, statvfs.f_ffree, statvfs.f_bsize as u32,
                      statvfs.f_namemax as u32, statvfs.f_frsize as u32);
+    }
+
+    fn write(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
+             data: &[u8], flags: u32, reply: ReplyWrite)
+    {
+        match self.fs.write(ino, offset, data, flags) {
+            Ok(lsize) => reply.written(lsize),
+            Err(errno) => reply.error(errno)
+        }
     }
 }

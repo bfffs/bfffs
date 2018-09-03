@@ -7,6 +7,7 @@
 //! and snapshotted.  The also support the same CRUD operations as Trees.
 
 use common::*;
+use common::dml::{Compression, DML};
 use common::tree::{Key, Value};
 use futures::{Future, Stream};
 use std::{
@@ -39,6 +40,13 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.tree.get(k)
     }
 
+    /// Read directly from the IDML, bypassing the Tree
+    fn get_blob(&self, ridp: &RID)
+        -> impl Future<Item=Box<DivBuf>, Error=Error> + Send
+    {
+        self.idml.get::<DivBufShared, DivBuf>(ridp)
+    }
+
     fn insert(&self, txg: TxgT, k: K, v: V)
         -> impl Future<Item=Option<V>, Error=Error>
     {
@@ -52,6 +60,13 @@ impl<K: Key, V: Value> Dataset<K, V> {
 
     fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>) -> Self {
         Dataset{idml, tree}
+    }
+
+    /// Write directly to the IDML, bypassing the Tree
+    fn put_blob(&self, dbs: DivBufShared, compression: Compression, txg: TxgT)
+        -> impl Future<Item=RID, Error=Error> + Send
+    {
+        self.idml.put(dbs, compression, txg)
     }
 
     fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
@@ -95,6 +110,13 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.dataset.get(k)
+    }
+
+    /// Read directly from the IDML, bypassing the Tree
+    pub fn get_blob(&self, ridp: &RID)
+        -> impl Future<Item=Box<DivBuf>, Error=Error> + Send
+    {
+        self.dataset.get_blob(ridp)
     }
 
     pub fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
@@ -143,6 +165,13 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
 
     pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT) -> Self {
         ReadWriteDataset{dataset: Dataset::new(idml, tree), txg}
+    }
+
+    /// Write directly to the IDML, bypassing the Tree
+    pub fn put_blob(&self, dbs: DivBufShared, compression: Compression)
+        -> impl Future<Item=RID, Error=Error> + Send
+    {
+        self.dataset.put_blob(dbs, compression, self.txg)
     }
 
     pub fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>

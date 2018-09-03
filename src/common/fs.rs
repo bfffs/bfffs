@@ -4,7 +4,9 @@
 use atomic::*;
 use common::Error;
 use common::database::*;
+use common::dml::Compression;
 use common::fs_tree::*;
+use divbuf::{DivBufShared, DivBuf};
 use futures::{
     Future,
     IntoFuture,
@@ -15,6 +17,7 @@ use futures::{
 };
 use libc;
 use std::{
+    cmp,
     ffi::{OsStr, OsString},
     mem,
     os::unix::ffi::OsStrExt,
@@ -22,6 +25,8 @@ use std::{
 };
 use time;
 use tokio_io_pool;
+
+const RECORDSIZE: usize = 4 * 1024;    // Default record size 4KB
 
 /// Generic Filesystem layer.
 ///
@@ -253,6 +258,53 @@ impl Fs {
                        libc::S_IFDIR | (mode as u16), nlink, f)
     }
 
+    pub fn read(&self, ino: u64, offset: u64, size: usize)
+        -> Result<Box<DivBuf>, i32>
+    {
+        assert_eq!(offset as usize % RECORDSIZE, 0,
+                   "Unaligned reads are TODO");
+        assert_eq!(size % RECORDSIZE, 0, "Unaligned reads are TODO");
+        assert_eq!(size, RECORDSIZE, "Multi-record reads are TODO");
+        let (tx, rx) = oneshot::channel();
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
+        self.handle.spawn(
+            self.db.fsread(self.tree, move |ds| {
+                let dataset = Arc::new(ds);
+                dataset.get(inode_key)
+                .and_then(move |value| {
+                    let fsize = value.unwrap().as_inode().unwrap().size;
+                    if fsize <= offset {
+                        let db = DivBufShared::from(Vec::new()).try().unwrap();
+                        tx.send(Ok(Box::new(db))).unwrap();
+                        Box::new(Ok(()).into_future())
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    } else {
+                        let k = FSKey::new(ino, ObjKey::Extent(offset));
+                        let fut = dataset.get(k)
+                        .and_then(move |v| {
+                            match v.unwrap().as_extent().unwrap() {
+                                Extent::Inline(_) => unimplemented!(),
+                                Extent::OnDisk(extent) =>
+                                    dataset.get_blob(&extent.rid)
+                            }
+                        }).map(move |r: Box<DivBuf>| {
+                            let db = if fsize < offset + size as u64 {
+                                let db_size = fsize as u64 - offset;
+                                Box::new(r.slice_to(db_size as usize))
+                            } else {
+                                r
+                            };
+                            tx.send(Ok(db)).unwrap()
+                        });
+                        Box::new(fut)
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    }
+                })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     // TODO: instead of the full size struct libc::dirent, use a variable size
     // structure in the mpsc channel
     pub fn readdir(&self, ino: u64, _fh: u64, soffs: i64)
@@ -420,6 +472,53 @@ impl Fs {
             self.db.sync_transaction()
             .map_err(|e| panic!("{:?}", e))
             .map(|_| tx.send(()).unwrap())
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
+    pub fn write(&mut self, ino: u64, offset: i64, data: &[u8], _flags: u32)
+        -> Result<u32, i32>
+    {
+        // Outline:
+        // 1) Split the I/O into discrete records
+        // 2) For each record
+        //   a) If it's complete, write it to the tree as a CachedExtent
+        //   b) If it's a partial record, try to read the old one from the tree
+        //     i) If sucessful, RMW it
+        //     ii) If not, pad the beginning of the record with zeros.  Pad the
+        //         end if the Inode indicates that the file size requires it.
+        //         Then write it as a CachedExtent
+        //  3) Set file length
+        let (tx, rx) = oneshot::channel();
+        assert_eq!(offset as usize % RECORDSIZE, 0,
+                   "Unaligned writes are TODO");
+        assert_eq!(data.len() % RECORDSIZE, 0, "Unaligned writes are TODO");
+        assert_eq!(data.len(), RECORDSIZE, "Multi-record writes are TODO");
+        let lsize = data.len() as u32;
+        let v = Vec::from(data);
+        let buf = DivBufShared::from(v);
+        self.handle.spawn(
+            self.db.fswrite(self.tree, move |ds| {
+                let inode_key = FSKey::new(ino, ObjKey::Inode);
+                let dataset = Arc::new(ds);
+                let dataset2 = dataset.clone();
+                let dataset3 = dataset.clone();
+                dataset.put_blob(buf, Compression::None)
+                .and_then(move |rid| {
+                    let k = FSKey::new(ino, ObjKey::Extent(offset as u64));
+                    let v = FSValue::OnDiskExtent(OnDiskExtent{lsize, rid});
+                    dataset.insert(k, v)
+                }).and_then(move |_| {
+                    dataset3.get(inode_key)
+                }).and_then(move |r| {
+                    let mut value = r.unwrap();
+                    let old_size = value.as_inode().unwrap().size;
+                    let new_size = cmp::max(old_size,
+                                            offset as u64 + lsize as u64);
+                    value.as_mut_inode().unwrap().size = new_size;
+                    dataset2.insert(inode_key, value)
+                }).map(move |_| tx.send(Ok(lsize)).unwrap())
+            }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()
     }
