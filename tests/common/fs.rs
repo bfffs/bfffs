@@ -207,8 +207,8 @@ test_suite! {
         let inode = mocks.val.0.getattr(ino).unwrap();
         assert_eq!(inode.size, 4096);
 
-        // TODO: read the data back
-        let db = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let db = &sglist[0];
         assert_eq!(&db[..], &buf[..]);
     }
 

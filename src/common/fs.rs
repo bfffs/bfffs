@@ -2,7 +2,7 @@
 //! Common VFS implementation
 
 use atomic::*;
-use common::Error;
+use common::*;
 use common::database::*;
 use common::fs_tree::*;
 use divbuf::{DivBufShared, DivBuf};
@@ -258,7 +258,7 @@ impl Fs {
     }
 
     pub fn read(&self, ino: u64, offset: u64, size: usize)
-        -> Result<Box<DivBuf>, i32>
+        -> Result<SGList, i32>
     {
         assert_eq!(offset as usize % RECORDSIZE, 0,
                    "Unaligned reads are TODO");
@@ -274,7 +274,7 @@ impl Fs {
                     let fsize = value.unwrap().as_inode().unwrap().size;
                     if fsize <= offset {
                         let db = DivBufShared::from(Vec::new()).try().unwrap();
-                        tx.send(Ok(Box::new(db))).unwrap();
+                        tx.send(Ok(vec![db])).unwrap();
                         Box::new(Ok(()).into_future())
                             as Box<Future<Item=(), Error=Error> + Send>
                     } else {
@@ -297,11 +297,11 @@ impl Fs {
                         }).map(move |r: Box<DivBuf>| {
                             let db = if fsize < offset + size as u64 {
                                 let db_size = fsize as u64 - offset;
-                                Box::new(r.slice_to(db_size as usize))
+                                r.slice_to(db_size as usize)
                             } else {
-                                r
+                                *r
                             };
-                            tx.send(Ok(db)).unwrap()
+                            tx.send(Ok(vec![db])).unwrap()
                         });
                         Box::new(fut)
                             as Box<Future<Item=(), Error=Error> + Send>

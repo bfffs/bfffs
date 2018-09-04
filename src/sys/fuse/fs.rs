@@ -147,7 +147,7 @@ impl Filesystem for FuseFs {
             size: u32, reply: ReplyData)
     {
         match self.fs.read(ino, offset as u64, size as usize) {
-            Ok(db) => reply.data(&db[..]),
+            Ok(sglist) => reply.data(&sglist[0][..]),
             Err(errno) => reply.error(errno)
         }
     }
