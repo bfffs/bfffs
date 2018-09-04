@@ -4,7 +4,6 @@
 use atomic::*;
 use common::Error;
 use common::database::*;
-use common::dml::Compression;
 use common::fs_tree::*;
 use divbuf::{DivBufShared, DivBuf};
 use futures::{
@@ -283,9 +282,17 @@ impl Fs {
                         let fut = dataset.get(k)
                         .and_then(move |v| {
                             match v.unwrap().as_extent().unwrap() {
-                                Extent::Inline(_) => unimplemented!(),
-                                Extent::Blob(extent) =>
-                                    dataset.get_blob(&extent.rid)
+                                Extent::Inline(ile) => {
+                                    let buf = Box::new(ile.buf.try().unwrap());
+                                    Box::new(Ok(buf).into_future())
+                                        as Box<Future<Item=Box<DivBuf>,
+                                                      Error=Error> + Send>
+                                },
+                                Extent::Blob(be) => {
+                                    Box::new(dataset.get_blob(&be.rid))
+                                        as Box<Future<Item=Box<DivBuf>,
+                                                      Error=Error> + Send>
+                                }
                             }
                         }).map(move |r: Box<DivBuf>| {
                             let db = if fsize < offset + size as u64 {
@@ -496,19 +503,17 @@ impl Fs {
         assert_eq!(data.len(), RECORDSIZE, "Multi-record writes are TODO");
         let lsize = data.len() as u32;
         let v = Vec::from(data);
-        let buf = DivBufShared::from(v);
+        let buf = Arc::new(DivBufShared::from(v));
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
                 let dataset = Arc::new(ds);
                 let dataset2 = dataset.clone();
                 let dataset3 = dataset.clone();
-                dataset.put_blob(buf, Compression::None)
-                .and_then(move |rid| {
-                    let k = FSKey::new(ino, ObjKey::Extent(offset as u64));
-                    let v = FSValue::BlobExtent(BlobExtent{lsize, rid});
-                    dataset.insert(k, v)
-                }).and_then(move |_| {
+                let k = FSKey::new(ino, ObjKey::Extent(offset as u64));
+                let v = FSValue::InlineExtent(InlineExtent::new(buf));
+                dataset.insert(k, v)
+                .and_then(move |_| {
                     dataset3.get(inode_key)
                 }).and_then(move |r| {
                     let mut value = r.unwrap();

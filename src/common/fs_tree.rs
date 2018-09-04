@@ -197,7 +197,13 @@ mod dbs_serializer {
 pub struct InlineExtent {
     #[serde(with = "dbs_serializer")]
     // The Arc is necessary to make it Clone.
-    buf: Arc<DivBufShared>
+    pub buf: Arc<DivBufShared>
+}
+
+impl InlineExtent {
+    pub fn new(buf: Arc<DivBufShared>) -> Self {
+        InlineExtent{buf}
+    }
 }
 
 impl PartialEq for InlineExtent {
@@ -285,8 +291,8 @@ impl<A: Addr> Value for FSValue<A> {
                     // call this function with any other type for A, then you're
                     // doing something wrong.
                     let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
-                    let ode = BlobExtent{lsize, rid: rid_a};
-                    FSValue::BlobExtent(ode)
+                    let be = BlobExtent{lsize, rid: rid_a};
+                    FSValue::BlobExtent(be)
                 })) as Box<Future<Item=Self, Error=Error> + Send>
         } else {
             Box::new(Ok(self).into_future())
