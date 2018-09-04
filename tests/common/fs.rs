@@ -145,6 +145,26 @@ test_suite! {
         assert_eq!(parent_attr.nlink, 2);
     }
 
+    // A read that's split across two records
+    test read_two_recs(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[0..4096], 0);
+        assert_eq!(Ok(4096), r);
+        let r = mocks.val.0.write(ino, 4096, &buf[4096..8192], 0);
+        assert_eq!(Ok(4096), r);
+
+        let sglist = mocks.val.0.read(ino, 0, 8192).unwrap();
+        let db0 = &sglist[0];
+        assert_eq!(&db0[..], &buf[0..4096]);
+        let db1 = &sglist[1];
+        assert_eq!(&db1[..], &buf[4096..8192]);
+    }
+
     test readdir(mocks) {
         let mut entries = mocks.val.0.readdir(1, 0, 0);
         let (dotdot, _) = entries.next().unwrap().unwrap();

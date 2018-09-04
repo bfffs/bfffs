@@ -263,7 +263,6 @@ impl Fs {
         assert_eq!(offset as usize % RECORDSIZE, 0,
                    "Unaligned reads are TODO");
         assert_eq!(size % RECORDSIZE, 0, "Unaligned reads are TODO");
-        assert_eq!(size, RECORDSIZE, "Multi-record reads are TODO");
         let (tx, rx) = oneshot::channel();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         self.handle.spawn(
@@ -272,40 +271,43 @@ impl Fs {
                 dataset.get(inode_key)
                 .and_then(move |value| {
                     let fsize = value.unwrap().as_inode().unwrap().size;
-                    if fsize <= offset {
-                        let db = DivBufShared::from(Vec::new()).try().unwrap();
-                        tx.send(Ok(vec![db])).unwrap();
-                        Box::new(Ok(()).into_future())
-                            as Box<Future<Item=(), Error=Error> + Send>
-                    } else {
-                        let k = FSKey::new(ino, ObjKey::Extent(offset));
-                        let fut = dataset.get(k)
-                        .and_then(move |v| {
-                            match v.unwrap().as_extent().unwrap() {
-                                Extent::Inline(ile) => {
-                                    let buf = Box::new(ile.buf.try().unwrap());
-                                    Box::new(Ok(buf).into_future())
-                                        as Box<Future<Item=Box<DivBuf>,
-                                                      Error=Error> + Send>
-                                },
-                                Extent::Blob(be) => {
-                                    Box::new(dataset.get_blob(&be.rid))
-                                        as Box<Future<Item=Box<DivBuf>,
-                                                      Error=Error> + Send>
+                    let nrecs = div_roundup(size, RECORDSIZE);
+                    let futs = (0..nrecs).map(|rec| {
+                        let dataset2 = dataset.clone();
+                        let offs = offset + (rec * RECORDSIZE) as u64;
+                        if fsize <= offs {
+                            let dbs = DivBufShared::from(Vec::new());
+                            let db = dbs.try().unwrap();
+                            Box::new(Ok(db).into_future())
+                                as Box<Future<Item=DivBuf, Error=Error> + Send>
+                        } else {
+                            let k = FSKey::new(ino, ObjKey::Extent(offs));
+                            let fut = dataset2.get(k)
+                            .and_then(move |v| {
+                                match v.unwrap().as_extent().unwrap() {
+                                    Extent::Inline(ile) => {
+                                        let buf = ile.buf.try().unwrap();
+                                        Box::new(Ok(buf).into_future())
+                                            as Box<Future<Item=DivBuf,
+                                                          Error=Error> + Send>
+                                    },
+                                    Extent::Blob(be) => {
+                                        let bfut = dataset2.get_blob(&be.rid)
+                                            .map(|bdb| *bdb);
+                                        Box::new(bfut)
+                                            as Box<Future<Item=DivBuf,
+                                                          Error=Error> + Send>
+                                    }
                                 }
-                            }
-                        }).map(move |r: Box<DivBuf>| {
-                            let db = if fsize < offset + size as u64 {
-                                let db_size = fsize as u64 - offset;
-                                r.slice_to(db_size as usize)
-                            } else {
-                                *r
-                            };
-                            tx.send(Ok(vec![db])).unwrap()
-                        });
-                        Box::new(fut)
-                            as Box<Future<Item=(), Error=Error> + Send>
-                    }
+                            });
+                            Box::new(fut)
+                                as Box<Future<Item=DivBuf, Error=Error> + Send>
+                        }
+                    }).collect::<Vec<_>>();
+                    future::join_all(futs)
+                    .map(|sglist| {
+                        tx.send(Ok(sglist)).unwrap();
+                    })
                 })
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
