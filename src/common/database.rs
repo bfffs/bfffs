@@ -37,8 +37,8 @@ use tokio::timer;
 #[cfg(not(test))] use common::tree::Tree;
 #[cfg(test)] use common::tree_mock::TreeMock as Tree;
 
-pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
-pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
+pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
+pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
 
 /// Keys into the Forest
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
@@ -145,14 +145,14 @@ struct Label {
 }
 
 struct Inner {
-    fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue>>>>,
+    fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
     forest: ITree<TreeID, TreeOnDisk>,
     idml: Arc<IDML>,
 }
 
 impl Inner {
     fn open_filesystem(inner: Arc<Inner>, tree_id: TreeID)
-        -> Box<Future<Item=Arc<ITree<FSKey, FSValue>>, Error=Error> + Send>
+        -> Box<Future<Item=Arc<ITree<FSKey, FSValue<RID>>>, Error=Error> + Send>
     {
         if let Some(fs) = inner.fs_trees.lock().unwrap().get(&tree_id) {
             return Box::new(Ok(fs.clone()).into_future());

@@ -44,6 +44,8 @@ impl RidtEntry {
     }
 }
 
+impl Value for RidtEntry {}
+
 pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
 
 /// Container for the IDML's private trees

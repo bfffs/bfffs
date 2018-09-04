@@ -1334,8 +1334,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn write_leaf(dml: Arc<D>, node: Box<Node<A, K, V>>, txg: TxgT)
         -> impl Future<Item=A, Error=Error>
     {
-        let arc: Arc<Node<A, K, V>> = Arc::new(*node);
-        dml.put(arc, Compression::None, txg)
+        node.0.try_unwrap().unwrap().into_leaf().flush(&*dml, txg)
+        .and_then(move |leaf_data| {
+            let node = Node::new(NodeData::Leaf(leaf_data));
+            let arc: Arc<Node<A, K, V>> = Arc::new(node);
+            dml.put(arc, Compression::None, txg)
+        })
     }
 
     fn flush_r(dml: Arc<D>, mut node: Box<Node<A, K, V>>, txg: TxgT)
@@ -1750,6 +1754,8 @@ impl Default for TreeOnDisk {
         TreeOnDisk(Vec::new())
     }
 }
+
+impl Value for TreeOnDisk {}
 
 #[cfg(test)] mod tests;
 

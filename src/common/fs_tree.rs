@@ -3,14 +3,18 @@
 //! Data types used by trees representing filesystems
 
 use common::{
-    RID,
+    *,
+    dml::*,
     tree::*
 };
 use divbuf::DivBufShared;
+use futures::{Future, IntoFuture};
 use metrohash::MetroHash64;
+use serde::de::DeserializeOwned;
 use std::{
     ffi::{OsString, OsStr},
     hash::Hasher,
+    mem,
     ops::Range,
     os::unix::ffi::OsStrExt,
     sync::Arc
@@ -202,27 +206,34 @@ impl PartialEq for InlineExtent {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct OnDiskExtent {
+#[serde(bound(deserialize = "A: DeserializeOwned"))]
+pub struct OnDiskExtent<A: Addr> {
     pub lsize: u32,
-    pub rid: RID,
+    pub rid: A,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Extent<'a> {
+pub enum Extent<'a, A: Addr> {
     Inline(&'a InlineExtent),
-    OnDisk(&'a OnDiskExtent)
+    OnDisk(&'a OnDiskExtent<A>)
 }
 
+// This struct isn't really generic.  It should only ever be instantiated with
+// A=RID.  However, it's not possible to implement FSValue::flush without either
+// making FSValue generic, or using generics specialization.  And generics
+// specialization isn't stable yet.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub enum FSValue {
+#[serde(bound(deserialize = "A: DeserializeOwned"))]
+pub enum FSValue<A: Addr> {
     DirEntry(Dirent),
     Inode(Inode),
     InlineExtent(InlineExtent),
-    OnDiskExtent(OnDiskExtent),
+    OnDiskExtent(OnDiskExtent<A>),
+    None
 }
 
-impl FSValue {
-    pub fn as_extent(&self) -> Option<Extent> {
+impl<A: Addr> FSValue<A> {
+    pub fn as_extent(&self) -> Option<Extent<A>> {
         if let FSValue::InlineExtent(extent) = self {
             Some(Extent::Inline(extent))
         } else if let FSValue::OnDiskExtent(extent) = self {
@@ -254,6 +265,36 @@ impl FSValue {
         } else {
             None
         }
+    }
+}
+
+impl<A: Addr> Value for FSValue<A> {
+    fn flush<D>(self, dml: &D, txg: TxgT)
+        -> Box<Future<Item=Self, Error=Error> + Send>
+        where D: DML, D::Addr: 'static
+    {
+        if let FSValue::InlineExtent(ie) = self {
+            let lsize = ie.buf.len() as u32;
+            let dbs = Arc::try_unwrap(ie.buf).unwrap();
+            Box::new(dml.put(dbs, Compression::None, txg)
+                .map(move |rid: D::Addr| {
+                    debug_assert_eq!(mem::size_of::<D::Addr>(),
+                                     mem::size_of::<A>());
+                    // Safe because D::Addr should always equal A.  If you ever
+                    // call this function with any other type for A, then you're
+                    // doing something wrong.
+                    let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
+                    let ode = OnDiskExtent{lsize, rid: rid_a};
+                    FSValue::OnDiskExtent(ode)
+                })) as Box<Future<Item=Self, Error=Error> + Send>
+        } else {
+            Box::new(Ok(self).into_future())
+                as Box<Future<Item=Self, Error=Error> + Send>
+        }
+    }
+
+    fn needs_flush() -> bool {
+        true
     }
 }
 

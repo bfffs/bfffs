@@ -4,13 +4,14 @@
 use bincode;
 use common::*;
 use common::dml::*;
-use futures::Future;
+use futures::{Future, IntoFuture, future};
 use futures_locks::*;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
+    iter::FromIterator,
     mem,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
     sync::{
@@ -63,11 +64,27 @@ where T: Copy + Debug + DeserializeOwned + Ord + MinValue + PartialEq + Send +
     Serialize + 'static {}
 
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
-    Serialize + 'static {}
+    Serialize + 'static
+{
+    /// Prepare this `Value` to be written to disk
+    fn flush<D>(self, _dml: &D, _txg: TxgT)
+        -> Box<Future<Item=Self, Error=Error> + Send>
+        where D: DML, D::Addr: 'static
+    {
+        Box::new(Ok(self).into_future())
+    }
 
-impl<T> Value for T
-where T: Clone + Debug + DeserializeOwned + PartialEq + Send + Serialize +
-    'static {}
+    /// Does this Value type require flushing?
+    // This method will go away once generic specialization is stable
+    fn needs_flush() -> bool {
+        false
+    }
+}
+
+impl Value for RID {}
+
+#[cfg(test)] impl Value for f32 {}
+#[cfg(test)] impl Value for u32 {}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned,
@@ -183,6 +200,30 @@ pub(super) struct LeafData<K: Key, V> {
 }
 
 impl<K: Key, V: Value> LeafData<K, V> {
+    /// Flush all items to stable storage.
+    ///
+    /// For most items, this is a nop.  TODO: eliminate the loop for Value types
+    /// that don't need it, perhaps using generics specialization
+    pub fn flush<A, D>(self, d: &D, txg: TxgT)
+        -> Box<Future<Item=Self, Error=Error> + Send>
+        where D: DML<Addr=A>, A: 'static
+    {
+        if V::needs_flush() {
+            let flush_futs = self.items.into_iter().map(|(k, v)| {
+                v.flush(d, txg)
+                    .map(move |v| (k, v))
+            }).collect::<Vec<_>>();
+            let fut = future::join_all(flush_futs)
+                .map(|items| {
+                    LeafData{items: BTreeMap::from_iter(items.into_iter())}
+                });
+            Box::new(fut)  as Box<Future<Item=LeafData<K, V>, Error=Error> + Send>
+        } else {
+            Box::new(Ok(self).into_future())
+                as Box<Future<Item=LeafData<K, V>, Error=Error> + Send>
+        }
+    }
+
     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
         self.items.insert(k, v)
     }
@@ -506,6 +547,14 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     pub fn as_leaf_mut(&mut self) -> &mut LeafData<K, V> {
+        if let NodeData::Leaf(leaf) = self {
+            leaf
+        } else {
+            panic!("Not a NodeData::Leaf")  // LCOV_EXCL_LINE
+        }
+    }
+
+    pub fn into_leaf(self) -> LeafData<K, V> {
         if let NodeData::Leaf(leaf) = self {
             leaf
         } else {
