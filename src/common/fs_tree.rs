@@ -182,20 +182,21 @@ mod dbs_serializer {
         -> Result<Arc<DivBufShared>, DE::Error>
         where DE: Deserializer<'de>
     {
-        panic!("InlineExtents should be converted to OnDiskExtents before serializing")
+        panic!("InlineExtents should be converted to BlobExtents before serializing")
     }
 
     pub(super) fn serialize<S>(_dbs: &Arc<DivBufShared>, _serializer: S)
         -> Result<S::Ok, S::Error>
         where S: Serializer
     {
-        panic!("InlineExtents should be converted to OnDiskExtents before serializing")
+        panic!("InlineExtents should be converted to BlobExtents before serializing")
     }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct InlineExtent {
     #[serde(with = "dbs_serializer")]
+    // The Arc is necessary to make it Clone.
     buf: Arc<DivBufShared>
 }
 
@@ -207,7 +208,7 @@ impl PartialEq for InlineExtent {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned"))]
-pub struct OnDiskExtent<A: Addr> {
+pub struct BlobExtent<A: Addr> {
     pub lsize: u32,
     pub rid: A,
 }
@@ -215,7 +216,7 @@ pub struct OnDiskExtent<A: Addr> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Extent<'a, A: Addr> {
     Inline(&'a InlineExtent),
-    OnDisk(&'a OnDiskExtent<A>)
+    Blob(&'a BlobExtent<A>)
 }
 
 // This struct isn't really generic.  It should only ever be instantiated with
@@ -228,7 +229,7 @@ pub enum FSValue<A: Addr> {
     DirEntry(Dirent),
     Inode(Inode),
     InlineExtent(InlineExtent),
-    OnDiskExtent(OnDiskExtent<A>),
+    BlobExtent(BlobExtent<A>),
     None
 }
 
@@ -236,8 +237,8 @@ impl<A: Addr> FSValue<A> {
     pub fn as_extent(&self) -> Option<Extent<A>> {
         if let FSValue::InlineExtent(extent) = self {
             Some(Extent::Inline(extent))
-        } else if let FSValue::OnDiskExtent(extent) = self {
-            Some(Extent::OnDisk(extent))
+        } else if let FSValue::BlobExtent(extent) = self {
+            Some(Extent::Blob(extent))
         } else {
             None
         }
@@ -284,8 +285,8 @@ impl<A: Addr> Value for FSValue<A> {
                     // call this function with any other type for A, then you're
                     // doing something wrong.
                     let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
-                    let ode = OnDiskExtent{lsize, rid: rid_a};
-                    FSValue::OnDiskExtent(ode)
+                    let ode = BlobExtent{lsize, rid: rid_a};
+                    FSValue::BlobExtent(ode)
                 })) as Box<Future<Item=Self, Error=Error> + Send>
         } else {
             Box::new(Ok(self).into_future())

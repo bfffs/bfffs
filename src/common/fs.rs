@@ -284,7 +284,7 @@ impl Fs {
                         .and_then(move |v| {
                             match v.unwrap().as_extent().unwrap() {
                                 Extent::Inline(_) => unimplemented!(),
-                                Extent::OnDisk(extent) =>
+                                Extent::Blob(extent) =>
                                     dataset.get_blob(&extent.rid)
                             }
                         }).map(move |r: Box<DivBuf>| {
@@ -506,7 +506,7 @@ impl Fs {
                 dataset.put_blob(buf, Compression::None)
                 .and_then(move |rid| {
                     let k = FSKey::new(ino, ObjKey::Extent(offset as u64));
-                    let v = FSValue::OnDiskExtent(OnDiskExtent{lsize, rid});
+                    let v = FSValue::BlobExtent(BlobExtent{lsize, rid});
                     dataset.insert(k, v)
                 }).and_then(move |_| {
                     dataset3.get(inode_key)
