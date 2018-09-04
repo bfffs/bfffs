@@ -21,6 +21,7 @@ test_suite! {
     };
     use futures::{Future, future};
     use libc;
+    use rand::{Rng, thread_rng};
     use std::{
         ffi::{CString, CStr, OsString},
         fs,
@@ -196,7 +197,7 @@ test_suite! {
         assert_eq!(statvfs.f_blocks, 262144);
     }
 
-    // A very simple 4KB write to an empty file
+    // A very simple single record write to an empty file
     test write(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
         let buf = vec![42u8; 4096];
@@ -210,6 +211,29 @@ test_suite! {
         let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[..]);
+    }
+
+    // A write to an empty file that's split across two records
+    test write_two_recs(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(8192), r);
+
+        // Check the file size
+        let inode = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(inode.size, 8192);
+
+        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf[0..4096]);
+        let sglist = mocks.val.0.read(ino, 4096, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf[4096..8192]);
     }
 
 }

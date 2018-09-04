@@ -500,29 +500,36 @@ impl Fs {
         assert_eq!(offset as usize % RECORDSIZE, 0,
                    "Unaligned writes are TODO");
         assert_eq!(data.len() % RECORDSIZE, 0, "Unaligned writes are TODO");
-        assert_eq!(data.len(), RECORDSIZE, "Multi-record writes are TODO");
-        let lsize = data.len() as u32;
-        let v = Vec::from(data);
-        let buf = Arc::new(DivBufShared::from(v));
+
+        let datalen = data.len();
+        let sglist = (0..div_roundup(datalen, RECORDSIZE)).map(|rec| {
+            // Data copy
+            let v = Vec::from(&data[rec * RECORDSIZE..(rec + 1) * RECORDSIZE]);
+            Arc::new(DivBufShared::from(v))
+        }).collect::<Vec<_>>();
+
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
                 let dataset = Arc::new(ds);
                 let dataset2 = dataset.clone();
                 let dataset3 = dataset.clone();
-                let k = FSKey::new(ino, ObjKey::Extent(offset as u64));
-                let v = FSValue::InlineExtent(InlineExtent::new(buf));
-                dataset.insert(k, v)
-                .and_then(move |_| {
+                let data_futs = sglist.into_iter().enumerate().map(|(i, dbs)| {
+                    let offs = offset as u64 + (i * RECORDSIZE) as u64;
+                    let k = FSKey::new(ino, ObjKey::Extent(offs));
+                    let v = FSValue::InlineExtent(InlineExtent::new(dbs));
+                    dataset.insert(k, v)
+                }).collect::<Vec<_>>();
+                future::join_all(data_futs).and_then(move |_| {
                     dataset3.get(inode_key)
                 }).and_then(move |r| {
                     let mut value = r.unwrap();
                     let old_size = value.as_inode().unwrap().size;
                     let new_size = cmp::max(old_size,
-                                            offset as u64 + lsize as u64);
+                                            offset as u64 + datalen as u64);
                     value.as_mut_inode().unwrap().size = new_size;
                     dataset2.insert(inode_key, value)
-                }).map(move |_| tx.send(Ok(lsize)).unwrap())
+                }).map(move |_| tx.send(Ok(datalen as u32)).unwrap())
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()
