@@ -260,9 +260,6 @@ impl Fs {
     pub fn read(&self, ino: u64, offset: u64, size: usize)
         -> Result<SGList, i32>
     {
-        assert_eq!(offset as usize % RECORDSIZE, 0,
-                   "Unaligned reads are TODO");
-        assert_eq!(size % RECORDSIZE, 0, "Unaligned reads are TODO");
         let (tx, rx) = oneshot::channel();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         self.handle.spawn(
@@ -271,10 +268,13 @@ impl Fs {
                 dataset.get(inode_key)
                 .and_then(move |value| {
                     let fsize = value.unwrap().as_inode().unwrap().size;
-                    let nrecs = div_roundup(size, RECORDSIZE);
+                    let rs = RECORDSIZE as u64;
+                    let nrecs = div_roundup(offset + size as u64, rs)
+                        - (offset / rs);
+                    let baseoffset = offset - (offset % rs);
                     let futs = (0..nrecs).map(|rec| {
                         let dataset2 = dataset.clone();
-                        let offs = offset + (rec * RECORDSIZE) as u64;
+                        let offs = baseoffset + rec * rs;
                         if fsize <= offs {
                             let dbs = DivBufShared::from(Vec::new());
                             let db = dbs.try().unwrap();
@@ -299,6 +299,17 @@ impl Fs {
                                                           Error=Error> + Send>
                                     }
                                 }
+                            }).map(move |mut db| {
+                                if rec == 0 {
+                                    // Trim the beginning
+                                    db.split_to((offset - baseoffset) as usize);
+                                }
+                                if rec == nrecs - 1 {
+                                    // Trim the end
+                                    db.split_off(RECORDSIZE
+                                        - ((nrecs * rs) as usize - size));
+                                }
+                                db
                             });
                             Box::new(fut)
                                 as Box<Future<Item=DivBuf, Error=Error> + Send>

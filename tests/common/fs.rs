@@ -145,6 +145,22 @@ test_suite! {
         assert_eq!(parent_attr.nlink, 2);
     }
 
+    // A read that's smaller than a record, at both ends
+    test read_partial_record(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(4096), r);
+
+        let sglist = mocks.val.0.read(ino, 1024, 2048).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf[1024..3072]);
+    }
+
     // A read that's split across two records
     test read_two_recs(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
