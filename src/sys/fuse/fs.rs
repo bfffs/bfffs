@@ -205,7 +205,7 @@ impl Filesystem for FuseFs {
     fn write(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
              data: &[u8], flags: u32, reply: ReplyWrite)
     {
-        match self.fs.write(ino, offset, data, flags) {
+        match self.fs.write(ino, offset as u64, data, flags) {
             Ok(lsize) => reply.written(lsize),
             Err(errno) => reply.error(errno)
         }

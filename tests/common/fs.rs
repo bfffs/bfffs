@@ -264,6 +264,52 @@ test_suite! {
         assert_eq!(&db[..], &buf[..]);
     }
 
+    // A partial single record write that needs RMW on both ends
+    test write_partial_record(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf0 = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf0 {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
+        assert_eq!(Ok(4096), r);
+        let buf1 = vec![0u8; 2048];
+        let r = mocks.val.0.write(ino, 512, &buf1[..], 0);
+        assert_eq!(Ok(2048), r);
+
+        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[0..512], &buf0[0..512]);
+        assert_eq!(&db[512..2560], &buf1[..]);
+        assert_eq!(&db[2560..], &buf0[2560..]);
+    }
+
+    // write can RMW BlobExtents
+    test write_partial_blob_record(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf0 = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf0 {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
+        assert_eq!(Ok(4096), r);
+
+        // Sync the fs to flush the InlineExtent to a BlobExtent
+        mocks.val.0.sync();
+
+        let buf1 = vec![0u8; 2048];
+        let r = mocks.val.0.write(ino, 512, &buf1[..], 0);
+        assert_eq!(Ok(2048), r);
+
+        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[0..512], &buf0[0..512]);
+        assert_eq!(&db[512..2560], &buf1[..]);
+        assert_eq!(&db[2560..], &buf0[2560..]);
+    }
+
     // A write to an empty file that's split across two records
     test write_two_recs(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();

@@ -157,6 +157,13 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
         self.dataset.get(k)
     }
 
+    /// Read directly from the IDML, bypassing the Tree
+    pub fn get_blob(&self, ridp: &RID)
+        -> impl Future<Item=Box<DivBuf>, Error=Error> + Send
+    {
+        self.dataset.get_blob(ridp)
+    }
+
     pub fn insert(&self, k: K, v: V)
         -> impl Future<Item=Option<V>, Error=Error>
     {

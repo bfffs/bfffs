@@ -496,28 +496,35 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn write(&mut self, ino: u64, offset: i64, data: &[u8], _flags: u32)
+    pub fn write(&mut self, ino: u64, offset: u64, data: &[u8], _flags: u32)
         -> Result<u32, i32>
     {
         // Outline:
         // 1) Split the I/O into discrete records
         // 2) For each record
-        //   a) If it's complete, write it to the tree as a CachedExtent
+        //   a) If it's complete, write it to the tree as an InlineExtent
         //   b) If it's a partial record, try to read the old one from the tree
         //     i) If sucessful, RMW it
         //     ii) If not, pad the beginning of the record with zeros.  Pad the
         //         end if the Inode indicates that the file size requires it.
-        //         Then write it as a CachedExtent
+        //         Then write it as an InlineExtent
         //  3) Set file length
         let (tx, rx) = oneshot::channel();
-        assert_eq!(offset as usize % RECORDSIZE, 0,
-                   "Unaligned writes are TODO");
-        assert_eq!(data.len() % RECORDSIZE, 0, "Unaligned writes are TODO");
+        let rs = RECORDSIZE as u64;
 
         let datalen = data.len();
-        let sglist = (0..div_roundup(datalen, RECORDSIZE)).map(|rec| {
+        let nrecs = (div_roundup(offset + datalen as u64, rs)
+                     - (offset / rs)) as usize;
+        let baseoffset = offset - (offset % rs);
+        let reclen1 = cmp::min(datalen, (rs - (offset % rs)) as usize);
+        let sglist = (0..nrecs).map(|rec| {
+            let range = if rec == 0 {
+                0..reclen1
+            } else {
+                (reclen1 + (rec - 1) * RECORDSIZE)..(reclen1 + rec * RECORDSIZE)
+            };
             // Data copy
-            let v = Vec::from(&data[rec * RECORDSIZE..(rec + 1) * RECORDSIZE]);
+            let v = Vec::from(&data[range]);
             Arc::new(DivBufShared::from(v))
         }).collect::<Vec<_>>();
 
@@ -528,10 +535,54 @@ impl Fs {
                 let dataset2 = dataset.clone();
                 let dataset3 = dataset.clone();
                 let data_futs = sglist.into_iter().enumerate().map(|(i, dbs)| {
-                    let offs = offset as u64 + (i * RECORDSIZE) as u64;
+                    let offs = baseoffset + i as u64 * rs;
                     let k = FSKey::new(ino, ObjKey::Extent(offs));
-                    let v = FSValue::InlineExtent(InlineExtent::new(dbs));
-                    dataset.insert(k, v)
+                    if dbs.len() < RECORDSIZE {
+                        // We must read-modify-write
+                        let dataset4 = dataset.clone();
+                        let dataset5 = dataset.clone();
+                        let fut = dataset.get(k)
+                        .and_then(move |v| {
+                            match v.unwrap().as_extent().unwrap() {
+                                Extent::Inline(ile) => {
+                                    let r = Box::new(ile.buf.try().unwrap());
+                                    Box::new(Ok(r).into_future())
+                                        as Box<Future<Item=_, Error=_> + Send>
+                                },
+                                Extent::Blob(be) => {
+                                    Box::new(dataset4.get_blob(&be.rid))
+                                        as Box<Future<Item=_, Error=_> + Send>
+                                }
+                            }.and_then(move |db: Box<DivBuf>| {
+                                // Data copy, because we can't modify cache
+                                let mut base = Vec::from(&db[..]);
+                                let overlay = dbs.try().unwrap();
+                                let l = overlay.len() as u64;
+                                if i == 0 {
+                                    let s = (offset - baseoffset) as usize;
+                                    let e = (offset - baseoffset + l) as usize;
+                                    let r = s..e;
+                                    &mut base[r].copy_from_slice(&overlay[..]);
+                                } else {
+                                    assert_eq!(i, nrecs - 1);
+                                    &mut base[0..l as usize]
+                                        .copy_from_slice(&overlay[..]);
+                                }
+                                let new_dbs = Arc::new(
+                                    DivBufShared::from(base)
+                                );
+                                let extent = InlineExtent::new(new_dbs);
+                                let new_v = FSValue::InlineExtent(extent);
+                                dataset5.insert(k, new_v)
+                            })
+                        });
+                        Box::new(fut)
+                            as Box<Future<Item=_, Error=_> + Send>
+                    } else {
+                        let v = FSValue::InlineExtent(InlineExtent::new(dbs));
+                        Box::new(dataset.insert(k, v))
+                            as Box<Future<Item=_, Error=_> + Send>
+                    }
                 }).collect::<Vec<_>>();
                 future::join_all(data_futs).and_then(move |_| {
                     dataset3.get(inode_key)
@@ -539,7 +590,7 @@ impl Fs {
                     let mut value = r.unwrap();
                     let old_size = value.as_inode().unwrap().size;
                     let new_size = cmp::max(old_size,
-                                            offset as u64 + datalen as u64);
+                                            offset + datalen as u64);
                     value.as_mut_inode().unwrap().size = new_size;
                     dataset2.insert(inode_key, value)
                 }).map(move |_| tx.send(Ok(datalen as u32)).unwrap())
