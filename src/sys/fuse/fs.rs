@@ -202,6 +202,15 @@ impl Filesystem for FuseFs {
                      statvfs.f_namemax as u32, statvfs.f_frsize as u32);
     }
 
+    fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr,
+              reply: ReplyEmpty)
+    {
+        match self.fs.unlink(parent, name) {
+            Ok(()) => reply.ok(),
+            Err(errno) => reply.error(errno)
+        }
+    }
+
     fn write(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
              data: &[u8], flags: u32, reply: ReplyWrite)
     {

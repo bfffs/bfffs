@@ -248,6 +248,26 @@ test_suite! {
         assert_eq!(statvfs.f_blocks, 262144);
     }
 
+    test unlink(mocks) {
+        let filename = OsString::from("x");
+        let ino = mocks.val.0.create(1, &filename, 0o644).unwrap();
+        let r = mocks.val.0.unlink(1, &filename);
+        assert_eq!(Ok(()), r);
+
+        // Check that the inode is gone
+        let inode = mocks.val.0.getattr(ino);
+        assert_eq!(Err(libc::ENOENT), inode, "Inode was not removed");
+
+        // The parent dir should not have an "x" directory entry
+        let entries = mocks.val.0.readdir(1, 0, 0);
+        let x_de = entries
+        .map(|r| r.unwrap())
+        .filter(|(dirent, _ofs)| {
+            dirent.d_name[0] == 'x' as i8
+        }).nth(0);
+        assert!(x_de.is_none(), "Directory entry was not removed");
+    }
+
     // A very simple single record write to an empty file
     test write(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();

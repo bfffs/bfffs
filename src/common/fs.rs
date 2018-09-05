@@ -39,7 +39,7 @@ pub struct Fs {
 }
 
 /// File attributes, as returned by `getattr`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Attr {
     pub ino:        u64,
     /// File size in bytes
@@ -492,6 +492,47 @@ impl Fs {
             self.db.sync_transaction()
             .map_err(|e| panic!("{:?}", e))
             .map(|_| tx.send(()).unwrap())
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
+    pub fn unlink(&self, parent: u64, name: &OsStr) -> Result<(), i32> {
+        // Outline:
+        // 1) Lookup the file
+        // 2) range_delete the file's key range
+        // 3) Remove the parent dir's dir_entry
+        let (tx, rx) = oneshot::channel();
+        let owned_name = name.to_os_string();
+        let dekey = ObjKey::dir_entry(&owned_name);
+        self.handle.spawn(
+            self.db.fswrite(self.tree, move |dataset| {
+                // 1) Lookup the file
+                let key = FSKey::new(parent, dekey);
+                dataset.get(key)
+                .and_then(|r| {
+                    match r {
+                        Some(v) => {
+                            let de = v.as_direntry().unwrap();
+                            Ok(de.ino).into_future()
+                        },
+                        None => Err(Error::ENOENT).into_future()
+                    }
+                }).and_then(move |ino|  {
+                    // 2) range_delete its key range
+                    let ino_fut = dataset.range_delete(FSKey::obj_range(ino));
+                    // 3) Remove the parent dir's dir_entry
+                    let de_key = FSKey::new(parent, dekey);
+                    let dirent_fut = dataset.remove(de_key);
+
+                    ino_fut.join(dirent_fut)
+                }).then(move |r| {
+                    match r {
+                        Ok(_) => tx.send(Ok(()).into()),
+                        Err(e) => tx.send(Err(e.into()))
+                    }.ok().expect("FS::unlink: send failed");
+                    Ok(()).into_future()
+                })
+            }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()
     }
