@@ -110,6 +110,12 @@ impl FSKey {
         Range{start, end}
     }
 
+    pub fn extent_range(ino: u64) -> Range<Self> {
+        let start = FSKey::compose(ino, ObjKeyDiscriminant::Extent as u8, 0);
+        let end = FSKey::compose(ino, ObjKeyDiscriminant::Extent as u8 + 1, 0);
+        start..end
+    }
+
     pub fn new(object: u64, objkey: ObjKey) -> Self {
         let objtype = objkey.discriminant();
         let offset = objkey.offset();

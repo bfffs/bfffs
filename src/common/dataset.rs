@@ -35,6 +35,12 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.idml.allocated()
     }
 
+    fn delete_blob(&self, ridp: &RID, txg: TxgT)
+        -> impl Future<Item=(), Error=Error>
+    {
+        self.idml.delete(ridp, txg)
+    }
+
     fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.tree.get(k)
@@ -150,6 +156,10 @@ pub struct ReadWriteDataset<K: Key, V: Value>  {
 impl<K: Key, V: Value> ReadWriteDataset<K, V> {
     pub fn allocated(&self) -> LbaT {
         self.dataset.allocated()
+    }
+
+    pub fn delete_blob(&self, ridp: &RID) -> impl Future<Item=(), Error=Error> {
+        self.dataset.delete_blob(ridp, self.txg)
     }
 
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>

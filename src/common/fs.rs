@@ -495,13 +495,16 @@ impl Fs {
     pub fn unlink(&self, parent: u64, name: &OsStr) -> Result<(), i32> {
         // Outline:
         // 1) Lookup the file
-        // 2) range_delete the file's key range
-        // 3) Remove the parent dir's dir_entry
+        // 2) Delete the file's blob extents
+        // 3) range_delete the file's key range
+        // 4) Remove the parent dir's dir_entry
         let (tx, rx) = oneshot::channel();
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
         self.handle.spawn(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, move |ds| {
+                let dataset = Arc::new(ds);
+                let dataset2 = dataset.clone();
                 // 1) Lookup the file
                 let key = FSKey::new(parent, dekey);
                 dataset.get(key)
@@ -514,9 +517,20 @@ impl Fs {
                         None => Err(Error::ENOENT).into_future()
                     }
                 }).and_then(move |ino|  {
-                    // 2) range_delete its key range
+                    // 2) delete its blob extents
+                    dataset2.range(FSKey::extent_range(ino))
+                    .filter_map(move |(_k, v)| {
+                        if let Extent::Blob(be) = v.as_extent().unwrap() {
+                            Some(dataset2.delete_blob(&be.rid))
+                        } else {
+                            None
+                        }
+                    }).collect()
+                    .map(move |_| ino)
+                }).and_then(move |ino|  {
+                    // 3) range_delete its key range
                     let ino_fut = dataset.range_delete(FSKey::obj_range(ino));
-                    // 3) Remove the parent dir's dir_entry
+                    // 4) Remove the parent dir's dir_entry
                     let de_key = FSKey::new(parent, dekey);
                     let dirent_fut = dataset.remove(de_key);
 
