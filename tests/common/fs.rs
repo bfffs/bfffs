@@ -145,6 +145,21 @@ test_suite! {
         assert_eq!(parent_attr.nlink, 2);
     }
 
+    // Read a single BlobExtent record
+    test read_blob(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let buf = vec![42u8; 4096];
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(4096), r);
+
+        // Sync the filesystem to flush the InlineExtent to a BlobExtent
+        mocks.val.0.sync();
+
+        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf[..]);
+    }
+
     // A read that's smaller than a record, at both ends
     test read_partial_record(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
