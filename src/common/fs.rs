@@ -391,16 +391,13 @@ impl Fs {
                 // 1) Lookup the directory
                 let key = FSKey::new(parent, objkey);
                 ds.get(key)
-                .then(|r| {
+                .and_then(|r| {
                     match r {
-                        Ok(opt) => match opt {
-                            Some(v) => {
-                                let de = v.as_direntry().unwrap();
-                                Ok(de.ino).into_future()
-                            },
-                            None => Err(Error::ENOENT).into_future()
+                        Some(v) => {
+                            let de = v.as_direntry().unwrap();
+                            Ok(de.ino).into_future()
                         },
-                        Err(e) => Err(e).into_future()
+                        None => Err(Error::ENOENT).into_future()
                     }
                 }).and_then(move |ino| {
                     // 2) Check that the directory is empty
@@ -435,7 +432,6 @@ impl Fs {
                     let ino_fut = ds2.range_delete(FSKey::obj_range(ino));
 
                     // 4) Remove the parent dir's dir_entry
-                    //let objkey = ObjKey::dir_entry(&name);
                     let de_key = FSKey::new(parent, objkey);
                     let dirent_fut = ds2.remove(de_key);
 
