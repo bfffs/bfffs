@@ -264,6 +264,22 @@ test_suite! {
         assert_eq!(&db[..], &buf[..]);
     }
 
+    // A partial single record write appended to the file's end
+    test write_append(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf0 = vec![0u8; 1024];
+        let mut rng = thread_rng();
+        for x in &mut buf0 {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
+        assert_eq!(Ok(1024), r);
+
+        let sglist = mocks.val.0.read(ino, 0, 1024).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf0[..]);
+    }
+
     // A partial single record write that needs RMW on both ends
     test write_partial_record(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();

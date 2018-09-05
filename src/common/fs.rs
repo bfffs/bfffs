@@ -515,7 +515,6 @@ impl Fs {
         let datalen = data.len();
         let nrecs = (div_roundup(offset + datalen as u64, rs)
                      - (offset / rs)) as usize;
-        let baseoffset = offset - (offset % rs);
         let reclen1 = cmp::min(datalen, (rs - (offset % rs)) as usize);
         let sglist = (0..nrecs).map(|rec| {
             let range = if rec == 0 {
@@ -533,69 +532,95 @@ impl Fs {
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
                 let dataset = Arc::new(ds);
                 let dataset2 = dataset.clone();
-                let dataset3 = dataset.clone();
-                let data_futs = sglist.into_iter().enumerate().map(|(i, dbs)| {
-                    let offs = baseoffset + i as u64 * rs;
-                    let k = FSKey::new(ino, ObjKey::Extent(offs));
-                    if dbs.len() < RECORDSIZE {
-                        // We must read-modify-write
-                        let dataset4 = dataset.clone();
-                        let dataset5 = dataset.clone();
-                        let fut = dataset.get(k)
-                        .and_then(move |v| {
-                            match v.unwrap().as_extent().unwrap() {
-                                Extent::Inline(ile) => {
-                                    let r = Box::new(ile.buf.try().unwrap());
-                                    Box::new(Ok(r).into_future())
-                                        as Box<Future<Item=_, Error=_> + Send>
-                                },
-                                Extent::Blob(be) => {
-                                    Box::new(dataset4.get_blob(&be.rid))
-                                        as Box<Future<Item=_, Error=_> + Send>
-                                }
-                            }.and_then(move |db: Box<DivBuf>| {
-                                // Data copy, because we can't modify cache
-                                let mut base = Vec::from(&db[..]);
-                                let overlay = dbs.try().unwrap();
-                                let l = overlay.len() as u64;
-                                if i == 0 {
-                                    let s = (offset - baseoffset) as usize;
-                                    let e = (offset - baseoffset + l) as usize;
-                                    let r = s..e;
-                                    &mut base[r].copy_from_slice(&overlay[..]);
-                                } else {
-                                    assert_eq!(i, nrecs - 1);
-                                    &mut base[0..l as usize]
-                                        .copy_from_slice(&overlay[..]);
-                                }
-                                let new_dbs = Arc::new(
-                                    DivBufShared::from(base)
-                                );
-                                let extent = InlineExtent::new(new_dbs);
-                                let new_v = FSValue::InlineExtent(extent);
-                                dataset5.insert(k, new_v)
-                            })
-                        });
-                        Box::new(fut)
-                            as Box<Future<Item=_, Error=_> + Send>
-                    } else {
-                        let v = FSValue::InlineExtent(InlineExtent::new(dbs));
-                        Box::new(dataset.insert(k, v))
-                            as Box<Future<Item=_, Error=_> + Send>
-                    }
-                }).collect::<Vec<_>>();
-                future::join_all(data_futs).and_then(move |_| {
-                    dataset3.get(inode_key)
-                }).and_then(move |r| {
-                    let mut value = r.unwrap();
-                    let old_size = value.as_inode().unwrap().size;
-                    let new_size = cmp::max(old_size,
-                                            offset + datalen as u64);
-                    value.as_mut_inode().unwrap().size = new_size;
-                    dataset2.insert(inode_key, value)
+                dataset.get(inode_key)
+                .and_then(move |r| {
+                    let mut inode_value = r.unwrap();
+                    let filesize = inode_value.as_inode().unwrap().size;
+                    let data_futs = sglist.into_iter()
+                        .enumerate()
+                        .map(|(i, dbs)| {
+                        let ds3 = dataset.clone();
+                        Fs::write_record(ino, filesize, offset, i, dbs, ds3)
+                    }).collect::<Vec<_>>();
+                    future::join_all(data_futs).and_then(move |_| {
+                        let new_size = cmp::max(filesize,
+                                                offset + datalen as u64);
+                        inode_value.as_mut_inode().unwrap().size = new_size;
+                        dataset2.insert(inode_key, inode_value)
+                    })
                 }).map(move |_| tx.send(Ok(datalen as u32)).unwrap())
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()
+    }
+
+    // Subroutine of write
+    #[inline]
+    fn write_record(ino: u64, filesize: u64, offset: u64, i: usize,
+                    dbs: Arc<DivBufShared>, dataset: Arc<ReadWriteFilesystem>)
+        -> Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+    {
+        let rs = RECORDSIZE as u64;
+        let baseoffset = offset - (offset % rs);
+        let offs = baseoffset + i as u64 * rs;
+        let k = FSKey::new(ino, ObjKey::Extent(offs));
+        if dbs.len() < RECORDSIZE {
+            // We must read-modify-write
+            let dataset4 = dataset.clone();
+            let fut = dataset.get(k)
+            .and_then(move |r| {
+                match r {
+                    None => {
+                        // Either a hole, or beyond EOF
+                        let hsize = cmp::min(filesize, i as u64 * rs) as usize;
+                        let v = vec![0u8; hsize];
+                        let r = Box::new(DivBufShared::from(v).try().unwrap());
+                        Box::new(Ok(r).into_future())
+                            as Box<Future<Item=_, Error=_> + Send>
+                    },
+                    Some(FSValue::InlineExtent(ile)) => {
+                        let r = Box::new(ile.buf.try().unwrap());
+                        Box::new(Ok(r).into_future())
+                            as Box<Future<Item=_, Error=_> + Send>
+                    },
+                    Some(FSValue::BlobExtent(be)) => {
+                        Box::new(dataset4.get_blob(&be.rid))
+                            as Box<Future<Item=_, Error=_> + Send>
+                    },
+                    x => panic!("Unexpected value {:?} for key {:?}",
+                                x, k)
+                }.and_then(move |db: Box<DivBuf>| {
+                    // Data copy, because we can't modify cache
+                    let mut base = Vec::from(&db[..]);
+                    let overlay = dbs.try().unwrap();
+                    let l = overlay.len() as u64;
+                    if i == 0 {
+                        let s = (offset - baseoffset) as usize;
+                        let e = (offset - baseoffset + l) as usize;
+                        let r = s..e;
+                        if e > base.len() {
+                            // We must be appending
+                            base.resize(e, 0);
+                        }
+                        &mut base[r].copy_from_slice(&overlay[..]);
+                    } else {
+                        &mut base[0..l as usize]
+                            .copy_from_slice(&overlay[..]);
+                    }
+                    let new_dbs = Arc::new(
+                        DivBufShared::from(base)
+                    );
+                    let extent = InlineExtent::new(new_dbs);
+                    let new_v = FSValue::InlineExtent(extent);
+                    dataset.insert(k, new_v)
+                })
+            });
+            Box::new(fut)
+                as Box<Future<Item=_, Error=_> + Send>
+        } else {
+            let v = FSValue::InlineExtent(InlineExtent::new(dbs));
+            Box::new(dataset.insert(k, v))
+                as Box<Future<Item=_, Error=_> + Send>
+        }
     }
 }
