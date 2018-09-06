@@ -1089,10 +1089,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // If the IntElems point to leaves, just delete them.
                     let futs = guard.as_int_mut().children.drain(low..high)
                     .map(move |elem| {
-                        // If it points to an IntNode, recurse into it.
                         if let TreePtr::Addr(addr) = elem.ptr {
+                            // Delete on-disk leaves
                             dml6.delete(&addr, txg)
                         } else {
+                            // Simply drop in-memory leaves
                             Box::new(Ok(()).into_future())
                                 as Box<Future<Item=(), Error=Error> + Send>
                         }
