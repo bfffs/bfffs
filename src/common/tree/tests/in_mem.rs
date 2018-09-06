@@ -1422,9 +1422,82 @@ root:
                     22: 22.0"#);
 }
 
-// Delete a range that's contained within a single LeafNode
+/// Delete a range that causes the root node to be merged down
 #[test]
-fn range_delete_single_node() {
+fn range_delete_merge_root() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+                    3: 3.0
+          - key: 4
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
+                    8: 8.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(0..4, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 43
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          4: 4.0
+          5: 5.0
+          6: 6.0
+          7: 7.0
+          8: 8.0"#);
+}
+
+
+/// Delete a range that causes the root node to be merged two steps down
+#[test]
+fn range_delete_merge_root_twice() {
     let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
@@ -1460,6 +1533,7 @@ root:
                             items:
                               1: 1.0
                               2: 2.0
+                              3: 3.0
                     - key: 4
                       txgs:
                         start: 41
@@ -1473,6 +1547,14 @@ root:
                               6: 6.0
                               7: 7.0
                               8: 8.0
+          - key: 10
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
                     - key: 10
                       txgs:
                         start: 41
@@ -1484,6 +1566,101 @@ root:
                               10: 10.0
                               11: 11.0
                               12: 12.0
+                    - key: 13
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              13: 13.0
+                              14: 14.0
+                              15: 15.0
+                              16: 16.0
+                              17: 17.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(0..13, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 43
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          13: 13.0
+          14: 14.0
+          15: 15.0
+          16: 16.0
+          17: 17.0"#);
+}
+
+// Delete a range that's contained within a single LeafNode
+#[test]
+fn range_delete_single_node() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+          - key: 4
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0
+                    7: 7.0
+                    8: 8.0
+          - key: 10
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+                    12: 12.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
@@ -2190,6 +2367,66 @@ root:
                           lsize: 36
                           csize: 36
                           checksum: 0"#);
+}
+
+// range_delete with a range that includes a whole IntNode at the end of the
+// tree
+#[test]
+fn range_delete_to_end_deep() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    rt.block_on( {
+        let insert_futs = (0..23).map(|k| {
+            tree.insert(k, k as f32, TxgT::from(2))
+        }).collect::<Vec<_>>();
+        future::join_all(insert_futs)
+    }).unwrap();
+    let r = rt.block_on({
+        tree.range_delete(5..24, TxgT::from(2))
+    });
+    assert!(r.is_ok());
+    // NB: in this case, it would be acceptable for the final Tree to consist of
+    // either a single IntNode with two Leaves as shown below, or simply as a
+    // single Leaf.
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 2
+    end: 3
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 2
+              end: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+                    2: 2.0
+          - key: 3
+            txgs:
+              start: 2
+              end: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0"#);
+
 }
 
 // Unbounded range lookup
