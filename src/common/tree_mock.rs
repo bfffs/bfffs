@@ -4,7 +4,7 @@ use bincode;
 use common::{Error, TxgT};
 use common::dml::*;
 use common::tree::*;
-use futures::{Async, Future, Poll, Stream};
+use futures::{Async, Future, IntoFuture, Poll, Stream};
 use simulacrum::*;
 use std::{
     borrow::Borrow,
@@ -68,6 +68,11 @@ pub struct TreeMock<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
 impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     pub fn create(_dml: Arc<D>) -> Self {
         Self::new()
+    }
+
+    // No need to allow this method to be mocked; it's just for debugging
+    pub fn dump(&self) -> impl Future<Item=(), Error=Error> + Send {
+        Ok(()).into_future()
     }
 
     pub fn flush(&self, txg: TxgT)

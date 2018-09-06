@@ -64,6 +64,11 @@ impl IDMLMock {
             ("delete")
     }
 
+    // No need to allow this method to be mocked; it's just for debugging
+    pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> {
+        Ok(()).into_future()
+    }
+
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const RID,
         Box<Future<Item=Box<R>, Error=Error>>>
     {

@@ -132,6 +132,12 @@ impl<'a> IDML {
         IDML{cache, ddml, next_rid, transaction, trees}
     }
 
+    pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> {
+        let alloct_fut = self.trees.alloct.dump();
+        self.trees.ridt.dump()
+            .and_then(move |_| alloct_fut)
+    }
+
     pub fn list_closed_zones(&self)
         -> impl Stream<Item=ClosedZone, Error=Error> + Send
     {

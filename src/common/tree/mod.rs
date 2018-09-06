@@ -389,6 +389,44 @@ impl<A, D, K, V> Tree<A, D, K, V>
         )
     }
 
+    /// Dump a basic representation of the Tree's structure (not contents) to
+    /// stdout.
+    pub fn dump(&self) -> impl Future<Item=(), Error=Error> + Send {
+        let dml2 = self.dml.clone();
+        let dml3 = self.dml.clone();
+        self.read()
+            .and_then(move |tree_guard| {
+                let key = tree_guard.key;
+                tree_guard.rlock(dml2)
+                    .and_then(move |guard| {
+                        println!("{0:^1$}{2:?}", "", 0, key);
+                        Tree::dump_r(dml3, 4, guard)
+                    })
+            })
+    }
+
+    fn dump_r(dml: Arc<D>, indentation: usize, node: TreeReadGuard<A, K, V>)
+        -> impl Future<Item=(), Error=Error> + Send
+    {
+        if let NodeData::Int(ref int) = *node {
+            let futs = int.children.iter().map(move |child| {
+                let dml2 = dml.clone();
+                let key = child.key;
+                child.rlock(dml.clone())
+                    .and_then(move |next_node| {
+                        println!("{0:^1$}{2:?}", "", indentation, key);
+                        Tree::dump_r(dml2, indentation + 4, next_node)
+                    })
+            }).collect::<Vec<_>>();
+            Box::new(future::join_all(futs).map(|_| ()))
+                as Box<Future<Item=(), Error=Error> + Send>
+        } else {
+            println!("{0:^1$}nitems={2:?}", "", indentation, node.len());
+            Box::new(Ok(()).into_future())
+                as Box<Future<Item=(), Error=Error> + Send>
+        }
+    }
+
     /// Fix an Int node in danger of being underfull, returning the parent guard
     /// back to the caller
     fn fix_int<Q>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
