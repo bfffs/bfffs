@@ -442,6 +442,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Then, try to merge with the left sibling
         // Then, try to steal keys from the left sibling
         let nchildren = parent.as_int().nchildren();
+        debug_assert!(nchildren >= 2,
+            "nchildren < 2 for tree with parent key {:?}, idx={:?}",
+            parent.as_int().children[child_idx].key, child_idx);
         let (fut, sib_idx, right) = {
             if child_idx < nchildren - 1 {
                 let sib_idx = child_idx + 1;
