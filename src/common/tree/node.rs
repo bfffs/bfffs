@@ -379,6 +379,89 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
         }
     }
 
+    /// Lock the indicated children exclusively and apply a function to each.
+    ///
+    /// If they are not already resident in memory, then COW the target node2.
+    /// Return both the original guard and the function's results.
+    ///
+    /// This method is unsuitable for lock-coupling because there is no way to
+    /// release the parent guard while still holding the childrens' guards.
+    /// OTOH, the children are evaluated in parallel, which cannot be done with
+    /// lock-coupling.
+    // This function must return a Box instead of using impl Trait because of a
+    // bug regarding private types in return variables.  It's fixed in 1.29.0
+    pub fn xlock_range<B, D, F, R>(mut self, dml: Arc<D>, range: Range<usize>,
+                                   txg: TxgT, f: F)
+        -> Box<Future<Item=(TreeWriteGuard<A, K, V>, Vec<R>),
+                      Error=Error> + Send>
+        where D: DML<Addr=A> + 'static,
+              F: Fn(TreeWriteGuard<A, K, V>, &Arc<D>) -> B + Clone + Send
+                  + 'static,
+              B: Future<Item = R, Error = Error> + Send + 'static,
+              R: Send + 'static
+    {
+        let idx_start = range.start;
+        let idx_end = range.end;
+        let idx_range = idx_start..idx_end;
+        let idx_range2 = idx_start..idx_end;
+        let child_futs = self.as_int().children[idx_range].iter()
+        .map(move |elem| {
+            let dml2 = dml.clone();
+            let lock_fut = if elem.ptr.is_mem() {
+                Box::new(
+                    elem.ptr.as_mem().xlock()
+                        .map(|guard| (None, guard))
+                ) as Box<Future<Item=(Option<IntElem<A, K, V>>,
+                                      TreeWriteGuard<A, K, V>),
+                                Error=Error> + Send>
+            } else {
+                let addr = *elem.ptr.as_addr();
+                let fut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
+                    &addr, txg)
+                .map(move |arc| {
+                    let child_node = Box::new(Arc::try_unwrap(*arc)
+                        .expect("We should be the Node's only owner"));
+                    let guard = TreeWriteGuard::Mem(
+                        child_node.0.try_write().unwrap()
+                    );
+                    let key = *guard.key();
+                    let start = match *guard {
+                        NodeData::Int(ref id) => id.start_txg(),
+                        NodeData::Leaf(_) => txg
+                    };
+                    let txgs = start..(txg + 1);
+                    let ptr = TreePtr::Mem(child_node);
+                    let elem = IntElem::new(key, txgs, ptr);
+                    (Some(elem), guard)
+                });
+                Box::new(fut) as Box<Future<Item=(Option<IntElem<A, K, V>>,
+                                                  TreeWriteGuard<A, K, V>),
+                                            Error=Error> + Send>
+            };
+            let f2 = f.clone();
+            lock_fut.and_then(move |(elem, guard)| {
+                f2(guard, &dml2)
+                    .map(move |r| (elem, r))
+            })
+        }).collect::<Vec<_>>();
+        let fut = future::join_all(child_futs).map(move |r| {
+            let results = {
+                let child_iter = self.as_int_mut().children[idx_range2]
+                    .iter_mut();
+                let result_iter = r.into_iter();
+                child_iter.zip(result_iter).map(|(child, (new_elem, r))| {
+                    if let Some(elem) = new_elem {
+                        *child = elem;
+                    } else {
+                        child.txgs.end = txg + 1;
+                    }
+                    r
+                }).collect::<Vec<_>>()
+            };
+            (self, results)
+        });
+        Box::new(fut)
+    }
 }
 
 impl<A: Addr, K: Key, V: Value> Deref for TreeWriteGuard<A, K, V> {

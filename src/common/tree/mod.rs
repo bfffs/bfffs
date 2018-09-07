@@ -1102,16 +1102,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                 as Box<Future<Item=(), Error=Error> + Send>
                 } else {
                     // If the IntElems point to IntNodes, we must recurse
-                    let fut = stream::iter_ok(low..high)
-                        .fold(guard, move |guard, i| {
-                        let dml7 = dml6.clone();
-                        guard.xlock(dml6.clone(), i, txg)
-                            .and_then(move |(parent_guard, child_guard)| {
-                                Tree::range_delete_pass1(dml7, height - 1,
-                                    child_guard, .., None, txg)
-                                    .map(move |_| parent_guard)
-                            })
-                    }).map(move |mut parent_guard| {
+                    let fut = guard.xlock_range(dml6, low..high, txg,
+                        move |guard: TreeWriteGuard<A, K, V>, dml: &Arc<D>| {
+                        Tree::range_delete_pass1(dml.clone(), height - 1,
+                                                 guard, .., None, txg)
+                    })
+                    .map(move |(mut parent_guard, _results)| {
                         // With the children deleted, we can drop the IntElems
                         parent_guard.as_int_mut().children.drain(low..high);
                     });
