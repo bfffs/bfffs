@@ -236,12 +236,12 @@ fn range_delete() {
     let drpl4 = DRP::new(PBA{cluster: 0, lba: 20}, Compression::None, 36, 36, 0);
     let drpl5 = DRP::new(PBA{cluster: 0, lba: 21}, Compression::None, 36, 36, 0);
     let drpl6 = DRP::new(PBA{cluster: 0, lba: 22}, Compression::None, 36, 36, 0);
-    let children0 = vec![
+    let children1 = vec![
         IntElem::new(10u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl4)),
         IntElem::new(13u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl5)),
         IntElem::new(16u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl6)),
     ];
-    let intnode1 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
+    let intnode1 = Arc::new(Node::new(NodeData::Int(IntData::new(children1))));
     let opt_intnode1 = Some(intnode1);
     let drpi1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 36, 36, 0);
 
@@ -249,13 +249,13 @@ fn range_delete() {
     let drpl8 = DRP::new(PBA{cluster: 0, lba: 31}, Compression::None, 36, 36, 0);
     let drpl9 = DRP::new(PBA{cluster: 0, lba: 32}, Compression::None, 36, 36, 0);
     let drpl10 = DRP::new(PBA{cluster: 0, lba: 33}, Compression::None, 36, 36, 0);
-    let children0 = vec![
+    let children2 = vec![
         IntElem::new(20u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl7)),
         IntElem::new(26u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl8)),
         IntElem::new(29u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl9)),
         IntElem::new(30u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl10)),
     ];
-    let intnode2 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
+    let intnode2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
     let opt_intnode2 = Some(intnode2);
     let drpi2 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 36, 36, 0);
 
@@ -310,14 +310,14 @@ fn range_delete() {
     // order, even though we don't really care about it.
     // These nodes are popped or deleted in pass1
     expect_pop(&mut mock, drpi0.clone(), opt_intnode0);
+    expect_pop(&mut mock, drpi2.clone(), opt_intnode2);
+    expect_pop(&mut mock, drpi1.clone(), opt_intnode1);
     expect_pop(&mut mock, drpl2.clone(), opt_leafnode2);
     expect_delete(&mut mock, drpl3.clone());
-    expect_pop(&mut mock, drpi2.clone(), opt_intnode2);
-    expect_pop(&mut mock, drpl7.clone(), opt_leafnode7);
-    expect_pop(&mut mock, drpi1.clone(), opt_intnode1);
     expect_delete(&mut mock, drpl4.clone());
     expect_delete(&mut mock, drpl5.clone());
     expect_delete(&mut mock, drpl6.clone());
+    expect_pop(&mut mock, drpl7.clone(), opt_leafnode7);
     // leafnode8 is popped as part of the fixup in pass 2
     expect_pop(&mut mock, drpl8.clone(), opt_leafnode8);
 

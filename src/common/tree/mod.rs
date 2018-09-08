@@ -1038,6 +1038,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             (Bound::Excluded(i), Bound::Included(j)) => (i + 1)..j,
             _ => unreachable!()
         };
+        let wholly_deleted2 = wholly_deleted.clone();
 
         match (left_in_cut, right_in_cut) {
             (Some(i), Some(j)) if i == j => {
@@ -1070,56 +1071,63 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let new_ubound = guard.as_int().children.get(i + 1)
                 .map_or(ubound, |elem| Some(elem.key));
             Box::new(
-                guard.xlock(dml2.clone(), i, txg)
-                .and_then(move |(parent_guard, child_guard)| {
+                guard.xlock_nc(dml2.clone(), i, txg)
+                .and_then(move |(elem, child_guard)| {
                     Tree::range_delete_pass1(dml2, height - 1, child_guard,
                                              range, new_ubound, txg)
-                    .map(move |_| parent_guard)
+                    .map(move |_| elem)
                 })
-            ) as Box<Future<Item=_, Error=_> + Send>
+            ) as Box<Future<Item=Option<IntElem<A, K, V>>, Error=_> + Send>
         } else {
-            Box::new(Ok(guard).into_future())
-                as Box<Future<Item=_, Error=_> + Send>
+            Box::new(Ok(None).into_future())
+                as Box<Future<Item=Option<IntElem<A, K, V>>, Error=_> + Send>
         };
-        let right_fut = left_fut
-        .and_then(move |parent_guard: TreeWriteGuard<A, K, V>| {
-            if let Some(j) = right_in_cut {
-                let new_ubound = parent_guard.as_int().children.get(j + 1)
-                    .map_or(ubound, |elem| Some(elem.key));
-                Box::new(
-                    parent_guard.xlock(dml3.clone(), j, txg)
-                    .and_then(move |(parent_guard, child_guard)| {
-                        Tree::range_delete_pass1(dml3, height - 1, child_guard,
-                                                 range2, new_ubound, txg)
-                        .map(move  |_| parent_guard)
-                    })
-                ) as Box<Future<Item=_, Error=_> + Send>
-            } else {
-                Box::new(Ok(parent_guard).into_future())
-                    as Box<Future<Item=_, Error=_> + Send>
-            }
-        });
-        let middle_fut = right_fut
-        .and_then(move |guard: TreeWriteGuard<A, K, V>| {
-            Tree::range_delete_purge(dml, height, wholly_deleted, guard, txg)
-        });
+        let right_fut = if let Some(j) = right_in_cut {
+            let new_ubound = guard.as_int().children.get(j + 1)
+                .map_or(ubound, |elem| Some(elem.key));
+            Box::new(
+                guard.xlock_nc(dml3.clone(), j, txg)
+                .and_then(move |(elem, child_guard)| {
+                    Tree::range_delete_pass1(dml3, height - 1, child_guard,
+                                             range2, new_ubound, txg)
+                    .map(move  |_| elem)
+                })
+            ) as Box<Future<Item=Option<IntElem<A, K, V>>, Error=_> + Send>
+        } else {
+            Box::new(Ok(None).into_future())
+                as Box<Future<Item=Option<IntElem<A, K, V>>, Error=_> + Send>
+        };
+        let middle_fut = Tree::range_delete_purge(dml, height, wholly_deleted,
+                                                  guard, txg);
         Box::new(
-            middle_fut.map(|_| {
-                ()
+            left_fut.join3(middle_fut, right_fut)
+            .map(move |(left_elem, mut guard, right_elem)| {
+                if let Some(elem) = left_elem {
+                    guard.as_int_mut().children[left_in_cut.unwrap()] = elem;
+                }
+                if let Some(elem) = right_elem {
+                    let deleted = wholly_deleted2.end - wholly_deleted2.start;
+                    let j = right_in_cut.unwrap() - deleted;
+                    guard.as_int_mut().children[j] = elem;
+                }
+            })
+            //middle_fut.map(|_| {
+                //()
                 //let map = BTreeMap::<NodeId<K>, u32>::new();
                 //(map, 0usize)
-            })
+            //})
         ) as Box<Future<Item=_, Error=_> + Send>
     }
 
+    /// Delete the indicated range of children from the Tree
     fn range_delete_purge(dml: Arc<D>, height: u8, range: Range<usize>,
                           mut guard: TreeWriteGuard<A, K, V>, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Item=TreeWriteGuard<A, K, V>, Error=Error> + Send
     {
         if height == 0 {
             // Simply delete the leaves
-            Box::new(Ok(()).into_future())
-                as Box<Future<Item=(), Error=Error> + Send>
+            Box::new(Ok(guard).into_future())
+                as Box<Future<Item=_, Error=Error> + Send>
         } else if height == 1 {
             // If the child elements point to leaves, just delete them.
             let futs = guard.as_int_mut().children.drain(range)
@@ -1133,18 +1141,18 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         as Box<Future<Item=(), Error=Error> + Send>
                 }
             }).collect::<Vec<_>>();
-            let fut = future::join_all(futs).map(|_| ());
+            let fut = future::join_all(futs).map(|_| guard);
             Box::new(fut.into_future())
-                as Box<Future<Item=(), Error=Error> + Send>
+                as Box<Future<Item=_, Error=Error> + Send>
         } else {
             // If the IntElems point to IntNodes, we must recurse
             let fut = guard.drain_xlock(dml, range, txg, move |guard, dml| {
                 let range = 0..guard.len();
                 Tree::range_delete_purge(dml.clone(), height - 1, range, guard,
                                          txg)
-            }).map(|_| ());
+            }).map(|(guard, _)| guard);
             Box::new(fut.into_future())
-                as Box<Future<Item=(), Error=Error> + Send>
+                as Box<Future<Item=_, Error=Error> + Send>
         }
     }
 

@@ -379,6 +379,50 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
         }
     }
 
+    /// Like [`xlock`](#method.xlock) but without using lock-coupling
+    ///
+    /// Lock the indicated child exclusively.  If it is not already resident
+    /// in memory, then COW the target node.  Return both the child's guard and
+    /// a new IntElem that points to it, if it's different from the old IntElem.
+    /// The caller _must_ replace the old IntElem with the new one, or data will
+    /// leak!
+    pub fn xlock_nc<D>(&mut self, dml: Arc<D>, child_idx: usize, txg: TxgT)
+        -> (Box<Future<Item=(Option<IntElem<A, K, V>>,
+                             TreeWriteGuard<A, K, V>),
+                       Error=Error> + Send>)
+        where D: DML<Addr=A> + 'static
+    {
+        self.as_int_mut().children[child_idx].txgs.end = txg + 1;
+        if self.as_int().children[child_idx].ptr.is_mem() {
+            Box::new(
+                self.as_int().children[child_idx].ptr.as_mem().xlock()
+                .map(move |child_guard| {
+                      (None, child_guard)
+                 })
+            )
+        } else {
+            let addr = *self.as_int().children[child_idx].ptr.as_addr();
+            Box::new(
+                dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr, txg)
+               .map(move |arc| {
+                    let child_node = Box::new(Arc::try_unwrap(*arc)
+                        .expect("We should be the Node's only owner"));
+                    let guard = TreeWriteGuard::Mem(
+                        child_node.0.try_write().unwrap()
+                    );
+                    let ptr = TreePtr::Mem(child_node);
+                    let start = match *guard {
+                        NodeData::Int(ref id) => id.start_txg(),
+                        NodeData::Leaf(_) => txg
+                    };
+                    let end = txg;
+                    let elem = IntElem::new(*guard.key(), start..end, ptr);
+                    (Some(elem), guard)
+                })
+            )
+        }
+    }
+
     /// Remove the indicated children from the node and apply a function to
     /// each.
     ///
