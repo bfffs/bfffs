@@ -2164,7 +2164,7 @@ root:
                     22: 22.0"#);
 }
 
-// Range delete pass2 steals an empty leaf node to the left
+// Range delete pass2 steals a leaf node to the left
 #[test]
 fn range_delete_pass2_steal_left() {
     let mock = DDMLMock::new();
@@ -2273,7 +2273,7 @@ root:
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(5..22, TxgT::from(2))
+        tree.range_delete(5..21, TxgT::from(2))
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -2322,6 +2322,7 @@ root:
                             items:
                               3: 3.0
                               4: 4.0
+                              21: 21.0
           - key: 26
             txgs:
               start: 0

@@ -1078,8 +1078,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml3 = dml.clone();
         let range2 = range.clone();
         type CutFut<A, K, V> = Box<Future<Item=(Option<IntElem<A, K, V>>,
-                                                BTreeMap<NodeId<K>,
-                                                usize>, usize),
+                                                BTreeMap<NodeId<K>, usize>,
+                                                Option<usize>),
                                           Error=Error> + Send>;
         let left_fut = if let Some(i) = left_in_cut {
             let new_ubound = guard.as_int().children.get(i + 1)
@@ -1089,12 +1089,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 .and_then(move |(elem, child_guard)| {
                     Tree::range_delete_pass1(dml2, height - 1, child_guard,
                                              range, new_ubound, txg)
-                    .map(move |(m, len)| (elem, m, len))
+                    .map(move |(m, len)| (elem, m, Some(len)))
                 })
             ) as CutFut<A, K, V>
         } else {
             let map = BTreeMap::<NodeId<K>, usize>::new();
-            Box::new(Ok((None, map, 0usize)).into_future()) as CutFut<A, K, V>
+            Box::new(Ok((None, map, None)).into_future()) as CutFut<A, K, V>
         };
         let right_fut = if let Some(j) = right_in_cut {
             let new_ubound = guard.as_int().children.get(j + 1)
@@ -1104,12 +1104,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 .and_then(move |(elem, child_guard)| {
                     Tree::range_delete_pass1(dml3, height - 1, child_guard,
                                              range2, new_ubound, txg)
-                    .map(move |(m, len)| (elem, m, len))
+                    .map(move |(m, len)| (elem, m, Some(len)))
                 })
             ) as CutFut<A, K, V>
         } else {
             let map = BTreeMap::<NodeId<K>, usize>::new();
-            Box::new(Ok((None, map, 0usize)).into_future()) as CutFut<A, K, V>
+            Box::new(Ok((None, map, None)).into_future()) as CutFut<A, K, V>
         };
         let middle_fut = Tree::range_delete_purge(dml, height, wholly_deleted,
                                                   guard, txg);
@@ -1123,21 +1123,30 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 if let Some(elem) = lelem {
                     guard.as_int_mut().children[left_in_cut.unwrap()] = elem;
                 }
-                if llen != 0 {
+                if let Some(l) = llen {
                     let k = guard.as_int().children[left_in_cut.unwrap()].key;
                     let id = NodeId{height: height - 1, key: k};
-                    lmap.insert(id, llen);
+                    lmap.insert(id, l);
                 }
                 let deleted = wholly_deleted2.end - wholly_deleted2.start;
                 if let Some(elem) = relem {
                     let j = right_in_cut.unwrap() - deleted;
                     guard.as_int_mut().children[j] = elem;
                 }
-                if rlen != 0 {
+                if let Some(l) = rlen {
                     let j = right_in_cut.unwrap() - deleted;
                     let k = guard.as_int().children[j].key;
-                    let id = NodeId{height: height - 1, key: k};
-                    lmap.insert(id, rlen);
+                    if l == 0 {
+                        // Sometimes we delete every key in the node on the
+                        // right side of the cut, but we don't know we'll do
+                        // that until we've tried.  This is because parents only
+                        // store their childrens' minimum keys, not maximum
+                        // keys.
+                        guard.as_int_mut().children.remove(j);
+                    } else {
+                        let id = NodeId{height: height - 1, key: k};
+                        lmap.insert(id, l);
+                    }
                 }
                 (lmap, guard.len())
             })

@@ -395,6 +395,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
         if self.as_int().children[child_idx].ptr.is_mem() {
             Box::new(
+                // TODO: for leaf nodes, bump the start txg
                 self.as_int().children[child_idx].ptr.as_mem().xlock()
                 .map(move |child_guard| {
                       (None, child_guard)
