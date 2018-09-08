@@ -1115,7 +1115,7 @@ root:
                               2: 2.0
                     - key: 5
                       txgs:
-                        start: 41
+                        start: 42
                         end: 43
                       ptr:
                         Mem:
@@ -2012,7 +2012,7 @@ root:
                   children:
                     - key: 20
                       txgs:
-                        start: 41
+                        start: 42
                         end: 43
                       ptr:
                         Mem:

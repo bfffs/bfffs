@@ -385,8 +385,9 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// in memory, then COW the target node.  Return both the child's guard and
     /// a new IntElem that points to it, if it's different from the old IntElem.
     /// The caller _must_ replace the old IntElem with the new one, or data will
-    /// leak!
-    pub fn xlock_nc<D>(&mut self, dml: Arc<D>, child_idx: usize, txg: TxgT)
+    /// leak!  `height` is the height of `self`, not the target.  Leaves are 0.
+    pub fn xlock_nc<D>(&mut self, dml: Arc<D>, child_idx: usize, height: u8,
+                       txg: TxgT)
         -> (Box<Future<Item=(Option<IntElem<A, K, V>>,
                              TreeWriteGuard<A, K, V>),
                        Error=Error> + Send>)
@@ -394,12 +395,15 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
         if self.as_int().children[child_idx].ptr.is_mem() {
+            if height == 1 {
+                self.as_int_mut().children[child_idx].txgs.start = txg;
+            }
             Box::new(
-                // TODO: for leaf nodes, bump the start txg
                 self.as_int().children[child_idx].ptr.as_mem().xlock()
                 .map(move |child_guard| {
-                      (None, child_guard)
-                 })
+                    debug_assert!((height > 1) ^ child_guard.is_leaf());
+                    (None, child_guard)
+                })
             )
         } else {
             let addr = *self.as_int().children[child_idx].ptr.as_addr();

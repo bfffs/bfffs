@@ -1085,7 +1085,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let new_ubound = guard.as_int().children.get(i + 1)
                 .map_or(ubound, |elem| Some(elem.key));
             Box::new(
-                guard.xlock_nc(dml2.clone(), i, txg)
+                guard.xlock_nc(dml2.clone(), i, height, txg)
                 .and_then(move |(elem, child_guard)| {
                     Tree::range_delete_pass1(dml2, height - 1, child_guard,
                                              range, new_ubound, txg)
@@ -1100,7 +1100,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let new_ubound = guard.as_int().children.get(j + 1)
                 .map_or(ubound, |elem| Some(elem.key));
             Box::new(
-                guard.xlock_nc(dml3.clone(), j, txg)
+                guard.xlock_nc(dml3.clone(), j, height, txg)
                 .and_then(move |(elem, child_guard)| {
                     Tree::range_delete_pass1(dml3, height - 1, child_guard,
                                              range2, new_ubound, txg)
