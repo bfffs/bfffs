@@ -26,7 +26,7 @@ use serde::de::{Deserializer, DeserializeOwned};
 use std::{
     borrow::Borrow,
     cell::RefCell,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeSet, VecDeque},
     fmt::Debug,
     mem,
     ops::{Bound, DerefMut, Range, RangeBounds},
@@ -892,7 +892,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                                  root_guard, range, None, txg)
                             .map(move |(mut m, danger, _)| {
                                 let id = NodeId{height: height - 1, key};
-                                m.insert(id, danger);
+                                if danger {
+                                    m.insert(id);
+                                }
                                 (tree_guard, m)
                             })
                     })
@@ -991,7 +993,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn range_delete_pass1<R, T>(min_fanout: usize, dml: Arc<D>,
                                 height: u8, mut guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>, txg: TxgT)
-        -> impl Future<Item=(BTreeMap<NodeId<K>, bool>, bool, usize),
+        -> impl Future<Item=(BTreeSet<NodeId<K>>, bool, usize),
                        Error=Error> + Send
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
@@ -1000,7 +1002,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         if height == 0 {
             debug_assert!(guard.is_leaf());
             guard.as_leaf_mut().range_delete(range);
-            let map = BTreeMap::<NodeId<K>, bool>::new();
+            let map = BTreeSet::<NodeId<K>>::new();
             let danger = guard.len() < min_fanout;
             return Box::new(Ok((map, danger, guard.len())).into_future())
                 as Box<Future<Item=_, Error=_> + Send>;
@@ -1053,7 +1055,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             child_guard, range, next_ubound, txg)
                         .map(move |(mut m, child_danger, _child_len)| {
                             let id = NodeId{height: height - 1, key};
-                            m.insert(id, child_danger);
+                            if child_danger {
+                                m.insert(id);
+                            }
                             let l = parent_guard.len();
                             let danger = l <= min_fanout;
                             (m, danger, l)
@@ -1073,7 +1077,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml3 = dml.clone();
         let range2 = range.clone();
         type CutFut<A, K, V> = Box<Future<Item=(Option<IntElem<A, K, V>>,
-                                                BTreeMap<NodeId<K>, bool>,
+                                                BTreeSet<NodeId<K>>,
                                                 Option<bool>, Option<usize>),
                                           Error=Error> + Send>;
         let left_fut = if let Some(i) = left_in_cut {
@@ -1091,7 +1095,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 })
             ) as CutFut<A, K, V>
         } else {
-            let map = BTreeMap::<NodeId<K>, bool>::new();
+            let map = BTreeSet::<NodeId<K>>::new();
             Box::new(Ok((None, map, None, None)).into_future())
                 as CutFut<A, K, V>
         };
@@ -1110,7 +1114,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 })
             ) as CutFut<A, K, V>
         } else {
-            let map = BTreeMap::<NodeId<K>, bool>::new();
+            let map = BTreeSet::<NodeId<K>>::new();
             Box::new(Ok((None, map, None, None)).into_future())
                 as CutFut<A, K, V>
         };
@@ -1129,7 +1133,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 if let Some(danger) = ldanger {
                     let k = guard.as_int().children[left_in_cut.unwrap()].key;
                     let id = NodeId{height: height - 1, key: k};
-                    lmap.insert(id, danger);
+                    if danger {
+                        lmap.insert(id);
+                    }
                 }
                 let deleted = wholly_deleted2.end - wholly_deleted2.start;
                 if let Some(elem) = relem {
@@ -1148,7 +1154,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         guard.as_int_mut().children.remove(j);
                     } else {
                         let id = NodeId{height: height - 1, key: k};
-                        lmap.insert(id, danger);
+                        if danger {
+                            lmap.insert(id);
+                        }
                     }
                 }
                 let l = guard.len();
@@ -1201,7 +1209,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// range_delete_pass1.
     fn range_delete_pass2x<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
                                 tree_guard: RwLockWriteGuard<IntElem<A, K, V>>,
-                                mut map: BTreeMap<NodeId<K>, bool>,
+                                mut map: BTreeSet<NodeId<K>>,
                                 range: R, txg: TxgT)
         -> Box<Future<Item=(), Error=Error> + Send>
         where K: Borrow<T>,
@@ -1216,13 +1224,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 as Box<Future<Item=(), Error=Error> + Send>
         }
         let id = NodeId{height, key: K::min_value()};
-        if map.get(&id) == Some(&true) {
+        if map.contains(&id) {
             // Merge down the root, then fix it up
             let fut = Tree::xlock_and_merge_root(dml.clone(), inner.clone(),
                                                  tree_guard, txg)
             .and_then(move |(tree_guard, root_guard)| {
-                let any_kids_in_danger = map.iter().any(|(id, danger)|
-                    id.height == height - 1 && *danger
+                let any_kids_in_danger = map.iter().any(|id|
+                    id.height == height - 1
                 );
                 let fut = if root_guard.len() == 1 {
                     // Merge it down again
@@ -1239,7 +1247,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         } else {
                             let key = root_guard.as_int().children[i].key;
                             let id = NodeId{height: height - 1, key};
-                            if map.remove(&id) == Some(true) {
+                            if map.remove(&id) {
                                 Some(i)
                             } else {
                                 None
