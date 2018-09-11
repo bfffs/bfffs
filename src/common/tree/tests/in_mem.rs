@@ -943,8 +943,8 @@ root:
                     2: 2.0
           - key: 5
             txgs:
-              start: 42
-              end: 43
+              start: 41
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -952,8 +952,7 @@ root:
                     5: 5.0
                     6: 6.0
                     7: 7.0
-                    10: 10.0
-          - key: 31
+          - key: 10
             txgs:
               start: 42
               end: 43
@@ -961,6 +960,7 @@ root:
               Mem:
                 Leaf:
                   items:
+                    10: 10.0
                     32: 32.0
                     37: 37.0
                     40: 40.0"#);

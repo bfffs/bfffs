@@ -887,11 +887,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
             .and_then(move |guard| {
                 Tree::xlock_root(dml2, guard, txg)
                     .and_then(move |(tree_guard, root_guard)| {
-                        let key = tree_guard.key;
+                        // ptr is guaranteed to be a TreePtr::Mem because we
+                        // just xlock()ed it.
+                        let id = tree_guard.ptr.as_mem()
+                            as *const Node<A, K, V> as usize;
                         Tree::range_delete_pass1(min_fanout, dml6, height - 1,
                                                  root_guard, range, None, txg)
                             .map(move |(mut m, danger, _)| {
-                                let id = NodeId{height: height - 1, key};
                                 if danger {
                                     m.insert(id);
                                 }
@@ -988,12 +990,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
     ///
     /// # Returns
     /// `
-    /// A map that stores the number of children for each node in the
-    /// cut
+    /// A BTreeSet indicating which nodes in the cut are in-danger, indexed by
+    /// the Node's memory address.
     fn range_delete_pass1<R, T>(min_fanout: usize, dml: Arc<D>,
                                 height: u8, mut guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>, txg: TxgT)
-        -> impl Future<Item=(BTreeSet<NodeId<K>>, bool, usize),
+        -> impl Future<Item=(BTreeSet<usize>, bool, usize),
                        Error=Error> + Send
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
@@ -1002,7 +1004,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         if height == 0 {
             debug_assert!(guard.is_leaf());
             guard.as_leaf_mut().range_delete(range);
-            let map = BTreeSet::<NodeId<K>>::new();
+            let map = BTreeSet::<usize>::new();
             let danger = guard.len() < min_fanout;
             return Box::new(Ok((map, danger, guard.len())).into_future())
                 as Box<Future<Item=_, Error=_> + Send>;
@@ -1050,11 +1052,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 };
                 return Box::new(guard.xlock(dml.clone(), i, txg)
                     .and_then(move |(parent_guard, child_guard)| {
-                        let key = parent_guard.as_int().children[i].key;
+                        //let key = parent_guard.as_int().children[i].key;
                         Tree::range_delete_pass1(min_fanout, dml, height - 1,
                             child_guard, range, next_ubound, txg)
                         .map(move |(mut m, child_danger, _child_len)| {
-                            let id = NodeId{height: height - 1, key};
+                            // We just xlock()ed the child, so it's guaranteed
+                            // to be a TreePtr::Mem
+                            let id = parent_guard.as_int().children[i].ptr
+                                .as_mem() as *const Node<A, K, V> as usize;
                             if child_danger {
                                 m.insert(id);
                             }
@@ -1077,7 +1082,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml3 = dml.clone();
         let range2 = range.clone();
         type CutFut<A, K, V> = Box<Future<Item=(Option<IntElem<A, K, V>>,
-                                                BTreeSet<NodeId<K>>,
+                                                BTreeSet<usize>,
                                                 Option<bool>, Option<usize>),
                                           Error=Error> + Send>;
         let left_fut = if let Some(i) = left_in_cut {
@@ -1095,7 +1100,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 })
             ) as CutFut<A, K, V>
         } else {
-            let map = BTreeSet::<NodeId<K>>::new();
+            let map = BTreeSet::<usize>::new();
             Box::new(Ok((None, map, None, None)).into_future())
                 as CutFut<A, K, V>
         };
@@ -1114,7 +1119,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 })
             ) as CutFut<A, K, V>
         } else {
-            let map = BTreeSet::<NodeId<K>>::new();
+            let map = BTreeSet::<usize>::new();
             Box::new(Ok((None, map, None, None)).into_future())
                 as CutFut<A, K, V>
         };
@@ -1131,8 +1136,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     guard.as_int_mut().children[left_in_cut.unwrap()] = elem;
                 }
                 if let Some(danger) = ldanger {
-                    let k = guard.as_int().children[left_in_cut.unwrap()].key;
-                    let id = NodeId{height: height - 1, key: k};
+                    let elem = &guard.as_int().children[left_in_cut.unwrap()];
+                    // elem.ptr is guaranteed to be a TreePtr::Mem because we
+                    // got it from xlock_nc() above.
+                    let id = elem.ptr.as_mem() as *const Node<A, K, V> as usize;
                     if danger {
                         lmap.insert(id);
                     }
@@ -1144,7 +1151,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 }
                 if let Some(danger) = rdanger {
                     let j = right_in_cut.unwrap() - deleted;
-                    let k = guard.as_int().children[j].key;
                     if rlen == Some(0) {
                         // Sometimes we delete every key in the node on the
                         // right side of the cut, but we don't know we'll do
@@ -1153,7 +1159,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         // keys.
                         guard.as_int_mut().children.remove(j);
                     } else {
-                        let id = NodeId{height: height - 1, key: k};
+                        let elem = &guard.as_int().children[j];
+                        // elem.ptr is guaranteed to be a TreePtr::Mem because
+                        // we got it from xlock_nc() above.
+                        let id = elem.ptr.as_mem()
+                            as *const Node<A, K, V> as usize;
                         if danger {
                             lmap.insert(id);
                         }
@@ -1209,7 +1219,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// range_delete_pass1.
     fn range_delete_pass2x<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
                                 tree_guard: RwLockWriteGuard<IntElem<A, K, V>>,
-                                mut map: BTreeSet<NodeId<K>>,
+                                mut map: BTreeSet<usize>,
                                 range: R, txg: TxgT)
         -> Box<Future<Item=(), Error=Error> + Send>
         where K: Borrow<T>,
@@ -1223,15 +1233,23 @@ impl<A, D, K, V> Tree<A, D, K, V>
             return Box::new(Ok(()).into_future())
                 as Box<Future<Item=(), Error=Error> + Send>
         }
-        let id = NodeId{height, key: K::min_value()};
+        // tree_guard.ptr is guaranteed to be a TreePtr::Mem because
+        // range_delete_pass1 dirtied it.
+        let id = tree_guard.ptr.as_mem() as *const Node<A, K, V> as usize;
         if map.contains(&id) {
             // Merge down the root, then fix it up
             let fut = Tree::xlock_and_merge_root(dml.clone(), inner.clone(),
                                                  tree_guard, txg)
             .and_then(move |(tree_guard, root_guard)| {
-                let any_kids_in_danger = map.iter().any(|id|
-                    id.height == height - 1
-                );
+                let any_kids_in_danger = !root_guard.is_leaf() &&
+                    root_guard.as_int().children.iter()
+                .any(|elem| {
+                    if let TreePtr::Mem(p) = &elem.ptr {
+                        map.contains(&(&**p as *const Node<A, K, V> as usize))
+                    } else {
+                        false
+                    }
+                });
                 let fut = if root_guard.len() == 1 {
                     // Merge it down again
                     Tree::range_delete_pass2x(inner, dml, tree_guard, map,
@@ -1245,10 +1263,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         if root_guard.is_leaf() {
                             None
                         } else {
-                            let key = root_guard.as_int().children[i].key;
-                            let id = NodeId{height: height - 1, key};
-                            if map.remove(&id) {
-                                Some(i)
+                            let elem = &root_guard.as_int().children[i];
+                            if let TreePtr::Mem(p) = &elem.ptr {
+                                let id = &**p as *const Node<A, K, V> as usize;
+                                if map.remove(&id) {
+                                    Some(i)
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
