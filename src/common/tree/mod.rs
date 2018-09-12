@@ -1252,9 +1252,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     });
                     Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
                 } else {
-                    // TODO: hold tree_guard until pass2 is done
-                    Tree::range_delete_pass2(inner, dml, root_guard, map, range,
-                                             None, txg)
+                    let fut = Tree::range_delete_pass2(inner, dml, root_guard,
+                                                       map, range, None, txg)
+                    .map(move |r| {
+                        drop(tree_guard);
+                        r
+                    });
+                    Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
                 };
                 fut
             });
