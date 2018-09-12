@@ -1030,11 +1030,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             _ => ()
         }
 
-        // We found the LCA.  Descend along both sides of the cut.  Annoyingly,
-        // we must descend into the cut nodes in serial because of xlock's
-        // requirements.
-        // TODO: Do this part in parallel by abandoning lock-coupling and
-        // keeping the whole tree locked from the LCA down.
+        // We found the LCA.  Descend along both sides of the cut.
         let dml2 = dml.clone();
         let dml3 = dml.clone();
         let range2 = range.clone();
