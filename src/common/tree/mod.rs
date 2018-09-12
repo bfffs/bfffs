@@ -26,7 +26,7 @@ use serde::de::{Deserializer, DeserializeOwned};
 use std::{
     borrow::Borrow,
     cell::RefCell,
-    collections::{BTreeSet, VecDeque},
+    collections::{HashSet, VecDeque},
     fmt::Debug,
     mem,
     ops::{Bound, DerefMut, Range, RangeBounds},
@@ -948,21 +948,24 @@ impl<A, D, K, V> Tree<A, D, K, V>
     ///
     /// # Returns
     /// `
-    /// A BTreeSet indicating which nodes in the cut are in-danger, indexed by
+    /// A HashSet indicating which nodes in the cut are in-danger, indexed by
     /// the Node's memory address.
     fn range_delete_pass1<R, T>(min_fanout: usize, dml: Arc<D>,
                                 height: u8, mut guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>, txg: TxgT)
-        -> impl Future<Item=(BTreeSet<usize>, bool, usize),
+        -> impl Future<Item=(HashSet<usize>, bool, usize),
                        Error=Error> + Send
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
+        // Enough for two nodes on each of six levels of a tree
+        const HASHSET_CAPACITY: usize = 12;
+
         if height == 0 {
             debug_assert!(guard.is_leaf());
             guard.as_leaf_mut().range_delete(range);
-            let map = BTreeSet::<usize>::new();
+            let map = HashSet::<usize>::with_capacity(HASHSET_CAPACITY);
             let danger = guard.len() < min_fanout;
             return Box::new(Ok((map, danger, guard.len())).into_future())
                 as Box<Future<Item=_, Error=_> + Send>;
@@ -1035,7 +1038,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml3 = dml.clone();
         let range2 = range.clone();
         type CutFut<A, K, V> = Box<Future<Item=(Option<IntElem<A, K, V>>,
-                                                BTreeSet<usize>,
+                                                HashSet<usize>,
                                                 Option<bool>, Option<usize>),
                                           Error=Error> + Send>;
         let left_fut = if let Some(i) = left_in_cut {
@@ -1053,7 +1056,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 })
             ) as CutFut<A, K, V>
         } else {
-            let map = BTreeSet::<usize>::new();
+            let map = HashSet::<usize>::with_capacity(HASHSET_CAPACITY);
             Box::new(Ok((None, map, None, None)).into_future())
                 as CutFut<A, K, V>
         };
@@ -1072,7 +1075,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 })
             ) as CutFut<A, K, V>
         } else {
-            let map = BTreeSet::<usize>::new();
+            let map = HashSet::<usize>::with_capacity(HASHSET_CAPACITY);
             Box::new(Ok((None, map, None, None)).into_future())
                 as CutFut<A, K, V>
         };
@@ -1082,9 +1085,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
             left_fut.join3(middle_fut, right_fut)
             .map(move |((lelem, mut lmap, ldanger, _),
                         mut guard,
-                        (relem, mut rmap, rdanger, rlen))|
+                        (relem, rmap, rdanger, rlen))|
             {
-                lmap.append(&mut rmap);
+                lmap.extend(rmap.into_iter());
                 if let Some(elem) = lelem {
                     guard.as_int_mut().children[left_in_cut.unwrap()] = elem;
                 }
@@ -1172,7 +1175,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// range_delete_pass1.
     fn range_delete_pass2x<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
                                 tree_guard: RwLockWriteGuard<IntElem<A, K, V>>,
-                                mut map: BTreeSet<usize>,
+                                mut map: HashSet<usize>,
                                 range: R, txg: TxgT)
         -> Box<Future<Item=(), Error=Error> + Send>
         where K: Borrow<T>,
@@ -1278,9 +1281,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// range_delete_pass1.
     fn range_delete_pass2<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
                                 guard: TreeWriteGuard<A, K, V>,
-                                map: BTreeSet<usize>,
+                                map: HashSet<usize>,
                                 range: R, ubound: Option<K>, txg: TxgT)
-        -> Box<Future<Item=BTreeSet<usize>, Error=Error> + Send>
+        -> Box<Future<Item=HashSet<usize>, Error=Error> + Send>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
@@ -1289,7 +1292,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Traverse the tree, recursing through every node in the cut.  Fix any
         // nodes marked as in-danger
         type FixitFut<A, K, V> = Box<
-            Future<Item=(TreeWriteGuard<A, K, V>, BTreeSet<usize>, i8),
+            Future<Item=(TreeWriteGuard<A, K, V>, HashSet<usize>, i8),
                    Error=Error> + Send
         >;
 
@@ -1317,7 +1320,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             // LCOV_EXCL_STOP
         };
         let fixit = move |parent_guard: TreeWriteGuard<A, K, V>, idx: usize,
-                          mut map: BTreeSet<usize>, range: R|
+                          mut map: HashSet<usize>, range: R|
         {
             type IntermediateFut<A, K, V> = Box<
                 Future<Item=(TreeWriteGuard<A, K, V>, i8, i8),
