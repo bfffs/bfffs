@@ -2370,6 +2370,25 @@ root:
                           checksum: 0"#);
 }
 
+// range_delete of a small range at the end of the tree
+#[test]
+fn range_delete_at_end() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::new(ddml, 2, 5, 1<<22);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    rt.block_on( {
+        let insert_futs = (0..23).map(|k| {
+            tree.insert(k, k as f32, TxgT::from(2))
+        }).collect::<Vec<_>>();
+        future::join_all(insert_futs)
+    }).unwrap();
+    let r = rt.block_on({
+        tree.range_delete(22..23, TxgT::from(2))
+    });
+    assert!(r.is_ok());
+}
+
 // range_delete with a range that includes a whole IntNode at the end of the
 // tree
 #[test]

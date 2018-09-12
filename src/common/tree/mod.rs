@@ -1004,9 +1004,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
         match (left_in_cut, right_in_cut) {
             (Some(i), Some(j)) if i == j => {
+                debug_assert!(i <= guard.len());
                 // Haven't found the lowest common ancestor (LCA) yet.  Keep
                 // recursing
-                let next_ubound = if i == guard.len() {
+                let next_ubound = if i == guard.len() - 1 {
                     ubound
                 } else {
                     Some(guard.as_int().children[i + 1].key)
