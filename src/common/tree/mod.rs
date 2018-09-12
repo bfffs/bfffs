@@ -857,8 +857,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     })
             })
             .and_then(move |(tree_guard, m)| {
-                Tree::range_delete_pass2x(inner2, dml7, tree_guard, m,
-                                         rangeclone, txg)
+                Tree::range_delete_pass2_root(inner2, dml7, tree_guard, m,
+                                              rangeclone, txg)
             })
     }
 
@@ -1173,10 +1173,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Depth-first traversal reshaping the tree after some keys were deleted by
     /// range_delete_pass1.
-    fn range_delete_pass2x<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
-                                tree_guard: RwLockWriteGuard<IntElem<A, K, V>>,
-                                mut map: HashSet<usize>,
-                                range: R, txg: TxgT)
+    fn range_delete_pass2_root<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+        tree_guard: RwLockWriteGuard<IntElem<A, K, V>>, mut map: HashSet<usize>,
+        range: R, txg: TxgT)
         -> Box<Future<Item=(), Error=Error> + Send>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
@@ -1208,8 +1207,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 });
                 let fut = if root_guard.len() == 1 {
                     // Merge it down again
-                    Tree::range_delete_pass2x(inner, dml, tree_guard, map,
-                                              range, txg)
+                    Tree::range_delete_pass2_root(inner, dml, tree_guard, map,
+                                                  range, txg)
                 } else if any_kids_in_danger {
                     let dml3 = dml.clone();
                     let inner3 = inner.clone();
@@ -1246,8 +1245,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             (root_guard, merged)
                         })
                     }).and_then(move |_| {
-                        Tree::range_delete_pass2x(inner3, dml3, tree_guard, map,
-                                                  range, txg)
+                        Tree::range_delete_pass2_root(inner3, dml3, tree_guard,
+                                                      map, range, txg)
                     });
                     Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
                 } else {
