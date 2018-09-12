@@ -1254,9 +1254,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 } else {
                     let fut = Tree::range_delete_pass2(inner, dml, root_guard,
                                                        map, range, None, txg)
-                    .map(move |r| {
+                    .map(move |_| {
                         drop(tree_guard);
-                        r
+                        ()
                     });
                     Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
                 };
@@ -1268,10 +1268,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
             .and_then(move |(tree_guard, root_guard)| {
                 Tree::range_delete_pass2(inner, dml, root_guard, map, range,
                                          None, txg)
-                .map(move |r| {
+                .map(move |_| {
                     // tree_guard needs to live this long
                     drop(tree_guard);
-                    r
+                    ()
                 })
             });
             Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
@@ -1284,7 +1284,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                 guard: TreeWriteGuard<A, K, V>,
                                 map: BTreeSet<usize>,
                                 range: R, ubound: Option<K>, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<Future<Item=BTreeSet<usize>, Error=Error> + Send>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
@@ -1292,9 +1292,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Outline:
         // Traverse the tree, recursing through every node in the cut.  Fix any
         // nodes marked as in-danger
+        type FixitFut<A, K, V> = Box<
+            Future<Item=(TreeWriteGuard<A, K, V>, BTreeSet<usize>, i8),
+                   Error=Error> + Send
+        >;
+
         if guard.is_leaf() {
             // This node was already fixed.  No need to recurse further
-            return Box::new(Ok(()).into_future());
+            return Box::new(Ok(map).into_future());
         }
 
         let (start_idx_bound, end_idx_bound)
@@ -1320,10 +1325,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         {
             type IntermediateFut<A, K, V> = Box<
                 Future<Item=(TreeWriteGuard<A, K, V>, i8, i8),
-                       Error=Error> + Send
-            >;
-            type FinalFut<A, K, V> = Box<
-                Future<Item=(TreeWriteGuard<A, K, V>, i8),
                        Error=Error> + Send
             >;
             let l = parent_guard.as_int().nchildren();
@@ -1361,29 +1362,24 @@ impl<A, D, K, V> Tree<A, D, K, V>
             }).and_then(move |(parent_guard, child_guard, merged)| {
                 Tree::range_delete_pass2(inner3, dml5, child_guard, map, range2,
                                          child_ubound, txg)
-                    .map(move |_| (parent_guard, merged))
+                    .map(move |map| (parent_guard, map, merged))
             });
-            Box::new(fut) as FinalFut<A, K, V>
+            Box::new(fut) as FixitFut<A, K, V>
         };
 
-        // TODO: eliminate map.clone by returning map from
-        // range_delete_pass2
-        let map2 = map.clone();
         let fut = match children_to_fix.0 {
-            None => Box::new(Ok((guard, 0i8)).into_future())
-                as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8),
-                              Error=Error> + Send>,
+            None => Box::new(Ok((guard, map, 0i8)).into_future())
+                as FixitFut<A, K, V>,
             Some(idx) => fixit(guard, idx, map, range2)
         }
-        .and_then(move |(parent_guard, merged)| {
+        .and_then(move |(parent_guard, map, merged)| {
             match children_to_fix.1 {
                 Some(idx) if Some(idx - merged as usize) != children_to_fix.0 =>
-                    fixit(parent_guard, idx - merged as usize, map2, range3),
-                _ => Box::new(Ok((parent_guard, merged)).into_future())
-                    as Box<Future<Item=(TreeWriteGuard<A, K, V>, i8),
-                                  Error=Error> + Send>,
+                    fixit(parent_guard, idx - merged as usize, map, range3),
+                _ => Box::new(Ok((parent_guard, map, merged)).into_future())
+                    as FixitFut<A, K, V>,
             }}
-        ).map(|_| ());
+        ).map(|(_, map, _)| map);
         Box::new(fut)
     }
 
