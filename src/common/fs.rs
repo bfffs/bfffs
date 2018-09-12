@@ -521,10 +521,12 @@ impl Fs {
                     dataset2.range(FSKey::extent_range(ino))
                     .filter_map(move |(_k, v)| {
                         if let Extent::Blob(be) = v.as_extent().unwrap() {
-                            Some(dataset2.delete_blob(&be.rid))
+                            Some(be.rid)
                         } else {
                             None
                         }
+                    }).and_then(move |rid| {
+                        dataset2.delete_blob(&rid)
                     }).collect()
                     .map(move |_| ino)
                 }).and_then(move |ino|  {
