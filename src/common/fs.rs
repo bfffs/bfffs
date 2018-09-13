@@ -3,7 +3,10 @@
 
 use atomic::*;
 use common::*;
-use common::database::*;
+#[cfg(not(test))] use common::database::*;
+#[cfg(test)] use common::database_mock::DatabaseMock as Database;
+#[cfg(test)] use common::database_mock::{ReadOnlyFilesystem, ReadWriteFilesystem};
+use common::database::TreeID;
 use common::fs_tree::*;
 use divbuf::{DivBufShared, DivBuf};
 use futures::{
@@ -676,4 +679,79 @@ impl Fs {
                 as Box<Future<Item=_, Error=_> + Send>
         }
     }
+}
+
+// LCOV_EXCL_START
+#[cfg(test)]
+#[cfg(feature = "mocks")]
+mod t {
+
+use super::*;
+use common::tree::MinValue;
+use simulacrum::*;
+
+fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
+    let mut rt = tokio_io_pool::Builder::default()
+        .pool_size(1)
+        .build()
+        .unwrap();
+    let mut ds = ReadOnlyFilesystem::new();
+    ds.expect_last_key()
+        .called_once()
+        .returning(|_| Box::new(Ok(Some(FSKey::min_value())).into_future()));
+    let mut opt_ds = Some(ds);
+    let mut db = Database::new();
+    db.expect_new_fs()
+        .called_once()
+        .returning(|_| Box::new(Ok(TreeID::Fs(0)).into_future()));
+    db.expect_fsread()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let tree_id = rt.block_on(db.new_fs()).unwrap();
+    (rt, db, tree_id)
+}
+
+#[test]
+fn create() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    // For the unit tests, we skip creating the "/" directory
+    let ino = 1;
+    let filename = OsString::from("x");
+    let filename2 = filename.clone();
+    ds.expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_inode() &&
+            args.1.as_inode().unwrap().size == 0 &&
+            args.1.as_inode().unwrap().nlink == 1 &&
+            args.1.as_inode().unwrap().mode == libc::S_IFREG | 0o644
+        })).returning(|_| Box::new(Ok(None).into_future()));
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_direntry() &&
+            args.1.as_direntry().unwrap().dtype == libc::DT_REG &&
+            args.1.as_direntry().unwrap().name == filename2 &&
+            args.1.as_direntry().unwrap().ino == ino
+        })).returning(|_| Box::new(Ok(None).into_future()));
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+
+    assert_eq!(ino, fs.create(1, &filename, 0o644).unwrap());
+}
+
+#[test]
+fn sync() {
+    let (rt, mut db, tree_id) = setup();
+    db.expect_sync_transaction()
+        .called_once()
+        .returning(|_| Box::new(Ok(()).into_future()));
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+
+    fs.sync();
+}
 }

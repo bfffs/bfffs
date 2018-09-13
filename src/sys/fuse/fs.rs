@@ -1,7 +1,9 @@
 // vim: tw=80
 //! FUSE filesystem access
 
-use common::database::*;
+#[cfg(not(test))] use common::database::*;
+#[cfg(test)] use common::database_mock::DatabaseMock as Database;
+use common::database::TreeID;
 use common::fs::Fs;
 use fuse::*;
 use libc;

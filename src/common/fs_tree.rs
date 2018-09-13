@@ -116,6 +116,22 @@ impl FSKey {
         start..end
     }
 
+    pub fn is_direntry(&self) -> bool {
+        if self.objtype() == ObjKeyDiscriminant::DirEntry as u8 {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_inode(&self) -> bool {
+        if self.objtype() == ObjKeyDiscriminant::Inode as u8 {
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn new(object: u64, objkey: ObjKey) -> Self {
         let objtype = objkey.discriminant();
         let offset = objkey.offset();
