@@ -9,7 +9,6 @@ use std::{
     mem,
     rc::{Rc, Weak},
     ops,
-    thread,
     time,
 };
 #[cfg(not(test))] use std::{
@@ -18,6 +17,7 @@ use std::{
     path::Path
 };
 use tokio::executor::current_thread;
+use tokio::timer;
 use uuid::Uuid;
 
 use common::{*, label::*, vdev::*, vdev_leaf::*};
@@ -247,14 +247,20 @@ impl Inner {
             if let Some(d) = self.issue_fut(sender, fut) {
                 self.delayed = Some(d);
                 if self.queue_depth == 1 {
-                    // TODO this sleep works if there is only one VdevBlock in
-                    // the entire reactor.  But if there are more than one, then
-                    // we need a tokio-enabled sleep so the other VdevBlocks can
-                    // complete their futures.  tokio-timer has lousy
-                    // performance, and tokio doesn't yet have a builtin timer,
-                    // so I'll defer this until it does.
-                    thread::sleep(time::Duration::from_millis(10));
-                    continue;
+                    // Can't issue any I/O at all!  This means that other
+                    // processes outside of bfffs's control are using too many
+                    // disk resources.  In this case, the only thing we can do
+                    // is sleep and try again later.
+                    let weakself = self.weakself.clone();
+                    let duration = time::Duration::from_millis(10);
+                    let wakeup_time = time::Instant::now() + duration;
+                    let delay_fut = timer::Delay::new(wakeup_time)
+                    .map(move |_| {
+                        let inner = weakself.upgrade().expect(
+                            "VdevBlock dropped with outstanding I/O");
+                        inner.borrow_mut().issue_all();
+                    }).map_err(|e| panic!("{:?}", e));
+                    current_thread::spawn(delay_fut);
                 }
                 break;
             }
