@@ -10,7 +10,7 @@ cargo +nightly-2018-06-01-x86_64-unknown-freebsd test --all-features
 # Check that benchmarks run, but don't care about results
 rustup run nightly-2018-06-01-x86_64-unknown-freebsd cargo bench
 
-# It should also work on stable >= 1.28.0
+# It should also work on stable >= 1.29.0
 cargo +stable test
 
 # Measure test coverage, too

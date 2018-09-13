@@ -438,12 +438,9 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// release the parent guard while still holding the childrens' guards.
     /// OTOH, the children are evaluated in parallel, which cannot be done with
     /// lock-coupling.
-    // This function must return a Box instead of using impl Trait because of a
-    // bug regarding private types in return variables.  It's fixed in 1.29.0
     pub fn drain_xlock<B, D, F, R>(mut self, dml: Arc<D>, range: Range<usize>,
                                    txg: TxgT, f: F)
-        -> Box<Future<Item=(TreeWriteGuard<A, K, V>, Vec<R>),
-                      Error=Error> + Send>
+        -> impl Future<Item=(TreeWriteGuard<A, K, V>, Vec<R>), Error=Error>
         where D: DML<Addr=A> + 'static,
               F: Fn(TreeWriteGuard<A, K, V>, &Arc<D>) -> B + Clone + Send
                   + 'static,
@@ -478,8 +475,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                 f2(guard, &dml2)
             })
         }).collect::<Vec<_>>();
-        let fut = future::join_all(child_futs).map(move |r| (self, r));
-        Box::new(fut)
+        future::join_all(child_futs).map(move |r| (self, r))
     }
 }
 
