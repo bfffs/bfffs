@@ -230,6 +230,7 @@ impl DDML {
     }
 
     /// Assert that the given zone was clean as of the given transaction
+    #[cfg(debug_assertions)]
     pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) {
         self.pool.assert_clean_zone(cluster, zone, txg)
     }

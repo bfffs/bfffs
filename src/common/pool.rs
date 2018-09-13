@@ -55,7 +55,6 @@ pub type ClusterLike = cluster::Cluster;
 #[derive(Debug)]
 enum Rpc {
     Allocated(oneshot::Sender<LbaT>),
-    AssertCleanZone(ZoneT, TxgT),
     FindClosedZone(ZoneT, oneshot::Sender<Option<cluster::ClosedZone>>),
     Free(LbaT, LbaT, oneshot::Sender<Result<(), Error>>),
     OptimumQueueDepth(oneshot::Sender<u32>),
@@ -63,7 +62,9 @@ enum Rpc {
     Size(oneshot::Sender<LbaT>),
     SyncAll(oneshot::Sender<Result<(), Error>>),
     Write(IoVec, TxgT, oneshot::Sender<Result<LbaT, Error>>),
-    WriteLabel(LabelWriter, oneshot::Sender<Result<(), Error>>)
+    WriteLabel(LabelWriter, oneshot::Sender<Result<(), Error>>),
+    #[cfg(debug_assertions)]
+    AssertCleanZone(ZoneT, TxgT),
 }
 
 /// RPC server for `Cluster` objects
@@ -96,6 +97,7 @@ impl<'a> ClusterServer {
     fn dispatch(&self, rpc: Rpc) -> impl Future<Item=(), Error=()>
     {
         match rpc {
+            #[cfg(debug_assertions)]
             Rpc::AssertCleanZone(zone, txg) => {
                 self.cluster.assert_clean_zone(zone, txg);
                 Box::new(future::ok::<(), ()>(()))
@@ -180,12 +182,10 @@ impl<'a> ClusterProxy {
         rx.map_err(|_| Error::EPIPE)
     }
 
+    #[cfg(debug_assertions)]
     fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT) {
-        #[cfg(debug_assertions)]
-        {
-            let rpc = Rpc::AssertCleanZone(zone, txg);
-            self.server.unbounded_send(rpc).unwrap();
-        }
+        let rpc = Rpc::AssertCleanZone(zone, txg);
+        self.server.unbounded_send(rpc).unwrap();
     }
 
     fn free(&self, lba: LbaT, length: LbaT)
@@ -386,6 +386,7 @@ impl<'a> Pool {
     }
 
     /// Assert that the given zone was clean as of the given transaction
+    #[cfg(debug_assertions)]
     pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) {
         self.clusters[cluster as usize].assert_clean_zone(zone, txg)
     }

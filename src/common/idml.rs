@@ -101,7 +101,9 @@ impl<'a> IDML {
         let trees2 = self.trees.clone();
         let trees3 = self.trees.clone();
         let ddml2 = self.ddml.clone();
+        #[cfg(debug_assertions)]
         let ddml3 = self.ddml.clone();
+        #[cfg(debug_assertions)]
         let zone2 = zone.clone();
         self.list_indirect_records(&zone).for_each(move |record| {
             IDML::move_record(cache2.clone(), trees2.clone(), ddml2.clone(),
@@ -119,6 +121,7 @@ impl<'a> IDML {
                 });
             czfut.join(atfut).map(|_| ())
         }).map(move |_| {
+            #[cfg(debug_assertions)]
             ddml3.assert_clean_zone(zone2.pba.cluster, zone2.zid, txg)
         })
     }
