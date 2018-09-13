@@ -5,7 +5,7 @@ use atomic::*;
 use common::*;
 #[cfg(not(test))] use common::database::*;
 #[cfg(test)] use common::database_mock::DatabaseMock as Database;
-#[cfg(test)] use common::database_mock::{ReadOnlyFilesystem, ReadWriteFilesystem};
+#[cfg(test)] use common::database_mock::ReadWriteFilesystem;
 use common::database::TreeID;
 use common::fs_tree::*;
 use divbuf::{DivBufShared, DivBuf};
@@ -688,6 +688,8 @@ mod t {
 
 use super::*;
 use common::tree::MinValue;
+#[cfg(test)] use common::database_mock::ReadOnlyFilesystem;
+use futures::stream;
 use simulacrum::*;
 
 fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
@@ -754,4 +756,79 @@ fn sync() {
 
     fs.sync();
 }
+
+#[test]
+fn unlink() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let parent_ino = 1;
+    let ino = 2;
+    let blob_rid = RID(99999);
+    let filename = OsString::from("x");
+    let filename2 = filename.clone();
+
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .returning(move |_| {
+            let dirent = Dirent {
+                ino,
+                dtype: libc::DT_REG,
+                name: filename2.clone()
+            };
+            let v = Some(FSValue::DirEntry(dirent));
+            Box::new(Ok(v).into_future())
+        });
+    ds.then().expect_range()
+        .called_once()
+        .with(FSKey::extent_range(ino))
+        .returning(move |_| {
+            // Return one blob extent and one embedded extent
+            let k0 = FSKey::new(ino, ObjKey::Extent(0));
+            let be0 = BlobExtent{lsize: 4096, rid: blob_rid};
+            let v0 = FSValue::BlobExtent(be0);
+            let k1 = FSKey::new(ino, ObjKey::Extent(4096));
+            let dbs0 = Arc::new(DivBufShared::from(vec![0u8; 1]));
+            let v1 = FSValue::InlineExtent(InlineExtent::new(dbs0));
+            let extents = vec![(k0, v0), (k1, v1)];
+            Box::new(stream::iter_ok(extents))
+        });
+    ds.then().expect_delete_blob()
+        .called_once()
+        .with(passes(move |rid: &*const RID| blob_rid == unsafe {**rid}))
+        .returning(|_| Box::new(Ok(()).into_future()));
+    ds.then().expect_range_delete()
+        .called_once()
+        .with(FSKey::obj_range(ino))
+        .returning(|_| Box::new(Ok(()).into_future()));
+    ds.then().expect_remove()
+        .called_once()
+        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .returning(move |_| {
+            //Box::new(Ok(None).into_future())
+            let now = time::get_time();
+            let inode = Inode {
+                size: 4098,
+                nlink: 1,
+                flags: 0,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                birthtime: now,
+                uid: 0,
+                gid: 0,
+                mode: libc::S_IFREG | 0o644,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
+    let mut opt_ds = Some(ds);
+
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.unlink(1, &filename);
+    assert_eq!(Ok(()), r);
+}
+
 }
