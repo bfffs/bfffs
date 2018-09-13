@@ -271,8 +271,7 @@ impl Inner {
     fn issue_fut(&mut self, sender: oneshot::Sender<()>, mut fut: Box<VdevFut>)
         -> Option<(oneshot::Sender<()>, Box<VdevFut>)> {
 
-        let weakself = self.weakself.clone();
-        let inner = weakself.upgrade().expect(
+        let inner = self.weakself.upgrade().expect(
             "VdevBlock dropped with outstanding I/O");
 
         // Certain errors, like EAGAIN, happen synchronously.  If the future is
