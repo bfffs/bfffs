@@ -496,18 +496,18 @@ impl Display for FreeSpaceMap {
             let total = self.zones[i].total_blocks as f64;
             // We want to round used + free up so the graph won't overestimate
             // available space, but we want to display used and free separately.
-            let (used_width, free_width) = if self.is_empty(i as ZoneT) {
+            let (used_width, freed_width) = if self.is_empty(i as ZoneT) {
                 (0, 0)
             } else {
                 let used = self.in_use(i as ZoneT) as f64;
-                let free = self.zones[i].freed_blocks as f64;
-                let not_avail_width = ((used + free) / total * sw64).round()
+                let freed = self.zones[i].freed_blocks as f64;
+                let not_avail_width = ((used + freed) / total * sw64).round()
                     as usize;
                 let used_width = (used / total * sw64).round() as usize;
-                let free_width = not_avail_width - used_width;
-                (used_width, free_width)
+                let freed_width = not_avail_width - used_width;
+                (used_width, freed_width)
             };
-            let avail_width = space_width - free_width - used_width;
+            let avail_width = space_width - freed_width - used_width;
             let start = if self.is_empty(i as ZoneT) {
                 format!("{0:1$}", "", txg_width)
             } else {
@@ -523,7 +523,7 @@ impl Display for FreeSpaceMap {
             // Repeated row compression: if two or more rows are identical but
             // for the zone number, only print the first
             let this_row = format!("{0}-{1} |{2:3$}{4:=>5$}{6:7$}", start, end,
-                                   "", free_width, "", used_width,
+                                   "", freed_width, "", used_width,
                                    "", avail_width);
             if let Some(ref row) = last_row {
                 if *row == this_row {
