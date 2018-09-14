@@ -67,12 +67,16 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     Serialize + 'static
 {
     /// Prepare this `Value` to be written to disk
+    // LCOV_EXCL_START   unreachable code
     fn flush<D>(self, _dml: &D, _txg: TxgT)
         -> Box<Future<Item=Self, Error=Error> + Send>
         where D: DML, D::Addr: 'static
     {
-        Box::new(Ok(self).into_future())
+        // should never be called since needs_flush is false.  Ideally, this
+        // entire function should go away once generic specialization is stable
+        unreachable!()
     }
+    // LCOV_EXCL_STOP
 
     /// Does this Value type require flushing?
     // This method will go away once generic specialization is stable
