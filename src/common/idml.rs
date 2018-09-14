@@ -123,7 +123,7 @@ impl<'a> IDML {
         }).map(move |_| {
             #[cfg(debug_assertions)]
             ddml3.assert_clean_zone(zone2.pba.cluster, zone2.zid, txg)
-        })
+        })  // LCOV_EXCL_LINE   kcov false negative
     }
 
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
