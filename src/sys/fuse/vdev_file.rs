@@ -2,7 +2,7 @@
 
 use common::{*, label::*, vdev::*, vdev_leaf::*};
 use divbuf::DivBufShared;
-use futures::{Future, future};
+use futures::{Async, Future, Poll, future};
 use std::{
     borrow::{Borrow, BorrowMut},
     io,
@@ -10,7 +10,7 @@ use std::{
     path::Path
 };
 use tokio::reactor::Handle;
-use tokio_file::File;
+use tokio_file::{AioFut, File, LioFut};
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -123,9 +123,7 @@ impl VdevLeafApi for VdevFile {
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
         let container = Box::new(IoVecMutContainer(buf));
         let off = lba * (BYTES_PER_LBA as u64);
-        let fut = self.file.read_at(container, off).unwrap()
-            .map_err(|e| Error::from(e))
-            .map(|_| ());
+        let fut = VdevFileFut(self.file.read_at(container, off).unwrap());
         Box::new(fut)
     }
 
@@ -134,13 +132,7 @@ impl VdevLeafApi for VdevFile {
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecMutContainer(iovec)) as Box<BorrowMut<[u8]>>
         }).collect();
-        let fut = self.file.readv_at(containers, off).unwrap()
-            .map_err(|e| Error::from(e))
-            .map(|lio_result| {
-                // We must drain the iterator to free the AioCb resources
-                lio_result.into_iter().map(|_| ()).count();
-                ()
-            });
+        let fut = VdevFileLioFut(self.file.readv_at(containers, off).unwrap());
         Box::new(fut)
     }
 
@@ -166,12 +158,7 @@ impl VdevLeafApi for VdevFile {
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
         }).collect();
-        let fut = self.file.writev_at(containers, off).unwrap()
-            .map_err(|e| Error::from(e))
-            .map(|result| {
-                result.into_iter().map(|_| ()).count();
-                ()
-            });
+        let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
         Box::new(fut)
     }
 }
@@ -240,9 +227,48 @@ impl VdevFile {
         -> impl Future<Item = (), Error = Error>
     {
         let off = lba * (BYTES_PER_LBA as u64);
-        self.file.write_at(buf, off).unwrap()
-            .map(|_| ())
-            .map_err(|e| Error::from(e))
+        VdevFileFut(self.file.write_at(buf, off).unwrap())
+    }
+}
+
+struct VdevFileFut(AioFut);
+
+impl Future for VdevFileFut {
+    type Item = ();
+    type Error = Error;
+
+    // aio_write and friends will sometimes return an error synchronously (like
+    // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
+    // once before spawning the future into the event loop.  But that results in
+    // calling poll again after it returns an error, which is incompatible with
+    // FuturesExt::{map, map_err}'s implementations.  So we have to define a
+    // custom poll method here, with map's and map_err's functionality inlined.
+    fn poll(&mut self) -> Poll<(), Error> {
+        match self.0.poll() {
+            Ok(Async::Ready(_aio_result)) => Ok(Async::Ready(())),
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(e) => Err(Error::from(e))
+        }
+    }
+}
+
+struct VdevFileLioFut(LioFut);
+
+impl Future for VdevFileLioFut {
+    type Item = ();
+    type Error = Error;
+
+    // See comments for VdevFileFut::poll
+    fn poll(&mut self) -> Poll<(), Error>{
+        match self.0.poll() {
+            Ok(Async::Ready(lio_result)) => {
+                // We must drain the iterator to free the AioCb resources
+                lio_result.into_iter().map(|_| ()).count();
+                Ok(Async::Ready(()))
+            },
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(e) => Err(Error::from(e))
+        }
     }
 }
 
