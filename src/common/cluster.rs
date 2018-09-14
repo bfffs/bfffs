@@ -368,10 +368,8 @@ impl<'a> FreeSpaceMap {
                     assert_eq!(fsm.try_allocate(allocated).0.unwrap().0,
                                zid);
                 }
-                fsm.zones[zid as usize].txgs = txgs;
-            }
-            if freed > 0 {
                 fsm.zones[zid as usize].freed_blocks = freed;
+                fsm.zones[zid as usize].txgs = txgs;
             }
         }
         future::join_all(oz_futs)
@@ -1020,6 +1018,7 @@ mod cluster {
     }
 
     // FreeSpaceMap::open with the following conditions:
+    // A closed zone with no freed blocks
     // A closed zone with some freed blocks
     // An empty zone before the maximum open or full zone
     // An open zone with some freed blocks
@@ -1028,7 +1027,7 @@ mod cluster {
     fn freespacemap_open() {
         let s = Scenario::new();
         let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.reopen_zone_call(2, 77).and_return(
+        s.expect(vr.reopen_zone_call(3, 77).and_return(
                 Box::new(Ok(()).into_future())
         ));
         s.expect(vr.zones_call().and_return_clone(4).times(..));
@@ -1036,28 +1035,33 @@ mod cluster {
         s.expect(vr.zone_limits_call(1).and_return_clone((104, 196)).times(..));
         s.expect(vr.zone_limits_call(2).and_return_clone((204, 296)).times(..));
         s.expect(vr.zone_limits_call(3).and_return_clone((304, 396)).times(..));
+        s.expect(vr.zone_limits_call(4).and_return_clone((404, 496)).times(..));
         let label = Label {
-            allocated_blocks: vec![u32::max_value(), 0, 77, 0],
-            freed_blocks: vec![22, 0, 33, 0],
-            txgs: vec![TxgT::from(1)..TxgT::from(3),
+            allocated_blocks: vec![u32::max_value(), u32::max_value(), 0, 77, 0],
+            freed_blocks: vec![0, 22, 0, 33, 0],
+            txgs: vec![TxgT::from(0)..TxgT::from(2),
+                       TxgT::from(1)..TxgT::from(3),
                        TxgT::from(0)..TxgT::from(0),
                        TxgT::from(2)..TxgT::from(u32::max_value()),
                        TxgT::from(0)..TxgT::from(0)]
         };
         let mock_vr: Box<VdevRaidTrait> = Box::new(vr);
         let fsm = FreeSpaceMap::open(label, &mock_vr).wait().unwrap();
-        assert_eq!(fsm.zones.len(), 3);
-        assert_eq!(fsm.zones[0].freed_blocks, 22);
+        assert_eq!(fsm.zones.len(), 4);
+        assert_eq!(fsm.zones[0].freed_blocks, 0);
         assert_eq!(fsm.zones[0].total_blocks, 92);
-        assert_eq!(fsm.zones[0].txgs, TxgT::from(1)..TxgT::from(3));
-        assert!(fsm.is_empty(1));
-        assert_eq!(fsm.zones[2].freed_blocks, 33);
-        assert_eq!(fsm.zones[2].total_blocks, 92);
-        assert_eq!(fsm.zones[2].txgs.start, TxgT::from(2));
-        let oz = fsm.open_zones.get(&2).unwrap();
-        assert_eq!(oz.start, 204);
+        assert_eq!(fsm.zones[0].txgs, TxgT::from(0)..TxgT::from(2));
+        assert_eq!(fsm.zones[1].freed_blocks, 22);
+        assert_eq!(fsm.zones[1].total_blocks, 92);
+        assert_eq!(fsm.zones[1].txgs, TxgT::from(1)..TxgT::from(3));
+        assert!(fsm.is_empty(2));
+        assert_eq!(fsm.zones[3].freed_blocks, 33);
+        assert_eq!(fsm.zones[3].total_blocks, 92);
+        assert_eq!(fsm.zones[3].txgs.start, TxgT::from(2));
+        let oz = fsm.open_zones.get(&3).unwrap();
+        assert_eq!(oz.start, 304);
         assert_eq!(oz.allocated_blocks, 77);
-        assert!(fsm.is_empty(3));
+        assert!(fsm.is_empty(4));
     }
 
     #[test]
