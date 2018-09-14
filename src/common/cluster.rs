@@ -1298,6 +1298,13 @@ mod cluster {
 mod free_space_map {
     use super::super::*;
 
+    // pet kcov
+    #[test]
+    fn debug() {
+        let fsm = FreeSpaceMap::new(10);
+        format!("{:?}", fsm);
+    }
+
     #[test]
     fn allocated_all_empty() {
         let fsm = FreeSpaceMap::new(32768);

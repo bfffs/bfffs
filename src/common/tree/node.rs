@@ -917,6 +917,11 @@ fn debug() {
 }
 
 #[test]
+fn txgt_min_value() {
+    assert_eq!(TxgT(0), TxgT::min_value());
+}
+
+#[test]
 fn deserialize_int() {
     let serialized = DivBufShared::from(vec![
         1u8, 0, 0, 0, // enum variant 0 for IntNode

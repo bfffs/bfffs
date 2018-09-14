@@ -344,7 +344,7 @@ impl Database {
                         itree.flush(txg)
                             .and_then(move |tod| {
                                 inner5.forest.insert(tree_id2, tod, txg)
-                            })
+                            })  // LCOV_EXCL_LINE   kcov false negative
                     }).collect::<Vec<_>>()
             };
             future::join_all(fsfuts)
@@ -386,6 +386,13 @@ mod t {
         executor::current_thread::TaskExecutor,
         runtime::current_thread
     };
+
+    // pet kcov
+    #[test]
+    fn debug() {
+        let label = Label{forest: TreeOnDisk::default()};
+        format!("{:?}", label);
+    }
 
     #[test]
     fn sync_transaction() {

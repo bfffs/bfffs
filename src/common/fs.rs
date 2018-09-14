@@ -746,6 +746,28 @@ fn create() {
     assert_eq!(ino, fs.create(1, &filename, 0o644).unwrap());
 }
 
+// Pet kcov
+#[test]
+fn debug_attr() {
+    let attr = Attr {
+        ino: 1,
+        size: 4096,
+        blocks: 1,
+        atime: time::Timespec::new(1, 2),
+        mtime: time::Timespec::new(3, 4),
+        ctime: time::Timespec::new(5, 6),
+        birthtime: time::Timespec::new(7, 8),
+        mode: libc::S_IFREG | 0o644,
+        nlink: 1,
+        uid: 1000,
+        gid: 1000,
+        rdev: 0,
+        flags: 0,
+    };
+    let s = format!("{:?}", attr);
+    assert_eq!("Attr { ino: 1, size: 4096, blocks: 1, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: 33188, nlink: 1, uid: 1000, gid: 1000, rdev: 0, flags: 0 }", s);
+}
+
 #[test]
 fn sync() {
     let (rt, mut db, tree_id) = setup();

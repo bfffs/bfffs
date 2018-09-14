@@ -275,14 +275,14 @@ impl DDML {
                             let next = State{pool: s.pool, cluster: c, zid: z};
                             (Some(pclz), Some(next))
                         },
-                        (Some(_), None) => unreachable!(),
+                        (Some(_), None) => unreachable!(),  // LCOV_EXCL_LINE
                         (None, Some((c, z))) => {
                             let next = State{pool: s.pool, cluster: c, zid: z};
                             (None, Some(next))
                         },
                         (None, None) => (None, None)
                     }
-                });
+                }); // LCOV_EXCL_LINE   kcov false negative
                 Some(fut)
             } else {
                 None

@@ -750,7 +750,7 @@ impl VdevRaid {
                 futs.push(Box::new(self.writev_at_one(&sglist, stripe_lba)));
             }
             buf2
-        } else {
+        } else {  // LCOV_EXCL_LINE kcov false negative
             buf
         };
         if !buf3.is_empty() {

@@ -330,6 +330,12 @@ fn zero_sglist(len: usize) -> SGList {
 
 // LCOV_EXCL_START
 #[test]
+fn test_error() {
+    assert_eq!(Error::EPERM, Error::from(nix::Error::Sys(nix::errno::Errno::EPERM)));
+    assert_eq!(Error::EUNKNOWN, Error::from(nix::Error::InvalidUtf8));
+}
+
+#[test]
 fn test_div_roundup() {
     assert_eq!(div_roundup(5u8, 2u8), 3u8);
     assert_eq!(div_roundup(4u8, 2u8), 2u8);

@@ -663,7 +663,7 @@ impl VdevBlock {
 impl Vdev for VdevBlock {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         self.inner.borrow().leaf.lba2zone(lba)
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Returns the "best" number of operations to queue to this `VdevBlock`.  A
     /// smaller number may result in inefficient use of resources, or even
