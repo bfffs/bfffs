@@ -16,7 +16,7 @@ use std::{
     num::NonZeroU64,
     path::Path
 };
-use tokio::executor::current_thread;
+use tokio_current_thread;
 use tokio::timer;
 use uuid::Uuid;
 
@@ -260,7 +260,7 @@ impl Inner {
                             "VdevBlock dropped with outstanding I/O");
                         inner.borrow_mut().issue_all();
                     }).map_err(|e| panic!("{:?}", e));
-                    current_thread::spawn(delay_fut);
+                    tokio_current_thread::spawn(delay_fut);
                 }
                 break;
             }
@@ -293,7 +293,7 @@ impl Inner {
             Ok(r) => {
                 match r {
                     Async::NotReady => {
-                        current_thread::spawn(
+                        tokio_current_thread::spawn(
                             fut.and_then(move |_| {
                                 sender.send(()).unwrap();
                                 inner.borrow_mut().queue_depth -= 1;
