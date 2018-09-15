@@ -40,6 +40,19 @@ impl IDMLMock {
         self.e.expect::<(), LbaT>("allocated")
     }
 
+    pub fn check_ridt(&self) -> impl Future<Item=bool, Error=Error> {
+         self.e.was_called_returning::<(),
+            Box<Future<Item=bool, Error=Error> + Send>>
+            ("check_ridt", ())
+    }
+
+    pub fn expect_check_ridt(&mut self) -> Method<(),
+        Box<Future<Item=bool, Error=Error> + Send>>
+    {
+        self.e.expect::<(), Box<Future<Item=bool, Error=Error> + Send>>
+            ("check_ridt")
+    }
+
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
     {

@@ -2,10 +2,52 @@ extern crate bfffs;
 #[macro_use] extern crate clap;
 extern crate futures;
 extern crate tokio;
+extern crate tokio_io_pool;
 
-mod debug {
 use bfffs::common::device_manager::DevManager;
 use futures::future;
+use std::sync::Arc;
+use tokio::{
+    executor::current_thread::TaskExecutor,
+    runtime::current_thread::Runtime
+};
+
+mod check {
+use super::*;
+
+// Offline consistency check.  Checks that:
+// * RAID parity is consistent
+// * Checksums match
+// * RIDT and AllocT are exact inverses
+// * RIDT contains no orphan entries not found in the FSTrees
+// * Spacemaps match actual usage
+pub fn main(args: &clap::ArgMatches) {
+    let poolname = args.value_of("name").unwrap();
+    let disks = args.values_of("disks").unwrap();
+    let dev_manager = DevManager::new();
+    for dev in disks.map(|s| s.to_string())
+    {
+        dev_manager.taste(dev);
+    }
+    let uuid = dev_manager.importable_pools().iter()
+        .filter(|(name, _uuid)| {
+            *name == poolname
+        }).nth(0).unwrap().1;
+
+    let mut rt = tokio_io_pool::Runtime::new();
+    let handle = rt.handle().clone();
+    let db = Arc::new(rt.block_on(future::lazy(move || {
+        dev_manager.import(uuid, handle)
+    })).unwrap());
+    rt.block_on(future::lazy(move || {
+        db.check()
+    })).unwrap();
+    // TODO: the other checks
+}
+
+}
+
+mod debug {
 use super::*;
 use tokio::runtime::current_thread::Runtime;
 
@@ -49,17 +91,13 @@ use bfffs::common::database::*;
 use bfffs::common::ddml::DDML;
 use bfffs::common::idml::IDML;
 use bfffs::common::pool::{ClusterProxy, Pool};
-use futures::{Future, future};
+use futures::Future;
 use std::{
     num::NonZeroU64,
     str::FromStr,
-    sync::{Arc, Mutex}
+    sync::Mutex
 };
 use super::*;
-use tokio::{
-    executor::current_thread::TaskExecutor,
-    runtime::current_thread::Runtime
-};
 
 fn create(args: &clap::ArgMatches) {
     let rt = Runtime::new().unwrap();
@@ -206,7 +244,28 @@ pub fn main(args: &clap::ArgMatches) {
 fn main() {
     let app = clap::App::new("bfffs")
         .version(crate_version!())
-        .subcommand(clap::SubCommand::with_name("pool")
+        .subcommand(clap::SubCommand::with_name("check")
+            .about("Consistency check")
+            .arg(clap::Arg::with_name("name")
+                 .help("Pool name")
+                 .required(true)
+            ).arg(clap::Arg::with_name("disks")
+                  .multiple(true)
+                  .required(true)
+            )
+        ).subcommand(clap::SubCommand::with_name("debug")
+            .about("Debugging tools")
+            .subcommand(clap::SubCommand::with_name("dump")
+                .about("Dump internal filesystem information")
+                .arg(clap::Arg::with_name("name")
+                     .help("Pool name")
+                     .required(true)
+                ).arg(clap::Arg::with_name("disks")
+                      .multiple(true)
+                      .required(true)
+                )
+            )
+        ).subcommand(clap::SubCommand::with_name("pool")
             .about("create, destroy, and modify storage pools")
             .subcommand(clap::SubCommand::with_name("create")
                 .about("create a new storage pool")
@@ -222,23 +281,12 @@ fn main() {
                       .required(true)
                 )
             )
-        ).subcommand(clap::SubCommand::with_name("debug")
-            .about("Debugging tools")
-            .subcommand(clap::SubCommand::with_name("dump")
-                .about("Dump internal filesystem information")
-                .arg(clap::Arg::with_name("name")
-                     .help("Pool name")
-                     .required(true)
-                ).arg(clap::Arg::with_name("disks")
-                      .multiple(true)
-                      .required(true)
-                )
-            )
         );
     let matches = app.get_matches();
     match matches.subcommand() {
-        ("pool", Some(args)) => pool::main(args),
+        ("check", Some(args)) => check::main(args),
         ("debug", Some(args)) => debug::main(args),
+        ("pool", Some(args)) => pool::main(args),
         _ => {
             println!("Error: subcommand required\n{}", matches.usage());
             std::process::exit(2);

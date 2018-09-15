@@ -196,6 +196,33 @@ pub struct Database {
 }
 
 impl Database {
+    /// Foreground consistency check.  Prints any irregularities to stderr
+    ///
+    /// # Returns
+    ///
+    /// `true` on success, `false` on failure
+    pub fn check(&self) -> impl Future<Item=bool, Error=Error> {
+        // Should check that:
+        // * RAID parity is consistent and checksums match
+        //   - For each entry in the RIDT, read it from disk in "verify mode",
+        //     which bypasses cache, reads from all RAID members, verifies
+        //     RAID parity, but does not decompress.
+        //   - Somehow walk through the DTrees doing the same.
+        // * RIDT and AllocT are exact inverses
+        //   - For each entry in the Alloct, check that the corresponding entry
+        //     in the RIDT is an inverse.
+        //   - For each entry in the RIDT, check that an entry exists in the
+        //     AllocT.
+        // * RIDT's refcounts are correct.
+        //   - Walk through the FSTrees and DTrees building a new RIDT, and
+        //     compare it to the real RIDT.  Use some kind of external database.
+        // * Spacemaps match actual usage
+        //   - For each zone, calculate the actual usage by comparing entries
+        //     from the Alloct and by a TXG-limited scan through the DTrees.
+        //     Compare that to the FreeSpaceMap
+        self.inner.idml.check_ridt()
+    }
+
     /// Clean zones immediately.  Does not wait for the result to be polled!
     ///
     /// The returned `Receiver` will deliver notification when cleaning is

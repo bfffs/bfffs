@@ -86,6 +86,57 @@ impl<'a> IDML {
         self.ddml.allocated()
     }
 
+    /// Foreground RIDT/AllocT consistency check.
+    ///
+    /// Checks that the RIDT and AllocT are exact inverses of each other.
+    ///
+    /// # Returns
+    ///
+    /// `true` on success, `false` on failure
+    pub fn check_ridt(&self) -> impl Future<Item=bool, Error=Error> {
+        let trees2 = self.trees.clone();
+        let trees3 = self.trees.clone();
+        let alloct_fut = self.trees.alloct.range(..)
+        .fold(true, move |passes, (pba, rid)| {
+            trees2.ridt.get(rid)
+            .map(move |v| {
+                passes & match v {
+                    Some(ridt_entry) => {
+                        if ridt_entry.drp.pba() != pba {
+                            eprintln!(concat!("Indirect block {} has address ",
+                                "{:?} but another address {:?} also maps to ",
+                                "same ", "indirect block"), rid,
+                                ridt_entry.drp.pba(), pba);
+                            false
+                        } else {
+                            true
+                        }
+                    }, None => {
+                        eprintln!(concat!("Extraneous entry {:?} => {} in the ",
+                            "Allocation Table"), pba, rid);
+                        false
+                    }
+                }
+            })
+        });
+        let ridt_fut = self.trees.ridt.range(..)
+        .fold(true, move |passes, (rid, entry)| {
+            trees3.alloct.get(entry.drp.pba())
+            .map(move |v| {
+                passes & match v {
+                    Some(_) => true,
+                    None => {
+                        eprintln!(concat!("Indirect block {} has no reverse ",
+                            "mapping in the allocation table"), rid);
+                        false
+                    }
+                }
+            })
+        });
+        alloct_fut.join(ridt_fut)
+        .map(|(x, y)| x & y)
+    }
+
     /// Clean `zone` by moving all of its records to other zones.
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
@@ -505,6 +556,72 @@ mod t {
         let drp = DRP::random(Compression::None, 4096);
         let ridt_entry = RidtEntry::new(drp);
         format!("{:?}", ridt_entry);
+    }
+
+    #[test]
+    fn check_ridt_ok() {
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let cache = Cache::new();
+        let ddml = DDML::new();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        inject_record(&mut rt, &idml, &rid, &drp, 2);
+
+        assert!(rt.block_on(idml.check_ridt()).unwrap());
+    }
+
+    #[test]
+    fn check_ridt_extraneous_alloct() {
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let cache = Cache::new();
+        let ddml = DDML::new();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        // Inject a record into the AllocT but not the RIDT
+        let txg = TxgT::from(0);
+        rt.block_on(idml.trees.alloct.insert(drp.pba(), rid, txg)).unwrap();
+
+        assert!(!rt.block_on(idml.check_ridt()).unwrap());
+    }
+
+    #[test]
+    fn check_ridt_extraneous_ridt() {
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let cache = Cache::new();
+        let ddml = DDML::new();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        // Inject a record into the RIDT but not the AllocT
+        let entry = RidtEntry{drp: drp, refcount: 2};
+        let txg = TxgT::from(0);
+        rt.block_on(idml.trees.ridt.insert(rid.clone(), entry, txg)).unwrap();
+
+        assert!(!rt.block_on(idml.check_ridt()).unwrap());
+    }
+
+    #[test]
+    fn check_ridt_mismatch() {
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let drp2 = DRP::random(Compression::None, 4096);
+        let cache = Cache::new();
+        let ddml = DDML::new();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        // Inject a mismatched pair of records
+        let entry = RidtEntry{drp: drp, refcount: 2};
+        let txg = TxgT::from(0);
+        rt.block_on(idml.trees.ridt.insert(rid.clone(), entry, txg)).unwrap();
+        rt.block_on(idml.trees.alloct.insert(drp2.pba(), rid, txg)).unwrap();
+
+        assert!(!rt.block_on(idml.check_ridt()).unwrap());
     }
 
     #[test]
