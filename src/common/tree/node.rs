@@ -254,15 +254,19 @@ impl<K: Key, V: Value> LeafData<K, V> {
               R: RangeBounds<T>,
               T: Ord + Clone
     {
-        let l = self.items.keys().next_back().unwrap();
-        let more = match range.end_bound() {
-            Bound::Included(i) | Bound::Excluded(i) if i <= l.borrow() => false,
-            _ => true
-        };
-        let items = self.items.range(range)
-            .map(|(k, v)| (*k, v.clone()))
-            .collect::<VecDeque<(K, V)>>();
-        (items, more)
+        if let Some(l) = self.items.keys().next_back() {
+            let more = match range.end_bound() {
+                Bound::Included(i) | Bound::Excluded(i) if i <= l.borrow() =>
+                    false,
+                _ => true
+            };
+            let items = self.items.range(range)
+                .map(|(k, v)| (*k, v.clone()))
+                .collect::<VecDeque<(K, V)>>();
+            (items, more)
+        } else {
+            (VecDeque::new(), false)
+        }
     }
 
     /// Delete all keys within the given range, possibly leaving an empty

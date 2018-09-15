@@ -2449,6 +2449,18 @@ root:
 
 }
 
+// Empty tree
+#[test]
+fn range_empty_tree() {
+    let ddml = Arc::new(DDMLMock::new());
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::create(ddml);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range(..).collect()
+    );
+    assert_eq!(r, Ok(Vec::new()));
+}
+
 // Unbounded range lookup
 #[test]
 fn range_full() {
