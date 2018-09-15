@@ -1,6 +1,7 @@
 // vim: tw=80
 // LCOV_EXCL_START
 use bincode;
+use common::*;
 use common::{Error, TxgT};
 use common::dml::*;
 use common::tree::*;
@@ -9,7 +10,7 @@ use simulacrum::*;
 use std::{
     borrow::Borrow,
     marker::PhantomData,
-    ops::RangeBounds,
+    ops::{Range, RangeBounds},
     sync::Arc
 };
 
@@ -66,6 +67,22 @@ pub struct TreeMock<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
 }
 
 impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
+    pub fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
+        -> impl Future<Item=(), Error=Error> + Send
+    {
+        self.e.was_called_returning::<(Range<PBA>, Range<TxgT>, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>
+            ("clean_zone", (pbas, txgs, txg))
+    }
+
+    pub fn expect_clean_zone(&mut self)
+        -> Method<(Range<PBA>, Range<TxgT>, TxgT),
+                   Box<Future<Item=(), Error=Error> + Send>>
+    {
+        self.e.expect::<(Range<PBA>, Range<TxgT>, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>("clean_zone")
+    }
+
     pub fn create(_dml: Arc<D>) -> Self {
         Self::new()
     }
