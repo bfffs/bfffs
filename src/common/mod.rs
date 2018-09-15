@@ -4,7 +4,11 @@ use divbuf::{DivBuf, DivBufMut, DivBufShared};
 use libc;
 use nix;
 use num_traits::{FromPrimitive, ToPrimitive};
-use std::{hash::Hasher, ops::{Add, AddAssign, Div, Sub}};
+use std::{
+    fmt::{self, Display, Formatter},
+    hash::Hasher,
+    ops::{Add, AddAssign, Div, Sub}
+};
 
 pub mod cache;
 #[cfg(test)] mod cache_mock;
@@ -254,6 +258,12 @@ impl PBA {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, PartialOrd, Ord,
          Serialize)]
 pub struct RID(u64);
+
+impl Display for RID {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        self.0.fmt(f)
+    }
+}
 
 /// "Private" trait; only exists to ensure that div_roundup will fail to compile
 /// when used with signed numbers.  It would be nice to use a negative trait
