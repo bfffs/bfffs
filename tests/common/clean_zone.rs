@@ -24,7 +24,9 @@ test_suite! {
         ffi::OsString,
         fs,
         num::NonZeroU64,
-        sync::{Arc, Mutex}
+        sync::{Arc, Mutex},
+        thread,
+        time
     };
     use tempdir::TempDir;
     use tokio_io_pool::Runtime;
@@ -63,6 +65,17 @@ test_suite! {
             (db, fs, rt)
         }
     });
+
+    // This tests a regression in database::Syncer::run.  However, I can't
+    // reproduce it without creating a FileSystem, so that's why it's in this
+    // file.
+    #[ignore = "Test is slow" ]
+    test sleep_sync_sync(mocks(1 << 20, 32)) {
+        let (_db, fs, _rt) = mocks.val;
+        thread::sleep(time::Duration::from_millis(5500));
+        fs.sync();
+        fs.sync();
+    }
 
     // Minimal test for cleaning zones.  Fills up the first zone and part of the
     // second.  Then deletes most of the data in the first zone.  Then cleans

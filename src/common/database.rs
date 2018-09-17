@@ -113,7 +113,7 @@ impl Syncer {
             delay_fut.select(rx_fut)
                 .map_err(|_| ())
                 .and_then(move |(remainder, other)| {
-                    type LoopFutFut = Box<Future<Item=(LoopFut),
+                    type LoopFutFut = Box<Future<Item=LoopFut,
                                                  Error=()> + Send>;
                     if let Some(s) = remainder {
                         // We got kicked.  Restart the wait
@@ -128,7 +128,7 @@ impl Syncer {
                             Database::sync_transaction_priv(&i2)
                             .map_err(|e| panic!("{:?}", e))
                             .map(move |_| Box::new(
-                                    other.map(|o| (None, o.unwrap()))
+                                    other.map(|o| (Some(()), o.unwrap()))
                                 ) as LoopFut
                             )
                         ) as LoopFutFut
