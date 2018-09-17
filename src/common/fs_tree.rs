@@ -117,19 +117,11 @@ impl FSKey {
     }
 
     pub fn is_direntry(&self) -> bool {
-        if self.objtype() == ObjKeyDiscriminant::DirEntry as u8 {
-            true
-        } else {
-            false
-        }
+        self.objtype() == ObjKeyDiscriminant::DirEntry as u8
     }
 
     pub fn is_inode(&self) -> bool {
-        if self.objtype() == ObjKeyDiscriminant::Inode as u8 {
-            true
-        } else {
-            false
-        }
+        self.objtype() == ObjKeyDiscriminant::Inode as u8
     }
 
     pub fn new(object: u64, objkey: ObjKey) -> Self {
@@ -330,6 +322,13 @@ impl<A: Addr> Value for FSValue<A> {
 #[cfg(test)]
 mod t {
 use super::*;
+
+// pet kcov
+#[test]
+fn debug() {
+    assert_eq!("Extent(0)", format!("{:?}", ObjKey::Extent(0)));
+    assert_eq!("DirEntry(0)", format!("{:?}", ObjKey::DirEntry(0)));
+}
 
 /// For best locality of reference, keys of the same object should always
 /// sort together, keys of the same object and objtype should always sort

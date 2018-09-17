@@ -539,7 +539,7 @@ impl Iterator for PrimeSIterData {
                 ChunkId::Data(a + 1)
             }
         },
-        ChunkId::Parity(_, _) => unreachable!()
+        ChunkId::Parity(_, _) => unreachable!() // LCOV_EXCL_LINE
         };
         result
     }

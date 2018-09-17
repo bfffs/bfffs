@@ -145,7 +145,7 @@ use futures::future;
 use simulacrum::*;
 use super::*;
 use tokio::runtime::current_thread;
-use tokio::executor::current_thread::TaskExecutor;
+use tokio_current_thread::TaskExecutor;
 
 /// Clean in the background
 #[test]

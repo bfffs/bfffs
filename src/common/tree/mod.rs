@@ -644,7 +644,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                          Tree::get_range_r(dml, g, None, range)
                      })
             })
-    }
+    }   // LCOV_EXCL_LINE kcov false negative
 
     /// Range lookup beginning in the node `guard`.  `next_guard`, if present,
     /// must be the node immediately to the right (and possibly up one or more
@@ -980,19 +980,19 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let left_in_cut = match start_idx_bound {
             Bound::Included(_) => None,
             Bound::Excluded(i) => Some(i),
-            _ => unreachable!()
+            _ => unreachable!() // LCOV_EXCL_LINE unreachable
         };
         let right_in_cut = match end_idx_bound {
             Bound::Included(j) => Some(j),
             Bound::Excluded(_) => None,
-            _ => unreachable!()
+            _ => unreachable!() // LCOV_EXCL_LINE unreachable
         };
         let wholly_deleted = match (start_idx_bound, end_idx_bound) {
             (Bound::Included(i), Bound::Excluded(j)) => i..j,
             (Bound::Included(i), Bound::Included(j)) => i..j,
             (Bound::Excluded(i), Bound::Excluded(j)) => (i + 1)..j,
             (Bound::Excluded(i), Bound::Included(j)) => (i + 1)..j,
-            _ => unreachable!()
+            _ => unreachable!() // LCOV_EXCL_LINE unreachable
         };
         let wholly_deleted2 = wholly_deleted.clone();
 
@@ -1256,7 +1256,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     .map(move |_| {
                         drop(tree_guard);
                         ()
-                    });
+                    }); //LCOV_EXCL_START  kcov false negative
                     Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
                 };
                 fut
@@ -1271,7 +1271,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // tree_guard needs to live this long
                     drop(tree_guard);
                     ()
-                })
+                })  //LCOV_EXCL_START  kcov false negative
             });
             Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
         }

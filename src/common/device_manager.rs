@@ -144,7 +144,7 @@ impl DevManager {
         let inner = Inner{ leaves: BTreeMap::new(),
             raids: BTreeMap::new(),
             pools: BTreeMap::new()
-        };
+        };  // LCOV_EXCL_LINE kcov false negative
         DevManager{inner: Mutex::new(inner)}
     }
 

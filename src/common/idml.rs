@@ -174,7 +174,7 @@ impl<'a> IDML {
         }).map(move |_| {
             #[cfg(debug_assertions)]
             ddml3.assert_clean_zone(zone2.pba.cluster, zone2.zid, txg)
-        })
+        })  // LCOV_EXCL_LINE   kcov false negative
     }
 
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
@@ -556,6 +556,14 @@ mod t {
         let drp = DRP::random(Compression::None, 4096);
         let ridt_entry = RidtEntry::new(drp);
         format!("{:?}", ridt_entry);
+
+        let label = Label{
+            alloct:     TreeOnDisk::default(),
+            next_rid:   0,
+            ridt:       TreeOnDisk::default(),
+            txg:        TxgT(0)
+        };
+        format!("{:?}", label);
     }
 
     #[test]

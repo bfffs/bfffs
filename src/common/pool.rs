@@ -703,6 +703,20 @@ mod pool {
         }
     }
 
+    // pet kcov
+    #[test]
+    fn debug() {
+        let s = Scenario::new();
+        let c = s.create_mock::<MockCluster>();
+        s.expect(c.uuid_call().and_return(Uuid::new_v4()));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        rt.block_on(future::lazy(|| {
+            let cluster_proxy = ClusterProxy::new(Box::new(c));
+            format!("{:?}", cluster_proxy);
+            future::ok::<(), ()>(())
+        })).unwrap();
+    }
+
     #[test]
     fn find_closed_zone() {
         let s = Scenario::new();
@@ -1012,6 +1026,30 @@ mod pool {
         assert!(pool.stats.allocated_space[0].load(Ordering::Relaxed) > 0);
         rt.block_on( pool.free(drp, 1)).unwrap();
         assert_eq!(pool.stats.allocated_space[0].load(Ordering::Relaxed), 0);
+    }
+}
+
+mod rpc {
+    use super::super::*;
+
+    // pet kcov
+    #[test]
+    fn debug() {
+        let dbs = DivBufShared::from(Vec::new());
+        let lw = LabelWriter::new();
+        format!("{:?}", Rpc::Allocated(oneshot::channel().0));
+        format!("{:?}", Rpc::FindClosedZone(0, oneshot::channel().0));
+        format!("{:?}", Rpc::Free(0, 0, oneshot::channel().0));
+        format!("{:?}", Rpc::OptimumQueueDepth(oneshot::channel().0));
+        format!("{:?}", Rpc::Read(dbs.try_mut().unwrap(), 0,
+            oneshot::channel().0));
+        format!("{:?}", Rpc::Size(oneshot::channel().0));
+        format!("{:?}", Rpc::SyncAll(oneshot::channel().0));
+        format!("{:?}", Rpc::Write(dbs.try().unwrap(), TxgT(0),
+            oneshot::channel().0));
+        format!("{:?}", Rpc::WriteLabel(lw, oneshot::channel().0));
+        #[cfg(debug_assertions)]
+        format!("{:?}", Rpc::AssertCleanZone(0, TxgT(0)));
     }
 }
 

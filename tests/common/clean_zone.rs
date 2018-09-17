@@ -24,20 +24,23 @@ test_suite! {
         ffi::OsString,
         fs,
         num::NonZeroU64,
-        sync::{Arc, Mutex}
+        sync::{Arc, Mutex},
+        thread,
+        time
     };
     use tempdir::TempDir;
     use tokio_io_pool::Runtime;
 
-    fixture!( mocks(zone_size: u64) -> (Arc<Database>, Fs, Runtime) {
+    fixture!( mocks(devsize: u64, zone_size: u64)
+              -> (Arc<Database>, Fs, Runtime)
+    {
         setup(&mut self) {
             let mut rt = Runtime::new();
             let handle = rt.handle().clone();
-            let len = 1 << 30;  // 1GB
             let tempdir = t!(TempDir::new("test_fs"));
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
-            t!(file.set_len(len));
+            t!(file.set_len(*self.devsize));
             drop(file);
             let zone_size = NonZeroU64::new(*self.zone_size);
             let db = rt.block_on(future::lazy(move || {
@@ -63,8 +66,44 @@ test_suite! {
         }
     });
 
+    // This tests a regression in database::Syncer::run.  However, I can't
+    // reproduce it without creating a FileSystem, so that's why it's in this
+    // file.
+    #[ignore = "Test is slow" ]
+    test sleep_sync_sync(mocks(1 << 20, 32)) {
+        let (_db, fs, _rt) = mocks.val;
+        thread::sleep(time::Duration::from_millis(5500));
+        fs.sync();
+        fs.sync();
+    }
+
+    // Minimal test for cleaning zones.  Fills up the first zone and part of the
+    // second.  Then deletes most of the data in the first zone.  Then cleans
+    // it, and does not reopen it.  We just have to sort-of take it on faith
+    // that zone 0 is clean, because the public API doesn't expose zones.
+    test clean_zone(mocks(1 << 20, 32)) {
+        let (db, mut fs, _rt) = mocks.val;
+        let small_filename = OsString::from("small");
+        let small_ino = fs.create(1, &small_filename, 0o644).unwrap();
+        let buf = vec![42u8; 4096];
+        fs.write(small_ino, 0, &buf[..], 0).unwrap();
+
+        let big_filename = OsString::from("big");
+        let big_ino = fs.create(1, &big_filename, 0o644).unwrap();
+        for i in 0..18 {
+            fs.write(big_ino, i * 4096, &buf[..], 0).unwrap();
+        }
+        fs.sync();
+
+        fs.unlink(1, &big_filename).unwrap();
+        fs.sync();
+
+        db.clean().wait().unwrap();
+        fs.sync();
+    }
+
     #[ignore = "Test is slow and intermittent" ]
-    test clean_zone(mocks(512)) {
+    test clean_zone_leak(mocks(1 << 30, 512)) {
         let (db, fs, _rt) = mocks.val;
         for i in 0..16384 {
             let fname = format!("f.{}", i);
@@ -76,10 +115,11 @@ test_suite! {
             fs.rmdir(1, &OsString::from(fname)).unwrap();
         }
         fs.sync();
-        let statvfs = fs.statvfs();
+        let mut statvfs = fs.statvfs();
         println!("Before cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
         db.clean().wait().unwrap();
+        statvfs = fs.statvfs();
         println!("After cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
     }
@@ -88,7 +128,7 @@ test_suite! {
     /// (node.0.get_mut() fails in Tree::flush_r).  As of 664:7ce31a1d42db, it
     /// fails about 30% of the time.
     #[ignore = "Test is slow and intermittent" ]
-    test get_mut(mocks(512)) {
+    test get_mut(mocks(1 << 30, 512)) {
         let (db, fs, _rt) = mocks.val;
         for i in 0..16384 {
             let fname = format!("f.{}", i);
@@ -100,10 +140,11 @@ test_suite! {
             fs.rmdir(1, &OsString::from(fname)).unwrap();
         }
         fs.sync();
-        let statvfs = fs.statvfs();
+        let mut statvfs = fs.statvfs();
         println!("Before cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
         db.clean().wait().unwrap();
+        statvfs = fs.statvfs();
         println!("After cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
     }

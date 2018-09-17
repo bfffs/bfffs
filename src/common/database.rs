@@ -113,7 +113,7 @@ impl Syncer {
             delay_fut.select(rx_fut)
                 .map_err(|_| ())
                 .and_then(move |(remainder, other)| {
-                    type LoopFutFut = Box<Future<Item=(LoopFut),
+                    type LoopFutFut = Box<Future<Item=LoopFut,
                                                  Error=()> + Send>;
                     if let Some(s) = remainder {
                         // We got kicked.  Restart the wait
@@ -128,7 +128,7 @@ impl Syncer {
                             Database::sync_transaction_priv(&i2)
                             .map_err(|e| panic!("{:?}", e))
                             .map(move |_| Box::new(
-                                    other.map(|o| (None, o.unwrap()))
+                                    other.map(|o| (Some(()), o.unwrap()))
                                 ) as LoopFut
                             )
                         ) as LoopFutFut
@@ -371,7 +371,7 @@ impl Database {
                         itree.flush(txg)
                             .and_then(move |tod| {
                                 inner5.forest.insert(tree_id2, tod, txg)
-                            })
+                            })  // LCOV_EXCL_LINE   kcov false negative
                     }).collect::<Vec<_>>()
             };
             future::join_all(fsfuts)
@@ -413,6 +413,13 @@ mod t {
         executor::current_thread::TaskExecutor,
         runtime::current_thread
     };
+
+    // pet kcov
+    #[test]
+    fn debug() {
+        let label = Label{forest: TreeOnDisk::default()};
+        format!("{:?}", label);
+    }
 
     #[test]
     fn sync_transaction() {

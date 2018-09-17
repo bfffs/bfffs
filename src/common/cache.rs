@@ -286,6 +286,16 @@ impl Cache {
 
 /// Get the least recently used entry
 // LCOV_EXCL_START
+
+// pet kcov
+#[test]
+fn debug() {
+    format!("{:?}", Cache::with_capacity(100));
+    let dbs = DivBufShared::from(Vec::new());
+    let entry = LruEntry{buf: Box::new(dbs), lru: None, mru: None};
+    assert_eq!("LruEntry { lru: None, mru: None }", format!("{:?}", entry));
+}
+
 #[test]
 fn test_get_lru() {
     let mut cache = Cache::with_capacity(100);
