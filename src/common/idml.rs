@@ -1056,7 +1056,6 @@ mod t {
         assert_eq!(alloc_rec.unwrap(), actual_rid);
     }
 
-    #[ignore = "Simulacrum can't mock a single generic method with different type parameters more than once in the same test https://github.com/pcsm/simulacrum/issues/55"]
     #[test]
     fn sync_all() {
         let rid = RID(42);
@@ -1064,6 +1063,10 @@ mod t {
         let mut ddml = DDML::new();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdeadbeef);
+        ddml.expect_put_type::<Arc<tree::Node<DRP, RID, RidtEntry>>>
+            ("put_ridt");
+        ddml.expect_put_type::<Arc<tree::Node<DRP, PBA, RID>>>
+            ("put_alloct");
         ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
             .called_any()
             .with(params!(any(), any(), TxgT::from(42)))

@@ -7,10 +7,15 @@ use common::ddml::*;
 use common::label::*;
 use futures::{Future, Stream};
 use simulacrum::*;
-use std::borrow::Borrow;
+use std::{
+    any,
+    borrow::Borrow,
+    collections::hash_map::HashMap
+};
 
 pub struct DDMLMock {
-    e: Expectations
+    e: Expectations,
+    m: HashMap<any::TypeId, &'static str>
 }
 
 impl DDMLMock {
@@ -36,7 +41,8 @@ impl DDMLMock {
 
     pub fn new() -> Self {
         Self {
-            e: Expectations::new()
+            e: Expectations::new(),
+            m: HashMap::new()
         }
     }
 
@@ -81,12 +87,25 @@ impl DDMLMock {
             ("pop")
     }
 
+    // Due to a bug in Simulacrum, mocking DDML::put is way overcomplicated.
+    // The test method must first call `expect_put_type` with the type to be
+    // mocked, and a name for it.  Then `expect_put` and `put` can be used like
+    // normal.
+    //
+    // Simulacrum can't mock a single generic method with different type
+    // parameters more than once in the same test
+    // https://github.com/pcsm/simulacrum/issues/55"]
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
         Box<Future<Item=DRP, Error=Error> + Send>>
     {
+        let method_name = self.m.get(&any::TypeId::of::<T>()).unwrap_or(&"put");
         self.e.expect::<(T, Compression, TxgT),
                         Box<Future<Item=DRP, Error=Error> + Send>>
-            ("put")
+            (method_name)
+    }
+
+    pub fn expect_put_type<T: Cacheable>(&mut self, name: &'static str) {
+        self.m.insert(any::TypeId::of::<T>(), name);
     }
 
     pub fn expect_sync_all(&mut self)
@@ -226,9 +245,10 @@ impl DML for DDMLMock {
                          txg:TxgT)
         -> Box<Future<Item=DRP, Error=Error> + Send>
     {
+        let method_name = self.m.get(&any::TypeId::of::<T>()).unwrap_or(&"put");
         self.e.was_called_returning::<(T, Compression, TxgT),
             (Box<Future<Item=DRP, Error=Error> + Send>)>
-            ("put", (cacheable, compression, txg))
+            (method_name, (cacheable, compression, txg))
     }
 
     fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error> + Send>
