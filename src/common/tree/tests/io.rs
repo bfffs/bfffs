@@ -124,6 +124,41 @@ root:
     assert_eq!(vec![drpi0, drpl0, drpl1, drpl2], addrs);
 }
 
+/// Tree::addresses on a Tree with a single leaf node
+#[test]
+fn addresses_leaf() {
+    let mock = DDMLMock::new();
+    let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Addr:
+      pba:
+        cluster: 0
+        lba: 0
+      compression: None
+      lsize: 36
+      csize: 36
+      checksum: 0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let addrs = rt.block_on(future::lazy(|| {
+        tree.addresses(..).collect()
+    })).unwrap();
+    assert_eq!(vec![drpl], addrs);
+
+}
+
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_below_root() {
