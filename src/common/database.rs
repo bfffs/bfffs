@@ -214,13 +214,31 @@ impl Database {
         //   - For each entry in the RIDT, check that an entry exists in the
         //     AllocT.
         // * RIDT's refcounts are correct.
-        //   - Walk through the FSTrees and DTrees building a new RIDT, and
-        //     compare it to the real RIDT.  Use some kind of external database.
+        //   - Walk through the FSTrees building a new RIDT, and compare it to
+        //     the real RIDT.  Use some kind of external database.
         // * Spacemaps match actual usage
         //   - For each zone, calculate the actual usage by comparing entries
         //     from the Alloct and by a TXG-limited scan through the DTrees.
         //     Compare that to the FreeSpaceMap
-        self.inner.idml.check_ridt()
+        // * All Trees' IntNode's TXG ranges are accurate
+        // * All files' link counts are correct
+        let ridt_fut = self.inner.idml.check_ridt();
+        let txgs_fut = self.check_txgs();
+        ridt_fut
+        .and_then(|passed| txgs_fut.map(move |r| passed & r))
+    }
+
+    fn check_txgs(&self) -> impl Future<Item=bool, Error=Error> {
+        let inner2 = self.inner.clone();
+        self.inner.idml.check_txgs()
+        .and_then(move |passed| {
+            inner2.forest.range(..)
+            .fold(passed, move |passed, (tree_id, _)| {
+                Inner::open_filesystem(inner2.clone(), tree_id)
+                .and_then(move |tree| tree.check_txgs())
+                .map(move |r| r && passed)
+            })
+        })
     }
 
     /// Clean zones immediately.  Does not wait for the result to be polled!

@@ -487,6 +487,82 @@ impl<A, D, K, V> Tree<A, D, K, V>
         Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
     }
 
+    /// Audit each Node's TXG range for accuracy
+    pub fn check_txgs(&self) -> impl Future<Item=bool, Error=Error> + Send {
+        // Keep the whole tree locked and use LIFO lock discipline
+        let height = self.i.height.load(Ordering::Relaxed) as u8;
+        let dml = self.dml.clone();
+        self.read()
+            .and_then(move |tree_guard| {
+                if height == 1 {
+                    Box::new(Ok(true).into_future())
+                } else {
+                    let fut = tree_guard.rlock(dml.clone())
+                    .and_then(move |guard| {
+                        Tree::check_txgs_r(dml, height - 1, guard)
+                    }).map(move |r| {
+                        if r.1.start < tree_guard.txgs.start ||
+                           r.1.end > tree_guard.txgs.end {
+                            eprintln!(concat!("TXG inconsistency! Tree ",
+                                "contained TXGs {:?} but Root node recorded ",
+                                "{:?}"), r.1, tree_guard.txgs);
+                            false
+                        } else {
+                            r.0
+                        }
+                    });
+                    Box::new(fut) as Box<Future<Item=bool, Error=Error> + Send>
+                }
+            })
+    }
+
+    /// # Parameters
+    ///
+    /// - `height`:     The height of `node`.  Leaves are 0.
+    ///
+    /// # Returns
+    ///
+    /// Whether this node or any children were error-free, and the TXG range of
+    /// this Node's children.
+    fn check_txgs_r(dml: Arc<D>, height: u8, node: TreeReadGuard<A, K, V>)
+        -> Box<Future<Item=(bool, Range<TxgT>), Error=Error> + Send>
+    {
+        debug_assert!(height > 0);
+        let children = &node.as_int().children;
+        let start = children.iter().map(|c| c.txgs.start).min().unwrap();
+        let end = children.iter().map(|c| c.txgs.end).max().unwrap();
+        if height == 1 {
+            // The children are all leaves; no need to recurse
+            Box::new(Ok((true, start..end)).into_future())
+        } else {
+            let futs = node.as_int().children.iter().map(|c| {
+                let dml2 = dml.clone();
+                let range = c.txgs.clone();
+                let key = c.key;
+                c.rlock(dml.clone())
+                .and_then(move |guard|
+                    Tree::check_txgs_r(dml2, height - 1, guard)
+                ).map(move |(passed, r)| {
+                    if r.start < range.start || r.end > range.end {
+                        let id = NodeId {height: height - 1, key};
+                        eprintln!(concat!("TXG inconsistency!  Node {:?} ",
+                            "contained TXGs {:?} but its parent recorded TXGs ",
+                            "{:?}"), id, r, range);
+                        false
+                    } else {
+                        passed
+                    }
+                })
+            }).collect::<Vec<_>>();
+            let fut = future::join_all(futs)
+            .map(move |r| {
+                let passed = r.into_iter().all(|x| x);
+                (passed, start..end)
+            });
+            Box::new(fut)
+        }
+    }
+
     pub fn create(dml: Arc<D>) -> Self {
         Tree::new(dml,
                   4,        // BetrFS's min fanout

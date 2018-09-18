@@ -8,6 +8,270 @@ use futures::future;
 use simulacrum::*;
 use tokio::runtime::current_thread;
 
+#[test]
+fn check_txgs_bad_root() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 42
+              end: 43
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 1.0
+                    1: 2.0
+          - key: 256
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 256
+                compression: ZstdL9NoShuffle
+                lsize: 16000
+                csize: 8000
+                checksum: 0x1a7ebabe
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(!rt.block_on(tree.check_txgs()).unwrap());
+}
+
+#[test]
+fn check_txgs_bad_int() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 20
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 30
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      txgs:
+                        start: 30
+                        end: 31
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 1
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 2
+                      txgs:
+                        start: 31
+                        end: 32
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 2
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+          - key: 9
+            txgs:
+              start: 21
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 3
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 12
+                      txgs:
+                        start: 20
+                        end: 21
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 4
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(!rt.block_on(tree.check_txgs()).unwrap());
+}
+
+#[test]
+fn check_txgs_ok() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 20
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 30
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      txgs:
+                        start: 30
+                        end: 31
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 1
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 2
+                      txgs:
+                        start: 31
+                        end: 32
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 2
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+          - key: 9
+            txgs:
+              start: 20
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 9
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 3
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+                    - key: 12
+                      txgs:
+                        start: 20
+                        end: 21
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 4
+                          compression: None
+                          lsize: 16000
+                          csize: 8000
+                          checksum: 1
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(rt.block_on(tree.check_txgs()).unwrap());
+}
+
+#[test]
+fn check_txgs_leaf() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 1
+  ptr:
+    Addr:
+      pba:
+        cluster: 0
+        lba: 256
+      compression: ZstdL9NoShuffle
+      lsize: 16000
+      csize: 8000
+      checksum: 0x1a7ebabe
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(rt.block_on(tree.check_txgs()).unwrap());
+}
+
 /// Recompute start TXGs on Tree flush
 #[test]
 fn flush() {

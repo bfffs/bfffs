@@ -53,6 +53,12 @@ impl IDMLMock {
             ("check_ridt")
     }
 
+    pub fn check_txgs(&self) -> impl Future<Item=bool, Error=Error> {
+         self.e.was_called_returning::<(),
+            Box<Future<Item=bool, Error=Error> + Send>>
+            ("check_txgs", ())
+    }
+
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
     {

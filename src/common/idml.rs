@@ -137,6 +137,18 @@ impl<'a> IDML {
         .map(|(x, y)| x & y)
     }
 
+    /// Foreground Tree consistency check.
+    ///
+    /// Checks that the DTrees have consistent TXG ranges in each Node
+    ///
+    /// # Returns
+    ///
+    /// `true` on success, `false` on failure
+    pub fn check_txgs(&self) -> impl Future<Item=bool, Error=Error> {
+        self.trees.alloct.check_txgs().join(self.trees.ridt.check_txgs())
+        .map(|(x, y)| x && y)
+    }
+
     /// Clean `zone` by moving all of its records to other zones.
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
