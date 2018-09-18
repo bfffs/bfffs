@@ -13,9 +13,11 @@ use common::dml::*;
 use futures::{
     Async,
     Future,
-    future::{self, IntoFuture},
     Poll,
-    stream::{self, Stream}
+    Sink,
+    future::{self, IntoFuture},
+    stream::{self, Stream},
+    sync::mpsc
 };
 use futures_locks::*;
 #[cfg(test)]
@@ -34,6 +36,8 @@ use std::{
         Arc,
     }
 };
+use tokio::executor::{DefaultExecutor, Executor};
+
 mod node;
 use self::node::*;
 // Node must be visible for the IDML's unit tests
@@ -399,6 +403,90 @@ impl<A, D, K, V> Tree<A, D, K, V>
           K: Key,
           V: Value
 {
+    /// Return the address (not key) of every Node within a given TXG range in
+    /// the Tree.
+    ///
+    /// Guaranteed to return every address used by the Tree, and no others.
+    pub fn addresses<R, T>(&self, txgs: R)
+        -> impl Stream<Item=A, Error=()>
+        where TxgT: Borrow<T>,
+              R: Clone + RangeBounds<T> + Send + 'static,
+              T: Ord + Clone + Send
+    {
+        // Keep the whole tree locked so no new addresses come into use and no
+        // old ones get freed while we're working
+        type SenderFut<A, K, V> = Box<Future<Item=(mpsc::Sender<A>,
+            RwLockReadGuard<IntElem<A, K, V>>), Error=Error> + Send>;
+        let (tx, rx) = mpsc::channel(self.i.max_fanout as usize);
+        let height = self.i.height.load(Ordering::Relaxed) as u8;
+        let dml = self.dml.clone();
+        let txgs2 = txgs.clone();
+        let task = self.read()
+        .and_then(move |tree_guard| {
+            if tree_guard.ptr.is_addr()
+                && ranges_overlap(&txgs, &tree_guard.txgs)
+            {
+                let fut = tx.send(*tree_guard.ptr.as_addr())
+                .map_err(|_| Error::EPIPE)
+                .map(move |tx| (tx, tree_guard));
+                Box::new(fut) as SenderFut<A, K, V>
+            } else {
+                Box::new(Ok((tx, tree_guard)).into_future())
+                    as SenderFut<A, K, V>
+            }
+        }).and_then(move |(tx, tree_guard)| {
+            if height > 1 {
+                let fut = tree_guard.rlock(dml.clone())
+                .and_then(move |guard| Tree::addresses_r(dml, height - 1,
+                                                         guard, tx, txgs2))
+                .map(move |_| drop(tree_guard));
+                Box::new(fut)
+                    as Box<Future<Item=(), Error=Error> + Send>
+            } else {
+                Box::new(Ok(()).into_future())
+                    as Box<Future<Item=(), Error=Error> + Send>
+            }
+        }).map_err(|e| panic!("{:?}", e));
+        DefaultExecutor::current().spawn(Box::new(task)).unwrap();
+        rx
+    }
+
+    fn addresses_r<R, T>(dml:Arc<D>, height: u8, guard: TreeReadGuard<A, K, V>,
+                             tx: mpsc::Sender<A>, txgs: R)
+        -> Box<Future<Item=(), Error=Error> + Send>
+        where TxgT: Borrow<T>,
+              R: Clone + RangeBounds<T> + Send + 'static,
+              T: Ord + Clone + Send
+    {
+        let child_addresses = guard.as_int().children.iter()
+        .filter(|c| c.ptr.is_addr() && ranges_overlap(&txgs, &c.txgs))
+        .map(|c| *c.ptr.as_addr())
+        .collect::<Vec<_>>();
+        let fut = tx.send_all(stream::iter_ok(child_addresses.into_iter()))
+        .map_err(|_| Error::EPIPE)
+        .and_then(move |(tx, _)| {
+            if height > 1 {
+                let txgs2 = txgs.clone();
+                let child_futs = guard.as_int().children.iter()
+                .filter(move |c| ranges_overlap(&txgs2, &c.txgs))
+                .map(move |c| {
+                    let dml2 = dml.clone();
+                    let tx2 = tx.clone();
+                    let txgs2 = txgs.clone();
+                    c.rlock(dml2.clone())
+                    .and_then(move |guard| Tree::addresses_r(dml2, height - 1,
+                                                             guard, tx2, txgs2))
+                }).collect::<Vec<_>>();
+                Box::new(future::join_all(child_futs).map(|_| ()))
+                    as Box<Future<Item=(), Error=Error> + Send>
+            } else {
+                Box::new(Ok(()).into_future())
+                    as Box<Future<Item=(), Error=Error> + Send>
+            }
+        });
+        Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+    }
+
     pub fn create(dml: Arc<D>) -> Self {
         Tree::new(dml,
                   4,        // BetrFS's min fanout
@@ -424,7 +512,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     fn dump_r(dml: Arc<D>, indentation: usize, node: TreeReadGuard<A, K, V>)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> Box<Future<Item=(), Error=Error> + Send>
     {
         if let NodeData::Int(ref int) = *node {
             let futs = int.children.iter().map(move |child| {

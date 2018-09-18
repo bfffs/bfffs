@@ -10,6 +10,120 @@ use simulacrum::*;
 use tokio::prelude::task::current;
 use tokio::runtime::current_thread;
 
+#[test]
+fn addresses() {
+    type NodeT = Arc<Node<DRP, u32, f32>>;
+    fn expect_get(mock: &mut DDMLMock, drp: DRP,
+                  mut node: Option<NodeT>)
+    {
+        mock.then().expect_get::<NodeT>()
+            .called_once()
+            .with(passes(move |arg: &*const DRP| {
+                unsafe {**arg == drp}
+            })).returning(move |_| {
+                let res = Box::new(node.take().unwrap());
+                Box::new(future::ok::<Box<NodeT>, Error>(res))
+            });
+    }
+
+    let mut mock = DDMLMock::new();
+    let drpl0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
+    let drpl1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 36, 36, 0);
+    let drpl2 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 36, 36, 0);
+    let drpi0 = DRP::new(PBA{cluster: 0, lba: 3}, Compression::None, 36, 36, 0);
+
+    let children0 = vec![
+        IntElem::new(0u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl0)),
+        IntElem::new(1u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl1)),
+    ];
+    let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
+    let opt_intnode0 = Some(intnode0);
+    
+    expect_get(&mut mock, drpi0.clone(), opt_intnode0);
+
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 8
+              end: 9
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 3
+                compression: None
+                lsize: 36
+                csize: 36
+                checksum: 0
+          - key: 10
+            txgs:
+              start: 20
+              end: 32
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Addr:
+                          pba:
+                            cluster: 0
+                            lba: 2
+                          compression: None
+                          lsize: 36
+                          csize: 36
+                          checksum: 0
+                    - key: 15
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                              17: 17.0
+          # This  Node is not returned due to its TXG range
+          - key: 20
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Addr:
+                pba:
+                  cluster: 0
+                  lba: 4
+                compression: None
+                lsize: 36
+                csize: 36
+                checksum: 0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let addrs = rt.block_on(future::lazy(|| {
+        tree.addresses(TxgT::from(5)..).collect()
+    })).unwrap();
+    assert_eq!(vec![drpi0, drpl0, drpl1, drpl2], addrs);
+}
+
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_below_root() {
