@@ -43,15 +43,33 @@ pub use self::node::{Addr, Key, MinValue, Value};
 
 /// Are there any elements in common between the two Ranges?
 #[cfg_attr(feature = "cargo-clippy", allow(if_same_then_else))]
-fn ranges_overlap<T: PartialOrd>(x: &Range<T>, y: &Range<T>) -> bool {
-    if x.end <= x.start || y.end <= y.start {
+fn ranges_overlap<R, T, U>(x: &R, y: &Range<U>) -> bool
+    where U: Borrow<T> + PartialOrd,
+          R: RangeBounds<T>,
+          T: PartialOrd
+{
+    let x_is_empty = match (x.start_bound(), x.end_bound()) {
+        (Bound::Included(s), Bound::Included(e)) => e < s,
+        (Bound::Included(s), Bound::Excluded(e)) => e <= s,
+        (Bound::Excluded(s), Bound::Included(e)) => e <= s,
+        (Bound::Excluded(s), Bound::Excluded(e)) => e <= s,
+        (Bound::Unbounded, _) => false,
+        (_, Bound::Unbounded) => false,
+    };
+    let x_precedes_y = match x.end_bound() {
+        Bound::Included(e) => e < y.start.borrow(),
+        Bound::Excluded(e) => e <= y.start.borrow(),
+        Bound::Unbounded => false
+    };
+    let y_precedes_x = match x.start_bound() {
+        Bound::Included(s) | Bound::Excluded(s) => s >= y.end.borrow(),
+        Bound::Unbounded => false
+    };
+
+    if x_is_empty || y.end <= y.start {
         // One of the Ranges is empty
         false
-    } else if x.end <= y.start {
-        // x precedes y
-        false
-    } else if y.end <= x.start {
-        // y precedes x
+    } else if x_precedes_y || y_precedes_x {
         false
     } else {
         true
