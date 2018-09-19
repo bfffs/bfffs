@@ -67,10 +67,10 @@ pub struct TreeMock<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
 }
 
 impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
-    pub fn check_txgs(&self) -> impl Future<Item=bool, Error=Error> + Send {
+    pub fn check(&self) -> impl Future<Item=bool, Error=Error> + Send {
         self.e.was_called_returning::<(),
             Box<Future<Item=bool, Error=Error> + Send>>
-            ("check_txgs", ())
+            ("check", ())
     }
 
     pub fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)

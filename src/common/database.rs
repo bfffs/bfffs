@@ -220,25 +220,21 @@ impl Database {
         //   - For each zone, calculate the actual usage by comparing entries
         //     from the Alloct and by a TXG-limited scan through the DTrees.
         //     Compare that to the FreeSpaceMap
-        // * All Trees' IntNode's TXG ranges are accurate
+        // * All Trees' are consistent and satisfy their invariants.
         // * All files' link counts are correct
-        let ridt_fut = self.inner.idml.check_ridt();
-        let txgs_fut = self.check_txgs();
-        ridt_fut
-        .and_then(|passed| txgs_fut.map(move |r| passed & r))
+        let idml_fut = self.inner.idml.check();
+        let forest_fut = self.check_forest();
+        idml_fut.and_then(|passed| forest_fut.map(move |r| passed & r))
     }
 
-    fn check_txgs(&self) -> impl Future<Item=bool, Error=Error> {
+    fn check_forest(&self) -> impl Future<Item=bool, Error=Error> {
         let inner2 = self.inner.clone();
-        self.inner.idml.check_txgs()
-        .and_then(move |passed| {
-            inner2.forest.range(..)
-            .fold(passed, move |passed, (tree_id, _)| {
+        self.inner.forest.range(..)
+            .fold(true, move |passed, (tree_id, _)| {
                 Inner::open_filesystem(inner2.clone(), tree_id)
-                .and_then(move |tree| tree.check_txgs())
+                .and_then(move |tree| tree.check())
                 .map(move |r| r && passed)
             })
-        })
     }
 
     /// Clean zones immediately.  Does not wait for the result to be polled!

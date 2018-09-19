@@ -487,8 +487,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
     }
 
-    /// Audit each Node's TXG range for accuracy
-    pub fn check_txgs(&self) -> impl Future<Item=bool, Error=Error> + Send {
+    /// Audit the whole Tree for consistency and invariants
+    // TODO: check node size limits, too
+    pub fn check(&self) -> impl Future<Item=bool, Error=Error> + Send {
         // Keep the whole tree locked and use LIFO lock discipline
         let height = self.i.height.load(Ordering::Relaxed) as u8;
         let dml = self.dml.clone();
@@ -499,7 +500,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 } else {
                     let fut = tree_guard.rlock(dml.clone())
                     .and_then(move |guard| {
-                        Tree::check_txgs_r(dml, height - 1, guard)
+                        Tree::check_r(dml, height - 1, guard)
                     }).map(move |r| {
                         if r.1.start < tree_guard.txgs.start ||
                            r.1.end > tree_guard.txgs.end {
@@ -524,7 +525,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     ///
     /// Whether this node or any children were error-free, and the TXG range of
     /// this Node's children.
-    fn check_txgs_r(dml: Arc<D>, height: u8, node: TreeReadGuard<A, K, V>)
+    fn check_r(dml: Arc<D>, height: u8, node: TreeReadGuard<A, K, V>)
         -> Box<Future<Item=(bool, Range<TxgT>), Error=Error> + Send>
     {
         debug_assert!(height > 0);
@@ -541,7 +542,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 let key = c.key;
                 c.rlock(dml.clone())
                 .and_then(move |guard|
-                    Tree::check_txgs_r(dml2, height - 1, guard)
+                    Tree::check_r(dml2, height - 1, guard)
                 ).map(move |(passed, r)| {
                     if r.start < range.start || r.end > range.end {
                         let id = NodeId {height: height - 1, key};

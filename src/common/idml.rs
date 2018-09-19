@@ -93,7 +93,7 @@ impl<'a> IDML {
     /// # Returns
     ///
     /// `true` on success, `false` on failure
-    pub fn check_ridt(&self) -> impl Future<Item=bool, Error=Error> {
+    fn check_ridt(&self) -> impl Future<Item=bool, Error=Error> {
         let trees2 = self.trees.clone();
         let trees3 = self.trees.clone();
         let alloct_fut = self.trees.alloct.range(..)
@@ -139,14 +139,16 @@ impl<'a> IDML {
 
     /// Foreground Tree consistency check.
     ///
-    /// Checks that the DTrees have consistent TXG ranges in each Node
+    /// Checks that all DTrees are consistent and satisfy their invariants.
     ///
     /// # Returns
     ///
     /// `true` on success, `false` on failure
-    pub fn check_txgs(&self) -> impl Future<Item=bool, Error=Error> {
-        self.trees.alloct.check_txgs().join(self.trees.ridt.check_txgs())
-        .map(|(x, y)| x && y)
+    pub fn check(&self) -> impl Future<Item=bool, Error=Error> {
+        self.trees.alloct.check()
+        .join3(self.trees.ridt.check(),
+               self.check_ridt())
+        .map(|(x, y, z)| x && y && z)
     }
 
     /// Clean `zone` by moving all of its records to other zones.

@@ -9,7 +9,7 @@ use simulacrum::*;
 use tokio::runtime::current_thread;
 
 #[test]
-fn check_txgs_bad_root() {
+fn check_bad_root_txgs() {
     let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
@@ -53,11 +53,11 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(!rt.block_on(tree.check_txgs()).unwrap());
+    assert!(!rt.block_on(tree.check()).unwrap());
 }
 
 #[test]
-fn check_txgs_bad_int() {
+fn check_bad_int_txgs() {
     let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
@@ -146,11 +146,11 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(!rt.block_on(tree.check_txgs()).unwrap());
+    assert!(!rt.block_on(tree.check()).unwrap());
 }
 
 #[test]
-fn check_txgs_ok() {
+fn check_ok() {
     let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
@@ -239,11 +239,11 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(rt.block_on(tree.check_txgs()).unwrap());
+    assert!(rt.block_on(tree.check()).unwrap());
 }
 
 #[test]
-fn check_txgs_leaf() {
+fn check_leaf() {
     let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
@@ -269,7 +269,7 @@ root:
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(rt.block_on(tree.check_txgs()).unwrap());
+    assert!(rt.block_on(tree.check()).unwrap());
 }
 
 /// Recompute start TXGs on Tree flush
