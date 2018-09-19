@@ -541,10 +541,6 @@ impl VdevBlock {
                 inner.leaf.lba2zone(start).unwrap());
             // The LBA must be the begining of a zone
             debug_assert_eq!(start, limits.0);
-            // The scheduler must not currently reside in this zone.  That would
-            // imply that we just operated on an empty zone
-            debug_assert!(inner.last_lba >= limits.1 ||
-                          inner.last_lba < limits.0);
         }
 
         self.new_fut(block_op, receiver)
