@@ -852,11 +852,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // The range is truly empty
                     Box::new(Ok((v, None)).into_future())
                 } else {
-                    let bound = if more && next_guard.is_some() {
-                        Some(Bound::Included(next_guard.unwrap()
-                                                       .key()
-                                                       .borrow()
-                                                       .clone()))
+                    let bound = if more {
+                        Some(match next_guard {
+                            Some(g) => Bound::Included(g.key().borrow().clone()),
+                            None => {
+                                let t = leaf.last_key().unwrap().borrow().clone();
+                                Bound::Excluded(t)
+                            }
+                        })
                     } else {
                         None
                     };
@@ -1324,9 +1327,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         if height == 0 {
             // Simply delete the leaves
+            debug_assert!(guard.is_leaf());
             Box::new(Ok(guard).into_future())
                 as Box<Future<Item=_, Error=Error> + Send>
         } else if height == 1 {
+            debug_assert!(!guard.is_leaf());
             // If the child elements point to leaves, just delete them.
             let futs = guard.as_int_mut().children.drain(range)
             .map(move |elem| {
@@ -1343,6 +1348,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             Box::new(fut.into_future())
                 as Box<Future<Item=_, Error=Error> + Send>
         } else {
+            debug_assert!(!guard.is_leaf());
             // If the IntElems point to IntNodes, we must recurse
             let fut = guard.drain_xlock(dml, range, txg, move |guard, dml| {
                 let range = 0..guard.len();

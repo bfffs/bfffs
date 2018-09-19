@@ -102,9 +102,9 @@ test_suite! {
         fs.sync();
     }
 
-    #[ignore = "Test is slow and intermittent" ]
+    #[ignore = "Test is slow" ]
     test clean_zone_leak(mocks(1 << 30, 512)) {
-        let (db, fs, _rt) = mocks.val;
+        let (db, fs, mut rt) = mocks.val;
         for i in 0..16384 {
             let fname = format!("f.{}", i);
             fs.mkdir(1, &OsString::from(fname), 0o755).unwrap();
@@ -122,6 +122,7 @@ test_suite! {
         statvfs = fs.statvfs();
         println!("After cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
+        rt.block_on(db.check()).unwrap();
     }
 
     /// A regression test for bug d5b4dab35d9be12ff1505e886ed5ca8ad4b6a526

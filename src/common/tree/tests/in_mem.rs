@@ -2869,13 +2869,23 @@ root:
                   items:
                     3: 3.0
                     4: 4.0
+          - key: 5
+            txgs:
+              start: 0
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5: 5.0
+                    6: 6.0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range(2..4)
+        tree.range(2..6)
             .collect()
     );
-    assert_eq!(r, Ok(vec![(3, 3.0)]));
+    assert_eq!(r, Ok(vec![(3, 3.0), (4, 4.0), (5, 5.0)]));
 }
 
 #[test]

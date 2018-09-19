@@ -255,7 +255,7 @@ stack backtrace:
 
 [reproduce]
 The easiest way to reproduce, though it isn't 100% reliable:
-cargo +nightly test --all-features common::clean_zone::t::clean_zone -- --ignored
+cargo +nightly test --all-features common::clean_zone::t::clean_zone_leak -- --ignored
 
 [comments]
 # Comments and updates - leave your name
