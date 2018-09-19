@@ -149,6 +149,17 @@ impl Fs {
                        libc::S_IFREG | (mode as u16), 1, f)
     }
 
+    pub fn dump(&self) {
+        let (tx, rx) = oneshot::channel();
+        self.handle.spawn(
+            self.db.fsread(self.tree, move |dataset| {
+                dataset.dump_trees()
+                .map(|_| tx.send(()).unwrap())
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     pub fn getattr(&self, ino: u64) -> Result<Attr, i32> {
         let (tx, rx) = oneshot::channel();
         self.handle.spawn(

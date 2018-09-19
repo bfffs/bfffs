@@ -31,6 +31,11 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
         self.e.expect::<(), LbaT>("allocated")
     }
 
+    pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> + Send {
+        self.e.was_called_returning::<(), Box<Future<Item=(), Error=Error> + Send>>
+            ("dump_trees", ())
+    }
+
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.e.was_called_returning::<K,

@@ -119,6 +119,10 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
         self.dataset.allocated()
     }
 
+    pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> {
+        self.dataset.dump_trees()
+    }
+
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.dataset.get(k)
