@@ -42,14 +42,11 @@ root:
               start: 41
               end: 42
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 256
-                compression: ZstdL9NoShuffle
-                lsize: 16000
-                csize: 8000
-                checksum: 0x1a7ebabe
+              Mem:
+                Leaf:
+                  items:
+                    256: 256.0
+                    257: 257.0
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -88,27 +85,21 @@ root:
                         start: 30
                         end: 31
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 1
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 1.0
+                              1: 2.0
                     - key: 2
                       txgs:
                         start: 31
                         end: 32
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 2
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Mem:
+                          Leaf:
+                            items:
+                              2: 3.0
+                              3: 4.0
           - key: 9
             txgs:
               start: 21
@@ -122,27 +113,66 @@ root:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 3
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Mem:
+                          Leaf:
+                            items:
+                              9: 9.0
+                              10: 10.0
                     - key: 12
                       txgs:
                         start: 20
                         end: 21
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 4
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(!rt.block_on(tree.check()).unwrap());
+}
+
+#[test]
+fn check_bad_key() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 11
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+          - key: 13
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    13: 13.0
+                    14: 14.0
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -181,27 +211,24 @@ root:
                         start: 30
                         end: 31
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 1
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
                     - key: 2
                       txgs:
                         start: 31
                         end: 32
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 2
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Mem:
+                          Leaf:
+                            items:
+                              2: 2.0
+                              3: 3.0
+                              4: 4.0
+                              5: 5.0
+                              6: 6.0
           - key: 9
             txgs:
               start: 20
@@ -215,27 +242,21 @@ root:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 3
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Mem:
+                          Leaf:
+                            items:
+                              10: 10.0
+                              11: 11.0
                     - key: 12
                       txgs:
                         start: 20
                         end: 21
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 4
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Mem:
+                          Leaf:
+                            items:
+                              12: 12.0
+                              13: 13.0
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -243,7 +264,97 @@ root:
 }
 
 #[test]
-fn check_leaf() {
+fn check_empty() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree = Tree::<DRP, DDMLMock, u32, f32>::create(ddml);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(rt.block_on(tree.check()).unwrap());
+}
+
+#[test]
+fn check_leaf_underflow() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 9
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+          - key: 13
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    13: 13.0
+                    14: 14.0
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(!rt.block_on(tree.check()).unwrap());
+}
+
+#[test]
+fn check_root_int_underflow() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 9
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(!rt.block_on(tree.check()).unwrap());
+}
+
+// The root node is allowed to underflow if it's a leaf
+#[test]
+fn check_root_leaf_ok() {
     let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
@@ -258,18 +369,45 @@ root:
     start: 0
     end: 1
   ptr:
-    Addr:
-      pba:
-        cluster: 0
-        lba: 256
-      compression: ZstdL9NoShuffle
-      lsize: 16000
-      csize: 8000
-      checksum: 0x1a7ebabe
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
     assert!(rt.block_on(tree.check()).unwrap());
+}
+
+#[test]
+fn check_root_leaf_overflow() {
+    let mock = DDMLMock::new();
+    let ddml = Arc::new(mock);
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 1
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
+          1: 1.0
+          2: 2.0
+          3: 3.0
+          4: 4.0
+          5: 5.0
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(!rt.block_on(tree.check()).unwrap());
 }
 
 /// Recompute start TXGs on Tree flush

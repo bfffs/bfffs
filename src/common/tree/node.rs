@@ -90,6 +90,16 @@ impl Value for RID {}
 #[cfg(test)] impl Value for f32 {}
 #[cfg(test)] impl Value for u32 {}
 
+/// Uniquely identifies any Node in the Tree.
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct NodeId<K: Key> {
+    /// Tree level of the Node.  Leaves are 0.
+    pub(super) height: u8,
+    /// Less than or equal to the Node's first child/item.  Greater than the
+    /// previous Node's last child/item.
+    pub(super) key: K
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned,
                              V: DeserializeOwned"))]
@@ -658,6 +668,31 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         } else {
             panic!("Not a NodeData::Leaf")  // LCOV_EXCL_LINE
         }
+    }
+
+    /// Check invariants for a single NodeData
+    pub fn check(&self, key: K, height: u8, is_root: bool, min_fanout: usize,
+                 max_fanout: usize) -> bool
+    {
+        let id = NodeId{height, key};
+        let l = self.len();
+        let len_ok = if (!is_root || !self.is_leaf()) && l < min_fanout {
+            eprintln!("Node underflow.  Node {:?} has {} items", id, l);
+            false
+        } else if l > max_fanout {
+            eprintln!("Node overflow.  Node {:?} has {} items", id, l);
+            false
+        } else {
+            true
+        };
+        let key_ok = if !is_root && key > *self.key() {
+            eprintln!("Bad key.  Node {:?} has lowest element {:?} but key {:?}"
+                      , id, self.key(), key);
+            false
+        } else {
+            true
+        };
+        len_ok && key_ok
     }
 
     pub fn into_leaf(self) -> LeafData<K, V> {
