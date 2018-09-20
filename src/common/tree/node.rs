@@ -186,7 +186,6 @@ impl<A: Addr, K: Key, V: Value> PartialEq  for TreePtr<A, K, V> {
 mod node_serializer {
     use super::*;
     use serde::{Deserialize, de::Deserializer, Serializer};
-    use tokio::runtime::current_thread;
 
     pub(super) fn deserialize<'de, A, DE, K, V>(deserializer: DE)
         -> Result<Box<Node<A, K, V>>, DE::Error>
@@ -198,10 +197,9 @@ mod node_serializer {
 
     pub(super) fn serialize<A, S, K, V>(node: &Node<A, K, V>,
                                      serializer: S) -> Result<S::Ok, S::Error>
-        where A: Addr, S: Serializer, K: Key, V: Value {
-
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let guard = rt.block_on(node.0.read()).unwrap();
+        where A: Addr, S: Serializer, K: Key, V: Value
+    {
+        let guard = node.0.try_read().unwrap();
         (*guard).serialize(serializer)
     }
 }
