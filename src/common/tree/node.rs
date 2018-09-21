@@ -11,6 +11,7 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
+    hash::Hash,
     iter::FromIterator,
     mem,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
@@ -49,11 +50,11 @@ impl MinValue for TxgT {
     }
 }
 
-pub trait Addr: Copy + Debug + DeserializeOwned + PartialEq + Send + Serialize +
+pub trait Addr: Copy + Debug + DeserializeOwned + Eq + Hash + PartialEq + Send + Serialize +
     'static {}
 
 impl<T> Addr for T
-where T: Copy + Debug + DeserializeOwned + PartialEq + Send + Serialize +
+where T: Copy + Debug + DeserializeOwned + Eq + Hash + PartialEq + Send + Serialize +
     'static {}
 
 pub trait Key: Copy + Debug + DeserializeOwned + Ord + PartialEq + MinValue +
@@ -115,11 +116,7 @@ pub(super) enum TreePtr<A: Addr, K: Key, V: Value> {
     None,
     /// Dirty btree nodes live only in RAM, not on disk or in cache.  Being
     /// RAM-resident, we don't need to store their checksums or lsizes.
-    // This variant must come last, so other variants' discriminators don't
-    // change depending on #[cfg(test)]
-    #[cfg_attr(not(test), serde(skip_serializing))]
-    #[cfg_attr(not(test), serde(skip_deserializing))]
-    #[cfg_attr(test, serde(with = "node_serializer"))]
+    #[serde(with = "node_serializer")]
     Mem(Box<Node<A, K, V>>),
 }
 
@@ -181,8 +178,6 @@ impl<A: Addr, K: Key, V: Value> PartialEq  for TreePtr<A, K, V> {
     }
 }
 
-// LCOV_EXCL_START
-#[cfg(test)]
 mod node_serializer {
     use super::*;
     use serde::{Deserialize, de::Deserializer, Serializer};
@@ -203,7 +198,6 @@ mod node_serializer {
         (*guard).serialize(serializer)
     }
 }
-// LCOV_EXCL_STOP
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned, V: DeserializeOwned"))]
@@ -324,6 +318,16 @@ impl<K: Key, V: Value> LeafData<K, V> {
 pub(super) enum TreeReadGuard<A: Addr, K: Key, V: Value> {
     Mem(RwLockReadGuard<NodeData<A, K, V>>),
     Addr(RwLockReadGuard<NodeData<A, K, V>>, Box<Arc<Node<A, K, V>>>)
+}
+
+impl<A: Addr, K: Key, V: Value> TreeReadGuard<A, K, V> {
+    pub(super) fn is_mem(&self) -> bool {
+        if let TreeReadGuard::Mem(_) = self {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl<A: Addr, K: Key, V: Value> Deref for TreeReadGuard<A, K, V> {

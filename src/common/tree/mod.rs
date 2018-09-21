@@ -20,18 +20,17 @@ use futures::{
     sync::mpsc
 };
 use futures_locks::*;
-#[cfg(test)]
 use serde::Serializer;
 use serde::de::{Deserializer, DeserializeOwned};
-#[cfg(test)] use serde_yaml;
+use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
 use std::{
     borrow::Borrow,
     cell::RefCell,
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     mem,
-    ops::{Bound, DerefMut, Range, RangeBounds},
+    ops::{Bound, Deref, DerefMut, Range, RangeBounds},
     sync::{
         Arc,
     }
@@ -91,7 +90,6 @@ mod atomic_u64_serializer {
             .map(|u| Atomic::new(u))
     }
 
-    #[cfg(test)]
     pub fn serialize<S>(x: &Atomic<u64>, s: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
@@ -101,7 +99,6 @@ mod atomic_u64_serializer {
 
 mod tree_root_serializer {
     use super::*;
-    #[cfg(test)]
     use serde::{Serialize, ser::Error};
     use serde::Deserialize;
 
@@ -113,7 +110,6 @@ mod tree_root_serializer {
             .map(|int_elem| RwLock::new(int_elem))
     }
 
-    #[cfg(test)]
     pub(super) fn serialize<A, K, S, V>(x: &RwLock<IntElem<A, K, V>>, s: S)
         -> Result<S::Ok, S::Error>
         where A: Addr, K: Key, S: Serializer, V: Value
@@ -342,8 +338,7 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
 }
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(Deserialize, Serialize))]
-#[cfg_attr(not(test), derive(Deserialize))]
+#[derive(Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 struct Inner<A: Addr, K: Key, V: Value> {
     /// Tree height.  1 if the Tree consists of a single Leaf node.
@@ -577,42 +572,79 @@ impl<A, D, K, V> Tree<A, D, K, V>
         )
     }
 
-    /// Dump a basic representation of the Tree's structure (not contents) to
-    /// stdout.
+    /// Dump a YAMLized representation of the Tree to stdout.
+    ///
+    /// To save RAM, the Tree is actually dumped as several independent YAML
+    /// records.  The first one is the Tree itself, and the rest are other
+    /// on-disk Nodes.  All the Nodes can be combined into a single YAML map by
+    /// simply removing the `---` separators.
     pub fn dump(&self) -> impl Future<Item=(), Error=Error> + Send {
+        // Outline:
+        // * Lock the whole tree and proceed bottom-up.
+        // * YAMLize each Node
+        // * If that Node is on-disk, print it and its address in a form that
+        //   can be deserialized into a HashMap<A, NodeData>.  Otherwise, extend
+        //   its parent's representation.
+        // * Last of all, print the root's representation.
         let dml2 = self.dml.clone();
         let dml3 = self.dml.clone();
+        let inner2 = self.i.clone();
         self.read()
             .and_then(move |tree_guard| {
-                let key = tree_guard.key;
                 tree_guard.rlock(dml2)
-                    .and_then(move |guard| {
-                        println!("{0:^1$}{2:?}", "", 0, key);
-                        Tree::dump_r(dml3, 4, guard)
-                    })
+                .and_then(move |guard| {
+                    Tree::dump_r(dml3, guard)
+                }).map(move |guard| {
+                    let mut hmap = HashMap::new();
+                    if !guard.is_mem() {
+                        hmap.insert(*tree_guard.ptr.as_addr(),
+                            serde_yaml::to_value(guard.deref()).unwrap());
+                    }
+                    println!("{}", &serde_yaml::to_string(&*inner2).unwrap());
+                    if ! hmap.is_empty() {
+                        println!("{}", &serde_yaml::to_string(&hmap).unwrap());
+                    }
+                })
             })
     }
 
-    fn dump_r(dml: Arc<D>, indentation: usize, node: TreeReadGuard<A, K, V>)
-        -> Box<Future<Item=(), Error=Error> + Send>
+    fn dump_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>)
+        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + Send>
     {
-        if let NodeData::Int(ref int) = *node {
+        type ChildFut<A, K, V> = Box<Future<Item=Vec<TreeReadGuard<A, K, V>>,
+                                            Error=Error> + Send>;
+        let fut = if let NodeData::Int(ref int) = *node {
             let futs = int.children.iter().map(move |child| {
                 let dml2 = dml.clone();
-                let key = child.key;
                 child.rlock(dml.clone())
-                    .and_then(move |next_node| {
-                        println!("{0:^1$}{2:?}", "", indentation, key);
-                        Tree::dump_r(dml2, indentation + 4, next_node)
+                    .and_then(move |child_node| {
+                        Tree::dump_r(dml2, child_node)
                     })
             }).collect::<Vec<_>>();
-            Box::new(future::join_all(futs).map(|_| ()))
-                as Box<Future<Item=(), Error=Error> + Send>
+            Box::new(future::join_all(futs))
+                as ChildFut<A, K, V>
         } else {
-            println!("{0:^1$}nitems={2:?}", "", indentation, node.len());
-            Box::new(Ok(()).into_future())
-                as Box<Future<Item=(), Error=Error> + Send>
+            Box::new(Ok(Vec::new()).into_future())
+                as ChildFut<A, K, V>
         }
+        .map(move |r| {
+            if !node.is_leaf() {
+                let mut hmap = HashMap::new();
+                let citer = node.as_int().children.iter();
+                for (child, guard) in citer.zip(r.iter()) {
+                    if !guard.is_mem() {
+                        hmap.insert(*child.ptr.as_addr(),
+                                 serde_yaml::to_value(guard.deref()).unwrap());
+                    }
+                }
+                if ! hmap.is_empty() {
+                    println!("{}", &serde_yaml::to_string(&hmap).unwrap());
+                }
+            }
+            node
+        });
+        Box::new(fut) as Box<Future<Item=TreeReadGuard<A, K, V>,
+                                    Error=Error> + Send>
     }
 
     /// Fix an Int node in danger of being underfull, returning the parent guard

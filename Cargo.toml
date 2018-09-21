@@ -39,6 +39,7 @@ num-traits = "^0.1"
 serde = "1.0.60"
 serde_cbor = "0.8"
 serde_derive = "1.0"
+serde_yaml = "0.7"
 time = "0.1"	# needed for FUSE
 tokio = "0.1.8"
 tokio-current-thread = "0.1.1"
@@ -58,7 +59,6 @@ itertools = "0.7.1"
 permutohedron = "0.2"
 pretty_assertions = "0.5"
 rand = "0.3"
-serde_yaml = "0.7"
 simulacrum = { version = "=0.3.0" }
 tempdir = "0.3"
 
