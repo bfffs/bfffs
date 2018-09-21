@@ -838,7 +838,6 @@ fn unlink() {
         .called_once()
         .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
         .returning(move |_| {
-            //Box::new(Ok(None).into_future())
             let now = time::get_time();
             let inode = Inode {
                 size: 4098,
