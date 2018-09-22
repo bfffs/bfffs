@@ -422,8 +422,10 @@ root:
 }
 
 /// Regression test for bug 2d045899e991a7cf977303abb565c09cf8c34b2f
+/// If range_delete removes all keys from a node on the left side of the cut, it
+/// should remove the entire node.
 #[test]
-fn underflow() {
+fn range_delete_left_in_cut_full() {
     fn expect_delete(mock: &mut DMLMock, addr: u32)
     {
         mock.then().expect_delete()
@@ -530,7 +532,7 @@ root:
               Mem:
                 Int:
                   children:
-                    - key: 67
+                    - key: 36
                       txgs:
                         start: 2
                         end: 3
@@ -554,13 +556,54 @@ root:
                         start: 2
                         end: 3
                       ptr:
+                        Addr: 172
+                    - key: 75
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Addr: 175
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    rt.block_on(
+        tree.range_delete(4..32, TxgT::from(42))
+    ).unwrap();
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 2
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 25
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
                         Mem:
                           Leaf:
                             items:
-                              72: 38
-                              73: 39
-                              74: 40
-                    - key: 75
+                              32: 16.0
+                              33: 17.0
+                              34: 18.0
+                              35: 19.0
+                    - key: 36
                       txgs:
                         start: 2
                         end: 3
@@ -568,16 +611,36 @@ root:
                         Mem:
                           Leaf:
                             items:
-                              75: 41
-                              92: 28
-                              95: 15
-"#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    rt.block_on(
-        tree.range_delete(4..32, TxgT::from(42))
-    ).unwrap();
-    let clean_tree = format!("{}", tree);
-    println!("{}", &clean_tree);
-    assert!(!rt.block_on(tree.check()).unwrap());
+                              36: 20.0
+                              37: 21.0
+                              38: 27.0
+                              67: 33.0
+                              68: 34.0
+          - key: 69
+            txgs:
+              start: 1
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 69
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 84
+                    - key: 72
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Addr: 172
+                    - key: 75
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Addr: 175"#);
 }
 // LCOV_EXCL_STOP

@@ -1297,8 +1297,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     Tree::range_delete_pass1(min_fanout, dml2, height - 1,
                                              child_guard, range, new_ubound,
                                              txg)
-                    .map(move |(m, danger, _child_len)|
-                         (elem, m, Some(danger), None)
+                    .map(move |(m, danger, child_len)|
+                         (elem, m, Some(danger), Some(child_len))
                     )
                 })
             ) as CutFut<A, K, V>
@@ -1330,15 +1330,23 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                                   guard, txg);
         Box::new(
             left_fut.join3(middle_fut, right_fut)
-            .map(move |((lelem, mut lmap, ldanger, _),
+            .map(move |((lelem, mut lmap, ldanger, llen),
                         mut guard,
                         (relem, rmap, rdanger, rlen))|
             {
+                let mut deleted_on_left = 0;
                 lmap.extend(rmap.into_iter());
                 if let Some(elem) = lelem {
                     guard.as_int_mut().children[left_in_cut.unwrap()] = elem;
                 }
-                if let Some(danger) = ldanger {
+                if llen == Some(0) {
+                    // Sometimes we delete every key in the node on the left
+                    // side of the cut, but we don't know we'll do that until
+                    // we've tried.  This is because parents may store a key
+                    // less than any key actually contained in the child.
+                    guard.as_int_mut().children.remove(left_in_cut.unwrap());
+                    deleted_on_left += 1;
+                } else if let Some(danger) = ldanger {
                     let elem = &guard.as_int().children[left_in_cut.unwrap()];
                     // elem.ptr is guaranteed to be a TreePtr::Mem because we
                     // got it from xlock_nc() above.
@@ -1349,11 +1357,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 }
                 let deleted = wholly_deleted2.end - wholly_deleted2.start;
                 if let Some(elem) = relem {
-                    let j = right_in_cut.unwrap() - deleted;
+                    let j = right_in_cut.unwrap() - deleted - deleted_on_left;
                     guard.as_int_mut().children[j] = elem;
                 }
                 if let Some(danger) = rdanger {
-                    let j = right_in_cut.unwrap() - deleted;
+                    let j = right_in_cut.unwrap() - deleted - deleted_on_left;
                     if rlen == Some(0) {
                         // Sometimes we delete every key in the node on the
                         // right side of the cut, but we don't know we'll do
