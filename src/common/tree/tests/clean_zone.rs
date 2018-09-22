@@ -3,6 +3,7 @@
 
 use atomic::{Atomic, Ordering};
 use common::tree::*;
+use common::dml_mock::*;
 use common::ddml_mock::*;
 use common::ddml::DRP;
 use futures::future;
@@ -418,5 +419,165 @@ root:
     let end = PBA::new(0, 200);
     let txgs = TxgT::from(1000)..TxgT::from(1001);  // XXX placeholder
     rt.block_on(tree.clean_zone(start..end, txgs, TxgT::from(42))).unwrap();
+}
+
+/// Regression test for bug 2d045899e991a7cf977303abb565c09cf8c34b2f
+#[test]
+fn underflow() {
+    fn expect_delete(mock: &mut DMLMock, addr: u32)
+    {
+        mock.then().expect_delete()
+            .called_once()
+            .with(passes(move |(arg, _): &(*const u32, TxgT)| {
+                unsafe {**arg == addr}
+            })).returning(move |_| {
+                Box::new(future::ok::<(), Error>(()))
+            });
+    }
+
+    fn expect_pop(mock: &mut DMLMock, addr: u32,
+                  mut node: Option<Arc<Node<u32, u32, f32>>>)
+    {
+        mock.then().expect_pop::<Arc<Node<u32, u32, f32>>,
+                                 Arc<Node<u32, u32, f32>>>()
+            .called_once()
+            .with(passes(move |(arg, _): &(*const u32, TxgT)| {
+                unsafe {**arg == addr}
+            })).returning(move |_| {
+                let res = Box::new(node.take().unwrap());
+                Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
+            });
+    }
+
+    let mut mock = DMLMock::new();
+
+    let addrl0 = 81;
+    let mut ld0 = LeafData::new();
+    ld0.insert(19, 15.0);
+    ld0.insert(20, 16.0);
+    ld0.insert(21, 17.0);
+    let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
+    let opt_leafnode0 = Some(leafnode0);
+
+    let addrl1 = 94;
+
+    expect_pop(&mut mock, addrl0, opt_leafnode0);
+    expect_delete(&mut mock, addrl1);
+
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 3
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 81
+                    - key: 22
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Addr: 94
+                    - key: 25
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              25: 21
+                              31: 27
+                              32: 16
+                    - key: 33
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              33: 17
+                              34: 18
+                              35: 19
+          - key: 36
+            txgs:
+              start: 1
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 67
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              36: 20
+                              37: 21
+                              38: 27
+                              67: 33
+                              68: 34
+                    - key: 69
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 84
+                    - key: 72
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              72: 38
+                              73: 39
+                              74: 40
+                    - key: 75
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              75: 41
+                              92: 28
+                              95: 15
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    rt.block_on(
+        tree.range_delete(4..32, TxgT::from(42))
+    ).unwrap();
+    let clean_tree = format!("{}", tree);
+    println!("{}", &clean_tree);
+    assert!(!rt.block_on(tree.check()).unwrap());
 }
 // LCOV_EXCL_STOP
