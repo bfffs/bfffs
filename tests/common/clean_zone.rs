@@ -51,7 +51,7 @@ test_suite! {
                     .map(|pool| {
                         let cache = Arc::new(
                             Mutex::new(
-                                Cache::with_capacity(1_000_000)
+                                Cache::with_capacity(32_000_000)
                             )
                         );
                         let ddml = Arc::new(DDML::new(pool, cache.clone()));
@@ -118,11 +118,12 @@ test_suite! {
         let mut statvfs = fs.statvfs();
         println!("Before cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
+        assert!(rt.block_on(db.check()).unwrap());
         db.clean().wait().unwrap();
         statvfs = fs.statvfs();
         println!("After cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
-        rt.block_on(db.check()).unwrap();
+        assert!(rt.block_on(db.check()).unwrap());
     }
 
     /// A regression test for bug d5b4dab35d9be12ff1505e886ed5ca8ad4b6a526
