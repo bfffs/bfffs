@@ -2,17 +2,16 @@
 // LCOV_EXCL_START
 
 use common::tree::*;
-use common::ddml_mock::*;
-#[cfg(test)] use common::ddml::DRP;
+use common::dml_mock::*;
 use futures::future;
 use simulacrum::*;
 use tokio::runtime::current_thread;
 
 #[test]
 fn check_bad_root_txgs() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -55,9 +54,9 @@ root:
 
 #[test]
 fn check_bad_int_txgs() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -136,9 +135,9 @@ root:
 
 #[test]
 fn check_bad_key() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -181,9 +180,9 @@ root:
 
 #[test]
 fn check_ok() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -265,9 +264,9 @@ root:
 
 #[test]
 fn check_empty() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree = Tree::<DRP, DDMLMock, u32, f32>::create(ddml);
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree = Tree::<u32, DMLMock, u32, f32>::create(dml);
 
     let mut rt = current_thread::Runtime::new().unwrap();
     assert!(rt.block_on(tree.check()).unwrap());
@@ -275,9 +274,9 @@ fn check_empty() {
 
 #[test]
 fn check_leaf_underflow() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -319,9 +318,9 @@ root:
 
 #[test]
 fn check_root_int_underflow() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -355,9 +354,9 @@ root:
 // The root node is allowed to underflow if it's a leaf
 #[test]
 fn check_root_leaf_ok() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -381,9 +380,9 @@ root:
 
 #[test]
 fn check_root_leaf_overflow() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -413,18 +412,18 @@ root:
 /// Recompute start TXGs on Tree flush
 #[test]
 fn flush() {
-    let mut mock = DDMLMock::new();
-    let drp = DRP::random(Compression::None, 1000);
-    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
+    let mut mock = DMLMock::new();
+    let addr = 9999;
+    mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .called_once()
-        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, TxgT)|{
+        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, TxgT)|{
             let node_data = (args.0).0.try_read().unwrap();
             node_data.is_leaf() || args.2 == TxgT::from(42)
         }))
-        .returning(move |_| Box::new(Ok(drp).into_future()));
-    mock.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
+        .returning(move |_| Box::new(Ok(addr).into_future()));
+    mock.then().expect_put::<Arc<Node<u32, u32, u32>>>()
         .called_once()
-        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, TxgT)|{
+        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, TxgT)|{
             let node_data = (args.0).0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
@@ -433,9 +432,9 @@ fn flush() {
             int_data.children[1].txgs == (TxgT::from(41)..TxgT::from(42)) &&
             args.2 == TxgT::from(42)
         }))
-        .returning(move |_| Box::new(Ok(drp).into_future()));
-    let ddml = Arc::new(mock);
-    let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+        .returning(move |_| Box::new(Ok(addr).into_future()));
+    let dml = Arc::new(mock);
+    let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -465,14 +464,7 @@ root:
               start: 41
               end: 42
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 256
-                compression: ZstdL9NoShuffle
-                lsize: 16000
-                csize: 8000
-                checksum: 0x1a7ebabe
+              Addr: 256
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -486,28 +478,27 @@ root:
 /// Remove a key that merges two int nodes
 #[test]
 fn merge() {
-    let mut mock = DDMLMock::new();
+    let mut mock = DMLMock::new();
     let mut ld1 = LeafData::new();
     ld1.insert(2, 2.0);
     ld1.insert(3, 3.0);
     ld1.insert(4, 4.0);
-    let drpl1 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None,
-                         16000, 8000, 1);
+    let addrl1 = 2;
     let ln1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
     let holder1 = RefCell::new(Some(ln1));
-    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
+    mock.expect_pop::<Arc<Node<u32, u32, f32>>, Arc<Node<u32, u32, f32>>>()
         .called_once()
-        .with(passes(move |args: &(*const DRP, TxgT)|
-                     unsafe {*args.0 == drpl1} && args.1 == TxgT::from(42))
+        .with(passes(move |args: &(*const u32, TxgT)|
+                     unsafe {*args.0 == addrl1} && args.1 == TxgT::from(42))
         ).returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must hack it with RefCell<Option<T>>
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(holder1.borrow_mut().take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
         });
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -535,27 +526,13 @@ root:
                         start: 30
                         end: 31
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 1
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 1
                     - key: 2
                       txgs:
                         start: 31
                         end: 32
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 2
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 2
           - key: 9
             txgs:
               start: 20
@@ -569,53 +546,25 @@ root:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 3
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 3
                     - key: 12
                       txgs:
                         start: 20
                         end: 21
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 4
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 4
                     - key: 15
                       txgs:
                         start: 24
                         end: 25
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 5
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 5
           - key: 18
             txgs:
               start: 15
               end: 16
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 6
-                compression: None
-                lsize: 16000
-                csize: 8000
-                checksum: 1"#);
+              Addr: 6"#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r2 = rt.block_on(tree.remove(4, TxgT::from(42)));
     assert!(r2.is_ok());
@@ -647,14 +596,7 @@ root:
                         start: 30
                         end: 31
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 1
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 1
                     - key: 2
                       txgs:
                         start: 42
@@ -670,80 +612,51 @@ root:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 3
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 3
                     - key: 12
                       txgs:
                         start: 20
                         end: 21
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 4
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 4
                     - key: 15
                       txgs:
                         start: 24
                         end: 25
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 5
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 5
           - key: 18
             txgs:
               start: 15
               end: 16
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 6
-                compression: None
-                lsize: 16000
-                csize: 8000
-                checksum: 1"#);
+              Addr: 6"#);
 }
 
 /// Insert a key that splits the root IntNode
 #[test]
 fn split() {
-    let mut mock = DDMLMock::new();
+    let mut mock = DMLMock::new();
     let mut ld = LeafData::new();
     ld.insert(12, 12.0);
     ld.insert(13, 13.0);
     ld.insert(14, 14.0);
-    let drpl = DRP::new(PBA{cluster: 0, lba: 1280}, Compression::None,
-                        16000, 8000, 5);
+    let addrl = 1280;
     let node = Arc::new(Node::new(NodeData::Leaf(ld)));
     let node_holder = RefCell::new(Some(node));
-    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
+    mock.expect_pop::<Arc<Node<u32, u32, f32>>, Arc<Node<u32, u32, f32>>>()
         .called_once()
-        .with(passes(move |args: &(*const DRP, TxgT)|
-                     unsafe {*args.0 == drpl} && args.1 == TxgT::from(42))
+        .with(passes(move |args: &(*const u32, TxgT)|
+                     unsafe {*args.0 == addrl} && args.1 == TxgT::from(42))
         ).returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must hack it with RefCell<Option<T>>
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
         });
-    let ddml = Arc::new(mock);
-    let tree = Tree::<DRP, DDMLMock, u32, f32>::from_str(ddml, r#"
+    let dml = Arc::new(mock);
+    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -763,66 +676,31 @@ root:
               start: 4
               end: 10
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 256
-                compression: None
-                lsize: 16000
-                csize: 8000
-                checksum: 1
+              Addr: 256
           - key: 3
             txgs:
               start: 5
               end: 11
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 512
-                compression: None
-                lsize: 16000
-                csize: 8000
-                checksum: 2
+              Addr: 512
           - key: 6
             txgs:
               start: 3
               end: 12
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 768
-                compression: None
-                lsize: 16000
-                csize: 8000
-                checksum: 3
+              Addr: 768
           - key: 9
             txgs:
               start: 6
               end: 22
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 1024
-                compression: None
-                lsize: 16000
-                csize: 8000
-                checksum: 4
+              Addr: 1024
           - key: 12
             txgs:
               start: 7
               end: 34
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 1280
-                compression: None
-                lsize: 16000
-                csize: 8000
-                checksum: 5
+              Addr: 1280
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r2 = rt.block_on(tree.insert(15, 15.0, TxgT::from(42)));
@@ -855,40 +733,19 @@ root:
                         start: 4
                         end: 10
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 256
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 1
+                        Addr: 256
                     - key: 3
                       txgs:
                         start: 5
                         end: 11
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 512
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 2
+                        Addr: 512
                     - key: 6
                       txgs:
                         start: 3
                         end: 12
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 768
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 3
+                        Addr: 768
           - key: 9
             txgs:
               start: 6
@@ -902,14 +759,7 @@ root:
                         start: 6
                         end: 22
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 1024
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 1024
                     - key: 12
                       txgs:
                         start: 42
@@ -927,9 +777,9 @@ root:
 /// Recompute TXG ranges after stealing keys
 #[test]
 fn steal() {
-    let mock = DDMLMock::new();
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -949,14 +799,7 @@ root:
               start: 10
               end: 11
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 0
-                compression: None
-                lsize: 16000
-                csize: 8000
-                checksum: 4
+              Addr: 0
           - key: 9
             txgs:
               start: 21
@@ -970,66 +813,31 @@ root:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 9
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 9
                     - key: 12
                       txgs:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 12
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 12
                     - key: 15
                       txgs:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 15
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 15
                     - key: 17
                       txgs:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 17
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 17
                     - key: 19
                       txgs:
                         start: 21
                         end: 22
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 19
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 19
           - key: 21
             txgs:
               start: 39
@@ -1043,14 +851,7 @@ root:
                         start: 39
                         end: 40
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 21
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 21
                     - key: 24
                       txgs:
                         start: 41
@@ -1085,14 +886,7 @@ root:
               start: 10
               end: 11
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 0
-                compression: None
-                lsize: 16000
-                csize: 8000
-                checksum: 4
+              Addr: 0
           - key: 9
             txgs:
               start: 41
@@ -1106,53 +900,25 @@ root:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 9
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 9
                     - key: 12
                       txgs:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 12
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 12
                     - key: 15
                       txgs:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 15
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 15
                     - key: 17
                       txgs:
                         start: 41
                         end: 42
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 17
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 17
           - key: 19
             txgs:
               start: 21
@@ -1166,27 +932,13 @@ root:
                         start: 21
                         end: 22
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 19
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 19
                     - key: 21
                       txgs:
                         start: 39
                         end: 40
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 21
-                          compression: None
-                          lsize: 16000
-                          csize: 8000
-                          checksum: 4
+                        Addr: 21
                     - key: 24
                       txgs:
                         start: 41
