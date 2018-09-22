@@ -180,8 +180,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 99 filtered out
 error: test failed, to rerun pass '--test mod'
 
 [reproduce]
-env RUST_BACKTRACE=1 cargo +nightly-2018-09-06-x86_64-unknown-freebsd test
---all-features -- --ignored common::clean_zone::t::clean_zone_leak
+cargo +nightly test --all-features common::tree::tests::clean_zone::underflow
 
 [comments]
 # Comments and updates - leave your name

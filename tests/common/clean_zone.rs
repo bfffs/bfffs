@@ -103,14 +103,14 @@ test_suite! {
     }
 
     #[ignore = "Test is slow" ]
-    test clean_zone_leak(mocks(1 << 30, 512)) {
+    test clean_zone_leak(mocks(1 << 26, 32)) {
         let (db, fs, mut rt) = mocks.val;
-        for i in 0..16384 {
+        for i in 0..16 {
             let fname = format!("f.{}", i);
             fs.mkdir(1, &OsString::from(fname), 0o755).unwrap();
         }
         fs.sync();
-        for i in 0..8000 {
+        for i in 0..8 {
             let fname = format!("f.{}", i);
             fs.rmdir(1, &OsString::from(fname)).unwrap();
         }
@@ -119,6 +119,8 @@ test_suite! {
         println!("Before cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
         assert!(rt.block_on(db.check()).unwrap());
+        let mut f = fs::File::create("/tmp/dumpfile").unwrap();
+        db.dump(&mut f).unwrap();
         db.clean().wait().unwrap();
         statvfs = fs.statvfs();
         println!("After cleaning: {:?} free out of {:?}",
