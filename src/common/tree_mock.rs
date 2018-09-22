@@ -5,10 +5,11 @@ use common::*;
 use common::{Error, TxgT};
 use common::dml::*;
 use common::tree::*;
-use futures::{Async, Future, IntoFuture, Poll, Stream};
+use futures::{Async, Future, Poll, Stream};
 use simulacrum::*;
 use std::{
     borrow::Borrow,
+    io,
     marker::PhantomData,
     ops::{Range, RangeBounds},
     sync::Arc
@@ -94,8 +95,8 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     }
 
     // No need to allow this method to be mocked; it's just for debugging
-    pub fn dump(&self) -> impl Future<Item=(), Error=Error> + Send {
-        Ok(()).into_future()
+    pub fn dump(&self, _f: &mut io::Write) -> Result<(), Error> {
+        Ok(())
     }
 
     pub fn flush(&self, txg: TxgT)

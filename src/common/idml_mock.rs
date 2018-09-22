@@ -6,6 +6,7 @@ use common::idml::*;
 use common::label::*;
 use futures::{Future, IntoFuture, Stream};
 use simulacrum::*;
+use std::io;
 
 pub struct IDMLMock {
     e: Expectations
@@ -77,8 +78,9 @@ impl IDMLMock {
     }
 
     // No need to allow this method to be mocked; it's just for debugging
-    pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> {
-        Ok(()).into_future()
+    pub fn dump_trees(&self, _f: &mut io::Write) -> Result<(), Error>
+    {
+        Ok(())
     }
 
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const RID,
