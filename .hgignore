@@ -7,3 +7,4 @@ syntax: glob
 .nfs.*
 Cargo.lock
 target
+target_cov
