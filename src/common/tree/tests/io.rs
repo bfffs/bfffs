@@ -133,23 +133,23 @@ root:
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_below_root() {
-    let mut mock = DDMLMock::new();
+    let mut mock = DMLMock::new();
     let node = Arc::new(Node::new(NodeData::Leaf(LeafData::new())));
     let node_holder = RefCell::new(Some(node));
-    let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
+    let addrl = 0;
+    mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
         .called_once()
-        .with(passes(move |args: &(*const DRP, TxgT)|
-                     unsafe {*args.0 == drpl} && args.1 == TxgT::from(42))
+        .with(passes(move |args: &(*const u32, TxgT)|
+                     unsafe {*args.0 == addrl} && args.1 == TxgT::from(42))
         ).returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must hack it with RefCell<Option<T>>
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
         });
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -169,27 +169,13 @@ root:
               start: 41
               end: 42
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 0
-                compression: None
-                lsize: 36
-                csize: 36
-                checksum: 0
+              Addr: 0
           - key: 256
             txgs:
               start: 41
               end: 42
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 256
-                compression: ZstdL9NoShuffle
-                lsize: 16000
-                csize: 8000
-                checksum: 1234567
+              Addr: 256
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -224,36 +210,29 @@ root:
               start: 41
               end: 42
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 256
-                compression: ZstdL9NoShuffle
-                lsize: 16000
-                csize: 8000
-                checksum: 1234567"#);
+              Addr: 256"#);
 }
 
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_root() {
-    let mut mock = DDMLMock::new();
+    let mut mock = DMLMock::new();
     let node = Arc::new(Node::new(NodeData::Leaf(LeafData::new())));
     let node_holder = RefCell::new(Some(node));
-    let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    mock.expect_pop::<Arc<Node<DRP, u32, u32>>, Arc<Node<DRP, u32, u32>>>()
+    let addrl = 0;
+    mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
         .called_once()
-        .with(passes(move |args: &(*const DRP, TxgT)|
-                     unsafe {*args.0 == drpl} && args.1 == TxgT::from(42))
+        .with(passes(move |args: &(*const u32, TxgT)|
+                     unsafe {*args.0 == addrl} && args.1 == TxgT::from(42))
         ).returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must hack it with RefCell<Option<T>>
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node_holder.borrow_mut().take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
         });
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -265,14 +244,7 @@ root:
     start: 41
     end: 42
   ptr:
-    Addr:
-      pba:
-        cluster: 0
-        lba: 0
-      compression: None
-      lsize: 36
-      csize: 36
-      checksum: 0
+    Addr: 0
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -339,45 +311,45 @@ fn open() {
 // delete the middle IntNode and partially delete the other two.
 #[test]
 fn range_delete() {
-    let drpl0 = DRP::new(PBA{cluster: 0, lba: 10}, Compression::None, 36, 36, 0);
-    let drpl1 = DRP::new(PBA{cluster: 0, lba: 11}, Compression::None, 36, 36, 0);
-    let drpl2 = DRP::new(PBA{cluster: 0, lba: 12}, Compression::None, 36, 36, 0);
-    let drpl3 = DRP::new(PBA{cluster: 0, lba: 13}, Compression::None, 36, 36, 0);
+    let addrl0 = 10;
+    let addrl1 = 11;
+    let addrl2 = 12;
+    let addrl3 = 13;
     let children0 = vec![
-        IntElem::new(0u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl0)),
-        IntElem::new(1u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl1)),
-        IntElem::new(3u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl2)),
-        IntElem::new(6u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl3)),
+        IntElem::new(0u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl0)),
+        IntElem::new(1u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl1)),
+        IntElem::new(3u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl2)),
+        IntElem::new(6u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl3)),
     ];
     let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
     let opt_intnode0 = Some(intnode0);
-    let drpi0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
+    let addri0 = 0;
 
-    let drpl4 = DRP::new(PBA{cluster: 0, lba: 20}, Compression::None, 36, 36, 0);
-    let drpl5 = DRP::new(PBA{cluster: 0, lba: 21}, Compression::None, 36, 36, 0);
-    let drpl6 = DRP::new(PBA{cluster: 0, lba: 22}, Compression::None, 36, 36, 0);
+    let addrl4 = 20;
+    let addrl5 = 21;
+    let addrl6 = 22;
     let children1 = vec![
-        IntElem::new(10u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl4)),
-        IntElem::new(13u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl5)),
-        IntElem::new(16u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl6)),
+        IntElem::new(10u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl4)),
+        IntElem::new(13u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl5)),
+        IntElem::new(16u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl6)),
     ];
     let intnode1 = Arc::new(Node::new(NodeData::Int(IntData::new(children1))));
     let opt_intnode1 = Some(intnode1);
-    let drpi1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 36, 36, 0);
+    let addri1 = 1;
 
-    let drpl7 = DRP::new(PBA{cluster: 0, lba: 30}, Compression::None, 36, 36, 0);
-    let drpl8 = DRP::new(PBA{cluster: 0, lba: 31}, Compression::None, 36, 36, 0);
-    let drpl9 = DRP::new(PBA{cluster: 0, lba: 32}, Compression::None, 36, 36, 0);
-    let drpl10 = DRP::new(PBA{cluster: 0, lba: 33}, Compression::None, 36, 36, 0);
+    let addrl7 = 30;
+    let addrl8 = 31;
+    let addrl9 = 32;
+    let addrl10 = 33;
     let children2 = vec![
-        IntElem::new(20u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl7)),
-        IntElem::new(26u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl8)),
-        IntElem::new(29u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl9)),
-        IntElem::new(30u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(drpl10)),
+        IntElem::new(20u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl7)),
+        IntElem::new(26u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl8)),
+        IntElem::new(29u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl9)),
+        IntElem::new(30u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl10)),
     ];
     let intnode2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
     let opt_intnode2 = Some(intnode2);
-    let drpi2 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 36, 36, 0);
+    let addri2 = 2;
 
     let mut ld2 = LeafData::new();
     ld2.insert(3, 3.0);
@@ -400,49 +372,49 @@ fn range_delete() {
     let leafnode8 = Arc::new(Node::new(NodeData::Leaf(ld8)));
     let opt_leafnode8 = Some(leafnode8);
 
-    let mut mock = DDMLMock::new();
+    let mut mock = DMLMock::new();
 
-    fn expect_delete(mock: &mut DDMLMock, drp: DRP) {
+    fn expect_delete(mock: &mut DMLMock, addr: u32) {
         mock.then().expect_delete()
             .called_once()
-            .with(passes(move |(arg, _): &(*const DRP, TxgT)| {
-                unsafe {**arg == drp}
+            .with(passes(move |(arg, _): &(*const u32, TxgT)| {
+                unsafe {**arg == addr}
             })).returning(move |_| {
                 Box::new(future::ok::<(), Error>(()))
             });
     }
 
-    fn expect_pop(mock: &mut DDMLMock, drp: DRP,
-                  mut node: Option<Arc<Node<DRP, u32, f32>>>)
+    fn expect_pop(mock: &mut DMLMock, addr: u32,
+                  mut node: Option<Arc<Node<u32, u32, f32>>>)
     {
-        mock.then().expect_pop::<Arc<Node<DRP, u32, f32>>,
-                                 Arc<Node<DRP, u32, f32>>>()
+        mock.then().expect_pop::<Arc<Node<u32, u32, f32>>,
+                                 Arc<Node<u32, u32, f32>>>()
             .called_once()
-            .with(passes(move |(arg, _): &(*const DRP, TxgT)| {
-                unsafe {**arg == drp}
+            .with(passes(move |(arg, _): &(*const u32, TxgT)| {
+                unsafe {**arg == addr}
             })).returning(move |_| {
                 let res = Box::new(node.take().unwrap());
-                Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+                Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
             });
     }
 
     // Simulacrum requires us to define the expectations in their exact call
     // order, even though we don't really care about it.
     // These nodes are popped or deleted in pass1
-    expect_pop(&mut mock, drpi0.clone(), opt_intnode0);
-    expect_pop(&mut mock, drpi2.clone(), opt_intnode2);
-    expect_pop(&mut mock, drpi1.clone(), opt_intnode1);
-    expect_pop(&mut mock, drpl2.clone(), opt_leafnode2);
-    expect_delete(&mut mock, drpl3.clone());
-    expect_delete(&mut mock, drpl4.clone());
-    expect_delete(&mut mock, drpl5.clone());
-    expect_delete(&mut mock, drpl6.clone());
-    expect_pop(&mut mock, drpl7.clone(), opt_leafnode7);
+    expect_pop(&mut mock, addri0.clone(), opt_intnode0);
+    expect_pop(&mut mock, addri2.clone(), opt_intnode2);
+    expect_pop(&mut mock, addri1.clone(), opt_intnode1);
+    expect_pop(&mut mock, addrl2.clone(), opt_leafnode2);
+    expect_delete(&mut mock, addrl3.clone());
+    expect_delete(&mut mock, addrl4.clone());
+    expect_delete(&mut mock, addrl5.clone());
+    expect_delete(&mut mock, addrl6.clone());
+    expect_pop(&mut mock, addrl7.clone(), opt_leafnode7);
     // leafnode8 is popped as part of the fixup in pass 2
-    expect_pop(&mut mock, drpl8.clone(), opt_leafnode8);
+    expect_pop(&mut mock, addrl8.clone(), opt_leafnode8);
 
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -462,40 +434,19 @@ root:
               start: 8
               end: 9
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 0
-                compression: None
-                lsize: 36
-                csize: 36
-                checksum: 0
+              Addr: 0
           - key: 10
             txgs:
               start: 20
               end: 32
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 1
-                compression: None
-                lsize: 36
-                csize: 36
-                checksum: 0
+              Addr: 1
           - key: 20
             txgs:
               start: 8
               end: 24
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 2
-                compression: None
-                lsize: 36
-                csize: 36
-                checksum: 0
+              Addr: 2
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     rt.block_on(
@@ -529,27 +480,13 @@ root:
                         start: 0
                         end: 1
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 10
-                          compression: None
-                          lsize: 36
-                          csize: 36
-                          checksum: 0
+                        Addr: 10
                     - key: 1
                       txgs:
                         start: 0
                         end: 1
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 11
-                          compression: None
-                          lsize: 36
-                          csize: 36
-                          checksum: 0
+                        Addr: 11
                     - key: 3
                       txgs:
                         start: 42
@@ -584,27 +521,13 @@ root:
                         start: 0
                         end: 1
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 32
-                          compression: None
-                          lsize: 36
-                          csize: 36
-                          checksum: 0
+                        Addr: 32
                     - key: 30
                       txgs:
                         start: 0
                         end: 1
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 33
-                          compression: None
-                          lsize: 36
-                          csize: 36
-                          checksum: 0"#);
+                        Addr: 33"#);
 }
 
 #[test]
@@ -620,9 +543,9 @@ fn range_leaf() {
         }
 
         pub fn expect_poll(&mut self)
-            -> Method<(), Poll<Box<Arc<Node<DRP, u32, f32>>>, Error>>
+            -> Method<(), Poll<Box<Arc<Node<u32, u32, f32>>>, Error>>
         {
-            self.e.expect::<(), Poll<Box<Arc<Node<DRP, u32, f32>>>, Error>>("poll")
+            self.e.expect::<(), Poll<Box<Arc<Node<u32, u32, f32>>>, Error>>("poll")
         }
 
         pub fn then(&mut self) -> &mut Self {
@@ -632,12 +555,12 @@ fn range_leaf() {
     }
 
     impl Future for FutureMock {
-        type Item = Box<Arc<Node<DRP, u32, f32>>>;
+        type Item = Box<Arc<Node<u32, u32, f32>>>;
         type Error = Error;
 
         fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
             self.e.was_called_returning::<(),
-                Poll<Box<Arc<Node<DRP, u32, f32>>>, Error>>("poll", ())
+                Poll<Box<Arc<Node<u32, u32, f32>>>, Error>>("poll", ())
         }
     }
 
@@ -646,7 +569,7 @@ fn range_leaf() {
     // single-threaded unit tests.
     unsafe impl Send for FutureMock {}
 
-    let mut mock = DDMLMock::new();
+    let mut mock = DMLMock::new();
     let mut ld1 = LeafData::new();
     ld1.insert(0, 0.0);
     ld1.insert(1, 1.0);
@@ -654,7 +577,7 @@ fn range_leaf() {
     ld1.insert(3, 3.0);
     ld1.insert(4, 4.0);
     let node1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
-    mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
+    mock.expect_get::<Arc<Node<u32, u32, f32>>>()
         .called_once()
         .returning(move |_| {
             let mut fut = FutureMock::new();
@@ -676,8 +599,8 @@ fn range_leaf() {
                 });
             Box::new(fut)
         });
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -689,14 +612,7 @@ root:
     start: 0
     end: 42
   ptr:
-    Addr:
-      pba:
-        cluster: 0
-        lba: 0
-      compression: None
-      lsize: 36
-      csize: 36
-      checksum: 0
+    Addr: 0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
@@ -710,27 +626,27 @@ root:
 /// without also reading its children, so we'll test this through the private
 /// IntElem::rlock API.
 fn read_int() {
-    let drp0 = DRP::random(Compression::None, 40000);
-    let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 16000);
+    let addr0 = 8888;
+    let addr1 = 9999;
     let children = vec![
-        IntElem::new(0u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(drp0)),
-        IntElem::new(256u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(drp1)),
+        IntElem::new(0u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(addr0)),
+        IntElem::new(256u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(addr1)),
     ];
     let node = Arc::new(Node::new(NodeData::Int(IntData::new(children))));
-    let drpl = DRP::new(PBA{cluster: 1, lba: 2}, Compression::None, 36, 36, 0);
-    let mut mock = DDMLMock::new();
-    mock.expect_get::<Arc<Node<DRP, u32, u32>>>()
+    let addrl = 102;
+    let mut mock = DMLMock::new();
+    mock.expect_get::<Arc<Node<u32, u32, u32>>>()
         .called_once()
-        .with(passes(move |arg: & *const DRP| unsafe {**arg == drpl} ))
+        .with(passes(move |arg: & *const u32| unsafe {**arg == addrl} ))
         .returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must clone db here.
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node.clone());
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
         });
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml.clone(), r#"
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml.clone(), r#"
 ---
 height: 2
 min_fanout: 2
@@ -742,23 +658,16 @@ root:
     start: 0
     end: 42
   ptr:
-    Addr:
-      pba:
-        cluster: 1
-        lba: 2
-      compression: None
-      lsize: 36
-      csize: 36
-      checksum: 0
+    Addr: 102
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(future::lazy(|| {
         let root_guard = tree.i.root.try_read().unwrap();
-        root_guard.rlock(ddml).map(|node| {
+        root_guard.rlock(dml).map(|node| {
             let int_data = (*node).as_int();
             assert_eq!(int_data.nchildren(), 2);
-            // Validate DRPs as well as possible using their public API
+            // Validate IntElems as well as possible using their public API
             assert_eq!(int_data.children[0].key, 0);
             assert!(!int_data.children[0].ptr.is_mem());
             assert_eq!(int_data.children[1].key, 256);
@@ -770,23 +679,23 @@ root:
 
 #[test]
 fn read_leaf() {
-    let mut mock = DDMLMock::new();
+    let mut mock = DMLMock::new();
     let mut ld = LeafData::new();
     ld.insert(0, 100);
     ld.insert(1, 200);
     ld.insert(99, 50_000);
     let node = Arc::new(Node::new(NodeData::Leaf(ld)));
-    mock.expect_get::<Arc<Node<DRP, u32, u32>>>()
+    mock.expect_get::<Arc<Node<u32, u32, u32>>>()
         .called_once()
         .returning(move |_| {
             // XXX simulacrum can't return a uniquely owned object in an
             // expectation, so we must clone db here.
             // https://github.com/pcsm/simulacrum/issues/52
             let res = Box::new(node.clone());
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, u32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
         });
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -798,14 +707,7 @@ root:
     start: 0
     end: 42
   ptr:
-    Addr:
-      pba:
-        cluster: 0
-        lba: 0
-      compression: None
-      lsize: 36
-      csize: 36
-      checksum: 0
+    Addr: 0
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -815,7 +717,7 @@ root:
 
 #[test]
 fn remove_and_merge_down() {
-    let mut mock = DDMLMock::new();
+    let mut mock = DMLMock::new();
 
     let mut ld = LeafData::new();
     ld.insert(3, 3.0);
@@ -823,17 +725,17 @@ fn remove_and_merge_down() {
     ld.insert(5, 5.0);
     let leafnode = Arc::new(Node::new(NodeData::Leaf(ld)));
     let mut opt_leafnode = Some(leafnode);
-    let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
+    let addrl = 0;
+    mock.expect_pop::<Arc<Node<u32, u32, f32>>, Arc<Node<u32, u32, f32>>>()
         .called_once()
-        .with(passes(move |args: &(*const DRP, TxgT)| unsafe {*args.0 == drpl}))
+        .with(passes(move |args: &(*const u32, TxgT)| unsafe {*args.0 == addrl}))
         .returning(move |_| {
             let res = Box::new(opt_leafnode.take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
+            Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
         });
 
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -853,14 +755,7 @@ root:
               start: 41
               end: 42
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 0
-                compression: None
-                lsize: 36
-                csize: 36
-                checksum: 0
+              Addr: 0
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r2 = rt.block_on(tree.remove(1, TxgT::from(42)));
@@ -936,8 +831,8 @@ root:
 // If the tree isn't dirty, then there's nothing to do
 #[test]
 fn write_clean() {
-    let ddml = Arc::new(DDMLMock::new());
-    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+    let dml = Arc::new(DMLMock::new());
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -949,14 +844,7 @@ root:
     start: 0
     end: 42
   ptr:
-    Addr:
-      pba:
-        cluster: 0
-        lba: 0
-      compression: None
-      lsize: 36
-      csize: 36
-      checksum: 0
+    Addr: 0
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
@@ -967,21 +855,21 @@ root:
 /// Sync a Tree with both dirty Int nodes and dirty Leaf nodes
 #[test]
 fn write_deep() {
-    let mut mock = DDMLMock::new();
-    let drp = DRP::random(Compression::None, 1000);
-    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
+    let mut mock = DMLMock::new();
+    let addr = 42;
+    mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .called_once()
-        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, _)| {
+        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, _)| {
             let node_data = (args.0).0.try_read().unwrap();
             let leaf_data = node_data.as_leaf();
             leaf_data.get(&0) == Some(100) &&
             leaf_data.get(&1) == Some(200) &&
             args.2 == TxgT::from(42)
         }))
-        .returning(move |_| Box::new(Ok(drp).into_future()));
-    mock.then().expect_put::<Arc<Node<DRP, u32, u32>>>()
+        .returning(move |_| Box::new(Ok(addr).into_future()));
+    mock.then().expect_put::<Arc<Node<u32, u32, u32>>>()
         .called_once()
-        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, _)| {
+        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, _)| {
             let node_data = (args.0).0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
@@ -990,9 +878,9 @@ fn write_deep() {
             int_data.children[1].ptr.is_addr() &&
             args.2 == TxgT::from(42)
         }))
-        .returning(move |_| Box::new(Ok(drp).into_future()));
-    let ddml = Arc::new(mock);
-    let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+        .returning(move |_| Box::new(Ok(addr).into_future()));
+    let dml = Arc::new(mock);
+    let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -1022,32 +910,25 @@ root:
               start: 41
               end: 42
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 256
-                compression: ZstdL9NoShuffle
-                lsize: 16000
-                csize: 8000
-                checksum: 0x1a7ebabe
+              Addr: 256
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.flush(TxgT::from(42)));
     assert!(r.is_ok());
-    let root_drp = *Arc::get_mut(&mut tree.i).unwrap()
+    let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap()
         .ptr.as_addr();
-    assert_eq!(root_drp, drp);
+    assert_eq!(root_addr, addr);
 }
 
 #[test]
 fn write_int() {
-    let mut mock = DDMLMock::new();
-    let drp = DRP::random(Compression::None, 1000);
-    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
+    let mut mock = DMLMock::new();
+    let addr = 9999;
+    mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .called_once()
-        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, _)|{
+        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, _)|{
             let node_data = (args.0).0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
@@ -1056,9 +937,9 @@ fn write_int() {
             !int_data.children[1].ptr.is_mem() &&
             args.2 == TxgT::from(42)
         }))
-        .returning(move |_| Box::new(Ok(drp).into_future()));
-    let ddml = Arc::new(mock);
-    let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+        .returning(move |_| Box::new(Ok(addr).into_future()));
+    let dml = Arc::new(mock);
+    let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 2
 min_fanout: 2
@@ -1078,53 +959,39 @@ root:
               start: 5
               end: 15
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 0
-                compression: None
-                lsize: 40000
-                csize: 40000
-                checksum: 0xdeadbeef
+              Addr: 0
           - key: 256
             txgs:
               start: 18
               end: 25
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 256
-                compression: ZstdL9NoShuffle
-                lsize: 16000
-                csize: 8000
-                checksum: 0x1a7ebabe
+              Addr: 256
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.flush(TxgT::from(42)));
     assert!(r.is_ok());
-    let root_drp = *Arc::get_mut(&mut tree.i).unwrap()
+    let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap()
         .ptr.as_addr();
-    assert_eq!(root_drp, drp);
+    assert_eq!(root_addr, addr);
 }
 
 #[test]
 fn write_leaf() {
-    let mut mock = DDMLMock::new();
-    let drp = DRP::random(Compression::None, 1000);
-    mock.expect_put::<Arc<Node<DRP, u32, u32>>>()
+    let mut mock = DMLMock::new();
+    let addr = 9999;
+    mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .called_once()
-        .with(passes(move |args: &(Arc<Node<DRP, u32, u32>>, _, _)|{
+        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, _)|{
             let node_data = (args.0).0.try_read().unwrap();
             let leaf_data = node_data.as_leaf();
             leaf_data.get(&0) == Some(100) &&
             leaf_data.get(&1) == Some(200) &&
             args.2 == TxgT::from(42)
-        })).returning(move |_| Box::new(Ok(drp).into_future()));
-    let ddml = Arc::new(mock);
-    let mut tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+        })).returning(move |_| Box::new(Ok(addr).into_future()));
+    let dml = Arc::new(mock);
+    let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -1146,9 +1013,9 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.flush(TxgT::from(42)));
     assert!(r.is_ok());
-    let root_drp = *Arc::get_mut(&mut tree.i).unwrap()
+    let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap()
         .ptr.as_addr();
-    assert_eq!(root_drp, drp);
+    assert_eq!(root_addr, addr);
 }
 // LCOV_EXCL_STOP
