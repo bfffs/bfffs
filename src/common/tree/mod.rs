@@ -29,6 +29,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
+    io,
     mem,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
     rc::Rc,
@@ -587,7 +588,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     // `&mut Formatter` isn't `Send`, so these Futures can only be used with the
     // current_thread Runtime.  Given that limitation, we may as well make our
     // own Runtime
-    pub fn dump(&self, f: &mut Formatter) -> fmt::Result {
+    pub fn dump(&self, f: &mut io::Write) -> Result<(), Error> {
         // Outline:
         // * Lock the whole tree and proceed bottom-up.
         // * YAMLize each Node
@@ -614,18 +615,18 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     }
                     let mut f2 = rrf2.borrow_mut();
                     let s = serde_yaml::to_string(&*inner2).unwrap();
-                    f2.write_str(&s).unwrap();
+                    writeln!(f2, "{}", &s).unwrap();
                     if ! hmap.is_empty() {
                         let s = serde_yaml::to_string(&hmap).unwrap();
-                        f2.write_str(&s).unwrap();
+                        writeln!(f2, "{}", &s).unwrap();
                     }
                 })
             });
-        rt.block_on(fut).map_err(|_| fmt::Error)
+        rt.block_on(fut)
     }
 
     fn dump_r<'a>(dml: Arc<D>, node: TreeReadGuard<A, K, V>,
-                  f: Rc<RefCell<&'a mut Formatter>>)
+                  f: Rc<RefCell<&'a mut io::Write>>)
         -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
     {
         type ChildFut<'a, A, K, V> =
@@ -658,7 +659,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 }
                 if ! hmap.is_empty() {
                     let s = serde_yaml::to_string(&hmap).unwrap();
-                    f2.borrow_mut().write_str(&s).unwrap();
+                    writeln!(f2.borrow_mut(), "{}", &s).unwrap();
                 }
             }
             node

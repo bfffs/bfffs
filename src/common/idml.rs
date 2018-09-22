@@ -20,7 +20,7 @@ use common::{
 use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
 use std::{
-    fmt,
+    io,
     sync::{Arc, Mutex},
 };
 #[cfg(not(test))]
@@ -202,7 +202,7 @@ impl<'a> IDML {
         IDML{cache, ddml, next_rid, transaction, trees}
     }
 
-    pub fn dump_trees(&self, f: &mut fmt::Formatter) -> fmt::Result
+    pub fn dump_trees(&self, f: &mut io::Write) -> Result<(), Error>
     {
         self.trees.ridt.dump(f)?;
         self.trees.alloct.dump(f)
