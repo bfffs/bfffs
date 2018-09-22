@@ -3,6 +3,7 @@
 // LCOV_EXCL_START
 
 use common::tree::*;
+use common::dml_mock::*;
 use common::ddml_mock::*;
 use common::ddml::DRP;
 use futures::future;
@@ -12,37 +13,37 @@ use tokio::runtime::current_thread;
 
 #[test]
 fn addresses() {
-    type NodeT = Arc<Node<DRP, u32, f32>>;
-    fn expect_get(mock: &mut DDMLMock, drp: DRP,
+    type NodeT = Arc<Node<u32, u32, f32>>;
+    fn expect_get(mock: &mut DMLMock, addr: u32,
                   mut node: Option<NodeT>)
     {
         mock.then().expect_get::<NodeT>()
             .called_once()
-            .with(passes(move |arg: &*const DRP| {
-                unsafe {**arg == drp}
+            .with(passes(move |arg: &*const u32| {
+                unsafe {**arg == addr}
             })).returning(move |_| {
                 let res = Box::new(node.take().unwrap());
                 Box::new(future::ok::<Box<NodeT>, Error>(res))
             });
     }
 
-    let mut mock = DDMLMock::new();
-    let drpl0 = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    let drpl1 = DRP::new(PBA{cluster: 0, lba: 1}, Compression::None, 36, 36, 0);
-    let drpl2 = DRP::new(PBA{cluster: 0, lba: 2}, Compression::None, 36, 36, 0);
-    let drpi0 = DRP::new(PBA{cluster: 0, lba: 3}, Compression::None, 36, 36, 0);
+    let mut mock = DMLMock::new();
+    let addrl0 = 0;
+    let addrl1 = 1;
+    let addrl2 = 2;
+    let addri0 = 3;
 
     let children0 = vec![
-        IntElem::new(0u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl0)),
-        IntElem::new(1u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl1)),
+        IntElem::new(0u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl0)),
+        IntElem::new(1u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl1)),
     ];
     let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
     let opt_intnode0 = Some(intnode0);
     
-    expect_get(&mut mock, drpi0.clone(), opt_intnode0);
+    expect_get(&mut mock, addri0.clone(), opt_intnode0);
 
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
 min_fanout: 2
@@ -62,14 +63,7 @@ root:
               start: 8
               end: 9
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 3
-                compression: None
-                lsize: 36
-                csize: 36
-                checksum: 0
+              Addr: 3
           - key: 10
             txgs:
               start: 20
@@ -83,14 +77,7 @@ root:
                         start: 9
                         end: 10
                       ptr:
-                        Addr:
-                          pba:
-                            cluster: 0
-                            lba: 2
-                          compression: None
-                          lsize: 36
-                          csize: 36
-                          checksum: 0
+                        Addr: 2
                     - key: 15
                       txgs:
                         start: 9
@@ -108,29 +95,22 @@ root:
               start: 0
               end: 1
             ptr:
-              Addr:
-                pba:
-                  cluster: 0
-                  lba: 4
-                compression: None
-                lsize: 36
-                csize: 36
-                checksum: 0
+              Addr: 4
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let addrs = rt.block_on(future::lazy(|| {
         tree.addresses(TxgT::from(5)..).collect()
     })).unwrap();
-    assert_eq!(vec![drpi0, drpl0, drpl1, drpl2], addrs);
+    assert_eq!(vec![addri0, addrl0, addrl1, addrl2], addrs);
 }
 
 /// Tree::addresses on a Tree with a single leaf node
 #[test]
 fn addresses_leaf() {
-    let mock = DDMLMock::new();
-    let drpl = DRP::new(PBA{cluster: 0, lba: 0}, Compression::None, 36, 36, 0);
-    let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
+    let mock = DMLMock::new();
+    let addrl = 0;
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 1
 min_fanout: 2
@@ -142,21 +122,12 @@ root:
     start: 41
     end: 42
   ptr:
-    Addr:
-      pba:
-        cluster: 0
-        lba: 0
-      compression: None
-      lsize: 36
-      csize: 36
-      checksum: 0
-"#);
+    Addr: 0"#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let addrs = rt.block_on(future::lazy(|| {
         tree.addresses(..).collect()
     })).unwrap();
-    assert_eq!(vec![drpl], addrs);
-
+    assert_eq!(vec![addrl], addrs);
 }
 
 /// Insert an item into a Tree that's not dirty
