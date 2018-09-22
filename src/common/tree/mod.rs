@@ -31,11 +31,15 @@ use std::{
     fmt::Debug,
     mem,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
+    rc::Rc,
     sync::{
         Arc,
     }
 };
-use tokio::executor::{DefaultExecutor, Executor};
+use tokio::{
+    executor::{DefaultExecutor, Executor},
+    runtime::current_thread
+};
 
 mod node;
 use self::node::*;
@@ -574,11 +578,16 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Dump a YAMLized representation of the Tree to stdout.
     ///
+    /// Must be called from the synchronous domain.
+    ///
     /// To save RAM, the Tree is actually dumped as several independent YAML
     /// records.  The first one is the Tree itself, and the rest are other
     /// on-disk Nodes.  All the Nodes can be combined into a single YAML map by
     /// simply removing the `---` separators.
-    pub fn dump(&self) -> impl Future<Item=(), Error=Error> + Send {
+    // `&mut Formatter` isn't `Send`, so these Futures can only be used with the
+    // current_thread Runtime.  Given that limitation, we may as well make our
+    // own Runtime
+    pub fn dump(&self, f: &mut Formatter) -> fmt::Result {
         // Outline:
         // * Lock the whole tree and proceed bottom-up.
         // * YAMLize each Node
@@ -589,43 +598,53 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml2 = self.dml.clone();
         let dml3 = self.dml.clone();
         let inner2 = self.i.clone();
-        self.read()
+        let rrf = Rc::new(RefCell::new(f));
+        let rrf2 = rrf.clone();
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let fut = self.read()
             .and_then(move |tree_guard| {
                 tree_guard.rlock(dml2)
                 .and_then(move |guard| {
-                    Tree::dump_r(dml3, guard)
+                    Tree::dump_r(dml3, guard, rrf)
                 }).map(move |guard| {
                     let mut hmap = HashMap::new();
                     if !guard.is_mem() {
                         hmap.insert(*tree_guard.ptr.as_addr(),
                             serde_yaml::to_value(guard.deref()).unwrap());
                     }
-                    println!("{}", &serde_yaml::to_string(&*inner2).unwrap());
+                    let mut f2 = rrf2.borrow_mut();
+                    let s = serde_yaml::to_string(&*inner2).unwrap();
+                    f2.write_str(&s).unwrap();
                     if ! hmap.is_empty() {
-                        println!("{}", &serde_yaml::to_string(&hmap).unwrap());
+                        let s = serde_yaml::to_string(&hmap).unwrap();
+                        f2.write_str(&s).unwrap();
                     }
                 })
-            })
+            });
+        rt.block_on(fut).map_err(|_| fmt::Error)
     }
 
-    fn dump_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>)
-        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + Send>
+    fn dump_r<'a>(dml: Arc<D>, node: TreeReadGuard<A, K, V>,
+                  f: Rc<RefCell<&'a mut Formatter>>)
+        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
     {
-        type ChildFut<A, K, V> = Box<Future<Item=Vec<TreeReadGuard<A, K, V>>,
-                                            Error=Error> + Send>;
+        type ChildFut<'a, A, K, V> =
+            Box<Future<Item=Vec<TreeReadGuard<A, K, V>>, Error=Error> + 'a>;
+        let f2 = f.clone();
         let fut = if let NodeData::Int(ref int) = *node {
             let futs = int.children.iter().map(move |child| {
                 let dml2 = dml.clone();
+                let f3 = f.clone();
                 child.rlock(dml.clone())
                     .and_then(move |child_node| {
-                        Tree::dump_r(dml2, child_node)
+                        Tree::dump_r(dml2, child_node, f3)
                     })
             }).collect::<Vec<_>>();
             Box::new(future::join_all(futs))
-                as ChildFut<A, K, V>
+                as ChildFut<'a, A, K, V>
         } else {
             Box::new(Ok(Vec::new()).into_future())
-                as ChildFut<A, K, V>
+                as ChildFut<'a, A, K, V>
         }
         .map(move |r| {
             if !node.is_leaf() {
@@ -638,13 +657,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     }
                 }
                 if ! hmap.is_empty() {
-                    println!("{}", &serde_yaml::to_string(&hmap).unwrap());
+                    let s = serde_yaml::to_string(&hmap).unwrap();
+                    f2.borrow_mut().write_str(&s).unwrap();
                 }
             }
             node
         });
         Box::new(fut) as Box<Future<Item=TreeReadGuard<A, K, V>,
-                                    Error=Error> + Send>
+                                    Error=Error> + 'a>
     }
 
     /// Fix an Int node in danger of being underfull, returning the parent guard

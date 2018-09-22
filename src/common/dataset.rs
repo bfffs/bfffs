@@ -41,12 +41,6 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.idml.delete(ridp, txg)
     }
 
-    fn dump_trees(&self) -> impl Future<Item=(), Error=Error> {
-        let idml_fut = self.idml.dump_trees();
-        self.tree.dump()
-            .and_then(move |_| idml_fut)
-    }
-
     fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.tree.get(k)
@@ -119,10 +113,6 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
         self.dataset.allocated()
     }
 
-    pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> {
-        self.dataset.dump_trees()
-    }
-
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.dataset.get(k)
@@ -170,10 +160,6 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
 
     pub fn delete_blob(&self, ridp: &RID) -> impl Future<Item=(), Error=Error> {
         self.dataset.delete_blob(ridp, self.txg)
-    }
-
-    pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> {
-        self.dataset.dump_trees()
     }
 
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>

@@ -19,8 +19,10 @@ use common::{
 };
 use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
-use std::sync::{Arc, Mutex};
-
+use std::{
+    fmt,
+    sync::{Arc, Mutex},
+};
 #[cfg(not(test))]
 use common::cache::Cache;
 #[cfg(test)]
@@ -200,10 +202,10 @@ impl<'a> IDML {
         IDML{cache, ddml, next_rid, transaction, trees}
     }
 
-    pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> {
-        let alloct_fut = self.trees.alloct.dump();
-        self.trees.ridt.dump()
-            .and_then(move |_| alloct_fut)
+    pub fn dump_trees(&self, f: &mut fmt::Formatter) -> fmt::Result
+    {
+        self.trees.ridt.dump(f)?;
+        self.trees.alloct.dump(f)
     }
 
     pub fn list_closed_zones(&self)
