@@ -11,7 +11,6 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
-    hash::Hash,
     iter::FromIterator,
     mem,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
@@ -50,11 +49,11 @@ impl MinValue for TxgT {
     }
 }
 
-pub trait Addr: Copy + Debug + DeserializeOwned + Eq + Hash + PartialEq + Send + Serialize +
+pub trait Addr: Copy + Debug + DeserializeOwned + Eq + Ord + PartialEq + Send + Serialize +
     'static {}
 
 impl<T> Addr for T
-where T: Copy + Debug + DeserializeOwned + Eq + Hash + PartialEq + Send + Serialize +
+where T: Copy + Debug + DeserializeOwned + Eq + Ord + PartialEq + Send + Serialize +
     'static {}
 
 pub trait Key: Copy + Debug + DeserializeOwned + Ord + PartialEq + MinValue +

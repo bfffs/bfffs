@@ -126,9 +126,10 @@ pub type PoolLike = Pool;
 ///
 /// A Record is a local unit of data on disk.  It may be larger or smaller than
 /// a Block, but Records are always read/written in their entirety.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct DRP {
     /// Physical Block Address.  The record's location on disk.
+    // Must come first so PartialOrd can be derived
     pba: PBA,
     /// Compression algorithm in use
     compression: Compression,

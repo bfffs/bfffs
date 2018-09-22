@@ -7,7 +7,7 @@ use futures::Future;
 pub use common::cache::{Cacheable, CacheRef};
 
 /// Compression mode in use
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Compression {
     None = 0,
     /// Maximum Compression ratio for unstructured buffers

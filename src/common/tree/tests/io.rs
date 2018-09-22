@@ -8,6 +8,8 @@ use common::ddml_mock::*;
 use common::ddml::DRP;
 use futures::future;
 use simulacrum::*;
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
 use tokio::prelude::task::current;
 use tokio::runtime::current_thread;
 
@@ -128,6 +130,257 @@ root:
         tree.addresses(..).collect()
     })).unwrap();
     assert_eq!(vec![addrl], addrs);
+}
+
+#[test]
+fn dump() {
+    type NodeT = Arc<Node<u32, u32, f32>>;
+    fn expect_get(mock: &mut DMLMock, addr: u32,
+                  mut node: Option<NodeT>)
+    {
+        mock.then().expect_get::<NodeT>()
+            .called_once()
+            .with(passes(move |arg: &*const u32| {
+                unsafe {**arg == addr}
+            })).returning(move |_| {
+                let res = Box::new(node.take().unwrap());
+                Box::new(future::ok::<Box<NodeT>, Error>(res))
+            });
+    }
+
+    let mut mock = DMLMock::new();
+    let addrl0 = 0;
+    let addrl1 = 1;
+    let addrl2 = 2;
+    let addri0 = 3;
+    let addri2 = 4;
+    let addrl4 = 5;
+    let addrl5 = 6;
+
+    let children0 = vec![
+        IntElem::new(0u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl0)),
+        IntElem::new(2u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl1)),
+    ];
+    let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
+    let opt_intnode0 = Some(intnode0);
+    let opt_intnode0c = opt_intnode0.clone();
+
+    let mut ld0 = LeafData::new();
+    ld0.insert(0, 0.0);
+    ld0.insert(1, 1.0);
+    let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
+    let opt_leafnode0 = Some(leafnode0);
+
+    let mut ld1 = LeafData::new();
+    ld1.insert(2, 2.0);
+    ld1.insert(3, 3.0);
+    let leafnode1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
+    let opt_leafnode1 = Some(leafnode1);
+
+    let mut ld2 = LeafData::new();
+    ld2.insert(10, 10.0);
+    ld2.insert(11, 11.0);
+    let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
+    let opt_leafnode2 = Some(leafnode2);
+
+    let children2 = vec![
+        IntElem::new(20u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl4)),
+        IntElem::new(25u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl5)),
+    ];
+    let intnode2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
+    let opt_intnode2 = Some(intnode2);
+
+    let mut ld4 = LeafData::new();
+    ld4.insert(20, 20.0);
+    ld4.insert(21, 21.0);
+    let leafnode4 = Arc::new(Node::new(NodeData::Leaf(ld4)));
+    let opt_leafnode4 = Some(leafnode4);
+
+    let mut ld5 = LeafData::new();
+    ld5.insert(25, 25.0);
+    ld5.insert(26, 26.0);
+    let leafnode5 = Arc::new(Node::new(NodeData::Leaf(ld5)));
+    let opt_leafnode5 = Some(leafnode5);
+
+    expect_get(&mut mock, addri0, opt_intnode0c);    // lba 3
+    expect_get(&mut mock, addri2, opt_intnode2);     // lba 4
+    expect_get(&mut mock, addrl0, opt_leafnode0);    // lba 0
+    expect_get(&mut mock, addrl1, opt_leafnode1);    // lba 1
+    expect_get(&mut mock, addrl2, opt_leafnode2);    // lba 2
+    expect_get(&mut mock, addrl4, opt_leafnode4);    // lba 5
+    expect_get(&mut mock, addrl5, opt_leafnode5);    // lba 6
+
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 8
+              end: 9
+            ptr:
+              Addr: 3
+          - key: 10
+            txgs:
+              start: 20
+              end: 32
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Addr: 2
+                    - key: 15
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                              17: 17.0
+          # This  Node is not returned due to its TXG range
+          - key: 20
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Addr: 4
+"#);
+let expected =
+r#"---
+0:
+  Leaf:
+    items:
+      0: 0.0
+      1: 1.0
+1:
+  Leaf:
+    items:
+      2: 2.0
+      3: 3.0
+---
+2:
+  Leaf:
+    items:
+      10: 10.0
+      11: 11.0
+---
+5:
+  Leaf:
+    items:
+      20: 20.0
+      21: 21.0
+6:
+  Leaf:
+    items:
+      25: 25.0
+      26: 26.0
+---
+3:
+  Int:
+    children:
+      - key: 0
+        txgs:
+          start: 8
+          end: 9
+        ptr:
+          Addr: 0
+      - key: 2
+        txgs:
+          start: 8
+          end: 9
+        ptr:
+          Addr: 1
+4:
+  Int:
+    children:
+      - key: 20
+        txgs:
+          start: 8
+          end: 9
+        ptr:
+          Addr: 5
+      - key: 25
+        txgs:
+          start: 8
+          end: 9
+        ptr:
+          Addr: 6
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 8
+              end: 9
+            ptr:
+              Addr: 3
+          - key: 10
+            txgs:
+              start: 20
+              end: 32
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Addr: 2
+                    - key: 15
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                              17: 17.0
+          - key: 20
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Addr: 4
+"#;
+    let mut out = Vec::new();
+    tree.dump(&mut out).unwrap();
+    println!("{:?}", OsStr::from_bytes(&out[..]));
+    assert_eq!(expected, OsStr::from_bytes(&out[..]));
 }
 
 /// Insert an item into a Tree that's not dirty

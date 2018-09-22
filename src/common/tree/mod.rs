@@ -27,7 +27,7 @@ use serde_yaml;
 use std::{
     borrow::Borrow,
     cell::RefCell,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     fmt::Debug,
     io,
     mem,
@@ -593,8 +593,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // * Lock the whole tree and proceed bottom-up.
         // * YAMLize each Node
         // * If that Node is on-disk, print it and its address in a form that
-        //   can be deserialized into a HashMap<A, NodeData>.  Otherwise, extend
-        //   its parent's representation.
+        //   can be deserialized into a BTreeMap<A, NodeData>.  Otherwise,
+        //   extend its parent's representation.
         // * Last of all, print the root's representation.
         let dml2 = self.dml.clone();
         let dml3 = self.dml.clone();
@@ -608,7 +608,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 .and_then(move |guard| {
                     Tree::dump_r(dml3, guard, rrf)
                 }).map(move |guard| {
-                    let mut hmap = HashMap::new();
+                    let mut hmap = BTreeMap::new();
                     if !guard.is_mem() {
                         hmap.insert(*tree_guard.ptr.as_addr(),
                             serde_yaml::to_value(guard.deref()).unwrap());
@@ -649,7 +649,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }
         .map(move |r| {
             if !node.is_leaf() {
-                let mut hmap = HashMap::new();
+                let mut hmap = BTreeMap::new();
                 let citer = node.as_int().children.iter();
                 for (child, guard) in citer.zip(r.iter()) {
                     if !guard.is_mem() {
