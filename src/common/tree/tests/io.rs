@@ -267,6 +267,57 @@ root:
 "#);
 let expected =
 r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 8
+              end: 9
+            ptr:
+              Addr: 3
+          - key: 10
+            txgs:
+              start: 20
+              end: 32
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Addr: 2
+                    - key: 15
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                              17: 17.0
+          - key: 20
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Addr: 4
+---
 0:
   Leaf:
     items:
@@ -325,57 +376,6 @@ r#"---
           end: 9
         ptr:
           Addr: 6
----
-height: 3
-min_fanout: 2
-max_fanout: 5
-_max_size: 4194304
-root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 8
-              end: 9
-            ptr:
-              Addr: 3
-          - key: 10
-            txgs:
-              start: 20
-              end: 32
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 10
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Addr: 2
-                    - key: 15
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              15: 15.0
-                              16: 16.0
-                              17: 17.0
-          - key: 20
-            txgs:
-              start: 0
-              end: 1
-            ptr:
-              Addr: 4
 "#;
     let mut out = Vec::new();
     tree.dump(&mut out).unwrap();

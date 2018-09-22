@@ -601,24 +601,26 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let inner2 = self.i.clone();
         let rrf = Rc::new(RefCell::new(f));
         let rrf2 = rrf.clone();
+        let rrf3 = rrf.clone();
         let mut rt = current_thread::Runtime::new().unwrap();
         let fut = self.read()
             .and_then(move |tree_guard| {
                 tree_guard.rlock(dml2)
                 .and_then(move |guard| {
+                    let mut f2 = rrf2.borrow_mut();
+                    let s = serde_yaml::to_string(&*inner2).unwrap();
+                    writeln!(f2, "{}", &s).unwrap();
                     Tree::dump_r(dml3, guard, rrf)
                 }).map(move |guard| {
+                    let mut f3 = rrf3.borrow_mut();
                     let mut hmap = BTreeMap::new();
                     if !guard.is_mem() {
                         hmap.insert(*tree_guard.ptr.as_addr(),
                             serde_yaml::to_value(guard.deref()).unwrap());
                     }
-                    let mut f2 = rrf2.borrow_mut();
-                    let s = serde_yaml::to_string(&*inner2).unwrap();
-                    writeln!(f2, "{}", &s).unwrap();
                     if ! hmap.is_empty() {
                         let s = serde_yaml::to_string(&hmap).unwrap();
-                        writeln!(f2, "{}", &s).unwrap();
+                        writeln!(f3, "{}", &s).unwrap();
                     }
                 })
             });
