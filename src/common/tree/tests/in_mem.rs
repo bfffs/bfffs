@@ -32,6 +32,97 @@ root:
           0: 0.0"#);
 }
 
+// When inserting into an int node's first child and the key is lower than the
+// int node's own key, the int node's own key must be lowered to match.
+#[test]
+fn insert_lower_than_parents_key() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 67
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    67: 67.0
+                    68: 68.0
+                    69: 69.0
+          - key: 70
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    70: 70.0
+                    71: 71.0
+                    72: 72.0
+                    73: 73.0
+                    74: 74.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r2 = rt.block_on(tree.insert(36, 36.0, TxgT::from(42)));
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", tree),
+r#"---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 36
+            txgs:
+              start: 42
+              end: 43
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    36: 36.0
+                    67: 67.0
+                    68: 68.0
+                    69: 69.0
+          - key: 70
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    70: 70.0
+                    71: 71.0
+                    72: 72.0
+                    73: 73.0
+                    74: 74.0"#);
+}
+
 #[test]
 fn insert_dup() {
     let mock = DMLMock::new();

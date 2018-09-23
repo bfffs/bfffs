@@ -820,10 +820,15 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Insert a value into an int node without splitting it
     fn insert_int_no_split(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
-                           node: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
+                           mut node: TreeWriteGuard<A, K, V>, k: K, v: V,
+                           txg: TxgT)
         -> impl Future<Item=Option<V>, Error=Error>
     {
         let child_idx = node.as_int().position(&k);
+        if k < node.as_int().children[child_idx].key {
+            debug_assert_eq!(child_idx, 0);
+            node.as_int_mut().children[child_idx].key = k;
+        }
         let fut = node.xlock(dml.clone(), child_idx, txg);
         fut.and_then(move |(parent, child)| {
                 Tree::insert_int(inner, dml, parent, child_idx, child, k, v, txg)
