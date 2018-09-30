@@ -98,45 +98,57 @@ impl<'a> IDML {
     fn check_ridt(&self) -> impl Future<Item=bool, Error=Error> {
         let trees2 = self.trees.clone();
         let trees3 = self.trees.clone();
-        let alloct_fut = self.trees.alloct.range(..)
-        .fold(true, move |passes, (pba, rid)| {
-            trees2.ridt.get(rid)
-            .map(move |v| {
-                passes & match v {
-                    Some(ridt_entry) => {
-                        if ridt_entry.drp.pba() != pba {
-                            eprintln!(concat!("Indirect block {} has address ",
-                                "{:?} but another address {:?} also maps to ",
-                                "same ", "indirect block"), rid,
-                                ridt_entry.drp.pba(), pba);
+        // Grab the TXG lock exclusively, just so other users can't modify the
+        // RIDT or AllocT while we're checking them.  NB: it might be
+        // preferable to use a dedicated lock for this instead.
+        self.transaction.write()
+        .map_err(|_| unreachable!())
+        .and_then(move |txg_guard| {
+            let alloct_fut = trees2.alloct.range(..)
+            .fold(true, move |passes, (pba, rid)| {
+                trees2.ridt.get(rid)
+                .map(move |v| {
+                    passes & match v {
+                        Some(ridt_entry) => {
+                            if ridt_entry.drp.pba() != pba {
+                                eprintln!(concat!("Indirect block {} has ",
+                                    "address {:?} but another address {:?} ",
+                                    "also maps to same indirect block"), rid,
+                                    ridt_entry.drp.pba(), pba);
+                                false
+                            } else {
+                                true
+                            }
+                        }, None => {
+                            eprintln!(concat!("Extraneous entry {:?} => {} in ",
+                                "the Allocation Table"), pba, rid);
                             false
-                        } else {
-                            true
                         }
-                    }, None => {
-                        eprintln!(concat!("Extraneous entry {:?} => {} in the ",
-                            "Allocation Table"), pba, rid);
-                        false
                     }
-                }
-            })
-        });
-        let ridt_fut = self.trees.ridt.range(..)
-        .fold(true, move |passes, (rid, entry)| {
-            trees3.alloct.get(entry.drp.pba())
-            .map(move |v| {
-                passes & match v {
-                    Some(_) => true,
-                    None => {
-                        eprintln!(concat!("Indirect block {} has no reverse ",
-                            "mapping in the allocation table"), rid);
-                        false
+                })
+            });
+            let ridt_fut = trees3.ridt.range(..)
+            .fold(true, move |passes, (rid, entry)| {
+                trees3.alloct.get(entry.drp.pba())
+                .map(move |v| {
+                    passes & match v {
+                        Some(_) => true,
+                        None => {
+                            eprintln!(concat!("Indirect block {} has no ",
+                                "reverse mapping in the allocation table.  ",
+                                "Entry={:?}"),
+                                rid, entry);
+                            false
+                        }
                     }
-                }
+                })
+            });
+            alloct_fut.join(ridt_fut)
+            .map(move |(x, y)| {
+                drop(txg_guard);
+                x & y
             })
-        });
-        alloct_fut.join(ridt_fut)
-        .map(|(x, y)| x & y)
+        })
     }
 
     /// Foreground Tree consistency check.
