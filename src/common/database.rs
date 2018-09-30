@@ -90,48 +90,39 @@ impl Syncer {
         ) as LoopFut;
 
         let taskfut = stream::repeat(())
-        .fold(initial, move |rif, _| {
+        .fold(initial, move |rx_fut: LoopFut, _| {
             let i2 = inner.clone();
             let wakeup_time = Instant::now() + duration;
             let delay = timer::Delay::new(wakeup_time);
             let delay_fut = delay
-                .map(|_| None)
                 .map_err(|e| panic!("{:?}", e));
 
-            let rx_fut = rif
-                .and_then(|(rvalue, remainder)| {
-                    if rvalue.is_some() {
-                        Ok(Some(remainder)).into_future()
-                    } else {
-                        // The Sender got dropped, which implies that
-                        // the Database got dropped.  Error out of the
-                        // loop.
-                        Err(()).into_future()
-                    }
-                });
-
-            delay_fut.select(rx_fut)
+            delay_fut.select2(rx_fut)
                 .map_err(|_| ())
-                .and_then(move |(remainder, other)| {
+                .and_then(move |r| {
                     type LoopFutFut = Box<Future<Item=LoopFut,
                                                  Error=()> + Send>;
-                    if let Some(s) = remainder {
-                        // We got kicked.  Restart the wait
-                        let b = Box::new(
-                            s.into_future()
-                             .map_err(|e| panic!("{:?}", e))
-                        ) as LoopFut;
-                        Box::new(Ok(b).into_future()) as LoopFutFut
-                    } else {
-                        // Time's up.  Sync the database
-                        Box::new(
-                            Database::sync_transaction_priv(&i2)
-                            .map_err(|e| panic!("{:?}", e))
-                            .map(move |_| Box::new(
-                                    other.map(|o| (Some(()), o.unwrap()))
-                                ) as LoopFut
-                            )
-                        ) as LoopFutFut
+                    match r {
+                        future::Either::A((_, rx_fut)) => {
+                            //Time's up.  Sync the database
+                            Box::new(
+                                Database::sync_transaction_priv(&i2)
+                                .map_err(|e| panic!("{:?}", e))
+                                .map(move |_| rx_fut)
+                                //)
+                            ) as LoopFutFut
+                        }, future::Either::B(((Some(_), remainder), _)) => {
+                            // We got kicked.  Restart the wait
+                            let b = Box::new(
+                                remainder.into_future()
+                                 .map_err(|e| panic!("{:?}", e))
+                            ) as LoopFut;
+                            Box::new(Ok(b).into_future()) as LoopFutFut
+                        }, future::Either::B(((None, _), _)) => {
+                            // Sender got dropped, which implies that the
+                            // Database got dropped  Error out of the loop
+                            Box::new(Err(()).into_future()) as LoopFutFut
+                        }
                     }
                 })
         }).map(|_| ());
