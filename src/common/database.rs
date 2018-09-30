@@ -54,14 +54,20 @@ impl MinValue for TreeID {
     }
 }
 
+#[derive(Debug)]
+enum SyncerMsg {
+    Kick,
+    Shutdown(oneshot::Sender<()>),
+}
+
 struct Syncer {
-    tx: mpsc::Sender<()>
+    tx: mpsc::Sender<SyncerMsg>
 }
 
 impl Syncer {
     fn kick(&self) -> impl Future<Item=(), Error=Error> {
         self.tx.clone()
-            .send(())
+            .send(SyncerMsg::Kick)
             .map(|_| ())
             .map_err(|e| panic!("{:?}", e))
     }
@@ -75,11 +81,12 @@ impl Syncer {
     // Start a task that will sync the database at a fixed interval, but will
     // reset the timer if it gets a message on a channel.  While conceptually
     // simple, this is very hard to express in the world of Futures.
-    fn run<E>(mut handle: E, inner: Arc<Inner>, rx: mpsc::Receiver<()>)
+    fn run<E>(mut handle: E, inner: Arc<Inner>, rx: mpsc::Receiver<SyncerMsg>)
         where E: Executor + 'static
     {
         // The Future type used for the accumulator in the fold loop
-        type LoopFut = Box<Future<Item=(Option<()>, mpsc::Receiver<()>),
+        type LoopFut = Box<Future<Item=(Option<SyncerMsg>,
+                                        mpsc::Receiver<SyncerMsg>),
                                   Error=()> + Send>;
 
         // Fixed 5-second duration
@@ -111,13 +118,22 @@ impl Syncer {
                                 .map(move |_| rx_fut)
                                 //)
                             ) as LoopFutFut
-                        }, future::Either::B(((Some(_), remainder), _)) => {
-                            // We got kicked.  Restart the wait
-                            let b = Box::new(
-                                remainder.into_future()
-                                 .map_err(|e| panic!("{:?}", e))
-                            ) as LoopFut;
-                            Box::new(Ok(b).into_future()) as LoopFutFut
+                        }, future::Either::B(((Some(sm), remainder), _)) => {
+                            match sm {
+                                SyncerMsg::Kick => {
+                                    // We got kicked.  Restart the wait
+                                    let b = Box::new(
+                                        remainder.into_future()
+                                         .map_err(|e| panic!("{:?}", e))
+                                    ) as LoopFut;
+                                    Box::new(Ok(b).into_future()) as LoopFutFut
+                                }, SyncerMsg::Shutdown(tx) => {
+                                    // Error out of the loop
+                                    tx.send(()).unwrap();
+                                    Box::new(Err(()).into_future())
+                                        as LoopFutFut
+                                }
+                            }
                         }, future::Either::B(((None, _), _)) => {
                             // Sender got dropped, which implies that the
                             // Database got dropped  Error out of the loop
@@ -127,6 +143,23 @@ impl Syncer {
                 })
         }).map(|_| ());
         handle.spawn(Box::new(taskfut)).unwrap();
+    }
+
+    fn shutdown(&self) -> impl Future<Item=(), Error=()> {
+        let (tx, rx) = oneshot::channel();
+        self.tx.clone()
+        .send(SyncerMsg::Shutdown(tx))
+        .then(|r| {
+            match r {
+                Ok(_) => Box::new(rx.map_err(|e| panic!("{:?}", e)))
+                    as Box<Future<Item=_, Error=_>>,
+                Err(_) => {
+                    // Syncer must already be shutdown
+                    Box::new(Ok(()).into_future())
+                    as Box<Future<Item=_, Error=_>>
+                }
+            }
+        })
     }
 }
 
@@ -345,6 +378,11 @@ impl Database {
             .map(|fs| ReadOnlyFilesystem::new(idml2, fs))
     }
 
+    /// Shutdown all background tasks
+    pub fn stop_background_tasks(&self)  -> impl Future<Item=(), Error=()> {
+        self.syncer.shutdown()
+    }
+
     /// Finish the current transaction group and start a new one.
     pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> {
         self.syncer.kick().join(Database::sync_transaction_priv(&self.inner))
@@ -428,6 +466,36 @@ mod t {
     fn debug() {
         let label = Label{forest: TreeOnDisk::default()};
         format!("{:?}", label);
+    }
+
+    #[test]
+    fn stop_background_tasks() {
+        let idml = IDML::new();
+        let forest = Tree::new();
+
+        let mut rt = current_thread::Runtime::new().unwrap();
+
+        rt.block_on(future::lazy(|| {
+            let task_executor = TaskExecutor::current();
+            let db = Database::new(Arc::new(idml), forest, task_executor);
+            db.stop_background_tasks()
+        })).unwrap();
+    }
+
+    /// stop_background_tasks should be idempotent
+    #[test]
+    fn stop_background_tasks_twice() {
+        let idml = IDML::new();
+        let forest = Tree::new();
+
+        let mut rt = current_thread::Runtime::new().unwrap();
+
+        rt.block_on(future::lazy(|| {
+            let task_executor = TaskExecutor::current();
+            let db = Database::new(Arc::new(idml), forest, task_executor);
+            db.stop_background_tasks()
+            .and_then(move |_| db.stop_background_tasks())
+        })).unwrap();
     }
 
     #[test]
