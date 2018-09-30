@@ -145,18 +145,18 @@ impl Syncer {
         handle.spawn(Box::new(taskfut)).unwrap();
     }
 
-    fn shutdown(&self) -> impl Future<Item=(), Error=()> {
+    fn shutdown(&self) -> impl Future<Item=(), Error=()> + Send {
         let (tx, rx) = oneshot::channel();
         self.tx.clone()
         .send(SyncerMsg::Shutdown(tx))
         .then(|r| {
             match r {
                 Ok(_) => Box::new(rx.map_err(|e| panic!("{:?}", e)))
-                    as Box<Future<Item=_, Error=_>>,
+                    as Box<Future<Item=_, Error=_> + Send>,
                 Err(_) => {
                     // Syncer must already be shutdown
                     Box::new(Ok(()).into_future())
-                    as Box<Future<Item=_, Error=_>>
+                    as Box<Future<Item=_, Error=_> + Send>
                 }
             }
         })
@@ -379,7 +379,8 @@ impl Database {
     }
 
     /// Shutdown all background tasks
-    pub fn stop_background_tasks(&self)  -> impl Future<Item=(), Error=()> {
+    pub fn stop_background_tasks(&self) -> impl Future<Item=(), Error=()> + Send
+    {
         self.syncer.shutdown()
     }
 
