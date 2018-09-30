@@ -412,6 +412,10 @@ impl Database {
             .and_then(move |txg| {
                 Inner::rw_filesystem(inner2, tree_id, *txg)
                     .and_then(|ds| f(ds).into_future())
+                    .map(move |r| {
+                        drop(txg);
+                        r
+                    })
             })
     }
 }
