@@ -72,6 +72,6 @@ lto = true
 members = ["isa-l"]
 
 [patch.crates-io]
-simulacrum_mock = { git = "https://github.com/asomers/simulacrum/", rev = "4be48c4" }
+simulacrum_mock = { git = "https://github.com/pcsm/simulacrum/", rev = "872b48d" }
 bitfield = { git = "https://github.com/dzamlo/rust-bitfield.git", rev = "233c81a" }
 tokio-signal = { git = "https://github.com/asomers/tokio-signal.git", rev = "0fcca68"}
