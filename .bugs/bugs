@@ -7,5 +7,6 @@ IDML::clean_zone occasionally fails to fully clean           | owner:"hg.user", 
 DowncastError ONLY ON NIGHTLY                                | owner:"hg.user", open:True, id:529defe6770c6591f6a7a1d8ff32d259993917a4, time:1535047452.46
 DDML::put_common tries to truncate DivBufShares that are still referenced | owner:"hg.user", open:False, id:709377ba5f51040cacb7f3e922d469400bfe422a, time:1535047528.71
 IDML::move_record tries to read cache values as wrong type   | owner:"hg.user", open:False, id:ba2b5032c8b6c39c47e347b8ca78a7d16b5841b6, time:1535047396.36
+Node underflow after range_delete with min_fanout > 2        | owner:Alan Somers <asomers@gmail.com>, open:True, id:c2bd7069a3422387a6b40c4fd337cf01b3740c80, time:1539029603.41
 Tree::rewrite_node doesn't update node's TXG range           | owner:"hg.user", open:True, id:c92cb41103d75c95273276c4683503886bed4420, time:1535045181.12
 node.0.get_mut() fails in Tree::flush_r                      | owner:Alan Somers <asomers@gmail.com>, open:False, id:d5b4dab35d9be12ff1505e886ed5ca8ad4b6a526, time:1535669947.97

@@ -1512,6 +1512,144 @@ root:
                     22: 22.0"#);
 }
 
+/// Do a range delete that causes two Nodes to merge and yet still underflow.
+/// Regression test for bug c2bd706
+#[test]
+#[ignore = "Test currently fails: bug c2bd706"]
+fn range_delete_merge_and_underflow() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 2
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    2: 2.0
+                    3: 3.0
+          - key: 4
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4: 4.0
+                    5: 5.0
+                    6: 6.0
+          - key: 7
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    7: 7.0
+                    8: 8.0
+                    9: 9.0
+          - key: 10
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+                    12: 12.0
+          - key: 13
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    13: 13.0
+                    14: 14.0
+                    15: 15.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(2..6, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    println!("{}", &tree);
+    assert!(rt.block_on(tree.check()).unwrap());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    1: 1.0
+                    6: 6.0
+                    7: 7.0
+                    8: 8.0
+                    9: 9.0
+          - key: 10
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+                    12: 12.0
+          - key: 13
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    13: 13.0
+                    14: 14.0
+                    15: 15.0
+"#);
+}
+
 /// Delete a range that causes the root node to be merged down
 #[test]
 fn range_delete_merge_root() {
