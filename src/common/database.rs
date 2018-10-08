@@ -379,9 +379,12 @@ impl Database {
     }
 
     /// Shutdown all background tasks
-    pub fn stop_background_tasks(&self) -> impl Future<Item=(), Error=()> + Send
+    pub fn shutdown(&mut self) -> impl Future<Item=(), Error=()> + Send
     {
+        let idml2 = self.inner.idml.clone();
         self.syncer.shutdown()
+        .join(self.cleaner.shutdown())
+        .map(move |_| idml2.shutdown())
     }
 
     /// Finish the current transaction group and start a new one.
@@ -470,32 +473,38 @@ mod t {
     }
 
     #[test]
-    fn stop_background_tasks() {
-        let idml = IDML::new();
+    fn shutdown() {
+        let mut idml = IDML::new();
+        idml.expect_shutdown()
+            .called_once()
+            .returning(|_| ());
         let forest = Tree::new();
 
         let mut rt = current_thread::Runtime::new().unwrap();
 
         rt.block_on(future::lazy(|| {
             let task_executor = TaskExecutor::current();
-            let db = Database::new(Arc::new(idml), forest, task_executor);
-            db.stop_background_tasks()
+            let mut db = Database::new(Arc::new(idml), forest, task_executor);
+            db.shutdown()
         })).unwrap();
     }
 
-    /// stop_background_tasks should be idempotent
+    /// shutdown should be idempotent
     #[test]
-    fn stop_background_tasks_twice() {
-        let idml = IDML::new();
+    fn shutdown_twice() {
+        let mut idml = IDML::new();
+        idml.expect_shutdown()
+            .called_times(2)
+            .returning(|_| ());
         let forest = Tree::new();
 
         let mut rt = current_thread::Runtime::new().unwrap();
 
         rt.block_on(future::lazy(|| {
             let task_executor = TaskExecutor::current();
-            let db = Database::new(Arc::new(idml), forest, task_executor);
-            db.stop_background_tasks()
-            .and_then(move |_| db.stop_background_tasks())
+            let mut db = Database::new(Arc::new(idml), forest, task_executor);
+            db.shutdown()
+            .and_then(move |_| db.shutdown())
         })).unwrap();
     }
 

@@ -59,6 +59,7 @@ enum Rpc {
     Free(LbaT, LbaT, oneshot::Sender<Result<(), Error>>),
     OptimumQueueDepth(oneshot::Sender<u32>),
     Read(IoVecMut, LbaT, oneshot::Sender<Result<(), Error>>),
+    Shutdown(),
     Size(oneshot::Sender<LbaT>),
     SyncAll(oneshot::Sender<Result<(), Error>>),
     Write(IoVec, TxgT, oneshot::Sender<Result<LbaT, Error>>),
@@ -127,6 +128,9 @@ impl<'a> ClusterServer {
                 let fut = self.cluster.read(buf, lba)
                     .then(|r| Ok(tx.send(r).unwrap()));
                 Box::new(fut) as Box<Future<Item=(), Error=()>>
+            },
+            Rpc::Shutdown() => {
+                Box::new(future::err::<(), ()>(()))
             },
             Rpc::Size(tx) => {
                 tx.send(self.cluster.size()).unwrap();
@@ -232,6 +236,13 @@ impl<'a> ClusterProxy {
         self.server.unbounded_send(rpc).unwrap();
         rx.map_err(|_| Error::EPIPE)
             .and_then(|result| result.into_future())
+    }
+
+    fn shutdown(&self) {
+        let rpc = Rpc::Shutdown();
+        // Ignore errors.  An error indicates that the ClusterServer is already
+        // shut down.
+        let _ = self.server.unbounded_send(rpc);
     }
 
     fn size(&self) -> impl Future<Item = LbaT, Error = Error> {
@@ -589,6 +600,13 @@ impl<'a> Pool {
                 stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
                 r
             })
+    }
+
+    /// Shutdown all background tasks.
+    pub fn shutdown(&self) {
+        for c in self.clusters.iter() {
+            c.shutdown();
+        }
     }
 
     /// Return approximately the Pool's usable storage space in LBAs.

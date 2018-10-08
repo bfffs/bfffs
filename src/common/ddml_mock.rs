@@ -181,6 +181,10 @@ impl DDMLMock {
             ("put_direct")
     }
 
+    pub fn shutdown(&self) {
+        self.e.was_called_returning::<(), ()>("shutdown", ())
+    }
+
     pub fn size(&self) -> LbaT {
         self.e.was_called_returning::<(), LbaT>("size", ())
     }

@@ -84,7 +84,7 @@ impl SyncCleaner {
 ///
 /// Cleans old Zones by moving their data to empty zones and erasing them.
 pub struct Cleaner {
-    tx: mpsc::Sender<oneshot::Sender<()>>
+    tx: Option<mpsc::Sender<oneshot::Sender<()>>>
 }
 
 impl Cleaner {
@@ -97,7 +97,7 @@ impl Cleaner {
     /// drop it, and cleaning will continue in the background.
     pub fn clean(&self) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
-        if let Err(e) = self.tx.clone().try_send(tx) {
+        if let Err(e) = self.tx.as_ref().unwrap().clone().try_send(tx) {
             if e.is_full() {
                 // No worries; cleaning is idempotent
             } else {
@@ -113,7 +113,7 @@ impl Cleaner {
         let (tx, rx) = mpsc::channel(1);
         Cleaner::run(handle, idml, thresh.unwrap_or(Cleaner::DEFAULT_THRESHOLD),
                      rx);
-        Cleaner{tx}
+        Cleaner{tx: Some(tx)}
     }
 
     // Start a task that will clean the system in the background, whenever
@@ -134,6 +134,14 @@ impl Cleaner {
                     })
             })
         }))).unwrap()
+    }
+
+    // Shutdown the Cleaner's background task
+    pub fn shutdown(&mut self) -> impl Future<Item=(), Error=()> + Send {
+        // Ignore return value.  An error indicates that the Cleaner is already
+        // shut down.
+        let _ = self.tx.take();
+        future::ok::<(), ()>(())
     }
 }
 

@@ -44,6 +44,7 @@ pub trait PoolTrait {
     fn name(&self) -> &str;
     fn read(&self, buf: IoVecMut, pba: PBA)
         -> Box<Future<Item=(), Error=Error> + Send>;
+    fn shutdown(&self);
     fn size(&self) -> LbaT;
     fn sync_all(&self) -> Box<Future<Item=(), Error=Error> + Send>;
     fn uuid(&self) -> Uuid;
@@ -83,6 +84,9 @@ impl PoolTrait for MockPoolWrapper {
         -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.0.read(buf, pba)
+    }
+    fn shutdown(&self) {
+        self.0.shutdown()
     }
     fn size(&self) -> LbaT {
         self.0.size()
@@ -405,6 +409,11 @@ impl DDML {
         self.put_common(cacheref, compression, txg)
     }
 
+    /// Shutdown all background tasks.
+    pub fn shutdown(&self) {
+        self.pool.shutdown()
+    }
+
     /// Return approximately the usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
         self.pool.size()
@@ -523,6 +532,7 @@ mod t {
             fn name(&self) -> &str;
             fn read(&self, buf: IoVecMut, pba: PBA)
                 -> Box<Future<Item=(), Error=Error> + Send>;
+            fn shutdown(&self);
             fn size(&self) -> LbaT;
             fn sync_all(&self)
                 -> Box<Future<Item=(), Error=Error> + Send>;

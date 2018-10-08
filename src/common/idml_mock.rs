@@ -148,6 +148,14 @@ impl IDMLMock {
         }
     }
 
+    pub fn shutdown(&self) {
+        self.e.was_called_returning::<(), ()>("shutdown", ())
+    }
+
+    pub fn expect_shutdown(&mut self) -> Method<(), ()> {
+        self.e.expect::<(), ()>("shutdown")
+    }
+
     pub fn size(&self) -> LbaT {
          self.e.was_called_returning::<(), LbaT> ("size", ())
     }

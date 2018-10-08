@@ -316,6 +316,11 @@ impl<'a> IDML {
             })
     }
 
+    /// Shutdown all background tasks.
+    pub fn shutdown(&self) {
+        self.ddml.shutdown()
+    }
+
     /// Return approximately the usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
         self.ddml.size()
