@@ -1691,8 +1691,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Box<Future<Item=Option<V>, Error=Error> + Send>
     {
         let dml2 = dml.clone();
-        // First, fix the node, if necessary
-        if child.underflow(inner.min_fanout) {
+        // First, fix the node, if necessary.  Merge/steal even if the node
+        // currently satifisfies the min_fanout, because we may remove end up
+        // removing a child
+        if child.underflow(inner.min_fanout + 1) {
             let i2 = inner.clone();
             Box::new(
                 Tree::fix_int(i2, dml.clone(), parent, child_idx, child, txg)

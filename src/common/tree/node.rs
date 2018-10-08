@@ -737,7 +737,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     /// Is this node currently underflowing?
     pub fn underflow(&self, min_fanout: u64) -> bool {
         let len = self.len() as u64;
-        len <= min_fanout
+        len < min_fanout
     }
 
     /// Should this node be split because it's too big?
