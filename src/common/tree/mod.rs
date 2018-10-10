@@ -15,7 +15,7 @@ use futures::{
     Future,
     Poll,
     Sink,
-    future::{self, IntoFuture},
+    future::{self, IntoFuture, Loop},
     stream::{self, Stream},
     sync::mpsc
 };
@@ -1554,7 +1554,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Traverse the tree, recursing through every node in the cut.  Fix any
         // nodes marked as in-danger
         type FixitFut<A, K, V> = Box<
-            Future<Item=(TreeWriteGuard<A, K, V>, HashSet<usize>, i8),
+            Future<Item=(TreeWriteGuard<A, K, V>, HashSet<usize>, i8, i8),
                    Error=Error> + Send
         >;
 
@@ -1601,6 +1601,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let dml5 = dml.clone();
             let inner2 = inner.clone();
             let inner3 = inner.clone();
+            let min_fanout = inner.min_fanout;
             let danger = if parent_guard.as_int().children[idx].ptr.is_mem() {
                 let p = parent_guard.as_int().children[idx].ptr.as_mem();
                 map.remove(&(p as *const Node<A, K, V> as usize))
@@ -1608,39 +1609,67 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 false
             };
             let fut = if danger {
-                let fut = parent_guard.xlock(dml2, idx, txg)
-                .and_then(move |(parent, child)| {
-                    Tree::fix_int(inner2, dml3, parent, idx, child, txg)
+                // After a range_delete, merging once may be insufficient to fix
+                // a Node.  Loop until it's fixed.  We should need to loop at
+                // most twice.
+                let fut = future::loop_fn((parent_guard, 0i8, 0i8),
+                move |(parent_guard, mb, ma)| {
+                    let inner4 = inner2.clone();
+                    let dml6 = dml3.clone();
+                    parent_guard.xlock(dml2.clone(), idx - (mb as usize), txg)
+                    .and_then(move |(parent_guard, child)| {
+                        // A node in the cut have two children in the cut.
+                        // Fixing them may require, worst case, merging them
+                        // both with another node not in the cut, reducing the
+                        // node size by two.  So preemptively fix nodes that may
+                        // underflow if they lose two children.
+                        if child.underflow(min_fanout + 2) {
+                            let fut = Tree::fix_int(inner4, dml6, parent_guard,
+                                                    idx - (mb as usize), child,
+                                                    txg)
+                            .map(move |(parent_guard, nmb, nma)| {
+                                Loop::Continue((parent_guard, nmb + mb,
+                                                nma + ma))
+                            });
+                            Box::new(fut)
+                                as Box<Future<Item=_, Error=_> + Send>
+                        } else {
+                            let r = Loop::Break((parent_guard, mb, ma));
+                            Box::new(future::ok::<_, _>(r))
+                                as Box<Future<Item=_, Error=_> + Send>
+                        }
+                    })
                 });
                 Box::new(fut) as IntermediateFut<A, K, V>
             } else {
                 let fut = Ok((parent_guard, 0i8, 0i8)).into_future();
                 Box::new(fut) as IntermediateFut<A, K, V>
-            }.and_then(move |(parent_guard, merged_before, merged_after)| {
-                let merged = merged_before + merged_after;
-                parent_guard.xlock(dml4, idx - merged_before as usize, txg)
-                    .map(move |(parent, child)| (parent, child, merged))
-            }).and_then(move |(parent_guard, child_guard, merged)| {
+            }.and_then(move |(parent_guard, mb, ma)| {
+                parent_guard.xlock(dml4, idx - mb as usize, txg)
+                    .map(move |(parent, child)| (parent, child, mb, ma))
+            }).and_then(move |(parent_guard, child_guard, mb, ma)| {
                 Tree::range_delete_pass2(inner3, dml5, child_guard, map, range2,
                                          child_ubound, txg)
-                    .map(move |map| (parent_guard, map, merged))
+                    .map(move |map| (parent_guard, map, mb, ma))
             });
             Box::new(fut) as FixitFut<A, K, V>
         };
 
         let fut = match children_to_fix.0 {
-            None => Box::new(Ok((guard, map, 0i8)).into_future())
+            None => Box::new(Ok((guard, map, 0i8, 0i8)).into_future())
                 as FixitFut<A, K, V>,
             Some(idx) => fixit(guard, idx, map, range2)
         }
-        .and_then(move |(parent_guard, map, merged)| {
+        .and_then(move |(parent_guard, map, mb, ma)| {
+            // Fix the second child in the cut, if there is one, and if it
+            // didn't merge with the first child.
             match children_to_fix.1 {
-                Some(idx) if Some(idx - merged as usize) != children_to_fix.0 =>
-                    fixit(parent_guard, idx - merged as usize, map, range3),
-                _ => Box::new(Ok((parent_guard, map, merged)).into_future())
+                Some(idx) if ma == 0 =>
+                    fixit(parent_guard, idx - mb as usize, map, range3),
+                _ => Box::new(Ok((parent_guard, map, mb, ma)).into_future())
                     as FixitFut<A, K, V>,
             }}
-        ).map(|(_, map, _)| map);
+        ).map(|(_, map, _, _)| map);
         Box::new(fut)
     }
 
