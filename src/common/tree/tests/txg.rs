@@ -316,6 +316,7 @@ root:
     assert!(!rt.block_on(tree.check()).unwrap());
 }
 
+// The root Node is always allowed to underflow
 #[test]
 fn check_root_int_underflow() {
     let mock = DMLMock::new();
@@ -323,8 +324,8 @@ fn check_root_int_underflow() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+min_fanout: 3
+max_fanout: 7
 _max_size: 4194304
 root:
   key: 0
@@ -345,10 +346,24 @@ root:
                   items:
                     10: 10.0
                     11: 11.0
+                    12: 12.0
+                    13: 13.0
+          - key: 19
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    20: 20.0
+                    21: 21.0
+                    22: 22.0
+                    23: 23.0
 "#);
 
     let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(!rt.block_on(tree.check()).unwrap());
+    assert!(rt.block_on(tree.check()).unwrap());
 }
 
 // The root node is allowed to underflow if it's a leaf

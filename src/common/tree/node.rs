@@ -677,7 +677,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     {
         let id = NodeId{height, key};
         let l = self.len();
-        let len_ok = if (!is_root || !self.is_leaf()) && l < min_fanout {
+        let len_ok = if (!is_root) && l < min_fanout {
             eprintln!("Node underflow.  Node {:?} has {} items", id, l);
             false
         } else if l > max_fanout {
