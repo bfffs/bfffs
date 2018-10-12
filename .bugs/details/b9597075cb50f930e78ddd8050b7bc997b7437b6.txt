@@ -1,0 +1,31 @@
+# Lines starting with '#' and sections without content
+# are not displayed by a call to 'details'
+#
+[paths]
+# Paths related to this bug.
+# suggested format: REPO_PATH:LINENUMBERS
+
+
+[details]
+Revision 768:6805b1abde4a caused range_delete_pass2 to attempt to fix an
+in-danger node repeatedly until the danger goes away.  This fixed a bug
+whereby fixing a child could cause the parent to underflow.  However, it's
+possible that the child can't be fixed to the exacting standard demanded
+(min_fanout + 2).  In that case, fixit() will infinitely loop in the
+future::loop_fn statement.
+
+
+[expected]
+# The expected result
+
+
+[actual]
+# What happened instead
+
+
+[reproduce]
+Test case range_delete_cant_fix_for_minfanout_plus_two added.
+
+
+[comments]
+# Comments and updates - leave your name

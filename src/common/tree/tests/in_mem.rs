@@ -2048,6 +2048,204 @@ root:
           17: 17.0"#);
 }
 
+// After pass1, there are two sibling nodes that can't be fixed so that each of
+// them satisfies the min_fanout + 2 rule.
+// Regression test for bug b959707
+#[test]
+#[ignore = "Test currently fails: bug b959707"]
+fn range_delete_cant_fix_for_minfanout_plus_two() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr: 1003623
+          - key: 3889
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr: 1003889
+          - key: 4145
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 4160
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004160
+                    - key: 4194
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4193: 4193.0
+                              4195: 4195.0
+          - key: 4599
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 4600
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4601: 4601.0
+                              4608: 4608.0
+                    - key: 4609
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4610: 4610.0
+                              4612: 4612.0
+                    - key: 4617
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004617
+                    - key: 4627
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004627
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(4480..4600, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr: 1003623
+          - key: 3889
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr: 1003889
+          - key: 4145
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 4160
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004160
+                    - key: 4194
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4193: 4193.0
+                              4195: 4195.0
+                    - key: 4600
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4601: 4601.0
+                              4608: 4608.0
+          - key: 4609
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 4609
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4610: 4610.0
+                              4612: 4612.0
+                    - key: 4617
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004617
+                    - key: 4627
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004627"#);
+}
+
 // Delete a range that's contained within a single LeafNode
 #[test]
 fn range_delete_single_node() {
@@ -2155,6 +2353,179 @@ root:
                     10: 10.0
                     11: 11.0
                     12: 12.0"#);
+}
+
+/// At 769:376dcac1d512, this test will cause a node to underflow during pass1,
+/// be stolen left during pass2, and never get fixed.
+/// Regression test for 4a99d7f
+#[test]
+#[ignore = "Test currently fails: bug 4a99d7f"]
+fn range_delete_underflow_and_steal_left() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr: 1003623
+          - key: 3889
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr: 1003889
+          - key: 4145
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 4194
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4193: 4193.0
+                              4195: 4195.0
+                    - key: 4457
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4565: 4565.0
+                              4567: 4567.0
+          - key: 4599
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 4600
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4601: 4601.0
+                              4608: 4608.0
+                    - key: 4609
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4610: 4610.0
+                              4612: 4612.0
+                    - key: 4617
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004617
+                    - key: 4627
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004627
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(4480..4608, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr: 1003623
+          - key: 3889
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Addr: 1003889
+          - key: 4145
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 4193
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4193: 4193.0
+                              4195: 4195.0
+                    - key: 4601
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4608: 4608.0
+                              4609: 4609.0
+                              4611: 4611.0
+                    - key: 4617
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004617"#);
 }
 
 // Delete a range that includes a whole Node at the end of the Tree

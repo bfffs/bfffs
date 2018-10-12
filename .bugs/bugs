@@ -4,8 +4,10 @@ IDML::move_record shouldn't decompress records read from disk | owner:"hg.user",
 Empty leaf node during Tree::get_range_r                     | owner:Alan Somers <asomers@gmail.com>, open:False, id:2d045899e991a7cf977303abb565c09cf8c34b2f, time:1537394073.09
 Eliminate StripeBuffer for NullRaid                          | owner:"hg.user", open:False, id:2de8809213ad39011fc4244722cd80db2d73a48a, time:1535047502.28
 IDML::clean_zone occasionally fails to fully clean           | owner:"hg.user", open:False, id:398f578a650ca7e6e3559de1b77255b4c829698a, time:1535586410.54
+range_delete_pass2 doesn't fix underflowing nodes that get stolen | owner:Alan Somers <asomers@gmail.com>, open:True, id:4a99d7fbd8891cb8e0453d2b6306ce28c37e34a0, time:1539362545.92
 DowncastError ONLY ON NIGHTLY                                | owner:"hg.user", open:True, id:529defe6770c6591f6a7a1d8ff32d259993917a4, time:1535047452.46
 DDML::put_common tries to truncate DivBufShares that are still referenced | owner:"hg.user", open:False, id:709377ba5f51040cacb7f3e922d469400bfe422a, time:1535047528.71
+Infinite iteration caused by 768:6805b1abde4a                | owner:Alan Somers <asomers@gmail.com>, open:True, id:b9597075cb50f930e78ddd8050b7bc997b7437b6, time:1539362332.72
 IDML::move_record tries to read cache values as wrong type   | owner:"hg.user", open:False, id:ba2b5032c8b6c39c47e347b8ca78a7d16b5841b6, time:1535047396.36
 Node underflow after range_delete with min_fanout > 2        | owner:Alan Somers <asomers@gmail.com>, open:False, id:c2bd7069a3422387a6b40c4fd337cf01b3740c80, time:1539029603.41
 Tree::rewrite_node doesn't update node's TXG range           | owner:"hg.user", open:True, id:c92cb41103d75c95273276c4683503886bed4420, time:1535045181.12
