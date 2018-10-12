@@ -1066,7 +1066,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + Send + 'static,
+              R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
         // Sanity check the arguments
@@ -1441,7 +1441,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         range: R, txg: TxgT)
         -> Box<Future<Item=(), Error=Error> + Send>
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + Send + 'static,
+              R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
         let tree_height = inner.height.load(Ordering::Relaxed) as u8;
@@ -1547,7 +1547,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                 range: R, ubound: Option<K>, txg: TxgT)
         -> Box<Future<Item=HashSet<usize>, Error=Error> + Send>
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + Send + 'static,
+              R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
         // Outline:

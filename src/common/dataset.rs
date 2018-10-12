@@ -86,7 +86,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
     pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + Send + 'static,
+              R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Debug + Ord + Clone + Send + 'static
     {
         self.tree.range_delete(range, txg)
@@ -202,7 +202,7 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
     pub fn range_delete<R, T>(&self, range: R)
         -> impl Future<Item=(), Error=Error> + Send
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + Send + 'static,
+              R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Debug + Ord + Clone + Send + 'static
     {
         self.dataset.range_delete(range, self.txg)
