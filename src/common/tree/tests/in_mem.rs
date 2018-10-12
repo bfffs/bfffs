@@ -2206,7 +2206,7 @@ root:
                     - key: 4600
                       txgs:
                         start: 41
-                        end: 42
+                        end: 43
                       ptr:
                         Mem:
                           Leaf:
@@ -2397,7 +2397,17 @@ root:
               Mem:
                 Int:
                   children:
-                    - key: 4194
+                    - key: 4150
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4151: 4151.0
+                              4152: 4152.0
+                    - key: 4193
                       txgs:
                         start: 41
                         end: 42
@@ -2457,6 +2467,12 @@ root:
                         end: 42
                       ptr:
                         Addr: 1004627
+                    - key: 4637
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004637
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
@@ -2498,17 +2514,7 @@ root:
               Mem:
                 Int:
                   children:
-                    - key: 4193
-                      txgs:
-                        start: 41
-                        end: 42
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              4193: 4193.0
-                              4195: 4195.0
-                    - key: 4601
+                    - key: 4150
                       txgs:
                         start: 42
                         end: 43
@@ -2516,15 +2522,39 @@ root:
                         Mem:
                           Leaf:
                             items:
+                              4151: 4151.0
+                              4152: 4152.0
+                              4193: 4193.0
+                              4195: 4195.0
                               4608: 4608.0
-                              4609: 4609.0
-                              4611: 4611.0
+                    - key: 4609
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4610: 4610.0
+                              4612: 4612.0
                     - key: 4617
                       txgs:
                         start: 41
                         end: 42
                       ptr:
-                        Addr: 1004617"#);
+                        Addr: 1004617
+                    - key: 4627
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004627
+                    - key: 4637
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004637"#);
 }
 
 // Delete a range that includes a whole Node at the end of the Tree

@@ -1571,7 +1571,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let children_to_fix = match (start_idx_bound, end_idx_bound) {
             (Bound::Included(_), Bound::Excluded(_)) => (None, None),
             (Bound::Included(_), Bound::Included(j)) => (None, Some(j)),
-            (Bound::Excluded(i), Bound::Excluded(_)) => (Some(i), None),
+            (Bound::Excluded(i), Bound::Excluded(j))
+                if j <= i + 1 => (Some(i), None),
+            (Bound::Excluded(i), Bound::Excluded(j))
+                if j == i + 2 => (Some(i), Some(i + 1)),
+            (Bound::Excluded(i), Bound::Excluded(j))
+                if j > i + 2 => panic!("shouldn't happen"),
+            (Bound::Excluded(_), Bound::Excluded(_)) => unreachable!(),
             (Bound::Excluded(i), Bound::Included(j)) if j > i =>
                 (Some(i), Some(j)),
             (Bound::Excluded(i), Bound::Included(j)) if j <= i =>
