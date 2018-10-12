@@ -1676,8 +1676,8 @@ fn range_delete_merge_and_parent_underflow() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+min_fanout: 3
+max_fanout: 7
 _max_size: 4194304
 root:
   key: 0
@@ -1706,6 +1706,7 @@ root:
                             items:
                               1: 1.0
                               2: 2.0
+                              3: 3.0
                     - key: 4
                       txgs:
                         start: 41
@@ -1716,6 +1717,24 @@ root:
                             items:
                               4: 4.0
                               5: 5.0
+                              6: 6.0
+                    - key: 7
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              7: 7.0
+                              8: 8.0
+                              9: 9.0
+                    - key: 10
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 10010
           - key: 20
             txgs:
               start: 0
@@ -1734,33 +1753,42 @@ root:
                             items:
                               20: 20.0
                               21: 21.0
+                              22: 22.0
                     - key: 23
                       txgs:
                         start: 41
                         end: 42
                       ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              23: 23.0
-                              24: 24.0
+                        Addr: 10023
+                    - key: 26
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 10026
           - key: 30
             txgs:
               start: 0
               end: 1
             ptr:
               Addr: 300
+          - key: 40
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Addr: 10040
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(2..5, TxgT::from(42))
+        tree.range_delete(2..6, TxgT::from(42))
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+min_fanout: 3
+max_fanout: 7
 _max_size: 4194304
 root:
   key: 0
@@ -1788,10 +1816,17 @@ root:
                           Leaf:
                             items:
                               1: 1.0
-                              5: 5.0
-                              20: 20.0
-                              21: 21.0
-                    - key: 23
+                              6: 6.0
+                              7: 7.0
+                              8: 8.0
+                              9: 9.0
+                    - key: 10
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 10010
+                    - key: 20
                       txgs:
                         start: 41
                         end: 42
@@ -1799,14 +1834,33 @@ root:
                         Mem:
                           Leaf:
                             items:
-                              23: 23.0
-                              24: 24.0
+                              20: 20.0
+                              21: 21.0
+                              22: 22.0
+                    - key: 23
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 10023
+                    - key: 26
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 10026
           - key: 30
             txgs:
               start: 0
               end: 1
             ptr:
-              Addr: 300"#);
+              Addr: 300
+          - key: 40
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Addr: 10040"#);
 }
 
 /// Delete a range that causes the root node to be merged down
