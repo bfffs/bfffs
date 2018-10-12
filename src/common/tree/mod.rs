@@ -15,7 +15,7 @@ use futures::{
     Future,
     Poll,
     Sink,
-    future::{self, IntoFuture, Loop},
+    future::{self, IntoFuture},
     stream::{self, Stream},
     sync::mpsc
 };
@@ -1594,13 +1594,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
             } else {
                 ubound
             };
-            let range2 = range.clone();
             let dml2 = dml.clone();
-            let dml3 = dml.clone();
             let dml4 = dml.clone();
             let dml5 = dml.clone();
+            let dml6 = dml.clone();
+            let dml7 = dml.clone();
             let inner2 = inner.clone();
             let inner3 = inner.clone();
+            let inner4 = inner.clone();
             let min_fanout = inner.min_fanout;
             let danger = if parent_guard.as_int().children[idx].ptr.is_mem() {
                 let p = parent_guard.as_int().children[idx].ptr.as_mem();
@@ -1609,36 +1610,34 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 false
             };
             let fut = if danger {
-                // After a range_delete, merging once may be insufficient to fix
-                // a Node.  Loop until it's fixed.  We should need to loop at
-                // most twice.
-                let fut = future::loop_fn((parent_guard, 0i8, 0i8),
-                move |(parent_guard, mb, ma)| {
-                    let inner4 = inner2.clone();
-                    let dml6 = dml3.clone();
-                    parent_guard.xlock(dml2.clone(), idx - (mb as usize), txg)
-                    .and_then(move |(parent_guard, child)| {
-                        // A node in the cut have two children in the cut.
-                        // Fixing them may require, worst case, merging them
-                        // both with another node not in the cut, reducing the
-                        // node size by two.  So preemptively fix nodes that may
-                        // underflow if they lose two children.
-                        if child.underflow(min_fanout + 2) {
-                            let fut = Tree::fix_int(inner4, dml6, parent_guard,
-                                                    idx - (mb as usize), child,
-                                                    txg)
-                            .map(move |(parent_guard, nmb, nma)| {
-                                Loop::Continue((parent_guard, nmb + mb,
-                                                nma + ma))
-                            });
-                            Box::new(fut)
-                                as Box<Future<Item=_, Error=_> + Send>
-                        } else {
-                            let r = Loop::Break((parent_guard, mb, ma));
-                            Box::new(future::ok::<_, _>(r))
-                                as Box<Future<Item=_, Error=_> + Send>
-                        }
-                    })
+                let fut = parent_guard.xlock(dml2.clone(), idx, txg)
+                .and_then(move |(parent, child)| {
+                    Tree::fix_int(inner2, dml2, parent, idx, child, txg)
+                }).and_then(move |(parent_guard, mb, ma)| {
+                    // After a range_delete, fixing once may be insufficient to
+                    // fix a Node, because two nodes may merge that could have
+                    // as few as one child each.  We may need to fix at most
+                    // twice.
+                    parent_guard.xlock(dml7, idx - mb as usize, txg)
+                    .map(move |(parent, child)| (parent, child, mb, ma))
+                }).and_then(move |(parent, child, mb, ma)| {
+                    // A node in the cut have two children in the cut.  Fixing
+                    // them may require, worst case, merging them both with
+                    // another node not in the cut, reducing the node size by
+                    // two.  So preemptively fix nodes that may underflow if
+                    // they lose two children.
+                    if child.underflow(min_fanout + 2) {
+                        let fut = Tree::fix_int(inner4, dml6, parent,
+                                                idx - (mb as usize), child, txg)
+                        .map(move |(parent, nmb, nma)| {
+                            (parent, nmb + mb, nma + ma)
+                        });
+                        Box::new(fut)
+                            as Box<Future<Item=_, Error=_> + Send>
+                    } else {
+                        Box::new(future::ok::<_, _>((parent, mb, ma)))
+                            as Box<Future<Item=_, Error=_> + Send>
+                    }
                 });
                 Box::new(fut) as IntermediateFut<A, K, V>
             } else {
@@ -1648,7 +1647,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 parent_guard.xlock(dml4, idx - mb as usize, txg)
                     .map(move |(parent, child)| (parent, child, mb, ma))
             }).and_then(move |(parent_guard, child_guard, mb, ma)| {
-                Tree::range_delete_pass2(inner3, dml5, child_guard, map, range2,
+                Tree::range_delete_pass2(inner3, dml5, child_guard, map, range,
                                          child_ubound, txg)
                     .map(move |map| (parent_guard, map, mb, ma))
             });

@@ -2052,7 +2052,6 @@ root:
 // them satisfies the min_fanout + 2 rule.
 // Regression test for bug b959707
 #[test]
-#[ignore = "Test currently fails: bug b959707"]
 fn range_delete_cant_fix_for_minfanout_plus_two() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
