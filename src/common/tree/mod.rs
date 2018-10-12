@@ -586,8 +586,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// on-disk Nodes.  All the Nodes can be combined into a single YAML map by
     /// simply removing the `---` separators.
     // `&mut Formatter` isn't `Send`, so these Futures can only be used with the
-    // current_thread Runtime.  Given that limitation, we may as well make our
-    // own Runtime
+    // current_thread Runtime.  Given that limitation, we may as well
+    // instantiate our own Runtime
     pub fn dump(&self, f: &mut io::Write) -> Result<(), Error> {
         // Outline:
         // * Lock the whole tree and proceed bottom-up.

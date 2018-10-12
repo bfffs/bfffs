@@ -21,6 +21,7 @@ use libc;
 use std::{
     cmp,
     ffi::{OsStr, OsString},
+    fs::File,
     mem,
     os::unix::ffi::OsStrExt,
     sync::Arc,
@@ -147,6 +148,14 @@ impl Fs {
         };
         self.do_create(parent, libc::DT_REG, 0, name,
                        libc::S_IFREG | (mode as u16), 1, f)
+    }
+
+    /// Dump a YAMLized representation of the filesystem's Tree to a plain
+    /// `std::fs::File`.
+    ///
+    /// Must be called from the synchronous domain.
+    pub fn dump(&self, file: File) {
+        self.db.dump(file, self.tree)
     }
 
     pub fn getattr(&self, ino: u64) -> Result<Attr, i32> {

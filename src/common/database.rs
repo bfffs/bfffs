@@ -25,6 +25,7 @@ use libc;
 use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
+    fs::File,
     sync::{Arc, Mutex},
     time::{Duration, Instant}
 };
@@ -276,6 +277,16 @@ impl Database {
     {
         let forest = ITree::create(idml.clone());
         Database::new(idml, forest, handle)
+    }
+
+    /// Dump a YAMLized representation of the given Tree to a plain
+    /// `std::fs::File`.
+    ///
+    /// Must be called from the synchronous domain.
+    pub fn dump(&self, mut file: File, tree: TreeID) {
+        self.inner.fs_trees.lock().unwrap()
+        .get(&tree).unwrap()
+        .dump(&mut file).unwrap();
     }
 
     /// Create a new, blank filesystem

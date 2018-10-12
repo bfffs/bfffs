@@ -12,6 +12,7 @@ use futures::{
     sync::oneshot
 };
 use simulacrum::*;
+use std::fs::File;
 
 pub type ReadOnlyFilesystem = ReadOnlyDatasetMock<FSKey, FSValue<RID>>;
 pub type ReadWriteFilesystem = ReadWriteDatasetMock<FSKey, FSValue<RID>>;
@@ -28,6 +29,10 @@ impl DatabaseMock {
     pub fn expect_clean(&mut self) -> Method<(), oneshot::Receiver<()>>
     {
         self.e.expect::<(), oneshot::Receiver<()>>("clean")
+    }
+
+    pub fn dump(&self, file: File, tree: TreeID) {
+        self.e.was_called_returning::<(File, TreeID), ()>("dump", (file, tree))
     }
 
     pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> + Send {
