@@ -671,7 +671,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Fix an Int node in danger of being underfull, returning the parent guard
     /// back to the caller
     #[cfg_attr(feature = "cargo-clippy", allow(clippy::collapsible_if))]
-    fn fix_int<Q>(inner: Arc<Inner<A, K, V>>, dml: &Arc<D>,
+    fn fix_int<Q>(inner: &Arc<Inner<A, K, V>>, dml: &Arc<D>,
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, mut child: TreeWriteGuard<A, K, V>,
                   txg: TxgT)
@@ -687,6 +687,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         debug_assert!(nchildren >= 2,
             "nchildren < 2 for tree with parent key {:?}, idx={:?}",
             parent.as_int().children[child_idx].key, child_idx);
+        let max_fanout = inner.max_fanout;
         let (fut, sib_idx, right) = {
             if child_idx < nchildren - 1 {
                 let sib_idx = child_idx + 1;
@@ -700,7 +701,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let (before, after) = {
                 let children = &mut parent.as_int_mut().children;
                 if right {
-                    if child.can_merge(&sibling, inner.max_fanout) {
+                    if child.can_merge(&sibling, max_fanout) {
                         child.merge(sibling);
                         children[child_idx].txgs.start = child.start_txg(txg);
                         children.remove(sib_idx);
@@ -713,7 +714,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         (0, 1)
                     }
                 } else {
-                    if sibling.can_merge(&child, inner.max_fanout) {
+                    if sibling.can_merge(&child, max_fanout) {
                         sibling.merge(child);
                         children[sib_idx].txgs.start = sibling.start_txg(txg);
                         children.remove(child_idx);
@@ -1492,7 +1493,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         let idx = i - merged;
                         root_guard.xlock(&dml, idx, txg)
                         .and_then(move |(root_guard, child_guard)| {
-                            Tree::fix_int(inner4, &dml4,
+                            Tree::fix_int(&inner4, &dml4,
                                           root_guard, idx, child_guard, txg)
                         }).map(|(root_guard, before, after)| {
                             let merged = (before + after) as usize;
@@ -1608,7 +1609,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let fut = if danger {
                 let fut = parent_guard.xlock(&dml2, idx, txg)
                 .and_then(move |(parent, child)| {
-                    Tree::fix_int(inner2, &dml2, parent, idx, child, txg)
+                    Tree::fix_int(&inner2, &dml2, parent, idx, child, txg)
                 }).and_then(move |(parent_guard, mb, ma)| {
                     // After a range_delete, fixing once may be insufficient to
                     // fix a Node, because two nodes may merge that could have
@@ -1623,7 +1624,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // two.  So preemptively fix nodes that may underflow if
                     // they lose two children.
                     if child.underflow(min_fanout + 2) {
-                        let fut = Tree::fix_int(inner4, &dml6, parent,
+                        let fut = Tree::fix_int(&inner4, &dml6, parent,
                                                 idx - (mb as usize), child, txg)
                         .map(move |(parent, nmb, nma)| {
                             (parent, nmb + mb, nma + ma)
@@ -1719,9 +1720,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // currently satifisfies the min_fanout, because we may remove end up
         // removing a child
         if child.underflow(inner.min_fanout + 1) {
-            let i2 = inner.clone();
             Box::new(
-                Tree::fix_int(i2, &dml, parent, child_idx, child, txg)
+                Tree::fix_int(&inner, &dml, parent, child_idx, child, txg)
                     .and_then(move |(parent, _, _)| {
                         let child_idx = parent.as_int().position(&k);
                         parent.xlock(&dml, child_idx, txg)
