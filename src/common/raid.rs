@@ -143,7 +143,7 @@ impl Codec {
                       where T : BorrowMut<[u8]> {
         let mut cursors : Vec<SGCursor> =
             data.iter()
-                .map(SGCursor::from)
+                .map(|sglist| SGCursor::from(&sglist[..]))
                 .collect();
         let mut l = 0;
         while l < len {

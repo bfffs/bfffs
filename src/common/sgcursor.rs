@@ -15,7 +15,7 @@ use common::*;
 ///   chosen locations (plus the original boundaries, too).  This is necessary
 ///   for splitting an `SGList` up into multiple columns.
 pub struct SGCursor<'a> {
-    sglist: &'a SGList,
+    sglist: &'a [IoVec],
     sglist_idx: usize,
     iovec_idx: usize
 }
@@ -61,8 +61,8 @@ impl<'a> SGCursor<'a> {
     }
 }
 
-impl<'a> From<&'a SGList> for SGCursor<'a> {
-    fn from(src: &'a SGList) -> SGCursor {
+impl<'a> From<&'a [IoVec]> for SGCursor<'a> {
+    fn from(src: &'a [IoVec]) -> SGCursor {
         SGCursor { sglist: src, sglist_idx: 0, iovec_idx: 0}
     }
 }
@@ -82,7 +82,7 @@ mod tests {
         let db1 = dbs1.try().unwrap();
         let db2 = dbs2.try().unwrap();
         let sglist : SGList = vec![db0, db1, db2];
-        let mut cursor = SGCursor::from(&sglist);
+        let mut cursor = SGCursor::from(&sglist[..]);
         assert_eq!(cursor.peek_len(), 5);
         assert_eq!(&cursor.next(MAX).unwrap()[..], &[0, 1, 2, 3, 4][..]);
         assert_eq!(cursor.peek_len(), 5);
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     pub fn test_null() {
         let sglist = SGList::new();
-        let mut cursor = SGCursor::from(&sglist);
+        let mut cursor = SGCursor::from(&sglist[..]);
         assert_eq!(cursor.peek_len(), 0);
         assert_eq!(cursor.next(MAX), None);
     }
@@ -109,14 +109,14 @@ mod tests {
         let divbuf = dbs.try().unwrap();
         let sglist : SGList = vec![divbuf.clone()];
         {
-            let mut cursor = SGCursor::from(&sglist);
+            let mut cursor = SGCursor::from(&sglist[..]);
             assert_eq!(cursor.peek_len(), 10);
             assert_eq!(cursor.next(MAX).unwrap(), divbuf);
             assert_eq!(cursor.next(MAX), None);
         }
         // Now try smaller accesses
         {
-            let mut cursor = SGCursor::from(&sglist);
+            let mut cursor = SGCursor::from(&sglist[..]);
             assert_eq!(cursor.peek_len(), 10);
             assert_eq!(&cursor.next(3).unwrap()[..], &[0, 1, 2][..]);
             assert_eq!(cursor.peek_len(), 7);

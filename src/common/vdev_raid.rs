@@ -556,7 +556,7 @@ impl VdevRaid {
             end_lba >= stripe_buffer.unwrap().lba() {
 
             // We need to service part of the read from the StripeBuffer
-            let mut cursor = SGCursor::from(stripe_buffer.unwrap().peek());
+            let mut cursor = SGCursor::from(&stripe_buffer.unwrap().peek()[..]);
             let direct_len = if stripe_buffer.unwrap().lba() > lba {
                 (stripe_buffer.unwrap().lba() - lba) as usize * BYTES_PER_LBA
             } else {
@@ -922,7 +922,7 @@ impl VdevRaid {
     /// This is mostly useful internally, for writing from the stripe buffer.
     /// It should not be used publicly.
     #[doc(hidden)]
-    pub fn writev_at_one(&self, buf: &SGList, lba: LbaT)
+    pub fn writev_at_one(&self, buf: &[IoVec], lba: LbaT)
         -> impl Future<Item = (), Error = Error>
     {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
