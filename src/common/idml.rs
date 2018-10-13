@@ -185,8 +185,7 @@ impl<'a> IDML {
         #[cfg(debug_assertions)]
         let zone2 = zone.clone();
         self.list_indirect_records(&zone).for_each(move |record| {
-            IDML::move_record(cache2.clone(), trees2.clone(), ddml2.clone(),
-                              record, txg)
+            IDML::move_record(&cache2, &trees2, &ddml2, record, txg)
         }).and_then(move |_| {
             let txgs2 = zone.txgs.clone();
             let pba_range = zone.pba..end;
@@ -252,8 +251,8 @@ impl<'a> IDML {
                  mut label_reader: LabelReader) -> (Self, LabelReader)
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let alloct = Tree::open(ddml.clone(), l.alloct).unwrap();
-        let ridt = Tree::open(ddml.clone(), l.ridt).unwrap();
+        let alloct = Tree::open(ddml.clone(), &l.alloct).unwrap();
+        let ridt = Tree::open(ddml.clone(), &l.ridt).unwrap();
         let transaction = RwLock::new(l.txg);
         let next_rid = Atomic::new(l.next_rid);
         let trees = Arc::new(Trees{alloct, ridt});
@@ -262,8 +261,8 @@ impl<'a> IDML {
     }
 
     /// Rewrite the given direct Record and update its metadata.
-    fn move_record(cache: Arc<Mutex<Cache>>, trees: Arc<Trees>, ddml: Arc<DDML>,
-                   rid: RID, txg: TxgT)
+    fn move_record(cache: &Arc<Mutex<Cache>>, trees: &Arc<Trees>,
+                   ddml: &Arc<DDML>, rid: RID, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
     {
         type MyFut = Box<Future<Item=DRP, Error=Error> + Send>;
@@ -869,8 +868,8 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp0, 1);
 
-        rt.block_on(IDML::move_record(idml.cache.clone(), idml.trees.clone(),
-                                      idml.ddml.clone(), rid, TxgT::from(0))
+        rt.block_on(IDML::move_record(&idml.cache, &idml.trees,
+                                      &idml.ddml, rid, TxgT::from(0))
         ).unwrap();
 
         // Now verify the RIDT and alloct entries
@@ -915,8 +914,8 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         inject_record(&mut rt, &idml, &rid, &drp0, 1);
 
-        rt.block_on(IDML::move_record(idml.cache.clone(), idml.trees.clone(),
-                                      idml.ddml.clone(), rid, TxgT::from(0))
+        rt.block_on(IDML::move_record(&idml.cache, &idml.trees,
+                                      &idml.ddml, rid, TxgT::from(0))
         ).unwrap();
 
         // Now verify the RIDT and alloct entries

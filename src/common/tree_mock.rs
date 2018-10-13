@@ -166,7 +166,7 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
         }
     }
 
-    pub fn open(_dml: Arc<D>, _on_disk: TreeOnDisk) -> bincode::Result<Self> {
+    pub fn open(_dml: Arc<D>, _on_disk: &TreeOnDisk) -> bincode::Result<Self> {
         Ok(Self::new())
     }
 

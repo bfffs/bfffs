@@ -176,7 +176,7 @@ struct Inner {
 }
 
 impl Inner {
-    fn open_filesystem(inner: Arc<Inner>, tree_id: TreeID)
+    fn open_filesystem(inner: &Arc<Inner>, tree_id: TreeID)
         -> Box<Future<Item=Arc<ITree<FSKey, FSValue<RID>>>, Error=Error> + Send>
     {
         if let Some(fs) = inner.fs_trees.lock().unwrap().get(&tree_id) {
@@ -187,7 +187,7 @@ impl Inner {
         let inner2 = inner.clone();
         let fut = inner.forest.get(tree_id)
             .map(move |tod| {
-                let tree = Arc::new(ITree::open(idml2, tod.unwrap()).unwrap());
+                let tree = Arc::new(ITree::open(idml2, &tod.unwrap()).unwrap());
                 inner2.fs_trees.lock().unwrap()
                     .insert(tree_id, tree.clone());
                 tree
@@ -195,11 +195,11 @@ impl Inner {
         Box::new(fut)
     }
 
-    fn rw_filesystem(inner: Arc<Inner>, tree_id: TreeID, txg: TxgT)
+    fn rw_filesystem(inner: &Arc<Inner>, tree_id: TreeID, txg: TxgT)
         -> impl Future<Item=ReadWriteFilesystem, Error=Error>
     {
         let idml2 = inner.idml.clone();
-        Inner::open_filesystem(inner.clone(), tree_id)
+        Inner::open_filesystem(&inner, tree_id)
             .map(move |fs| ReadWriteFilesystem::new(idml2, fs, txg))
     }
 
@@ -256,7 +256,7 @@ impl Database {
         let inner2 = self.inner.clone();
         self.inner.forest.range(..)
             .fold(true, move |passed, (tree_id, _)| {
-                Inner::open_filesystem(inner2.clone(), tree_id)
+                Inner::open_filesystem(&inner2, tree_id)
                 .and_then(move |tree| tree.check())
                 .map(move |r| r && passed)
             })
@@ -377,7 +377,7 @@ impl Database {
         where E: Clone + Executor + 'static
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let forest = Tree::open(idml.clone(), l.forest).unwrap();
+        let forest = Tree::open(idml.clone(), &l.forest).unwrap();
         Database::new(idml, forest, handle)
     }
 
@@ -385,7 +385,7 @@ impl Database {
         -> impl Future<Item=ReadOnlyFilesystem, Error=Error>
     {
         let idml2 = self.inner.idml.clone();
-        Inner::open_filesystem(self.inner.clone(), tree_id)
+        Inner::open_filesystem(&self.inner, tree_id)
             .map(|fs| ReadOnlyFilesystem::new(idml2, fs))
     }
 
@@ -454,7 +454,7 @@ impl Database {
         self.inner.idml.txg()
             .map_err(|_| Error::EPIPE)
             .and_then(move |txg| {
-                Inner::rw_filesystem(inner2, tree_id, *txg)
+                Inner::rw_filesystem(&inner2, tree_id, *txg)
                     .and_then(|ds| f(ds).into_future())
                     .map(move |r| {
                         drop(txg);

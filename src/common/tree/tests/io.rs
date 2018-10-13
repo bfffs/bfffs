@@ -548,7 +548,7 @@ fn open() {
     let on_disk = TreeOnDisk(v);
     let mock = DDMLMock::new();
     let ddml = Arc::new(mock);
-    let tree = Tree::<DRP, DDMLMock, u32, u32>::open(ddml, on_disk).unwrap();
+    let tree = Tree::<DRP, DDMLMock, u32, u32>::open(ddml, &on_disk).unwrap();
     assert_eq!(tree.i.height.load(Ordering::Relaxed), 1);
     assert_eq!(tree.i.min_fanout, 2);
     assert_eq!(tree.i.max_fanout, 5);
@@ -1140,7 +1140,7 @@ root:
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(future::lazy(|| {
         let root_guard = tree.i.root.try_read().unwrap();
-        root_guard.rlock(dml).map(|node| {
+        root_guard.rlock(&dml).map(|node| {
             let int_data = (*node).as_int();
             assert_eq!(int_data.nchildren(), 2);
             // Validate IntElems as well as possible using their public API

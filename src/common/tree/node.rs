@@ -354,7 +354,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// the child's guard.
     // Consuming and returning self prevents lifetime checker issues that
     // interfere with lock coupling.
-    pub fn xlock<D>(mut self, dml: Arc<D>, child_idx: usize, txg: TxgT)
+    pub fn xlock<D>(mut self, dml: &Arc<D>, child_idx: usize, txg: TxgT)
         -> (Box<Future<Item=(TreeWriteGuard<A, K, V>,
                              TreeWriteGuard<A, K, V>),
                        Error=Error> + Send>)
@@ -407,7 +407,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// a new IntElem that points to it, if it's different from the old IntElem.
     /// The caller _must_ replace the old IntElem with the new one, or data will
     /// leak!  `height` is the height of `self`, not the target.  Leaves are 0.
-    pub fn xlock_nc<D>(&mut self, dml: Arc<D>, child_idx: usize, height: u8,
+    pub fn xlock_nc<D>(&mut self, dml: &Arc<D>, child_idx: usize, height: u8,
                        txg: TxgT)
         -> (Box<Future<Item=(Option<IntElem<A, K, V>>,
                              TreeWriteGuard<A, K, V>),
@@ -548,7 +548,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     }
 
     /// Lock nonexclusively
-    pub fn rlock<D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: Arc<D>)
+    pub fn rlock<D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: &Arc<D>)
         -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + Send>
     {
         match self.ptr {
