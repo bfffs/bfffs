@@ -168,13 +168,13 @@ fn iter_7_5_2() {
         for s in 0..locator.stripes() {
             for a in 0..m {
                 let id = ChunkId::Data(rep * locator.datachunks() +
-                                       s as u64 * m as u64 + a as u64);
+                                       u64::from(s) * m as u64 + a as u64);
                 assert_eq!((id, locator.id2loc(id)), iter.next().unwrap());
                 assert_eq!((id, locator.id2loc(id)), iter_data.next().unwrap());
             }
             for p in 0..f {
                 let id = ChunkId::Parity(rep * locator.datachunks() +
-                                         s as u64 * m as u64, p);
+                                         u64::from(s) * m as u64, p);
                 assert_eq!((id, locator.id2loc(id)), iter.next().unwrap());
             }
         }

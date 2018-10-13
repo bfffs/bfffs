@@ -81,7 +81,7 @@ test_suite! {
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(dirent.d_fileno as u64, ino);
+        assert_eq!(u64::from(dirent.d_fileno), ino);
 
         // The parent dir's link count should not have increased
         let parent_attr = mocks.val.0.getattr(1).unwrap();
@@ -123,7 +123,7 @@ test_suite! {
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
         assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
-        assert_eq!(dot.d_fileno as u64, ino);
+        assert_eq!(u64::from(dot.d_fileno), ino);
 
         // The parent dir should have an "x" directory entry
         let entries = mocks.val.0.readdir(1, 0, 0);
@@ -138,7 +138,7 @@ test_suite! {
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(dirent.d_fileno as u64, ino);
+        assert_eq!(u64::from(dirent.d_fileno), ino);
 
         // The parent dir's link count should've increased
         let parent_attr = mocks.val.0.getattr(1).unwrap();
@@ -213,6 +213,8 @@ test_suite! {
         assert_eq!(dot.d_fileno, 1);
     }
 
+    #[cfg_attr(feature = "cargo-clippy",
+               allow(clippy::block_in_if_condition_stmt))]
     test rmdir(mocks) {
         let dirname = OsString::from("x");
         let ino = mocks.val.0.mkdir(1, &dirname, 0o755).unwrap();
@@ -245,7 +247,7 @@ test_suite! {
 
     test statvfs(mocks) {
         let statvfs = mocks.val.0.statvfs();
-        assert_eq!(statvfs.f_blocks, 262144);
+        assert_eq!(statvfs.f_blocks, 262_144);
     }
 
     test unlink(mocks) {

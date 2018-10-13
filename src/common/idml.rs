@@ -573,13 +573,13 @@ mod t {
     use tokio::runtime::current_thread;
 
     /// Inject a record into the RIDT and AllocT
-    fn inject_record(rt: &mut current_thread::Runtime, idml: &IDML, rid: &RID,
+    fn inject_record(rt: &mut current_thread::Runtime, idml: &IDML, rid: RID,
                      drp: &DRP, refcount: u64)
     {
-        let entry = RidtEntry{drp: drp.clone(), refcount};
+        let entry = RidtEntry{drp: *drp, refcount};
         let txg = TxgT::from(0);
-        rt.block_on(idml.trees.ridt.insert(*rid, entry, txg)).unwrap();
-        rt.block_on(idml.trees.alloct.insert(drp.pba(), *rid, txg)).unwrap();
+        rt.block_on(idml.trees.ridt.insert(rid, entry, txg)).unwrap();
+        rt.block_on(idml.trees.alloct.insert(drp.pba(), rid, txg)).unwrap();
     }
 
     // pet kcov
@@ -607,7 +607,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp, 2);
+        inject_record(&mut rt, &idml, rid, &drp, 2);
 
         assert!(rt.block_on(idml.check_ridt()).unwrap());
     }
@@ -640,7 +640,7 @@ mod t {
         // Inject a record into the RIDT but not the AllocT
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        rt.block_on(idml.trees.ridt.insert(rid.clone(), entry, txg)).unwrap();
+        rt.block_on(idml.trees.ridt.insert(rid, entry, txg)).unwrap();
 
         assert!(!rt.block_on(idml.check_ridt()).unwrap());
     }
@@ -658,7 +658,7 @@ mod t {
         // Inject a mismatched pair of records
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        rt.block_on(idml.trees.ridt.insert(rid.clone(), entry, txg)).unwrap();
+        rt.block_on(idml.trees.ridt.insert(rid, entry, txg)).unwrap();
         rt.block_on(idml.trees.alloct.insert(drp2.pba(), rid, txg)).unwrap();
 
         assert!(!rt.block_on(idml.check_ridt()).unwrap());
@@ -685,7 +685,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp, 1);
+        inject_record(&mut rt, &idml, rid, &drp, 1);
 
         rt.block_on(idml.delete(&rid, TxgT::from(42))).unwrap();
         // Now verify the contents of the RIDT and AllocT
@@ -703,7 +703,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp, 2);
+        inject_record(&mut rt, &idml, rid, &drp, 2);
 
         rt.block_on(idml.delete(&rid, TxgT::from(42))).unwrap();
         // Now verify the contents of the RIDT and AllocT
@@ -785,7 +785,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp, 1);
+        inject_record(&mut rt, &idml, rid, &drp, 1);
 
         let fut = idml.get::<DivBufShared, DivBuf>(&rid);
         current_thread::Runtime::new().unwrap().block_on(fut).unwrap();
@@ -805,24 +805,24 @@ mod t {
         // A record just below the target zone
         let rid0 = RID(99);
         let drp0 = DRP::new(PBA::new(0, 99), Compression::None, 4096, 4096, 0);
-        inject_record(&mut rt, &idml, &rid0, &drp0, 1);
+        inject_record(&mut rt, &idml, rid0, &drp0, 1);
         // A record at the end of the target zone
         let rid2 = RID(102);
         let drp2 = DRP::new(PBA::new(0, 199), Compression::None, 4096, 4096, 0);
-        inject_record(&mut rt, &idml, &rid2, &drp2, 1);
+        inject_record(&mut rt, &idml, rid2, &drp2, 1);
         // A record at the start of the target zone
         let rid1 = RID(92);
         let drp1 = DRP::new(PBA::new(0, 100), Compression::None, 4096, 4096, 0);
-        inject_record(&mut rt, &idml, &rid1, &drp1, 1);
+        inject_record(&mut rt, &idml, rid1, &drp1, 1);
         // A record just past the target zone
         let rid3 = RID(101);
         let drp3 = DRP::new(PBA::new(0, 200), Compression::None, 4096, 4096, 0);
-        inject_record(&mut rt, &idml, &rid3, &drp3, 1);
+        inject_record(&mut rt, &idml, rid3, &drp3, 1);
         // A record in the same LBA range as but different cluster than the
         // target zone
         let rid4 = RID(105);
         let drp4 = DRP::new(PBA::new(1, 150), Compression::None, 4096, 4096, 0);
-        inject_record(&mut rt, &idml, &rid4, &drp4, 1);
+        inject_record(&mut rt, &idml, rid4, &drp4, 1);
 
         let r = rt.block_on(idml.list_indirect_records(&cz).collect());
         assert_eq!(r.unwrap(), vec![rid1, rid2]);
@@ -835,7 +835,7 @@ mod t {
         let rid = RID(1);
         let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
         let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
-        let drp1_c = drp1.clone();
+        let drp1_c = drp1;
         let mut cache = Cache::new();
         let mut ddml = DDML::new();
         cache.expect_get_ref()
@@ -866,7 +866,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp0, 1);
+        inject_record(&mut rt, &idml, rid, &drp0, 1);
 
         rt.block_on(IDML::move_record(&idml.cache, &idml.trees,
                                       &idml.ddml, rid, TxgT::from(0))
@@ -887,7 +887,6 @@ mod t {
         let rid = RID(1);
         let drp0 = DRP::random(Compression::None, 4096);
         let drp1 = DRP::random(Compression::None, 4096);
-        let drp2 = drp1.clone();
         let mut cache = Cache::new();
         let mut ddml = DDML::new();
         cache.expect_get_ref()
@@ -912,7 +911,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp0, 1);
+        inject_record(&mut rt, &idml, rid, &drp0, 1);
 
         rt.block_on(IDML::move_record(&idml.cache, &idml.trees,
                                       &idml.ddml, rid, TxgT::from(0))
@@ -921,8 +920,8 @@ mod t {
         // Now verify the RIDT and alloct entries
         let entry = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
-        assert_eq!(entry.drp, drp2);
-        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp2.pba())).unwrap();
+        assert_eq!(entry.drp, drp1);
+        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp1.pba())).unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
 
@@ -949,7 +948,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp, 1);
+        inject_record(&mut rt, &idml, rid, &drp, 1);
 
         let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(42));
         rt.block_on(fut).unwrap();
@@ -976,7 +975,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp, 2);
+        inject_record(&mut rt, &idml, rid, &drp, 2);
 
         let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0));
         rt.block_on(fut).unwrap();
@@ -1009,7 +1008,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp, 1);
+        inject_record(&mut rt, &idml, rid, &drp, 1);
 
         let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0));
         rt.block_on(fut).unwrap();
@@ -1041,7 +1040,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp, 2);
+        inject_record(&mut rt, &idml, rid, &drp, 2);
 
         let fut = idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0));
         rt.block_on(fut).unwrap();
@@ -1058,7 +1057,7 @@ mod t {
         let mut cache = Cache::new();
         let mut ddml = DDML::new();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
-                           0xdeadbeef);
+                           0xdead_beef);
         let rid = RID(0);
         cache.expect_insert()
             .called_once()
@@ -1094,7 +1093,7 @@ mod t {
         let cache = Cache::new();
         let mut ddml = DDML::new();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
-                           0xdeadbeef);
+                           0xdead_beef);
         ddml.expect_put_type::<Arc<tree::Node<DRP, RID, RidtEntry>>>
             ("put_ridt");
         ddml.expect_put_type::<Arc<tree::Node<DRP, PBA, RID>>>
@@ -1120,7 +1119,7 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
-        inject_record(&mut rt, &idml, &rid, &drp, 2);
+        inject_record(&mut rt, &idml, rid, &drp, 2);
 
         rt.block_on(idml.sync_all(TxgT::from(42))).unwrap();
     }

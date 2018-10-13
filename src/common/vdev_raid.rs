@@ -1334,7 +1334,7 @@ test_suite! {
             for _ in 0..*self.n {
                 let mock = Box::new(s.create_mock::<MockVdevBlock>());
                 s.expect(mock.size_call()
-                                    .and_return_clone(262144)
+                                    .and_return_clone(262_144)
                                     .times(..));  // 256k LBAs
                 s.expect(mock.lba2zone_call(0)
                                     .and_return_clone(None)
@@ -1342,7 +1342,7 @@ test_suite! {
                 s.expect(mock.lba2zone_call(matchers::in_range(1..65536))
                                     .and_return_clone(Some(0))
                                     .times(..));
-                s.expect(mock.lba2zone_call(matchers::in_range(65536..131072))
+                s.expect(mock.lba2zone_call(matchers::in_range(65536..131_072))
                                     .and_return_clone(Some(1))
                                     .times(..));
                 s.expect(mock.optimum_queue_depth_call()
@@ -1353,7 +1353,7 @@ test_suite! {
                                     .times(..));
                 s.expect(mock.zone_limits_call(1)
                                     // 64k LBAs/zone
-                                    .and_return_clone((65536, 131072))
+                                    .and_return_clone((65536, 131_072))
                                     .times(..));
 
                 blockdevs.push(mock);
@@ -1372,16 +1372,16 @@ test_suite! {
         assert_eq!(mocks.val.1.lba2zone(95), None);
         assert_eq!(mocks.val.1.lba2zone(96), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(245759), Some(0));
+        assert_eq!(mocks.val.1.lba2zone(245_759), Some(0));
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(245760), Some(1));
+        assert_eq!(mocks.val.1.lba2zone(245_760), Some(1));
 
         assert_eq!(mocks.val.1.optimum_queue_depth(), 12);
 
-        assert_eq!(mocks.val.1.size(), 983040);
+        assert_eq!(mocks.val.1.size(), 983_040);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (96, 245760));
-        assert_eq!(mocks.val.1.zone_limits(1), (245760, 491520));
+        assert_eq!(mocks.val.1.zone_limits(0), (96, 245_760));
+        assert_eq!(mocks.val.1.zone_limits(1), (245_760, 491_520));
     }
 
     test medium(mocks((7, 4, 1, 16))) {
@@ -1389,16 +1389,16 @@ test_suite! {
         assert_eq!(mocks.val.1.lba2zone(95), None);
         assert_eq!(mocks.val.1.lba2zone(96), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(344063), Some(0));
+        assert_eq!(mocks.val.1.lba2zone(344_063), Some(0));
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(344064), Some(1));
+        assert_eq!(mocks.val.1.lba2zone(344_064), Some(1));
 
         assert_eq!(mocks.val.1.optimum_queue_depth(), 17);
 
-        assert_eq!(mocks.val.1.size(), 1376256);
+        assert_eq!(mocks.val.1.size(), 1_376_256);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (96, 344064));
-        assert_eq!(mocks.val.1.zone_limits(1), (344064, 688128));
+        assert_eq!(mocks.val.1.zone_limits(0), (96, 344_064));
+        assert_eq!(mocks.val.1.zone_limits(1), (344_064, 688_128));
     }
 
     // A layout whose depth does not evenly divide the zone size.  The zone size
@@ -1409,18 +1409,18 @@ test_suite! {
         assert_eq!(mocks.val.1.lba2zone(127), None);
         assert_eq!(mocks.val.1.lba2zone(128), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(366975), Some(0));
+        assert_eq!(mocks.val.1.lba2zone(366_975), Some(0));
         // An LBA in between zones 0 and 1
-        assert_eq!(mocks.val.1.lba2zone(366976), None);
+        assert_eq!(mocks.val.1.lba2zone(366_976), None);
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(367040), Some(1));
+        assert_eq!(mocks.val.1.lba2zone(367_040), Some(1));
 
         assert_eq!(mocks.val.1.optimum_queue_depth(), 14);
 
-        assert_eq!(mocks.val.1.size(), 1468006);
+        assert_eq!(mocks.val.1.size(), 1_468_006);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (128, 366976));
-        assert_eq!(mocks.val.1.zone_limits(1), (367040, 733952));
+        assert_eq!(mocks.val.1.zone_limits(0), (128, 366_976));
+        assert_eq!(mocks.val.1.zone_limits(1), (367_040, 733_952));
     }
 
     // A layout whose depth does not evenly divide the zone size and has
@@ -1431,17 +1431,17 @@ test_suite! {
         assert_eq!(mocks.val.1.lba2zone(159), None);
         assert_eq!(mocks.val.1.lba2zone(160), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(480511), Some(0));
+        assert_eq!(mocks.val.1.lba2zone(480_511), Some(0));
         // LBAs in between zones 0 and 1
-        assert_eq!(mocks.val.1.lba2zone(480512), None);
-        assert_eq!(mocks.val.1.lba2zone(480639), None);
+        assert_eq!(mocks.val.1.lba2zone(480_512), None);
+        assert_eq!(mocks.val.1.lba2zone(480_639), None);
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(480640), Some(1));
+        assert_eq!(mocks.val.1.lba2zone(480_640), Some(1));
 
-        assert_eq!(mocks.val.1.size(), 1922389);
+        assert_eq!(mocks.val.1.size(), 1_922_389);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (160, 480512));
-        assert_eq!(mocks.val.1.zone_limits(1), (480640, 961152));
+        assert_eq!(mocks.val.1.zone_limits(0), (160, 480_512));
+        assert_eq!(mocks.val.1.zone_limits(1), (480_640, 961_152));
     }
 
     // A layout whose chunksize does not evenly divide the zone size.  One or
@@ -1451,17 +1451,17 @@ test_suite! {
         assert_eq!(mocks.val.1.lba2zone(29), None);
         assert_eq!(mocks.val.1.lba2zone(30), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(245744), Some(0));
+        assert_eq!(mocks.val.1.lba2zone(245_744), Some(0));
         // LBAs in the zone 0-1 gap
-        assert_eq!(mocks.val.1.lba2zone(245745), None);
-        assert_eq!(mocks.val.1.lba2zone(245774), None);
+        assert_eq!(mocks.val.1.lba2zone(245_745), None);
+        assert_eq!(mocks.val.1.lba2zone(245_774), None);
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(245775), Some(1));
+        assert_eq!(mocks.val.1.lba2zone(245_775), Some(1));
 
-        assert_eq!(mocks.val.1.size(), 983025);
+        assert_eq!(mocks.val.1.size(), 983_025);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (30, 245745));
-        assert_eq!(mocks.val.1.zone_limits(1), (245775, 491505));
+        assert_eq!(mocks.val.1.zone_limits(0), (30, 245_745));
+        assert_eq!(mocks.val.1.zone_limits(1), (245_775, 491_505));
     }
 }
 
@@ -1477,24 +1477,24 @@ fn read_at_one_stripe() {
         let s = Scenario::new();
         let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m0.size_call().and_return_clone(262144).times(..));
+        s.expect(m0.size_call().and_return_clone(262_144).times(..));
         s.expect(m0.open_zone_call(65536).and_return(
                 Box::new(future::ok::<(), Error>(()))));
         s.expect(m0.optimum_queue_depth_call().and_return_clone(10)
                  .times(..));
         s.expect(m0.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m0.zone_limits_call(1).and_return_clone((65536, 131072))
+        s.expect(m0.zone_limits_call(1).and_return_clone((65536, 131_072))
                  .times(..));
 
         blockdevs.push(m0);
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m1.size_call().and_return_clone(262144).times(..));
+        s.expect(m1.size_call().and_return_clone(262_144).times(..));
         s.expect(m1.open_zone_call(65536).and_return(
                 Box::new(future::ok::<(), Error>(()))));
         s.expect(m1.optimum_queue_depth_call().and_return_clone(10)
                  .times(..));
         s.expect(m1.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m1.zone_limits_call(1).and_return_clone((65536, 131072))
+        s.expect(m1.zone_limits_call(1).and_return_clone((65536, 131_072))
                  .times(..));
         s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1504,13 +1504,13 @@ fn read_at_one_stripe() {
 
         blockdevs.push(m1);
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m2.size_call().and_return_clone(262144).times(..));
+        s.expect(m2.size_call().and_return_clone(262_144).times(..));
         s.expect(m2.open_zone_call(65536).and_return(
                 Box::new(future::ok::<(), Error>(()))));
         s.expect(m2.optimum_queue_depth_call().and_return_clone(10)
                  .times(..));
         s.expect(m2.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m2.zone_limits_call(1).and_return_clone((65536, 131072))
+        s.expect(m2.zone_limits_call(1).and_return_clone((65536, 131_072))
                  .times(..));
         s.expect(m2.read_at_call(check!(|buf: &IoVecMut| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1526,7 +1526,7 @@ fn read_at_one_stripe() {
         vdev_raid.open_zone(1);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
-        vdev_raid.read_at(rbuf, 131072);
+        vdev_raid.read_at(rbuf, 131_072);
 }
 
 #[test]
@@ -1541,7 +1541,7 @@ fn sync_all() {
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.size_call().and_return_clone(262_144).times(..));
         s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
         s.expect(bd.sync_all_call()
                  .and_return(Box::new(future::ok::<(), Error>(())))
@@ -1582,7 +1582,7 @@ fn sync_all_unflushed() {
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
-        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.size_call().and_return_clone(262_144).times(..));
         s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
         s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
         s.expect(bd.open_zone_call(60_000).and_return(
@@ -1628,14 +1628,14 @@ fn write_at_one_stripe() {
         let s = Scenario::new();
         let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m0.size_call().and_return_clone(262144).times(..));
+        s.expect(m0.size_call().and_return_clone(262_144).times(..));
         s.expect(m0.lba2zone_call(65536).and_return_clone(Some(1)).times(..));
         s.expect(m0.open_zone_call(65536).and_return(
                 Box::new(future::ok::<(), Error>(()))));
         s.expect(m0.optimum_queue_depth_call().and_return_clone(10)
                  .times(..));
         s.expect(m0.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m0.zone_limits_call(1).and_return_clone((65536, 131072))
+        s.expect(m0.zone_limits_call(1).and_return_clone((65536, 131_072))
                  .times(..));
         s.expect(m0.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1645,14 +1645,14 @@ fn write_at_one_stripe() {
 
         blockdevs.push(m0);
         let m1 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m1.size_call().and_return_clone(262144).times(..));
+        s.expect(m1.size_call().and_return_clone(262_144).times(..));
         s.expect(m1.lba2zone_call(65536).and_return_clone(Some(1)).times(..));
         s.expect(m1.open_zone_call(65536).and_return(
                 Box::new(future::ok::<(), Error>(()))));
         s.expect(m1.optimum_queue_depth_call().and_return_clone(10)
                  .times(..));
         s.expect(m1.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m1.zone_limits_call(1).and_return_clone((65536, 131072))
+        s.expect(m1.zone_limits_call(1).and_return_clone((65536, 131_072))
                  .times(..));
         s.expect(m1.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1662,14 +1662,14 @@ fn write_at_one_stripe() {
 
         blockdevs.push(m1);
         let m2 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m2.size_call().and_return_clone(262144).times(..));
+        s.expect(m2.size_call().and_return_clone(262_144).times(..));
         s.expect(m2.lba2zone_call(65536).and_return_clone(Some(1)).times(..));
         s.expect(m2.open_zone_call(65536).and_return(
                 Box::new(future::ok::<(), Error>(()))));
         s.expect(m2.optimum_queue_depth_call().and_return_clone(10)
                  .times(..));
         s.expect(m2.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m2.zone_limits_call(1).and_return_clone((65536, 131072))
+        s.expect(m2.zone_limits_call(1).and_return_clone((65536, 131_072))
                  .times(..));
         s.expect(m2.write_at_call(check!(|buf: &IoVec| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
@@ -1685,7 +1685,7 @@ fn write_at_one_stripe() {
         vdev_raid.open_zone(1);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try().unwrap();
-        vdev_raid.write_at(wbuf, 1, 131072);
+        vdev_raid.write_at(wbuf, 1, 131_072);
 }
 
 // Partially written stripes should be flushed by flush_zone
@@ -1702,7 +1702,7 @@ fn write_at_and_flush_zone() {
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.size_call().and_return_clone(262_144).times(..));
         s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
         s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
         s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
@@ -1717,9 +1717,9 @@ fn write_at_and_flush_zone() {
     let bd0 = bd();
     s.expect(bd0.writev_at_call(check!(|buf: &SGList| {
         // The first segment is user data
-        &buf[0][..] == &vec![1u8; BYTES_PER_LBA][..] &&
+        buf[0][..] == vec![1u8; BYTES_PER_LBA][..] &&
         // Later segments are zero-fill from flush_zone
-        &buf[1][..] == &vec![0u8; BYTES_PER_LBA][..]
+        buf[1][..] == vec![0u8; BYTES_PER_LBA][..]
     }), 60_000)
         .and_return( Box::new( future::ok::<(), Error>(())))
     );
@@ -1728,7 +1728,7 @@ fn write_at_and_flush_zone() {
     // This write is from the zero-fill
     s.expect(bd1.writev_at_call(check!(|buf: &SGList| {
         buf.len() == 1 &&
-        &buf[0][..] == &vec![0u8; 2 * BYTES_PER_LBA][..]
+        buf[0][..] == vec![0u8; 2 * BYTES_PER_LBA][..]
     }), 60_000)
         .and_return( Box::new( future::ok::<(), Error>(())))
     );
@@ -1737,8 +1737,8 @@ fn write_at_and_flush_zone() {
     let bd2 = bd();
     s.expect(bd2.write_at_call(check!(|buf: &IoVec| {
         // single disk parity is a simple XOR
-        &buf[0..4096] == &vec![1u8; BYTES_PER_LBA][..] &&
-        &buf[4096..8192] == &vec![0u8; BYTES_PER_LBA][..]
+        buf[0..4096] == vec![1u8; BYTES_PER_LBA][..] &&
+        buf[4096..8192] == vec![0u8; BYTES_PER_LBA][..]
     }), 60_000)
         .and_return( Box::new( future::ok::<(), Error>(())))
     );
@@ -1774,7 +1774,7 @@ fn erase_zone() {
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.size_call().and_return_clone(262_144).times(..));
         s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
         s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
         s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
@@ -1813,7 +1813,7 @@ fn flush_zone_closed() {
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.size_call().and_return_clone(262_144).times(..));
         s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
         s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
         s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
@@ -1849,7 +1849,7 @@ fn flush_zone_empty_stripe_buffer() {
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262144).times(..));
+        s.expect(bd.size_call().and_return_clone(262_144).times(..));
         s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
         s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
         s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
@@ -1890,7 +1890,7 @@ fn open_zone_reopen() {
 
     let s = Scenario::new();
     let bd = s.create_mock::<MockVdevBlock>();
-    s.expect(bd.size_call().and_return_clone(262144).times(..));
+    s.expect(bd.size_call().and_return_clone(262_144).times(..));
     s.expect(bd.lba2zone_call(1).and_return_clone(Some(0)).times(..));
     s.expect(bd.lba2zone_call(4196).and_return_clone(Some(1)).times(..));
     s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
@@ -1931,7 +1931,7 @@ fn open_zone_zero_fill_wasted_chunks() {
 
         let bd = || {
             let bd = Box::new(s.create_mock::<MockVdevBlock>());
-            s.expect(bd.size_call().and_return_clone(262144).times(..));
+            s.expect(bd.size_call().and_return_clone(262_144).times(..));
             s.expect(bd.lba2zone_call(1).and_return_clone(Some(0)).times(..));
             s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
             s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
@@ -1978,7 +1978,7 @@ fn open_zone_zero_fill_wasted_stripes() {
 
         let bd = |gap_chunks: LbaT| {
             let bd = Box::new(s.create_mock::<MockVdevBlock>());
-            s.expect(bd.size_call().and_return_clone(262144).times(..));
+            s.expect(bd.size_call().and_return_clone(262_144).times(..));
             s.expect(bd.lba2zone_call(1).and_return_clone(Some(0)).times(..));
             s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
             s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));

@@ -1,3 +1,8 @@
+#![cfg_attr(feature = "cargo-clippy", feature(tool_lints))]
+// https://github.com/mindsbackyard/galvanic-test/pull/13
+#![cfg_attr(feature = "cargo-clippy", allow(clippy::unnecessary_mut_passed))]
+
+
 extern crate bfffs;
 extern crate divbuf;
 extern crate fixedbitset;

@@ -1058,7 +1058,7 @@ mod cluster {
         assert_eq!(fsm.zones[3].freed_blocks, 33);
         assert_eq!(fsm.zones[3].total_blocks, 92);
         assert_eq!(fsm.zones[3].txgs.start, TxgT::from(2));
-        let oz = fsm.open_zones.get(&3).unwrap();
+        let oz = &fsm.open_zones[&3];
         assert_eq!(oz.start, 304);
         assert_eq!(oz.allocated_blocks, 77);
         assert!(fsm.is_empty(4));
@@ -1148,7 +1148,7 @@ mod cluster {
             fut.and_then(|_| cluster.sync_all())
         })).unwrap();
         let fsm = cluster.fsm.borrow();
-        assert_eq!(fsm.open_zones.get(&0).unwrap().write_pointer(), 6);
+        assert_eq!(fsm.open_zones[&0].write_pointer(), 6);
         assert_eq!(fsm.zones[0].freed_blocks, 5);
     }
 
@@ -1350,7 +1350,7 @@ mod free_space_map {
     // One million trailing empty zones
     #[test]
     fn display() {
-        let mut fsm = FreeSpaceMap::new(1000004);
+        let mut fsm = FreeSpaceMap::new(1_000_004);
         fsm.open_zone(0, 4, 96, 88, TxgT::from(1)).unwrap();
         fsm.finish_zone(0, TxgT::from(2));
         fsm.free(0, 22);
@@ -1572,9 +1572,10 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(zid, 0, 1000, used, TxgT::from(0)).unwrap();
         fsm.finish_zone(zid, TxgT::from(0));
-        assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space - used);
+        assert_eq!(LbaT::from(fsm.zones[zid as usize].freed_blocks),
+                   space - used);
         fsm.free(zid, used);
-        assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space);
+        assert_eq!(LbaT::from(fsm.zones[zid as usize].freed_blocks), space);
     }
 
     #[test]
@@ -1605,7 +1606,7 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(zid, 0, 1000, space, TxgT::from(0)).unwrap();
         fsm.free(zid, space);
-        assert_eq!(fsm.zones[zid as usize].freed_blocks as LbaT, space);
+        assert_eq!(LbaT::from(fsm.zones[zid as usize].freed_blocks), space);
     }
 
     #[test]

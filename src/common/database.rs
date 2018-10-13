@@ -445,6 +445,8 @@ impl Database {
     /// All operations conducted by the supplied closure will be completed
     /// within the same Pool transaction group.  Thus, after a power failure and
     /// recovery, either all will have completed, or none will have.
+    // IDMLMock::txg has a slightly different signature than IDML::txg
+    #[cfg_attr(all(feature = "cargo-clippy", test), allow(clippy::drop_ref))]
     pub fn fswrite<F, B, R>(&self, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
         where F: FnOnce(ReadWriteFilesystem) -> B,

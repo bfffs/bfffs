@@ -1255,12 +1255,12 @@ test_suite! {
         // Schedule the final two operations in reverse LBA order, but verify
         // that they get issued in actual LBA order
         let final_fut = future::ok::<(), Error>(());
-        seq.expect(leaf.write_at_call(ANY, num_ops as LbaT - 1)
+        seq.expect(leaf.write_at_call(ANY, LbaT::from(num_ops) - 1)
                             .and_call(|_, _| {
                                 Box::new(final_fut)
                             }));
         let penultimate_fut = future::ok::<(), Error>(());
-        seq.expect(leaf.write_at_call(ANY, num_ops as LbaT)
+        seq.expect(leaf.write_at_call(ANY, LbaT::from(num_ops))
                             .and_call(|_, _| {
                                 Box::new(penultimate_fut)
                             }));
@@ -1272,17 +1272,17 @@ test_suite! {
             // First schedule all operations.  There are too many to issue them
             // all immediately
             let unbuf_fut = future::join_all((1..num_ops - 1).rev().map(|i| {
-                let mut fut = vdev.write_at(wbuf.clone(), i as LbaT);
+                let mut fut = vdev.write_at(wbuf.clone(), LbaT::from(i));
                 // Manually poll so the VdevBlockFut will get scheduled
                 fut.poll().unwrap();
                 fut
             }));
             let mut penultimate_fut = vdev.write_at(wbuf.clone(),
-                                                    num_ops as LbaT);
+                                                    LbaT::from(num_ops));
             // Manually poll so the VdevBlockFut will get scheduled
             penultimate_fut.poll().unwrap();
             let mut final_fut = vdev.write_at(wbuf.clone(),
-                                              (num_ops - 1) as LbaT);
+                                              LbaT::from(num_ops - 1));
             // Manually poll so the VdevBlockFut will get scheduled
             final_fut.poll().unwrap();
             let fut = unbuf_fut.join3(penultimate_fut, final_fut);

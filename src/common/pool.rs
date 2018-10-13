@@ -774,7 +774,7 @@ mod pool {
                     txgs: TxgT::from(2)..TxgT::from(3)
                 })));
             s.expect(c.find_closed_zone_call(4).and_return(None));
-            s.expect(c.size_call().and_return(32768000));
+            s.expect(c.size_call().and_return(32_768_000));
             s.expect(c.uuid_call().and_return(Uuid::new_v4()));
             c
         };
@@ -822,7 +822,7 @@ mod pool {
             let c = s.create_mock::<MockCluster>();
             s.expect(c.allocated_call().and_return(0));
             s.expect(c.optimum_queue_depth_call().and_return(10));
-            s.expect(c.size_call().and_return(32768000));
+            s.expect(c.size_call().and_return(32_768_000));
             s.expect(c.uuid_call().and_return(Uuid::new_v4()));
             c
         };
@@ -843,6 +843,9 @@ mod pool {
         assert!(rt.block_on(pool.free(PBA::new(1, 12345), 16)).is_ok());
     }
 
+    // optimum_queue_depth is always a smallish integer, so exact equality
+    // testing is ok.
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::float_cmp))]
     #[test]
     fn new() {
         let s = Scenario::new();
@@ -877,7 +880,7 @@ mod pool {
         let cluster = s.create_mock::<MockCluster>();
         s.expect(cluster.allocated_call().and_return(0));
         s.expect(cluster.optimum_queue_depth_call().and_return(10));
-        s.expect(cluster.size_call().and_return(32768000));
+        s.expect(cluster.size_call().and_return(32_768_000));
         s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
         s.expect(cluster.read_call(matchers::ANY, 10)
             .and_call(|mut iovec: IoVecMut, _lba: LbaT| {
@@ -910,7 +913,7 @@ mod pool {
         let cluster = s.create_mock::<MockCluster>();
         s.expect(cluster.allocated_call().and_return(0));
         s.expect(cluster.optimum_queue_depth_call().and_return(10));
-        s.expect(cluster.size_call().and_return(32768000));
+        s.expect(cluster.size_call().and_return(32_768_000));
         s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
         s.expect(cluster.read_call(matchers::ANY, matchers::ANY)
             .and_return(Box::new(Err(e).into_future()))
@@ -938,7 +941,7 @@ mod pool {
             let c = s.create_mock::<MockCluster>();
             s.expect(c.allocated_call().and_return(0));
             s.expect(c.optimum_queue_depth_call().and_return(10));
-            s.expect(c.size_call().and_return(32768000));
+            s.expect(c.size_call().and_return(32_768_000));
             s.expect(c.uuid_call().and_return(Uuid::new_v4()));
             s.expect(c.sync_all_call()
                 .and_return(Box::new(future::ok::<(), Error>(())))
@@ -964,7 +967,7 @@ mod pool {
         let cluster = s.create_mock::<MockCluster>();
             s.expect(cluster.allocated_call().and_return(0));
             s.expect(cluster.optimum_queue_depth_call().and_return(10));
-            s.expect(cluster.size_call().and_return(32768000));
+            s.expect(cluster.size_call().and_return(32_768_000));
             s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
             s.expect(cluster.write_call(check!(move |buf: &IoVec| {
                     buf.len() == BYTES_PER_LBA
@@ -991,7 +994,7 @@ mod pool {
         let cluster = s.create_mock::<MockCluster>();
             s.expect(cluster.allocated_call().and_return(0));
             s.expect(cluster.optimum_queue_depth_call().and_return(10));
-            s.expect(cluster.size_call().and_return(32768000));
+            s.expect(cluster.size_call().and_return(32_768_000));
             s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
             s.expect(cluster.write_call(matchers::ANY, matchers::ANY)
                 .and_return(Ok((0, Box::new(Err(e).into_future()))))
@@ -1016,7 +1019,7 @@ mod pool {
         let cluster = s.create_mock::<MockCluster>();
             s.expect(cluster.allocated_call().and_return(0));
             s.expect(cluster.optimum_queue_depth_call().and_return(10));
-            s.expect(cluster.size_call().and_return(32768000));
+            s.expect(cluster.size_call().and_return(32_768_000));
             s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
             s.expect(cluster.write_call(matchers::ANY, matchers::ANY)
                 .and_return(Err(e)));
@@ -1040,7 +1043,7 @@ mod pool {
         let cluster = s.create_mock::<MockCluster>();
         s.expect(cluster.allocated_call().and_return(0));
         s.expect(cluster.optimum_queue_depth_call().and_return(10));
-        s.expect(cluster.size_call().and_return(32768000));
+        s.expect(cluster.size_call().and_return(32_768_000));
         s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
         s.expect(cluster.write_call(matchers::ANY, matchers::ANY)
             .and_return(Ok((0, Box::new(future::ok::<(), Error>(()))))));

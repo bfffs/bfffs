@@ -15,6 +15,7 @@ use std::{
     sync::Arc
 };
 
+#[derive(Default)]
 pub struct RangeQueryMock<A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A>,
@@ -27,21 +28,6 @@ pub struct RangeQueryMock<A, D, K, T, V>
     k: PhantomData<K>,
     t: PhantomData<T>,
     v: PhantomData<V>
-}
-
-impl<A: Addr, D: DML<Addr=A>, K: Key + Borrow<T>, T: Ord + Clone + Send,
-     V: Value>
-    RangeQueryMock<A, D, K, T, V>
-{
-    pub fn new() -> Self {
-        Self {
-            a: PhantomData,
-            d: PhantomData,
-            k: PhantomData,
-            t: PhantomData,
-            v: PhantomData,
-        }
-    }
 }
 
 impl<A, D, K, T, V> Stream for RangeQueryMock<A, D, K, T, V>
@@ -90,6 +76,7 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
             Box<Future<Item=(), Error=Error> + Send>>("clean_zone")
     }
 
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
     pub fn create(_dml: Arc<D>) -> Self {
         Self::new()
     }
@@ -166,6 +153,7 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
         }
     }
 
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
     pub fn open(_dml: Arc<D>, _on_disk: &TreeOnDisk) -> bincode::Result<Self> {
         Ok(Self::new())
     }

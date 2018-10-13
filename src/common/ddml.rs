@@ -572,7 +572,6 @@ mod t {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
-        let pba2 = pba.clone();
         let s = Scenario::new();
         let mut cache = Cache::new();
         // Ideally, we'd expect that Cache::remove gets called before
@@ -580,7 +579,7 @@ mod t {
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::PBA(pba2)}
+                unsafe {**key == Key::PBA(pba)}
             })).returning(move |_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
@@ -600,13 +599,12 @@ mod t {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
-        let pba2 = pba.clone();
         let s = Scenario::new();
         let mut cache = Cache::new();
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::PBA(pba2)}
+                unsafe {**key == Key::PBA(pba)}
             })).returning(|_| None);
         let pool = s.create_mock::<MockPool>();
         let pool_wrapper = MockPoolWrapper(Box::new(pool));
@@ -619,7 +617,7 @@ mod t {
     fn get_direct() {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
-                      csize: 1, checksum: 0xe7f15966a3d61f8};
+                      csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let s = Scenario::new();
         let cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
@@ -639,7 +637,6 @@ mod t {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
-        let pba2 = pba.clone();
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let s = Scenario::new();
         let mut cache = Cache::new();
@@ -647,7 +644,7 @@ mod t {
         cache.expect_get()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::PBA(pba2)}
+                unsafe {**key == Key::PBA(pba)}
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
@@ -661,8 +658,7 @@ mod t {
     fn get_cold() {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
-                      csize: 1, checksum: 0xe7f15966a3d61f8};
-        let pba2 = pba.clone();
+                      csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let owned_by_cache = Rc::new(RefCell::new(Vec::<Box<Cacheable>>::new()));
         let owned_by_cache2 = owned_by_cache.clone();
         let s = Scenario::new();
@@ -673,7 +669,7 @@ mod t {
         cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::PBA(pba2)}
+                unsafe {**key == Key::PBA(pba)}
             })).returning(|_| None);
         s.expect(pool.read_call(check!(|dbm: &DivBufMut| {
             dbm.len() == 4096
@@ -681,7 +677,7 @@ mod t {
         cache.expect_insert()
             .called_once()
             .with(passes(move |args: &(Key, _)| {
-                args.0 == Key::PBA(pba2)
+                args.0 == Key::PBA(pba)
             })).returning(move |(_, dbs)| {;
                 owned_by_cache2.borrow_mut().push(dbs);
             });
@@ -697,15 +693,14 @@ mod t {
     fn get_ecksum() {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
-                      csize: 1, checksum: 0xdeadbeefdeadbeef};
-        let pba2 = pba.clone();
+                      csize: 1, checksum: 0xdead_beef_dead_beef};
         let s = Scenario::new();
         let mut cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::PBA(pba2)}
+                unsafe {**key == Key::PBA(pba)}
             })).returning(|_| None);
         s.expect(pool.read_call(check!(|dbm: &DivBufMut| {
             dbm.len() == 4096
@@ -769,14 +764,13 @@ mod t {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
-        let pba2 = pba.clone();
         let s = Scenario::new();
         let mut cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::PBA(pba2)}
+                unsafe {**key == Key::PBA(pba)}
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
@@ -791,9 +785,8 @@ mod t {
     #[test]
     fn pop_cold() {
         let pba = PBA::default();
-        let pba2 = pba.clone();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
-                      csize: 1, checksum: 0xe7f15966a3d61f8};
+                      csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
         let mut cache = Cache::new();
@@ -801,7 +794,7 @@ mod t {
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::PBA(pba2)}
+                unsafe {**key == Key::PBA(pba)}
             })).returning(|_| None);
         seq.expect(pool.read_call(ANY, pba)
                    .and_return(Box::new(future::ok::<(), Error>(()))));
@@ -819,16 +812,15 @@ mod t {
     #[test]
     fn pop_ecksum() {
         let pba = PBA::default();
-        let pba2 = pba.clone();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
-                      csize: 1, checksum: 0xdeadbeefdeadbeef};
+                      csize: 1, checksum: 0xdead_beef_dead_beef};
         let s = Scenario::new();
         let mut cache = Cache::new();
         let pool = s.create_mock::<MockPool>();
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
-                unsafe {**key == Key::PBA(pba2)}
+                unsafe {**key == Key::PBA(pba)}
             })).returning(|_| None);
         s.expect(pool.read_call(ANY, pba)
                    .and_return(Box::new(future::ok::<(), Error>(()))));
@@ -846,7 +838,7 @@ mod t {
     fn pop_direct() {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
-                      csize: 1, checksum: 0xe7f15966a3d61f8};
+                      csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
         let cache = Cache::new();

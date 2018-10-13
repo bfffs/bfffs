@@ -312,12 +312,12 @@ fn test_get_lru() {
     assert_eq!(cache.mru, Some(key1));
     assert_eq!(cache.lru, Some(key2));
     {
-        let v = cache.store.get(&key1).unwrap();
+        let v = &cache.store[&key1];
         assert_eq!(v.mru, None);
         assert_eq!(v.lru, Some(key2));
     }
     {
-        let v = cache.store.get(&key2).unwrap();
+        let v = &cache.store[&key2];
         assert_eq!(v.lru, None);
         assert_eq!(v.mru, Some(key1));
     }
@@ -341,15 +341,15 @@ fn test_get_middle() {
     assert_eq!(cache.mru, Some(key2));
     assert_eq!(cache.lru, Some(key1));
     {
-        let v = cache.store.get(&key1).unwrap();
+        let v = &cache.store[&key1];
         assert_eq!(v.mru, Some(key3));
     }
     {
-        let v = cache.store.get(&key2).unwrap();
+        let v = &cache.store[&key2];
         assert_eq!(v.lru, Some(key3));
     }
     {
-        let v = cache.store.get(&key3).unwrap();
+        let v = &cache.store[&key3];
         assert_eq!(v.lru, Some(key1));
         assert_eq!(v.mru, Some(key2));
     }
@@ -423,11 +423,11 @@ fn test_get_mru() {
     assert_eq!(cache.lru, Some(key1));
     assert_eq!(cache.mru, Some(key2));
     {
-        let v = cache.store.get(&key1).unwrap();
+        let v = &cache.store[&key1];
         assert_eq!(v.mru, Some(key2));
     }
     {
-        let v = cache.store.get(&key2).unwrap();
+        let v = &cache.store[&key2];
         assert_eq!(v.lru, Some(key1));
     }
 }
@@ -481,16 +481,16 @@ fn test_get_ref_middle() {
     assert_eq!(cache.mru, Some(key3));
     assert_eq!(cache.lru, Some(key1));
     {
-        let v = cache.store.get(&key1).unwrap();
+        let v = &cache.store[&key1];
         assert_eq!(v.mru, Some(key2));
     }
     {
-        let v = cache.store.get(&key2).unwrap();
+        let v = &cache.store[&key2];
         assert_eq!(v.lru, Some(key1));
         assert_eq!(v.mru, Some(key3));
     }
     {
-        let v = cache.store.get(&key3).unwrap();
+        let v = &cache.store[&key3];
         assert_eq!(v.lru, Some(key2));
     }
 }
@@ -530,7 +530,7 @@ fn test_insert_dup_value() {
     // Check that the mru/lru entries are consistent
     assert_eq!(cache.mru, Some(key));
     assert_eq!(cache.lru, Some(key));
-    let entry = cache.store.get(&key).unwrap();
+    let entry = &cache.store[&key];
     assert_eq!(entry.mru, None);
     assert_eq!(entry.lru, None);
 }
@@ -546,7 +546,7 @@ fn test_insert_empty() {
     assert_eq!(cache.lru, Some(key));
     assert_eq!(cache.mru, Some(key));
     {
-        let v = cache.store.get(&key).unwrap();
+        let v = &cache.store[&key];
         assert!(v.lru.is_none());
         assert!(v.mru.is_none());
     }
@@ -567,7 +567,7 @@ fn test_insert_one() {
     assert_eq!(cache.lru, Some(key1));
     assert_eq!(cache.mru, Some(key2));
     {
-        let v = cache.store.get(&key2).unwrap();
+        let v = &cache.store[&key2];
         assert_eq!(v.lru, Some(key1));
         assert!(v.mru.is_none());
     }
@@ -612,7 +612,7 @@ fn test_remove_lru() {
     assert_eq!(cache.size(), 7);
     assert_eq!(cache.lru, Some(key2));
     {
-        let v = cache.store.get(&key2).unwrap();
+        let v = &cache.store[&key2];
         assert!(v.lru.is_none());
     }
 }
@@ -637,11 +637,11 @@ fn test_remove_middle() {
     assert_eq!(cache.lru, Some(key1));
     assert_eq!(cache.mru, Some(key3));
     {
-        let v = cache.store.get(&key1).unwrap();
+        let v = &cache.store[&key1];
         assert_eq!(v.mru, Some(key3));
     }
     {
-        let v = cache.store.get(&key3).unwrap();
+        let v = &cache.store[&key3];
         assert_eq!(v.lru, Some(key1));
     }
 }
@@ -662,7 +662,7 @@ fn test_remove_mru() {
     assert_eq!(cache.size(), 5);
     assert_eq!(cache.mru, Some(key1));
     {
-        let v = cache.store.get(&key1).unwrap();
+        let v = &cache.store[&key1];
         assert!(v.mru.is_none());
     }
 }

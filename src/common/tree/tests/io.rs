@@ -42,7 +42,7 @@ fn addresses() {
     let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
     let opt_intnode0 = Some(intnode0);
     
-    expect_get(&mut mock, addri0.clone(), opt_intnode0);
+    expect_get(&mut mock, addri0, opt_intnode0);
 
     let dml = Arc::new(mock);
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
@@ -539,11 +539,11 @@ fn open() {
         36, 0, 0, 0,                            // csize = 36
         1, 2, 3, 4, 5, 6, 7, 8,                 // checksum = 0x0807060504030201
     ];
-    let expected_drp = DRP::new(PBA::new(2, 0x0102030405060708),
+    let expected_drp = DRP::new(PBA::new(2, 0x0102_0304_0506_0708),
         Compression::ZstdL9NoShuffle,
         78,     // lsize
         36,     // csize
-        0x0807060504030201
+        0x0807_0605_0403_0201
     );
     let on_disk = TreeOnDisk(v);
     let mock = DDMLMock::new();
@@ -552,7 +552,7 @@ fn open() {
     assert_eq!(tree.i.height.load(Ordering::Relaxed), 1);
     assert_eq!(tree.i.min_fanout, 2);
     assert_eq!(tree.i.max_fanout, 5);
-    assert_eq!(tree.i._max_size, 4194304);
+    assert_eq!(tree.i._max_size, 4_194_304);
     let root_elem_guard = tree.i.root.try_read().unwrap();
     assert_eq!(root_elem_guard.key, 0);
     assert_eq!(root_elem_guard.txgs, TxgT::from(0)..TxgT::from(42));
@@ -654,17 +654,17 @@ fn range_delete() {
     // Simulacrum requires us to define the expectations in their exact call
     // order, even though we don't really care about it.
     // These nodes are popped or deleted in pass1
-    expect_pop(&mut mock, addri0.clone(), opt_intnode0);
-    expect_pop(&mut mock, addri2.clone(), opt_intnode2);
-    expect_pop(&mut mock, addri1.clone(), opt_intnode1);
-    expect_pop(&mut mock, addrl2.clone(), opt_leafnode2);
-    expect_delete(&mut mock, addrl3.clone());
-    expect_delete(&mut mock, addrl4.clone());
-    expect_delete(&mut mock, addrl5.clone());
-    expect_delete(&mut mock, addrl6.clone());
-    expect_pop(&mut mock, addrl7.clone(), opt_leafnode7);
+    expect_pop(&mut mock, addri0, opt_intnode0);
+    expect_pop(&mut mock, addri2, opt_intnode2);
+    expect_pop(&mut mock, addri1, opt_intnode1);
+    expect_pop(&mut mock, addrl2, opt_leafnode2);
+    expect_delete(&mut mock, addrl3);
+    expect_delete(&mut mock, addrl4);
+    expect_delete(&mut mock, addrl5);
+    expect_delete(&mut mock, addrl6);
+    expect_pop(&mut mock, addrl7, opt_leafnode7);
     // leafnode8 is popped as part of the fixup in pass 2
-    expect_pop(&mut mock, addrl8.clone(), opt_leafnode8);
+    expect_pop(&mut mock, addrl8, opt_leafnode8);
 
     let dml = Arc::new(mock);
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
