@@ -116,7 +116,10 @@ impl<'a> ClusterServer {
             },
             Rpc::Free(lba, length, tx) => {
                 let fut = self.cluster.free(lba, length)
-                    .then(|r| Ok(tx.send(r).unwrap()));
+                .then(|r| {
+                    tx.send(r).unwrap();
+                    Ok(())
+                });
                 Box::new(fut) as Box<Future<Item=(), Error=()>>
             }
             Rpc::OptimumQueueDepth(tx) => {
@@ -126,7 +129,10 @@ impl<'a> ClusterServer {
             },
             Rpc::Read(buf, lba, tx) => {
                 let fut = self.cluster.read(buf, lba)
-                    .then(|r| Ok(tx.send(r).unwrap()));
+                .then(|r| {
+                    tx.send(r).unwrap();
+                    Ok(())
+                });
                 Box::new(fut) as Box<Future<Item=(), Error=()>>
             },
             Rpc::Shutdown() => {
@@ -139,19 +145,23 @@ impl<'a> ClusterServer {
             },
             Rpc::SyncAll(tx) => {
                 let fut = self.cluster.sync_all()
-                    .then(|r| Ok(tx.send(r).unwrap()));
+                .then(|r| {
+                    tx.send(r).unwrap();
+                    Ok(())
+                });
                 Box::new(fut) as Box<Future<Item=(), Error=()>>
             },
             Rpc::Write(buf, txg, tx) => {
                 match self.cluster.write(buf, txg) {
                     Ok((lba, wfut)) => {
                         let txfut = wfut
-                            .then(move |r|
-                                Ok(match r {
+                            .then(move |r| {
+                                match r {
                                     Ok(_) => tx.send(Ok(lba)),
                                     Err(e) => tx.send(Err(e))
-                                }.unwrap())
-                            );
+                                }.unwrap();
+                                Ok(())
+                            });
                         Box::new(txfut) as Box<Future<Item=(), Error=()>>
                     },
                     Err(e) => {
@@ -163,7 +173,10 @@ impl<'a> ClusterServer {
             },
             Rpc::WriteLabel(label_writer, tx) => {
                 let fut = self.cluster.write_label(label_writer)
-                    .then(|r| Ok(tx.send(r).unwrap()));
+                .then(|r| {
+                    tx.send(r).unwrap();
+                    Ok(())
+                });
                 Box::new(fut) as Box<Future<Item=(), Error=()>>
             },
         }
@@ -476,6 +489,7 @@ impl<'a> Pool {
     /// [`Cluster`](struct.Cluster.html)s.
     ///
     /// Must be called from within the context of a Tokio Runtime.
+    #[cfg_attr(feature = "cargo-clippy", allow(new_ret_no_self))]
     fn new(name: String, uuid: Uuid, clusters: Vec<ClusterProxy>)
         -> impl Future<Item=Self, Error=Error>
     {
@@ -485,12 +499,12 @@ impl<'a> Pool {
         );
         let allocated_fut = future::join_all(clusters.iter()
             .map(|cluster| cluster.allocated()
-                 .map(|allocated| Atomic::new(allocated))
+            .map(Atomic::new)
             ).collect::<Vec<_>>()
         );
         let oqd_fut = future::join_all(clusters.iter()
             .map(|cluster| cluster.optimum_queue_depth()
-                 .map(|oqd| f64::from(oqd))
+            .map(f64::from)
             ).collect::<Vec<_>>()
         );
         let queue_depth: Vec<_> = clusters.iter()
@@ -519,6 +533,7 @@ impl<'a> Pool {
     /// * `(None, Some(x))`    - No closed zone this call.  Repeat the call,
     ///                          supplying `x`
     /// * `(None, None)`       - No more closed zones in this pool.
+    #[cfg_attr(feature = "cargo-clippy", allow(collapsible_if))]
     pub fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
         -> impl Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
                        Error=Error>

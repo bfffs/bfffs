@@ -57,7 +57,7 @@ impl FuseFs {
                 };
                 Ok(reply_attr)
             },
-            Err(e) => Err(e.into())
+            Err(e) => Err(e)
         }
     }
 

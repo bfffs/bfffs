@@ -82,7 +82,7 @@ impl Vdev for VdevFile {
     fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
         let fut = self.file.sync_all().unwrap()
             .map(|_| ())
-            .map_err(|e| Error::from(e));
+            .map_err(Error::from);
         Box::new(fut)
     }
 
@@ -204,7 +204,7 @@ impl VdevFile {
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
         f.read_at(container, 0).unwrap()
-         .map_err(|e| Error::from(e))
+         .map_err(Error::from)
          .and_then(move |aio_result| {
             drop(aio_result);   // release reference on dbs
             LabelReader::from_dbs(dbs).and_then(|mut label_reader| {
@@ -263,7 +263,7 @@ impl Future for VdevFileLioFut {
         match self.0.poll() {
             Ok(Async::Ready(lio_result)) => {
                 // We must drain the iterator to free the AioCb resources
-                lio_result.into_iter().map(|_| ()).count();
+                lio_result.map(|_| ()).count();
                 Ok(Async::Ready(()))
             },
             Ok(Async::NotReady) => Ok(Async::NotReady),

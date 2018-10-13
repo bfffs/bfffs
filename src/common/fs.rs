@@ -169,7 +169,7 @@ impl Fs {
                         Ok(Some(v)) => {
                             let inode = v.as_inode().unwrap();
                             let attr = Attr {
-                                ino: ino,
+                                ino,
                                 size: inode.size,
                                 blocks: 0,
                                 atime: inode.atime,
@@ -458,9 +458,9 @@ impl Fs {
                     ino_fut.join3(dirent_fut, nlink_fut)
                 }).then(move |r| {
                     match r {
-                        Ok(_) => tx.send(Ok(()).into()),
+                        Ok(_) => tx.send(Ok(())),
                         Err(e) => tx.send(Err(e.into()))
-                    }.ok().expect("FS::rmdir: send failed");
+                    }.expect("FS::rmdir: send failed");
                     Ok(()).into_future()
                 })
             }).map_err(|e| panic!("{:?}", e))
@@ -551,9 +551,9 @@ impl Fs {
                     ino_fut.join(dirent_fut)
                 }).then(move |r| {
                     match r {
-                        Ok(_) => tx.send(Ok(()).into()),
+                        Ok(_) => tx.send(Ok(())),
                         Err(e) => tx.send(Err(e.into()))
-                    }.ok().expect("FS::unlink: send failed");
+                    }.expect("FS::unlink: send failed");
                     Ok(()).into_future()
                 })
             }).map_err(|e| panic!("{:?}", e))
@@ -667,10 +667,9 @@ impl Fs {
                             // We must be appending
                             base.resize(e, 0);
                         }
-                        &mut base[r].copy_from_slice(&overlay[..]);
+                        base[r].copy_from_slice(&overlay[..]);
                     } else {
-                        &mut base[0..l as usize]
-                            .copy_from_slice(&overlay[..]);
+                        base[0..l as usize].copy_from_slice(&overlay[..]);
                     }
                     let new_dbs = Arc::new(
                         DivBufShared::from(base)

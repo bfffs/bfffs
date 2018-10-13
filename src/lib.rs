@@ -1,5 +1,10 @@
 #![cfg_attr(feature = "mocks", feature(plugin))]
 
+// Disable the range_plus_one lint until this bug is fixed.  It generates many
+// false positive in the Tree code.
+// https://github.com/rust-lang-nursery/rust-clippy/issues/3307
+#![cfg_attr(feature = "cargo-clippy", allow(range_plus_one))]
+
 extern crate atomic;
 extern crate bincode;
 #[macro_use]

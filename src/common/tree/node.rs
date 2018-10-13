@@ -481,10 +481,9 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                 .map(move |arc| {
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
-                    let guard = TreeWriteGuard::Mem(
+                    TreeWriteGuard::Mem(
                         child_node.0.try_write().unwrap()
-                    );
-                    guard
+                    )
                 });
                 Box::new(fut) as Box<Future<Item= TreeWriteGuard<A, K, V>,
                                             Error=Error> + Send>
@@ -538,7 +537,7 @@ pub(super) struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
 impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     /// Is the child node dirty?  That is, does it differ from the on-disk
     /// version?
-    pub fn is_dirty(&mut self) -> bool {
+    pub fn is_dirty(&self) -> bool {
         self.ptr.is_dirty()
     }
 
@@ -554,7 +553,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
             TreePtr::Mem(ref node) => {
                 Box::new(
                     node.0.read()
-                        .map(|guard| TreeReadGuard::Mem(guard))
+                        .map(TreeReadGuard::Mem)
                         .map_err(|_| Error::EPIPE)
                 )
             },
@@ -838,7 +837,7 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
     }
 
     fn eq(&self, o: &Cacheable) -> bool {
-        if let Some(other) = o.downcast_ref::<Arc<Node<A, K, V>>>().ok() {
+        if let Ok(other) = o.downcast_ref::<Arc<Node<A, K, V>>>() {
             // Since the cache is strictly read-only, try_read is guaranteed to
             // work if both values are cached, which is probably the only
             // context that should be using this method.
@@ -912,8 +911,7 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
             "Shouldn't be serializing a Node that's locked for writing");
         let v = bincode::serialize(&g.deref()).unwrap();
         let dbs = DivBufShared::from(v);
-        let db = dbs.try().unwrap();
-        db
+        dbs.try().unwrap()
     }
 
     fn to_owned(self) -> Box<Cacheable> {
@@ -935,7 +933,7 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     {
         Box::new(
             self.0.write()
-                .map(|guard| TreeWriteGuard::Mem(guard))
+                .map(TreeWriteGuard::Mem)
                 .map_err(|_| Error::EPIPE)
         )
     }

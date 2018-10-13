@@ -639,7 +639,7 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         // Inject a record into the RIDT but not the AllocT
-        let entry = RidtEntry{drp: drp, refcount: 2};
+        let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
         rt.block_on(idml.trees.ridt.insert(rid.clone(), entry, txg)).unwrap();
 
@@ -657,7 +657,7 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
         // Inject a mismatched pair of records
-        let entry = RidtEntry{drp: drp, refcount: 2};
+        let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
         rt.block_on(idml.trees.ridt.insert(rid.clone(), entry, txg)).unwrap();
         rt.block_on(idml.trees.alloct.insert(drp2.pba(), rid, txg)).unwrap();

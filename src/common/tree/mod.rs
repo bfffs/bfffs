@@ -51,6 +51,7 @@ pub use self::node::{Addr, Key, MinValue, Value};
 
 /// Are there any elements in common between the two Ranges?
 #[cfg_attr(feature = "cargo-clippy", allow(if_same_then_else))]
+#[cfg_attr(feature = "cargo-clippy", allow(needless_bool))]
 fn ranges_overlap<R, T, U>(x: &R, y: &Range<U>) -> bool
     where U: Borrow<T> + PartialOrd,
           R: RangeBounds<T>,
@@ -91,8 +92,7 @@ mod atomic_u64_serializer {
     pub fn deserialize<'de, D>(d: D) -> Result<Atomic<u64>, D::Error>
         where D: Deserializer<'de>
     {
-        u64::deserialize(d)
-            .map(|u| Atomic::new(u))
+        u64::deserialize(d).map(Atomic::new)
     }
 
     pub fn serialize<S>(x: &Atomic<u64>, s: S) -> Result<S::Ok, S::Error>
@@ -111,8 +111,7 @@ mod tree_root_serializer {
         -> Result<RwLock<IntElem<A, K, V>>, DE::Error>
         where A: Addr, DE: Deserializer<'de>, K: Key, V: Value
     {
-        IntElem::deserialize(d)
-            .map(|int_elem| RwLock::new(int_elem))
+        IntElem::deserialize(d).map(RwLock::new)
     }
 
     pub(super) fn serialize<A, K, S, V>(x: &RwLock<IntElem<A, K, V>>, s: S)
@@ -672,6 +671,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Fix an Int node in danger of being underfull, returning the parent guard
     /// back to the caller
+    #[cfg_attr(feature = "cargo-clippy", allow(collapsible_if))]
     fn fix_int<Q>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, mut child: TreeWriteGuard<A, K, V>,
@@ -769,15 +769,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
             Box::new(Tree::insert_int_no_split(inner, dml, parent, k, v, txg))
+        } else if child.is_leaf() {
+            let elem = &mut parent.as_int_mut().children[child_idx];
+            Box::new(Tree::<A, D, K, V>::insert_leaf_no_split(elem,
+                child, k, v, txg))
         } else {
-            if child.is_leaf() {
-                let elem = &mut parent.as_int_mut().children[child_idx];
-                Box::new(Tree::<A, D, K, V>::insert_leaf_no_split(elem,
-                    child, k, v, txg))
-            } else {
-                drop(parent);
-                Box::new(Tree::insert_int_no_split(inner, dml, child, k, v, txg))
-            }
+            drop(parent);
+            Box::new(Tree::insert_int_no_split(inner, dml, child, k, v, txg))
         }
     }
 
@@ -788,7 +786,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         let old_v = child.as_leaf_mut().insert(k, v);
         elem.txgs = txg..txg + 1;
-        return Ok(old_v).into_future()
+        Ok(old_v).into_future()
     }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
@@ -1468,7 +1466,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         false
                     }
                 });
-                let fut = if root_guard.len() == 1 {
+                if root_guard.len() == 1 {
                     // Merge it down again
                     Tree::range_delete_pass2_root(inner, dml, tree_guard, map,
                                                   range, txg)
@@ -1520,8 +1518,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         ()
                     }); //LCOV_EXCL_START  kcov false negative
                     Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
-                };
-                fut
+                }
             });
             Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
         } else {
@@ -1769,7 +1766,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
         if node.is_leaf() {
             let old_v = node.as_leaf_mut().remove(&k);
-            return Box::new(Ok(old_v).into_future());
+            Box::new(Ok(old_v).into_future())
         } else {
             let child_idx = node.as_int().position(&k);
             let fut = node.xlock(dml.clone(), child_idx, txg);
@@ -1824,9 +1821,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         })
         .map(move |root_guard| {
             let root = IntElem::<A, K, V>{
-                key: root_guard.key.clone(),
+                key: root_guard.key,
                 txgs: root_guard.txgs.clone(),
-                ptr: TreePtr::Addr(root_guard.ptr.as_addr().clone())
+                ptr: TreePtr::Addr(*root_guard.ptr.as_addr())
             };
             let iod = InnerOnDisk{
                 height: inner2.height.load(Ordering::Relaxed),
@@ -1860,7 +1857,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 });
             return Box::new(fut);
         }
-        let mut ndata = node.0.try_write().ok().expect("node.0.try_write");
+        let mut ndata = node.0.try_write().expect("node.0.try_write");
 
         // We need to flush each dirty child, rewrite its TreePtr, and update
         // the Node's txg range.  Satisfying the borrow checker requires that
@@ -1869,7 +1866,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // reassemble it after the join_all
         let dml2 = dml.clone();
         let children_fut = ndata.as_int_mut().children.drain(..)
-        .map(move |mut elem| {
+        .map(move |elem| {
             if elem.is_dirty()
             {
                 // If the child is dirty, then we have ownership over it.  We
@@ -2240,7 +2237,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                         // TODO: accurately update the start txg
                         guard.as_int().children[child_idx].txgs.start
                     };
-                    let txgs = Range{start, end: txg + 1};
+                    let txgs = start..txg + 1;
                     guard.as_int_mut().children[child_idx].txgs = txgs;
                 });
             Box::new(fut)

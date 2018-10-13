@@ -43,14 +43,13 @@ impl DevManager {
                 let leaves = raid.children.iter().map(|uuid| {
                     inner.leaves.remove(&uuid).unwrap()
                 }).collect::<Vec<_>>();
-                (raid.uuid.clone(), leaves)
+                (raid.uuid, leaves)
             }).collect::<BTreeMap<_, _>>();
             // Drop the self.inner mutex
             (pool, raids, leaves)
         };
         let proxies = raids.into_iter().map(move |raid| {
-            let raid_uuid = raid.uuid.clone();
-            let leaf_paths = leaves.remove(&raid_uuid).unwrap();
+            let leaf_paths = leaves.remove(&raid.uuid).unwrap();
             let (tx, rx) = oneshot::channel();
             // The top-level Executor spawn puts each Cluster onto a different
             // thread, when using tokio-io-pool
@@ -63,7 +62,7 @@ impl DevManager {
                 }).collect()
                 .and_then(move |vdev_blocks| {
                     let (vdev_raid, reader) =
-                        vdev_raid::VdevRaid::open(Some(raid_uuid), vdev_blocks);
+                        vdev_raid::VdevRaid::open(Some(raid.uuid), vdev_blocks);
                     cluster::Cluster::open(vdev_raid, reader)
                 }).map(|(cluster, reader)| {
                     let proxy = pool::ClusterProxy::new(cluster);
@@ -106,14 +105,13 @@ impl DevManager {
                 let leaves = raid.children.iter().map(|uuid| {
                     inner.leaves.remove(&uuid).unwrap()
                 }).collect::<Vec<_>>();
-                (raid.uuid.clone(), leaves)
+                (raid.uuid, leaves)
             }).collect::<BTreeMap<_, _>>();
             // Drop the self.inner mutex
             (pool, raids, leaves)
         };
         let cfuts = raids.into_iter().map(move |raid| {
-            let raid_uuid = raid.uuid.clone();
-            let leaf_paths = leaves.remove(&raid_uuid).unwrap();
+            let leaf_paths = leaves.remove(&raid.uuid).unwrap();
             stream::iter_ok(leaf_paths.into_iter())
                 .and_then(|path| {
                 vdev_file::VdevFile::open(path)
@@ -122,7 +120,7 @@ impl DevManager {
             }).collect()
             .and_then(move |vdev_blocks| {
                 let (vdev_raid, reader) =
-                    vdev_raid::VdevRaid::open(Some(raid_uuid), vdev_blocks);
+                    vdev_raid::VdevRaid::open(Some(raid.uuid), vdev_blocks);
                 cluster::Cluster::open(vdev_raid, reader)
             }).map(|(cluster, _reader)| {
                 cluster

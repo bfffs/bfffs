@@ -355,13 +355,13 @@ impl<'a> FreeSpaceMap {
         let mut oz_futs = Vec::new();
         for v in multizip((allocated_iter, freed_iter, txgs_iter)).enumerate() {
             let zid = v.0 as ZoneT;
-            let allocated = (v.1).0 as LbaT;
+            let allocated = LbaT::from((v.1).0);
             let freed = (v.1).1;
             let txgs = (v.1).2;
             if allocated > 0 {
                 let zl = vdev.zone_limits(zid);
                 fsm.open_zone(zid, zl.0, zl.1, 0, txgs.start).unwrap();
-                if allocated == u32::max_value() as LbaT {
+                if allocated == LbaT::from(u32::max_value()) {
                     fsm.finish_zone(zid, txgs.end - 1);
                 } else if allocated > 0 {
                     oz_futs.push(vdev.reopen_zone(zid, allocated));
@@ -478,29 +478,29 @@ impl Display for FreeSpaceMap {
             .unwrap());
 
         // First print the header
-        write!(f, "FreeSpaceMap: {} Zones: {} Closed, {} Empty, {} Open\n",
+        writeln!(f, "FreeSpaceMap: {} Zones: {} Closed, {} Empty, {} Open",
             t, c, e, o)?;
-        let zone_width = cmp::max(5, ((t + 1) as f64).log(16.0).ceil() as usize);
+        let zone_width = cmp::max(5, f64::from(t + 1).log(16.0).ceil() as usize);
         let txg_width = cmp::max(1,
-            ((max_txg + 1) as f64).log(16.0).ceil() as usize);
+            f64::from(max_txg + 1).log(16.0).ceil() as usize);
         let space_width = 80 - zone_width - 2 * txg_width - 7;
         let sw64 = space_width as f64;
-        write!(f, "{0:^1$}|{2:^3$}|{4:^5$}|\n", "Zone", zone_width + 1,
+        writeln!(f, "{0:^1$}|{2:^3$}|{4:^5$}|", "Zone", zone_width + 1,
                "TXG", txg_width * 2 + 3, "Space", space_width)?;
-        write!(f, "{0:-^1$}|{2:-^3$}|{4:-^5$}|\n", "", zone_width + 1,
+        writeln!(f, "{0:-^1$}|{2:-^3$}|{4:-^5$}|", "", zone_width + 1,
                "", txg_width * 2 + 3, "", space_width)?;
 
         // Now loop over the zones
         let mut last_row: Option<String> = None;
         for i in 0..self.zones.len() {
-            let total = self.zones[i].total_blocks as f64;
+            let total = f64::from(self.zones[i].total_blocks);
             // We want to round used + free up so the graph won't overestimate
             // available space, but we want to display used and free separately.
             let (used_width, freed_width) = if self.is_empty(i as ZoneT) {
                 (0, 0)
             } else {
                 let used = self.in_use(i as ZoneT) as f64;
-                let freed = self.zones[i].freed_blocks as f64;
+                let freed = f64::from(self.zones[i].freed_blocks);
                 let not_avail_width = ((used + freed) / total * sw64).round()
                     as usize;
                 let used_width = (used / total * sw64).round() as usize;
@@ -530,13 +530,13 @@ impl Display for FreeSpaceMap {
                     continue;
                 }
             }
-            write!(f, "{0:>1$x} | {2}|\n", i, zone_width, this_row)?;
+            writeln!(f, "{0:>1$x} | {2}|", i, zone_width, this_row)?;
             last_row = Some(this_row);
         }
 
         // Print a single row for trailing empty zones, if any
         if t > self.zones.len() as u32 {
-            write!(f, "{0:>1$x} | {2:^3$} |{4:5$}|\n",
+            writeln!(f, "{0:>1$x} | {2:^3$} |{4:5$}|",
                    self.zones.len(), zone_width, "-", 2 * txg_width + 1,
                    "", space_width)?;
         }

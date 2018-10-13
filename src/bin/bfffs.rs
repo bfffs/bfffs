@@ -117,7 +117,7 @@ fn create(args: &clap::ArgMatches) {
         let next = values.next();
         match next {
             None => {
-                if devs.len() > 0 {
+                if !devs.is_empty() {
                     match cluster_type {
                         Some("mirror") =>
                             builder.create_mirror(&devs[..]),
@@ -129,7 +129,7 @@ fn create(args: &clap::ArgMatches) {
                 break;
             },
             Some("mirror") => {
-                if devs.len() > 0 {
+                if !devs.is_empty() {
                     builder.create_cluster(cluster_type.as_ref().unwrap(),
                                            &devs[..]);
                 }
@@ -137,7 +137,7 @@ fn create(args: &clap::ArgMatches) {
                 cluster_type = Some("mirror")
             },
             Some("raid") => {
-                if devs.len() > 0 {
+                if !devs.is_empty() {
                     builder.create_cluster(cluster_type.as_ref().unwrap(),
                                            &devs[..]);
                 }

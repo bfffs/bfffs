@@ -353,7 +353,7 @@ impl Inner {
             self.last_lba = op.lba;
             Some(op)
         } else if self.syncing {
-            debug_assert!(self.after_sync.len() > 0);
+            debug_assert!(!self.after_sync.is_empty());
             let op = self.after_sync.pop_front().unwrap();
             if op.cmd == Cmd::SyncAll {
                 // If this op was the sync_all, then reschedule all the

@@ -59,7 +59,7 @@ pub enum ObjKey {
 impl ObjKey {
     /// Create a `ObjKey::DirEntry` object from a pathname
     pub fn dir_entry(name: &OsStr) -> Self {
-        if name.as_bytes().contains(&('/' as u8)) {
+        if name.as_bytes().contains(&(b'/')) {
             panic!("Directory entries may not contain '/'");
         }
 
@@ -139,9 +139,9 @@ impl FSKey {
     }
 
     fn compose(object: u64, objtype: u8, offset: u64) -> Self {
-        FSKey(((object as u128) << 64)
-              | ((objtype as u128) << 56)
-              | (offset as u128))
+        FSKey((u128::from(object) << 64)
+              | (u128::from(objtype) << 56)
+              | u128::from(offset))
     }
 }
 

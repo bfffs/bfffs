@@ -76,7 +76,7 @@ impl Syncer {
     fn new<E: Executor + 'static>(handle: E, inner: Arc<Inner>) -> Self {
         let (tx, rx) = mpsc::channel(1);
         Syncer::run(handle, inner, rx);
-        Syncer{tx: tx}
+        Syncer{tx}
     }
 
     // Start a task that will sync the database at a fixed interval, but will

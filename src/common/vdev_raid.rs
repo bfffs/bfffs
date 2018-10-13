@@ -558,9 +558,7 @@ impl VdevRaid {
             // We need to service part of the read from the StripeBuffer
             let mut cursor = SGCursor::from(stripe_buffer.unwrap().peek());
             let direct_len = if stripe_buffer.unwrap().lba() > lba {
-                let direct_len = (stripe_buffer.unwrap().lba() - lba) as usize *
-                                 BYTES_PER_LBA;
-                direct_len
+                (stripe_buffer.unwrap().lba() - lba) as usize * BYTES_PER_LBA
             } else {
                 // Seek to the LBA of interest
                 let mut skipped = 0;
@@ -574,7 +572,7 @@ impl VdevRaid {
             };
             let mut sb_buf = buf.split_off(direct_len);
             // Copy from StripeBuffer into sb_buf
-            while sb_buf.len() > 0 {
+            while !sb_buf.is_empty() {
                 let iovec = cursor.next(sb_buf.len()).expect(
                     "Read beyond the stripe buffer into unallocated space");
                 sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
@@ -780,6 +778,8 @@ impl VdevRaid {
     }
 
     /// Write two or more whole stripes
+    //#[allow(clippy::needless_range_loop)]
+    #[cfg_attr(feature = "cargo-clippy", allow(needless_range_loop))]
     fn write_at_multi(&self, mut buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
@@ -985,9 +985,7 @@ impl Vdev for VdevRaid {
         let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
         let disk_lba = loc.offset * self.chunksize;
         let tentative = self.blockdevs[loc.disk as usize].lba2zone(disk_lba);
-        if tentative.is_none() {
-            return None;
-        }
+        tentative?;
         // NB: this call to zone_limits is slow, but unfortunately necessary.
         let limits = self.zone_limits(tentative.unwrap());
         if lba >= limits.0 && lba < limits.1 {
@@ -1063,8 +1061,7 @@ impl Vdev for VdevRaid {
             let stripes = (0..self.blockdevs.len()).map(|i| {
                 let cid = self.locator.loc2id(Chunkloc::new(i as i16,
                                                             boundary_chunk));
-                let stripe = cid.address() / m;
-                stripe
+                cid.address() / m
             });
             let (min_stripe, max_stripe) = min_max(stripes).unwrap();
 

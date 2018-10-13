@@ -19,6 +19,8 @@ pub enum Key {
 }
 
 /// Types that implement `Cacheable` may be stored in the cache
+// Things in Cache will never be empty, so they don't need is_empty
+#[cfg_attr(feature = "cargo-clippy", allow(len_without_is_empty))]
 pub trait Cacheable: Any + Debug + Send + Sync {
     /// Deserialize a buffer into Self.  Will panic if deserialization fails.
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized;
@@ -73,8 +75,8 @@ impl Cacheable for DivBufShared {
     }
 
     fn eq(&self, other: &Cacheable) -> bool {
-        if let Some(other_dbs) = other.downcast_ref::<DivBufShared>().ok() {
-            &self.try().unwrap()[..] == &other_dbs.try().unwrap()[..]
+        if let Ok(other_dbs) = other.downcast_ref::<DivBufShared>() {
+            self.try().unwrap()[..] == other_dbs.try().unwrap()[..]
         } else {
             // other isn't even the same concrete type
             false
@@ -173,7 +175,7 @@ impl Cache {
     /// The block will be marked as the most recently used.
     pub fn get<T: CacheRef>(&mut self, key: &Key) -> Option<Box<T>> {
         if self.mru == Some(*key) {
-            Some(self.store.get(key).unwrap().buf.make_ref().downcast::<T>().unwrap())
+            Some(self.store[key].buf.make_ref().downcast::<T>().unwrap())
         } else {
             let mru = self.mru;
             let mut v_mru = None;
@@ -226,7 +228,7 @@ impl Cache {
             // inserting two identical values is merely bad timing.  We must
             // compare the buffers to verify.
             {
-                let new_entry = self.store.get(&key).unwrap();
+                let new_entry = &self.store[&key];
                 assert!(old_entry.buf.eq(&*new_entry.buf),
                     "Conflicting value cached with key={:?}", key);
             }

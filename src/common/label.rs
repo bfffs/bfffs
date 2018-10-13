@@ -48,7 +48,7 @@ impl<'de> LabelReader {
         if db.len() < MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN {
             return Err(Error::EINVAL);
         }
-        if &MAGIC[..] != &db[0..MAGIC_LEN] {
+        if MAGIC[..] != db[0..MAGIC_LEN] {
             return Err(Error::EINVAL);
         }
 
