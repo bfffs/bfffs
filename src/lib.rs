@@ -1,9 +1,13 @@
 #![cfg_attr(feature = "mocks", feature(plugin))]
+#![cfg_attr(feature = "cargo-clippy", feature(tool_lints))]
 
 // Disable the range_plus_one lint until this bug is fixed.  It generates many
 // false positive in the Tree code.
 // https://github.com/rust-lang-nursery/rust-clippy/issues/3307
-#![cfg_attr(feature = "cargo-clippy", allow(range_plus_one))]
+#![cfg_attr(feature = "cargo-clippy", allow(clippy::range_plus_one))]
+
+// Simulacrum doesn't (yet) impl Default for Expectations
+#![cfg_attr(feature = "cargo-clippy", allow(clippy::new_without_default))]
 
 extern crate atomic;
 extern crate bincode;

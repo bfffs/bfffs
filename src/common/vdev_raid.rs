@@ -779,7 +779,7 @@ impl VdevRaid {
 
     /// Write two or more whole stripes
     //#[allow(clippy::needless_range_loop)]
-    #[cfg_attr(feature = "cargo-clippy", allow(needless_range_loop))]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_range_loop))]
     fn write_at_multi(&self, mut buf: IoVec, lba: LbaT) -> Box<VdevFut> {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;

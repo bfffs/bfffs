@@ -489,7 +489,7 @@ impl<'a> Pool {
     /// [`Cluster`](struct.Cluster.html)s.
     ///
     /// Must be called from within the context of a Tokio Runtime.
-    #[cfg_attr(feature = "cargo-clippy", allow(new_ret_no_self))]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::new_ret_no_self))]
     fn new(name: String, uuid: Uuid, clusters: Vec<ClusterProxy>)
         -> impl Future<Item=Self, Error=Error>
     {
@@ -533,7 +533,7 @@ impl<'a> Pool {
     /// * `(None, Some(x))`    - No closed zone this call.  Repeat the call,
     ///                          supplying `x`
     /// * `(None, None)`       - No more closed zones in this pool.
-    #[cfg_attr(feature = "cargo-clippy", allow(collapsible_if))]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::collapsible_if))]
     pub fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
         -> impl Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
                        Error=Error>

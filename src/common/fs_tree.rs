@@ -188,7 +188,7 @@ pub struct Inode {
     pub mode:       u16,
 }
 
-#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
 mod dbs_serializer {
     use super::*;
     use serde::{de::Deserializer, Serializer};

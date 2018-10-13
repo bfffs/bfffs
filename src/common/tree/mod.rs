@@ -50,8 +50,8 @@ pub(super) use self::node::Node;
 pub use self::node::{Addr, Key, MinValue, Value};
 
 /// Are there any elements in common between the two Ranges?
-#[cfg_attr(feature = "cargo-clippy", allow(if_same_then_else))]
-#[cfg_attr(feature = "cargo-clippy", allow(needless_bool))]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::if_same_then_else))]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_bool))]
 fn ranges_overlap<R, T, U>(x: &R, y: &Range<U>) -> bool
     where U: Borrow<T> + PartialOrd,
           R: RangeBounds<T>,
@@ -670,7 +670,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Fix an Int node in danger of being underfull, returning the parent guard
     /// back to the caller
-    #[cfg_attr(feature = "cargo-clippy", allow(collapsible_if))]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::collapsible_if))]
     fn fix_int<Q>(inner: Arc<Inner<A, K, V>>, dml: &Arc<D>,
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, mut child: TreeWriteGuard<A, K, V>,
@@ -1829,7 +1829,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     // Clippy has a false positive on `node`
-    #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
     fn write_leaf(dml: Arc<D>, node: Node<A, K, V>, txg: TxgT)
         -> impl Future<Item=A, Error=Error>
     {

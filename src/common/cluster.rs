@@ -260,7 +260,7 @@ impl<'a> FreeSpaceMap {
     }
 
     /// Find the next closed zone including or after `start`
-    #[cfg_attr(feature = "cargo-clippy", allow(if_same_then_else))]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::if_same_then_else))]
     fn find_closed_zone(&'a self, start: ZoneT) -> Option<ClosedZone>
     {
         self.zones[(start as usize)..].iter()
