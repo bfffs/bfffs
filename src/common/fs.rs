@@ -72,12 +72,57 @@ pub struct Attr {
     pub flags:      u64,
 }
 
+/// Arguments for Fs::do_create
+struct CreateArgs
+{
+    parent: u64,
+    dtype: u8,
+    flags: u64,
+    name: OsString,
+    mode: u16,
+    nlink: u64,
+    // NB: this could be a Box<FnOnce> after bug 28796 is fixed
+    // https://github.com/rust-lang/rust/issues/28796
+    cb: Box<Fn(&Arc<ReadWriteFilesystem>, u64)
+        -> Box<Future<Item=(), Error=Error> + Send + 'static> + Send >
+}
+
+impl CreateArgs {
+    pub fn callback<F>(mut self, f: F) -> Self
+        where F: Fn(&Arc<ReadWriteFilesystem>, u64)
+        -> Box<Future<Item=(), Error=Error> + Send + 'static> + Send + 'static
+    {
+        self.cb = Box::new(f);
+        self
+    }
+
+    fn default_cb(_: &Arc<ReadWriteFilesystem>, _: u64)
+        -> Box<Future<Item=(), Error=Error> + Send + 'static>
+    {
+        Box::new(Ok(()).into_future())
+    }
+
+    // Enable once chflags(2) support comes in
+    //pub fn flags(mut self, flags: u64) -> Self {
+        //self.flags = flags;
+        //self
+    //}
+
+    pub fn new(parent: u64, dtype: u8, name: &OsStr, mode: u16) -> Self {
+        let cb = Box::new(CreateArgs::default_cb);
+        CreateArgs{parent, dtype, flags: 0, name: name.to_owned(), mode,
+                   nlink: 1, cb}
+    }
+
+    pub fn nlink(mut self, nlink: u64) -> Self {
+        self.nlink = nlink;
+        self
+    }
+}
+
 impl Fs {
-    fn do_create<F, B>(&self, parent: u64, dtype: u8, flags: u64, name: &OsStr,
-                 mode: u16, nlink: u64, f: F)
+    fn do_create(&self, args: CreateArgs)
         -> Result<u64, i32>
-        where F: FnOnce(&Arc<ReadWriteFilesystem>, u64) -> B + Send + 'static,
-              B: Future<Item = (), Error = Error> + Send + 'static,
     {
         let (tx, rx) = oneshot::channel();
         let ino = self.next_object();
@@ -85,31 +130,32 @@ impl Fs {
         let now = time::get_time();
         let inode = Inode {
             size: 0,
-            nlink,
-            flags,
+            nlink: args.nlink,
+            flags: args.flags,
             atime: now,
             mtime: now,
             ctime: now,
             birthtime: now,
             uid: 0,
             gid: 0,
-            mode
+            mode: args.mode
         };
         let inode_value = FSValue::Inode(inode);
 
+        let parent_dirent_objkey = ObjKey::dir_entry(&args.name);
         let parent_dirent = Dirent {
             ino,
-            dtype,
-            name:   name.to_owned()
+            dtype: args.dtype,
+            name:   args.name
         };
-        let parent_dirent_objkey = ObjKey::dir_entry(name);
-        let parent_dirent_key = FSKey::new(parent, parent_dirent_objkey);
+        let parent_dirent_key = FSKey::new(args.parent, parent_dirent_objkey);
         let parent_dirent_value = FSValue::DirEntry(parent_dirent);
 
+        let cb = args.cb;
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
                 let dataset = Arc::new(ds);
-                let extra_fut = f(&dataset, ino);
+                let extra_fut = cb(&dataset, ino);
                 dataset.insert(inode_key, inode_value).join3(
                     dataset.insert(parent_dirent_key, parent_dirent_value),
                     extra_fut
@@ -143,11 +189,9 @@ impl Fs {
     pub fn create(&self, parent: u64, name: &OsStr, mode: u32)
         -> Result<u64, i32>
     {
-        let f = |_: &Arc<ReadWriteFilesystem>, _| {
-            Ok(()).into_future()
-        };
-        self.do_create(parent, libc::DT_REG, 0, name,
-                       libc::S_IFREG | (mode as u16), 1, f)
+        let create_args = CreateArgs::new(parent, libc::DT_REG, name,
+                       libc::S_IFREG | (mode as u16));
+        self.do_create(create_args)
     }
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
@@ -259,14 +303,19 @@ impl Fs {
                     dataset2.insert(parent_inode_key, value)
                 });
 
-            dataset.insert(dot_dirent_key, dot_dirent_value).join3(
+            let fut = dataset.insert(dot_dirent_key, dot_dirent_value).join3(
                 dataset.insert(dotdot_dirent_key, dotdot_dirent_value),
                 nlink_fut)
-            .map(|_| ())
+            .map(|_| ());
+            Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
         };
 
-        self.do_create(parent, libc::DT_DIR, 0, name,
-                       libc::S_IFDIR | (mode as u16), nlink, f)
+        let create_args = CreateArgs::new(parent, libc::DT_DIR, name,
+                       libc::S_IFDIR | (mode as u16))
+        .nlink(nlink)
+        .callback(f);
+
+        self.do_create(create_args)
     }
 
     pub fn read(&self, ino: u64, offset: u64, size: usize)
