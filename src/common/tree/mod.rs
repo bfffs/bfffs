@@ -1799,7 +1799,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 {
                     drop(child_guard);
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
-                    Tree::flush_r(dml2, ptr.into_node(), txg)
+                    Tree::flush_r(dml2, *ptr.into_node(), txg)
                         .map(move |(addr, txgs)| {
                             root_guard.ptr = TreePtr::Addr(addr);
                             root_guard.txgs = txgs;
@@ -1830,7 +1830,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     // Clippy has a false positive on `node`
     #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
-    fn write_leaf(dml: Arc<D>, node: Box<Node<A, K, V>>, txg: TxgT)
+    fn write_leaf(dml: Arc<D>, node: Node<A, K, V>, txg: TxgT)
         -> impl Future<Item=A, Error=Error>
     {
         node.0.try_unwrap().unwrap().into_leaf().flush(&*dml, txg)
@@ -1841,7 +1841,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         })
     }
 
-    fn flush_r(dml: Arc<D>, mut node: Box<Node<A, K, V>>, txg: TxgT)
+    fn flush_r(dml: Arc<D>, mut node: Node<A, K, V>, txg: TxgT)
         -> Box<Future<Item=(D::Addr, Range<TxgT>), Error=Error> + Send>
     {
         if node.0.get_mut().expect("node.0.get_mut").is_leaf() {
@@ -1872,7 +1872,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 let fut = elem.ptr.as_mem().xlock().and_then(move |guard|
                 {
                     drop(guard);
-                    Tree::flush_r(dml3, elem.ptr.into_node(), txg)
+                    Tree::flush_r(dml3, *elem.ptr.into_node(), txg)
                 }).map(move |(addr, txgs)| {
                     IntElem::new(key, txgs, TreePtr::Addr(addr))
                 });
@@ -1893,7 +1893,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     .unwrap();
                 ndata.as_int_mut().children = elems;
                 drop(ndata);
-                let arc: Arc<Node<A, K, V>> = Arc::new(*node);
+                let arc: Arc<Node<A, K, V>> = Arc::new(node);
                 dml2.put(arc, Compression::None, txg)
                     .map(move |addr| (addr, start_txg..txg + 1))
             })
