@@ -49,18 +49,18 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
             ("get")
     }
 
-    pub fn get_blob(&self, ridp: &RID)
+    pub fn get_blob(&self, rid: RID)
         -> impl Future<Item=Box<DivBuf>, Error=Error> + Send
     {
-        self.e.was_called_returning::<*const RID,
+        self.e.was_called_returning::<RID,
             Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>
-            ("get_blob", ridp as *const RID)
+            ("get_blob", rid)
     }
 
-    pub fn expect_get_blob(&mut self) -> Method<*const RID,
+    pub fn expect_get_blob(&mut self) -> Method<RID,
         Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>
     {
-        self.e.expect::<*const RID,
+        self.e.expect::<RID,
             Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
     }
 
@@ -134,16 +134,16 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
         self.e.expect::<(), LbaT>("allocated")
     }
 
-    pub fn delete_blob(&self, ridp: &RID) -> impl Future<Item=(), Error=Error> {
-        self.e.was_called_returning::<*const RID,
+    pub fn delete_blob(&self, rid: RID) -> impl Future<Item=(), Error=Error> {
+        self.e.was_called_returning::<RID,
             Box<Future<Item=(), Error=Error> + Send>>
-            ("delete_blob", ridp as *const RID)
+            ("delete_blob", rid)
     }
 
-    pub fn expect_delete_blob(&mut self) -> Method<*const RID,
+    pub fn expect_delete_blob(&mut self) -> Method<RID,
         Box<Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<*const RID, Box<Future<Item=(), Error=Error> + Send>>
+        self.e.expect::<RID, Box<Future<Item=(), Error=Error> + Send>>
             ("delete_blob")
     }
 
@@ -160,18 +160,18 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
             ("get")
     }
 
-    pub fn get_blob(&self, ridp: &RID)
+    pub fn get_blob(&self, rid: RID)
         -> impl Future<Item=Box<DivBuf>, Error=Error> + Send
     {
-        self.e.was_called_returning::<*const RID,
+        self.e.was_called_returning::<RID,
             Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>
-            ("get_blob", ridp as *const RID)
+            ("get_blob", rid)
     }
 
-    pub fn expect_get_blob(&mut self) -> Method<*const RID,
+    pub fn expect_get_blob(&mut self) -> Method<RID,
         Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>
     {
-        self.e.expect::<*const RID,
+        self.e.expect::<RID,
             Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
     }
 

@@ -304,7 +304,7 @@ impl Fs {
                                                           Error=Error> + Send>
                                     },
                                     Extent::Blob(be) => {
-                                        let bfut = dataset2.get_blob(&be.rid)
+                                        let bfut = dataset2.get_blob(be.rid)
                                             .map(|bdb| *bdb);
                                         Box::new(bfut)
                                             as Box<Future<Item=DivBuf,
@@ -538,7 +538,7 @@ impl Fs {
                             None
                         }
                     }).and_then(move |rid| {
-                        dataset2.delete_blob(&rid)
+                        dataset2.delete_blob(rid)
                     }).collect()
                     .map(move |_| ino)
                 }).and_then(move |ino|  {
@@ -649,7 +649,7 @@ impl Fs {
                             as Box<Future<Item=_, Error=_> + Send>
                     },
                     Some(FSValue::BlobExtent(be)) => {
-                        Box::new(dataset4.get_blob(&be.rid))
+                        Box::new(dataset4.get_blob(be.rid))
                             as Box<Future<Item=_, Error=_> + Send>
                     },
                     x => panic!("Unexpected value {:?} for key {:?}",
@@ -825,7 +825,7 @@ fn unlink() {
         });
     ds.then().expect_delete_blob()
         .called_once()
-        .with(passes(move |rid: &*const RID| blob_rid == unsafe {**rid}))
+        .with(passes(move |rid: &RID| blob_rid == *rid))
         .returning(|_| Box::new(Ok(()).into_future()));
     ds.then().expect_range_delete()
         .called_once()
