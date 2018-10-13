@@ -713,7 +713,7 @@ fn debug_cmd() {
     let erase_zone = Cmd::EraseZone(0);
     let finish_zone = Cmd::FinishZone(0);
     let sync_all = Cmd::SyncAll;
-    let label_writer = LabelWriter::new();
+    let label_writer = LabelWriter::default();
     let write_label = Cmd::WriteLabel(label_writer);
     format!("{:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at, erase_zone,
             finish_zone, sync_all, write_label);

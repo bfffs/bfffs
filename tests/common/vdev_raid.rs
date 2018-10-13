@@ -612,7 +612,7 @@ test_suite! {
         let (old_raid, _tempdir, paths) = raid.val;
         let uuid = old_raid.uuid();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(move || {
-            let label_writer = LabelWriter::new();
+            let label_writer = LabelWriter::default();
             old_raid.write_label(label_writer).and_then(move |_| {
                 future::join_all(paths.into_iter().map(|path| {
                     VdevFile::open(path).map(|(leaf, reader)| {
@@ -628,7 +628,7 @@ test_suite! {
 
     test write_label(raid()) {
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let label_writer = LabelWriter::new();
+            let label_writer = LabelWriter::default();
             raid.val.0.write_label(label_writer)
         })).unwrap();
         for path in raid.val.2 {

@@ -17,12 +17,14 @@ use uuid::Uuid;
 use tokio::runtime::current_thread;
 #[cfg(not(test))] use tokio::executor::{self, DefaultExecutor, Executor};
 
+#[derive(Default)]
 struct Inner {
     leaves: BTreeMap<Uuid, PathBuf>,
     raids: BTreeMap<Uuid, vdev_raid::Label>,
     pools: BTreeMap<Uuid, pool::Label>,
 }
 
+#[derive(Default)]
 pub struct DevManager {
     inner: Mutex<Inner>
 }
@@ -136,14 +138,6 @@ impl DevManager {
             .map(|(_uuid, label)| {
                 (label.name.clone(), label.uuid)
             }).collect::<Vec<_>>()
-    }
-
-    pub fn new() -> Self {
-        let inner = Inner{ leaves: BTreeMap::new(),
-            raids: BTreeMap::new(),
-            pools: BTreeMap::new()
-        };  // LCOV_EXCL_LINE kcov false negative
-        DevManager{inner: Mutex::new(inner)}
     }
 
     /// Taste the device identified by `p` for an BFFFS label.

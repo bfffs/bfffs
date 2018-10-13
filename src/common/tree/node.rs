@@ -243,10 +243,6 @@ impl<K: Key, V: Value> LeafData<K, V> {
         self.items.keys().next_back().cloned()
     }
 
-    pub fn new() -> Self {
-        LeafData{items: BTreeMap::new()}
-    }
-
     /// Lookup a range of values from a single Leaf Node.
     ///
     /// # Returns
@@ -310,6 +306,12 @@ impl<K: Key, V: Value> LeafData<K, V> {
         // There are no children, so the TXG range is just the current TXG
         let txgs = txg..txg + 1;
         (txgs.clone(), IntElem::new(cutoff, txgs, TreePtr::Mem(Box::new(node))))
+    }
+}
+
+impl<K: Key, V: Value> Default for LeafData<K, V> {
+    fn default() -> Self {
+        LeafData{items: BTreeMap::new()}
     }
 }
 

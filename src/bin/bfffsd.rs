@@ -40,7 +40,7 @@ fn main() {
         .map(|s| s.to_string())
         .collect::<Vec<_>>();
 
-    let dev_manager = DevManager::new();
+    let dev_manager = DevManager::default();
     for dev in devices.iter() {
         dev_manager.taste(dev);
     }

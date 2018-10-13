@@ -1690,7 +1690,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         Box::new(
                             Node::new(
                                 NodeData::Leaf(
-                                    LeafData::new()
+                                    LeafData::default()
                                 )
                             )
                         )

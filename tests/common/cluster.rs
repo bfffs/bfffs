@@ -102,7 +102,7 @@ test_suite! {
     test write_label(objects()) {
         let (mut rt, old_cluster, _tempdir, path) = objects.val;
         rt.block_on(future::lazy(|| {
-            let label_writer = LabelWriter::new();
+            let label_writer = LabelWriter::default();
             old_cluster.write_label(label_writer)
         })).unwrap();
 

@@ -1069,7 +1069,7 @@ mod rpc {
     #[test]
     fn debug() {
         let dbs = DivBufShared::from(Vec::new());
-        let lw = LabelWriter::new();
+        let lw = LabelWriter::default();
         format!("{:?}", Rpc::Allocated(oneshot::channel().0));
         format!("{:?}", Rpc::FindClosedZone(0, oneshot::channel().0));
         format!("{:?}", Rpc::Free(0, 0, oneshot::channel().0));

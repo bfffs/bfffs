@@ -494,7 +494,7 @@ root:
 #[test]
 fn merge() {
     let mut mock = DMLMock::new();
-    let mut ld1 = LeafData::new();
+    let mut ld1 = LeafData::default();
     ld1.insert(2, 2.0);
     ld1.insert(3, 3.0);
     ld1.insert(4, 4.0);
@@ -652,7 +652,7 @@ root:
 #[test]
 fn split() {
     let mut mock = DMLMock::new();
-    let mut ld = LeafData::new();
+    let mut ld = LeafData::default();
     ld.insert(12, 12.0);
     ld.insert(13, 13.0);
     ld.insert(14, 14.0);

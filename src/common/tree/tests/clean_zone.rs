@@ -34,7 +34,7 @@ fn basic() {
     )));
     let drpi1 = DRP::new(PBA{cluster: 0, lba: 4}, Compression::None, 0, 0, 0);
 
-    let mut ld3 = LeafData::new();
+    let mut ld3 = LeafData::default();
     ld3.insert(6, 6.0);
     ld3.insert(7, 7.0);
     let mut ln3 = Some(Arc::new(Node::new(NodeData::Leaf(ld3))));
@@ -61,7 +61,7 @@ fn basic() {
 
     // On-disk leaf node in the target zone
     let drpl8 = DRP::new(PBA{cluster: 0, lba: 102}, Compression::None, 0, 0, 0);
-    let mut ld8 = LeafData::new();
+    let mut ld8 = LeafData::default();
     ld8.insert(16, 16.0);
     ld8.insert(17, 17.0);
     let mut ln8 = Some(Arc::new(Node::new(NodeData::Leaf(ld8))));

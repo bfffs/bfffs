@@ -58,7 +58,7 @@ test_suite! {
             rt.block_on(
                 db.sync_transaction()
             ).unwrap();
-            let dev_manager = DevManager::new();
+            let dev_manager = DevManager::default();
             (rt, dev_manager, pathsclone, tempdir)
         }
     });

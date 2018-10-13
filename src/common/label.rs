@@ -79,17 +79,12 @@ impl<'de> LabelReader {
 }
 
 /// Successively writes serialized structs into the label
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct LabelWriter {
     buffers: SGList,
 }
 
 impl LabelWriter {
-    /// Construct an empty `LabelWriter`
-    pub fn new() -> Self {
-        LabelWriter { buffers: Vec::new() }
-    }
-
     /// Write a `T` into the label.
     ///
     /// Multiple calls to `serialize` take effect in LIFO order.  That is, the

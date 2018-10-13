@@ -165,19 +165,19 @@ fn dump() {
     let opt_intnode0 = Some(intnode0);
     let opt_intnode0c = opt_intnode0.clone();
 
-    let mut ld0 = LeafData::new();
+    let mut ld0 = LeafData::default();
     ld0.insert(0, 0.0);
     ld0.insert(1, 1.0);
     let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
     let opt_leafnode0 = Some(leafnode0);
 
-    let mut ld1 = LeafData::new();
+    let mut ld1 = LeafData::default();
     ld1.insert(2, 2.0);
     ld1.insert(3, 3.0);
     let leafnode1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
     let opt_leafnode1 = Some(leafnode1);
 
-    let mut ld2 = LeafData::new();
+    let mut ld2 = LeafData::default();
     ld2.insert(10, 10.0);
     ld2.insert(11, 11.0);
     let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
@@ -190,13 +190,13 @@ fn dump() {
     let intnode2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
     let opt_intnode2 = Some(intnode2);
 
-    let mut ld4 = LeafData::new();
+    let mut ld4 = LeafData::default();
     ld4.insert(20, 20.0);
     ld4.insert(21, 21.0);
     let leafnode4 = Arc::new(Node::new(NodeData::Leaf(ld4)));
     let opt_leafnode4 = Some(leafnode4);
 
-    let mut ld5 = LeafData::new();
+    let mut ld5 = LeafData::default();
     ld5.insert(25, 25.0);
     ld5.insert(26, 26.0);
     let leafnode5 = Arc::new(Node::new(NodeData::Leaf(ld5)));
@@ -387,7 +387,7 @@ root:
 #[test]
 fn insert_below_root() {
     let mut mock = DMLMock::new();
-    let node = Arc::new(Node::new(NodeData::Leaf(LeafData::new())));
+    let node = Arc::new(Node::new(NodeData::Leaf(LeafData::default())));
     let node_holder = RefCell::new(Some(node));
     let addrl = 0;
     mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
@@ -470,7 +470,7 @@ root:
 #[test]
 fn insert_root() {
     let mut mock = DMLMock::new();
-    let node = Arc::new(Node::new(NodeData::Leaf(LeafData::new())));
+    let node = Arc::new(Node::new(NodeData::Leaf(LeafData::default())));
     let node_holder = RefCell::new(Some(node));
     let addrl = 0;
     mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
@@ -604,21 +604,21 @@ fn range_delete() {
     let opt_intnode2 = Some(intnode2);
     let addri2 = 2;
 
-    let mut ld2 = LeafData::new();
+    let mut ld2 = LeafData::default();
     ld2.insert(3, 3.0);
     ld2.insert(4, 4.0);
     ld2.insert(5, 5.0);
     let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
     let opt_leafnode2 = Some(leafnode2);
 
-    let mut ld7 = LeafData::new();
+    let mut ld7 = LeafData::default();
     ld7.insert(20, 20.0);
     ld7.insert(21, 21.0);
     ld7.insert(22, 22.0);
     let leafnode7 = Arc::new(Node::new(NodeData::Leaf(ld7)));
     let opt_leafnode7 = Some(leafnode7);
 
-    let mut ld8 = LeafData::new();
+    let mut ld8 = LeafData::default();
     ld8.insert(26, 26.0);
     ld8.insert(27, 27.0);
     ld8.insert(28, 28.0);
@@ -816,7 +816,7 @@ fn range_delete_left_in_cut_full() {
     let mut mock = DMLMock::new();
 
     let addrl0 = 81;
-    let mut ld0 = LeafData::new();
+    let mut ld0 = LeafData::default();
     ld0.insert(19, 15.0);
     ld0.insert(20, 16.0);
     ld0.insert(21, 17.0);
@@ -1046,7 +1046,7 @@ fn range_leaf() {
     unsafe impl Send for FutureMock {}
 
     let mut mock = DMLMock::new();
-    let mut ld1 = LeafData::new();
+    let mut ld1 = LeafData::default();
     ld1.insert(0, 0.0);
     ld1.insert(1, 1.0);
     ld1.insert(2, 2.0);
@@ -1156,7 +1156,7 @@ root:
 #[test]
 fn read_leaf() {
     let mut mock = DMLMock::new();
-    let mut ld = LeafData::new();
+    let mut ld = LeafData::default();
     ld.insert(0, 100);
     ld.insert(1, 200);
     ld.insert(99, 50_000);
@@ -1195,7 +1195,7 @@ root:
 fn remove_and_merge_down() {
     let mut mock = DMLMock::new();
 
-    let mut ld = LeafData::new();
+    let mut ld = LeafData::default();
     ld.insert(3, 3.0);
     ld.insert(4, 4.0);
     ld.insert(5, 5.0);

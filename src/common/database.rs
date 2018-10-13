@@ -207,7 +207,7 @@ impl Inner {
     fn write_label(&self, tod: TreeOnDisk, txg: TxgT)
         -> impl Future<Item=(), Error=Error>
     {
-        let mut labeller = LabelWriter::new();
+        let mut labeller = LabelWriter::default();
         let label = Label { forest: tod };
         labeller.serialize(label).unwrap();
         self.idml.write_label(labeller, txg)
