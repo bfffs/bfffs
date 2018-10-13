@@ -21,7 +21,7 @@ use futures::{
 };
 use futures_locks::*;
 use serde::Serializer;
-use serde::de::{Deserializer, DeserializeOwned};
+use serde::de::DeserializeOwned;
 use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
 use std::{
@@ -87,13 +87,6 @@ fn ranges_overlap<R, T, U>(x: &R, y: &Range<U>) -> bool
 
 mod atomic_u64_serializer {
     use super::*;
-    use serde::Deserialize;
-
-    pub fn deserialize<'de, D>(d: D) -> Result<Atomic<u64>, D::Error>
-        where D: Deserializer<'de>
-    {
-        u64::deserialize(d).map(Atomic::new)
-    }
 
     pub fn serialize<S>(x: &Atomic<u64>, s: S) -> Result<S::Ok, S::Error>
         where S: Serializer
@@ -105,14 +98,6 @@ mod atomic_u64_serializer {
 mod tree_root_serializer {
     use super::*;
     use serde::{Serialize, ser::Error};
-    use serde::Deserialize;
-
-    pub(super) fn deserialize<'de, A, DE, K, V>(d: DE)
-        -> Result<RwLock<IntElem<A, K, V>>, DE::Error>
-        where A: Addr, DE: Deserializer<'de>, K: Key, V: Value
-    {
-        IntElem::deserialize(d).map(RwLock::new)
-    }
 
     pub(super) fn serialize<A, K, S, V>(x: &RwLock<IntElem<A, K, V>>, s: S)
         -> Result<S::Ok, S::Error>
@@ -140,9 +125,7 @@ pub struct RangeQuery<A, D, K, T, V>
     last_fut: Option<Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
                        Error=Error> + Send>>,
     /// Handle to the tree's inner
-    inner: Arc<Inner<A, K, V>>,
-    /// Handle to the tree's DML
-    dml: Arc<D>
+    inner: Arc<Inner<A, D, K, V>>,
 }
 
 impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
@@ -151,9 +134,9 @@ impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
           K: Key + Borrow<T>,
           T: Ord + Clone + Send,
           V: Value
-    {
+{
 
-    fn new<R>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>, range: R)
+    fn new<R>(inner: Arc<Inner<A, D, K, V>>, range: R)
         -> RangeQuery<A, D, K, T, V>
         where R: RangeBounds<T>
     {
@@ -168,7 +151,7 @@ impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
             Bound::Unbounded => Bound::Unbounded,
         };
         let data = VecDeque::new();
-        RangeQuery{cursor, data, end, last_fut: None, inner, dml}
+        RangeQuery{cursor, data, end, last_fut: None, inner}
     }
 }
 
@@ -190,8 +173,7 @@ impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
                     let mut fut = self.last_fut.take().unwrap_or_else(|| {
                         let l = self.cursor.clone().unwrap();
                         let r = (l, self.end.clone());
-                        let dml2 = self.dml.clone();
-                        Box::new(Tree::get_range(&self.inner, dml2, r))
+                        Box::new(Tree::get_range(&self.inner, r))
                     });
                     match fut.poll() {
                         Ok(Async::Ready((v, bound))) => {
@@ -238,10 +220,7 @@ struct CleanZonePass1Inner<D, K, V>
     txgs: Range<TxgT>,
 
     /// Handle to the tree's inner struct
-    inner: Arc<Inner<ddml::DRP, K, V>>,
-
-    /// Handle to the tree's DML
-    dml: Arc<D>
+    inner: Arc<Inner<ddml::DRP, D, K, V>>,
 }
 
 /// Result type of `Tree::clean_zone`
@@ -259,7 +238,7 @@ impl<D, K, V> CleanZonePass1<D, K, V>
           V: Value
     {
 
-    fn new(inner: Arc<Inner<ddml::DRP, K, V>>, dml: Arc<D>, pbas: Range<PBA>,
+    fn new(inner: Arc<Inner<ddml::DRP, D, K, V>>, pbas: Range<PBA>,
            txgs: Range<TxgT>, echelon: u8)
         -> CleanZonePass1<D, K, V>
     {
@@ -267,7 +246,7 @@ impl<D, K, V> CleanZonePass1<D, K, V>
         let data = VecDeque::new();
         let last_fut = None;
         let inner = CleanZonePass1Inner{cursor, data, echelon, last_fut, pbas,
-                                        txgs, inner, dml};
+                                        txgs, inner};
         CleanZonePass1{inner: RefCell::new(inner)}
     }
 }
@@ -298,7 +277,7 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
                             let txgs = i.txgs.clone();
                             let e = i.echelon;
                             Box::new(Tree::get_dirty_nodes(i.inner.clone(),
-                                i.dml.clone(), l, pbas, txgs, e))
+                                l, pbas, txgs, e))
                         });
                         match f.poll() {
                             Ok(Async::Ready((v, bound))) => {
@@ -342,9 +321,8 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
 }
 
 #[derive(Debug)]
-#[derive(Deserialize, Serialize)]
-#[serde(bound(deserialize = "K: DeserializeOwned"))]
-struct Inner<A: Addr, K: Key, V: Value> {
+#[derive(Serialize)]
+struct Inner<A: Addr, D: DML, K: Key, V: Value> {
     /// Tree height.  1 if the Tree consists of a single Leaf node.
     // Use atomics so it can be modified from an immutable reference.  Accesses
     // should be very rare, so performance is not a concern.
@@ -360,12 +338,38 @@ struct Inner<A: Addr, K: Key, V: Value> {
     _max_size: u64,
     /// Root node
     #[serde(with = "tree_root_serializer")]
-    root: RwLock<IntElem<A, K, V>>
+    root: RwLock<IntElem<A, K, V>>,
+    #[serde(skip)]
+    dml: Arc<D>
+}
+
+impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
+    #[cfg(test)]
+    pub fn from_str(dml: Arc<D>, s: &str) -> Self {
+        let iod: InnerOnDisk<A, K, V> = serde_yaml::from_str(s).unwrap();
+        Inner::new(dml, iod)
+    }
+
+    fn new(dml: Arc<D>, iod: InnerOnDisk<A, K, V>) -> Self {
+        Inner {
+            height: Atomic::new(iod.height),
+            min_fanout: iod.min_fanout,
+            max_fanout: iod.max_fanout,
+            _max_size: iod._max_size,
+            root: RwLock::new(iod.root),
+            dml
+        }
+    }
+
+    pub fn open(dml: Arc<D>, on_disk: &TreeOnDisk) -> bincode::Result<Self> {
+        let iod: InnerOnDisk<A, K, V> = bincode::deserialize(&on_disk.0[..])?;
+        Ok(Inner::new(dml, iod))
+    }
 }
 
 /// A version of `Inner` that is serializable
 #[derive(Debug)]
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 struct InnerOnDisk<A: Addr, K: Key, V: Value> {
     height: u64,
@@ -382,8 +386,7 @@ struct InnerOnDisk<A: Addr, K: Key, V: Value> {
 /// *`K`:   Key type.  Must be ordered and copyable; should be compact
 /// *`V`:   Value type in the leaves.
 pub struct Tree<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
-    dml: Arc<D>,
-    i: Arc<Inner<A, K, V>>
+    i: Arc<Inner<A, D, K, V>>
 }
 
 impl<A, D, K, V> Tree<A, D, K, V>
@@ -408,7 +411,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             RwLockReadGuard<IntElem<A, K, V>>), Error=Error> + Send>;
         let (tx, rx) = mpsc::channel(self.i.max_fanout as usize);
         let height = self.i.height.load(Ordering::Relaxed) as u8;
-        let dml = self.dml.clone();
+        let dml = self.i.dml.clone();
         let txgs2 = txgs.clone();
         let task = self.read()
         .and_then(move |tree_guard| {
@@ -440,8 +443,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         rx
     }
 
-    fn addresses_r<R, T>(dml:Arc<D>, height: u8, guard: TreeReadGuard<A, K, V>,
-                             tx: mpsc::Sender<A>, txgs: R)
+    fn addresses_r<R, T>(dml: Arc<D>, height: u8, guard: TreeReadGuard<A, K, V>,
+                         tx: mpsc::Sender<A>, txgs: R)
         -> Box<Future<Item=(), Error=Error> + Send>
         where TxgT: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
@@ -462,7 +465,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     let dml2 = dml.clone();
                     let tx2 = tx.clone();
                     let txgs2 = txgs.clone();
-                    c.rlock(&dml2)
+                    c.rlock(&dml)
                     .and_then(move |guard| Tree::addresses_r(dml2, height - 1,
                                                              guard, tx2, txgs2))
                 }).collect::<Vec<_>>();
@@ -481,12 +484,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
     pub fn check(&self) -> impl Future<Item=bool, Error=Error> + Send {
         // Keep the whole tree locked and use LIFO lock discipline
         let height = self.i.height.load(Ordering::Relaxed) as u8;
-        let dml = self.dml.clone();
+        let inner = self.i.clone();
         let min_fanout = self.i.min_fanout as usize;
         let max_fanout = self.i.max_fanout as usize;
         self.read()
         .and_then(move |tree_guard| {
-            tree_guard.rlock(&dml)
+            tree_guard.rlock(&inner.dml)
             .and_then(move |guard| {
                 let root_ok = guard.check(tree_guard.key, height - 1, true,
                                           min_fanout, max_fanout);
@@ -494,7 +497,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     Box::new(Ok(root_ok).into_future())
                         as Box<Future<Item=bool, Error=Error> + Send>
                 } else {
-                    let fut = Tree::check_r(&dml, height - 1, &guard,
+                    let fut = Tree::check_r(&inner.dml, height - 1, &guard,
                                             min_fanout, max_fanout)
                     .map(move |r| {
                         if r.1.start < tree_guard.txgs.start ||
@@ -595,20 +598,19 @@ impl<A, D, K, V> Tree<A, D, K, V>
         //   can be deserialized into a BTreeMap<A, NodeData>.  Otherwise,
         //   extend its parent's representation.
         // * Last of all, print the root's representation.
-        let dml2 = self.dml.clone();
-        let inner2 = self.i.clone();
+        let inner = self.i.clone();
         let rrf = Rc::new(RefCell::new(f));
         let rrf2 = rrf.clone();
         let rrf3 = rrf.clone();
         let mut rt = current_thread::Runtime::new().unwrap();
         let fut = self.read()
             .and_then(move |tree_guard| {
-                tree_guard.rlock(&dml2)
+                tree_guard.rlock(&inner.dml)
                 .and_then(move |guard| {
                     let mut f2 = rrf2.borrow_mut();
-                    let s = serde_yaml::to_string(&*inner2).unwrap();
+                    let s = serde_yaml::to_string(&*inner).unwrap();
                     writeln!(f2, "{}", &s).unwrap();
-                    Tree::dump_r(dml2, guard, rrf)
+                    Tree::dump_r(inner.dml.clone(), guard, rrf)
                 }).map(move |guard| {
                     let mut f3 = rrf3.borrow_mut();
                     let mut hmap = BTreeMap::new();
@@ -671,7 +673,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Fix an Int node in danger of being underfull, returning the parent guard
     /// back to the caller
     #[cfg_attr(feature = "cargo-clippy", allow(clippy::collapsible_if))]
-    fn fix_int<Q>(inner: &Arc<Inner<A, K, V>>, dml: &Arc<D>,
+    fn fix_int<Q>(inner: &Arc<Inner<A, D, K, V>>,
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, mut child: TreeWriteGuard<A, K, V>,
                   txg: TxgT)
@@ -691,10 +693,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let (fut, sib_idx, right) = {
             if child_idx < nchildren - 1 {
                 let sib_idx = child_idx + 1;
-                (parent.xlock(&dml, sib_idx, txg), sib_idx, true)
+                (parent.xlock(&inner.dml, sib_idx, txg), sib_idx, true)
             } else {
                 let sib_idx = child_idx - 1;
-                (parent.xlock(&dml, sib_idx, txg), sib_idx, false)
+                (parent.xlock(&inner.dml, sib_idx, txg), sib_idx, false)
             }
         };
         fut.map(move |(mut parent, mut sibling)| {
@@ -734,8 +736,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     #[cfg(test)]
     pub fn from_str(dml: Arc<D>, s: &str) -> Self {
-        let i: Arc<Inner<A, K, V>> = Arc::new(serde_yaml::from_str(s).unwrap());
-        Tree{dml, i}
+        Tree{i: Arc::new(Inner::from_str(dml, s))}
     }
 
     /// Insert value `v` into the tree at key `k`, returning the previous value
@@ -743,13 +744,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
     pub fn insert(&self, k: K, v: V, txg: TxgT)
         -> impl Future<Item=Option<V>, Error=Error>
     {
-        let dml2 = self.dml.clone();
         let inner2 = self.i.clone();
         self.write()
             .and_then(move |guard| {
-                Tree::xlock_root(&dml2, guard, txg)
+                Tree::xlock_root(&inner2.dml, guard, txg)
                      .and_then(move |(root_guard, child_guard)| {
-                         Tree::insert_locked(inner2, dml2, root_guard,
+                         Tree::insert_locked(inner2, root_guard,
                                              child_guard, k, v, txg)
                      })
             })
@@ -757,7 +757,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Insert value `v` into an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn insert_int(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+    fn insert_int(inner: Arc<Inner<A, D, K, V>>,
                   mut parent: TreeWriteGuard<A, K, V>, child_idx: usize,
                   mut child: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
         -> Box<Future<Item=Option<V>, Error=Error> + Send> {
@@ -768,14 +768,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
             parent.as_int_mut().children[child_idx].txgs = old_txgs;
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
-            Box::new(Tree::insert_int_no_split(inner, dml, parent, k, v, txg))
+            Box::new(Tree::insert_int_no_split(inner, parent, k, v, txg))
         } else if child.is_leaf() {
             let elem = &mut parent.as_int_mut().children[child_idx];
             Box::new(Tree::<A, D, K, V>::insert_leaf_no_split(elem,
                 child, k, v, txg))
         } else {
             drop(parent);
-            Box::new(Tree::insert_int_no_split(inner, dml, child, k, v, txg))
+            Box::new(Tree::insert_int_no_split(inner, child, k, v, txg))
         }
     }
 
@@ -790,7 +790,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Helper for `insert`.  Handles insertion once the tree is locked
-    fn insert_locked(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+    fn insert_locked(inner: Arc<Inner<A, D, K, V>>,
                      mut relem: RwLockWriteGuard<IntElem<A, K, V>>,
                      mut rnode: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
         -> Box<Future<Item=Option<V>, Error=Error> + Send>
@@ -812,12 +812,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                                               rnode, k, v, txg))
         } else {
             drop(relem);
-            Box::new(Tree::insert_int_no_split(inner, dml, rnode, k, v, txg))
+            Box::new(Tree::insert_int_no_split(inner, rnode, k, v, txg))
         }
     }
 
     /// Insert a value into an int node without splitting it
-    fn insert_int_no_split(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+    fn insert_int_no_split(inner: Arc<Inner<A, D, K, V>>,
                            mut node: TreeWriteGuard<A, K, V>, k: K, v: V,
                            txg: TxgT)
         -> impl Future<Item=Option<V>, Error=Error>
@@ -827,16 +827,16 @@ impl<A, D, K, V> Tree<A, D, K, V>
             debug_assert_eq!(child_idx, 0);
             node.as_int_mut().children[child_idx].key = k;
         }
-        let fut = node.xlock(&dml, child_idx, txg);
+        let fut = node.xlock(&inner.dml, child_idx, txg);
         fut.and_then(move |(parent, child)| {
-                Tree::insert_int(inner, dml, parent, child_idx, child, k, v, txg)
+                Tree::insert_int(inner, parent, child_idx, child, k, v, txg)
         })
     }
 
     /// Lookup the value of key `k`.  Return `None` if no value is present.
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
-        let dml2 = self.dml.clone();
+        let dml2 = self.i.dml.clone();
         self.read()
             .and_then(move |tree_guard| {
                 tree_guard.rlock(&dml2)
@@ -873,19 +873,20 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// results, consisting of all matching (K,V) pairs within a single Leaf
     /// Node, plus an optional Bound for the next iteration of the search.  If
     /// the Bound is `None`, then the search is complete.
-    fn get_range<R, T>(inner: &Inner<A, K, V>, dml: Arc<D>, range: R)
+    fn get_range<R, T>(inner: &Inner<A, D, K, V>, range: R)
         -> impl Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
                        Error=Error> + Send
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + Send + 'static
     {
+        let dml2 = inner.dml.clone();
         Tree::<A, D, K, V>::read_root(&inner)
             .and_then(move |tree_guard| {
-                tree_guard.rlock(&dml)
+                tree_guard.rlock(&dml2)
                      .and_then(move |g| {
                          drop(tree_guard);
-                         Tree::get_range_r(dml, g, None, range)
+                         Tree::get_range_r(dml2, g, None, range)
                      })
             })
     }   // LCOV_EXCL_LINE kcov false negative
@@ -992,7 +993,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Return the highest valued key in the `Tree`
     pub fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error> {
-        let dml2 = self.dml.clone();
+        let dml2 = self.i.dml.clone();
         self.read()
             .and_then(move |tree_guard| {
                 tree_guard.rlock(&dml2)
@@ -1028,8 +1029,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Open a `Tree` from its serialized representation
     pub fn open(dml: Arc<D>, on_disk: &TreeOnDisk) -> bincode::Result<Self> {
-        let inner = Arc::new(bincode::deserialize(&on_disk.0[..])?);
-        Ok(Tree{ dml, i: inner })
+        let i = Inner::open(dml, on_disk)?;
+        Ok(Tree{i: Arc::new(i)})
     }
 
     /// Lookup a range of (key, value) pairs for keys within the range `range`.
@@ -1046,7 +1047,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             (Bound::Excluded(s), Bound::Excluded(e)) => debug_assert!(s < e),
             _ => ()
         };
-        RangeQuery::new(self.i.clone(), self.dml.clone(), range)
+        RangeQuery::new(self.i.clone(), range)
     }
 
     /// Delete a range of keys
@@ -1076,8 +1077,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         //    in-danger.
         // 2) Traverse the tree again, fixing underflowing and in-danger nodes.
         let rangeclone = range.clone();
-        let dml2 = self.dml.clone();
-        let dml7 = self.dml.clone();
+        let dml2 = self.i.dml.clone();
         let inner2 = self.i.clone();
         let min_fanout = self.i.min_fanout as usize;
         let height = self.i.height.load(Ordering::Relaxed) as u8;
@@ -1100,7 +1100,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     })
             })
             .and_then(move |(tree_guard, m)| {
-                Tree::range_delete_pass2_root(inner2, dml7, tree_guard, m,
+                Tree::range_delete_pass2_root(inner2, tree_guard, m,
                                               rangeclone, txg)
             })
     }
@@ -1428,7 +1428,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Depth-first traversal reshaping the tree after some keys were deleted by
     /// range_delete_pass1.
-    fn range_delete_pass2_root<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+    fn range_delete_pass2_root<R, T>(inner: Arc<Inner<A, D, K, V>>,
         tree_guard: RwLockWriteGuard<IntElem<A, K, V>>, mut map: HashSet<usize>,
         range: R, txg: TxgT)
         -> Box<Future<Item=(), Error=Error> + Send>
@@ -1448,7 +1448,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let id = tree_guard.ptr.as_mem() as *const Node<A, K, V> as usize;
         if map.contains(&id) {
             // Merge down the root, then fix it up
-            let fut = Tree::xlock_and_merge_root(dml.clone(), inner.clone(),
+            let fut = Tree::xlock_and_merge_root(inner.clone(),
                                                  tree_guard, txg)
             .and_then(move |(tree_guard, root_guard)| {
                 let any_kids_in_danger = !root_guard.is_leaf() &&
@@ -1462,10 +1462,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 });
                 if root_guard.len() == 1 {
                     // Merge it down again
-                    Tree::range_delete_pass2_root(inner, dml, tree_guard, map,
+                    Tree::range_delete_pass2_root(inner, tree_guard, map,
                                                   range, txg)
                 } else if any_kids_in_danger {
-                    let dml3 = dml.clone();
                     let inner3 = inner.clone();
                     let mut to_fix = Vec::with_capacity(2);
                     to_fix.extend((0..root_guard.len())
@@ -1489,23 +1488,22 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     let fut = stream::iter_ok(to_fix.into_iter())
                     .fold((root_guard, 0), move |(root_guard, merged), i| {
                         let inner4 = inner.clone();
-                        let dml4 = dml.clone();
                         let idx = i - merged;
-                        root_guard.xlock(&dml, idx, txg)
+                        root_guard.xlock(&inner.dml, idx, txg)
                         .and_then(move |(root_guard, child_guard)| {
-                            Tree::fix_int(&inner4, &dml4,
+                            Tree::fix_int(&inner4,
                                           root_guard, idx, child_guard, txg)
                         }).map(|(root_guard, before, after)| {
                             let merged = (before + after) as usize;
                             (root_guard, merged)
                         })
                     }).and_then(move |_| {
-                        Tree::range_delete_pass2_root(inner3, dml3, tree_guard,
+                        Tree::range_delete_pass2_root(inner3, tree_guard,
                                                       map, range, txg)
                     });
                     Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
                 } else {
-                    let fut = Tree::range_delete_pass2(inner, dml, root_guard,
+                    let fut = Tree::range_delete_pass2(inner, root_guard,
                                                        map, range, None, txg)
                     .map(move |_| {
                         drop(tree_guard);
@@ -1516,9 +1514,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
             });
             Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
         } else {
-            let fut = Tree::xlock_root(&dml, tree_guard, txg)
+            let fut = Tree::xlock_root(&inner.dml, tree_guard, txg)
             .and_then(move |(tree_guard, root_guard)| {
-                Tree::range_delete_pass2(inner, dml, root_guard, map, range,
+                Tree::range_delete_pass2(inner, root_guard, map, range,
                                          None, txg)
                 .map(move |_| {
                     // tree_guard needs to live this long
@@ -1532,7 +1530,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Depth-first traversal reshaping the tree after some keys were deleted by
     /// range_delete_pass1.
-    fn range_delete_pass2<R, T>(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+    fn range_delete_pass2<R, T>(inner: Arc<Inner<A, D, K, V>>,
                                 guard: TreeWriteGuard<A, K, V>,
                                 map: HashSet<usize>,
                                 range: R, ubound: Option<K>, txg: TxgT)
@@ -1591,11 +1589,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
             } else {
                 ubound
             };
-            let dml2 = dml.clone();
-            let dml4 = dml.clone();
-            let dml5 = dml.clone();
-            let dml6 = dml.clone();
-            let dml7 = dml.clone();
+            let dml4 = inner.dml.clone();
+            let dml7 = inner.dml.clone();
             let inner2 = inner.clone();
             let inner3 = inner.clone();
             let inner4 = inner.clone();
@@ -1607,9 +1602,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 false
             };
             let fut = if danger {
-                let fut = parent_guard.xlock(&dml2, idx, txg)
+                let fut = parent_guard.xlock(&dml7, idx, txg)
                 .and_then(move |(parent, child)| {
-                    Tree::fix_int(&inner2, &dml2, parent, idx, child, txg)
+                    Tree::fix_int(&inner2, parent, idx, child, txg)
                 }).and_then(move |(parent_guard, mb, ma)| {
                     // After a range_delete, fixing once may be insufficient to
                     // fix a Node, because two nodes may merge that could have
@@ -1624,7 +1619,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // two.  So preemptively fix nodes that may underflow if
                     // they lose two children.
                     if child.underflow(min_fanout + 2) {
-                        let fut = Tree::fix_int(&inner4, &dml6, parent,
+                        let fut = Tree::fix_int(&inner4, parent,
                                                 idx - (mb as usize), child, txg)
                         .map(move |(parent, nmb, nma)| {
                             (parent, nmb + mb, nma + ma)
@@ -1644,7 +1639,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 parent_guard.xlock(&dml4, idx - mb as usize, txg)
                     .map(move |(parent, child)| (parent, child, mb, ma))
             }).and_then(move |(parent_guard, child_guard, mb, ma)| {
-                Tree::range_delete_pass2(inner3, dml5, child_guard, map, range,
+                Tree::range_delete_pass2(inner3, child_guard, map, range,
                                          child_ubound, txg)
                     .map(move |map| (parent_guard, map, mb, ma))
             });
@@ -1673,7 +1668,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         // Since there are no on-disk children, the initial TXG range is empty
         let txgs = TxgT::from(0)..TxgT::from(0);
-        let i: Arc<Inner<A, K, V>> = Arc::new(Inner {
+        let i: Arc<Inner<A, D, K, V>> = Arc::new(Inner {
             height: Atomic::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
@@ -1690,69 +1685,67 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         )
                     )
                 )
-            )
+            ),
+            dml
         });
-        Tree{ dml, i }
+        Tree{ i }
     }
 
     /// Remove and return the value at key `k`, if any.
     pub fn remove(&self, k: K, txg: TxgT)
         -> impl Future<Item=Option<V>, Error=Error> + Send
     {
-        let dml2 = self.dml.clone();
         let i2 = self.i.clone();
         self.write()
             .and_then(move |tree_guard| {
-                Tree::remove_locked(i2, dml2, tree_guard, k, txg)
+                Tree::remove_locked(i2, tree_guard, k, txg)
             })
     }
 
     /// Remove key `k` from an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn remove_int(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+    fn remove_int(inner: Arc<Inner<A, D, K, V>>,
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, child: TreeWriteGuard<A, K, V>, k: K,
                   txg: TxgT)
         -> Box<Future<Item=Option<V>, Error=Error> + Send>
     {
-        let dml2 = dml.clone();
         // First, fix the node, if necessary.  Merge/steal even if the node
         // currently satifisfies the min_fanout, because we may remove end up
         // removing a child
         if child.underflow(inner.min_fanout + 1) {
+            let dml2 = inner.dml.clone();
             Box::new(
-                Tree::fix_int(&inner, &dml, parent, child_idx, child, txg)
+                Tree::fix_int(&inner, parent, child_idx, child, txg)
                     .and_then(move |(parent, _, _)| {
                         let child_idx = parent.as_int().position(&k);
-                        parent.xlock(&dml, child_idx, txg)
+                        parent.xlock(&dml2, child_idx, txg)
                     }).and_then(move |(parent, child)| {
                         drop(parent);
-                        Tree::remove_no_fix(inner, dml2, child, k, txg)
+                        Tree::remove_no_fix(inner, child, k, txg)
                     })
             )
         } else {
             drop(parent);
-            Tree::remove_no_fix(inner, dml, child, k, txg)
+            Tree::remove_no_fix(inner, child, k, txg)
         }
     }
 
     /// Helper for `remove`.  Handles removal once the tree is locked
-    fn remove_locked(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+    fn remove_locked(inner: Arc<Inner<A, D, K, V>>,
                      tree_guard: RwLockWriteGuard<IntElem<A, K, V>>, k: K,
                      txg: TxgT)
         -> impl Future<Item=Option<V>, Error=Error> + Send
     {
-        let i2 = inner.clone();
-        let dml2 = dml.clone();
-        Tree::xlock_and_merge_root(dml2, i2, tree_guard, txg)
+        Tree::xlock_and_merge_root(inner.clone(), tree_guard, txg)
             .and_then(move |(tree_guard, root_guard)| {
                 drop(tree_guard);
-                Tree::remove_no_fix(inner, dml, root_guard, k, txg)
+                Tree::remove_no_fix(inner, root_guard, k, txg)
             })
     }
 
     /// Remove key `k` from a node, but don't try to fixup the node.
-    fn remove_no_fix(inner: Arc<Inner<A, K, V>>, dml: Arc<D>,
+    fn remove_no_fix(inner: Arc<Inner<A, D, K, V>>,
                      mut node: TreeWriteGuard<A, K, V>, k: K, txg: TxgT)
         -> Box<Future<Item=Option<V>, Error=Error> + Send>
     {
@@ -1762,9 +1755,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
             Box::new(Ok(old_v).into_future())
         } else {
             let child_idx = node.as_int().position(&k);
-            let fut = node.xlock(&dml, child_idx, txg);
+            let fut = node.xlock(&inner.dml, child_idx, txg);
             Box::new(fut.and_then(move |(parent, child)| {
-                    Tree::remove_int(inner, dml, parent, child_idx, child, k,
+                    Tree::remove_int(inner, parent, child_idx, child, k,
                                      txg)
                 })
             )
@@ -1785,7 +1778,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     // portion at each time.  But it wouldn't be able to guarantee a clean tree.
     pub fn flush(&self, txg: TxgT) -> impl Future<Item=TreeOnDisk, Error=Error>
     {
-        let dml2 = self.dml.clone();
+        let dml2 = self.i.dml.clone();
         let inner2 = self.i.clone();
         self.write()
             .and_then(move |root_guard| {
@@ -1907,7 +1900,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         Tree::<A, D, K, V>::read_root(&self.i)
     }
 
-    fn read_root(inner: &Inner<A, K, V>)
+    fn read_root(inner: &Inner<A, D, K, V>)
         -> impl Future<Item=RwLockReadGuard<IntElem<A, K, V>>, Error=Error>
     {
         inner.root.read().map_err(|_| Error::EPIPE)
@@ -1920,7 +1913,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         Tree::<A, D, K, V>::write_root(&self.i)
     }
 
-    fn write_root(inner: &Inner<A, K, V>)
+    fn write_root(inner: &Inner<A, D, K, V>)
         -> impl Future<Item=RwLockWriteGuard<IntElem<A, K, V>>, Error=Error>
     {
         inner.root.write().map_err(|_| Error::EPIPE)
@@ -1929,7 +1922,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
     /// memory, then COW it.  If it has an only child, merge the root node with
     /// its child.
-    fn xlock_and_merge_root(dml: Arc<D>, inner: Arc<Inner<A, K, V>>,
+    fn xlock_and_merge_root(inner: Arc<Inner<A, D, K, V>>,
                   tree_guard: RwLockWriteGuard<IntElem<A, K, V>>, txg: TxgT)
         -> impl Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
                              TreeWriteGuard<A, K, V>),
@@ -1944,7 +1937,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         //     Drop the root's intelem lock
         //     Replace the root's IntElem with the child's
         //     Relock the root's intelem
-        Tree::xlock_root(&dml, tree_guard, txg)
+        Tree::xlock_root(&inner.dml, tree_guard, txg)
             .and_then(move |(mut tree_guard, mut root_guard)| {
                 if !root_guard.is_leaf() &&
                     root_guard.as_int().nchildren() == 1
@@ -1958,7 +1951,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // The root's key must always be the absolute minimum
                     tree_guard.key = K::min_value();
                     inner.height.fetch_sub(1, Ordering::Relaxed);
-                    let fut = Tree::xlock_root(&dml, tree_guard, txg);
+                    let fut = Tree::xlock_root(&inner.dml, tree_guard, txg);
                     Box::new(fut) as MyFut<A, K, V>
                 } else {
                     Box::new(Ok((tree_guard, root_guard)).into_future())
@@ -2041,11 +2034,9 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
         //    just one level we won't have to clean anymore
         let tree_height = self.i.height.load(Ordering::Relaxed) as u8;
         let inner2 = self.i.clone();
-        let dml2 = self.dml.clone();
         stream::iter_ok(0..tree_height).for_each(move |echelon| {
             let inner3 = inner2.clone();
-            let dml3 = dml2.clone();
-            CleanZonePass1::new(inner2.clone(), dml2.clone(), pbas.clone(),
+            CleanZonePass1::new(inner2.clone(), pbas.clone(),
                                 txgs.clone(), echelon)
                 .collect()
                 .and_then(move |nodes| {
@@ -2053,8 +2044,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                         // TODO: consider attempting to rewrite multiple nodes
                         // at once, so as not to spend so much time traversing
                         // the tree
-                        Tree::rewrite_node(inner3.clone(), dml3.clone(), node,
-                                           txg)
+                        Tree::rewrite_node(inner3.clone(), node, txg)
                     })
                 })
         })
@@ -2063,7 +2053,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     /// Find all Nodes starting at `key` at a given level of the Tree which lay
     /// in the indicated range of PBAs.  `txgs` must include all transactions in
     /// which anything was written to any block in `pbas`.
-    fn get_dirty_nodes(inner: Arc<Inner<ddml::DRP, K, V>>, dml: Arc<D>, key: K,
+    fn get_dirty_nodes(inner: Arc<Inner<ddml::DRP, D, K, V>>, key: K,
                        pbas: Range<PBA>, txgs: Range<TxgT>, echelon: u8)
         -> impl Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>
     {
@@ -2086,10 +2076,11 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                         as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
                                       Error=Error> + Send>
                 } else {
-                    let fut = tree_guard.rlock(&dml)
+                    let dml2 = inner.dml.clone();
+                    let fut = tree_guard.rlock(&dml2)
                          .and_then(move |guard| {
                              drop(tree_guard);
-                             Tree::get_dirty_nodes_r(dml, guard, h - 1, None,
+                             Tree::get_dirty_nodes_r(dml2, guard, h - 1, None,
                                                      key, pbas, txgs, echelon)
                          });
                     Box::new(fut)
@@ -2153,13 +2144,14 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     }
 
     /// Rewrite `node`, without modifying its contents
-    fn rewrite_node(inner: Arc<Inner<ddml::DRP, K, V>>, dml: Arc<D>,
+    fn rewrite_node(inner: Arc<Inner<ddml::DRP, D, K, V>>,
                     node: NodeId<K>, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
     {
         Tree::<ddml::DRP, D, K, V>::write_root(&*inner)
-            .and_then(move |mut guard| {
+        .and_then(move |mut guard| {
             let h = inner.height.load(Ordering::Relaxed) as u8;
+            let dml2 = inner.dml.clone();
             if h == node.height + 1 {
                 // Clean the root node
                 if guard.ptr.is_mem() {
@@ -2168,20 +2160,20 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                     let fut = Box::new(future::ok(()));
                     return fut as Box<Future<Item=(), Error=Error> + Send>;
                 }
-                let fut = dml.pop::<Arc<Node<ddml::DRP, K, V>>,
+                let fut = dml2.pop::<Arc<Node<ddml::DRP, K, V>>,
                                      Arc<Node<ddml::DRP, K, V>>>(
                                         guard.ptr.as_addr(), txg)
                     .and_then(move |arc| {
-                        dml.put(*arc, Compression::None, txg)
+                        dml2.put(*arc, Compression::None, txg)
                     }).map(move |addr| {
                         let new = TreePtr::Addr(addr);
                         guard.ptr = new;
                     });
                 Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
             } else {
-                let fut = Tree::xlock_root(&dml, guard, txg)
+                let fut = Tree::xlock_root(&dml2, guard, txg)
                      .and_then(move |(_root_guard, child_guard)| {
-                         Tree::rewrite_node_r(dml, child_guard, h - 1, node,
+                         Tree::rewrite_node_r(dml2, child_guard, h - 1, node,
                                               txg)
                      });
                 Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
