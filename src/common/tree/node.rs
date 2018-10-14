@@ -441,7 +441,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                         NodeData::Int(ref id) => id.start_txg(),
                         NodeData::Leaf(_) => txg
                     };
-                    let end = txg;
+                    let end = txg + 1;
                     let elem = IntElem::new(*guard.key(), start..end, ptr);
                     (Some(elem), guard)
                 })

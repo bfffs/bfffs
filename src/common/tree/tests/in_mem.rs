@@ -1033,8 +1033,8 @@ root:
                     2: 2.0
           - key: 5
             txgs:
-              start: 41
-              end: 42
+              start: 42
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -1042,7 +1042,8 @@ root:
                     5: 5.0
                     6: 6.0
                     7: 7.0
-          - key: 10
+                    10: 10.0
+          - key: 31
             txgs:
               start: 42
               end: 43
@@ -1050,7 +1051,6 @@ root:
               Mem:
                 Leaf:
                   items:
-                    10: 10.0
                     32: 32.0
                     37: 37.0
                     40: 40.0"#);
@@ -2203,17 +2203,7 @@ root:
                             items:
                               4193: 4193.0
                               4195: 4195.0
-                    - key: 4600
-                      txgs:
-                        start: 41
-                        end: 43
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              4601: 4601.0
-                              4608: 4608.0
-          - key: 4609
+          - key: 4599
             txgs:
               start: 41
               end: 43
@@ -2221,6 +2211,16 @@ root:
               Mem:
                 Int:
                   children:
+                    - key: 4600
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4601: 4601.0
+                              4608: 4608.0
                     - key: 4609
                       txgs:
                         start: 41
@@ -2358,7 +2358,6 @@ root:
 /// be stolen left during pass2, and never get fixed.
 /// Regression test for 4a99d7f
 #[test]
-#[ignore = "Test currently fails: bug 4a99d7f"]
 fn range_delete_underflow_and_steal_left() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
@@ -2516,18 +2515,15 @@ root:
                   children:
                     - key: 4150
                       txgs:
-                        start: 42
-                        end: 43
+                        start: 41
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
                             items:
                               4151: 4151.0
                               4152: 4152.0
-                              4193: 4193.0
-                              4195: 4195.0
-                              4608: 4608.0
-                    - key: 4609
+                    - key: 4193
                       txgs:
                         start: 41
                         end: 42
@@ -2535,8 +2531,27 @@ root:
                         Mem:
                           Leaf:
                             items:
+                              4193: 4193.0
+                              4195: 4195.0
+                    - key: 4600
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              4608: 4608.0
                               4610: 4610.0
                               4612: 4612.0
+          - key: 4617
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
                     - key: 4617
                       txgs:
                         start: 41
@@ -2836,7 +2851,7 @@ root:
                     - key: 7
                       txgs:
                         start: 41
-                        end: 43
+                        end: 42
                       ptr:
                         Mem:
                           Leaf:
@@ -2872,6 +2887,14 @@ root:
                             items:
                               24: 24.0
                               26: 26.0
+          - key: 30
+            txgs:
+              start: 41
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
                     - key: 30
                       txgs:
                         start: 41
@@ -2984,7 +3007,7 @@ root:
           - key: 1
             txgs:
               start: 41
-              end: 43
+              end: 42
             ptr:
               Mem:
                 Leaf:
@@ -3068,6 +3091,7 @@ root:
                             items:
                               20: 20.0
                               21: 21.0
+                              22: 22.0
                     - key: 26
                       txgs:
                         start: 0
@@ -3086,10 +3110,16 @@ root:
                         end: 1
                       ptr:
                         Addr: 33
+                    - key: 40
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr: 34
 "#);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
-        tree.range_delete(6..21, TxgT::from(2))
+        tree.range_delete(3..21, TxgT::from(2))
     );
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -3121,7 +3151,7 @@ root:
                         end: 1
                       ptr:
                         Addr: 11
-                    - key: 3
+                    - key: 20
                       txgs:
                         start: 2
                         end: 3
@@ -3129,11 +3159,15 @@ root:
                         Mem:
                           Leaf:
                             items:
-                              3: 3.0
-                              4: 4.0
-                              5: 5.0
                               21: 21.0
-          - key: 26
+                              22: 22.0
+                    - key: 26
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr: 126
+          - key: 29
             txgs:
               start: 0
               end: 3
@@ -3141,12 +3175,6 @@ root:
               Mem:
                 Int:
                   children:
-                    - key: 26
-                      txgs:
-                        start: 0
-                        end: 1
-                      ptr:
-                        Addr: 126
                     - key: 29
                       txgs:
                         start: 0
@@ -3158,7 +3186,13 @@ root:
                         start: 0
                         end: 1
                       ptr:
-                        Addr: 33"#);
+                        Addr: 33
+                    - key: 40
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr: 34"#);
 }
 
 // range_delete of a small range at the end of the tree

@@ -618,13 +618,6 @@ fn range_delete() {
     let leafnode7 = Arc::new(Node::new(NodeData::Leaf(ld7)));
     let opt_leafnode7 = Some(leafnode7);
 
-    let mut ld8 = LeafData::default();
-    ld8.insert(26, 26.0);
-    ld8.insert(27, 27.0);
-    ld8.insert(28, 28.0);
-    let leafnode8 = Arc::new(Node::new(NodeData::Leaf(ld8)));
-    let opt_leafnode8 = Some(leafnode8);
-
     let mut mock = DMLMock::new();
 
     fn expect_delete(mock: &mut DMLMock, addr: u32) {
@@ -663,8 +656,6 @@ fn range_delete() {
     expect_delete(&mut mock, addrl5);
     expect_delete(&mut mock, addrl6);
     expect_pop(&mut mock, addrl7, opt_leafnode7);
-    // leafnode8 is popped as part of the fixup in pass 2
-    expect_pop(&mut mock, addrl8, opt_leafnode8);
 
     let dml = Arc::new(mock);
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
@@ -750,7 +741,7 @@ root:
                             items:
                               3: 3.0
                               4: 4.0
-          - key: 20
+          - key: 26
             txgs:
               start: 0
               end: 43
@@ -760,15 +751,10 @@ root:
                   children:
                     - key: 26
                       txgs:
-                        start: 42
-                        end: 43
+                        start: 0
+                        end: 1
                       ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              26: 26.0
-                              27: 27.0
-                              28: 28.0
+                        Addr: 31
                     - key: 29
                       txgs:
                         start: 0
@@ -886,15 +872,7 @@ root:
                               33: 17
                               34: 18
                               35: 19
-          - key: 36
-            txgs:
-              start: 1
-              end: 3
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 36
+                    - key: 37
                       txgs:
                         start: 2
                         end: 3
@@ -902,11 +880,30 @@ root:
                         Mem:
                           Leaf:
                             items:
-                              36: 20
-                              37: 21
-                              38: 27
-                              67: 33
-                              68: 34
+                              37: 17
+                              38: 18
+                              39: 19
+          - key: 46
+            txgs:
+              start: 1
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 46
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              46: 20
+                              47: 21
+                              48: 27
+                              77: 33
+                              78: 34
                     - key: 69
                       txgs:
                         start: 1
@@ -965,7 +962,7 @@ root:
                               33: 17.0
                               34: 18.0
                               35: 19.0
-                    - key: 36
+                    - key: 37
                       txgs:
                         start: 2
                         end: 3
@@ -973,11 +970,22 @@ root:
                         Mem:
                           Leaf:
                             items:
-                              36: 20.0
-                              37: 21.0
-                              38: 27.0
-                              67: 33.0
-                              68: 34.0
+                              37: 17.0
+                              38: 18.0
+                              39: 19.0
+                    - key: 46
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              46: 20.0
+                              47: 21.0
+                              48: 27.0
+                              77: 33.0
+                              78: 34.0
           - key: 69
             txgs:
               start: 1

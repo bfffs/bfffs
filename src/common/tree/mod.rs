@@ -15,7 +15,7 @@ use futures::{
     Future,
     Poll,
     Sink,
-    future::{self, IntoFuture},
+    future::{self, IntoFuture, Loop},
     stream::{self, Stream},
     sync::mpsc
 };
@@ -1090,7 +1090,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // 1) Traverse the tree removing all requested KV-pairs, leaving damaged
         //    nodes, deleting empty nodes, and recording which nodes are
         //    in-danger.
-        // 2) Traverse the tree again, fixing underflowing and in-danger nodes.
+        // 2) Traverse the tree again, fixing underflowing nodes.
         let rangeclone = range.clone();
         let dml2 = self.i.dml.clone();
         let inner2 = self.i.clone();
@@ -1113,10 +1113,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                 (tree_guard, m)
                             })
                     })
-            })
-            .and_then(move |(tree_guard, m)| {
-                Tree::range_delete_pass2_root(inner2, tree_guard, m,
-                                              rangeclone, txg)
+            }).and_then(move |(tree_guard, m)| {
+                Tree::range_delete_pass2(inner2, tree_guard, m, rangeclone, txg)
             })
     }
 
@@ -1254,12 +1252,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         };
         let wholly_deleted2 = wholly_deleted.clone();
 
-        let num_in_cut = match (left_in_cut, right_in_cut) {
-            (Some(i), Some(j)) if i != j => 2,
-            (None, None) => 0,
-            _ => 1
-        };
-
         match (left_in_cut, right_in_cut) {
             (Some(i), Some(j)) if i == j => {
                 debug_assert!(i <= guard.len());
@@ -1394,8 +1386,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 }
                 let l = guard.len();
                 let danger = l < min_fanout ||
-                    (l <= min_fanout && num_in_cut == 1) ||
-                    (l <= min_fanout + 1 && num_in_cut == 2);
+                    ldanger == Some(true) ||
+                    rdanger == Some(true);
                 (lmap, danger, guard.len())
             })
         ) as Box<Future<Item=_, Error=_> + Send>
@@ -1441,242 +1433,144 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }
     }
 
-    /// Depth-first traversal reshaping the tree after some keys were deleted by
-    /// range_delete_pass1.
-    fn range_delete_pass2_root<R, T>(inner: Arc<Inner<A, D, K, V>>,
-        tree_guard: RwLockWriteGuard<IntElem<A, K, V>>, mut map: HashSet<usize>,
+    /// Depth-first, bottom-up traversal reshaping the tree after some keys were
+    /// deleted by range_delete_pass1.
+    //
+    // Unlike most Tree methods, this doesn't use lock-coupling.  It keeps the
+    // whole Tree locked.  Also, it operates bottom-up rather than top down,
+    // fixing the lowest nodes first.  This:
+    // * Uses the same RAM as a top-down approach, since nothing is flushed
+    //   until it's done.
+    // * Performs less I/O, because it only fixes nodes that actually underflow,
+    //   as opposed to nodes that might underflow if their children are merged.
+    // * Has no less concurrency, because even a top-down approach keeps the
+    //   whole Tree locked.
+    fn range_delete_pass2<R, T>(inner: Arc<Inner<A, D, K, V>>,
+        tree_guard: RwLockWriteGuard<IntElem<A, K, V>>, map: HashSet<usize>,
         range: R, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> impl Future<Item=(), Error=Error> + Send
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
-        let tree_height = inner.height.load(Ordering::Relaxed) as u8;
-        // height is 0-indexed, tree_height is 1-indexed.
-        let height = tree_height - 1;
-        if height == 0 {
-            return Box::new(Ok(()).into_future())
-                as Box<Future<Item=(), Error=Error> + Send>
-        }
-        // tree_guard.ptr is guaranteed to be a TreePtr::Mem because
-        // range_delete_pass1 dirtied it.
-        let id = tree_guard.ptr.as_mem() as *const Node<A, K, V> as usize;
-        if map.contains(&id) {
-            // Merge down the root, then fix it up
-            let fut = Tree::xlock_and_merge_root(inner.clone(),
-                                                 tree_guard, txg)
-            .and_then(move |(tree_guard, root_guard)| {
-                let any_kids_in_danger = !root_guard.is_leaf() &&
-                    root_guard.as_int().children.iter()
-                .any(|elem| {
-                    if let TreePtr::Mem(p) = &elem.ptr {
-                        map.contains(&(&**p as *const Node<A, K, V> as usize))
+        let inner2 = inner.clone();
+        Tree::xlock_and_merge_root(inner.clone(), tree_guard, txg)
+        .and_then(move |(tree_guard, root_guard)| {
+            Tree::range_delete_pass2_r(inner, root_guard, map, range, txg)
+            .map(|_| tree_guard)
+        }).and_then(move |tree_guard| {
+            // Keep merging down the root as long as it has 1 child
+            future::loop_fn(tree_guard, move |tree_guard| {
+                Tree::xlock_and_merge_root(inner2.clone(), tree_guard, txg)
+                .and_then(move |(tree_guard, root_guard)| {
+                    if !root_guard.is_leaf() &&
+                        root_guard.as_int().nchildren() == 1 {
+                        Ok(Loop::Continue(tree_guard))
                     } else {
-                        false
+                        Ok(Loop::Break(tree_guard))
                     }
-                });
-                if root_guard.len() == 1 {
-                    // Merge it down again
-                    Tree::range_delete_pass2_root(inner, tree_guard, map,
-                                                  range, txg)
-                } else if any_kids_in_danger {
-                    let inner3 = inner.clone();
-                    let mut to_fix = Vec::with_capacity(2);
-                    to_fix.extend((0..root_guard.len())
-                    .filter_map(|i| {
-                        if root_guard.is_leaf() {
-                            None
-                        } else {
-                            let elem = &root_guard.as_int().children[i];
-                            if let TreePtr::Mem(p) = &elem.ptr {
-                                let id = &**p as *const Node<A, K, V> as usize;
-                                if map.remove(&id) {
-                                    Some(i)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                    }));
-                    let fut = stream::iter_ok(to_fix.into_iter())
-                    .fold((root_guard, 0), move |(root_guard, merged), i| {
-                        let inner4 = inner.clone();
-                        let idx = i - merged;
-                        root_guard.xlock(&inner.dml, idx, txg)
-                        .and_then(move |(root_guard, child_guard)| {
-                            Tree::fix_int(&inner4,
-                                          root_guard, idx, child_guard, txg)
-                        }).map(|(root_guard, before, after)| {
-                            let merged = (before + after) as usize;
-                            (root_guard, merged)
-                        })
-                    }).and_then(move |_| {
-                        Tree::range_delete_pass2_root(inner3, tree_guard,
-                                                      map, range, txg)
-                    });
-                    Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
-                } else {
-                    let fut = Tree::range_delete_pass2(inner, root_guard,
-                                                       map, range, None, txg)
-                    .map(move |_| {
-                        drop(tree_guard);
-                        ()
-                    }); //LCOV_EXCL_START  kcov false negative
-                    Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
-                }
-            });
-            Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
-        } else {
-            let fut = Tree::xlock_root(&inner.dml, tree_guard, txg)
-            .and_then(move |(tree_guard, root_guard)| {
-                Tree::range_delete_pass2(inner, root_guard, map, range,
-                                         None, txg)
-                .map(move |_| {
-                    // tree_guard needs to live this long
-                    drop(tree_guard);
-                    ()
-                })  //LCOV_EXCL_START  kcov false negative
-            });
-            Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
-        }
+                })
+            })
+        }).map(|tree_guard| {
+            drop(tree_guard);
+        })
     }
 
-    /// Depth-first traversal reshaping the tree after some keys were deleted by
-    /// range_delete_pass1.
-    fn range_delete_pass2<R, T>(inner: Arc<Inner<A, D, K, V>>,
-                                guard: TreeWriteGuard<A, K, V>,
-                                map: HashSet<usize>,
-                                range: R, ubound: Option<K>, txg: TxgT)
+    fn range_delete_pass2_r<R, T>(inner: Arc<Inner<A, D, K, V>>,
+        guard: TreeWriteGuard<A, K, V>, mut map: HashSet<usize>, range: R,
+        txg: TxgT)
         -> Box<Future<Item=HashSet<usize>, Error=Error> + Send>
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
-        // Outline:
-        // Traverse the tree, recursing through every node in the cut.  Fix any
-        // nodes marked as in-danger
-        type FixitFut<A, K, V> = Box<
-            Future<Item=(TreeWriteGuard<A, K, V>, HashSet<usize>, i8, i8),
-                   Error=Error> + Send
-        >;
-
         if guard.is_leaf() {
-            // This node was already fixed.  No need to recurse further
-            return Box::new(Ok(map).into_future());
-        }
-
-        let (start_idx_bound, end_idx_bound)
-            = Tree::<A, D, K, V>::range_delete_get_bounds( &guard, &range,
-                                                           ubound);
-        let range2 = range.clone();
-        let range3 = range.clone();
-        let children_to_fix = match (start_idx_bound, end_idx_bound) {
-            (Bound::Included(_), Bound::Excluded(_)) => (None, None),
-            (Bound::Included(_), Bound::Included(j)) => (None, Some(j)),
-            (Bound::Excluded(i), Bound::Excluded(j))
-                if j <= i + 1 => (Some(i), None),
-            (Bound::Excluded(i), Bound::Excluded(j))
-                if j == i + 2 => (Some(i), Some(i + 1)),
-            (Bound::Excluded(i), Bound::Excluded(j))
-                if j > i + 2 => panic!("shouldn't happen"),
-            (Bound::Excluded(_), Bound::Excluded(_)) => unreachable!(),
-            (Bound::Excluded(i), Bound::Included(j)) if j > i =>
-                (Some(i), Some(j)),
-            (Bound::Excluded(i), Bound::Included(j)) if j <= i =>
-                (Some(i), None),
-            // LCOV_EXCL_START  kcov false negative
-            (Bound::Excluded(_), Bound::Included(_)) => unreachable!(),
-            (Bound::Unbounded, _) | (_, Bound::Unbounded) => unreachable!(),
-            // LCOV_EXCL_STOP
-        };
-        let fixit = move |parent_guard: TreeWriteGuard<A, K, V>, idx: usize,
-                          mut map: HashSet<usize>, range: R|
-        {
-            type IntermediateFut<A, K, V> = Box<
-                Future<Item=(TreeWriteGuard<A, K, V>, i8, i8),
-                       Error=Error> + Send
-            >;
-            let l = parent_guard.as_int().nchildren();
-            let child_ubound = if idx < l - 1 {
-                Some(parent_guard.as_int().children[idx + 1].key)
-            } else {
-                ubound
-            };
-            let dml4 = inner.dml.clone();
-            let dml7 = inner.dml.clone();
+            Box::new(Ok(map).into_future())
+        } else {
+            // Descend into every affected child
+            let mut to_fix = Vec::with_capacity(2);
+            to_fix.extend((0..guard.len())
+            .filter_map(|i| {
+                if let TreePtr::Mem(p) = &guard.as_int().children[i].ptr {
+                    let id = &**p as *const Node<A, K, V> as usize;
+                    if map.remove(&id) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                } else {
+                    // This child obviously wasn't affected in pass1
+                    None
+                }
+            }));
+            if to_fix.is_empty() {
+                return Box::new(Ok(map).into_future());
+            }
             let inner2 = inner.clone();
-            let inner3 = inner.clone();
-            let inner4 = inner.clone();
-            let min_fanout = inner.min_fanout;
-            let danger = if parent_guard.as_int().children[idx].ptr.is_mem() {
-                let p = parent_guard.as_int().children[idx].ptr.as_mem();
-                map.remove(&(p as *const Node<A, K, V> as usize))
-            } else {
-                false
-            };
-            let fut = if danger {
-                let fut = parent_guard.xlock(&dml7, idx, txg)
-                .and_then(move |(parent, child)| {
-                    Tree::fix_int(&inner2, parent, idx, child, txg)
-                }).and_then(move |(parent_guard, mb, ma)| {
+            let range2 = range.clone();
+            let left_idx = to_fix[0];
+            let right_idx = to_fix.get(1).cloned();
+            let fut = stream::iter_ok(to_fix.into_iter())
+            .fold((guard, map), move |(guard, map), i| {
+                let inner3 = inner2.clone();
+                let range3 = range2.clone();
+                guard.xlock(&inner2.dml, i, txg)
+                .and_then(move |(guard, child_guard)| {
+                    Tree::range_delete_pass2_r(inner3, child_guard, map,
+                                               range3, txg)
+                    .map(move |map| (guard, map))
+                })
+            }).and_then(move |(guard, map)| {
+                // Fix the children after recursing:
+                // 1) Fix the left child first
+                // 2) If it's still underflowing, fix it again
+                // 3) Then fix the right child, unless it was merged
+                type FixIntType<A, K, V> = (TreeWriteGuard<A, K, V>, i8, i8);
+                let inner4 = inner.clone();
+                let inner5 = inner.clone();
+                let inner6 = inner.clone();
+                guard.xlock(&inner.dml, left_idx, txg)
+                .and_then(move |(guard, child_guard)| {
+                    Tree::fix_int(&inner, guard, left_idx, child_guard, txg)
+                }).and_then(move |(guard, before, after)| {
                     // After a range_delete, fixing once may be insufficient to
                     // fix a Node, because two nodes may merge that could have
                     // as few as one child each.  We may need to fix at most
                     // twice.
-                    parent_guard.xlock(&dml7, idx - mb as usize, txg)
-                    .map(move |(parent, child)| (parent, child, mb, ma))
-                }).and_then(move |(parent, child, mb, ma)| {
-                    // A node in the cut have two children in the cut.  Fixing
-                    // them may require, worst case, merging them both with
-                    // another node not in the cut, reducing the node size by
-                    // two.  So preemptively fix nodes that may underflow if
-                    // they lose two children.
-                    if child.underflow(min_fanout + 2) {
-                        let fut = Tree::fix_int(&inner4, parent,
-                                                idx - (mb as usize), child, txg)
-                        .map(move |(parent, nmb, nma)| {
-                            (parent, nmb + mb, nma + ma)
+                    guard.xlock(&inner4.dml, left_idx - before as usize, txg)
+                    .map(move |(guard, child)| (guard, child, before, after))
+                }).and_then(move |(guard, child, mb, ma)| {
+                    if child.underflow(inner5.min_fanout) {
+                        let fut = Tree::fix_int(&inner5, guard,
+                            left_idx - (mb as usize), child, txg)
+                        .map(move |(guard, nmb, nma)| {
+                            (guard, nmb + mb, nma + ma)
                         });
                         Box::new(fut)
                             as Box<Future<Item=_, Error=_> + Send>
                     } else {
-                        Box::new(future::ok::<_, _>((parent, mb, ma)))
+                        Box::new(future::ok::<_, _>((guard, mb, ma)))
                             as Box<Future<Item=_, Error=_> + Send>
                     }
-                });
-                Box::new(fut) as IntermediateFut<A, K, V>
-            } else {
-                let fut = Ok((parent_guard, 0i8, 0i8)).into_future();
-                Box::new(fut) as IntermediateFut<A, K, V>
-            }.and_then(move |(parent_guard, mb, ma)| {
-                parent_guard.xlock(&dml4, idx - mb as usize, txg)
-                    .map(move |(parent, child)| (parent, child, mb, ma))
-            }).and_then(move |(parent_guard, child_guard, mb, ma)| {
-                Tree::range_delete_pass2(inner3, child_guard, map, range,
-                                         child_ubound, txg)
-                    .map(move |map| (parent_guard, map, mb, ma))
+                }).and_then(move |(guard, mb, ma): FixIntType<A, K, V>| {
+                    // Fix the second node in the cut, if there is one, and if
+                    // it didn't get merged with the first
+                    if ma == 0 && right_idx.is_some() {
+                        let j = right_idx.unwrap() - mb as usize;
+                        let fut = guard.xlock(&inner6.dml, j, txg)
+                        .and_then(move |(guard, child_guard)| {
+                            Tree::fix_int(&inner6, guard, j, child_guard, txg)
+                        }).map(|_| map);
+                        Box::new(fut)
+                            as Box<Future<Item=_, Error=_> + Send>
+                    } else {
+                        Box::new(future::ok::<_, _>(map))
+                            as Box<Future<Item=_, Error=_> + Send>
+                    }
+                })
             });
-            Box::new(fut) as FixitFut<A, K, V>
-        };
-
-        let fut = match children_to_fix.0 {
-            None => Box::new(Ok((guard, map, 0i8, 0i8)).into_future())
-                as FixitFut<A, K, V>,
-            Some(idx) => fixit(guard, idx, map, range2)
+            Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
         }
-        .and_then(move |(parent_guard, map, mb, ma)| {
-            // Fix the second child in the cut, if there is one, and if it
-            // didn't merge with the first child.
-            match children_to_fix.1 {
-                Some(idx) if ma == 0 =>
-                    fixit(parent_guard, idx - mb as usize, map, range3),
-                _ => Box::new(Ok((parent_guard, map, mb, ma)).into_future())
-                    as FixitFut<A, K, V>,
-            }}
-        ).map(|(_, map, _, _)| map);
-        Box::new(fut)
     }
 
     fn new(dml: Arc<D>, min_fanout: u64, max_fanout: u64, max_size: u64) -> Self
