@@ -176,6 +176,13 @@ test_suite! {
         assert_eq!(&db[..], &buf[1024..3072]);
     }
 
+    test read_past_eof(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let sglist = mocks.val.0.read(ino, 0, 1024).unwrap();
+        let db = &sglist[0];
+        assert!(db.is_empty());
+    }
+
     // A read that's split across two records
     test read_two_recs(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
