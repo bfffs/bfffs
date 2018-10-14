@@ -232,6 +232,18 @@ struct CleanZonePass1<D, K, V>
     inner: RefCell<CleanZonePass1Inner<D, K, V>>
 }
 
+/// Arguments to Tree::get_dirty_nodes which are static
+struct GetDirtyNodeParams<K: Key> {
+    /// Starting point for search
+    key: K,
+    /// Range of PBAs considered dirty
+    pbas: Range<PBA>,
+    /// Range of transactions in which the dirty PBAs were written
+    txgs: Range<TxgT>,
+    /// Level of the tree to search
+    echelon: u8
+}
+
 impl<D, K, V> CleanZonePass1<D, K, V>
     where D: DML<Addr=ddml::DRP>,
           K: Key,
@@ -276,8 +288,11 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
                             let pbas = i.pbas.clone();
                             let txgs = i.txgs.clone();
                             let e = i.echelon;
+                            let params = GetDirtyNodeParams {
+                                key: l, pbas, txgs, echelon: e
+                            };
                             Box::new(Tree::get_dirty_nodes(i.inner.clone(),
-                                l, pbas, txgs, e))
+                                params))
                         });
                         match f.poll() {
                             Ok(Async::Ready((v, bound))) => {
@@ -2053,20 +2068,20 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     /// Find all Nodes starting at `key` at a given level of the Tree which lay
     /// in the indicated range of PBAs.  `txgs` must include all transactions in
     /// which anything was written to any block in `pbas`.
-    fn get_dirty_nodes(inner: Arc<Inner<ddml::DRP, D, K, V>>, key: K,
-                       pbas: Range<PBA>, txgs: Range<TxgT>, echelon: u8)
+    fn get_dirty_nodes(inner: Arc<Inner<ddml::DRP, D, K, V>>,
+                       params: GetDirtyNodeParams<K>)
         -> impl Future<Item=(VecDeque<NodeId<K>>, Option<K>), Error=Error>
     {
         Tree::<ddml::DRP, D, K, V>::read_root(&*inner)
             .and_then(move |tree_guard| {
                 let h = inner.height.load(Ordering::Relaxed) as u8;
-                if h == echelon + 1 {
+                if h == params.echelon + 1 {
                     // Clean the tree root
                     let dirty = if tree_guard.ptr.is_addr() &&
-                        tree_guard.ptr.as_addr().pba() >= pbas.start &&
-                        tree_guard.ptr.as_addr().pba() < pbas.end {
+                        tree_guard.ptr.as_addr().pba() >= params.pbas.start &&
+                        tree_guard.ptr.as_addr().pba() < params.pbas.end {
                         let mut v = VecDeque::new();
-                        v.push_back(NodeId{height: echelon,
+                        v.push_back(NodeId{height: params.echelon,
                             key: tree_guard.key});
                         v
                     } else {   // LCOV_EXCL_LINE   kcov false negative
@@ -2081,7 +2096,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                          .and_then(move |guard| {
                              drop(tree_guard);
                              Tree::get_dirty_nodes_r(dml2, guard, h - 1, None,
-                                                     key, pbas, txgs, echelon)
+                                                     params)
                          });
                     Box::new(fut)
                         as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
@@ -2090,27 +2105,27 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
             })
     }
 
-    /// Find dirty nodes in `PBA` range `pbas`, beginning at `key`.
-    /// `next_key`, if present, must be the key of the node immediately to the
-    /// right (and possibly up one or more levels) from `guard`.  `height` is
-    /// the tree height of `guard`, where leaves are 0.
+    /// Find dirty nodes as specified by 'params'.  `next_key`, if present, must
+    /// be the key of the node immediately to the right (and possibly up one or
+    /// more levels) from `guard`.  `height` is the tree height of `guard`,
+    /// where leaves are 0.
     fn get_dirty_nodes_r(dml: Arc<D>, guard: TreeReadGuard<ddml::DRP, K, V>,
                          height: u8,
                          next_key: Option<K>,
-                         key: K, pbas: Range<PBA>, txgs: Range<TxgT>,
-                         echelon: u8)
+                         params: GetDirtyNodeParams<K>)
         -> Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
                       Error=Error> + Send>
     {
-        if height == echelon + 1 {
+        if height == params.echelon + 1 {
             let nodes = guard.as_int().children.iter().filter_map(|child| {
                 if child.ptr.is_addr() &&
-                    child.ptr.as_addr().pba() >= pbas.start &&
-                    child.ptr.as_addr().pba() < pbas.end
+                    child.ptr.as_addr().pba() >= params.pbas.start &&
+                    child.ptr.as_addr().pba() < params.pbas.end
                 {
-                    assert!(ranges_overlap(&txgs, &child.txgs),
+                    assert!(ranges_overlap(&params.txgs, &child.txgs),
                         "Node's PBA {:?} resides in the query range {:?} but its TXG range {:?} does not overlap the query range {:?}",
-                        child.ptr.as_addr().pba(), &pbas, &child.txgs, &txgs);
+                        child.ptr.as_addr().pba(), &params.pbas, &child.txgs,
+                        &params.txgs);
                     Some(NodeId{height: height - 1, key: child.key})
                 } else {
                     None
@@ -2119,9 +2134,9 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
             return Box::new(future::ok((nodes, next_key)))
         }
         // Find the first child >= key whose txg range overlaps with txgs
-        let idx0 = guard.as_int().position(&key);
+        let idx0 = guard.as_int().position(&params.key);
         let idx_in_range = (idx0..guard.as_int().nchildren()).filter(|idx| {
-            ranges_overlap(&guard.as_int().children[*idx].txgs, &txgs)
+            ranges_overlap(&guard.as_int().children[*idx].txgs, &params.txgs)
         }).nth(0);
         if let Some(idx) = idx_in_range {
             let next_key = if idx < guard.as_int().nchildren() - 1 {
@@ -2134,7 +2149,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                 child_fut.and_then(move |child_guard| {
                     drop(guard);
                     Tree::get_dirty_nodes_r(dml, child_guard, height - 1,
-                                            next_key, key, pbas, txgs, echelon)
+                                            next_key, params)
                 })
             ) as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
                             Error=Error> + Send>
