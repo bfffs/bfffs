@@ -1212,7 +1212,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> impl Future<Item=(HashSet<usize>, bool, usize),
                        Error=Error> + Send
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + Send + 'static,
+              R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
         // Enough for two nodes on each of six levels of a tree
