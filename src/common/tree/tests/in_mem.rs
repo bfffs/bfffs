@@ -3365,6 +3365,330 @@ fn range_delete_at_end() {
     assert!(r.is_ok());
 }
 
+// range_delete with a RangeFrom (x..) argument
+#[test]
+fn range_delete_range_from() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 2
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr: 10010
+                    - key: 3
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+                              5: 5.0
+          - key: 20
+            txgs:
+              start: 0
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 20
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              21: 21.0
+                    - key: 26
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              26: 26.0
+                              27: 27.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(5.., TxgT::from(2))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 3
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Addr: 10010
+          - key: 3
+            txgs:
+              start: 2
+              end: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0"#);
+}
+
+// range_delete with a RangeFull (..) argument
+#[test]
+fn range_delete_range_full() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 2
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1: 1.0
+                              2: 2.0
+                    - key: 3
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+          - key: 20
+            txgs:
+              start: 0
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 20
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              21: 21.0
+                              22: 22.0
+                    - key: 26
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              26: 26.0
+                              27: 27.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(.., TxgT::from(2))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 2
+    end: 3
+  ptr:
+    Mem:
+      Leaf:
+        items: {}"#);
+}
+
+// range_delete with a RangeTo (..x) argument
+#[test]
+fn range_delete_range_to() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 2
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1: 1.0
+                              2: 2.0
+                    - key: 3
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3: 3.0
+                              4: 4.0
+          - key: 20
+            txgs:
+              start: 0
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 20
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              21: 21.0
+                              22: 22.0
+                    - key: 26
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr: 10026
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(..21, TxgT::from(2))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 3
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 20
+            txgs:
+              start: 2
+              end: 3
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    21: 21.0
+                    22: 22.0
+          - key: 26
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Addr: 10026"#);
+}
+
 // range_delete with a range that includes a whole IntNode at the end of the
 // tree
 #[test]

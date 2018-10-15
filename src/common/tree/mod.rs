@@ -1164,7 +1164,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             },
         };
         let end_idx_bound = match range.end_bound() {
-            Bound::Unbounded => Bound::Excluded(l + 1),
+            Bound::Unbounded => Bound::Excluded(l),
             Bound::Included(t) => {
                 let idx = guard.as_int().position(t);
                 if ubound.is_some() && t >= ubound.unwrap().borrow() {
@@ -1868,15 +1868,17 @@ impl<A, D, K, V> Tree<A, D, K, V>
                              TreeWriteGuard<A, K, V>),
                        Error=Error> + Send>;
         // First, lock the root IntElem
-        // If it's not a leaf and has a single child,
+        // If it's not a leaf and has a single child:
         //     Drop the root's intelem lock
         //     Replace the root's IntElem with the child's
         //     Relock the root's intelem
+        // If it's not a leaf and has no children:
+        //     Make it a leaf
+        //     Fix the tree's height
         Tree::xlock_root(&inner.dml, tree_guard, txg)
             .and_then(move |(mut tree_guard, mut root_guard)| {
-                if !root_guard.is_leaf() &&
-                    root_guard.as_int().nchildren() == 1
-                {
+                let nchildren = root_guard.len();
+                if !root_guard.is_leaf() && nchildren == 1 {
                     let new_root = root_guard.as_int_mut()
                         .children
                         .pop()
@@ -1886,6 +1888,25 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // The root's key must always be the absolute minimum
                     tree_guard.key = K::min_value();
                     inner.height.fetch_sub(1, Ordering::Relaxed);
+                    let fut = Tree::xlock_root(&inner.dml, tree_guard, txg);
+                    Box::new(fut) as MyFut<A, K, V>
+                } else if !root_guard.is_leaf() && nchildren == 0 {
+                    let treeptr = TreePtr::Mem(
+                        Box::new(
+                            Node::new(
+                                NodeData::Leaf(
+                                    LeafData::default()
+                                )
+                            )
+                        )
+                    );
+                    drop(root_guard);
+                    let new_root = IntElem::new(K::min_value(), txg..txg + 1,
+                        treeptr);
+                    *tree_guard = new_root;
+                    // The root's key must always be the absolute minimum
+                    tree_guard.key = K::min_value();
+                    inner.height.store(1, Ordering::Relaxed);
                     let fut = Tree::xlock_root(&inner.dml, tree_guard, txg);
                     Box::new(fut) as MyFut<A, K, V>
                 } else {
