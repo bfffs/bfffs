@@ -1443,12 +1443,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }
     }
 
-    /// Depth-first, bottom-up traversal reshaping the tree after some keys were
-    /// deleted by range_delete_pass1.
+    /// Reshape the tree after some keys were deleted by range_delete_pass1.
     //
     // Unlike most Tree methods, this doesn't use lock-coupling.  It keeps the
-    // whole Tree locked.  Also, it operates bottom-up rather than top down,
-    // fixing the lowest nodes first.  This:
+    // whole Tree locked.  Also, it operates partially bottom-up.  First it
+    // descends all the way to the leaves, fixing any nodes with < 2 children.
+    // On the way back up, it fixes every underflowing node.  This:
     // * Uses the same RAM as a top-down approach, since nothing is flushed
     //   until it's done.
     // * Performs less I/O, because it only fixes nodes that actually underflow,
@@ -1463,15 +1463,29 @@ impl<A, D, K, V> Tree<A, D, K, V>
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
+        let initial_rg: Option<TreeWriteGuard<A, K, V>> = None;
         let inner2 = inner.clone();
-        Tree::xlock_and_merge_root(inner.clone(), tree_guard, txg)
+        let inner3 = inner.clone();
+        // Keep merging down the root as long as it has 1 child
+        future::loop_fn((tree_guard, initial_rg), move |(tree_guard, _)| {
+            Tree::xlock_and_merge_root(inner.clone(), tree_guard, txg)
+            .and_then(move |(tree_guard, root_guard)| {
+                if !root_guard.is_leaf() &&
+                    root_guard.as_int().nchildren() == 1 {
+                    Ok(Loop::Continue((tree_guard, None)))
+                } else {
+                    Ok(Loop::Break((tree_guard, Some(root_guard))))
+                }
+            })
+        })
         .and_then(move |(tree_guard, root_guard)| {
-            Tree::range_delete_pass2_r(inner, root_guard, map, range, txg)
+            Tree::range_delete_pass2_r(inner2, root_guard.unwrap(), map, range,
+                                       txg)
             .map(|_| tree_guard)
         }).and_then(move |tree_guard| {
             // Keep merging down the root as long as it has 1 child
             future::loop_fn(tree_guard, move |tree_guard| {
-                Tree::xlock_and_merge_root(inner2.clone(), tree_guard, txg)
+                Tree::xlock_and_merge_root(inner3.clone(), tree_guard, txg)
                 .and_then(move |(tree_guard, root_guard)| {
                     if !root_guard.is_leaf() &&
                         root_guard.as_int().nchildren() == 1 {
@@ -1521,32 +1535,56 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let left_idx = to_fix[0];
             let right_idx = to_fix.get(1).cloned();
             let fut = stream::iter_ok(to_fix.into_iter())
-            .fold((guard, map), move |(guard, map), i| {
+            .fold((guard, map, 0, 0), move |(guard, map, mb, ma), i| {
                 let inner3 = inner2.clone();
+                let inner7 = inner2.clone();
                 let range3 = range2.clone();
-                guard.xlock(&inner2.dml, i, txg)
+                guard.xlock(&inner2.dml, i - mb - ma, txg)
                 .and_then(move |(guard, child_guard)| {
+                    // Before recursing, we must merge any nodes with < 1
+                    // children.  Otherwise, we won't be able to fix their only
+                    // children
+                    if child_guard.underflow(2) {
+                        let fut = Tree::fix_int(&inner7, guard, i - mb,
+                                                child_guard, txg)
+                        .and_then(move |(guard, nmb, ma)| {
+                            guard.xlock(&inner7.dml, i - mb - nmb as usize, txg)
+                            .map(move |(guard, child_guard)|
+                                 (guard, child_guard, mb + nmb as usize,
+                                  ma as usize)
+                             )
+                        });
+                        Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                    } else {
+                        Box::new(Ok((guard, child_guard, mb, ma)).into_future())
+                            as Box<Future<Item=_, Error=_> + Send>
+                    }
+                }).and_then(move |(guard, child_guard, mb, ma)| {
                     Tree::range_delete_pass2_r(inner3, child_guard, map,
                                                range3, txg)
-                    .map(move |map| (guard, map))
+                    .map(move |map| (guard, map, mb, ma))
                 })
-            }).and_then(move |(guard, map)| {
+            }).and_then(move |(guard, map, mb, ma)| {
                 // Fix the children after recursing:
                 // 1) Fix the left child first
                 // 2) If it's still underflowing, fix it again
                 // 3) Then fix the right child, unless it was merged
-                type FixIntType<A, K, V> = (TreeWriteGuard<A, K, V>, i8, i8);
+                type FixIntType<A, K, V>
+                    = (TreeWriteGuard<A, K, V>, usize, usize);
                 let inner4 = inner.clone();
                 let inner5 = inner.clone();
                 let inner6 = inner.clone();
-                guard.xlock(&inner.dml, left_idx, txg)
+                guard.xlock(&inner.dml, left_idx - mb, txg)
                 .and_then(move |(guard, child_guard)| {
                     if child_guard.underflow(inner.min_fanout) {
-                        Box::new(Tree::fix_int(&inner, guard, left_idx,
-                            child_guard, txg))
-                            as Box<Future<Item=_, Error=_> + Send>
+                        let fut = Tree::fix_int(&inner, guard, left_idx - mb,
+                                                child_guard, txg)
+                        .map(move |(guard, nmb, nma)|
+                             (guard, nmb as usize + mb, ma + nma as usize)
+                        );
+                        Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
                     } else {
-                        Box::new(Ok((guard, 0i8, 0i8)).into_future())
+                        Box::new(Ok((guard, mb, ma)).into_future())
                             as Box<Future<Item=_, Error=_> + Send>
                     }
                 }).and_then(move |(guard, before, after): FixIntType<A, K, V>| {
@@ -1554,14 +1592,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // fix a Node, because two nodes may merge that could have
                     // as few as one child each.  We may need to fix at most
                     // twice.
-                    guard.xlock(&inner4.dml, left_idx - before as usize, txg)
+                    guard.xlock(&inner4.dml, left_idx - before, txg)
                     .map(move |(guard, child)| (guard, child, before, after))
                 }).and_then(move |(guard, child, mb, ma)| {
                     if child.underflow(inner5.min_fanout) {
                         let fut = Tree::fix_int(&inner5, guard,
                             left_idx - (mb as usize), child, txg)
                         .map(move |(guard, nmb, nma)| {
-                            (guard, nmb + mb, nma + ma)
+                            (guard, nmb as usize + mb, nma as usize + ma)
                         });
                         Box::new(fut)
                             as Box<Future<Item=_, Error=_> + Send>
@@ -1573,7 +1611,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // Fix the second node in the cut, if there is one, and if
                     // it didn't get merged with the first
                     if ma == 0 && right_idx.is_some() {
-                        let j = right_idx.unwrap() - mb as usize;
+                        let j = right_idx.unwrap() - mb;
                         let fut = guard.xlock(&inner6.dml, j, txg)
                         .and_then(move |(guard, child_guard)| {
                             if child_guard.underflow(inner6.min_fanout) {
