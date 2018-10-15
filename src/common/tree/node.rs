@@ -578,6 +578,26 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     }
 }
 
+impl<A: Addr, K: Key, V: Value> Default for IntElem<A, K, V> {
+    /// Generate a new IntElem suitable for use as the root of a Tree
+    fn default() -> Self {
+        // Since there are no on-disk children, the initial TXG range is empty
+        let txgs = TxgT::from(0)..TxgT::from(0);
+        IntElem::new(K::min_value(),
+            txgs,
+            TreePtr::Mem(
+                Box::new(
+                    Node::new(
+                        NodeData::Leaf(
+                            LeafData::default()
+                        )
+                    )
+                )
+            )
+        )
+    }
+}
+
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned"))]
 pub(super) struct IntData<A: Addr, K: Key, V: Value> {

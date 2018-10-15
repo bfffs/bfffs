@@ -1602,25 +1602,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn new(dml: Arc<D>, min_fanout: u64, max_fanout: u64, max_size: u64) -> Self
     {
         // Since there are no on-disk children, the initial TXG range is empty
-        let txgs = TxgT::from(0)..TxgT::from(0);
         let i: Arc<Inner<A, D, K, V>> = Arc::new(Inner {
             height: Atomic::new(1),
             min_fanout, max_fanout,
             _max_size: max_size,
-            root: RwLock::new(
-                IntElem::new(K::min_value(),
-                    txgs,
-                    TreePtr::Mem(
-                        Box::new(
-                            Node::new(
-                                NodeData::Leaf(
-                                    LeafData::default()
-                                )
-                            )
-                        )
-                    )
-                )
-            ),
+            root: RwLock::new(IntElem::default()),
             dml
         });
         Tree{ i }
@@ -1891,18 +1877,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     let fut = Tree::xlock_root(&inner.dml, tree_guard, txg);
                     Box::new(fut) as MyFut<A, K, V>
                 } else if !root_guard.is_leaf() && nchildren == 0 {
-                    let treeptr = TreePtr::Mem(
-                        Box::new(
-                            Node::new(
-                                NodeData::Leaf(
-                                    LeafData::default()
-                                )
-                            )
-                        )
-                    );
                     drop(root_guard);
-                    let new_root = IntElem::new(K::min_value(), txg..txg + 1,
-                        treeptr);
+                    let new_root = IntElem::default();
                     *tree_guard = new_root;
                     // The root's key must always be the absolute minimum
                     tree_guard.key = K::min_value();

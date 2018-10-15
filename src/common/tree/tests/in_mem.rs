@@ -3569,7 +3569,7 @@ _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 2
+    start: 0
     end: 3
   ptr:
     Mem:
