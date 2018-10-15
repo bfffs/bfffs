@@ -741,7 +741,7 @@ root:
                             items:
                               3: 3.0
                               4: 4.0
-          - key: 26
+          - key: 20
             txgs:
               start: 0
               end: 43
@@ -944,7 +944,7 @@ root:
         children:
           - key: 0
             txgs:
-              start: 2
+              start: 0
               end: 43
             ptr:
               Mem:
@@ -973,6 +973,14 @@ root:
                               37: 17.0
                               38: 18.0
                               39: 19.0
+          - key: 46
+            txgs:
+              start: 1
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
                     - key: 46
                       txgs:
                         start: 2
@@ -986,14 +994,6 @@ root:
                               48: 27.0
                               77: 33.0
                               78: 34.0
-          - key: 69
-            txgs:
-              start: 1
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
                     - key: 69
                       txgs:
                         start: 1

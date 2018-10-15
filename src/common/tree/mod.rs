@@ -1263,19 +1263,29 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     Some(guard.as_int().children[i + 1].key)
                 };
                 return Box::new(guard.xlock(&dml, i, txg)
-                    .and_then(move |(parent_guard, child_guard)| {
+                    .and_then(move |(mut parent_guard, child_guard)| {
                         Tree::range_delete_pass1(min_fanout, dml, height - 1,
                             child_guard, range, next_ubound, txg)
-                        .map(move |(mut m, child_danger, _child_len)| {
-                            // We just xlock()ed the child, so it's guaranteed
-                            // to be a TreePtr::Mem
-                            let id = parent_guard.as_int().children[i].ptr
-                                .as_mem() as *const Node<A, K, V> as usize;
-                            if child_danger {
-                                m.insert(id);
+                        .map(move |(mut m, mut child_danger, child_len)| {
+                            if child_len == 0 {
+                                // Sometimes we delete every key in LCA of of
+                                // the cut, but we don't know we'll do that
+                                // until we've tried.  This is because parents
+                                // may store a key less than any key actually
+                                // contained in the child.
+                                parent_guard.as_int_mut().children.remove(i);
+                                child_danger = false;
+                            } else {
+                                // We just xlock()ed the child, so it's
+                                // guaranteed to be a TreePtr::Mem
+                                let id = parent_guard.as_int().children[i].ptr
+                                    .as_mem() as *const Node<A, K, V> as usize;
+                                if child_danger {
+                                    m.insert(id);
+                                }
                             }
                             let l = parent_guard.len();
-                            let danger = l <= min_fanout;
+                            let danger = l <= min_fanout || child_danger;
                             (m, danger, l)
                         })
                     })
@@ -1531,8 +1541,15 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 let inner6 = inner.clone();
                 guard.xlock(&inner.dml, left_idx, txg)
                 .and_then(move |(guard, child_guard)| {
-                    Tree::fix_int(&inner, guard, left_idx, child_guard, txg)
-                }).and_then(move |(guard, before, after)| {
+                    if child_guard.underflow(inner.min_fanout) {
+                        Box::new(Tree::fix_int(&inner, guard, left_idx,
+                            child_guard, txg))
+                            as Box<Future<Item=_, Error=_> + Send>
+                    } else {
+                        Box::new(Ok((guard, 0i8, 0i8)).into_future())
+                            as Box<Future<Item=_, Error=_> + Send>
+                    }
+                }).and_then(move |(guard, before, after): FixIntType<A, K, V>| {
                     // After a range_delete, fixing once may be insufficient to
                     // fix a Node, because two nodes may merge that could have
                     // as few as one child each.  We may need to fix at most
@@ -1559,8 +1576,17 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         let j = right_idx.unwrap() - mb as usize;
                         let fut = guard.xlock(&inner6.dml, j, txg)
                         .and_then(move |(guard, child_guard)| {
-                            Tree::fix_int(&inner6, guard, j, child_guard, txg)
-                        }).map(|_| map);
+                            if child_guard.underflow(inner6.min_fanout) {
+                                let fut = Tree::fix_int(&inner6, guard, j,
+                                                        child_guard, txg)
+                                .map(|_| map);
+                                Box::new(fut)
+                                    as Box<Future<Item=_, Error=_> + Send>
+                            } else {
+                                Box::new(future::ok::<_, _>(map))
+                                    as Box<Future<Item=_, Error=_> + Send>
+                            }
+                        });
                         Box::new(fut)
                             as Box<Future<Item=_, Error=_> + Send>
                     } else {
