@@ -52,6 +52,9 @@ pub const BYTES_PER_LBA: usize = 4096;
 /// single LBA.
 pub const BYTES_PER_FRAGMENT: usize = 256;
 
+/// Length of the global read-only `ZERO_REGION`
+pub const ZERO_REGION_LEN: usize = 8 * BYTES_PER_LBA;
+
 lazy_static! {
     /// A read-only buffer of zeros, useful for padding.
     ///
@@ -60,7 +63,7 @@ lazy_static! {
     /// impact on the CPU cache.  A larger size will consume fewer CPU cycles
     /// manipulating sglists.
     static ref ZERO_REGION: DivBufShared =
-        DivBufShared::from(vec![0u8; 8 * BYTES_PER_LBA]);
+        DivBufShared::from(vec![0u8; ZERO_REGION_LEN]);
 }
 
 /// Indexes a `Cluster` within the `Pool`.
