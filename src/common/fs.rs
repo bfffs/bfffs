@@ -386,10 +386,22 @@ impl Fs {
                                 }
                                 if rec == nrecs - 1 {
                                     // Trim the end
-                                    db.split_off(RECORDSIZE
-                                        - ((nrecs * rs) as usize - size));
+                                    let end = RECORDSIZE
+                                        - ((nrecs * rs) as usize - size);
+                                    if db.len() >= end {
+                                        db.split_off(RECORDSIZE
+                                            - ((nrecs * rs) as usize - size));
+                                        db
+                                    } else {
+                                        // A partial hole.  We got some data,
+                                        // but not enough.  Copy to a new buffer
+                                        let mut v = vec![0u8; end];
+                                        v[0..db.len()].copy_from_slice(&db[..]);
+                                        DivBufShared::from(v).try().unwrap()
+                                    }
+                                } else {
+                                    db
                                 }
-                                db
                             });
                             Box::new(fut)
                                 as Box<Future<Item=DivBuf, Error=Error> + Send>

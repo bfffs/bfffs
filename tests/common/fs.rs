@@ -183,6 +183,27 @@ test_suite! {
         assert_eq!(&db[..], &expected[..]);
     }
 
+    // Read a record within a sparse file that is partially occupied by an
+    // inline extent
+    test read_partial_hole(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf = vec![0u8; 2048];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(2048), r);
+        let r = mocks.val.0.write(ino, 4096, &buf[..], 0);
+        assert_eq!(Ok(2048), r);
+
+        // The file should now have a hole from offset 2048 to 4096
+        let sglist = mocks.val.0.read(ino, 2048, 2048).unwrap();
+        let db = &sglist[0];
+        let expected = [0u8; 2048];
+        assert_eq!(&db[..], &expected[..]);
+    }
+
     // A read that's smaller than a record, at both ends
     test read_partial_record(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
