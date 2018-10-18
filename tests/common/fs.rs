@@ -716,7 +716,7 @@ test_suite! {
         // *) Write to a regular file
         // *) Read from a regular file
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(10) {
+        while start.elapsed() < Duration::from_secs(60) {
             torture_test.step()
         }
         torture_test.shutdown();
