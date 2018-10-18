@@ -456,6 +456,7 @@ test_suite! {
     use std::{
         ffi::OsString,
         fs,
+        num::NonZeroU64,
         sync::{Arc, Mutex},
         time::{Duration, Instant},
     };
@@ -656,7 +657,7 @@ test_suite! {
         }
     }
 
-    fixture!( mocks(seed: Option<[u8; 16]>) -> (TortureTest) {
+    fixture!( mocks(seed: Option<[u8; 16]>, zone_size: u64) -> (TortureTest) {
         setup(&mut self) {
             env_logger::init();
 
@@ -668,8 +669,9 @@ test_suite! {
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
             drop(file);
+            let zone_size = NonZeroU64::new(*self.zone_size);
             let db = rt.block_on(future::lazy(move || {
-                Pool::create_cluster(None, 1, 1, None, 0, &[filename])
+                Pool::create_cluster(None, 1, 1, zone_size, 0, &[filename])
                 .map_err(|_| unreachable!())
                 .and_then(|cluster| {
                     Pool::create(String::from("test_fs"), vec![cluster])
@@ -722,7 +724,7 @@ test_suite! {
 
     /// Randomly execute a long series of filesystem operations.
     #[ignore = "Expected failure"]
-    test random(mocks((None))) {
+    test random(mocks((None, 512))) {
         do_test(mocks.val)
     }
 }
