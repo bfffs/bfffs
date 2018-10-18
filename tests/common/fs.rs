@@ -377,5 +377,301 @@ test_suite! {
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[4096..8192]);
     }
-
 }
+
+test_suite! {
+    name torture;
+
+    use bfffs::{
+        common::*,
+        common::cache::*,
+        common::database::*,
+        common::ddml::*,
+        common::fs::*,
+        common::idml::*,
+        common::pool::*,
+    };
+    use env_logger;
+    use futures::{Future, future};
+    use rand::{
+        Rng,
+        RngCore,
+        SeedableRng,
+        distributions::{Distribution, WeightedIndex},
+        thread_rng
+    };
+    use rand_xorshift::XorShiftRng;
+    use std::{
+        ffi::OsString,
+        fs,
+        sync::{Arc, Mutex},
+        time::{Duration, Instant},
+    };
+    use tempdir::TempDir;
+    use tokio_io_pool::Runtime;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Op {
+        Clean,
+        /// Should be `Sync`, but that word is reserved
+        SyncAll,
+        RmEnoent,
+        Ls,
+        Rmdir,
+        Mkdir,
+        Rm,
+        Touch,
+        Write,
+        Read
+    }
+
+    struct TortureTest {
+        db: Option<Arc<Database>>,
+        dirs: Vec<(u64, u64)>,
+        fs: Fs,
+        files: Vec<(u64, u64)>,
+        rng: XorShiftRng,
+        rt: Option<Runtime>,
+        w: Vec<(Op, f64)>,
+        wi: WeightedIndex<f64>
+    }
+
+    impl TortureTest {
+        fn check(&mut self) {
+            let db = self.db.as_ref().unwrap();
+            let rt = self.rt.as_mut().unwrap();
+            assert!(rt.block_on(db.check()).unwrap());
+        }
+
+        fn clean(&mut self) {
+            info!("clean");
+            self.db.as_ref().unwrap().clean().wait().unwrap();
+            self.check();
+        }
+
+        fn mkdir(&mut self) {
+            let num: u64 = self.rng.gen();
+            let fname = format!("{:x}", num);
+            info!("mkdir {}", fname);
+            let ino = self.fs.mkdir(1, &OsString::from(&fname), 0o755).unwrap();
+            self.dirs.push((num, ino));
+        }
+
+        fn ls(&mut self) {
+            let idx = self.rng.gen_range(0, self.dirs.len() + 1);
+            let (fname, ino) = if idx == self.dirs.len() {
+                ("/".to_owned(), 1)
+            } else {
+                let spec = self.dirs[idx];
+                (format!("{:x}", spec.0), spec.1)
+            };
+            let c = self.fs.readdir(ino, 0, 0).count();
+            info!("ls {}: {} entries", fname, c);
+        }
+
+        fn new(db: Arc<Database>, fs: Fs, rng: XorShiftRng, rt: Runtime,
+               w: Option<Vec<(Op, f64)>>) -> Self
+        {
+            let w = w.unwrap_or(vec![
+                (Op::Clean, 0.001),
+                (Op::SyncAll, 0.003),
+                (Op::RmEnoent, 1.0),
+                (Op::Ls, 5.0),
+                (Op::Rmdir, 5.0),
+                (Op::Mkdir, 6.0),
+                (Op::Rm, 15.0),
+                (Op::Touch, 18.0),
+                (Op::Write, 25.0),
+                (Op::Read, 25.0)
+            ]);
+            let wi = WeightedIndex::new(w.iter().map(|item| item.1)).unwrap();
+            TortureTest{db: Some(db), dirs: Vec::new(), files: Vec::new(), fs,
+                        rng, rt: Some(rt), w, wi}
+        }
+
+        fn read(&mut self) {
+            if !self.files.is_empty() {
+                // Pick a random file to read from
+                let idx = self.rng.gen_range(0, self.files.len());
+                let ino = self.files[idx].1;
+                // Pick a random offset within the first 8KB
+                let ofs = 2048 * self.rng.gen_range(0, 4);
+                info!("read {:x} at offset {}", self.files[idx].0, ofs);
+                let r = self.fs.read(ino, ofs, 2048);
+                // TODO: check buffer contents
+                assert!(r.is_ok());
+                self.check();
+            }
+        }
+
+        fn rm_enoent(&mut self) {
+            // Generate a random name that corresponds to no real file, but
+            // could be sorted anywhere amongst them.
+            let num: u64 = self.rng.gen();
+            let fname = format!("{:x}_x", num);
+            info!("rm {}", fname);
+            assert_eq!(self.fs.unlink(1, &OsString::from(&fname)),
+                       Err(Error::ENOENT.into()));
+        }
+
+        fn rm(&mut self) {
+            if !self.files.is_empty() {
+                let idx = self.rng.gen_range(0, self.files.len());
+                let fname = format!("{:x}", self.files.remove(idx).0);
+                info!("rm {}", fname);
+                self.fs.unlink(1, &OsString::from(&fname)).unwrap();
+                self.check();
+            }
+        }
+
+        fn rmdir(&mut self) {
+            if !self.dirs.is_empty() {
+                let idx = self.rng.gen_range(0, self.dirs.len());
+                let fname = format!("{:x}", self.dirs.remove(idx).0);
+                info!("rmdir {}", fname);
+                self.fs.rmdir(1, &OsString::from(&fname)).unwrap();
+                self.check();
+            }
+        }
+
+        fn shutdown(mut self) {
+            drop(self.fs);
+            let mut db = Arc::try_unwrap(self.db.take().unwrap())
+                .ok().expect("Arc::try_unwrap");
+            let mut rt = self.rt.take().unwrap();
+            rt.block_on(db.shutdown()).unwrap();
+            rt.shutdown_on_idle();
+        }
+
+        fn step(&mut self) {
+            match self.w[self.wi.sample(&mut self.rng)].0.clone() {
+                Op::Clean => self.clean(),
+                Op::Ls => self.ls(),
+                Op::Mkdir => self.mkdir(),
+                Op::Read => self.read(),
+                Op::Rm => self.rm(),
+                Op::Rmdir => self.rmdir(),
+                Op::RmEnoent => self.rm_enoent(),
+                Op::SyncAll => self.sync(),
+                Op::Touch => self.touch(),
+                Op::Write => self.write(),
+                //x => println!("{:?}", x)
+            }
+        }
+
+        fn sync(&mut self) {
+            info!("sync");
+            self.fs.sync();
+            self.check();
+        }
+
+        fn touch(&mut self) {
+            // The BTree is basically a flat namespace, so there's little test
+            // coverage to be gained by testing a hierarchical directory
+            // structure.  Instead, we'll stick all files in the root directory,
+            // which has inode 1.
+            let num: u64 = self.rng.gen();
+            let fname = format!("{:x}", num);
+            info!("Touch {}", fname);
+            let ino = self.fs.create(1, &OsString::from(&fname), 0o644).unwrap();
+            self.files.push((num, ino));
+            self.check();
+        }
+
+        /// Write to a file.
+        ///
+        /// Writes just 2KB.  This may create inline or on-disk extents.  It may
+        /// RMW on-disk extents.  The purpose is to exercise the tree, not large
+        /// I/O.
+        fn write(&mut self) {
+            if !self.files.is_empty() {
+                // Pick a random file to write to
+                let idx = self.rng.gen_range(0, self.files.len());
+                let ino = self.files[idx].1;
+                // Pick a random offset within the first 8KB
+                let piece: u64 = self.rng.gen_range(0, 4);
+                let ofs = 2048 * piece;
+                // Use a predictable fill value
+                let fill = (ino.wrapping_mul(piece) % u8::max_value as u64)
+                    as u8;
+                let buf = [fill; 2048];
+                //self.rng.fill_bytes(&mut buf);
+                info!("write {:x} at offset {}", self.files[idx].0, ofs);
+                let r = self.fs.write(ino, ofs, &buf[..], 0);
+                assert!(r.is_ok());
+                self.check();
+            }
+        }
+    }
+
+    fixture!( mocks(seed: Option<[u8; 16]>) -> (TortureTest) {
+        setup(&mut self) {
+            env_logger::init();
+
+            let mut rt = Runtime::new();
+            let handle = rt.handle().clone();
+            let len = 1 << 30;  // 1GB
+            let tempdir = t!(TempDir::new("test_fs"));
+            let filename = tempdir.path().join("vdev");
+            let file = t!(fs::File::create(&filename));
+            t!(file.set_len(len));
+            drop(file);
+            let db = rt.block_on(future::lazy(move || {
+                Pool::create_cluster(None, 1, 1, None, 0, &[filename])
+                .map_err(|_| unreachable!())
+                .and_then(|cluster| {
+                    Pool::create(String::from("test_fs"), vec![cluster])
+                    .map(|pool| {
+                        let cache = Arc::new(
+                            Mutex::new(
+                                Cache::with_capacity(32_000_000)
+                            )
+                        );
+                        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+                        let idml = IDML::create(ddml, cache);
+                        Arc::new(Database::create(Arc::new(idml), handle))
+                    })
+                })
+            })).unwrap();
+            let tree_id = rt.block_on(db.new_fs()).unwrap();
+            let fs = Fs::new(db.clone(), rt.handle().clone(), tree_id);
+            let mut seed = self.seed.unwrap_or_else(|| {
+                let mut seed = [0u8; 16];
+                let mut seeder = thread_rng();
+                seeder.fill_bytes(&mut seed);
+                seed
+            });
+            println!("Using seed {:?}", &seed);
+            // Use XorShiftRng because it's deterministic and seedable
+            let rng = XorShiftRng::from_seed(seed);
+
+            TortureTest::new(db, fs, rng, rt, None)
+        }
+    });
+
+    fn do_test(mut torture_test: TortureTest) {
+        // Random torture test.  At each step check the trees and also do one of:
+        // *) Clean zones
+        // *) Sync
+        // *) Remove a nonexisting regular file
+        // *) Remove an existing file
+        // *) Create a new regular file
+        // *) Remove an empty directory
+        // *) Create a directory
+        // *) List a directory
+        // *) Write to a regular file
+        // *) Read from a regular file
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(10) {
+            torture_test.step()
+        }
+        torture_test.shutdown();
+    }
+
+    /// Randomly execute a long series of filesystem operations.
+    #[ignore = "Expected failure"]
+    test random(mocks((None))) {
+        do_test(mocks.val)
+    }
+}
+

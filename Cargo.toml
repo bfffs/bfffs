@@ -56,9 +56,12 @@ features=  [ "suggestions", "color", "wrap_help" ]
 [dev-dependencies]
 galvanic-test = "0.1.3"
 itertools = "0.7.1"
+log = "0.4"
 permutohedron = "0.2"
 pretty_assertions = "0.5"
-rand = "0.3"
+# TODO: switch to rand 0.6 when it's released
+rand = { git ="https://github.com/rust-random/rand/", rev = "2457cdb" }
+rand_xorshift = { git ="https://github.com/rust-random/rand/", rev = "2457cdb" }
 simulacrum = { version = "=0.3.0" }
 tempdir = "0.3"
 
