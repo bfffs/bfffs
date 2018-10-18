@@ -464,7 +464,7 @@ test_suite! {
     use tokio_io_pool::Runtime;
 
     #[derive(Clone, Copy, Debug)]
-    enum Op {
+    pub enum Op {
         Clean,
         /// Should be `Sync`, but that word is reserved
         SyncAll,
@@ -657,7 +657,9 @@ test_suite! {
         }
     }
 
-    fixture!( mocks(seed: Option<[u8; 16]>, zone_size: u64) -> (TortureTest) {
+    fixture!( mocks(seed: Option<[u8; 16]>, freqs: Option<Vec<(Op, f64)>>,
+                    zone_size: u64) -> (TortureTest)
+    {
         setup(&mut self) {
             env_logger::init();
 
@@ -699,7 +701,7 @@ test_suite! {
             // Use XorShiftRng because it's deterministic and seedable
             let rng = XorShiftRng::from_seed(seed);
 
-            TortureTest::new(db, fs, rng, rt, None)
+            TortureTest::new(db, fs, rng, rt, self.freqs.clone())
         }
     });
 
@@ -723,9 +725,37 @@ test_suite! {
     }
 
     /// Randomly execute a long series of filesystem operations.
-    #[ignore = "Expected failure"]
-    test random(mocks((None, 512))) {
+    #[ignore = "Slow"]
+    test random(mocks((None, None, 512))) {
         do_test(mocks.val)
     }
+
+    // Regression test for bug 9bdac7a
+    //
+    // This problem was produced in the 62nd consecutive run of random, with the
+    // timed syncer disabled
+    // Indirect block 828 has no reverse mapping in the allocation table.  Entry=RidtEntry { drp: DRP { pba: PBA { cluster: 0, lba: 1727 }, compression: None, lsize: 664, csize: 664, checksum: 8397936589158738719 }, refcount: 1 }
+    // Indirect block 829 has no reverse mapping in the allocation table.  Entry=RidtEntry { drp: DRP { pba: PBA { cluster: 0, lba: 1728 }, compression: None, lsize: 2048, csize: 2048, checksum: 5069491788013618357 }, refcount: 1 }
+    // ...
+    #[ignore = "Expected Failure: bug 9bdac7a"]
+    test no_reverse_mapping_in_alloc_t(mocks((
+        Some([188u8, 143, 112, 35, 23, 46, 138, 132,
+              83, 217, 129, 45, 1, 198, 155, 22]),
+        Some(vec![
+            (Op::Clean, 0.01),
+            (Op::SyncAll, 0.03),
+            (Op::RmEnoent, 0.5),
+            (Op::Ls, 1.0),
+            (Op::Rmdir, 5.0),
+            (Op::Mkdir, 10.0),
+            (Op::Rm, 5.0),
+            (Op::Touch, 10.0),
+            (Op::Write, 10.0),
+            (Op::Read, 1.0)
+        ]),
+        512))) {
+        do_test(mocks.val)
+    }
+
 }
 
