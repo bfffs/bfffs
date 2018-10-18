@@ -318,7 +318,7 @@ impl Fs {
         self.do_create(create_args)
     }
 
-    pub fn read(&self, ino: u64, offset: u64, size: usize)
+    pub fn read(&self, ino: u64, offset: u64, mut size: usize)
         -> Result<SGList, i32>
     {
         let (tx, rx) = oneshot::channel();
@@ -330,6 +330,8 @@ impl Fs {
                 dataset.get(inode_key)
                 .and_then(move |value| {
                     let fsize = value.unwrap().as_inode().unwrap().size;
+                    // Truncate read to file size
+                    size = size.min((fsize.saturating_sub(offset)) as usize);
                     let rs = RECORDSIZE as u64;
                     let nrecs = div_roundup(offset + size as u64, rs)
                         - (offset / rs);

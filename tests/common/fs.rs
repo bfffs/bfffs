@@ -160,6 +160,12 @@ test_suite! {
         assert_eq!(&db[..], &buf[..]);
     }
 
+    test read_empty_file(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let sglist = mocks.val.0.read(ino, 0, 1024).unwrap();
+        assert!(sglist.is_empty());
+    }
+
     // Read a hole within a sparse file
     test read_hole(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
@@ -195,7 +201,15 @@ test_suite! {
 
     test read_past_eof(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
-        let sglist = mocks.val.0.read(ino, 0, 1024).unwrap();
+        let mut buf = vec![0u8; 2048];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(2048), r);
+
+        let sglist = mocks.val.0.read(ino, 2048, 1024).unwrap();
         let db = &sglist[0];
         assert!(db.is_empty());
     }
