@@ -31,7 +31,7 @@ use std::{
     fmt::Debug,
     io,
     mem,
-    ops::{Bound, Deref, DerefMut, Range, RangeBounds},
+    ops::{Bound, Deref, DerefMut, Range, RangeBounds, RangeInclusive},
     rc::Rc,
     sync::{
         Arc,
@@ -394,6 +394,11 @@ struct InnerOnDisk<A: Addr, K: Key, V: Value> {
     root: IntElem<A, K, V>
 }
 
+/// The return type of `Tree::check_r`
+type CheckR<K> = Box<Future<Item=(bool, RangeInclusive<K>, Range<TxgT>),
+                                 Error=Error> + Send>;
+
+
 /// In-memory representation of a COW B+-Tree
 ///
 /// # Generic Parameters
@@ -515,8 +520,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     let fut = Tree::check_r(&inner.dml, height - 1, &guard,
                                             min_fanout, max_fanout)
                     .map(move |r| {
-                        if r.1.start < tree_guard.txgs.start ||
-                           r.1.end > tree_guard.txgs.end {
+                        if r.2.start < tree_guard.txgs.start ||
+                           r.2.end > tree_guard.txgs.end {
                             eprintln!(concat!("TXG inconsistency! Tree ",
                                 "contained TXGs {:?} but Root node recorded ",
                                 "{:?}"), r.1, tree_guard.txgs);
@@ -537,11 +542,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
     ///
     /// # Returns
     ///
-    /// Whether this node or any children were error-free, and the TXG range of
-    /// this Node's children.
+    /// Whether this node or any children were error-free, the range of keys
+    /// contained by this node or any child, and the TXG range of this Node's
+    /// children.
     fn check_r(dml: &Arc<D>, height: u8, node: &TreeReadGuard<A, K, V>,
                min_fanout: usize, max_fanout: usize)
-        -> Box<Future<Item=(bool, Range<TxgT>), Error=Error> + Send>
+        -> CheckR<K>
     {
         debug_assert!(height > 0);
         let children = &node.as_int().children;
@@ -557,31 +563,54 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 let data_ok = guard.check(key, height - 1, false,
                                           min_fanout, max_fanout);
                 if guard.is_leaf() {
-                    Box::new(Ok((data_ok, range)).into_future())
-                        as Box<Future<Item=(bool, Range<TxgT>), Error=_> + Send>
+                    let first_key = *guard.key();
+                    // We can unwrap() the last_key because last_key should only
+                    // ever be None for a root leaf node, and check_r doesn't
+                    // get called in that case.
+                    let last_key = guard.as_leaf().last_key().unwrap();
+                    let keys = first_key..=last_key;
+                    Box::new(Ok((data_ok, keys, range)).into_future())
+                        as CheckR<K>
                 } else {
                     let fut = Tree::check_r(&dml2, height - 1, &guard,
                                             min_fanout, max_fanout)
-                    .map(move |(passed, txgs)| (passed && data_ok, txgs));
-                    Box::new(fut)
-                        as Box<Future<Item=(bool, Range<TxgT>), Error=_> + Send>
+                    .map(move |(passed, keys, txgs)| {
+                        // For IntNodes, use the key as recorded by the parent,
+                        // which is <= the lowest child's key
+                        (passed && data_ok, key..=*keys.end(), txgs)
+                    });
+                    Box::new(fut) as CheckR<K>
                 }
-            }).map(move |(passed, r)| {
+            }).map(move |(passed, keys, r)| {
                 if r.start < range2.start || r.end > range2.end {
                     let id = NodeId {height: height - 1, key};
                     eprintln!(concat!("TXG inconsistency!  Node {:?} ",
                         "contained TXGs {:?} but its parent recorded TXGs ",
                         "{:?}"), id, r, range2);
-                    false
+                    (false, keys)
                 } else {
-                    passed
+                    (passed, keys)
                 }
             })
         }).collect::<Vec<_>>();
         let fut = future::join_all(futs)
         .map(move |r| {
-            let passed = r.into_iter().all(|x| x);
-            (passed, start..end)
+            let children_passed = r.iter().all(|x| (*x).0);
+            let first_key = *r[0].1.start();
+            let mut last_key = K::min_value();
+            let sorted = r.iter().map(|(_passed, keys)| {
+                let r = if last_key > *keys.start() {
+                    eprintln!(concat!("Unsorted Tree!  ",
+                                      "Key {:?} precedes key {:?}"),
+                              last_key, *keys.start());
+                    false
+                } else {
+                    true
+                };
+                last_key = *keys.end();
+                r
+            }).all(|x| x);
+            (children_passed && sorted, first_key..=last_key, start..end)
         });
         Box::new(fut)
     }

@@ -424,6 +424,53 @@ root:
     assert!(!rt.block_on(tree.check()).unwrap());
 }
 
+// The tree is unsorted overall, even though each Node is correctly sorted
+#[test]
+fn check_unsorted() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 1
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    10: 10.0
+          - key: 5
+            txgs:
+              start: 0
+              end: 1
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5: 5.0
+                    6: 6.0
+                    11: 11.0
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(!rt.block_on(tree.check()).unwrap());
+}
+
 /// Recompute start TXGs on Tree flush
 #[test]
 fn flush() {

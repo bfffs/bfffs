@@ -675,7 +675,6 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         }
     }
 
-    #[cfg(test)]
     pub fn as_leaf(&self) -> &LeafData<K, V> {
         if let NodeData::Leaf(leaf) = self {
             leaf
