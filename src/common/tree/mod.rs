@@ -1555,7 +1555,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // This child obviously wasn't affected in pass1
                     None
                 }
-            }));
+            }).take(2));
             if to_fix.is_empty() {
                 return Box::new(Ok(map).into_future());
             }
