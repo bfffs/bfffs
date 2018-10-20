@@ -1863,6 +1863,151 @@ root:
               Addr: 10040"#);
 }
 
+// Regression test for bug 9bdac7a, where Tree::range_delete caused the
+// allocation table to become unsorted.  During pass2, one node must be merged
+// while descending and again while ascending.
+#[test]
+fn range_delete_merge_descending_and_ascending() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 3
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 452
+            txgs:
+              start: 2
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 452
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              462: 458
+                              494: 490
+                    - key: 1021
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1025: 835
+                              1027: 837
+          - key: 1245
+            txgs:
+              start: 2
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1309
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1313: 1123
+                              1316: 1126
+                    - key: 1341
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1368: 1178
+                              1662: 518
+          - key: 1663
+            txgs:
+              start: 2
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1663
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1663: 523
+                              1666: 547
+                    - key: 1687
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1687: 776
+                              1690: 779
+          - key: 1727
+            txgs:
+              start: 2
+              end: 3
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1727
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1727: 828
+                              1730: 832
+                    - key: 1759
+                      txgs:
+                        start: 2
+                        end: 3
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              1759: 861
+                              1762: 864
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(rt.block_on(tree.check()).unwrap());
+    let r = rt.block_on(
+        tree.range_delete(1024..1536, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    println!("{}", &tree);
+    assert!(rt.block_on(tree.check()).unwrap());
+}
+
 /// Delete a range that causes the root node to be merged down
 #[test]
 fn range_delete_merge_root() {

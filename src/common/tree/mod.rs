@@ -1574,13 +1574,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // children.  Otherwise, we won't be able to fix their only
                     // children
                     if child_guard.underflow(2) {
-                        let fut = Tree::fix_int(&inner7, guard, i - mb,
+                        let fut = Tree::fix_int(&inner7, guard, i - mb - ma,
                                                 child_guard, txg)
-                        .and_then(move |(guard, nmb, ma)| {
-                            guard.xlock(&inner7.dml, i - mb - nmb as usize, txg)
+                        .and_then(move |(guard, nmb, nma)| {
+                            guard.xlock(&inner7.dml, i - mb - ma - nmb as usize,
+                                        txg)
                             .map(move |(guard, child_guard)|
                                  (guard, child_guard, mb + nmb as usize,
-                                  ma as usize)
+                                  ma + nma as usize)
                              )
                         });
                         Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
