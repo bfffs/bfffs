@@ -2014,7 +2014,6 @@ root:
 /// got merged during ascent.  Then the code hit a "subtract with overflow"
 /// error when trying to merge the right child again.
 #[test]
-#[ignore = "expected failure: bug e6fd45d"]
 fn range_delete_merge_right_child_first() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);

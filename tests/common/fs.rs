@@ -724,21 +724,4 @@ test_suite! {
     test random(mocks((None, None, 512))) {
         do_test(mocks.val, None);
     }
-
-    /// Regression test for bug e6fd45d: attempt to subtract with overflow during
-    /// range_delete
-    #[ignore = "expected failure: bug e6fd45d"]
-    test range_delete_pass2_subtract_with_overflow(mocks((
-        Some([39u8, 82, 62, 167, 27, 160, 162, 142,
-              23, 80, 242, 4, 227, 45, 76, 99]),
-        Some(vec![
-            (Op::Clean, 0.01),
-            (Op::SyncAll, 0.03),
-            (Op::Mkdir, 10.0),
-            (Op::Touch, 10.0),
-        ]),
-        512)))
-    {
-        do_test(mocks.val, Some(Duration::from_secs(10)));
-    }
 }
