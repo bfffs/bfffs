@@ -2294,6 +2294,181 @@ root:
           8: 8.0"#);
 }
 
+/// Regression test for bug 40b01eb: Can't fix a node during range_delete_pass2
+/// ascent because its parent has only 1 child.  The correct solution is to
+/// wait.  The node will be fixed at one higher level up the stack.  In this
+/// case, that means by merging the root node down.
+#[test]
+fn range_delete_merge_root_during_ascent() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 2
+    end: 14
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 2762
+            txgs:
+              start: 12
+              end: 14
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 2778
+                      txgs:
+                        start: 12
+                        end: 13
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              2778: 2859
+                              2781: 2868
+                              2782: 2869
+                    - key: 2788
+                      txgs:
+                        start: 13
+                        end: 14
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              2965: 4758
+                              3027: 4820
+                              3074: 6186
+                    - key: 3077
+                      txgs:
+                        start: 13
+                        end: 14
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3081: 6193
+                              3085: 6197
+                              3088: 6200
+          - key: 3109
+            txgs:
+              start: 12
+              end: 14
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 3109
+                      txgs:
+                        start: 13
+                        end: 14
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3112: 6224
+                              3113: 6225
+                              3122: 6234
+                    - key: 3149
+                      txgs:
+                        start: 13
+                        end: 14
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3149: 6261
+                              3153: 6265
+                              3154: 6266
+                    - key: 3157
+                      txgs:
+                        start: 13
+                        end: 14
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3157: 6269
+                              3166: 6278
+                              3167: 6279
+          - key: 3365
+            txgs:
+              start: 13
+              end: 14
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 3509
+                      txgs:
+                        start: 13
+                        end: 14
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3509: 6621
+                              3531: 6643
+                              3532: 6644
+                    - key: 3541
+                      txgs:
+                        start: 13
+                        end: 14
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3546: 6658
+                              3547: 6659
+                              3572: 6684
+                    - key: 3573
+                      txgs:
+                        start: 13
+                        end: 14
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              3581: 6693
+                              3584: 3091
+                              3585: 3092
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(3072..3584, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 1
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 42
+    end: 43
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          2778: 2859
+          2781: 2868
+          2782: 2869
+          2965: 4758
+          3027: 4820
+          3584: 3091
+          3585: 3092"#);
+}
 
 /// Delete a range that causes the root node to be merged two steps down
 #[test]

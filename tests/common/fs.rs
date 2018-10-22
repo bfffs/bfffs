@@ -740,19 +740,4 @@ test_suite! {
     {
         do_test(mocks.val, Some(Duration::from_secs(10)));
     }
-
-    #[ignore = "expected failure: bug 40b01eb"]
-    test range_delete_pass2_nchildren_lt_2_during_fix_int(mocks((
-        Some([54, 239, 100, 241, 161, 254, 41, 150,
-             149, 175, 225, 64, 132, 100, 108, 142]),
-        Some(vec![
-            (Op::Clean, 0.01),
-            (Op::SyncAll, 0.03),
-            (Op::Mkdir, 10.0),
-            (Op::Touch, 10.0),
-        ]),
-        512)))
-    {
-        do_test(mocks.val, Some(Duration::from_secs(10)));
-    }
 }
