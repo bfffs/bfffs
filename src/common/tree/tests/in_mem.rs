@@ -2008,6 +2008,221 @@ root:
     assert!(rt.block_on(tree.check()).unwrap());
 }
 
+/// Regression test for bug e6fd45d.  After range_delete_pass1, Node 2,7148 has
+/// two children that both underflow.  During range_delete_pass2, the right
+/// child (key 7268) got merged during descent.  Then the left child (key 7148)
+/// got merged during ascent.  Then the code hit a "subtract with overflow"
+/// error when trying to merge the right child again.
+#[test]
+#[ignore = "expected failure: bug e6fd45d"]
+fn range_delete_merge_right_child_first() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 4
+max_fanout: 9
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 4
+    end: 15
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 7148
+            txgs:
+              start: 13
+              end: 15
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 7148
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              7153: 6699
+                              7156: 6702
+                              7164: 6710
+                              7173: 6719
+                    - key: 7252
+                      txgs:
+                        start: 13
+                        end: 1
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              7252: 6798
+                              7253: 6799
+                              7254: 6800
+                              7255: 6801
+                    - key: 7260
+                      txgs:
+                        start: 13
+                        end: 14
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              7260: 6806
+                              7265: 6811
+                              7266: 6812
+                              7267: 6813
+                    - key: 7268
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              7281: 6827
+                              7282: 6828
+                              7287: 6833
+                              7735: 5525
+          - key: 7736
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 7736
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              7736: 5527
+                              7737: 5538
+                              7738: 5540
+                              7739: 5543
+                    - key: 7744
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Addr: 1007744
+                    - key: 7752
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Addr: 1007752
+                    - key: 7760
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Addr: 1007760
+          - key: 7840
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Addr: 7693
+          - key: 8000
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Addr: 7692
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    rt.block_on(
+        tree.range_delete(7168..7680, TxgT::from(42))
+    ).unwrap();
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 4
+max_fanout: 9
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 4
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 7148
+            txgs:
+              start: 14
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 7148
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              7153: 6699
+                              7156: 6702
+                              7164: 6710
+                              7735: 5525
+                    - key: 7736
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              7736: 5527
+                              7737: 5538
+                              7738: 5540
+                              7739: 5543
+                    - key: 7744
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Addr: 1007744
+                    - key: 7752
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Addr: 1007752
+                    - key: 7760
+                      txgs:
+                        start: 14
+                        end: 15
+                      ptr:
+                        Addr: 1007760
+          - key: 7840
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Addr: 7693
+          - key: 8000
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Addr: 7692"#);
+}
+
 /// Delete a range that causes the root node to be merged down
 #[test]
 fn range_delete_merge_root() {

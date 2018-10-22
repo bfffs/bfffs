@@ -553,7 +553,6 @@ test_suite! {
                 let r = self.fs.read(ino, ofs, 2048);
                 // TODO: check buffer contents
                 assert!(r.is_ok());
-                self.check();
             }
         }
 
@@ -573,7 +572,6 @@ test_suite! {
                 let fname = format!("{:x}", self.files.remove(idx).0);
                 info!("rm {}", fname);
                 self.fs.unlink(1, &OsString::from(&fname)).unwrap();
-                self.check();
             }
         }
 
@@ -583,7 +581,6 @@ test_suite! {
                 let fname = format!("{:x}", self.dirs.remove(idx).0);
                 info!("rmdir {}", fname);
                 self.fs.rmdir(1, &OsString::from(&fname)).unwrap();
-                self.check();
             }
         }
 
@@ -615,7 +612,6 @@ test_suite! {
         fn sync(&mut self) {
             info!("sync");
             self.fs.sync();
-            self.check();
         }
 
         fn touch(&mut self) {
@@ -628,7 +624,6 @@ test_suite! {
             info!("Touch {}", fname);
             let ino = self.fs.create(1, &OsString::from(&fname), 0o644).unwrap();
             self.files.push((num, ino));
-            self.check();
         }
 
         /// Write to a file.
@@ -652,7 +647,6 @@ test_suite! {
                 info!("write {:x} at offset {}", self.files[idx].0, ofs);
                 let r = self.fs.write(ino, ofs, &buf[..], 0);
                 assert!(r.is_ok());
-                self.check();
             }
         }
     }
@@ -705,7 +699,7 @@ test_suite! {
         }
     });
 
-    fn do_test(mut torture_test: TortureTest) {
+    fn do_test(mut torture_test: TortureTest, duration: Option<Duration>) {
         // Random torture test.  At each step check the trees and also do one of:
         // *) Clean zones
         // *) Sync
@@ -717,8 +711,9 @@ test_suite! {
         // *) List a directory
         // *) Write to a regular file
         // *) Read from a regular file
+        let duration = duration.unwrap_or(Duration::from_secs(60));
         let start = Instant::now();
-        while start.elapsed() < Duration::from_secs(60) {
+        while start.elapsed() < duration {
             torture_test.step()
         }
         torture_test.shutdown();
@@ -727,6 +722,23 @@ test_suite! {
     /// Randomly execute a long series of filesystem operations.
     #[ignore = "Slow"]
     test random(mocks((None, None, 512))) {
-        do_test(mocks.val)
+        do_test(mocks.val, None);
+    }
+
+    /// Regression test for bug e6fd45d: attempt to subtract with overflow during
+    /// range_delete
+    #[ignore = "expected failure: bug e6fd45d"]
+    test range_delete_pass2_subtract_with_overflow(mocks((
+        Some([39u8, 82, 62, 167, 27, 160, 162, 142,
+              23, 80, 242, 4, 227, 45, 76, 99]),
+        Some(vec![
+            (Op::Clean, 0.01),
+            (Op::SyncAll, 0.03),
+            (Op::Mkdir, 10.0),
+            (Op::Touch, 10.0),
+        ]),
+        512)))
+    {
+        do_test(mocks.val, Some(Duration::from_secs(10)));
     }
 }
