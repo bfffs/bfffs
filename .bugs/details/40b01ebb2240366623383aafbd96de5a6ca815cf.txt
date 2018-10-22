@@ -1,0 +1,40 @@
+# Lines starting with '#' and sections without content
+# are not displayed by a call to 'details'
+#
+[paths]
+# Paths related to this bug.
+# suggested format: REPO_PATH:LINENUMBERS
+
+
+[details]
+In version 807:693a062fae04, I saw this error:
+
+thread '<unnamed>' panicked at 'nchildren < 2 for tree with parent key PBA { cluster: 0, lba: 2762 }, idx=0', src/common/tree/mod.rs:733:9
+
+[expected]
+# The expected result
+
+
+[actual]
+Here's a partial stack trace:
+   0: std::sys::unix::backtrace::tracing::imp::unwind_backtrace
+   1: std::sys_common::backtrace::print
+   2: std::panicking::default_hook::{{closure}}
+   3: std::panicking::default_hook
+   4: std::panicking::rust_panic_with_hook
+   5: std::panicking::continue_panic_fmt
+   6: std::panicking::begin_panic_fmt
+   7: <bfffs::common::tree::Tree<A, D, K, V>>::fix_int
+   8: <bfffs::common::tree::Tree<A, D, K, V>>::range_delete_pass2_r::{{closure}}::{{closure}}
+             at ./src/common/tree/mod.rs:1640
+
+
+[reproduce]
+1) In database.rs, Syncer::run, set the Duration to a very high value to
+disable the syncer.
+2) Run the
+common::fs::torture::range_delete_pass2_nchildren_lt_2_during_fix_int test
+
+
+[comments]
+# Comments and updates - leave your name
