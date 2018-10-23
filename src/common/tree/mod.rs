@@ -659,8 +659,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     let mut f3 = rrf3.borrow_mut();
                     let mut hmap = BTreeMap::new();
                     if !guard.is_mem() {
-                        hmap.insert(*tree_guard.ptr.as_addr(),
-                            serde_yaml::to_value(guard.deref()).unwrap());
+                        hmap.insert(*tree_guard.ptr.as_addr(), guard.deref());
                     }
                     if ! hmap.is_empty() {
                         let s = serde_yaml::to_string(&hmap).unwrap();
@@ -699,8 +698,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 let citer = node.as_int().children.iter();
                 for (child, guard) in citer.zip(r.iter()) {
                     if !guard.is_mem() {
-                        hmap.insert(*child.ptr.as_addr(),
-                                 serde_yaml::to_value(guard.deref()).unwrap());
+                        hmap.insert(*child.ptr.as_addr(), guard.deref());
                     }
                 }
                 if ! hmap.is_empty() {

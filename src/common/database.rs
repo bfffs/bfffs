@@ -25,7 +25,7 @@ use libc;
 use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
-    fs::File,
+    io,
     sync::{Arc, Mutex},
     time::{Duration, Instant}
 };
@@ -283,10 +283,10 @@ impl Database {
     /// `std::fs::File`.
     ///
     /// Must be called from the synchronous domain.
-    pub fn dump(&self, mut file: File, tree: TreeID) {
+    pub fn dump(&self, f: &mut io::Write, tree: TreeID) {
         self.inner.fs_trees.lock().unwrap()
         .get(&tree).unwrap()
-        .dump(&mut file).unwrap();
+        .dump(f).unwrap();
     }
 
     /// Create a new, blank filesystem

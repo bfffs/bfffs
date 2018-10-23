@@ -21,7 +21,7 @@ use libc;
 use std::{
     cmp,
     ffi::{OsStr, OsString},
-    fs::File,
+    io,
     mem,
     os::unix::ffi::OsStrExt,
     sync::Arc,
@@ -73,7 +73,7 @@ pub struct GetAttr {
 }
 
 /// File attributes, as set by `setattr`
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SetAttr {
     /// File size in bytes
     pub size:       Option<u64>,
@@ -219,10 +219,8 @@ impl Fs {
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
     /// `std::fs::File`.
-    ///
-    /// Must be called from the synchronous domain.
-    pub fn dump(&self, file: File) {
-        self.db.dump(file, self.tree)
+    pub fn dump(&self, f: &mut io::Write) {
+        self.db.dump(f, self.tree)
     }
 
     pub fn getattr(&self, ino: u64) -> Result<GetAttr, i32> {

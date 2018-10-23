@@ -89,6 +89,276 @@ test_suite! {
         assert_eq!(parent_attr.nlink, 1);
     }
 
+    // Dumps an FS tree, with enough data to create IntNodes
+    test dump(mocks) {
+        let ino_w = mocks.val.0.mkdir(1, &OsString::from("w"), 0o755).unwrap();
+        let ino_x = mocks.val.0.mkdir(1, &OsString::from("x"), 0o755).unwrap();
+        let ino_y = mocks.val.0.mkdir(1, &OsString::from("y"), 0o755).unwrap();
+        let ino_z = mocks.val.0.mkdir(1, &OsString::from("z"), 0o755).unwrap();
+        // Zero out the timestamp strings
+        let attr = SetAttr {
+            mode: None,
+            uid: None,
+            gid: None,
+            size: None,
+            atime: Some(Timespec{sec: 0, nsec: 0}),
+            mtime: Some(Timespec{sec: 0, nsec: 0}),
+            ctime: Some(Timespec{sec: 0, nsec: 0}),
+            birthtime: Some(Timespec{sec: 0, nsec: 0}),
+            flags: None,
+        };
+        mocks.val.0.setattr(1, attr).unwrap();
+        mocks.val.0.setattr(ino_w, attr).unwrap();
+        mocks.val.0.setattr(ino_x, attr).unwrap();
+        mocks.val.0.setattr(ino_y, attr).unwrap();
+        mocks.val.0.setattr(ino_z, attr).unwrap();
+        mocks.val.0.sync();
+
+        let mut buf = Vec::with_capacity(1024);
+        mocks.val.0.dump(&mut buf);
+        let fs_tree = String::from_utf8(buf).unwrap();
+        assert_eq!(fs_tree,
+r#"---
+height: 2
+min_fanout: 4
+max_fanout: 16
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 1
+  ptr:
+    Addr: 2
+---
+0:
+  Leaf:
+    items:
+      18474578933339636253:
+        DirEntry:
+          ino: 5
+          dtype: 4
+          name:
+            Unix:
+              - 122
+      18478388752068107043:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      18482701415731367003:
+        DirEntry:
+          ino: 3
+          dtype: 4
+          name:
+            Unix:
+              - 120
+      18486768971900222402:
+        DirEntry:
+          ino: 2
+          dtype: 4
+          name:
+            Unix:
+              - 119
+      18490468108375165510:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+      18501635435641183657:
+        DirEntry:
+          ino: 4
+          dtype: 4
+          name:
+            Unix:
+              - 121
+      18518801667747479552:
+        Inode:
+          size: 0
+          nlink: 5
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 0
+          gid: 0
+          mode: 16877
+      36925132825777658659:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      36937212182084717126:
+        DirEntry:
+          ino: 2
+          dtype: 4
+          name:
+            Unix:
+              - 46
+1:
+  Leaf:
+    items:
+      36965545741457031168:
+        Inode:
+          size: 0
+          nlink: 2
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 0
+          gid: 0
+          mode: 16877
+      55371876899487210275:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      55383956255794268742:
+        DirEntry:
+          ino: 3
+          dtype: 4
+          name:
+            Unix:
+              - 46
+      55412289815166582784:
+        Inode:
+          size: 0
+          nlink: 2
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 0
+          gid: 0
+          mode: 16877
+      73818620973196761891:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      73830700329503820358:
+        DirEntry:
+          ino: 4
+          dtype: 4
+          name:
+            Unix:
+              - 46
+      73859033888876134400:
+        Inode:
+          size: 0
+          nlink: 2
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 0
+          gid: 0
+          mode: 16877
+      92265365046906313507:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      92277444403213371974:
+        DirEntry:
+          ino: 5
+          dtype: 4
+          name:
+            Unix:
+              - 46
+      92305777962585686016:
+        Inode:
+          size: 0
+          nlink: 2
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 0
+          gid: 0
+          mode: 16877
+---
+2:
+  Int:
+    children:
+      - key: 0
+        txgs:
+          start: 0
+          end: 1
+        ptr:
+          Addr: 0
+      - key: 36965545741457031168
+        txgs:
+          start: 0
+          end: 1
+        ptr:
+          Addr: 1
+"#);
+    }
+
     /// getattr on the filesystem's root directory
     test getattr(mocks) {
         let attr = mocks.val.0.getattr(1).unwrap();
