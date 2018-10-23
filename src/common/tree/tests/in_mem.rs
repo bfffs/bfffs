@@ -2008,6 +2008,158 @@ root:
     assert!(rt.block_on(tree.check()).unwrap());
 }
 
+// A scenario in which the child on the left side of the cut is merged twice
+// during ascent.
+#[test]
+fn range_delete_merge_left_child_twice() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 2
+min_fanout: 5
+max_fanout: 11
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 2
+    end: 15
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+                    2: 2.0
+                    3: 3.0
+                    4: 4.0
+          - key: 10
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+                    12: 12.0
+                    13: 13.0
+                    14: 14.0
+          - key: 20
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    20: 20.0
+                    21: 21.0
+                    22: 22.0
+                    23: 23.0
+                    24: 24.0
+          - key: 30
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    30: 30.0
+                    31: 31.0
+                    32: 32.0
+                    33: 33.0
+                    34: 34.0
+          - key: 40
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    40: 40.0
+                    41: 41.0
+                    42: 42.0
+                    43: 43.0
+                    44: 44.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(12..23, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 2
+min_fanout: 5
+max_fanout: 11
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 2
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+                    2: 2.0
+                    3: 3.0
+                    4: 4.0
+          - key: 10
+            txgs:
+              start: 42
+              end: 43
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    10: 10.0
+                    11: 11.0
+                    23: 23.0
+                    24: 24.0
+                    30: 30.0
+                    31: 31.0
+                    32: 32.0
+                    33: 33.0
+                    34: 34.0
+          - key: 40
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    40: 40.0
+                    41: 41.0
+                    42: 42.0
+                    43: 43.0
+                    44: 44.0"#);
+}
+
 /// Regression test for another bug similar to e6fd45d.  After pass1, Node
 /// 1,4898 has two children that both underflow.  During pass2, the right child
 /// (key 5626) got merged during descent.  Then the left child got merged during

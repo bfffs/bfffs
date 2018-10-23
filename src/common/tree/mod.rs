@@ -1665,9 +1665,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // siblings.  If it has no siblings, then it will be fixed
                     // one more level up the stack.
                     if child.underflow(inner5.min_fanout) && guard.len() > 1 {
-                        // TODO: need coverage for this condition.  It can only
-                        // be reached if both nodes in the cut have two children
-                        // after pass1, and min_fanout >= 5.
                         let fut = Tree::fix_int(&inner5, guard,
                             left_idx - (mb as usize), child, txg)
                         .map(move |(guard, nmb, nma)| {
