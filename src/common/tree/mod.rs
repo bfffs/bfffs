@@ -1583,15 +1583,15 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 } else {
                     Box::new(Ok((guard, child_guard, 0, 0)).into_future())
                 }
-            }).and_then(move |(guard, child_guard, mb, ma)| {
+            }).and_then(move |(guard, child_guard, mb, mm)| {
                 // Recurse into the left child
                 Tree::range_delete_pass2_r(inner3, child_guard, map,
                                            range3, txg)
-                .map(move |map| (guard, map, mb, ma))
-            }).and_then(move |(guard, map, mb, ma)| {
+                .map(move |map| (guard, map, mb, mm))
+            }).and_then(move |(guard, map, mb, mm)| {
                 // Fix into the right node, if it exists and was not merged
                 // with the left node
-                if right_idx.is_some() && ma == 0 {
+                if right_idx.is_some() && mm == 0 {
                     let inner8 = inner.clone();
                     let j = right_idx.unwrap() - mb;
                     let fut = guard.xlock(&inner.dml, j, txg)
@@ -1601,27 +1601,26 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         if child_guard.underflow(2) {
                             let fut = Tree::fix_int(&inner, guard, j,
                                                     child_guard, txg)
-                            .and_then(move |(guard, nmb, nma)| {
+                            .and_then(move |(guard, nmb, _nma)| {
                                 guard.xlock(&inner.dml, j - nmb as usize, txg)
                                 .map(move |(guard, child_guard)|
-                                     (guard, child_guard, mb + nmb as usize,
-                                      ma + nma as usize)
+                                     (guard, child_guard, mb, mm + nmb as usize)
                                  )
                             });
                             Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
                         } else {
-                            let r = Ok((guard, child_guard, mb, 0usize));
+                            let r = Ok((guard, child_guard, mb, mm));
                             Box::new(r.into_future())
                         }
-                    }).and_then(move |(guard, child_guard, mb, ma)| {
+                    }).and_then(move |(guard, child_guard, mb, mm)| {
                         // Now recurse into the right child
                         Tree::range_delete_pass2_r(inner8, child_guard, map,
                                                    range, txg)
-                        .map(move |map| (guard, map, ma, mb))
+                        .map(move |map| (guard, map, mb, mm))
                     });
                     Box::new(fut) as Box<Future<Item=_, Error=Error> + Send>
                 } else {
-                    Box::new(Ok((guard, map, mb, ma)).into_future())
+                    Box::new(Ok((guard, map, mb, mm)).into_future())
                         as Box<Future<Item=_, Error=Error> + Send>
                 }
             }).and_then(move |(guard, map, mb, mm):

@@ -2008,6 +2008,108 @@ root:
     assert!(rt.block_on(tree.check()).unwrap());
 }
 
+/// Regression test for another bug similar to e6fd45d.  After pass1, Node
+/// 1,4898 has two children that both underflow.  During pass2, the right child
+/// (key 5626) got merged during descent.  Then the left child got merged during
+/// ascent, causing a "subtract with overflow" error.
+#[test]
+fn range_delete_merge_right_child_descending() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
+---
+height: 2
+min_fanout: 4
+max_fanout: 9
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 2
+    end: 15
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 4898
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4903: 3431
+                    4993: 3521
+                    5045: 3573
+                    5583: 2277
+          - key: 5618
+            txgs:
+              start: 13
+              end: 14
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5618: 5459
+                    5623: 5464
+                    5624: 5465
+                    5625: 5466
+          - key: 5626
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5629: 5470
+                    5630: 5471
+                    5631: 5472
+                    5632: 7554
+          - key: 5634
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5635: 7557
+                    5637: 7559
+                    5638: 7560
+                    5642: 7564
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(5120..5632, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 1
+min_fanout: 4
+max_fanout: 9
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 42
+    end: 43
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          4903: 3431
+          4993: 3521
+          5045: 3573
+          5632: 7554
+          5635: 7557
+          5637: 7559
+          5638: 7560
+          5642: 7564"#);
+}
+
 /// Regression test for bug e6fd45d.  After range_delete_pass1, Node 2,7148 has
 /// two children that both underflow.  During range_delete_pass2, the right
 /// child (key 7268) got merged during descent.  Then the left child (key 7148)
