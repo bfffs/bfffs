@@ -44,7 +44,7 @@ pub struct Fs {
 
 /// File attributes, as returned by `getattr`
 #[derive(Debug, PartialEq)]
-pub struct Attr {
+pub struct GetAttr {
     pub ino:        u64,
     /// File size in bytes
     pub size:       u64,
@@ -70,6 +70,29 @@ pub struct Attr {
     pub rdev:       u32,
     /// File flags
     pub flags:      u64,
+}
+
+/// File attributes, as set by `setattr`
+#[derive(Debug, PartialEq)]
+pub struct SetAttr {
+    /// File size in bytes
+    pub size:       Option<u64>,
+    /// access time
+    pub atime:      Option<time::Timespec>,
+    /// modification time
+    pub mtime:      Option<time::Timespec>,
+    /// change time
+    pub ctime:      Option<time::Timespec>,
+    /// birth time
+    pub birthtime:  Option<time::Timespec>,
+    /// File mode
+    pub mode:       Option<u16>,
+    /// user id
+    pub uid:        Option<u32>,
+    /// Group id
+    pub gid:        Option<u32>,
+    /// File flags
+    pub flags:      Option<u64>,
 }
 
 /// Arguments for Fs::do_create
@@ -202,7 +225,7 @@ impl Fs {
         self.db.dump(file, self.tree)
     }
 
-    pub fn getattr(&self, ino: u64) -> Result<Attr, i32> {
+    pub fn getattr(&self, ino: u64) -> Result<GetAttr, i32> {
         let (tx, rx) = oneshot::channel();
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
@@ -212,7 +235,7 @@ impl Fs {
                     match r {
                         Ok(Some(v)) => {
                             let inode = v.as_inode().unwrap();
-                            let attr = Attr {
+                            let attr = GetAttr {
                                 ino,
                                 size: inode.size,
                                 blocks: 0,
@@ -548,6 +571,35 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    pub fn setattr(&self, ino: u64, attr: SetAttr) -> Result<(), i32> {
+        let (tx, rx) = oneshot::channel();
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
+        self.handle.spawn(
+            self.db.fswrite(self.tree, move |ds| {
+                let dataset = Arc::new(ds);
+                dataset.get(inode_key)
+                .and_then(move |r| {
+                    let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
+                    if let Some(m) = attr.mode {
+                        iv.mode &= libc::S_IFMT;
+                        iv.mode |= m;
+                    }
+                    iv.uid = attr.uid.unwrap_or(iv.uid);
+                    iv.gid = attr.gid.unwrap_or(iv.gid);
+                    iv.size = attr.size.unwrap_or(iv.size);
+                    iv.atime = attr.atime.unwrap_or(iv.atime);
+                    iv.mtime = attr.mtime.unwrap_or(iv.mtime);
+                    iv.ctime = attr.ctime.unwrap_or(iv.ctime);
+                    iv.birthtime = attr.birthtime.unwrap_or(iv.birthtime);
+                    iv.flags = attr.flags.unwrap_or(iv.flags);
+                    iv.uid = attr.uid.unwrap_or(iv.uid);
+                    dataset.insert(inode_key, FSValue::Inode(iv))
+                }).map(move |_| tx.send(Ok(())).unwrap())
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     pub fn statvfs(&self) -> libc::statvfs {
         let (tx, rx) = oneshot::channel::<libc::statvfs>();
         self.handle.spawn(
@@ -837,7 +889,7 @@ fn create() {
 // Pet kcov
 #[test]
 fn debug_attr() {
-    let attr = Attr {
+    let attr = GetAttr {
         ino: 1,
         size: 4096,
         blocks: 1,
@@ -853,7 +905,7 @@ fn debug_attr() {
         flags: 0,
     };
     let s = format!("{:?}", attr);
-    assert_eq!("Attr { ino: 1, size: 4096, blocks: 1, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: 33188, nlink: 1, uid: 1000, gid: 1000, rdev: 0, flags: 0 }", s);
+    assert_eq!("GetAttr { ino: 1, size: 4096, blocks: 1, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: 33188, nlink: 1, uid: 1000, gid: 1000, rdev: 0, flags: 0 }", s);
 }
 
 #[test]

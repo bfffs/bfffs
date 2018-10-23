@@ -4,7 +4,7 @@
 #[cfg(not(test))] use common::database::*;
 #[cfg(test)] use common::database_mock::DatabaseMock as Database;
 use common::database::TreeID;
-use common::fs::Fs;
+use common::fs::{Fs, SetAttr};
 use fuse::*;
 use libc;
 use std::{
@@ -194,6 +194,48 @@ impl Filesystem for FuseFs {
         match self.fs.rmdir(parent, name) {
             Ok(()) => reply.ok(),
             Err(errno) => reply.error(errno)
+        }
+    }
+
+    fn setattr(&mut self,
+               _req: &Request,
+               ino: u64,
+               mode: Option<u32>,
+               uid: Option<u32>,
+               gid: Option<u32>,
+               size: Option<u64>,
+               atime: Option<Timespec>,
+               mtime: Option<Timespec>,
+               _fh: Option<u64>,
+               crtime: Option<Timespec>,
+               chgtime: Option<Timespec>,
+               _bkuptime: Option<Timespec>,
+               flags: Option<u32>,
+               reply: ReplyAttr)
+    {
+        let attr = SetAttr {
+            mode: mode.map(|m| m as u16),
+            uid,
+            gid,
+            size,
+            atime,
+            mtime,
+            ctime: chgtime,
+            birthtime: crtime,
+            flags: flags.map(|f| f as u64)
+        };
+        let r = self.fs.setattr(ino, attr)
+        .and_then(|_| self.do_getattr(ino));
+        // FUSE combines the functions of VOP_SETATTR and VOP_GETATTR
+        // into one.
+        match r {
+            Ok(file_attr) => {
+                let ttl = Timespec { sec: 0, nsec: 0 };
+                reply.attr(&ttl, &file_attr)
+            },
+            Err(e) => {
+                reply.error(e)
+            }
         }
     }
 

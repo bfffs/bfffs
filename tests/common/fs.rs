@@ -29,6 +29,7 @@ test_suite! {
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
+    use time::Timespec;
     use tokio_io_pool::Runtime;
 
     fixture!( mocks() -> (Fs, Runtime) {
@@ -90,18 +91,17 @@ test_suite! {
 
     /// getattr on the filesystem's root directory
     test getattr(mocks) {
-        let inode = mocks.val.0.getattr(1).unwrap();
-        assert_eq!(inode.nlink, 1);
-        assert_eq!(inode.flags, 0);
-        assert!(inode.atime.sec > 0);
-        assert!(inode.mtime.sec > 0);
-        assert!(inode.ctime.sec > 0);
-        assert!(inode.birthtime.sec > 0);
-        assert_eq!(inode.uid, 0);
-        assert_eq!(inode.gid, 0);
-        assert_eq!(inode.mode & 0o7777, 0o755);
-        assert_eq!(inode.mode & libc::S_IFMT, libc::S_IFDIR);
-        assert_eq!(inode.nlink, 1);
+        let attr = mocks.val.0.getattr(1).unwrap();
+        assert_eq!(attr.nlink, 1);
+        assert_eq!(attr.flags, 0);
+        assert!(attr.atime.sec > 0);
+        assert!(attr.mtime.sec > 0);
+        assert!(attr.ctime.sec > 0);
+        assert!(attr.birthtime.sec > 0);
+        assert_eq!(attr.uid, 0);
+        assert_eq!(attr.gid, 0);
+        assert_eq!(attr.mode & 0o7777, 0o755);
+        assert_eq!(attr.mode & libc::S_IFMT, libc::S_IFDIR);
     }
 
     test mkdir(mocks) {
@@ -302,6 +302,67 @@ test_suite! {
         let ino = mocks.val.0.mkdir(1, &dirname, 0o755).unwrap();
         mocks.val.0.mkdir(ino, &dirname, 0o755).unwrap();
         assert_eq!(mocks.val.0.rmdir(1, &dirname).unwrap_err(), libc::ENOTEMPTY);
+    }
+
+    test setattr(mocks) {
+        let filename = OsString::from("x");
+        let ino = mocks.val.0.create(1, &filename, 0o644).unwrap();
+        let mode = 0o1357;
+        let uid = 12345;
+        let gid = 54321;
+        let size = 9999;
+        let atime = Timespec {sec: 1, nsec: 2};
+        let mtime = Timespec {sec: 3, nsec: 4};
+        let ctime = Timespec {sec: 5, nsec: 6};
+        let birthtime = Timespec {sec: 7, nsec: 8};
+        let flags = 1;
+        // TODO: define UF_NODUMP in libc and use that here.
+        //let flags = libc::UF_NODUMP;
+
+        let assert = |attr: GetAttr| {
+            assert_eq!(attr.nlink, 1); // Shouldn't have been changed
+            assert_eq!(attr.flags, flags);
+            assert_eq!(attr.atime, atime);
+            assert_eq!(attr.mtime, mtime);
+            assert_eq!(attr.ctime, ctime);
+            assert_eq!(attr.birthtime, birthtime);
+            assert_eq!(attr.uid, uid);
+            assert_eq!(attr.gid, gid);
+            assert_eq!(attr.mode & 0o7777, mode);
+            assert_eq!(attr.size, size);
+            assert_eq!(attr.mode & libc::S_IFMT, libc::S_IFREG);
+        };
+
+        let attr = SetAttr {
+            mode: Some(mode),
+            uid: Some(uid),
+            gid: Some(gid),
+            size: Some(size),
+            atime: Some(atime),
+            mtime: Some(mtime),
+            ctime: Some(ctime),
+            birthtime: Some(birthtime),
+            flags: Some(flags)
+        };
+        mocks.val.0.setattr(ino, attr).unwrap();
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert(attr);
+
+        // Now test using setattr to update nothing
+        let attr = SetAttr {
+            mode: None,
+            uid: None,
+            gid: None,
+            size: None,
+            atime: None,
+            mtime: None,
+            ctime: None,
+            birthtime: None,
+            flags: None,
+        };
+        mocks.val.0.setattr(ino, attr).unwrap();
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert(attr);
     }
 
     test statvfs(mocks) {

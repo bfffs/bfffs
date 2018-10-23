@@ -17,6 +17,7 @@ extern crate nix;
 extern crate rand;
 extern crate rand_xorshift;
 extern crate tempdir;
+extern crate time;
 extern crate tokio;
 extern crate tokio_file;
 extern crate tokio_io_pool;
