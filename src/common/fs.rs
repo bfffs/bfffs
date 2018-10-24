@@ -360,73 +360,64 @@ impl Fs {
                     let futs = (0..nrecs).map(|rec| {
                         let dataset2 = dataset.clone();
                         let offs = baseoffset + rec * rs;
-                        if fsize <= offs {
-                            // Return empty buffer when reading past EOF
-                            let dbs = DivBufShared::from(Vec::new());
-                            let db = dbs.try().unwrap();
-                            Box::new(Ok(db).into_future())
-                                as Box<Future<Item=DivBuf, Error=Error> + Send>
-                        } else {
-                            let k = FSKey::new(ino, ObjKey::Extent(offs));
-                            // Lookup the extent
-                            let fut = dataset2.get(k)
-                            .and_then(move |v| {
-                                if let Some(item) = v {
-                                    match item.as_extent().unwrap() {
-                                        Extent::Inline(ile) => {
-                                            let buf = ile.buf.try().unwrap();
-                                            Box::new(Ok(buf).into_future())
-                                                as Box<Future<Item=_,
-                                                              Error=_> + Send>
-                                        },
-                                        Extent::Blob(be) => {
-                                            let bfut = dataset2.get_blob(be.rid)
-                                                .map(|bdb| *bdb);
-                                            Box::new(bfut)
-                                                as Box<Future<Item=_,
-                                                              Error=_> + Send>
-                                        }
+                        debug_assert!(fsize > offs);
+                        let k = FSKey::new(ino, ObjKey::Extent(offs));
+                        // Lookup the extent
+                        dataset2.get(k)
+                        .and_then(move |v| {
+                            if let Some(item) = v {
+                                match item.as_extent().unwrap() {
+                                    Extent::Inline(ile) => {
+                                        let buf = ile.buf.try().unwrap();
+                                        Box::new(Ok(buf).into_future())
+                                            as Box<Future<Item=_,
+                                                          Error=_> + Send>
+                                    },
+                                    Extent::Blob(be) => {
+                                        let bfut = dataset2.get_blob(be.rid)
+                                            .map(|bdb| *bdb);
+                                        Box::new(bfut)
+                                            as Box<Future<Item=_,
+                                                          Error=_> + Send>
                                     }
-                                } else {
-                                    // No extent found; it's a hole
-                                    let db = if ZERO_REGION_LEN <= RECORDSIZE {
-                                        ZERO_REGION.try().unwrap()
-                                    } else {
-                                        let v = vec![0u8; RECORDSIZE];
-                                        let dbs = DivBufShared::from(v);
-                                        dbs.try().unwrap()
-                                    };
-                                    Box::new(Ok(db).into_future())
-                                        as Box<Future<Item=DivBuf,
-                                                      Error=Error> + Send>
                                 }
-                            }).map(move |mut db| {
-                                if rec == 0 {
-                                    // Trim the beginning
-                                    db.split_to((offset - baseoffset) as usize);
-                                }
-                                if rec == nrecs - 1 {
-                                    // Trim the end
-                                    let end = RECORDSIZE
-                                        - ((nrecs * rs) as usize - size);
-                                    if db.len() >= end {
-                                        db.split_off(RECORDSIZE
-                                            - ((nrecs * rs) as usize - size));
-                                        db
-                                    } else {
-                                        // A partial hole.  We got some data,
-                                        // but not enough.  Copy to a new buffer
-                                        let mut v = vec![0u8; end];
-                                        v[0..db.len()].copy_from_slice(&db[..]);
-                                        DivBufShared::from(v).try().unwrap()
-                                    }
+                            } else {
+                                // No extent found; it's a hole
+                                let db = if ZERO_REGION_LEN <= RECORDSIZE {
+                                    ZERO_REGION.try().unwrap()
                                 } else {
+                                    let v = vec![0u8; RECORDSIZE];
+                                    let dbs = DivBufShared::from(v);
+                                    dbs.try().unwrap()
+                                };
+                                Box::new(Ok(db).into_future())
+                                    as Box<Future<Item=DivBuf,
+                                                  Error=Error> + Send>
+                            }
+                        }).map(move |mut db| {
+                            if rec == 0 {
+                                // Trim the beginning
+                                db.split_to((offset - baseoffset) as usize);
+                            }
+                            if rec == nrecs - 1 {
+                                // Trim the end
+                                let end = RECORDSIZE
+                                    - ((nrecs * rs) as usize - size);
+                                if db.len() >= end {
+                                    db.split_off(RECORDSIZE
+                                        - ((nrecs * rs) as usize - size));
                                     db
+                                } else {
+                                    // A partial hole.  We got some data,
+                                    // but not enough.  Copy to a new buffer
+                                    let mut v = vec![0u8; end];
+                                    v[0..db.len()].copy_from_slice(&db[..]);
+                                    DivBufShared::from(v).try().unwrap()
                                 }
-                            });
-                            Box::new(fut)
-                                as Box<Future<Item=DivBuf, Error=Error> + Send>
-                        }
+                            } else {
+                                db
+                            }
+                        })
                     }).collect::<Vec<_>>();
                     future::join_all(futs)
                     .map(|sglist| {
