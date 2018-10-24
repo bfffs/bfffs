@@ -516,6 +516,11 @@ impl Fs {
                             }
                         } else if let Some(inode) = v.as_inode() {
                             // TODO: check permissions, file flags, etc
+                            // The VFS should've already checked that inode is a
+                            // directory.
+                            assert_eq!(inode.mode & libc::S_IFMT,
+                                       libc::S_IFDIR,
+                                       "rmdir of a non-directory");
                             assert_eq!(inode.nlink, 2,
                                 concat!("Hard links to directories are ",
                                         "forbidden.  nlink={}"), inode.nlink);
@@ -664,6 +669,10 @@ impl Fs {
                     .map(move |_| ino)
                 }).and_then(move |ino|  {
                     // 3) range_delete its key range
+                    // NB: at this point we still don't know if the file is a
+                    // regular file or a directory.  But the VFS should've
+                    // already checked for us.  We don't want to check here,
+                    // because that may cause an additional read from disk.
                     let ino_fut = dataset.range_delete(FSKey::obj_range(ino));
                     // 4) Remove the parent dir's dir_entry
                     let de_key = FSKey::new(parent, dekey);

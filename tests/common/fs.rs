@@ -567,6 +567,13 @@ root:
         assert_eq!(mocks.val.0.rmdir(1, &dirname).unwrap_err(), libc::ENOENT);
     }
 
+    #[should_panic]
+    test rmdir_enotdir(mocks) {
+        let filename = OsString::from("x");
+        mocks.val.0.create(1, &filename, 0o644).unwrap();
+        mocks.val.0.rmdir(1, &filename).unwrap();
+    }
+
     test rmdir_enotempty(mocks) {
         let dirname = OsString::from("x");
         let ino = mocks.val.0.mkdir(1, &dirname, 0o755).unwrap();
