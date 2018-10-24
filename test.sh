@@ -5,13 +5,13 @@ set -e
 
 # Mockers is very picky about rust versions.  Mockers 0.12.2 is known to work
 # with rust-nightly 1.30.0 as of Sep-6-2018.
-cargo +nightly-2018-09-06-x86_64-unknown-freebsd test --all-features
+cargo +nightly-2018-09-06-x86_64-unknown-freebsd test --all-features --all
 
 # Check that benchmarks run, but don't care about results
 rustup run nightly-2018-09-06-x86_64-unknown-freebsd cargo bench
 
 # It should also work on stable >= 1.29.0
-cargo +stable test
+cargo +stable test --all
 
 # Measure test coverage, too
 which -s kcov && \

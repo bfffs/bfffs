@@ -196,3 +196,22 @@ pub fn gf_invert_matrix(input: &[u8], output: &mut [u8],
         Err(Error::new(ErrorKind::InvalidData, "Singular matrix"))
     }
 }
+
+#[cfg(test)]
+mod t {
+
+use super::*;
+
+#[test]
+fn test_version() {
+    assert_eq!(0x21300, version());
+}
+
+#[test]
+fn test_gf_invert_matrix_singular() {
+    let input = [1, 0, 0, 0];
+    let mut output = [0, 0, 0, 0];
+    assert!(gf_invert_matrix(&input, &mut output, 2).is_err())
+}
+
+}
