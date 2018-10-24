@@ -542,6 +542,15 @@ root:
         assert_eq!(dot.d_fileno, 1);
     }
 
+    // It's allowed for the client of Fs::readdir to drop the iterator without
+    // reading all entries.  The FUSE module does that when it runs out of space
+    // in the kernel-provided buffer.
+    // Just check that nothing panics.
+    test readdir_partial(mocks) {
+        let mut entries = mocks.val.0.readdir(1, 0, 0);
+        let _ = entries.next().unwrap().unwrap();
+    }
+
     #[cfg_attr(feature = "cargo-clippy",
                allow(clippy::block_in_if_condition_stmt))]
     test rmdir(mocks) {
@@ -665,6 +674,12 @@ root:
             dirent.d_name[0] == 'x' as i8
         }).nth(0);
         assert!(x_de.is_none(), "Directory entry was not removed");
+    }
+
+    test unlink_enoent(mocks) {
+        let filename = OsString::from("x");
+        let e = mocks.val.0.unlink(1, &filename).unwrap_err();
+        assert_eq!(e, libc::ENOENT);
     }
 
     // A very simple single record write to an empty file

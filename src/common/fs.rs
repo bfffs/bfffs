@@ -526,14 +526,14 @@ impl Fs {
                                         "forbidden.  nlink={}"), inode.nlink);
                             Ok(true).into_future()
                         } else {
+                            // Probably an extended attribute or something.
                             Ok(found_inode).into_future()
                         }
                     }).map(move |found_inode| {
-                        if ! found_inode {
-                            panic!(concat!("Inode {} not found, but parent ",
-                                           "direntry {}:{:?} exists!"),
+                        assert!(found_inode,
+                            concat!("Inode {} not found, but parent ",
+                                    "direntry {}:{:?} exists!"),
                                     ino, parent, owned_name);
-                        }
                         ino
                     })
                 }).and_then(move |ino| {
@@ -886,7 +886,7 @@ fn create() {
 
 // Pet kcov
 #[test]
-fn debug_attr() {
+fn debug_getattr() {
     let attr = GetAttr {
         ino: 1,
         size: 4096,
@@ -904,6 +904,24 @@ fn debug_attr() {
     };
     let s = format!("{:?}", attr);
     assert_eq!("GetAttr { ino: 1, size: 4096, blocks: 1, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: 33188, nlink: 1, uid: 1000, gid: 1000, rdev: 0, flags: 0 }", s);
+}
+
+// Pet kcov
+#[test]
+fn debug_setattr() {
+    let attr = SetAttr {
+        size: None,
+        atime: None,
+        mtime: None,
+        ctime: None,
+        birthtime: None,
+        mode: None,
+        uid: None,
+        gid: None,
+        flags: None,
+    };
+    let s = format!("{:?}", attr);
+    assert_eq!("SetAttr { size: None, atime: None, mtime: None, ctime: None, birthtime: None, mode: None, uid: None, gid: None, flags: None }", s);
 }
 
 #[test]
