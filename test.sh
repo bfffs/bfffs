@@ -15,4 +15,4 @@ cargo +stable test
 
 # Measure test coverage, too
 which -s kcov && \
-	env CARGO_TARGET_DIR=/localhome/somers/src/rust/arkfs/target_cov cargo +nightly-2018-09-06-x86_64 kcov -v --features mocks -- --include-path="src"
+	env CARGO_TARGET_DIR=/localhome/somers/src/rust/arkfs/target_cov cargo +nightly-2018-09-06-x86_64 kcov --all -v --features mocks -- --include-path="src,isa-l/src"
