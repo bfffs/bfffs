@@ -153,3 +153,94 @@ test_suite! {
         assert!(v[228..].iter().all(|&x| x == 0));
     }
 }
+
+test_suite! {
+    name t;
+
+    use bfffs::common::*;
+    use bfffs::common::cache::*;
+    use bfffs::common::pool::*;
+    use bfffs::common::ddml::*;
+    use bfffs::common::idml::*;
+    use divbuf::DivBufShared;
+    use futures::{Future, Stream, future, stream};
+    use std::{
+        fs,
+        num::NonZeroU64,
+        sync::{Arc, Mutex}
+    };
+    use tempdir::TempDir;
+    use tokio::runtime::current_thread::Runtime;
+
+    const LBA_PER_ZONE: LbaT = 256;
+    const POOLNAME: &str = &"TestPool";
+
+    fixture!( objects() -> (Runtime, IDML, TempDir) {
+        setup(&mut self) {
+            let len = 1 << 26;  // 64 MB
+            let tempdir = t!(TempDir::new("test_idml_persistence"));
+            let filename = tempdir.path().join("vdev");
+            {
+                let file = t!(fs::File::create(&filename));
+                t!(file.set_len(len));
+            }
+            let paths = [filename.clone()];
+            let mut rt = Runtime::new().unwrap();
+            let pool = rt.block_on(future::lazy(|| {
+                let cs = NonZeroU64::new(1);
+                let lpz = NonZeroU64::new(LBA_PER_ZONE);
+                let cluster = Pool::create_cluster(cs, 1, 1, lpz, 0, &paths);
+                let clusters = vec![cluster];
+                future::join_all(clusters)
+                    .map_err(|_| unreachable!())
+                    .and_then(|clusters|
+                        Pool::create(POOLNAME.to_string(), clusters)
+                    )
+            })).unwrap();
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let idml = IDML::create(ddml, cache);
+            (rt, idml, tempdir)
+        }
+    });
+
+    // When moving the last record from a zone, the allocator should not reopen
+    // the same zone for its destination
+    test move_last_record(objects()) {
+        let (mut rt, idml, _tempdir) = objects.val;
+        let idml = Arc::new(idml);
+        let ok = rt.block_on(future::lazy(|| {
+            // Write exactly 1 zone plus an LBA of data, then clean the first
+            // zone.  This ensures that when the last record is moved, the
+            // second zone will be full and the allocator will need to open a
+            // new zone.  It's indepedent of the label size.  At no point should
+            // we lose the record's reverse mapping.
+            let idml3 = idml.clone();
+            let idml4 = idml.clone();
+            stream::iter_ok(0..=LBA_PER_ZONE).for_each(move |_| {
+                let idml2 = idml.clone();
+                idml.txg()
+                .map_err(|_| Error::EPIPE)
+                .and_then(move |txg| {
+                    let dbs = DivBufShared::from(vec![0u8; 4096]);
+                    idml2.put(dbs, Compression::None, *txg)
+                }).map(|_| ())
+            }).and_then(move |_| {
+                idml3.txg()
+                .map_err(|_| Error::EPIPE)
+                .and_then(move |txg| {
+                    let idml5 = idml3.clone();
+                    idml3.list_closed_zones()
+                    .take(1)
+                    .for_each(move  |cz| {
+                        Box::new(idml5.clean_zone(cz, *txg))
+                            as Box<Future<Item=(), Error=Error>>
+                    })
+                })
+            }).and_then(move |_| {
+                idml4.check()
+            })
+        })).unwrap();
+        assert!(ok);
+    }
+}

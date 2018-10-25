@@ -183,12 +183,20 @@ impl<'a> IDML {
         #[cfg(debug_assertions)]
         let ddml3 = self.ddml.clone();
         #[cfg(debug_assertions)]
-        let zone2 = zone.clone();
+        let zid = zone.zid;
+        let pba = zone.pba;
+        let total_blocks = zone.total_blocks;
         self.list_indirect_records(&zone).for_each(move |record| {
             IDML::move_record(&cache2, &trees2, &ddml2, record, txg)
+            .map(move |drp| {
+                // We shouldn't have moved the record into the same zone
+                debug_assert!(drp.pba().cluster != pba.cluster ||
+                              drp.pba().lba < pba.lba ||
+                              drp.pba().lba >= pba.lba + total_blocks);
+            })
         }).and_then(move |_| {
             let txgs2 = zone.txgs.clone();
-            let pba_range = zone.pba..end;
+            let pba_range = pba..end;
             let czfut = trees3.ridt.clean_zone(pba_range.clone(), txgs2, txg);
             // Finish alloct.range_delete before alloct.clean_zone, because the
             // range delete is likely to eliminate most of not all nodes that
@@ -200,7 +208,7 @@ impl<'a> IDML {
             czfut.join(atfut).map(|_| ())
         }).map(move |_| {
             #[cfg(debug_assertions)]
-            ddml3.assert_clean_zone(zone2.pba.cluster, zone2.zid, txg)
+            ddml3.assert_clean_zone(pba.cluster, zid, txg)
         })  // LCOV_EXCL_LINE   kcov false negative
     }
 
@@ -263,7 +271,7 @@ impl<'a> IDML {
     /// Rewrite the given direct Record and update its metadata.
     fn move_record(cache: &Arc<Mutex<Cache>>, trees: &Arc<Trees>,
                    ddml: &Arc<DDML>, rid: RID, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Item=DRP, Error=Error> + Send
     {
         type MyFut = Box<Future<Item=DRP, Error=Error> + Send>;
 
@@ -279,39 +287,49 @@ impl<'a> IDML {
                     "Inconsistency in alloct.  Entry not found in RIDT");
                 let compression = entry.drp.compression();
                 let guard = cache2.lock().unwrap();
-                let fut = guard.get_ref(&Key::Rid(rid))
-                    .map(|t: Box<CacheRef>| {
-                        // Cache hit: delete the old record while writing the
-                        // new one.
-                        let delete_fut = ddml2.delete_direct(&entry.drp, txg);
-                        let db = t.serialize();
-                        let put_fut = ddml2.put_direct(&db, compression, txg);
-                        let fut = delete_fut.join(put_fut).map(|(_, drp)| drp);
-                        Box::new(fut) as MyFut
-                    })
-                    .unwrap_or_else(move || {
-                        // Cache miss: pop the old record, then write the new
-                        // one.
-                        // Even if the record is a Tree node, get it as though
-                        // it were a DivBufShared.  This skips deserialization
-                        // and works perfectly fine with put_direct
-                        // Read the record as though it were uncompressed, to
-                        // avoid the CPU cost of decompression/compression.
-                        let drp_uc = entry.drp.as_uncompressed();
-                        let fut = ddml2.pop_direct::<DivBufShared>(&drp_uc)
-                            .and_then(move |dbs| {
-                                let db = dbs.try().unwrap();
-                                ddml3.put_direct(&db, Compression::None, txg)
-                                .map(move |drp| drp.into_compressed(&entry.drp))
-                            });
-                        Box::new(fut) as MyFut
+                let fut = if let Some(t) = guard.get_ref(&Key::Rid(rid)) {
+                    // Cache hit: Write the new record and delete the old Must
+                    // finish writing the new record before deleting the old so
+                    // we don't reuse the zone too soon.
+                    // NB: if BFFFS ever implements deferred zone erase, then we
+                    // can write and delete in parallel.
+                    let db = t.serialize();
+                    let fut = ddml2.put_direct(&db, compression, txg)
+                    .and_then(move |drp| {
+                        ddml3.delete_direct(&entry.drp, txg)
+                        .map(move |_| drp)
                     });
+                    Box::new(fut) as MyFut
+                } else {
+                    // Cache miss: get the old record, write the new one, then
+                    // erase the old.  Same ordering requirements apply as for
+                    // the cache hit case.
+                    //
+                    // Even if the record is a Tree node, get it as though it
+                    // were a DivBufShared.  This skips deserialization and
+                    // works perfectly fine with put_direct.
+                    //
+                    // Read the record as though it were uncompressed, to avoid
+                    // the CPU cost of decompression/compression.
+                    let drp_uc = entry.drp.as_uncompressed();
+                    let ddml4 = ddml2.clone();
+                    let fut = ddml2.get_direct::<DivBufShared>(&drp_uc)
+                    .and_then(move |dbs| {
+                        let db = dbs.try().unwrap();
+                        ddml3.put_direct(&db, Compression::None, txg)
+                    }).and_then(move |drp| {
+                        ddml4.delete_direct(&entry.drp, txg)
+                        .map(move |_| drp.into_compressed(&entry.drp))
+                    });
+                    Box::new(fut) as MyFut
+                };
                 fut.and_then(move |drp: DRP| {
                     entry.drp = drp;
                     let ridt_fut = trees2.ridt.insert(rid, entry, txg);
                     let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
                     ridt_fut.join(alloct_fut)
-                }).map(|_| ())
+                    .map(move |_| drp)
+                })
             })
     }
 
@@ -845,7 +863,7 @@ mod t {
             })).returning(move |_| {
                 None
             });
-        ddml.expect_pop_direct()
+        ddml.expect_get_direct()
             .called_once()
             .with(passes(move |key: &*const DRP| {
                 unsafe {
@@ -863,6 +881,13 @@ mod t {
             })).returning(move |(_, _, _)|
                 Box::new(Ok(drp1).into_future())
             );
+        ddml.then().expect_delete_direct()
+            .called_once()
+            .with(passes(move |(key, _txg): &(*const DRP, TxgT)| {
+                unsafe {**key == drp0}
+            })).returning(move |_| {
+                Box::new(future::ok::<(), Error>(()))
+            });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -901,7 +926,7 @@ mod t {
             .returning(move |(_, _, _)|
                        Box::new(Ok(drp1).into_future())
             );
-        ddml.expect_delete_direct()
+        ddml.then().expect_delete_direct()
             .called_once()
             .with(passes(move |(key, _txg): &(*const DRP, TxgT)| {
                 unsafe {**key == drp0}
