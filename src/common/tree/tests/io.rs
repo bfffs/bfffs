@@ -731,6 +731,14 @@ root:
                         end: 1
                       ptr:
                         Addr: 11
+          - key: 3
+            txgs:
+              start: 0
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
                     - key: 3
                       txgs:
                         start: 42
@@ -741,14 +749,6 @@ root:
                             items:
                               3: 3.0
                               4: 4.0
-          - key: 26
-            txgs:
-              start: 0
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
                     - key: 26
                       txgs:
                         start: 0

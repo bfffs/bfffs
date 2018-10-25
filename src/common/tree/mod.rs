@@ -1606,7 +1606,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 // as few as one child each.  We may need to fix at most
                 // twice.  But don't fix if it has no siblings; that can happen
                 // if we need to merge the root down.
-                if underflow(&child_guard, !right_idx.is_some()) && guard.len() > 1 {
+                let common = !right_idx.is_some() || mm > 0;
+                if underflow(&child_guard, common) && guard.len() > 1 {
                     let fut = Tree::fix_int(&inner5, guard, left_idx - (mb as usize),
                                             child_guard, txg)
                     .and_then(move |(guard, nmb, nma)| {

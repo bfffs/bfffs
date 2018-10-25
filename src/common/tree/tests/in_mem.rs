@@ -2159,6 +2159,359 @@ root:
                     44: 44.0"#);
 }
 
+/// range_delete_pass1 results in two adjacent leaves with different parents
+/// having one item apiece.  range_delete_pass2 must merge them, then merge the
+/// left one again.
+#[test]
+fn range_delete_merge_to_lca_twice() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
+---
+height: 4
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 10
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 10422
+            txgs:
+              start: 7
+              end: 10
+            ptr:
+              Addr: 1010422
+          - key: 10694
+            txgs:
+              start: 7
+              end: 9
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10694
+                      txgs:
+                        start: 7
+                        end: 8
+                      ptr:
+                        Addr: 11632
+                    - key: 10710
+                      txgs:
+                        start: 7
+                        end: 9
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 10711
+                                txgs:
+                                  start: 7
+                                  end: 8
+                                ptr:
+                                  Addr: 11432
+                              - key: 10714
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        10714: 5916
+                                        11722: 3874
+                                        11725: 3877
+                              - key: 11730
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        10726: 5916
+                                        11727: 3874
+                                        11729: 3877
+                    - key: 11734
+                      txgs:
+                        start: 8
+                        end: 9
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 11734
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        10738: 5916
+                                        11739: 3874
+                                        11741: 3877
+                              - key: 11742
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11742: 3927
+                                        11744: 3938
+                                        11781: 4342
+                              - key: 11782
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11782: 4343
+                                        11784: 4345
+                                        11785: 4346
+                    - key: 11786
+                      txgs:
+                        start: 8
+                        end: 9
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 11786
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Addr: 7170
+                              - key: 11790
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Addr: 7171
+                              - key: 11794
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Addr: 7172
+                              - key: 11798
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Addr: 7173
+          - key: 11802
+            txgs:
+              start: 8
+              end: 10
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 11802
+                      txgs:
+                        start: 8
+                        end: 10
+                      ptr:
+                        Addr: 111802
+                    - key: 11865
+                      txgs:
+                        start: 8
+                        end: 9
+                      ptr:
+                        Addr: 7605
+                    - key: 11881
+                      txgs:
+                        start: 8
+                        end: 9
+                      ptr:
+                        Addr: 7606
+                    - key: 11897
+                      txgs:
+                        start: 8
+                        end: 9
+                      ptr:
+                        Addr: 7607
+                    - key: 12018
+                      txgs:
+                        start: 8
+                        end: 10
+                      ptr:
+                        Addr: 112018
+          - key: 12050
+            txgs:
+              start: 8
+              end: 9
+            ptr:
+              Addr: 7713
+          - key: 12114
+            txgs:
+              start: 8
+              end: 10
+            ptr:
+              Addr: 112144
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(11264..11776, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 4
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 10422
+            txgs:
+              start: 7
+              end: 10
+            ptr:
+              Addr: 1010422
+          - key: 10694
+            txgs:
+              start: 7
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10694
+                      txgs:
+                        start: 7
+                        end: 8
+                      ptr:
+                        Addr: 11632
+                    - key: 10710
+                      txgs:
+                        start: 7
+                        end: 43
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 10711
+                                txgs:
+                                  start: 7
+                                  end: 8
+                                ptr:
+                                  Addr: 11432
+                              - key: 10714
+                                txgs:
+                                  start: 42
+                                  end: 43
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        10714: 5916
+                                        11781: 4342
+                                        11782: 4343
+                                        11784: 4345
+                                        11785: 4346
+                              - key: 11786
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Addr: 7170
+                    - key: 11790
+                      txgs:
+                        start: 8
+                        end: 43
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 11790
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Addr: 7171
+                              - key: 11794
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Addr: 7172
+                              - key: 11798
+                                txgs:
+                                  start: 8
+                                  end: 9
+                                ptr:
+                                  Addr: 7173
+                    - key: 11802
+                      txgs:
+                        start: 8
+                        end: 10
+                      ptr:
+                        Addr: 111802
+          - key: 11865
+            txgs:
+              start: 8
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 11865
+                      txgs:
+                        start: 8
+                        end: 9
+                      ptr:
+                        Addr: 7605
+                    - key: 11881
+                      txgs:
+                        start: 8
+                        end: 9
+                      ptr:
+                        Addr: 7606
+                    - key: 11897
+                      txgs:
+                        start: 8
+                        end: 9
+                      ptr:
+                        Addr: 7607
+                    - key: 12018
+                      txgs:
+                        start: 8
+                        end: 10
+                      ptr:
+                        Addr: 112018
+          - key: 12050
+            txgs:
+              start: 8
+              end: 9
+            ptr:
+              Addr: 7713
+          - key: 12114
+            txgs:
+              start: 8
+              end: 10
+            ptr:
+              Addr: 112144"#);
+}
+
 /// Regression test for another bug similar to e6fd45d.  After pass1, Node
 /// 1,4898 has two children that both underflow.  During pass2, the right child
 /// (key 5626) got merged during descent.  Then the left child got merged during
@@ -3503,7 +3856,6 @@ root:
         tree.range_delete(21..32, TxgT::from(42))
     );
     assert!(r.is_ok());
-    println!("{}", &tree);
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
@@ -4903,20 +5255,20 @@ root:
                         end: 23
                       ptr:
                         Addr: 1006809
+          - key: 9437
+            txgs:
+              start: 17
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
                     - key: 9437
                       txgs:
                         start: 17
                         end: 23
                       ptr:
                         Addr: 1009437
-          - key: 11495
-            txgs:
-              start: 21
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
                     - key: 11495
                       txgs:
                         start: 22
@@ -7494,4 +7846,5 @@ fn remove_nonexistent() {
     let r = rt.block_on(tree.remove(3, TxgT::from(42)));
     assert_eq!(r, Ok(None));
 }
+
 // LCOV_EXCL_STOP
