@@ -263,6 +263,9 @@ impl<'a> FreeSpaceMap {
     #[cfg_attr(feature = "cargo-clippy", allow(clippy::if_same_then_else))]
     fn find_closed_zone(&'a self, start: ZoneT) -> Option<ClosedZone>
     {
+        if start as usize >= self.zones.len() {
+            return None;
+        }
         self.zones[(start as usize)..].iter()
             .enumerate()
             .filter_map(move |(i, z)| {
@@ -1485,6 +1488,16 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         fsm.finish_zone(0, TxgT::from(0));
         fsm.open_zone(2, 2, 3, 0, TxgT::from(0)).unwrap();
         assert!(fsm.find_closed_zone(1).is_none());
+    }
+
+    // find_closed_zone should fail for requests past the end of the last
+    // non-empty zone.
+    #[test]
+    fn find_closed_zone_out_of_bounds() {
+        let mut fsm = FreeSpaceMap::new(10);
+        fsm.open_zone(0, 0, 1, 0, TxgT::from(0)).unwrap();
+        fsm.finish_zone(0, TxgT::from(0));
+        assert!(fsm.find_closed_zone(2).is_none());
     }
 
     #[test]
