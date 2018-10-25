@@ -4,7 +4,7 @@ IDML::move_record shouldn't decompress records read from disk | owner:"hg.user",
 Empty leaf node during Tree::get_range_r                     | owner:Alan Somers <asomers@gmail.com>, open:False, id:2d045899e991a7cf977303abb565c09cf8c34b2f, time:1537394073.09
 Eliminate StripeBuffer for NullRaid                          | owner:"hg.user", open:False, id:2de8809213ad39011fc4244722cd80db2d73a48a, time:1535047502.28
 IDML::clean_zone occasionally fails to fully clean           | owner:"hg.user", open:False, id:398f578a650ca7e6e3559de1b77255b4c829698a, time:1535586410.54
-node underflow after range_delete                            | owner:Alan Somers <asomers@gmail.com>, open:True, id:3a1c7688e20e3685d4cae6dc2fdb84f688b8536e, time:1540334405.58
+node underflow after range_delete                            | owner:Alan Somers <asomers@gmail.com>, open:False, id:3a1c7688e20e3685d4cae6dc2fdb84f688b8536e, time:1540334405.58
 nchildren < 2 in fix_int during range_delete                 | owner:Alan Somers <asomers@gmail.com>, open:False, id:40b01ebb2240366623383aafbd96de5a6ca815cf, time:1540178983.24
 range_delete_pass2 doesn't fix underflowing nodes that get stolen | owner:Alan Somers <asomers@gmail.com>, open:False, id:4a99d7fbd8891cb8e0453d2b6306ce28c37e34a0, time:1539362545.92
 DowncastError ONLY ON NIGHTLY                                | owner:"hg.user", open:True, id:529defe6770c6591f6a7a1d8ff32d259993917a4, time:1535047452.46

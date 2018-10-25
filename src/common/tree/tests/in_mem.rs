@@ -2004,7 +2004,6 @@ root:
         tree.range_delete(1024..1536, TxgT::from(42))
     );
     assert!(r.is_ok());
-    println!("{}", &tree);
     assert!(rt.block_on(tree.check()).unwrap());
 }
 
@@ -2239,27 +2238,43 @@ root:
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
-height: 1
+height: 2
 min_fanout: 4
 max_fanout: 9
 _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 42
+    start: 2
     end: 43
   ptr:
     Mem:
-      Leaf:
-        items:
-          4903: 3431
-          4993: 3521
-          5045: 3573
-          5632: 7554
-          5635: 7557
-          5637: 7559
-          5638: 7560
-          5642: 7564"#);
+      Int:
+        children:
+          - key: 4898
+            txgs:
+              start: 42
+              end: 43
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    4903: 3431
+                    4993: 3521
+                    5045: 3573
+                    5632: 7554
+          - key: 5634
+            txgs:
+              start: 14
+              end: 15
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    5635: 7557
+                    5637: 7559
+                    5638: 7560
+                    5642: 7564"#);
 }
 
 /// Regression test for bug e6fd45d.  After range_delete_pass1, Node 2,7148 has
@@ -2702,26 +2717,42 @@ root:
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
-height: 1
+height: 2
 min_fanout: 3
 max_fanout: 7
 _max_size: 4194304
 root:
   key: 0
   txgs:
-    start: 42
+    start: 12
     end: 43
   ptr:
     Mem:
-      Leaf:
-        items:
-          2778: 2859
-          2781: 2868
-          2782: 2869
-          2965: 4758
-          3027: 4820
-          3584: 3091
-          3585: 3092"#);
+      Int:
+        children:
+          - key: 2778
+            txgs:
+              start: 12
+              end: 13
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    2778: 2859
+                    2781: 2868
+                    2782: 2869
+          - key: 2788
+            txgs:
+              start: 42
+              end: 43
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    2965: 4758
+                    3027: 4820
+                    3584: 3091
+                    3585: 3092"#);
 }
 
 /// Delete a range that causes the root node to be merged two steps down
@@ -2840,7 +2871,6 @@ root:
 // node who is its parent's only child.
 // Bug #3a1c768
 #[test]
-#[ignore("Expected failure: bug 3a1c768")]
 fn range_delete_parent_and_child_underflow_after_descent() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
@@ -3085,7 +3115,7 @@ root:
               Addr: 1002218
           - key: 3563
             txgs:
-              start: 9
+              start: 8
               end: 43
             ptr:
               Mem:
@@ -4258,7 +4288,7 @@ root:
           - key: 4145
             txgs:
               start: 41
-              end: 42
+              end: 43
             ptr:
               Mem:
                 Int:
@@ -4275,14 +4305,6 @@ root:
                         end: 42
                       ptr:
                         Addr: 1004457
-          - key: 4599
-            txgs:
-              start: 41
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
                     - key: 4600
                       txgs:
                         start: 41
@@ -4462,6 +4484,294 @@ root:
                         end: 1
                       ptr:
                         Addr: 34"#);
+}
+
+// range_delete_pass2 tries to steal a node to the right
+#[test]
+fn range_delete_pass2_steal_right() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
+---
+height: 4
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 23
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 5409
+            txgs:
+              start: 14
+              end: 23
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 5729
+                      txgs:
+                        start: 14
+                        end: 23
+                      ptr:
+                        Addr: 1005729
+                    - key: 6809
+                      txgs:
+                        start: 16
+                        end: 23
+                      ptr:
+                        Addr: 1006809
+                    - key: 9437
+                      txgs:
+                        start: 17
+                        end: 23
+                      ptr:
+                        Addr: 1009437
+          - key: 10049
+            txgs:
+              start: 18
+              end: 23
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10113
+                      txgs:
+                        start: 22
+                        end: 23
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 10113
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11264: 9282
+                                        11269: 9287
+                                        11270: 9288
+                                        11271: 9289
+                              - key: 11279
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11281: 9299
+                                        11283: 9301
+                                        11284: 9302
+                                        11285: 9303
+                              - key: 11287
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11288: 9306
+                                        11292: 9310
+                                        11293: 9311
+                                        11294: 9312
+                              - key: 11295
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11295: 9313
+                                        11298: 9316
+                                        11300: 9318
+                                        11301: 9319
+                    - key: 11495
+                      txgs:
+                        start: 21
+                        end: 23
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 11511
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11511: 9529
+                                        11514: 9532
+                              - key: 11519
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11616: 9634
+                                        11994: 6844
+                              - key: 11995
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11995: 6871
+                                        12002: 7037
+                              - key: 12003
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        12003: 7053
+                                        12010: 7164
+                    - key: 12037
+                      txgs:
+                        start: 22
+                        end: 23
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 12037
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Addr: 1012037
+                              - key: 12095
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Addr: 1012095
+                    - key: 12155
+                      txgs:
+                        start: 22
+                        end: 23
+                      ptr:
+                        Addr: 1012155
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(11264..11776, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 4
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 5409
+            txgs:
+              start: 14
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 5729
+                      txgs:
+                        start: 14
+                        end: 23
+                      ptr:
+                        Addr: 1005729
+                    - key: 6809
+                      txgs:
+                        start: 16
+                        end: 23
+                      ptr:
+                        Addr: 1006809
+                    - key: 9437
+                      txgs:
+                        start: 17
+                        end: 23
+                      ptr:
+                        Addr: 1009437
+          - key: 11495
+            txgs:
+              start: 21
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 11495
+                      txgs:
+                        start: 22
+                        end: 43
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 11519
+                                txgs:
+                                  start: 42
+                                  end: 43
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        11994: 6844
+                                        11995: 6871
+                                        12002: 7037
+                              - key: 12003
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        12003: 7053
+                                        12010: 7164
+                              - key: 12037
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Addr: 1012037
+                              - key: 12095
+                                txgs:
+                                  start: 22
+                                  end: 23
+                                ptr:
+                                  Addr: 1012095
+                    - key: 12155
+                      txgs:
+                        start: 22
+                        end: 23
+                      ptr:
+                        Addr: 1012155"#);
 }
 
 // range_delete of a small range at the end of the tree
