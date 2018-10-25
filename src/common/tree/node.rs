@@ -9,6 +9,7 @@ use futures_locks::*;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     borrow::Borrow,
+    cmp::max,
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
     iter::FromIterator,
@@ -809,7 +810,8 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
 
     /// Take `other`'s highest keys and merge them into ourself
     pub fn take_high_keys(&mut self, other: &mut NodeData<A, K, V>) {
-        let keys_to_share = (other.len() - self.len()) / 2;
+        // Try to even out the nodes, but always steal at least 1
+        let keys_to_share = max(1, (other.len() - self.len()) / 2);
         match self {
             NodeData::Int(int) => {
                 let other_children = &mut other.as_int_mut().children;
@@ -830,7 +832,8 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
 
     /// Take `other`'s lowest keys and merge them into ourself
     pub fn take_low_keys(&mut self, other: &mut NodeData<A, K, V>) {
-        let keys_to_share = (other.len() - self.len()) / 2;
+        // Try to even out the nodes, but always steal at least 1
+        let keys_to_share = max(1, (other.len() - self.len()) / 2);
         match self {
             NodeData::Int(int) => {
                 let other_children = &mut other.as_int_mut().children;

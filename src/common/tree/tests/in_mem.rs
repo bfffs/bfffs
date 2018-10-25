@@ -3196,6 +3196,7 @@ root:
                       ptr:
                         Addr: 1005119"#);
 }
+
 // After pass1, there are two sibling nodes that can't be fixed so that each of
 // them satisfies the min_fanout + 2 rule.
 // Regression test for bug b959707
@@ -3391,6 +3392,197 @@ root:
                         end: 42
                       ptr:
                         Addr: 1004627"#);
+}
+
+#[test]
+fn range_delete_cant_steal_to_fix_lca() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+---
+height: 3
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 1
+    end: 2
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            txgs:
+              start: 1
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 1000001
+                    - key: 10
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              10: 10.0
+                              11: 11.0
+                              12: 12.0
+                    - key: 20
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              21: 21.0
+                              22: 22.0
+                    - key: 30
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              30: 30.0
+                              31: 31.0
+                              32: 32.0
+          - key: 40
+            txgs:
+              start: 1
+              end: 2
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 40
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              40: 40.0
+                              41: 41.0
+                              42: 42.0
+                    - key: 50
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 1000050
+                    - key: 60
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 1000060
+                    - key: 70
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 1000070
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range_delete(21..32, TxgT::from(42))
+    );
+    assert!(r.is_ok());
+    println!("{}", &tree);
+    assert_eq!(format!("{}", &tree),
+r#"---
+height: 3
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 1
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 1
+            txgs:
+              start: 1
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 1000001
+                    - key: 10
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              10: 10.0
+                              11: 11.0
+                              12: 12.0
+                    - key: 20
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              32: 32.0
+                              40: 40.0
+                              41: 41.0
+                              42: 42.0
+          - key: 50
+            txgs:
+              start: 1
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 50
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 1000050
+                    - key: 60
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 1000060
+                    - key: 70
+                      txgs:
+                        start: 1
+                        end: 2
+                      ptr:
+                        Addr: 1000070"#);
 }
 
 // Delete a range that's contained within a single LeafNode
@@ -3686,7 +3878,13 @@ root:
                             items:
                               4610: 4610.0
                               4612: 4612.0
-          - key: 4617
+                    - key: 4617
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1004617
+          - key: 4627
             txgs:
               start: 41
               end: 43
@@ -3694,12 +3892,6 @@ root:
               Mem:
                 Int:
                   children:
-                    - key: 4617
-                      txgs:
-                        start: 41
-                        end: 42
-                      ptr:
-                        Addr: 1004617
                     - key: 4627
                       txgs:
                         start: 41
@@ -4458,7 +4650,13 @@ root:
                         end: 1
                       ptr:
                         Addr: 126
-          - key: 29
+                    - key: 29
+                      txgs:
+                        start: 0
+                        end: 1
+                      ptr:
+                        Addr: 32
+          - key: 30
             txgs:
               start: 0
               end: 3
@@ -4466,12 +4664,6 @@ root:
               Mem:
                 Int:
                   children:
-                    - key: 29
-                      txgs:
-                        start: 0
-                        end: 1
-                      ptr:
-                        Addr: 32
                     - key: 30
                       txgs:
                         start: 0
