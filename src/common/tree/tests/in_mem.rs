@@ -877,7 +877,15 @@ root:
 }
 
 // The range delete example from Figures 13-14 of B-Trees, Shadowing, and
-// Range-operations.
+// Range-operations.  Our result is slightly different than in the paper,
+// however, because in the second pass:
+// a) We fix nodes [10, -] and [-, 32] by merging them with their outer
+//    neighbors rather than themselves (this is legal).
+// b) When removing key 31 from [31, 32], we don't adjust the key in its parent
+//    IntElem.  This is legal because it still obeys the minimum-key-rule.  It's
+//    not generally possible to fix a parent's IntElem's key when removing a key
+//    from a child, because it may require holding the locks on more than 2
+//    nodes.
 #[test]
 fn range_delete() {
     let mock = DMLMock::new();
@@ -1025,8 +1033,8 @@ root:
                     2: 2.0
           - key: 5
             txgs:
-              start: 41
-              end: 42
+              start: 42
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -1034,7 +1042,8 @@ root:
                     5: 5.0
                     6: 6.0
                     7: 7.0
-          - key: 10
+                    10: 10.0
+          - key: 31
             txgs:
               start: 42
               end: 43
@@ -1042,16 +1051,7 @@ root:
               Mem:
                 Leaf:
                   items:
-                    10: 10.0
                     32: 32.0
-          - key: 37
-            txgs:
-              start: 41
-              end: 42
-            ptr:
-              Mem:
-                Leaf:
-                  items:
                     37: 37.0
                     40: 40.0"#);
 }
@@ -1530,6 +1530,434 @@ root:
                     20: 20.0
                     21: 21.0
                     22: 22.0"#);
+}
+
+// During range_delete_pass2, one node needs to be fixed three times.  The node
+// starts with one child.  The first fix merges two nodes to produce a single
+// one with 3 children.  The second steals a node, so the target has 4 children.
+// But the min fanout is 3 and the target is now a common ancestor, so it needs
+// a third merge to get 5 children.
+#[test]
+fn range_delete_fix_three_times() {
+    let mut mock = DMLMock::new();
+    mock.expect_delete()
+        .called_any()
+        .returning(move |_| {
+            Box::new(future::ok::<(), Error>(()))
+        });
+
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
+---
+height: 4
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 8
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 664
+            txgs:
+              start: 1
+              end: 5
+            ptr:
+              Addr: 3977
+          - key: 728
+            txgs:
+              start: 1
+              end: 8
+            ptr:
+              Addr: 100728
+          - key: 832
+            txgs:
+              start: 4
+              end: 8
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 832
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 832
+                                txgs:
+                                  start: 7
+                                  end: 8
+                                ptr:
+                                  Addr: 4627
+                              - key: 836
+                                txgs:
+                                  start: 6
+                                  end: 7
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        838: 646
+                                        839: 647
+                                        1027: 1814
+                              - key: 1028
+                                txgs:
+                                  start: 7
+                                  end: 8
+                                ptr:
+                                  Addr: 1001028
+                              - key: 1054
+                                txgs:
+                                  start: 6
+                                  end: 7
+                                ptr:
+                                  Addr: 8892
+                    - key: 1090
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 1090
+                                txgs:
+                                  start: 7
+                                  end: 8
+                                ptr:
+                                  Addr: 101090
+                              - key: 1130
+                                txgs:
+                                  start: 6
+                                  end: 7
+                                ptr:
+                                  Addr: 8894
+                              - key: 1170
+                                txgs:
+                                  start: 7
+                                  end: 8
+                                ptr:
+                                  Addr: 108894
+                              - key: 1297
+                                txgs:
+                                  start: 6
+                                  end: 7
+                                ptr:
+                                  Addr: 8897
+                              - key: 1314
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4054
+                    - key: 1318
+                      txgs:
+                        start: 4
+                        end: 7
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 1318
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4055
+                              - key: 1322
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4056
+                              - key: 1326
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4057
+                              - key: 1330
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4058
+                              - key: 1334
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4059
+          - key: 1466
+            txgs:
+              start: 4
+              end: 8
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1498
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 1498
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4100
+                              - key: 1502
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4101
+                              - key: 1506
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4102
+                              - key: 1510
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4103
+                    - key: 1514
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 1514
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4104
+                              - key: 1530
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        1530: 2317
+                                        1535: 2322
+                                        1536: 984
+                              - key: 1537
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4109
+                    - key: 1540
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 1540
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4110
+                              - key: 1544
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4111
+                              - key: 1548
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4112
+          - key: 1552
+            txgs:
+              start: 4
+              end: 8
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1552
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Addr: 10020
+                    - key: 1568
+                      txgs:
+                        start: 4
+                        end: 7
+                      ptr:
+                        Addr: 9592
+                    - key: 1624
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Addr: 10022
+                    - key: 1640
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Addr: 10024
+                    - key: 1656
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Addr: 10025
+"#);
+  let mut rt = current_thread::Runtime::new().unwrap();
+  let r = rt.block_on(
+  tree.range_delete(1024..1536, TxgT::from(42))
+  );
+  assert!(r.is_ok());
+  assert_eq!(format!("{}", &tree),
+r#"---
+height: 4
+min_fanout: 3
+max_fanout: 7
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 664
+            txgs:
+              start: 1
+              end: 5
+            ptr:
+              Addr: 3977
+          - key: 728
+            txgs:
+              start: 1
+              end: 8
+            ptr:
+              Addr: 100728
+          - key: 832
+            txgs:
+              start: 4
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 832
+                      txgs:
+                        start: 4
+                        end: 43
+                      ptr:
+                        Mem:
+                          Int:
+                            children:
+                              - key: 832
+                                txgs:
+                                  start: 7
+                                  end: 8
+                                ptr:
+                                  Addr: 4627
+                              - key: 836
+                                txgs:
+                                  start: 42
+                                  end: 43
+                                ptr:
+                                  Mem:
+                                    Leaf:
+                                      items:
+                                        838: 646
+                                        839: 647
+                                        1536: 984
+                              - key: 1537
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4109
+                              - key: 1540
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4110
+                              - key: 1544
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4111
+                              - key: 1548
+                                txgs:
+                                  start: 4
+                                  end: 5
+                                ptr:
+                                  Addr: 4112
+                    - key: 1552
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Addr: 10020
+                    - key: 1568
+                      txgs:
+                        start: 4
+                        end: 7
+                      ptr:
+                        Addr: 9592
+          - key: 1624
+            txgs:
+              start: 4
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 1624
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Addr: 10022
+                    - key: 1640
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Addr: 10024
+                    - key: 1656
+                      txgs:
+                        start: 4
+                        end: 8
+                      ptr:
+                        Addr: 10025"#);
 }
 
 /// Do a range delete that causes two Nodes to merge and yet still underflow.

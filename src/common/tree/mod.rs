@@ -1562,13 +1562,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 return Box::new(Ok(map).into_future());
             }
             let inner3 = inner.clone();
-            let inner5 = inner.clone();
             let inner7 = inner.clone();
             let range3 = range.clone();
             let min_fanout = inner.min_fanout;
             let left_idx = to_fix[0];
             let right_idx = to_fix.get(1).cloned();
-            let underflow = move |guard: &TreeWriteGuard<A, K, V>, common: bool| {
+            let underflow = move |guard: &TreeWriteGuard<A, K, V>, common: bool|
+            {
                 if guard.is_leaf() {
                     guard.underflow(min_fanout)
                 } else {
@@ -1588,49 +1588,40 @@ impl<A, D, K, V> Tree<A, D, K, V>
             };
             let fut = guard.xlock(&inner.dml, left_idx, txg)
             .and_then(move |(guard, child_guard)| {
-                // Before recursing, we must merge any nodes with < 2
-                // children.  Otherwise, we won't be able to fix their only
-                // children.
-                if underflow(&child_guard, !right_idx.is_some()) {
-                    let fut = Tree::fix_int(&inner7, guard, left_idx,
-                                            child_guard, txg)
-                    .and_then(move |(guard, mb, ma)| {
-                        guard.xlock(&inner7.dml, left_idx - mb as usize, txg)
-                        .map(move |(guard, child_guard)|
-                             (guard, child_guard, mb as usize, ma as usize)
-                         )
-                    });
-                    Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
-                } else {
-                    Box::new(Ok((guard, child_guard, 0, 0)).into_future())
-                }
-            }).and_then(move |(guard, child_guard, mb, mm)| {
                 // After a range_delete, fixing once may be insufficient to
                 // fix a Node, because two nodes may merge that could have
-                // as few as one child each.  We may need to fix at most
-                // twice.  But don't fix if it has no siblings; that can happen
-                // if we need to merge the root down.
-
-                // The left node may have become a common ancestor if we merged
-                // it with the right node, or if we stole some nodes from the
-                // right node.
-                let stole = mm == 0 && mb == 0;
-                let common = !right_idx.is_some() || mm > 0 || stole;
-                if underflow(&child_guard, common) && guard.len() > 1 {
-                    let fut = Tree::fix_int(&inner5, guard, left_idx - (mb as usize),
-                                            child_guard, txg)
-                    .and_then(move |(guard, nmb, nma)| {
-                        let i = left_idx - (mb as usize) - (nmb as usize);
-                        guard.xlock(&inner5.dml, i, txg)
-                        .map(move |(guard, child)| (guard, child, mb + nmb as usize,
-                                                    mm + nma as usize))
-                    });
-                    Box::new(fut)
-                            as Box<Future<Item=_, Error=_> + Send>
-                } else {
-                    Box::new(future::ok::<_, _>((guard, child_guard, mb, mm)))
-                        as Box<Future<Item=_, Error=_> + Send>
-                }
+                // as few as one child each.  We may need to fix multiple times.
+                future::loop_fn((guard, child_guard, 0, 0, false),
+                    move |(guard, child_guard, mb, mm, stole)|
+                {
+                    // The left node may have become a common ancestor if we
+                    // merged it with the right node, or if we stole some nodes
+                    // from the right node.
+                    let common = !right_idx.is_some() || mm > 0 || stole;
+                    // Don't fix if it has no siblings; that can happen if we
+                    // need to merge the root down.
+                    if underflow(&child_guard, common) && guard.len() > 1 {
+                        let i = left_idx - mb;
+                        let inner8 = inner7.clone();
+                        let fut = Tree::fix_int(&inner7, guard, i,
+                                                child_guard, txg)
+                        .and_then(move |(guard, nmb, nma)| {
+                            guard.xlock(&inner8.dml, i - nmb as usize, txg)
+                            .map(move |(guard, child_guard)| {
+                                let mb = mb + nmb as usize;
+                                let mm = mm + nma as usize;
+                                let stole = (nma == 0 && nmb == 0) || stole;
+                                let r = (guard, child_guard, mb, mm, stole);
+                                Loop::Continue(r)
+                            })
+                        });
+                        Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                    } else {
+                        let r = Loop::Break((guard, child_guard, mb, mm));
+                        let fut = Ok(r).into_future();
+                        Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                    }
+                })
             }).and_then(move |(guard, child_guard, mb, mm):
                 (TreeWriteGuard<A, K, V>, TreeWriteGuard<A, K, V>, usize, usize)|
             {
@@ -1646,8 +1637,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     let j = right_idx.unwrap() - mb;
                     let fut = guard.xlock(&inner.dml, j, txg)
                     .and_then(move |(guard, child_guard)| {
-                        // Fix while descending if it has < 2 children, just
-                        // like we did for the left child
                         if underflow(&child_guard, false) {
                             let fut = Tree::fix_int(&inner, guard, j,
                                                     child_guard, txg)
