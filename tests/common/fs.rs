@@ -810,7 +810,7 @@ test_suite! {
         ffi::OsString,
         fs,
         num::NonZeroU64,
-        sync::{Arc, Mutex},
+        sync::{Arc, Mutex, Once},
         time::{Duration, Instant},
     };
     use tempdir::TempDir;
@@ -1008,7 +1008,10 @@ test_suite! {
                     zone_size: u64) -> (TortureTest)
     {
         setup(&mut self) {
-            env_logger::init();
+            static ENV_LOGGER: Once = Once::new();
+            ENV_LOGGER.call_once(|| {
+                env_logger::init();
+            });
 
             let mut rt = Runtime::new();
             let handle = rt.handle().clone();
