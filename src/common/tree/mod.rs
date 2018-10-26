@@ -347,6 +347,10 @@ struct Inner<A: Addr, D: DML, K: Key, V: Value> {
     /// children from their neighbors.
     min_fanout: u64,
     /// Maximum node fanout.  Larger nodes will be split.
+    // Rodeh states that the minimum value of max_fanout that can guarantee
+    // invariants is 2 * min_fanout + 1.  However, range_delete can be slightly
+    // simplified if max_fanout is at least 2 * min_fanout + 4.  That would mean
+    // that fix_int can always either merge two nodes, or steal 2 nodes.
     max_fanout: u64,
     /// Maximum node size in bytes.  Larger nodes will be split or their message
     /// buffers flushed
@@ -1606,7 +1610,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 // as few as one child each.  We may need to fix at most
                 // twice.  But don't fix if it has no siblings; that can happen
                 // if we need to merge the root down.
-                let common = !right_idx.is_some() || mm > 0;
+
+                // The left node may have become a common ancestor if we merged
+                // it with the right node, or if we stole some nodes from the
+                // right node.
+                let stole = mm == 0 && mb == 0;
+                let common = !right_idx.is_some() || mm > 0 || stole;
                 if underflow(&child_guard, common) && guard.len() > 1 {
                     let fut = Tree::fix_int(&inner5, guard, left_idx - (mb as usize),
                                             child_guard, txg)
