@@ -354,8 +354,11 @@ impl Fs {
                     // Truncate read to file size
                     size = size.min((fsize.saturating_sub(offset)) as usize);
                     let rs = RECORDSIZE as u64;
-                    let nrecs = div_roundup(offset + size as u64, rs)
-                        - (offset / rs);
+                    let nrecs = if size == 0 {
+                        0
+                    } else {
+                        div_roundup(offset + size as u64, rs) - (offset / rs)
+                    };
                     let baseoffset = offset - (offset % rs);
                     let futs = (0..nrecs).map(|rec| {
                         let dataset2 = dataset.clone();

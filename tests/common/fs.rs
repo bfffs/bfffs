@@ -436,6 +436,12 @@ root:
         assert!(sglist.is_empty());
     }
 
+    test read_empty_file_past_start(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let sglist = mocks.val.0.read(ino, 2048, 2048).unwrap();
+        assert!(sglist.is_empty());
+    }
+
     // Read a hole within a sparse file
     test read_hole(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
@@ -501,8 +507,22 @@ root:
         assert_eq!(Ok(2048), r);
 
         let sglist = mocks.val.0.read(ino, 2048, 1024).unwrap();
-        let db = &sglist[0];
-        assert!(db.is_empty());
+        assert!(sglist.is_empty());
+    }
+
+    // Read past EOF, in an entirely different record
+    test read_well_past_eof(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(4096), r);
+
+        let sglist = mocks.val.0.read(ino, 1 << 30, 4096).unwrap();
+        assert!(sglist.is_empty());
     }
 
     // A read that's split across two records
