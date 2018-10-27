@@ -3,13 +3,6 @@ use galvanic_test::*;
 use log::*;
 
 /// Constructs a real filesystem and tests the common FS routines, without mounting
-macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
-    })
-}
-
 test_suite! {
     name fs;
 

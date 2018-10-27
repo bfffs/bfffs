@@ -2,13 +2,6 @@
 use galvanic_test::*;
 
 /// Constructs a real filesystem, fills it, and cleans it.
-macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
-    })
-}
-
 test_suite! {
     name t;
 

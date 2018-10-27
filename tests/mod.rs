@@ -2,6 +2,12 @@
 // https://github.com/mindsbackyard/galvanic-test/pull/13
 #![cfg_attr(feature = "cargo-clippy", allow(clippy::unnecessary_mut_passed))]
 
+macro_rules! t {
+    ($e:expr) => (match $e {
+        Ok(e) => e,
+        Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
+    })
+}
 
 extern crate bfffs;
 extern crate divbuf;

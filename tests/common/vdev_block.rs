@@ -1,13 +1,6 @@
 // vim: tw=80
 use galvanic_test::*;
 
-macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {:?}", stringify!($e), e),
-    })
-}
-
 test_suite! {
     // These tests use a real VdevLeaf object
     name vdev_block;
