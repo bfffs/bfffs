@@ -330,7 +330,7 @@ impl<'a> IDML {
                     ridt_fut.join(alloct_fut)
                     .map(move |_| drp)
                 })
-            })
+            })  // LCOV_EXCL_LINE   kcov false negative
     }
 
     /// Shutdown all background tasks.

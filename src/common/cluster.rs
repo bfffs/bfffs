@@ -599,7 +599,7 @@ impl<'a> Cluster {
     /// Assert that the given zone was clean as of the given transaction
     pub fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT) {
         self.fsm.borrow().assert_clean_zone(zone, txg)
-    }
+    }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Create a new `Cluster` from unused files or devices
     ///
