@@ -27,7 +27,6 @@ pub mod ddml;
 pub mod declust;
 pub mod device_manager;
 pub mod dml;
-pub mod dva;
 pub mod fs;
 pub mod fs_tree;
 pub mod idml;
