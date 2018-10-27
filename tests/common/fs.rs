@@ -583,6 +583,15 @@ root:
         assert_eq!(dstname, mocks.val.0.readlink(ino).unwrap());
     }
 
+    // Calling readlink on a non-symlink should return EINVAL
+    test readlink_einval(mocks) {
+        assert_eq!(Err(libc::EINVAL), mocks.val.0.readlink(1));
+    }
+
+    test readlink_enoent(mocks) {
+        assert_eq!(Err(libc::ENOENT), mocks.val.0.readlink(1000));
+    }
+
     #[cfg_attr(feature = "cargo-clippy",
                allow(clippy::block_in_if_condition_stmt))]
     test rmdir(mocks) {
@@ -711,6 +720,11 @@ root:
 
         let attr = mocks.val.0.getattr(ino).unwrap();
         assert_eq!(attr.mode, libc::S_IFLNK | 0o642);
+    }
+
+    test lookup_enoent(mocks) {
+        let filename = OsString::from("nonexistent");
+        assert_eq!(mocks.val.0.lookup(1, &filename), Err(libc::ENOENT));
     }
 
     test unlink(mocks) {
