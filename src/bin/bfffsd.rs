@@ -1,7 +1,7 @@
 // vim: tw=80
 
 extern crate bfffs;
-#[macro_use] extern crate clap;
+extern crate clap;
 extern crate env_logger;
 extern crate fuse;
 extern crate futures;
@@ -13,6 +13,7 @@ extern crate tokio_signal;
 use bfffs::common::database::*;
 use bfffs::common::device_manager::DevManager;
 use bfffs::sys::fs::FuseFs;
+use clap::crate_version;
 use futures::{Future, Stream, future};
 use std::{
     sync::Arc,

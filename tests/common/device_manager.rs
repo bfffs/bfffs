@@ -1,4 +1,5 @@
 // vim: tw=80
+use galvanic_test::*;
 
 /// Constructs a real filesystem and tests the common FS routines, without mounting
 macro_rules! t {

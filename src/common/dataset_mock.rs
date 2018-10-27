@@ -1,6 +1,6 @@
 // vim: tw=80
 // LCOV_EXCL_START
-use common::{
+use crate::common::{
     *,
     dml::Compression,
     tree::{Key, Value},

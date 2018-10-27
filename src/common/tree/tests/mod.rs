@@ -3,7 +3,7 @@
 #[cfg(test)] mod io;
 #[cfg(test)] mod txg;
 
-use common::tree::*;
+use crate::common::tree::*;
 
 #[test]
 fn ranges_overlap_test() {

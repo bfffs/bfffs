@@ -1,7 +1,7 @@
 // vim: tw=80
 
 use byteorder::{BigEndian, ByteOrder};
-use common::*;
+use crate::common::*;
 use divbuf::DivBufShared;
 use metrohash::MetroHash64;
 use serde::{Deserialize, Serialize};

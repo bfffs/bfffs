@@ -1,9 +1,12 @@
 // vim: tw=80
 
 use divbuf::{DivBuf, DivBufMut, DivBufShared};
+use enum_primitive_derive::Primitive;
+use lazy_static::lazy_static;
 use libc;
 use nix;
 use num_traits::{FromPrimitive, ToPrimitive};
+use serde_derive::*;
 use std::{
     fmt::{self, Display, Formatter},
     hash::Hasher,

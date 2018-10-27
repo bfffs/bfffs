@@ -4,7 +4,7 @@
 //!
 //! This is a trivial layout that uses a single device.
 
-use common::declust::*;
+use crate::common::declust::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NullRaid {

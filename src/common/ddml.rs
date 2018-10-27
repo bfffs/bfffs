@@ -5,12 +5,12 @@
 /// disk, and hash operations.  A Direct Record is a record that can never be
 /// duplicated, either through snapshots, clones, or deduplication.
 
-use common::{
+use crate::common::{
     *,
     cache::{Cacheable, CacheRef, Key},
     label::*,
 };
-#[cfg(not(test))] use common::pool::*;
+#[cfg(not(test))] use crate::common::pool::*;
 use futures::{Future, Stream, future, stream};
 use metrohash::MetroHash64;
 #[cfg(test)] use rand::{self, Rng};
@@ -22,14 +22,14 @@ use std::{
 #[cfg(all(test, feature = "mocks"))] use simulacrum::*;
 #[cfg(test)] use uuid::Uuid;
 
-pub use common::dml::{Compression, DML};
-pub use common::pool::ClosedZone;
+pub use crate::common::dml::{Compression, DML};
+pub use crate::common::pool::ClosedZone;
 
 #[cfg(not(test))]
-use common::cache::Cache;
+use crate::common::cache::Cache;
 // LCOV_EXCL_START
 #[cfg(test)]
-use common::cache_mock::CacheMock as Cache;
+use crate::common::cache_mock::CacheMock as Cache;
 
 #[cfg(test)]
 /// Only exists so mockers can replace Pool
@@ -510,7 +510,7 @@ mod t {
     use divbuf::DivBufShared;
     use futures::{IntoFuture, future};
     use mockers::matchers::ANY;
-    use mockers::{Scenario, Sequence};
+    use mockers::{Scenario, Sequence, check};
     use mockers_derive::mock;
     use simulacrum::validators::trivial::any;
     use std::cell::RefCell;

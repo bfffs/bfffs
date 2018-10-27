@@ -1,7 +1,7 @@
 // vim: tw=80
 
-use common::{cluster, pool, vdev::Vdev, vdev_raid};
-#[cfg(not(test))] use common::{Error, cache, database, ddml, idml, vdev_block};
+use crate::common::{cluster, pool, vdev::Vdev, vdev_raid};
+#[cfg(not(test))] use crate::common::{Error, cache, database, ddml, idml, vdev_block};
 use futures::{Future, future};
 #[cfg(not(test))] use futures::{stream, sync::oneshot};
 #[cfg(not(test))] use futures::Stream;
@@ -12,7 +12,7 @@ use std::{
     sync::Mutex
 };
 #[cfg(not(test))] use std::sync::Arc;
-use sys::vdev_file;
+use crate::sys::vdev_file;
 use uuid::Uuid;
 use tokio::runtime::current_thread;
 #[cfg(not(test))] use tokio::executor::{self, DefaultExecutor, Executor};

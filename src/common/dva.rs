@@ -1,5 +1,5 @@
 // vim: tw=80
-use common::*;
+use crate::common::*;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 /// Data Virtual Address for BFFFS.  Each DVA uniquely identifies the physical

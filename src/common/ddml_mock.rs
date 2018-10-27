@@ -1,10 +1,10 @@
 // vim: tw=80
 // LCOV_EXCL_START
-use common::{ClusterT, Error, LbaT, TxgT, ZoneT};
-use common::cache::{Cacheable, CacheRef};
-use common::dml::*;
-use common::ddml::*;
-use common::label::*;
+use crate::common::{ClusterT, Error, LbaT, TxgT, ZoneT};
+use crate::common::cache::{Cacheable, CacheRef};
+use crate::common::dml::*;
+use crate::common::ddml::*;
+use crate::common::label::*;
 use futures::{Future, Stream};
 use simulacrum::*;
 use std::{

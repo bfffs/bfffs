@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use common::*;
+use crate::common::*;
 use futures;
 use uuid::Uuid;
 

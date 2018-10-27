@@ -2,7 +2,8 @@
 
 //! Data types used by trees representing filesystems
 
-use common::{
+use bitfield::*;
+use crate::common::{
     *,
     dml::*,
     tree::*

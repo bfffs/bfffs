@@ -1,10 +1,10 @@
 // vim: tw=80
 
 use blosc;
-use common::*;
+use crate::common::*;
 use futures::Future;
 
-pub use common::cache::{Cacheable, CacheRef};
+pub use crate::common::cache::{Cacheable, CacheRef};
 
 /// Compression mode in use
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]

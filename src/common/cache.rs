@@ -1,6 +1,6 @@
 // vim: tw=80
-use common::*;
-use downcast::Any;
+use crate::common::*;
+use downcast::*;
 use metrohash::{MetroBuildHasher, MetroHash64};
 use std::{
     borrow::Borrow,

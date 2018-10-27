@@ -11,7 +11,7 @@
 //! Computer Architecture News. Vol. 26. No. 3. IEEE Computer Society, 1998.
 
 use fixedbitset::FixedBitSet;
-use common::{*, declust::*};
+use crate::common::{*, declust::*};
 use modulo::Mod;
 
 /// Return the multiplicative inverse of a, mod n.  n must be prime.

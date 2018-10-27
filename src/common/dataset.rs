@@ -6,9 +6,9 @@
 //! a specialized key-value store.  Datasets may be created, destroyed, cloned,
 //! and snapshotted.  The also support the same CRUD operations as Trees.
 
-use common::*;
-use common::dml::{Compression, DML};
-use common::tree::{Key, Value};
+use crate::common::*;
+use crate::common::dml::{Compression, DML};
+use crate::common::tree::{Key, Value};
 use futures::{Future, Stream};
 use std::{
     borrow::Borrow,
@@ -17,10 +17,10 @@ use std::{
     sync::Arc
 };
 
-#[cfg(not(test))] use common::tree::Tree;
-#[cfg(test)] use common::tree_mock::TreeMock as Tree;
-#[cfg(not(test))] use common::idml::IDML;
-#[cfg(test)] use common::idml_mock::IDMLMock as IDML;
+#[cfg(not(test))] use crate::common::tree::Tree;
+#[cfg(test)] use crate::common::tree_mock::TreeMock as Tree;
+#[cfg(not(test))] use crate::common::idml::IDML;
+#[cfg(test)] use crate::common::idml_mock::IDMLMock as IDML;
 
 pub type ITree<K, V> = Tree<RID, IDML, K, V>;
 

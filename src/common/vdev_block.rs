@@ -20,9 +20,9 @@ use tokio_current_thread;
 use tokio::timer;
 use uuid::Uuid;
 
-use common::{*, label::*, vdev::*, vdev_leaf::*};
+use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
 #[cfg(not(test))]
-use sys::vdev_file::*;
+use crate::sys::vdev_file::*;
 
 #[cfg(test)]
 pub type VdevLeaf = Box<VdevLeafApi>;
@@ -696,6 +696,13 @@ impl Vdev for VdevBlock {
 
 // LCOV_EXCL_START
 
+#[cfg(feature = "mocks")]
+#[cfg(test)]
+mod t {
+
+use galvanic_test::*;
+use super::*;
+
 // pet kcov
 #[test]
 fn debug_cmd() {
@@ -719,12 +726,9 @@ fn debug_cmd() {
             finish_zone, sync_all, write_label);
 }
 
-#[cfg(feature = "mocks")]
-#[cfg(test)]
 test_suite! {
     name t;
 
-    use super::*;
     use divbuf::DivBufShared;
     use futures;
     use futures::{Poll, future};
@@ -1326,5 +1330,6 @@ test_suite! {
             vdev.writev_at(wbuf, 1)
         })).unwrap();
     }
+}
 }
 // LCOV_EXCL_STOP

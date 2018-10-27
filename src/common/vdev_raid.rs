@@ -1,8 +1,8 @@
 // vim: tw=80
 
-use common::{*, declust::*, label::*, vdev::*, raid::*};
-#[cfg(not(test))] use common::vdev_block::*;
-use common::{null_raid::*, prime_s::*};
+use crate::common::{*, declust::*, label::*, vdev::*, raid::*};
+#[cfg(not(test))] use crate::common::vdev_block::*;
+use crate::common::{null_raid::*, prime_s::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
@@ -1274,8 +1274,9 @@ mod t {
 
 use super::*;
 use futures::future;
+use galvanic_test::*;
 use mockers::matchers::ANY;
-use mockers::Scenario;
+use mockers::{Scenario, check};
 use mockers_derive::mock;
 
 mock!{
@@ -1321,7 +1322,6 @@ test_suite! {
     // Test basic layout properties
     name basic;
 
-    use super::super::*;
     use super::MockVdevBlock;
     use mockers::{matchers, Scenario};
 

@@ -5,13 +5,13 @@
 //! Clients use the Database to obtain references to the Datasets.  The Database
 //! also owns the Forest and manages Transactions.
 
-use common::*;
-use common::cleaner::*;
-use common::dataset::*;
-use common::dml::DML;
-use common::fs_tree::*;
-use common::label::*;
-use common::tree::{MinValue, TreeOnDisk};
+use crate::common::*;
+use crate::common::cleaner::*;
+use crate::common::dataset::*;
+use crate::common::dml::DML;
+use crate::common::fs_tree::*;
+use crate::common::label::*;
+use crate::common::tree::{MinValue, TreeOnDisk};
 use futures::{
     Future,
     IntoFuture,
@@ -33,10 +33,10 @@ use time;
 use tokio::executor::Executor;
 use tokio::timer;
 
-#[cfg(not(test))] use common::idml::IDML;
-#[cfg(test)] use common::idml_mock::IDMLMock as IDML;
-#[cfg(not(test))] use common::tree::Tree;
-#[cfg(test)] use common::tree_mock::TreeMock as Tree;
+#[cfg(not(test))] use crate::common::idml::IDML;
+#[cfg(test)] use crate::common::idml_mock::IDMLMock as IDML;
+#[cfg(not(test))] use crate::common::tree::Tree;
+#[cfg(test)] use crate::common::tree_mock::TreeMock as Tree;
 
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;

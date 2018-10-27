@@ -1,9 +1,9 @@
 // vim: tw=80
 // LCOV_EXCL_START
-use common::*;
-use common::dml::*;
-use common::idml::*;
-use common::label::*;
+use crate::common::*;
+use crate::common::dml::*;
+use crate::common::idml::*;
+use crate::common::label::*;
 use futures::{Future, IntoFuture, Stream};
 use simulacrum::*;
 use std::io;

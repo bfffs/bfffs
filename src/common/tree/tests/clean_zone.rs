@@ -2,9 +2,9 @@
 // LCOV_EXCL_START
 
 use atomic::{Atomic, Ordering};
-use common::tree::*;
-use common::ddml_mock::*;
-use common::ddml::DRP;
+use crate::common::tree::*;
+use crate::common::ddml_mock::*;
+use crate::common::ddml::DRP;
 use futures::future;
 use simulacrum::*;
 use tokio::runtime::current_thread;

@@ -9,7 +9,7 @@
 // use the atomic crate since libstd's AtomicU64 type is still unstable
 // https://github.com/rust-lang/rust/issues/32976
 use atomic::{Atomic, Ordering};
-use common::{
+use crate::common::{
     *,
     dml::*,
     ddml::DRP,
@@ -24,15 +24,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 #[cfg(not(test))]
-use common::cache::Cache;
+use crate::common::cache::Cache;
 #[cfg(test)]
-use common::cache_mock::CacheMock as Cache;
+use crate::common::cache_mock::CacheMock as Cache;
 #[cfg(not(test))]
-use common::ddml::DDML;
+use crate::common::ddml::DDML;
 #[cfg(test)]
-use common::ddml_mock::DDMLMock as DDML;
+use crate::common::ddml_mock::DDMLMock as DDML;
 
-pub use common::ddml::ClosedZone;
+pub use crate::common::ddml::ClosedZone;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 struct RidtEntry {

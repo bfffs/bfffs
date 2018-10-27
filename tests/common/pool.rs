@@ -1,4 +1,5 @@
 // vim: tw=80
+use galvanic_test::*;
 
 macro_rules! t {
     ($e:expr) => (match $e {

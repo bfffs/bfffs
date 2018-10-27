@@ -8,8 +8,8 @@
 // https://github.com/rust-lang/rust/issues/32976
 use atomic::{Atomic, Ordering};
 use bincode;
-use common::*;
-use common::dml::*;
+use crate::common::*;
+use crate::common::dml::*;
 use futures::{
     Async,
     Future,

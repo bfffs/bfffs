@@ -1,4 +1,5 @@
 // vim: tw=80
+use galvanic_test::*;
 
 /// Constructs a real filesystem, fills it, and cleans it.
 macro_rules! t {

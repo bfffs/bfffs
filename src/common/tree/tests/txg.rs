@@ -1,8 +1,8 @@
 //! Tests regarding transaction transaction membership of nodes
 // LCOV_EXCL_START
 
-use common::tree::*;
-use common::dml_mock::*;
+use crate::common::tree::*;
+use crate::common::dml_mock::*;
 use futures::future;
 use simulacrum::*;
 use tokio::runtime::current_thread;

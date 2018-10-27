@@ -1,8 +1,8 @@
 // vim: tw=80
 // LCOV_EXCL_START
-use common::{Error, TxgT};
-use common::cache::{Cacheable, CacheRef};
-use common::dml::*;
+use crate::common::{Error, TxgT};
+use crate::common::cache::{Cacheable, CacheRef};
+use crate::common::dml::*;
 use futures::Future;
 use simulacrum::*;
 

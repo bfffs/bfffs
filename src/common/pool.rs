@@ -1,8 +1,8 @@
 // vim: tw=80
 
 use atomic::{Atomic, Ordering};
-use common::{*, label::*};
-#[cfg(not(test))] use common::cluster;
+use crate::common::{*, label::*};
+#[cfg(not(test))] use crate::common::cluster;
 use futures::{
     Future,
     IntoFuture,
@@ -711,7 +711,7 @@ mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
     use futures::{IntoFuture, future};
-    use mockers::{Scenario, matchers};
+    use mockers::{Scenario, check, matchers};
     use mockers_derive::mock;
     use tokio::runtime::current_thread;
 

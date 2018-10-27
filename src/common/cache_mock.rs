@@ -1,6 +1,6 @@
 // vim: tw=80
 // LCOV_EXCL_START
-use common::cache::*;
+use crate::common::cache::*;
 use simulacrum::*;
 
 pub struct CacheMock {

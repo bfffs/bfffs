@@ -2,12 +2,12 @@
 //! Common VFS implementation
 
 use atomic::*;
-use common::*;
-#[cfg(not(test))] use common::database::*;
-#[cfg(test)] use common::database_mock::DatabaseMock as Database;
-#[cfg(test)] use common::database_mock::ReadWriteFilesystem;
-use common::database::TreeID;
-use common::fs_tree::*;
+use crate::common::*;
+#[cfg(not(test))] use crate::common::database::*;
+#[cfg(test)] use crate::common::database_mock::DatabaseMock as Database;
+#[cfg(test)] use crate::common::database_mock::ReadWriteFilesystem;
+use crate::common::database::TreeID;
+use crate::common::fs_tree::*;
 use divbuf::{DivBufShared, DivBuf};
 use futures::{
     Future,
@@ -873,8 +873,8 @@ impl Fs {
 mod t {
 
 use super::*;
-use common::tree::MinValue;
-#[cfg(test)] use common::database_mock::ReadOnlyFilesystem;
+use crate::common::tree::MinValue;
+#[cfg(test)] use crate::common::database_mock::ReadOnlyFilesystem;
 use futures::stream;
 use simulacrum::*;
 

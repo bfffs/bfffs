@@ -1,7 +1,7 @@
 // vim: tw=80
 
-use common::*;
-use common::idml::ClosedZone;
+use crate::common::*;
+use crate::common::idml::ClosedZone;
 use futures::{
     Future,
     future,
@@ -11,8 +11,8 @@ use futures::{
 use std::sync::Arc;
 use tokio::executor::Executor;
 
-#[cfg(not(test))] use common::idml::IDML;
-#[cfg(test)] use common::idml_mock::IDMLMock as IDML;
+#[cfg(not(test))] use crate::common::idml::IDML;
+#[cfg(test)] use crate::common::idml_mock::IDMLMock as IDML;
 
 struct SyncCleaner {
     /// Handle to the DML.

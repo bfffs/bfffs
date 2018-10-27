@@ -1,8 +1,9 @@
 // vim: tw=80
 
-use common::{*, label::*, vdev::*, vdev_leaf::*};
+use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
 use divbuf::DivBufShared;
 use futures::{Async, Future, Poll, future};
+use serde_derive::*;
 use std::{
     borrow::{Borrow, BorrowMut},
     io,

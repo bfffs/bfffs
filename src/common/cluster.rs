@@ -1,7 +1,7 @@
 // vim: tw=80
 
-use common::{*, label::*, vdev::{Vdev, VdevFut}};
-#[cfg(not(test))] use common::vdev_raid::*;
+use crate::common::{*, label::*, vdev::{Vdev, VdevFut}};
+#[cfg(not(test))] use crate::common::vdev_raid::*;
 use futures::{ Future, IntoFuture, future};
 use itertools::multizip;
 use std::{
@@ -825,7 +825,7 @@ mod open_zone {
 mod cluster {
     use super::super::*;
     use divbuf::DivBufShared;
-    use mockers::{Scenario, matchers};
+    use mockers::{Scenario, check, matchers};
     use mockers_derive::mock;
     use tokio::runtime::current_thread;
 

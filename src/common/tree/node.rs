@@ -2,8 +2,8 @@
 
 //! Nodes for Trees (private module)
 use bincode;
-use common::*;
-use common::dml::*;
+use crate::common::*;
+use crate::common::dml::*;
 use futures::{Future, IntoFuture, future};
 use futures_locks::*;
 use serde::{Serialize, de::DeserializeOwned};
@@ -961,7 +961,7 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
 #[cfg(test)]
 mod t {
 
-use common::ddml::DRP;
+use crate::common::ddml::DRP;
 use divbuf::*;
 use super::*;
 
@@ -1022,7 +1022,7 @@ fn txgt_min_value() {
 #[cfg(test)]
 mod serialization {
 
-use common::ddml::DRP;
+use crate::common::ddml::DRP;
 use std::ops::Deref;
 use super::*;
 

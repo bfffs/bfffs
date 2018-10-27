@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use common::*;
+use crate::common::*;
 
 /// A Cursor type that can iterate over `SGList`s.
 ///
