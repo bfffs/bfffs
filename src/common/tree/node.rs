@@ -912,14 +912,6 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
     fn make_ref(&self) -> Box<CacheRef> {
         Box::new(self.clone())
     }
-
-    fn safe_to_expire(&self) -> bool {
-        true    // The Arc guarantees that we can expire at any time
-    }
-
-    fn truncate(&self, _len: usize) {
-        panic!("Can't truncate or resize an unserialized Node");
-    }
 }
 
 impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {

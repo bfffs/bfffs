@@ -38,17 +38,6 @@ pub trait Cacheable: Any + Debug + Send + Sync {
     /// As long as this handle is alive, the object will not be evicted from
     /// cache.
     fn make_ref(&self) -> Box<CacheRef>;
-
-    /// Can this cache entry be expired?
-    ///
-    /// The cache must be locked between calling `safe_to_expire` and `expire`
-    fn safe_to_expire(&self) -> bool;
-
-    /// Truncate this `Cacheable` down to the given size.
-    ///
-    /// This is mainly useful to correct padding that had to be added before
-    /// writing to disk.
-    fn truncate(&self, len: usize);
 }
 
 downcast!(Cacheable);
@@ -89,14 +78,6 @@ impl Cacheable for DivBufShared {
 
     fn make_ref(&self) -> Box<CacheRef> {
         Box::new(self.try().unwrap())
-    }
-
-    fn safe_to_expire(&self) -> bool {
-        self.try_mut().is_ok()
-    }
-
-    fn truncate(&self, len: usize) {
-        self.try_mut().unwrap().try_truncate(len).unwrap();
     }
 }
 
@@ -156,17 +137,8 @@ pub struct Cache {
 
 impl Cache {
     fn expire(&mut self) {
-        let mut key = self.lru;
-        loop {
-            assert!(key.is_some(), "Can't find an entry to expire");
-            let v = self.store.get_mut(&key.unwrap()).unwrap();
-            if v.buf.safe_to_expire() {
-                break;
-            } else {
-                key = v.mru;
-                continue;
-            }
-        }
+        let key = self.lru;
+        assert!(key.is_some(), "Can't find an entry to expire");
         self.remove(&key.unwrap());
     }
 
@@ -353,25 +325,6 @@ fn test_get_middle() {
         assert_eq!(v.lru, Some(key1));
         assert_eq!(v.mru, Some(key2));
     }
-}
-
-/// Don't expire a referenced entry, even if it's the LRU
-#[test]
-fn test_expire_referenced() {
-    let mut cache = Cache::with_capacity(100);
-    let key1 = Key::Rid(RID(1));
-    let key2 = Key::Rid(RID(2));
-    let key3 = Key::Rid(RID(3));
-    let dbs = Box::new(DivBufShared::from(vec![0u8; 13]));
-    cache.insert(key1, dbs);
-    let _ref1 = cache.get::<DivBuf>(&key1);
-    let dbs = Box::new(DivBufShared::from(vec![0u8; 17]));
-    cache.insert(key2, dbs);
-    let dbs = Box::new(DivBufShared::from(vec![0u8; 83]));
-    cache.insert(key3, dbs);
-
-    assert_eq!(cache.size(), 96);
-    assert!(cache.get::<DivBuf>(&key2).is_none());
 }
 
 /// On insertion, old entries should be expired to prevent overflow
