@@ -983,7 +983,6 @@ test_suite! {
                 Op::SyncAll => self.sync(),
                 Op::Touch => self.touch(),
                 Op::Write => self.write(),
-                //x => println!("{:?}", x)
             }
         }
 
