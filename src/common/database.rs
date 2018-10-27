@@ -314,7 +314,8 @@ impl Database {
                 birthtime: now,
                 uid: 0,
                 gid: 0,
-                mode: libc::S_IFDIR | 0o755
+                file_type: FileType::Dir,
+                mode: 0o755
             };
             let inode_value = FSValue::Inode(inode);
 

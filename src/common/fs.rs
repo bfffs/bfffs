@@ -100,6 +100,7 @@ struct CreateArgs
 {
     parent: u64,
     dtype: u8,
+    file_type: FileType,
     flags: u64,
     name: OsString,
     mode: u16,
@@ -131,10 +132,12 @@ impl CreateArgs {
         //self
     //}
 
-    pub fn new(parent: u64, dtype: u8, name: &OsStr, mode: u16) -> Self {
+    pub fn new(parent: u64, dtype: u8, name: &OsStr, mode: u16,
+               file_type: FileType) -> Self
+    {
         let cb = Box::new(CreateArgs::default_cb);
         CreateArgs{parent, dtype, flags: 0, name: name.to_owned(), mode,
-                   nlink: 1, cb}
+                   file_type, nlink: 1, cb}
     }
 
     pub fn nlink(mut self, nlink: u64) -> Self {
@@ -161,7 +164,8 @@ impl Fs {
             birthtime: now,
             uid: 0,
             gid: 0,
-            mode: args.mode
+            mode: args.mode & 0o7777,
+            file_type: args.file_type
         };
         let inode_value = FSValue::Inode(inode);
 
@@ -212,8 +216,9 @@ impl Fs {
     pub fn create(&self, parent: u64, name: &OsStr, mode: u32)
         -> Result<u64, i32>
     {
+        let file_type = FileType::Reg;
         let create_args = CreateArgs::new(parent, libc::DT_REG, name,
-                       libc::S_IFREG | (mode as u16));
+                       mode as u16, file_type);
         self.do_create(create_args)
     }
 
@@ -233,6 +238,7 @@ impl Fs {
                     match r {
                         Ok(Some(v)) => {
                             let inode = v.as_inode().unwrap();
+                            let mode = inode.file_type.mode() | inode.mode;
                             let attr = GetAttr {
                                 ino,
                                 size: inode.size,
@@ -241,7 +247,7 @@ impl Fs {
                                 mtime: inode.mtime,
                                 ctime: inode.ctime,
                                 birthtime: inode.birthtime,
-                                mode: inode.mode,
+                                mode,
                                 nlink: inode.nlink,
                                 uid: inode.uid,
                                 gid: inode.gid,
@@ -332,7 +338,7 @@ impl Fs {
         };
 
         let create_args = CreateArgs::new(parent, libc::DT_DIR, name,
-                       libc::S_IFDIR | (mode as u16))
+                       mode as u16, FileType::Dir)
         .nlink(nlink)
         .callback(f);
 
@@ -521,8 +527,7 @@ impl Fs {
                             // TODO: check permissions, file flags, etc
                             // The VFS should've already checked that inode is a
                             // directory.
-                            assert_eq!(inode.mode & libc::S_IFMT,
-                                       libc::S_IFDIR,
+                            assert_eq!(inode.file_type, FileType::Dir,
                                        "rmdir of a non-directory");
                             assert_eq!(inode.nlink, 2,
                                 concat!("Hard links to directories are ",
@@ -578,8 +583,7 @@ impl Fs {
                 .and_then(move |r| {
                     let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
                     if let Some(m) = attr.mode {
-                        iv.mode &= libc::S_IFMT;
-                        iv.mode |= m;
+                        iv.mode = m & 0o7777;
                     }
                     iv.uid = attr.uid.unwrap_or(iv.uid);
                     iv.gid = attr.gid.unwrap_or(iv.gid);
@@ -868,7 +872,8 @@ fn create() {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().size == 0 &&
             args.1.as_inode().unwrap().nlink == 1 &&
-            args.1.as_inode().unwrap().mode == libc::S_IFREG | 0o644
+            args.1.as_inode().unwrap().file_type == FileType::Reg &&
+            args.1.as_inode().unwrap().mode == 0o644
         })).returning(|_| Box::new(Ok(None).into_future()));
     ds.then().expect_insert()
         .called_once()
@@ -997,7 +1002,8 @@ fn unlink() {
                 birthtime: now,
                 uid: 0,
                 gid: 0,
-                mode: libc::S_IFREG | 0o644,
+                file_type: FileType::Reg,
+                mode: 0o644,
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });

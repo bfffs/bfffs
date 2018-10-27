@@ -196,7 +196,8 @@ root:
             nsec: 0
           uid: 0
           gid: 0
-          mode: 16877
+          mode: 493
+          file_type: Dir
       36925132825777658659:
         DirEntry:
           ino: 1
@@ -234,7 +235,8 @@ root:
             nsec: 0
           uid: 0
           gid: 0
-          mode: 16877
+          mode: 493
+          file_type: Dir
       55371876899487210275:
         DirEntry:
           ino: 1
@@ -269,7 +271,8 @@ root:
             nsec: 0
           uid: 0
           gid: 0
-          mode: 16877
+          mode: 493
+          file_type: Dir
       73818620973196761891:
         DirEntry:
           ino: 1
@@ -304,7 +307,8 @@ root:
             nsec: 0
           uid: 0
           gid: 0
-          mode: 16877
+          mode: 493
+          file_type: Dir
       92265365046906313507:
         DirEntry:
           ino: 1
@@ -339,7 +343,8 @@ root:
             nsec: 0
           uid: 0
           gid: 0
-          mode: 16877
+          mode: 493
+          file_type: Dir
 ---
 2:
   Int:

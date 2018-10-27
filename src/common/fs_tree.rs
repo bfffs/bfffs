@@ -159,6 +159,41 @@ pub struct Dirent {
     pub name:   OsString
 }
 
+/// Field of an `Inode`
+// Keep these fields in order!  This is the same order as the OS uses.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum FileType {
+    /// Fifo
+    Fifo,
+    /// Character device node
+    Char(libc::dev_t),
+    /// Directory
+    Dir,
+    /// Block device node
+    Block(libc::dev_t),
+    /// Regular file
+    Reg,
+    /// Symlink, with its destination
+    Link(OsString),
+    /// Socket
+    Socket,
+}
+
+impl FileType {
+    /// The file type part of the mode, as returned by stat(2)
+    pub fn mode(&self) -> u16 {
+        match self {
+            FileType::Fifo => libc::S_IFIFO,
+            FileType::Char(_) => libc::S_IFCHR,
+            FileType::Dir => libc::S_IFDIR,
+            FileType::Block(_) => libc::S_IFBLK,
+            FileType::Reg => libc::S_IFREG,
+            FileType::Link(_) => libc::S_IFLNK,
+            FileType::Socket => libc::S_IFSOCK,
+        }
+    }
+}
+
 /// In-memory representation of an Inode
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Inode {
@@ -184,8 +219,10 @@ pub struct Inode {
     pub uid:        u32,
     /// Group id
     pub gid:        u32,
-    /// File mode
+    /// File mode, low twelve bits only
     pub mode:       u16,
+    /// File type.  Regular, directory, etc
+    pub file_type:   FileType
 }
 
 #[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
