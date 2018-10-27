@@ -576,6 +576,13 @@ root:
         let _ = entries.next().unwrap().unwrap();
     }
 
+    test readlink(mocks) {
+        let dstname = OsString::from("dst");
+        let srcname = OsString::from("src");
+        let ino = mocks.val.0.symlink(1, &srcname, 0o642, &dstname).unwrap();
+        assert_eq!(dstname, mocks.val.0.readlink(ino).unwrap());
+    }
+
     #[cfg_attr(feature = "cargo-clippy",
                allow(clippy::block_in_if_condition_stmt))]
     test rmdir(mocks) {
@@ -679,6 +686,31 @@ root:
     test statvfs(mocks) {
         let statvfs = mocks.val.0.statvfs();
         assert_eq!(statvfs.f_blocks, 262_144);
+    }
+
+    test symlink(mocks) {
+        let dstname = OsString::from("dst");
+        let srcname = OsString::from("src");
+        let ino = mocks.val.0.symlink(1, &srcname, 0o642, &dstname).unwrap();
+        assert_eq!(mocks.val.0.lookup(1, &srcname).unwrap(), ino);
+
+        // The parent dir should have an "src" symlink entry
+        let entries = mocks.val.0.readdir(1, 0, 0);
+        let (dirent, _ofs) = entries
+        .map(|r| r.unwrap())
+        .filter(|(dirent, _ofs)| {
+            dirent.d_name[0] == 's' as i8
+        }).nth(0)
+        .expect("'s' directory entry not found");
+        assert_eq!(dirent.d_type, libc::DT_LNK);
+        let dirent_name = unsafe{
+            CStr::from_ptr(&dirent.d_name as *const c_char)
+        };
+        assert_eq!(dirent_name.to_str().unwrap(), srcname.to_str().unwrap());
+        assert_eq!(u64::from(dirent.d_fileno), ino);
+
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(attr.mode, libc::S_IFLNK | 0o642);
     }
 
     test unlink(mocks) {

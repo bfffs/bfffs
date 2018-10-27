@@ -487,6 +487,36 @@ impl Fs {
         rx.wait().map(|r| r.unwrap())
     }
 
+    pub fn readlink(&self, ino: u64) -> Result<OsString, i32> {
+        let (tx, rx) = oneshot::channel();
+        self.handle.spawn(
+            self.db.fsread(self.tree, move |dataset| {
+                let key = FSKey::new(ino, ObjKey::Inode);
+                dataset.get(key)
+                .then(move |r| {
+                    match r {
+                        Ok(Some(v)) => {
+                            let inode = v.as_inode().unwrap();
+                            if let FileType::Link(ref path) = inode.file_type {
+                                tx.send(Ok(path.clone()))
+                            } else {
+                                tx.send(Err(Error::EINVAL.into()))
+                            }
+                        },
+                        Ok(None) => {
+                            tx.send(Err(Error::ENOENT.into()))
+                        },
+                        Err(e) => {
+                            tx.send(Err(e.into()))
+                        }
+                    }.unwrap();
+                    future::ok::<(), Error>(())
+                })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     pub fn rmdir(&self, parent: u64, name: &OsStr) -> Result<(), i32> {
         // Outline:
         // 1) Lookup the directory
@@ -625,6 +655,17 @@ impl Fs {
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()
+    }
+
+    /// Create a symlink from `name` to `link`.  Returns the link's inode on
+    /// success, or an errno on failure.
+    pub fn symlink(&self, parent: u64, name: &OsStr, mode: u32, link: &OsStr)
+        -> Result<u64, i32>
+    {
+        let file_type = FileType::Link(link.to_os_string());
+        let create_args = CreateArgs::new(parent, libc::DT_LNK, name,
+                                          mode as u16, file_type);
+        self.do_create(create_args)
     }
 
     pub fn sync(&self) {

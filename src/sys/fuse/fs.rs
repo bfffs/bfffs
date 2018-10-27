@@ -10,6 +10,7 @@ use libc;
 use std::{
     ffi::OsStr,
     os::unix::ffi::OsStrExt,
+    path::Path,
     slice,
     sync::Arc
 };
@@ -189,6 +190,13 @@ impl Filesystem for FuseFs {
         reply.ok();
     }
 
+    fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
+        match self.fs.readlink(ino) {
+            Ok(path) => reply.data(&path.as_bytes()),
+            Err(errno) => reply.error(errno)
+        }
+    }
+
     fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr,
              reply: ReplyEmpty) {
         match self.fs.rmdir(parent, name) {
@@ -244,6 +252,29 @@ impl Filesystem for FuseFs {
         reply.statfs(statvfs.f_blocks, statvfs.f_bfree, statvfs.f_bavail,
                      statvfs.f_files, statvfs.f_ffree, statvfs.f_bsize as u32,
                      statvfs.f_namemax as u32, statvfs.f_frsize as u32);
+    }
+
+    fn symlink(&mut self, _req: &Request, parent: u64, name: &OsStr,
+               link: &Path, reply: ReplyEntry)
+    {
+        let ttl = Timespec { sec: 0, nsec: 0 };
+        // Weirdly, FUSE doesn't supply the symlink's mode.  Use a sensible
+        // default.
+        let mode = 0o755;
+        // FUSE combines the functions of VOP_MKDIR and VOP_GETATTR
+        // into one.
+        match self.fs.symlink(parent, name, mode, link.as_os_str())
+            .and_then(|ino| self.do_getattr(ino))
+        {
+            Ok(file_attr) => {
+                // The generation number is only used for filesystems exported
+                // by NFS, and is only needed if the filesystem reuses deleted
+                // inodes.  BFFFS does not reuse deleted inodes.
+                let gen = 0;
+                reply.entry(&ttl, &file_attr, gen)
+            },
+            Err(e) => reply.error(e)
+        }
     }
 
     fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr,
