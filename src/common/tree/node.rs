@@ -494,7 +494,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
             let f2 = f.clone();
             lock_fut.and_then(move |guard| {
                 f2(guard, &dml2)
-            })
+            })  // LCOV_EXCL_LINE kcov false negative
         }).collect::<Vec<_>>();
         future::join_all(child_futs).map(move |r| (self, r))
     }
@@ -936,7 +936,7 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
         let v = bincode::serialize(&g.deref()).unwrap();
         let dbs = DivBufShared::from(v);
         dbs.try().unwrap()
-    }
+    }   // LCOV_EXCL_LINE kcov false negative
 
     fn to_owned(self) -> Box<Cacheable> {
         Box::new(self)
@@ -965,12 +965,12 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
 }
 
 // LCOV_EXCL_START
-/// Tests for serialization/deserialization of Nodes
+/// Basic tests of node types
 #[cfg(test)]
-mod serialization {
+mod t {
 
 use common::ddml::DRP;
-use std::ops::Deref;
+use divbuf::*;
 use super::*;
 
 // pet kcov
@@ -980,12 +980,59 @@ fn debug() {
     let node: Arc<Node<DRP, u32, u32>> =
         Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
     format!("{:?}", node);
+
+    let mut children: Vec<IntElem<u32, u32, u32>> = Vec::new();
+    let txgs = TxgT(1)..TxgT(3);
+    children.push(IntElem::new(0, txgs, TreePtr::Addr(4)));
+    format!("{:?}", NodeData::Int(IntData{children}));
+}
+
+#[test]
+fn arc_node_eq() {
+    let items: BTreeMap<u32, u32> = BTreeMap::new();
+    let node: Arc<Node<DRP, u32, u32>> =
+        Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    assert!(node.eq(&node));
+    let dbs = DivBufShared::from(Vec::new());
+    assert!(!node.eq(&dbs));
+}
+
+#[test]
+fn treeptr_eq() {
+    assert_eq!(TreePtr::Addr::<u32, u32, u32>(0),
+               TreePtr::Addr::<u32, u32, u32>(0));
+    assert_ne!(TreePtr::Addr::<u32, u32, u32>(0),
+               TreePtr::Addr::<u32, u32, u32>(1));
+    assert_eq!(TreePtr::None::<u32, u32, u32>,
+               TreePtr::None::<u32, u32, u32>);
+    assert_ne!(TreePtr::Addr::<u32, u32, u32>(0),
+               TreePtr::None::<u32, u32, u32>);
+}
+
+#[test]
+#[should_panic(expected = "recursively")]
+fn treeptr_eq_mem() {
+    let x = TreePtr::Addr(0);
+    let items: BTreeMap<u32, u32> = BTreeMap::new();
+    let node: Box<Node<u32, u32, u32>> =
+        Box::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let y = TreePtr::Mem(node);
+    assert_ne!(x, y);
 }
 
 #[test]
 fn txgt_min_value() {
     assert_eq!(TxgT(0), TxgT::min_value());
 }
+}
+
+/// Tests for serialization/deserialization of Nodes
+#[cfg(test)]
+mod serialization {
+
+use common::ddml::DRP;
+use std::ops::Deref;
+use super::*;
 
 #[test]
 fn deserialize_int() {
