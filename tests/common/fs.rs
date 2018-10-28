@@ -389,6 +389,11 @@ root:
         assert_eq!(mocks.val.0.lookup(1, &dst).unwrap(), ino);
     }
 
+    test lookup_enoent(mocks) {
+        let filename = OsString::from("nonexistent");
+        assert_eq!(mocks.val.0.lookup(1, &filename), Err(libc::ENOENT));
+    }
+
     test mkdir(mocks) {
         let ino = mocks.val.0.mkdir(1, &OsString::from("x"), 0o755).unwrap();
         assert_eq!(mocks.val.0.lookup(1, &OsString::from("x")).unwrap(), ino);
@@ -525,21 +530,6 @@ root:
         assert!(sglist.is_empty());
     }
 
-    // Read past EOF, in an entirely different record
-    test read_well_past_eof(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
-        let mut buf = vec![0u8; 4096];
-        let mut rng = thread_rng();
-        for x in &mut buf {
-            *x = rng.gen();
-        }
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
-        assert_eq!(Ok(4096), r);
-
-        let sglist = mocks.val.0.read(ino, 1 << 30, 4096).unwrap();
-        assert!(sglist.is_empty());
-    }
-
     // A read that's split across two records
     test read_two_recs(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
@@ -558,6 +548,21 @@ root:
         assert_eq!(&db0[..], &buf[0..4096]);
         let db1 = &sglist[1];
         assert_eq!(&db1[..], &buf[4096..8192]);
+    }
+
+    // Read past EOF, in an entirely different record
+    test read_well_past_eof(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(4096), r);
+
+        let sglist = mocks.val.0.read(ino, 1 << 30, 4096).unwrap();
+        assert!(sglist.is_empty());
     }
 
     test readdir(mocks) {
@@ -732,11 +737,6 @@ root:
         assert_eq!(attr.mode, libc::S_IFLNK | 0o642);
     }
 
-    test lookup_enoent(mocks) {
-        let filename = OsString::from("nonexistent");
-        assert_eq!(mocks.val.0.lookup(1, &filename), Err(libc::ENOENT));
-    }
-
     test unlink(mocks) {
         let filename = OsString::from("x");
         let ino = mocks.val.0.create(1, &filename, 0o644).unwrap();
@@ -816,27 +816,6 @@ root:
         assert_eq!(&db[..], &buf0[..]);
     }
 
-    // A partial single record write that needs RMW on both ends
-    test write_partial_record(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
-        let mut buf0 = vec![0u8; 4096];
-        let mut rng = thread_rng();
-        for x in &mut buf0 {
-            *x = rng.gen();
-        }
-        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
-        assert_eq!(Ok(4096), r);
-        let buf1 = vec![0u8; 2048];
-        let r = mocks.val.0.write(ino, 512, &buf1[..], 0);
-        assert_eq!(Ok(2048), r);
-
-        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
-        let db = &sglist[0];
-        assert_eq!(&db[0..512], &buf0[0..512]);
-        assert_eq!(&db[512..2560], &buf1[..]);
-        assert_eq!(&db[2560..], &buf0[2560..]);
-    }
-
     // write can RMW BlobExtents
     test write_partial_blob_record(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
@@ -851,6 +830,27 @@ root:
         // Sync the fs to flush the InlineExtent to a BlobExtent
         mocks.val.0.sync();
 
+        let buf1 = vec![0u8; 2048];
+        let r = mocks.val.0.write(ino, 512, &buf1[..], 0);
+        assert_eq!(Ok(2048), r);
+
+        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[0..512], &buf0[0..512]);
+        assert_eq!(&db[512..2560], &buf1[..]);
+        assert_eq!(&db[2560..], &buf0[2560..]);
+    }
+
+    // A partial single record write that needs RMW on both ends
+    test write_partial_record(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
+        let mut buf0 = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf0 {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
+        assert_eq!(Ok(4096), r);
         let buf1 = vec![0u8; 2048];
         let r = mocks.val.0.write(ino, 512, &buf1[..], 0);
         assert_eq!(Ok(2048), r);
