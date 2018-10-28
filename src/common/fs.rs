@@ -270,6 +270,41 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    /// Create a hardlink from `ino` to `parent/name`.
+    pub fn link(&self, parent: u64, ino: u64, name: &OsStr) -> Result<u64, i32>
+    {
+        // Outline:
+        // * Increase the target's link count
+        // * Add the new directory entry
+        let (tx, rx) = oneshot::channel();
+        let name = name.to_owned();
+        self.handle.spawn(
+            self.db.fswrite(self.tree, move |ds| {
+                let inode_key = FSKey::new(ino, ObjKey::Inode);
+                ds.get(inode_key)
+                .and_then(move |r| {
+                    let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
+                    iv.nlink += 1;
+                    let dtype = iv.file_type.dtype();
+                    // FUSE is single-threaded, so we don't have to worry that
+                    // the target gets deleted before we increase its link
+                    // count.  The real VFS will provide a held vnode rather than an
+                    // inode.  So in neither case is there a race here.
+                    let ifut = ds.insert(inode_key, FSValue::Inode(iv));
+
+                    let dirent_objkey = ObjKey::dir_entry(&name);
+                    let dirent = Dirent { ino, dtype, name };
+                    let dirent_key = FSKey::new(parent, dirent_objkey);
+                    let dirent_value = FSValue::DirEntry(dirent);
+                    let dfut = ds.insert(dirent_key, dirent_value);
+
+                    ifut.join(dfut)
+                }).map(move |_| tx.send(Ok(ino)).unwrap())
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     pub fn lookup(&self, parent: u64, name: &OsStr) -> Result<u64, i32>
     {
         let (tx, rx) = oneshot::channel();

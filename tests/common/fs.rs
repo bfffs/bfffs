@@ -374,6 +374,21 @@ root:
         assert_eq!(attr.mode & libc::S_IFMT, libc::S_IFDIR);
     }
 
+    test link(mocks) {
+        let src = OsString::from("src");
+        let dst = OsString::from("dst");
+        let ino = mocks.val.0.create(1, &src, 0o644).unwrap();
+        let l_ino = mocks.val.0.link(1, ino, &dst).unwrap();
+        assert_eq!(ino, l_ino);
+
+        // The target's link count should've increased
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(attr.nlink, 2);
+
+        // The parent should have a new directory entry
+        assert_eq!(mocks.val.0.lookup(1, &dst).unwrap(), ino);
+    }
+
     test mkdir(mocks) {
         let ino = mocks.val.0.mkdir(1, &OsString::from("x"), 0o755).unwrap();
         assert_eq!(mocks.val.0.lookup(1, &OsString::from("x")).unwrap(), ino);

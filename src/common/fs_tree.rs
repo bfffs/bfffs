@@ -181,6 +181,19 @@ pub enum FileType {
 }
 
 impl FileType {
+    /// Return the dtype, as used in directory entries, for this `FileType`
+    pub fn dtype(&self) -> u8 {
+        match self {
+            FileType::Fifo => libc::DT_FIFO,
+            FileType::Char(_) => libc::DT_CHR,
+            FileType::Dir => libc::DT_DIR,
+            FileType::Block(_) => libc::DT_BLK,
+            FileType::Reg => libc::DT_REG,
+            FileType::Link(_) => libc::DT_LNK,
+            FileType::Socket => libc::DT_SOCK,
+        }
+    }
+
     /// The file type part of the mode, as returned by stat(2)
     pub fn mode(&self) -> u16 {
         match self {
