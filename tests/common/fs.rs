@@ -607,6 +607,121 @@ root:
         assert_eq!(Err(libc::ENOENT), mocks.val.0.readlink(1000));
     }
 
+    // Rename a directory.  The target is also a directory
+    test rename_dir_to_dir(mocks) {
+        let src = OsString::from("src");
+        let srcdir = OsString::from("srcdir");
+        let dst = OsString::from("dst");
+        let dstdir = OsString::from("dstdir");
+        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755).unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755).unwrap();
+        let src_ino = mocks.val.0.mkdir(srcdir_ino, &src, 0o755).unwrap();
+        let dst_ino = mocks.val.0.mkdir(dstdir_ino, &dst, 0o755).unwrap();
+
+        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(src_ino));
+        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
+        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(srcdir_inode.nlink, 2);
+        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        assert_eq!(dstdir_inode.nlink, 3);
+        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
+    }
+
+    // Rename a directory.  The target name does not exist
+    test rename_dir_to_nothing(mocks) {
+        let src = OsString::from("src");
+        let srcdir = OsString::from("srcdir");
+        let dst = OsString::from("dst");
+        let dstdir = OsString::from("dstdir");
+        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755).unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755).unwrap();
+        let ino = mocks.val.0.mkdir(srcdir_ino, &src, 0o755).unwrap();
+
+        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(ino));
+        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
+        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(srcdir_inode.nlink, 2);
+        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        assert_eq!(dstdir_inode.nlink, 3);
+    }
+
+    // Rename a non-directory.  The target is also a non-directory
+    test rename_nondir_to_nondir(mocks) {
+        let src = OsString::from("src");
+        let srcdir = OsString::from("srcdir");
+        let dst = OsString::from("dst");
+        let dstdir = OsString::from("dstdir");
+        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755).unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755).unwrap();
+        let src_ino = mocks.val.0.create(srcdir_ino, &src, 0o644).unwrap();
+        let dst_ino = mocks.val.0.create(dstdir_ino, &dst, 0o644).unwrap();
+
+        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(src_ino));
+        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
+        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(srcdir_inode.nlink, 2);
+        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        assert_eq!(dstdir_inode.nlink, 2);
+        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
+    }
+
+    // Rename a non-directory.  The target name does not exist
+    test rename_nondir_to_nothing(mocks) {
+        let src = OsString::from("src");
+        let srcdir = OsString::from("srcdir");
+        let dst = OsString::from("dst");
+        let dstdir = OsString::from("dstdir");
+        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755).unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755).unwrap();
+        let ino = mocks.val.0.create(srcdir_ino, &src, 0o644).unwrap();
+
+        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(ino));
+        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
+        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(srcdir_inode.nlink, 2);
+        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        assert_eq!(dstdir_inode.nlink, 2);
+    }
+
+    // Rename a regular file to a symlink.  Make sure the target is a symlink
+    // afterwards
+    test rename_reg_to_symlink(mocks) {
+        let src = OsString::from("src");
+        let srcdir = OsString::from("srcdir");
+        let dst = OsString::from("dst");
+        let dstdir = OsString::from("dstdir");
+        let linktarget = OsString::from("nonexistent");
+        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755).unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755).unwrap();
+        let src_ino = mocks.val.0.create(srcdir_ino, &src, 0o644).unwrap();
+        let dst_ino = mocks.val.0.symlink(dstdir_ino, &dst, 0o642, &linktarget)
+        .unwrap();
+
+        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(src_ino));
+        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
+        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(srcdir_inode.nlink, 2);
+        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        assert_eq!(dstdir_inode.nlink, 2);
+        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
+        let (de, _) = mocks.val.0.readdir(dstdir_ino, 0, 0)
+            .filter(|r| {
+                let dirent = r.unwrap().0;
+                dirent.d_fileno as u64 == src_ino
+            }).nth(0).unwrap().unwrap();
+        assert_eq!(de.d_type, libc::DT_REG);
+    }
+
     #[cfg_attr(feature = "cargo-clippy",
                allow(clippy::block_in_if_condition_stmt))]
     test rmdir(mocks) {

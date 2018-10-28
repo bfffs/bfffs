@@ -218,6 +218,15 @@ impl Filesystem for FuseFs {
         }
     }
 
+    fn rename(&mut self, _req: &Request, parent: u64, name: &OsStr,
+        newparent: u64, newname: &OsStr, reply: ReplyEmpty)
+    {
+        match self.fs.rename(parent, name, newparent, newname) {
+            Ok(()) => reply.ok(),
+            Err(errno) => reply.error(errno)
+        }
+    }
+
     fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr,
              reply: ReplyEmpty) {
         match self.fs.rmdir(parent, name) {

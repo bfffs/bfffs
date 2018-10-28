@@ -192,6 +192,86 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    /// Actually remove a directory, after all checks have passed
+    fn do_rmdir(dataset: Arc<ReadWriteFilesystem>, parent: u64, ino: u64,
+                dec_nlink: bool)
+        -> impl Future<Item=(), Error=Error> + Send
+    {
+        // Outline:
+        // 1) range_delete its key range
+        // 2) Decrement the parent dir's link count
+
+        // 1) range_delete its key range
+        let ino_fut = dataset.range_delete(FSKey::obj_range(ino));
+
+        // 2) Decrement the parent dir's link count
+        let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
+        let nlink_fut = if dec_nlink {
+            let fut = dataset.get(parent_ino_key)
+            .and_then(move |r| {
+                let mut value = r.unwrap();
+                value.as_mut_inode().unwrap().nlink -= 1;
+                dataset.insert(parent_ino_key, value)
+                .map(|_| ())
+            });
+            Box::new(fut)
+                as Box<Future<Item=_, Error=_> + Send>
+        } else {
+            Box::new(Ok(()).into_future())
+                as Box<Future<Item=_, Error=_> + Send>
+        };
+        ino_fut.join(nlink_fut)
+        .map(|_| ())
+    }
+
+    /// Unlink a file whose inode number is known and whose directory entry is
+    /// already deleted.  Returns the new link count.
+    fn do_unlink(dataset: Arc<ReadWriteFilesystem>, ino: u64)
+        -> impl Future<Item=u64, Error=Error> + Send
+    {
+        // 1) Lookup the inode
+        let key = FSKey::new(ino, ObjKey::Inode);
+        dataset.get(key)
+        .map(move |r| {
+            match r {
+                Some(v) => {
+                    v.as_inode().unwrap().clone()
+                },
+                None => {
+                    panic!("Orphan directory entry")
+                },
+            }
+        }).and_then(move |mut iv| {
+            if iv.nlink > 1 {
+                // 2a) Decrement the link count
+                iv.nlink -= 1;
+                let nlink = iv.nlink;
+                let fut = dataset.insert(key, FSValue::Inode(iv))
+                .map(move |_| nlink);
+                Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+            } else {
+                let dataset2 = dataset.clone();
+                // 2b) delete its blob extents
+                let fut = dataset.range(FSKey::extent_range(ino))
+                .filter_map(move |(_k, v)| {
+                    if let Extent::Blob(be) = v.as_extent().unwrap()
+                    {
+                        Some(be.rid)
+                    } else {
+                        None
+                    }
+                }).and_then(move |rid| {
+                    dataset2.delete_blob(rid)
+                }).collect()
+                .and_then(move |_| {
+                    // 2c) range_delete its key range
+                    dataset.range_delete(FSKey::obj_range(ino))
+                }).map(|_| 0u64);
+                Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+            }
+        })
+    }
+
     pub fn new(database: Arc<Database>, handle: tokio_io_pool::Handle,
                tree: TreeID) -> Self
     {
@@ -309,6 +389,7 @@ impl Fs {
     {
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::dir_entry(name);
+        let owned_name = name.to_owned();
         let key = FSKey::new(parent, objkey);
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
@@ -316,7 +397,11 @@ impl Fs {
                 .then(move |r| {
                     match r {
                         Ok(Some(v)) => {
-                            tx.send(Ok(v.as_direntry().unwrap().ino))
+                            // Verify that the direntry contains the right name
+                            // TODO: deal with hash collisions
+                            let de = v.as_direntry().unwrap();
+                            assert_eq!(de.name, owned_name);
+                            tx.send(Ok(de.ino))
                         },
                         Ok(None) => {
                             tx.send(Err(Error::ENOENT.into()))
@@ -378,6 +463,42 @@ impl Fs {
         .callback(f);
 
         self.do_create(create_args)
+    }
+
+    /// Check that a directory is safe to delete
+    fn ok_to_rmdir(ds: &ReadWriteFilesystem, ino: u64, parent: u64,
+                   name: OsString)
+        -> impl Future<Item=(), Error=Error> + Send
+    {
+        ds.range(FSKey::obj_range(ino))
+        .fold(false, |found_inode, (_, v)| {
+            if let Some(dirent) = v.as_direntry() {
+                if dirent.name != OsStr::new(".") &&
+                   dirent.name != OsStr::new("..") {
+                    Err(Error::ENOTEMPTY).into_future()
+                } else {
+                    Ok(found_inode).into_future()
+                }
+            } else if let Some(inode) = v.as_inode() {
+                // TODO: check permissions, file flags, etc
+                // The VFS should've already checked that inode is a
+                // directory.
+                assert_eq!(inode.file_type, FileType::Dir,
+                           "rmdir of a non-directory");
+                assert_eq!(inode.nlink, 2,
+                    "Hard links to directories are forbidden.  nlink={}",
+                    inode.nlink);
+                Ok(true).into_future()
+            } else {
+                // Probably an extended attribute or something.
+                Ok(found_inode).into_future()
+            }
+        }).map(move |found_inode| {
+            assert!(found_inode,
+                concat!("Inode {} not found, but parent ",
+                        "direntry {}:{:?} exists!"),
+                ino, parent, name);
+        })
     }
 
     pub fn read(&self, ino: u64, offset: u64, mut size: usize)
@@ -552,13 +673,141 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    pub fn rename(&mut self, parent: u64, name: &OsStr,
+        newparent: u64, newname: &OsStr) -> Result<(), i32>
+    {
+        // Outline:
+        // 0)  Check conditions
+        // 1)  Remove the source dirent
+        // 2)  Insert the dst dirent
+        // 3a) If source was a directory decrement parent's nlink
+        // 3b) If source was a directory and target did not exist, increment
+        //     newparent's nlink
+        // 3ci) If dst existed and is not a directory, decrement its link count
+        // 3cii) If dst existed and is a directory, remove it
+        let (tx, rx) = oneshot::channel();
+        let src_objkey = ObjKey::dir_entry(&name);
+        let dst_objkey = ObjKey::dir_entry(&newname);
+        let owned_newname = newname.to_owned();
+        let owned_newname2 = owned_newname.clone();
+        let samedir = parent == newparent;
+        self.handle.spawn(
+            self.db.fswrite(self.tree, move |dataset| {
+                let ds = Arc::new(dataset);
+                let ds4 = ds.clone();
+                let ds5 = ds.clone();
+                let dst_de_key = FSKey::new(newparent, dst_objkey);
+                // 0) Check conditions
+                ds.get(dst_de_key)
+                .and_then(move |r| {
+                    if let Some(v) = r {
+                        let dirent = v.as_direntry().unwrap();
+                        // Is it not a directory?
+                        if dirent.dtype != libc::DT_DIR {
+                            Box::new(Ok(()).into_future())
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        } else {
+                            // Is it a nonempty directory?
+                            Box::new(Fs::ok_to_rmdir(&ds4, dirent.ino,
+                                                     newparent, owned_newname))
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        }
+                    } else {
+                        // Destination doesn't exist.  No problem!
+                        Box::new(Ok(()).into_future())
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    }
+                }).and_then(move |_| {
+                    // 1) Remove the source directory entry
+                    let src_de_key = FSKey::new(parent, src_objkey);
+                    ds5.remove(src_de_key)
+                }).and_then(move |r| {
+                    if let Some(v) = r {
+                        let dirent = v.as_direntry().unwrap();
+                        Ok(dirent.clone()).into_future()
+                    } else {
+                        Err(Error::ENOENT).into_future()
+                    }
+                }).and_then(move |mut dirent| {
+                    // 2) Insert the new directory entry
+                    let isdir = dirent.dtype == libc::DT_DIR;
+                    dirent.name = owned_newname2;
+                    let de_value = FSValue::DirEntry(dirent);
+                    ds.insert(dst_de_key, de_value)
+                    .map(move |r| (r, ds, isdir))
+                }).and_then(move |(r, ds, isdir)| {
+                    let p_nlink_fut = if isdir && !samedir {
+                        // 3a) Decrement parent dir's link count
+                        let ds2 = ds.clone();
+                        let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
+                        let fut = ds.get(parent_ino_key)
+                        .and_then(move |r| {
+                            let mut value = r.unwrap();
+                            value.as_mut_inode().unwrap().nlink -= 1;
+                            ds2.insert(parent_ino_key, value)
+                            .map(|_| ())
+                        });
+                        Box::new(fut)
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    } else {
+                        Box::new(Ok(()).into_future())
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    };
+                    let np_nlink_fut = if isdir && !samedir && !r.is_some() {
+                        // 3b) Increment new parent dir's link count
+                        let ds3 = ds.clone();
+                        let newparent_ino_key = FSKey::new(newparent,
+                                                           ObjKey::Inode);
+                        let fut = ds.get(newparent_ino_key)
+                        .and_then(move |r| {
+                            let mut value = r.unwrap();
+                            value.as_mut_inode().unwrap().nlink += 1;
+                            ds3.insert(newparent_ino_key, value)
+                            .map(|_| ())
+                        });
+                        Box::new(fut)
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    } else {
+                        Box::new(Ok(()).into_future())
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    };
+                    let unlink_fut = if let Some(v) = r {
+                        let dst_ino = v.as_direntry().unwrap().ino;
+                        // 3ci) Decrement old dst's link count
+                        if isdir {
+                            let fut = Fs::do_rmdir(ds, newparent, dst_ino,
+                                                   false);
+                            Box::new(fut)
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        } else {
+                            let fut = Fs::do_unlink(ds.clone(), dst_ino)
+                            .map(|_| ());
+                            Box::new(fut)
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        }
+                    } else {
+                        Box::new(Ok(()).into_future())
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    };
+                    unlink_fut.join3(p_nlink_fut, np_nlink_fut)
+                }).then(move |r| {
+                    match r {
+                        Ok(_) => tx.send(Ok(())),
+                        Err(e) => tx.send(Err(e.into()))
+                    }.expect("FS::rename: send failed");
+                    Ok(()).into_future()
+                })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     pub fn rmdir(&self, parent: u64, name: &OsStr) -> Result<(), i32> {
         // Outline:
         // 1) Lookup the directory
         // 2) Check that the directory is empty
-        // 3) range_delete its key range
-        // 4) Remove the parent dir's dir_entry
-        // 5) Decrement the parent dir's link count
+        // 3) Remove its parent's directory entry
+        // 4) Actually remove it
         let (tx, rx) = oneshot::channel();
         let owned_name = name.to_os_string();
         let objkey = ObjKey::dir_entry(&owned_name);
@@ -579,53 +828,16 @@ impl Fs {
                     }
                 }).and_then(move |ino| {
                     // 2) Check that the directory is empty
-                    ds.range(FSKey::obj_range(ino))
-                    .fold(false, |found_inode, (_, v)| {
-                        if let Some(dirent) = v.as_direntry() {
-                            if dirent.name != OsStr::new(".") &&
-                               dirent.name != OsStr::new("..") {
-                                Err(Error::ENOTEMPTY).into_future()
-                            } else {
-                                Ok(found_inode).into_future()
-                            }
-                        } else if let Some(inode) = v.as_inode() {
-                            // TODO: check permissions, file flags, etc
-                            // The VFS should've already checked that inode is a
-                            // directory.
-                            assert_eq!(inode.file_type, FileType::Dir,
-                                       "rmdir of a non-directory");
-                            assert_eq!(inode.nlink, 2,
-                                concat!("Hard links to directories are ",
-                                        "forbidden.  nlink={}"), inode.nlink);
-                            Ok(true).into_future()
-                        } else {
-                            // Probably an extended attribute or something.
-                            Ok(found_inode).into_future()
-                        }
-                    }).map(move |found_inode| {
-                        assert!(found_inode,
-                            concat!("Inode {} not found, but parent ",
-                                    "direntry {}:{:?} exists!"),
-                                    ino, parent, owned_name);
-                        ino
-                    })
+                    Fs::ok_to_rmdir(&ds, ino, parent, owned_name)
+                    .map(move |_| ino)
                 }).and_then(move |ino| {
-                    // 3) range_delete its key range
-                    let ino_fut = ds2.range_delete(FSKey::obj_range(ino));
-
-                    // 4) Remove the parent dir's dir_entry
+                    // 3) Remove the parent dir's dir_entry
                     let de_key = FSKey::new(parent, objkey);
                     let dirent_fut = ds2.remove(de_key);
 
-                    // 5) Decrement the parent dir's link count
-                    let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
-                    let nlink_fut = ds2.get(parent_ino_key)
-                    .and_then(move |r| {
-                        let mut value = r.unwrap();
-                        value.as_mut_inode().unwrap().nlink -= 1;
-                        ds2.insert(parent_ino_key, value)
-                    });
-                    ino_fut.join3(dirent_fut, nlink_fut)
+                    // 4) Actually remove the directory
+                    let dfut = Fs::do_rmdir(ds2, parent, ino, true);
+                    dirent_fut.join(dfut)
                 }).then(move |r| {
                     match r {
                         Ok(_) => tx.send(Ok(())),
@@ -716,18 +928,12 @@ impl Fs {
     pub fn unlink(&self, parent: u64, name: &OsStr) -> Result<(), i32> {
         // Outline:
         // 1) Lookup and remove the directory entry
-        // 2) Lookup the inode
-        // 3) If link count is > 1
-        //    a) decrement its link count
-        // else
-        //    b) Delete the file's blob extents
-        //    c) range_delete the file's key range
+        // 2) Unlink the Inode
         let (tx, rx) = oneshot::channel();
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
         self.handle.spawn(
-            self.db.fswrite(self.tree, move |ds| {
-                let dataset = Arc::new(ds);
+            self.db.fswrite(self.tree, move |dataset| {
                 // 1) Lookup and remove the directory entry
                 let key = FSKey::new(parent, dekey);
                 dataset.remove(key)
@@ -740,46 +946,8 @@ impl Fs {
                         None => Err(Error::ENOENT).into_future()
                     }
                 }).and_then(move |ino|  {
-                    // 2) Lookup the inode
-                    let dataset2 = dataset.clone();
-                    let key = FSKey::new(ino, ObjKey::Inode);
-                    dataset.get(key)
-                    .map(move |r| {
-                        match r {
-                            Some(v) => {
-                                v.as_inode().unwrap().clone()
-                            },
-                            None => {
-                                panic!("Orphan directory entry")
-                            },
-                        }
-                    }).and_then(move |mut iv| {
-                        if iv.nlink > 1 {
-                            // 3a) Decrement the link count
-                            iv.nlink -= 1;
-                            let fut = dataset2.insert(key, FSValue::Inode(iv))
-                            .map(|_| ());
-                            Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
-                        } else {
-                            // 3b) delete its blob extents
-                            let fut = dataset2.range(FSKey::extent_range(ino))
-                            .filter_map(move |(_k, v)| {
-                                if let Extent::Blob(be) = v.as_extent().unwrap()
-                                {
-                                    Some(be.rid)
-                                } else {
-                                    None
-                                }
-                            }).and_then(move |rid| {
-                                dataset2.delete_blob(rid)
-                            }).collect()
-                            .and_then(move |_| {
-                                // 3c) range_delete its key range
-                                dataset.range_delete(FSKey::obj_range(ino))
-                            });
-                            Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
-                        }
-                    })
+                    // 2) Unlink the inode
+                    Fs::do_unlink(Arc::new(dataset), ino)
                 }).then(move |r| {
                     match r {
                         Ok(_) => tx.send(Ok(())),
