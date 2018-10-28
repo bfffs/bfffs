@@ -715,20 +715,22 @@ impl Fs {
 
     pub fn unlink(&self, parent: u64, name: &OsStr) -> Result<(), i32> {
         // Outline:
-        // 1) Lookup the file
-        // 2) Delete the file's blob extents
-        // 3) range_delete the file's key range
-        // 4) Remove the parent dir's dir_entry
+        // 1) Lookup and remove the directory entry
+        // 2) Lookup the inode
+        // 3) If link count is > 1
+        //    a) decrement its link count
+        // else
+        //    b) Delete the file's blob extents
+        //    c) range_delete the file's key range
         let (tx, rx) = oneshot::channel();
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
                 let dataset = Arc::new(ds);
-                let dataset2 = dataset.clone();
-                // 1) Lookup the file
+                // 1) Lookup and remove the directory entry
                 let key = FSKey::new(parent, dekey);
-                dataset.get(key)
+                dataset.remove(key)
                 .and_then(|r| {
                     match r {
                         Some(v) => {
@@ -738,30 +740,46 @@ impl Fs {
                         None => Err(Error::ENOENT).into_future()
                     }
                 }).and_then(move |ino|  {
-                    // 2) delete its blob extents
-                    dataset2.range(FSKey::extent_range(ino))
-                    .filter_map(move |(_k, v)| {
-                        if let Extent::Blob(be) = v.as_extent().unwrap() {
-                            Some(be.rid)
-                        } else {
-                            None
+                    // 2) Lookup the inode
+                    let dataset2 = dataset.clone();
+                    let key = FSKey::new(ino, ObjKey::Inode);
+                    dataset.get(key)
+                    .map(move |r| {
+                        match r {
+                            Some(v) => {
+                                v.as_inode().unwrap().clone()
+                            },
+                            None => {
+                                panic!("Orphan directory entry")
+                            },
                         }
-                    }).and_then(move |rid| {
-                        dataset2.delete_blob(rid)
-                    }).collect()
-                    .map(move |_| ino)
-                }).and_then(move |ino|  {
-                    // 3) range_delete its key range
-                    // NB: at this point we still don't know if the file is a
-                    // regular file or a directory.  But the VFS should've
-                    // already checked for us.  We don't want to check here,
-                    // because that may cause an additional read from disk.
-                    let ino_fut = dataset.range_delete(FSKey::obj_range(ino));
-                    // 4) Remove the parent dir's dir_entry
-                    let de_key = FSKey::new(parent, dekey);
-                    let dirent_fut = dataset.remove(de_key);
-
-                    ino_fut.join(dirent_fut)
+                    }).and_then(move |mut iv| {
+                        if iv.nlink > 1 {
+                            // 3a) Decrement the link count
+                            iv.nlink -= 1;
+                            let fut = dataset2.insert(key, FSValue::Inode(iv))
+                            .map(|_| ());
+                            Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                        } else {
+                            // 3b) delete its blob extents
+                            let fut = dataset2.range(FSKey::extent_range(ino))
+                            .filter_map(move |(_k, v)| {
+                                if let Extent::Blob(be) = v.as_extent().unwrap()
+                                {
+                                    Some(be.rid)
+                                } else {
+                                    None
+                                }
+                            }).and_then(move |rid| {
+                                dataset2.delete_blob(rid)
+                            }).collect()
+                            .and_then(move |_| {
+                                // 3c) range_delete its key range
+                                dataset.range_delete(FSKey::obj_range(ino))
+                            });
+                            Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                        }
+                    })
                 }).then(move |r| {
                     match r {
                         Ok(_) => tx.send(Ok(())),
@@ -1029,7 +1047,7 @@ fn unlink() {
     let filename = OsString::from("x");
     let filename2 = filename.clone();
 
-    ds.expect_get()
+    ds.expect_remove()
         .called_once()
         .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
         .returning(move |_| {
@@ -1041,6 +1059,27 @@ fn unlink() {
             let v = Some(FSValue::DirEntry(dirent));
             Box::new(Ok(v).into_future())
         });
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(ino, ObjKey::Inode))
+        .returning(move |_| {
+            let now = time::get_time();
+            let inode = Inode {
+                size: 4098,
+                nlink: 1,
+                flags: 0,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                birthtime: now,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Reg,
+                mode: 0o644,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
+
     ds.then().expect_range()
         .called_once()
         .with(FSKey::extent_range(ino))
@@ -1063,14 +1102,46 @@ fn unlink() {
         .called_once()
         .with(FSKey::obj_range(ino))
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.then().expect_remove()
+    let mut opt_ds = Some(ds);
+
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.unlink(1, &filename);
+    assert_eq!(Ok(()), r);
+}
+
+// Unlink of a multiply linked file
+#[test]
+fn unlink_hardlink() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let parent_ino = 1;
+    let ino = 2;
+    let filename = OsString::from("x");
+    let filename2 = filename.clone();
+
+    ds.expect_remove()
         .called_once()
         .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .returning(move |_| {
+            let dirent = Dirent {
+                ino,
+                dtype: libc::DT_REG,
+                name: filename2.clone()
+            };
+            let v = Some(FSValue::DirEntry(dirent));
+            Box::new(Ok(v).into_future())
+        });
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(ino, ObjKey::Inode))
         .returning(move |_| {
             let now = time::get_time();
             let inode = Inode {
                 size: 4098,
-                nlink: 1,
+                nlink: 2,
                 flags: 0,
                 atime: now,
                 mtime: now,
@@ -1083,6 +1154,13 @@ fn unlink() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_inode() &&
+            args.1.as_inode().unwrap().nlink == 1
+        })).returning(|_| Box::new(Ok(None).into_future()));
+
     let mut opt_ds = Some(ds);
 
     db.expect_fswrite()

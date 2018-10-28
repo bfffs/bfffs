@@ -763,6 +763,27 @@ root:
         assert_eq!(e, libc::ENOENT);
     }
 
+    // When unlinking a hardlink, the file should not be removed until its link
+    // count reaches zero.
+    test unlink_hardlink(mocks) {
+        let name1 = OsString::from("name1");
+        let name2 = OsString::from("name2");
+        let ino = mocks.val.0.create(1, &name1, 0o644).unwrap();
+        assert_eq!(mocks.val.0.link(1, ino, &name2).unwrap(), ino);
+
+        mocks.val.0.unlink(1, &name1).unwrap();
+        // File should still exist, now with link count 1.
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(attr.nlink, 1);
+        assert_eq!(mocks.val.0.lookup(1, &name1), Err(libc::ENOENT));
+
+        mocks.val.0.unlink(1, &name2).unwrap();
+        // File should actually be gone now
+        assert_eq!(mocks.val.0.lookup(1, &name1), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(1, &name2), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.getattr(ino), Err(libc::ENOENT));
+    }
+
     // A very simple single record write to an empty file
     test write(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644).unwrap();
@@ -771,8 +792,8 @@ root:
         assert_eq!(Ok(4096), r);
 
         // Check the file size
-        let inode = mocks.val.0.getattr(ino).unwrap();
-        assert_eq!(inode.size, 4096);
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(attr.size, 4096);
 
         let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
         let db = &sglist[0];
