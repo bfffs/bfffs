@@ -218,6 +218,10 @@ impl Filesystem for FuseFs {
         }
     }
 
+    // Note: rename is vulnerable to directory loops when linked against fuse2.
+    // rust-fuse can't yet use fuse3.  See also:
+    // https://github.com/zargony/rust-fuse/pull/97
+    // https://github.com/libfuse/libfuse/commit/d105faf
     fn rename(&mut self, _req: &Request, parent: u64, name: &OsStr,
         newparent: u64, newname: &OsStr, reply: ReplyEmpty)
     {
