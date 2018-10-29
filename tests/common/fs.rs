@@ -629,6 +629,28 @@ root:
         assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
     }
 
+    // Rename a directory.  The target is also a directory that isn't empty.
+    // Nothing should change.
+    test rename_dir_to_nonemptydir(mocks) {
+        let src = OsString::from("src");
+        let srcdir = OsString::from("srcdir");
+        let dst = OsString::from("dst");
+        let dstdir = OsString::from("dstdir");
+        let dstf = OsString::from("dstf");
+        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755).unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755).unwrap();
+        let src_ino = mocks.val.0.mkdir(srcdir_ino, &src, 0o755).unwrap();
+        let dst_ino = mocks.val.0.mkdir(dstdir_ino, &dst, 0o755).unwrap();
+        let dstf_ino = mocks.val.0.create(dst_ino, &dstf, 0o644).unwrap();
+
+        assert_eq!(mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst),
+                   Err(libc::ENOTEMPTY));
+
+        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Ok(src_ino));
+        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(dst_ino));
+        assert_eq!(mocks.val.0.lookup(dst_ino, &dstf), Ok(dstf_ino));
+    }
+
     // Rename a directory.  The target name does not exist
     test rename_dir_to_nothing(mocks) {
         let src = OsString::from("src");
@@ -643,10 +665,30 @@ root:
 
         assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(ino));
         assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
-        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
-        assert_eq!(srcdir_inode.nlink, 2);
-        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
-        assert_eq!(dstdir_inode.nlink, 3);
+        let srcdir_attr = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(srcdir_attr.nlink, 2);
+        let dstdir_attr = mocks.val.0.getattr(dstdir_ino).unwrap();
+        assert_eq!(dstdir_attr.nlink, 3);
+    }
+
+    // Rename a non-directory to a multiply-linked file.  The destination
+    // directory entry should be removed, but not the inode.
+    test rename_nondir_to_hardlink(mocks) {
+        let src = OsString::from("src");
+        let dst = OsString::from("dst");
+        let lnk = OsString::from("lnk");
+        let src_ino = mocks.val.0.create(1, &src, 0o644).unwrap();
+        let dst_ino = mocks.val.0.create(1, &dst, 0o644).unwrap();
+        let lnk_ino = mocks.val.0.link(1, dst_ino, &lnk).unwrap();
+        assert_eq!(dst_ino, lnk_ino);
+
+        mocks.val.0.rename(1, &src, 1, &dst).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(1, &dst), Ok(src_ino));
+        assert_eq!(mocks.val.0.lookup(1, &src), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(1, &lnk), Ok(lnk_ino));
+        let lnk_attr = mocks.val.0.getattr(lnk_ino).unwrap();
+        assert_eq!(lnk_attr.nlink, 1);
     }
 
     // Rename a non-directory.  The target is also a non-directory

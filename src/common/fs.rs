@@ -673,7 +673,7 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn rename(&mut self, parent: u64, name: &OsStr,
+    pub fn rename(&self, parent: u64, name: &OsStr,
         newparent: u64, newname: &OsStr) -> Result<(), i32>
     {
         // Outline:
@@ -1192,6 +1192,91 @@ fn debug_setattr() {
     };
     let s = format!("{:?}", attr);
     assert_eq!("SetAttr { size: None, atime: None, mtime: None, ctime: None, birthtime: None, mode: None, uid: None, gid: None, flags: None }", s);
+}
+
+/// Reading the source returns EIO.  Don't delete the dest
+#[test]
+fn rename_eio() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let srcname = OsString::from("x");
+    let dstname = OsString::from("y");
+    let dst_dirent = Dirent {
+        ino: 3,
+        dtype: libc::DT_REG,
+        name: dstname.clone()
+    };
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::dir_entry(&dstname)))
+        .returning(move |_| {
+            let v = FSValue::DirEntry(dst_dirent.clone());
+            Box::new(Ok(Some(v)).into_future())
+        });
+    ds.then().expect_remove()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::dir_entry(&srcname)))
+        .returning(move |_| {
+            Box::new(Err(Error::EIO).into_future())
+        });
+
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.rename(1, &srcname, 1, &dstname);
+    assert_eq!(Err(libc::EIO), r);
+}
+
+/// Rename a file within the same directory.  The parent directory's inode
+/// should not be modified.
+#[test]
+fn rename_samedir() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let srcname = OsString::from("x");
+    let dstname = OsString::from("y");
+    let src_dirent = Dirent {
+        ino: 2,
+        dtype: libc::DT_REG,
+        name: srcname.clone()
+    };
+    let new_dirent = Dirent {
+        ino: 2,
+        dtype: libc::DT_REG,
+        name: dstname.clone()
+    };
+    let new_de_value = FSValue::DirEntry(new_dirent);
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::dir_entry(&dstname)))
+        .returning(move |_| {
+            Box::new(Ok(None).into_future())
+        });
+    ds.then().expect_remove()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::dir_entry(&srcname)))
+        .returning(move |_| {
+            let v = FSValue::DirEntry(src_dirent.clone());
+            Box::new(Ok(Some(v)).into_future())
+        });
+    ds.then().expect_insert()
+        .called_once()
+        .with((FSKey::new(1, ObjKey::dir_entry(&dstname)), new_de_value))
+        .returning(move |_| {
+            Box::new(Ok(None).into_future())
+        });
+
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.rename(1, &srcname, 1, &dstname);
+    assert_eq!(Ok(()), r);
 }
 
 #[test]
