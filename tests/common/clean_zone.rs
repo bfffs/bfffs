@@ -78,12 +78,12 @@ test_suite! {
     test clean_zone(mocks(1 << 20, 32)) {
         let (db, mut fs, _rt) = mocks.val;
         let small_filename = OsString::from("small");
-        let small_ino = fs.create(1, &small_filename, 0o644).unwrap();
+        let small_ino = fs.create(1, &small_filename, 0o644, 0, 0).unwrap();
         let buf = vec![42u8; 4096];
         fs.write(small_ino, 0, &buf[..], 0).unwrap();
 
         let big_filename = OsString::from("big");
-        let big_ino = fs.create(1, &big_filename, 0o644).unwrap();
+        let big_ino = fs.create(1, &big_filename, 0o644, 0, 0).unwrap();
         for i in 0..18 {
             fs.write(big_ino, i * 4096, &buf[..], 0).unwrap();
         }
@@ -101,7 +101,7 @@ test_suite! {
         let (db, fs, mut rt) = mocks.val;
         for i in 0..16384 {
             let fname = format!("f.{}", i);
-            fs.mkdir(1, &OsString::from(fname), 0o755).unwrap();
+            fs.mkdir(1, &OsString::from(fname), 0o755, 0, 0).unwrap();
         }
         fs.sync();
         for i in 0..8000 {
@@ -133,7 +133,7 @@ test_suite! {
         let (db, fs, _rt) = mocks.val;
         for i in 0..16384 {
             let fname = format!("f.{}", i);
-            fs.mkdir(1, &OsString::from(fname), 0o755).unwrap();
+            fs.mkdir(1, &OsString::from(fname), 0o755, 0, 0).unwrap();
         }
         fs.sync();
         for i in 0..8192 {

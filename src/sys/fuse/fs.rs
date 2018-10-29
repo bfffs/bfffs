@@ -71,13 +71,13 @@ impl FuseFs {
 }
 
 impl Filesystem for FuseFs {
-    fn create(&mut self, _req: &Request, parent: u64, name: &OsStr,
+    fn create(&mut self, req: &Request, parent: u64, name: &OsStr,
               mode: u32, _flags: u32, reply: ReplyCreate) {
         let ttl = Timespec { sec: 0, nsec: 0 };
 
         // FUSE combines the functions of VOP_CREATE and VOP_GETATTR
         // into one.
-        match self.fs.create(parent, name, mode)
+        match self.fs.create(parent, name, mode, req.uid(), req.gid())
             .and_then(|ino| self.do_getattr(ino)) {
             Ok(file_attr) => {
                 // The generation number is only used for filesystems exported
@@ -146,13 +146,13 @@ impl Filesystem for FuseFs {
         }
     }
 
-    fn mkdir(&mut self, _req: &Request, parent: u64, name: &OsStr, mode: u32,
+    fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
                  reply: ReplyEntry)
     {
         let ttl = Timespec { sec: 0, nsec: 0 };
         // FUSE combines the functions of VOP_MKDIR and VOP_GETATTR
         // into one.
-        match self.fs.mkdir(parent, name, mode)
+        match self.fs.mkdir(parent, name, mode, req.uid(), req.gid())
             .and_then(|ino| self.do_getattr(ino)) {
             Ok(file_attr) => {
                 // The generation number is only used for filesystems exported
@@ -288,7 +288,7 @@ impl Filesystem for FuseFs {
                      statvfs.f_namemax as u32, statvfs.f_frsize as u32);
     }
 
-    fn symlink(&mut self, _req: &Request, parent: u64, name: &OsStr,
+    fn symlink(&mut self, req: &Request, parent: u64, name: &OsStr,
                link: &Path, reply: ReplyEntry)
     {
         let ttl = Timespec { sec: 0, nsec: 0 };
@@ -297,7 +297,8 @@ impl Filesystem for FuseFs {
         let mode = 0o755;
         // FUSE combines the functions of VOP_MKDIR and VOP_GETATTR
         // into one.
-        match self.fs.symlink(parent, name, mode, link.as_os_str())
+        match self.fs.symlink(parent, name, mode, req.uid(), req.gid(),
+                              link.as_os_str())
             .and_then(|ino| self.do_getattr(ino))
         {
             Ok(file_attr) => {

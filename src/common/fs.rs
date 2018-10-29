@@ -104,6 +104,8 @@ struct CreateArgs
     flags: u64,
     name: OsString,
     mode: u16,
+    uid: u32,
+    gid: u32,
     nlink: u64,
     // NB: this could be a Box<FnOnce> after bug 28796 is fixed
     // https://github.com/rust-lang/rust/issues/28796
@@ -132,12 +134,12 @@ impl CreateArgs {
         //self
     //}
 
-    pub fn new(parent: u64, dtype: u8, name: &OsStr, mode: u16,
-               file_type: FileType) -> Self
+    pub fn new(parent: u64, dtype: u8, name: &OsStr, mode: u16, uid: u32,
+               gid: u32, file_type: FileType) -> Self
     {
         let cb = Box::new(CreateArgs::default_cb);
         CreateArgs{parent, dtype, flags: 0, name: name.to_owned(), mode,
-                   file_type, nlink: 1, cb}
+                   file_type, uid, gid, nlink: 1, cb}
     }
 
     pub fn nlink(mut self, nlink: u64) -> Self {
@@ -162,8 +164,8 @@ impl Fs {
             mtime: now,
             ctime: now,
             birthtime: now,
-            uid: 0,
-            gid: 0,
+            uid: args.uid,
+            gid: args.gid,
             mode: args.mode & 0o7777,
             file_type: args.file_type
         };
@@ -293,12 +295,12 @@ impl Fs {
 }
 
 impl Fs {
-    pub fn create(&self, parent: u64, name: &OsStr, mode: u32)
-        -> Result<u64, i32>
+    pub fn create(&self, parent: u64, name: &OsStr, mode: u32, uid: u32,
+                  gid: u32) -> Result<u64, i32>
     {
         let file_type = FileType::Reg;
         let create_args = CreateArgs::new(parent, libc::DT_REG, name,
-                       mode as u16, file_type);
+                       mode as u16, uid, gid, file_type);
         self.do_create(create_args)
     }
 
@@ -417,8 +419,8 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn mkdir(&self, parent: u64, name: &OsStr, mode: u32)
-        -> Result<u64, i32>
+    pub fn mkdir(&self, parent: u64, name: &OsStr, mode: u32, uid: u32,
+                 gid: u32) -> Result<u64, i32>
     {
         let nlink = 2;  // One for the parent dir, and one for "."
 
@@ -458,7 +460,7 @@ impl Fs {
         };
 
         let create_args = CreateArgs::new(parent, libc::DT_DIR, name,
-                       mode as u16, FileType::Dir)
+                       mode as u16, uid, gid, FileType::Dir)
         .nlink(nlink)
         .callback(f);
 
@@ -906,12 +908,12 @@ impl Fs {
 
     /// Create a symlink from `name` to `link`.  Returns the link's inode on
     /// success, or an errno on failure.
-    pub fn symlink(&self, parent: u64, name: &OsStr, mode: u32, link: &OsStr)
-        -> Result<u64, i32>
+    pub fn symlink(&self, parent: u64, name: &OsStr, mode: u32, uid: u32,
+                   gid: u32, link: &OsStr) -> Result<u64, i32>
     {
         let file_type = FileType::Link(link.to_os_string());
         let create_args = CreateArgs::new(parent, libc::DT_LNK, name,
-                                          mode as u16, file_type);
+                                          mode as u16, uid, gid, file_type);
         self.do_create(create_args)
     }
 
@@ -1135,7 +1137,9 @@ fn create() {
             args.1.as_inode().unwrap().size == 0 &&
             args.1.as_inode().unwrap().nlink == 1 &&
             args.1.as_inode().unwrap().file_type == FileType::Reg &&
-            args.1.as_inode().unwrap().mode == 0o644
+            args.1.as_inode().unwrap().mode == 0o644 &&
+            args.1.as_inode().unwrap().uid == 123 &&
+            args.1.as_inode().unwrap().gid == 456
         })).returning(|_| Box::new(Ok(None).into_future()));
     ds.then().expect_insert()
         .called_once()
@@ -1151,7 +1155,7 @@ fn create() {
         .returning(move |_| opt_ds.take().unwrap());
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    assert_eq!(ino, fs.create(1, &filename, 0o644).unwrap());
+    assert_eq!(ino, fs.create(1, &filename, 0o644, 123, 456).unwrap());
 }
 
 // Pet kcov
