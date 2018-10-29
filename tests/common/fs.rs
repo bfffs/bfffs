@@ -97,7 +97,7 @@ test_suite! {
         .unwrap();
         // Zero out the timestamp strings
         let attr = SetAttr {
-            mode: None,
+            perm: None,
             uid: None,
             gid: None,
             size: None,
@@ -196,7 +196,7 @@ root:
             nsec: 0
           uid: 0
           gid: 0
-          mode: 493
+          perm: 493
           file_type: Dir
       36925132825777658659:
         DirEntry:
@@ -235,7 +235,7 @@ root:
             nsec: 0
           uid: 1
           gid: 2
-          mode: 493
+          perm: 493
           file_type: Dir
       55371876899487210275:
         DirEntry:
@@ -271,7 +271,7 @@ root:
             nsec: 0
           uid: 3
           gid: 4
-          mode: 493
+          perm: 493
           file_type: Dir
       73818620973196761891:
         DirEntry:
@@ -307,7 +307,7 @@ root:
             nsec: 0
           uid: 5
           gid: 6
-          mode: 493
+          perm: 493
           file_type: Dir
       92265365046906313507:
         DirEntry:
@@ -343,7 +343,7 @@ root:
             nsec: 0
           uid: 7
           gid: 8
-          mode: 493
+          perm: 493
           file_type: Dir
 ---
 2:
@@ -375,8 +375,8 @@ root:
         assert!(attr.birthtime.sec > 0);
         assert_eq!(attr.uid, 0);
         assert_eq!(attr.gid, 0);
-        assert_eq!(attr.mode & 0o7777, 0o755);
-        assert_eq!(attr.mode & libc::S_IFMT, libc::S_IFDIR);
+        assert_eq!(attr.mode.perm(), 0o755);
+        assert_eq!(attr.mode.file_type(), libc::S_IFDIR);
     }
 
     test link(mocks) {
@@ -852,7 +852,7 @@ root:
         let filename = OsString::from("x");
         let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0)
         .unwrap();
-        let mode = 0o1357;
+        let perm = 0o1357;
         let uid = 12345;
         let gid = 54321;
         let size = 9999;
@@ -873,13 +873,13 @@ root:
             assert_eq!(attr.birthtime, birthtime);
             assert_eq!(attr.uid, uid);
             assert_eq!(attr.gid, gid);
-            assert_eq!(attr.mode & 0o7777, mode);
+            assert_eq!(attr.mode.file_type(), libc::S_IFREG);
+            assert_eq!(attr.mode.perm(), perm);
             assert_eq!(attr.size, size);
-            assert_eq!(attr.mode & libc::S_IFMT, libc::S_IFREG);
         };
 
         let attr = SetAttr {
-            mode: Some(mode),
+            perm: Some(perm),
             uid: Some(uid),
             gid: Some(gid),
             size: Some(size),
@@ -895,7 +895,7 @@ root:
 
         // Now test using setattr to update nothing
         let attr = SetAttr {
-            mode: None,
+            perm: None,
             uid: None,
             gid: None,
             size: None,
@@ -938,7 +938,7 @@ root:
         assert_eq!(u64::from(dirent.d_fileno), ino);
 
         let attr = mocks.val.0.getattr(ino).unwrap();
-        assert_eq!(attr.mode, libc::S_IFLNK | 0o642);
+        assert_eq!(attr.mode.0, libc::S_IFLNK | 0o642);
     }
 
     test unlink(mocks) {

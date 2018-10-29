@@ -315,7 +315,7 @@ impl Database {
                 uid: 0,
                 gid: 0,
                 file_type: FileType::Dir,
-                mode: 0o755
+                perm: 0o755
             };
             let inode_value = FSValue::Inode(inode);
 

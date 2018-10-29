@@ -233,8 +233,8 @@ pub struct Inode {
     pub uid:        u32,
     /// Group id
     pub gid:        u32,
-    /// File mode, low twelve bits only
-    pub mode:       u16,
+    /// File permissions, the low twelve bits of mode
+    pub perm:       u16,
     /// File type.  Regular, directory, etc
     pub file_type:   FileType
 }

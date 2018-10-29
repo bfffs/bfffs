@@ -2,6 +2,7 @@
 //! Common VFS implementation
 
 use atomic::*;
+use bitfield::*;
 use crate::common::*;
 #[cfg(not(test))] use crate::common::database::*;
 #[cfg(test)] use crate::common::database_mock::DatabaseMock as Database;
@@ -42,6 +43,21 @@ pub struct Fs {
     tree: TreeID,
 }
 
+bitfield! {
+    /// File mode, including permissions and file type
+    #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+    pub struct Mode(u16);
+    impl Debug;
+    pub perm, _: 11, 0;
+}
+impl Mode {
+    // Access the `file_type` field without shifting, so we can compare it to
+    // the libc::S_IF* constants.
+    pub fn file_type(&self) -> u16 {
+        self.0 & libc::S_IFMT
+    }
+}
+
 /// File attributes, as returned by `getattr`
 #[derive(Debug, PartialEq)]
 pub struct GetAttr {
@@ -58,8 +74,8 @@ pub struct GetAttr {
     pub ctime:      time::Timespec,
     /// birth time
     pub birthtime:  time::Timespec,
-    /// File mode
-    pub mode:       u16,
+    /// File mode as returned by stat(2)
+    pub mode: Mode,
     /// Link count
     pub nlink:      u64,
     /// user id
@@ -85,8 +101,8 @@ pub struct SetAttr {
     pub ctime:      Option<time::Timespec>,
     /// birth time
     pub birthtime:  Option<time::Timespec>,
-    /// File mode
-    pub mode:       Option<u16>,
+    /// File permissions
+    pub perm:       Option<u16>,
     /// user id
     pub uid:        Option<u32>,
     /// Group id
@@ -103,7 +119,7 @@ struct CreateArgs
     file_type: FileType,
     flags: u64,
     name: OsString,
-    mode: u16,
+    perm: u16,
     uid: u32,
     gid: u32,
     nlink: u64,
@@ -134,11 +150,11 @@ impl CreateArgs {
         //self
     //}
 
-    pub fn new(parent: u64, dtype: u8, name: &OsStr, mode: u16, uid: u32,
+    pub fn new(parent: u64, dtype: u8, name: &OsStr, perm: u16, uid: u32,
                gid: u32, file_type: FileType) -> Self
     {
         let cb = Box::new(CreateArgs::default_cb);
-        CreateArgs{parent, dtype, flags: 0, name: name.to_owned(), mode,
+        CreateArgs{parent, dtype, flags: 0, name: name.to_owned(), perm,
                    file_type, uid, gid, nlink: 1, cb}
     }
 
@@ -166,7 +182,7 @@ impl Fs {
             birthtime: now,
             uid: args.uid,
             gid: args.gid,
-            mode: args.mode & 0o7777,
+            perm: args.perm,
             file_type: args.file_type
         };
         let inode_value = FSValue::Inode(inode);
@@ -295,12 +311,12 @@ impl Fs {
 }
 
 impl Fs {
-    pub fn create(&self, parent: u64, name: &OsStr, mode: u32, uid: u32,
+    pub fn create(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
                   gid: u32) -> Result<u64, i32>
     {
         let file_type = FileType::Reg;
         let create_args = CreateArgs::new(parent, libc::DT_REG, name,
-                       mode as u16, uid, gid, file_type);
+                       perm, uid, gid, file_type);
         self.do_create(create_args)
     }
 
@@ -320,7 +336,6 @@ impl Fs {
                     match r {
                         Ok(Some(v)) => {
                             let inode = v.as_inode().unwrap();
-                            let mode = inode.file_type.mode() | inode.mode;
                             let attr = GetAttr {
                                 ino,
                                 size: inode.size,
@@ -329,7 +344,7 @@ impl Fs {
                                 mtime: inode.mtime,
                                 ctime: inode.ctime,
                                 birthtime: inode.birthtime,
-                                mode,
+                                mode: Mode(inode.file_type.mode() | inode.perm),
                                 nlink: inode.nlink,
                                 uid: inode.uid,
                                 gid: inode.gid,
@@ -419,7 +434,7 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn mkdir(&self, parent: u64, name: &OsStr, mode: u32, uid: u32,
+    pub fn mkdir(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
                  gid: u32) -> Result<u64, i32>
     {
         let nlink = 2;  // One for the parent dir, and one for "."
@@ -460,7 +475,7 @@ impl Fs {
         };
 
         let create_args = CreateArgs::new(parent, libc::DT_DIR, name,
-                       mode as u16, uid, gid, FileType::Dir)
+                       perm, uid, gid, FileType::Dir)
         .nlink(nlink)
         .callback(f);
 
@@ -861,9 +876,7 @@ impl Fs {
                 dataset.get(inode_key)
                 .and_then(move |r| {
                     let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
-                    if let Some(m) = attr.mode {
-                        iv.mode = m & 0o7777;
-                    }
+                    iv.perm = attr.perm.unwrap_or(iv.perm);
                     iv.uid = attr.uid.unwrap_or(iv.uid);
                     iv.gid = attr.gid.unwrap_or(iv.gid);
                     iv.size = attr.size.unwrap_or(iv.size);
@@ -908,12 +921,12 @@ impl Fs {
 
     /// Create a symlink from `name` to `link`.  Returns the link's inode on
     /// success, or an errno on failure.
-    pub fn symlink(&self, parent: u64, name: &OsStr, mode: u32, uid: u32,
+    pub fn symlink(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
                    gid: u32, link: &OsStr) -> Result<u64, i32>
     {
         let file_type = FileType::Link(link.to_os_string());
         let create_args = CreateArgs::new(parent, libc::DT_LNK, name,
-                                          mode as u16, uid, gid, file_type);
+                                          perm, uid, gid, file_type);
         self.do_create(create_args)
     }
 
@@ -1137,7 +1150,7 @@ fn create() {
             args.1.as_inode().unwrap().size == 0 &&
             args.1.as_inode().unwrap().nlink == 1 &&
             args.1.as_inode().unwrap().file_type == FileType::Reg &&
-            args.1.as_inode().unwrap().mode == 0o644 &&
+            args.1.as_inode().unwrap().perm == 0o644 &&
             args.1.as_inode().unwrap().uid == 123 &&
             args.1.as_inode().unwrap().gid == 456
         })).returning(|_| Box::new(Ok(None).into_future()));
@@ -1169,7 +1182,7 @@ fn debug_getattr() {
         mtime: time::Timespec::new(3, 4),
         ctime: time::Timespec::new(5, 6),
         birthtime: time::Timespec::new(7, 8),
-        mode: libc::S_IFREG | 0o644,
+        mode: Mode(libc::S_IFREG | 0o644),
         nlink: 1,
         uid: 1000,
         gid: 1000,
@@ -1177,7 +1190,7 @@ fn debug_getattr() {
         flags: 0,
     };
     let s = format!("{:?}", attr);
-    assert_eq!("GetAttr { ino: 1, size: 4096, blocks: 1, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: 33188, nlink: 1, uid: 1000, gid: 1000, rdev: 0, flags: 0 }", s);
+    assert_eq!("GetAttr { ino: 1, size: 4096, blocks: 1, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: Mode { .0: 33188, perm: 420 }, nlink: 1, uid: 1000, gid: 1000, rdev: 0, flags: 0 }", s);
 }
 
 // Pet kcov
@@ -1189,13 +1202,13 @@ fn debug_setattr() {
         mtime: None,
         ctime: None,
         birthtime: None,
-        mode: None,
+        perm: None,
         uid: None,
         gid: None,
         flags: None,
     };
     let s = format!("{:?}", attr);
-    assert_eq!("SetAttr { size: None, atime: None, mtime: None, ctime: None, birthtime: None, mode: None, uid: None, gid: None, flags: None }", s);
+    assert_eq!("SetAttr { size: None, atime: None, mtime: None, ctime: None, birthtime: None, perm: None, uid: None, gid: None, flags: None }", s);
 }
 
 /// Reading the source returns EIO.  Don't delete the dest
@@ -1332,7 +1345,7 @@ fn unlink() {
                 uid: 0,
                 gid: 0,
                 file_type: FileType::Reg,
-                mode: 0o644,
+                perm: 0o644,
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
@@ -1407,7 +1420,7 @@ fn unlink_hardlink() {
                 uid: 0,
                 gid: 0,
                 file_type: FileType::Reg,
-                mode: 0o644,
+                perm: 0o644,
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });

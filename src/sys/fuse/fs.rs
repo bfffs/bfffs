@@ -30,7 +30,7 @@ impl FuseFs {
     fn do_getattr(&self, ino: u64) -> Result<FileAttr, i32> {
         match self.fs.getattr(ino) {
             Ok(attr) => {
-                let kind = match attr.mode & libc::S_IFMT {
+                let kind = match attr.mode.file_type() {
                     libc::S_IFIFO => FileType::NamedPipe,
                     libc::S_IFCHR => FileType::CharDevice,
                     libc::S_IFDIR => FileType::Directory,
@@ -38,7 +38,8 @@ impl FuseFs {
                     libc::S_IFREG => FileType::RegularFile,
                     libc::S_IFLNK => FileType::Symlink,
                     libc::S_IFSOCK => FileType::Socket,
-                    _ => panic!("Unknown file mode {:?}", attr.mode)
+                    _ => panic!("Unknown file type 0o{:o}",
+                                attr.mode.file_type())
                 };
                 let reply_attr = FileAttr {
                     ino: attr.ino,
@@ -49,7 +50,7 @@ impl FuseFs {
                     ctime: attr.ctime,
                     crtime: attr.birthtime,
                     kind,
-                    perm: (attr.mode & 0o7777) as u16,
+                    perm: attr.mode.perm(),
                     nlink: attr.nlink as u32,
                     uid: attr.uid,
                     gid: attr.gid,
@@ -95,7 +96,8 @@ impl Filesystem for FuseFs {
 
         // FUSE combines the functions of VOP_CREATE and VOP_GETATTR
         // into one.
-        match self.fs.create(parent, name, mode, req.uid(), req.gid())
+        let perm = (mode & 0o7777) as u16;
+        match self.fs.create(parent, name, perm, req.uid(), req.gid())
             .and_then(|ino| self.do_getattr(ino)) {
             Ok(file_attr) => {
                 // The generation number is only used for filesystems exported
@@ -137,7 +139,8 @@ impl Filesystem for FuseFs {
     fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
                  reply: ReplyEntry)
     {
-        let r = self.fs.mkdir(parent, name, mode, req.uid(), req.gid());
+        let perm = (mode & 0o7777) as u16;
+        let r = self.fs.mkdir(parent, name, perm, req.uid(), req.gid());
         self.reply_entry(r, reply);
     }
 
@@ -230,7 +233,7 @@ impl Filesystem for FuseFs {
                reply: ReplyAttr)
     {
         let attr = SetAttr {
-            mode: mode.map(|m| m as u16),
+            perm: mode.map(|m| (m & 0o7777) as u16),
             uid,
             gid,
             size,
@@ -267,8 +270,8 @@ impl Filesystem for FuseFs {
     {
         // Weirdly, FUSE doesn't supply the symlink's mode.  Use a sensible
         // default.
-        let mode = 0o755;
-        let r = self.fs.symlink(parent, name, mode, req.uid(), req.gid(),
+        let perm = 0o755;
+        let r = self.fs.symlink(parent, name, perm, req.uid(), req.gid(),
                                 link.as_os_str());
         self.reply_entry(r, reply);
     }
