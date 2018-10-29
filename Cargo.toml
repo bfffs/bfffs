@@ -10,7 +10,7 @@ mocks = ["mockers", "mockers_derive"]
 [dependencies]
 atomic = "0.3"
 bincode = { version = "1.0.1", features = ["i128"] }
-bitfield = "0.13"
+bitfield = "0.13.1"
 blosc = "0.1"
 byteorder = "1.2.3"
 divbuf = "0.3"
@@ -76,4 +76,3 @@ members = ["isa-l"]
 
 [patch.crates-io]
 simulacrum_mock = { git = "https://github.com/pcsm/simulacrum/", rev = "872b48d" }
-bitfield = { git = "https://github.com/dzamlo/rust-bitfield.git", rev = "233c81a" }
