@@ -441,6 +441,96 @@ root:
         assert_eq!(parent_attr.nlink, 2);
     }
 
+    test mkchar(mocks) {
+        let ino = mocks.val.0.mkchar(1, &OsString::from("x"), 0o644, 0, 0, 42)
+        .unwrap();
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(attr.mode.0, libc::S_IFCHR | 0o644);
+        assert_eq!(attr.rdev, 42);
+
+        // The parent dir should have an "x" directory entry
+        let entries = mocks.val.0.readdir(1, 0, 0);
+        let (dirent, _ofs) = entries
+        .map(|r| r.unwrap())
+        .filter(|(dirent, _ofs)| {
+            dirent.d_name[0] == 'x' as i8
+        }).nth(0)
+        .expect("'x' directory entry not found");
+        assert_eq!(dirent.d_type, libc::DT_CHR);
+        let dirent_name = unsafe{
+            CStr::from_ptr(&dirent.d_name as *const c_char)
+        };
+        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(u64::from(dirent.d_fileno), ino);
+    }
+
+    test mkblock(mocks) {
+        let ino = mocks.val.0.mkblock(1, &OsString::from("x"), 0o644, 0, 0, 42)
+        .unwrap();
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(attr.mode.0, libc::S_IFBLK | 0o644);
+        assert_eq!(attr.rdev, 42);
+
+        // The parent dir should have an "x" directory entry
+        let entries = mocks.val.0.readdir(1, 0, 0);
+        let (dirent, _ofs) = entries
+        .map(|r| r.unwrap())
+        .filter(|(dirent, _ofs)| {
+            dirent.d_name[0] == 'x' as i8
+        }).nth(0)
+        .expect("'x' directory entry not found");
+        assert_eq!(dirent.d_type, libc::DT_BLK);
+        let dirent_name = unsafe{
+            CStr::from_ptr(&dirent.d_name as *const c_char)
+        };
+        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(u64::from(dirent.d_fileno), ino);
+    }
+
+    test mkfifo(mocks) {
+        let ino = mocks.val.0.mkfifo(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(attr.mode.0, libc::S_IFIFO | 0o644);
+
+        // The parent dir should have an "x" directory entry
+        let entries = mocks.val.0.readdir(1, 0, 0);
+        let (dirent, _ofs) = entries
+        .map(|r| r.unwrap())
+        .filter(|(dirent, _ofs)| {
+            dirent.d_name[0] == 'x' as i8
+        }).nth(0)
+        .expect("'x' directory entry not found");
+        assert_eq!(dirent.d_type, libc::DT_FIFO);
+        let dirent_name = unsafe{
+            CStr::from_ptr(&dirent.d_name as *const c_char)
+        };
+        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(u64::from(dirent.d_fileno), ino);
+    }
+
+    test mksock(mocks) {
+        let ino = mocks.val.0.mksock(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let attr = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(attr.mode.0, libc::S_IFSOCK | 0o644);
+
+        // The parent dir should have an "x" directory entry
+        let entries = mocks.val.0.readdir(1, 0, 0);
+        let (dirent, _ofs) = entries
+        .map(|r| r.unwrap())
+        .filter(|(dirent, _ofs)| {
+            dirent.d_name[0] == 'x' as i8
+        }).nth(0)
+        .expect("'x' directory entry not found");
+        assert_eq!(dirent.d_type, libc::DT_SOCK);
+        let dirent_name = unsafe{
+            CStr::from_ptr(&dirent.d_name as *const c_char)
+        };
+        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(u64::from(dirent.d_fileno), ino);
+    }
+
     // Read a single BlobExtent record
     test read_blob(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)

@@ -115,7 +115,6 @@ pub struct SetAttr {
 struct CreateArgs
 {
     parent: u64,
-    dtype: u8,
     file_type: FileType,
     flags: u64,
     name: OsString,
@@ -150,11 +149,11 @@ impl CreateArgs {
         //self
     //}
 
-    pub fn new(parent: u64, dtype: u8, name: &OsStr, perm: u16, uid: u32,
+    pub fn new(parent: u64, name: &OsStr, perm: u16, uid: u32,
                gid: u32, file_type: FileType) -> Self
     {
         let cb = Box::new(CreateArgs::default_cb);
-        CreateArgs{parent, dtype, flags: 0, name: name.to_owned(), perm,
+        CreateArgs{parent, flags: 0, name: name.to_owned(), perm,
                    file_type, uid, gid, nlink: 1, cb}
     }
 
@@ -171,6 +170,15 @@ impl Fs {
         let (tx, rx) = oneshot::channel();
         let ino = self.next_object();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
+        let parent_dirent_objkey = ObjKey::dir_entry(&args.name);
+        let parent_dirent = Dirent {
+            ino,
+            dtype: args.file_type.dtype(),
+            name:   args.name
+        };
+        let parent_dirent_key = FSKey::new(args.parent, parent_dirent_objkey);
+        let parent_dirent_value = FSValue::DirEntry(parent_dirent);
+
         let now = time::get_time();
         let inode = Inode {
             size: 0,
@@ -186,15 +194,6 @@ impl Fs {
             file_type: args.file_type
         };
         let inode_value = FSValue::Inode(inode);
-
-        let parent_dirent_objkey = ObjKey::dir_entry(&args.name);
-        let parent_dirent = Dirent {
-            ino,
-            dtype: args.dtype,
-            name:   args.name
-        };
-        let parent_dirent_key = FSKey::new(args.parent, parent_dirent_objkey);
-        let parent_dirent_value = FSValue::DirEntry(parent_dirent);
 
         let cb = args.cb;
         self.handle.spawn(
@@ -314,9 +313,8 @@ impl Fs {
     pub fn create(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
                   gid: u32) -> Result<u64, i32>
     {
-        let file_type = FileType::Reg;
-        let create_args = CreateArgs::new(parent, libc::DT_REG, name,
-                       perm, uid, gid, file_type);
+        let create_args = CreateArgs::new(parent, name, perm, uid, gid,
+                                          FileType::Reg);
         self.do_create(create_args)
     }
 
@@ -336,6 +334,10 @@ impl Fs {
                     match r {
                         Ok(Some(v)) => {
                             let inode = v.as_inode().unwrap();
+                            let rdev = match inode.file_type {
+                                FileType::Char(x) | FileType::Block(x) => x,
+                                _ => 0
+                            };
                             let attr = GetAttr {
                                 ino,
                                 size: inode.size,
@@ -348,7 +350,7 @@ impl Fs {
                                 nlink: inode.nlink,
                                 uid: inode.uid,
                                 gid: inode.gid,
-                                rdev: 0,
+                                rdev,
                                 flags: inode.flags,
                             };
                             tx.send(Ok(attr))
@@ -474,11 +476,45 @@ impl Fs {
             Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
         };
 
-        let create_args = CreateArgs::new(parent, libc::DT_DIR, name,
-                       perm, uid, gid, FileType::Dir)
+        let create_args = CreateArgs::new(parent, name, perm, uid, gid,
+                                          FileType::Dir)
         .nlink(nlink)
         .callback(f);
 
+        self.do_create(create_args)
+    }
+
+    /// Make a block device
+    pub fn mkblock(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
+                   gid: u32, rdev: u32) -> Result<u64, i32>
+    {
+        let create_args = CreateArgs::new(parent, name, perm, uid, gid,
+                                          FileType::Block(rdev));
+        self.do_create(create_args)
+    }
+
+    /// Make a character device
+    pub fn mkchar(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32, rdev: u32) -> Result<u64, i32>
+    {
+        let create_args = CreateArgs::new(parent, name, perm, uid, gid,
+                                          FileType::Char(rdev));
+        self.do_create(create_args)
+    }
+
+    pub fn mkfifo(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32) -> Result<u64, i32>
+    {
+        let create_args = CreateArgs::new(parent, name, perm, uid, gid,
+                                          FileType::Fifo);
+        self.do_create(create_args)
+    }
+
+    pub fn mksock(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32) -> Result<u64, i32>
+    {
+        let create_args = CreateArgs::new(parent, name, perm, uid, gid,
+                                          FileType::Socket);
         self.do_create(create_args)
     }
 
@@ -925,8 +961,8 @@ impl Fs {
                    gid: u32, link: &OsStr) -> Result<u64, i32>
     {
         let file_type = FileType::Link(link.to_os_string());
-        let create_args = CreateArgs::new(parent, libc::DT_LNK, name,
-                                          perm, uid, gid, file_type);
+        let create_args = CreateArgs::new(parent, name, perm, uid, gid,
+                                          file_type);
         self.do_create(create_args)
     }
 

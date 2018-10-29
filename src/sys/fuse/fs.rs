@@ -144,6 +144,24 @@ impl Filesystem for FuseFs {
         self.reply_entry(r, reply);
     }
 
+    fn mknod(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
+             rdev: u32, reply: ReplyEntry)
+    {
+        let perm = (mode & 0o7777) as u16;
+        let r = match mode as u16 & libc::S_IFMT {
+            libc::S_IFIFO =>
+                self.fs.mkfifo(parent, name, perm, req.uid(), req.gid()),
+            libc::S_IFCHR =>
+                self.fs.mkchar(parent, name, perm, req.uid(), req.gid(), rdev),
+            libc::S_IFBLK =>
+                self.fs.mkblock(parent, name, perm, req.uid(), req.gid(), rdev),
+            libc::S_IFSOCK =>
+                self.fs.mksock(parent, name, perm, req.uid(), req.gid()),
+            _ => Err(libc::EOPNOTSUPP)
+        };
+        self.reply_entry(r, reply);
+    }
+
     fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
             size: u32, reply: ReplyData)
     {
