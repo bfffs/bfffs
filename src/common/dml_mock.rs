@@ -5,6 +5,7 @@ use crate::common::cache::{Cacheable, CacheRef};
 use crate::common::dml::*;
 use futures::Future;
 use simulacrum::*;
+use std::any;
 
 /// A very simple mock object that implements `DML` and nothing else.
 pub struct DMLMock {
@@ -38,20 +39,21 @@ impl DMLMock {
     }
 
     // Due to a bug in Simulacrum, mocking DDML::put is way overcomplicated.
-    // The test method must first call `expect_put_type` with the type to be
-    // mocked, and a name for it.  Then `expect_put` and `put` can be used like
-    // normal.
     //
     // Simulacrum can't mock a single generic method with different type
-    // parameters more than once in the same test
+    // parameters more than once in the same test.  The workaround is to
+    // dynamically construct the method name.
     // https://github.com/pcsm/simulacrum/issues/55"]
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
         Box<Future<Item=u32, Error=Error> + Send>>
     {
-        let method_name = &"put";
         self.e.expect::<(T, Compression, TxgT),
                         Box<Future<Item=u32, Error=Error> + Send>>
-            (method_name)
+            (&DMLMock::generic_method_name::<T>())
+    }
+
+    fn generic_method_name<T: 'static + ?Sized>() -> String {
+        format!("put::<{:?}>", any::TypeId::of::<T>())
     }
 
     pub fn new() -> Self {
@@ -101,10 +103,10 @@ impl DML for DMLMock {
                          txg:TxgT)
         -> Box<Future<Item=u32, Error=Error> + Send>
     {
-        let method_name = &"put";
+        let method_name = DMLMock::generic_method_name::<T>();
         self.e.was_called_returning::<(T, Compression, TxgT),
             (Box<Future<Item=u32, Error=Error> + Send>)>
-            (method_name, (cacheable, compression, txg))
+            (&method_name, (cacheable, compression, txg))
     }
 
     fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error> + Send>

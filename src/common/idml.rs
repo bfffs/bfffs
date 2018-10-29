@@ -1119,10 +1119,6 @@ mod t {
         let mut ddml = DDML::new();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdead_beef);
-        ddml.expect_put_type::<Arc<tree::Node<DRP, RID, RidtEntry>>>
-            ("put_ridt");
-        ddml.expect_put_type::<Arc<tree::Node<DRP, PBA, RID>>>
-            ("put_alloct");
         ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
             .called_any()
             .with(params!(any(), any(), TxgT::from(42)))

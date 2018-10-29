@@ -75,4 +75,4 @@ lto = true
 members = ["isa-l"]
 
 [patch.crates-io]
-simulacrum_mock = { git = "https://github.com/pcsm/simulacrum/", rev = "872b48d" }
+simulacrum_mock = { git = "https://github.com/pcsm/simulacrum/", rev = "13416e9" }
