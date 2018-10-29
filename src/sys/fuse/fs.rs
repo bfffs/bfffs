@@ -68,6 +68,24 @@ impl FuseFs {
         let fs = Fs::new(database, handle, tree);
         FuseFs{fs}
     }
+
+    /// Private helper for FUSE methods that take a `ReplyEntry`
+    fn reply_entry(&self, r: Result<u64, i32>, reply: ReplyEntry) {
+        // FUSE combines the function of VOP_GETATTR with many other VOPs.
+        match r.and_then(|ino| self.do_getattr(ino)) {
+            Ok(file_attr) => {
+                // The generation number is only used for filesystems exported
+                // by NFS, and is only needed if the filesystem reuses deleted
+                // inodes.  BFFFS does not reuse deleted inodes.
+                let gen = 0;
+                let ttl = Timespec { sec: 0, nsec: 0 };
+                reply.entry(&ttl, &file_attr, gen)
+            },
+            Err(e) => {
+                reply.error(e)
+            }
+        }
+    }
 }
 
 impl Filesystem for FuseFs {
@@ -107,64 +125,20 @@ impl Filesystem for FuseFs {
     fn link(&mut self, _req: &Request, parent: u64, ino: u64,
             name: &OsStr, reply: ReplyEntry)
     {
-        let ttl = Timespec { sec: 0, nsec: 0 };
-        // FUSE combines the functions of VOP_LINK and VOP_GETATTR
-        // into one.
-        match self.fs.link(ino, parent, name)
-            .and_then(|link_ino| self.do_getattr(link_ino)) {
-            Ok(file_attr) => {
-                // The generation number is only used for filesystems exported
-                // by NFS, and is only needed if the filesystem reuses deleted
-                // inodes.  BFFFS does not reuse deleted inodes.
-                let gen = 0;
-                reply.entry(&ttl, &file_attr, gen)
-            },
-            Err(e) => {
-                reply.error(e)
-            }
-        }
+        self.reply_entry(self.fs.link(ino, parent, name), reply);
     }
 
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr,
                reply: ReplyEntry)
     {
-        let ttl = Timespec { sec: 0, nsec: 0 };
-        // FUSE combines the functions of VOP_LOOKUP and VOP_GETATTR
-        // into one.
-        match self.fs.lookup(parent, name)
-            .and_then(|ino| self.do_getattr(ino)) {
-            Ok(file_attr) => {
-                // The generation number is only used for filesystems exported
-                // by NFS, and is only needed if the filesystem reuses deleted
-                // inodes.  BFFFS does not reuse deleted inodes.
-                let gen = 0;
-                reply.entry(&ttl, &file_attr, gen)
-            },
-            Err(e) => {
-                reply.error(e)
-            }
-        }
+        self.reply_entry(self.fs.lookup(parent, name), reply);
     }
 
     fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
                  reply: ReplyEntry)
     {
-        let ttl = Timespec { sec: 0, nsec: 0 };
-        // FUSE combines the functions of VOP_MKDIR and VOP_GETATTR
-        // into one.
-        match self.fs.mkdir(parent, name, mode, req.uid(), req.gid())
-            .and_then(|ino| self.do_getattr(ino)) {
-            Ok(file_attr) => {
-                // The generation number is only used for filesystems exported
-                // by NFS, and is only needed if the filesystem reuses deleted
-                // inodes.  BFFFS does not reuse deleted inodes.
-                let gen = 0;
-                reply.entry(&ttl, &file_attr, gen)
-            },
-            Err(e) => {
-                reply.error(e)
-            }
-        }
+        let r = self.fs.mkdir(parent, name, mode, req.uid(), req.gid());
+        self.reply_entry(r, reply);
     }
 
     fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
@@ -291,25 +265,12 @@ impl Filesystem for FuseFs {
     fn symlink(&mut self, req: &Request, parent: u64, name: &OsStr,
                link: &Path, reply: ReplyEntry)
     {
-        let ttl = Timespec { sec: 0, nsec: 0 };
         // Weirdly, FUSE doesn't supply the symlink's mode.  Use a sensible
         // default.
         let mode = 0o755;
-        // FUSE combines the functions of VOP_MKDIR and VOP_GETATTR
-        // into one.
-        match self.fs.symlink(parent, name, mode, req.uid(), req.gid(),
-                              link.as_os_str())
-            .and_then(|ino| self.do_getattr(ino))
-        {
-            Ok(file_attr) => {
-                // The generation number is only used for filesystems exported
-                // by NFS, and is only needed if the filesystem reuses deleted
-                // inodes.  BFFFS does not reuse deleted inodes.
-                let gen = 0;
-                reply.entry(&ttl, &file_attr, gen)
-            },
-            Err(e) => reply.error(e)
-        }
+        let r = self.fs.symlink(parent, name, mode, req.uid(), req.gid(),
+                                link.as_os_str());
+        self.reply_entry(r, reply);
     }
 
     fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr,
