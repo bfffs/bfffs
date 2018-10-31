@@ -3,12 +3,15 @@
 
 #[cfg(not(test))] use crate::common::database::*;
 #[cfg(test)] use crate::common::database_mock::DatabaseMock as Database;
-use crate::common::database::TreeID;
-use crate::common::fs::{Fs, SetAttr};
+use crate::common::{
+    RID,
+    database::TreeID,
+    fs::{ExtAttr, ExtAttrNamespace, Fs, SetAttr}
+};
 use fuse::*;
 use libc;
 use std::{
-    ffi::OsStr,
+    ffi::{OsString, OsStr},
     os::unix::ffi::OsStrExt,
     path::Path,
     slice,
@@ -87,6 +90,27 @@ impl FuseFs {
             }
         }
     }
+
+    /// Split a packed xattr name of the form "namespace.name" into its
+    /// components
+    fn split_xattr_name<'a>(packed_name: &'a OsStr)
+        -> (ExtAttrNamespace, &'a OsStr)
+    {
+        // FUSE packs namespace into the name, separated by a "."
+        let mut groups = packed_name.as_bytes()
+            .splitn(2, |&b| b == b'.')
+            .take(2);
+        let ns_str = OsStr::from_bytes(groups.next().unwrap());
+        let ns = if ns_str == &OsString::from("user") {
+            ExtAttrNamespace::User
+        } else if ns_str == &OsString::from("system") {
+            ExtAttrNamespace::System
+        } else {
+            panic!("Unknown namespace {:?}", ns_str)
+        };
+        let name = OsStr::from_bytes(groups.next().unwrap());
+        (ns, name)
+    }
 }
 
 impl Filesystem for FuseFs {
@@ -124,10 +148,22 @@ impl Filesystem for FuseFs {
         }
     }
 
-    fn getxattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr,
-                _size: u32, reply: ReplyXattr)
+    fn getxattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
+                size: u32, reply: ReplyXattr)
     {
-        reply.error(libc::EOPNOTSUPP)   // TODO
+        let (ns, name) = FuseFs::split_xattr_name(packed_name);
+        if size == 0 {
+            match self.fs.getextattrlen(ino, ns, name) {
+                Ok(len) => reply.size(len),
+                Err(errno) => reply.error(errno)
+            }
+        } else {
+            match self.fs.getextattr(ino, ns, name) {
+                // data copy
+                Ok(buf) => reply.data(&buf[..]),
+                Err(errno) => reply.error(errno)
+            }
+        }
     }
 
     fn link(&mut self, _req: &Request, parent: u64, ino: u64,
@@ -142,10 +178,55 @@ impl Filesystem for FuseFs {
         self.reply_entry(self.fs.lookup(parent, name), reply);
     }
 
-    fn listxattr(&mut self, _req: &Request, _ino: u64, _size: u32,
+    /// Get a list of all of the file's extended attributes
+    ///
+    /// # Parameters
+    ///
+    /// - `size`:   Maximum size to return.  If `0`, then `listxattr` will
+    ///             return the size of buffer needed, but no data.
+    ///
+    /// # Returns
+    ///
+    /// All of the file's extended attributes, concatenated and packed in the
+    /// form `<NAMESPACE>.<NAME>\0`.
+    fn listxattr(&mut self, _req: &Request, ino: u64, size: u32,
                  reply: ReplyXattr)
     {
-        reply.error(libc::EOPNOTSUPP)   // TODO
+        if size == 0 {
+            let f = |extattr: &ExtAttr<RID>| {
+                let name = extattr.name();
+                let prefix_len = match extattr.namespace() {
+                    ExtAttrNamespace::User => b"user.".len(),
+                    ExtAttrNamespace::System => b"system.".len(),
+                } as u32;
+                prefix_len + name.as_bytes().len() as u32 + 1
+            };
+            match self.fs.listextattrlen(ino, f) {
+                Ok(len) => reply.size(len),
+                Err(errno) => reply.error(errno)
+            }
+        } else {
+            let f = |buf: &mut Vec<u8>, extattr: &ExtAttr<RID>| {
+                let s = match extattr.namespace() {
+                    ExtAttrNamespace::User => &b"user."[..],
+                    ExtAttrNamespace::System => &b"system."[..],
+                };
+                buf.extend_from_slice(s);
+                buf.extend_from_slice(extattr.name().as_bytes());
+                buf.push(b'\0');
+            };
+            match self.fs.listextattr(ino, size, f) {
+                Ok(buf) => {
+                    if buf.len() <= size as usize {
+                        // data copy
+                        reply.data(&buf[..])
+                    } else {
+                        reply.error(libc::ERANGE)
+                    }
+                },
+                Err(errno) => reply.error(errno)
+            }
+        }
     }
 
     fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
@@ -225,10 +306,14 @@ impl Filesystem for FuseFs {
         }
     }
 
-    fn removexattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr,
+    fn removexattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
                    reply: ReplyEmpty)
     {
-        reply.error(libc::EOPNOTSUPP)   // TODO
+        let (ns, name) = FuseFs::split_xattr_name(packed_name);
+        match self.fs.deleteextattr(ino, ns, name) {
+            Ok(()) => reply.ok(),
+            Err(errno) => reply.error(errno)
+        }
     }
 
     // Note: rename is vulnerable to directory loops when linked against fuse2.
@@ -294,10 +379,14 @@ impl Filesystem for FuseFs {
         }
     }
 
-    fn setxattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr,
-                _value: &[u8], _flags: u32, _position: u32, reply: ReplyEmpty)
+    fn setxattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
+                value: &[u8], _flags: u32, _position: u32, reply: ReplyEmpty)
     {
-        reply.error(libc::EOPNOTSUPP)   // TODO
+        let (ns, name) = FuseFs::split_xattr_name(packed_name);
+        match self.fs.setextattr(ino, ns, name, value) {
+            Ok(()) => reply.ok(),
+            Err(errno) => reply.error(errno)
+        }
     }
 
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {

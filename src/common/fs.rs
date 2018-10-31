@@ -30,6 +30,7 @@ use std::{
 use time;
 use tokio_io_pool;
 
+pub use self::fs_tree::ExtAttr;
 pub use self::fs_tree::ExtAttrNamespace;
 
 const RECORDSIZE: usize = 4 * 1024;    // Default record size 4KB
@@ -569,30 +570,25 @@ impl Fs {
     /// # Parameters
     ///
     /// - `size`:       The expected length of list that will be returned
-    /// - `ns`:         If provided, results will be limited to this namespace.
+    /// - `f`:          A function that filters each extended attribute
+    ///                 and packs it into an expandable buffer
     ///
     /// # Returns
     ///
-    /// A buffer containing all extended attributes' names packed in the format
-    /// required by `extattr_list_file(2)`.
-    pub fn listextattr(&self, ino: u64, ns: Option<ExtAttrNamespace>,
-                       size: usize) -> Result<Vec<u8>, i32>
+    /// A buffer containing all extended attributes' names packed by `f`.
+    pub fn listextattr<F>(&self, ino: u64, size: u32, f: F)
+        -> Result<Vec<u8>, i32>
+        where F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
-                let buf = Vec::with_capacity(size);
+                let buf = Vec::with_capacity(size as usize);
                 dataset.range(FSKey::extattr_range(ino))
                 .fold(buf, move |mut buf, (_k, v)| {
                     let xattr = v.as_extattr().unwrap();
-                    if ns.is_none() || ns == Some(xattr.namespace()) {
-                        assert!(xattr.name().len() <= u8::max_value() as usize);
-                        buf.push(xattr.name().len() as u8);
-                        buf.extend_from_slice(xattr.name().as_bytes());
-                        future::ok::<Vec<u8>, Error>(buf)
-                    } else {
-                        future::ok::<Vec<u8>, Error>(buf)
-                    }
+                    f(&mut buf, &xattr);
+                    future::ok::<Vec<u8>, Error>(buf)
                 }).map(move |buf| tx.send(Ok(buf)).unwrap())
             }).map_err(|e: Error| panic!("{:?}", e))
         ).unwrap();
@@ -601,21 +597,27 @@ impl Fs {
 
     /// Like [`listextattr`](#method.listextattr), but it returns the length of
     /// the buffer that `listextattr` would return.
-    pub fn listextattrlen(&self, ino: u64, ns: Option<ExtAttrNamespace>)
-        -> Result<usize, i32>
+    ///
+    /// # Parameters
+    ///
+    /// - `f`:          A function that filters each extended attribute
+    ///                 and calculates its size as it would be packed by
+    ///                 `listextattr`.
+    ///
+    /// # Returns
+    ///
+    /// The length of buffer that would be required for `listextattr`.
+    pub fn listextattrlen<F>(&self, ino: u64, f: F) -> Result<u32, i32>
+        where F: Fn(&ExtAttr<RID>) -> u32 + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 dataset.range(FSKey::extattr_range(ino))
-                .fold(0usize, move |mut len, (_k, v)| {
+                .fold(0u32, move |mut len, (_k, v)| {
                     let extattr = v.as_extattr().unwrap();
-                    if ns.is_none() || ns == Some(extattr.namespace()) {
-                        len += 1 + extattr.name().as_bytes().len();
-                        future::ok::<usize, Error>(len)
-                    } else {
-                        future::ok::<usize, Error>(len)
-                    }
+                    len += f(&extattr);
+                    future::ok::<u32, Error>(len)
                 }).map(move |l| tx.send(Ok(l)).unwrap())
             }).map_err(|e: Error| panic!("{:?}", e))
         ).unwrap();

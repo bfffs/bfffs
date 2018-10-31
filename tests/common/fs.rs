@@ -7,6 +7,7 @@ test_suite! {
     name fs;
 
     use bfffs::{
+        common::RID,
         common::cache::*,
         common::database::*,
         common::ddml::*,
@@ -21,6 +22,7 @@ test_suite! {
         ffi::{CString, CStr, OsString},
         fs,
         os::raw::c_char,
+        os::unix::ffi::OsStrExt,
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
@@ -472,6 +474,40 @@ root:
         assert_eq!(mocks.val.0.lookup(1, &dst).unwrap(), ino);
     }
 
+    /// Helper for FreeBSD-style VFS
+    ///
+    /// In due course this should move into the FreeBSD implementation of
+    /// `vop_listextattr`, and the test should move into that file, too.
+    fn listextattr_lenf(ns: ExtAttrNamespace)
+        -> impl Fn(&ExtAttr<RID>) -> u32 + Send + 'static
+    {
+        move |extattr: &ExtAttr<RID>| {
+            if ns == extattr.namespace() {
+                let name = extattr.name();
+                assert!(name.len() as u32 <= u8::max_value() as u32);
+                1 + name.as_bytes().len() as u32
+            } else {
+                0
+            }
+        }
+    }
+
+    /// Helper for FreeBSD-style VFS
+    ///
+    /// In due course this should move into the FreeBSD implementation of
+    /// `vop_listextattr`, and the test should move into that file, too.
+    fn listextattr_lsf(ns: ExtAttrNamespace)
+        -> impl Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static
+    {
+        move |buf: &mut Vec<u8>, extattr: &ExtAttr<RID>| {
+            if ns == extattr.namespace() {
+                assert!(extattr.name().len() <= u8::max_value() as usize);
+                buf.push(extattr.name().len() as u8);
+                buf.extend_from_slice(extattr.name().as_bytes());
+            }
+        }
+    }
+
     test listextattr(mocks) {
         let filename = OsString::from("x");
         let name1 = OsString::from("foo");
@@ -487,8 +523,10 @@ root:
         // There is no requirement on the order of names
         let expected = [3u8, 0x62, 0x61, 0x72, 3, 0x66, 0x6f, 0x6f];
 
-        assert_eq!(mocks.val.0.listextattrlen(ino, None), Ok(8));
-        assert_eq!(&mocks.val.0.listextattr(ino, None, 64).unwrap()[..],
+        let lenf = self::listextattr_lenf(ns);
+        let lsf = self::listextattr_lsf(ns);
+        assert_eq!(mocks.val.0.listextattrlen(ino, lenf).unwrap(), 8);
+        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf).unwrap()[..],
                    &expected[..]);
     }
 
@@ -506,24 +544,25 @@ root:
         mocks.val.0.setextattr(ino, ns2, &name2, &value2[..]).unwrap();
 
         // Test queries for a single namespace
-        assert_eq!(mocks.val.0.listextattrlen(ino, Some(ns1)), Ok(4));
-        assert_eq!(&mocks.val.0.listextattr(ino, Some(ns1), 64).unwrap()[..],
+        let lenf = self::listextattr_lenf(ns1);
+        let lsf = self::listextattr_lsf(ns1);
+        assert_eq!(mocks.val.0.listextattrlen(ino, lenf), Ok(4));
+        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf).unwrap()[..],
                    &[3u8, 0x66, 0x6f, 0x6f][..]);
-        assert_eq!(mocks.val.0.listextattrlen(ino, Some(ns2)), Ok(5));
-        assert_eq!(&mocks.val.0.listextattr(ino, Some(ns2), 64).unwrap()[..],
+        let lenf = self::listextattr_lenf(ns2);
+        let lsf = self::listextattr_lsf(ns2);
+        assert_eq!(mocks.val.0.listextattrlen(ino, lenf), Ok(5));
+        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf).unwrap()[..],
                    &[4u8, 0x62, 0x65, 0x61, 0x6e][..]);
-
-        // Now query all namespaces
-        assert_eq!(mocks.val.0.listextattrlen(ino, None), Ok(9));
-        assert_eq!(&mocks.val.0.listextattr(ino, None, 64).unwrap()[..],
-                   &[3u8, 0x66, 0x6f, 0x6f, 4u8, 0x62, 0x65, 0x61, 0x6e][..]);
     }
 
     test listextattr_empty(mocks) {
         let filename = OsString::from("x");
         let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
-        assert_eq!(mocks.val.0.listextattrlen(ino, None), Ok(0));
-        assert!(mocks.val.0.listextattr(ino, None, 64).unwrap().is_empty());
+        let lenf = self::listextattr_lenf(ExtAttrNamespace::User);
+        let lsf = self::listextattr_lsf(ExtAttrNamespace::User);
+        assert_eq!(mocks.val.0.listextattrlen(ino, lenf), Ok(0));
+        assert!(mocks.val.0.listextattr(ino, 64, lsf).unwrap().is_empty());
     }
 
     test lookup_enoent(mocks) {
