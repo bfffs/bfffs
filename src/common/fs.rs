@@ -30,6 +30,8 @@ use std::{
 use time;
 use tokio_io_pool;
 
+pub use self::fs_tree::ExtAttrNamespace;
+
 const RECORDSIZE: usize = 4 * 1024;    // Default record size 4KB
 
 /// Generic Filesystem layer.
@@ -164,6 +166,29 @@ impl CreateArgs {
 }
 
 impl Fs {
+    /// Delete an extended attribute
+    pub fn deleteextattr(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
+        -> Result<(), i32>
+    {
+        let (tx, rx) = oneshot::channel();
+        let objkey = ObjKey::extattr(ns, &name);
+        let key = FSKey::new(ino, objkey);
+        self.handle.spawn(
+            self.db.fswrite(self.tree, move |dataset| {
+                // TODO: check for hash collisions
+                dataset.remove(key)
+                .map(move |r| {
+                    if r.is_some() {
+                        tx.send(Ok(()))
+                    } else {
+                        tx.send(Err(libc::ENOATTR))
+                    }.unwrap()
+                })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     fn do_create(&self, args: CreateArgs)
         -> Result<u64, i32>
     {
@@ -268,8 +293,8 @@ impl Fs {
                 Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
             } else {
                 let dataset2 = dataset.clone();
-                // 2b) delete its blob extents
-                let fut = dataset.range(FSKey::extent_range(ino))
+                // 2b) delete its blob extents and blob extended attributes
+                let extent_stream = dataset.range(FSKey::extent_range(ino))
                 .filter_map(move |(_k, v)| {
                     if let Extent::Blob(be) = v.as_extent().unwrap()
                     {
@@ -277,9 +302,18 @@ impl Fs {
                     } else {
                         None
                     }
-                }).and_then(move |rid| {
-                    dataset2.delete_blob(rid)
-                }).collect()
+                });
+                let extattr_stream = dataset.range(FSKey::extattr_range(ino))
+                .filter_map(move |(_k, v)| {
+                    if let ExtAttr::Blob(be) = v.as_extattr().unwrap()
+                    {
+                        Some(be.extent.rid)
+                    } else {
+                        None
+                    }
+                });
+                let fut = extent_stream.chain(extattr_stream)
+                .for_each(move |rid| dataset2.delete_blob(rid))
                 .and_then(move |_| {
                     // 2c) range_delete its key range
                     dataset.range_delete(FSKey::obj_range(ino))
@@ -369,6 +403,100 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    /// Retrieve the value of an extended attribute
+    pub fn getextattr(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
+        -> Result<DivBuf, i32>
+    {
+        let owned_name = name.to_owned();
+        let (tx, rx) = oneshot::channel();
+        let objkey = ObjKey::extattr(ns, &name);
+        let key = FSKey::new(ino, objkey);
+        self.handle.spawn(
+            self.db.fsread(self.tree, move |dataset| {
+                dataset.get(key)
+                .then(move |r| {
+                    match r {
+                        Ok(Some(v)) => {
+                            // Verify that the extattr contains the right name
+                            // TODO: deal with hash collisions
+                            let xattr = v.as_extattr().unwrap();
+                            assert_eq!(xattr.name(), owned_name);
+                            let fut = match xattr {
+                                ExtAttr::Inline(iea) => {
+                                    let buf = iea.extent.buf.try().unwrap();
+                                    Box::new(Ok(buf).into_future())
+                                        as Box<Future<Item=_, Error=_> + Send>
+                                },
+                                ExtAttr::Blob(bea) => {
+                                    let bfut = dataset.get_blob(bea.extent.rid)
+                                        .map(|bdb| *bdb);
+                                    Box::new(bfut)
+                                        as Box<Future<Item=_, Error=_> + Send>
+                                }
+                            }.map(move |buf| {
+                                tx.send(Ok(buf)).unwrap();
+                            });
+                            Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                        },
+                        Ok(None) => {
+                            tx.send(Err(Error::ENOATTR.into())).unwrap();
+                            Box::new(Ok(()).into_future())
+                                as Box<Future<Item=_, Error=_> + Send>
+                        },
+                        Err(e) => {
+                            tx.send(Err(e.into())).unwrap();
+                            Box::new(Ok(()).into_future())
+                                as Box<Future<Item=_, Error=_> + Send>
+                        }
+                    }
+                })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
+    /// Retrieve the length of the value of an extended attribute
+    pub fn getextattrlen(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
+        -> Result<u32, i32>
+    {
+        let owned_name = name.to_owned();
+        let (tx, rx) = oneshot::channel();
+        let objkey = ObjKey::extattr(ns, &name);
+        let key = FSKey::new(ino, objkey);
+        self.handle.spawn(
+            self.db.fsread(self.tree, move |dataset| {
+                dataset.get(key)
+                .then(move |r| {
+                    match r {
+                        Ok(Some(v)) => {
+                            // Verify that the extattr contains the right name
+                            // TODO: deal with hash collisions
+                            let xattr = v.as_extattr().unwrap();
+                            assert_eq!(xattr.name(), owned_name);
+                            let len = match xattr {
+                                ExtAttr::Inline(iea) => {
+                                    iea.extent.buf.len() as u32
+                                },
+                                ExtAttr::Blob(bea) => {
+                                    bea.extent.lsize
+                                }
+                            };
+                            tx.send(Ok(len))
+                        },
+                        Ok(None) => {
+                            tx.send(Err(Error::ENOATTR.into()))
+                        },
+                        Err(e) => {
+                            tx.send(Err(e.into()))
+                        }
+                    }.unwrap();
+                    future::ok::<(), Error>(())
+                })
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     /// Create a hardlink from `ino` to `parent/name`.
     pub fn link(&self, parent: u64, ino: u64, name: &OsStr) -> Result<u64, i32>
     {
@@ -432,6 +560,64 @@ impl Fs {
                     future::ok::<(), Error>(())
                 })
             }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
+    /// Retrieve a packed list of extended attribute names.
+    ///
+    /// # Parameters
+    ///
+    /// - `size`:       The expected length of list that will be returned
+    /// - `ns`:         If provided, results will be limited to this namespace.
+    ///
+    /// # Returns
+    ///
+    /// A buffer containing all extended attributes' names packed in the format
+    /// required by `extattr_list_file(2)`.
+    pub fn listextattr(&self, ino: u64, ns: Option<ExtAttrNamespace>,
+                       size: usize) -> Result<Vec<u8>, i32>
+    {
+        let (tx, rx) = oneshot::channel();
+        self.handle.spawn(
+            self.db.fsread(self.tree, move |dataset| {
+                let buf = Vec::with_capacity(size);
+                dataset.range(FSKey::extattr_range(ino))
+                .fold(buf, move |mut buf, (_k, v)| {
+                    let xattr = v.as_extattr().unwrap();
+                    if ns.is_none() || ns == Some(xattr.namespace()) {
+                        assert!(xattr.name().len() <= u8::max_value() as usize);
+                        buf.push(xattr.name().len() as u8);
+                        buf.extend_from_slice(xattr.name().as_bytes());
+                        future::ok::<Vec<u8>, Error>(buf)
+                    } else {
+                        future::ok::<Vec<u8>, Error>(buf)
+                    }
+                }).map(move |buf| tx.send(Ok(buf)).unwrap())
+            }).map_err(|e: Error| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
+    /// Like [`listextattr`](#method.listextattr), but it returns the length of
+    /// the buffer that `listextattr` would return.
+    pub fn listextattrlen(&self, ino: u64, ns: Option<ExtAttrNamespace>)
+        -> Result<usize, i32>
+    {
+        let (tx, rx) = oneshot::channel();
+        self.handle.spawn(
+            self.db.fsread(self.tree, move |dataset| {
+                dataset.range(FSKey::extattr_range(ino))
+                .fold(0usize, move |mut len, (_k, v)| {
+                    let extattr = v.as_extattr().unwrap();
+                    if ns.is_none() || ns == Some(extattr.namespace()) {
+                        len += 1 + extattr.name().as_bytes().len();
+                        future::ok::<usize, Error>(len)
+                    } else {
+                        future::ok::<usize, Error>(len)
+                    }
+                }).map(move |l| tx.send(Ok(l)).unwrap())
+            }).map_err(|e: Error| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -929,6 +1115,30 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    pub fn setextattr(&self, ino: u64, namespace: ExtAttrNamespace,
+                      name: &OsStr, data: &[u8]) -> Result<(), i32>
+    {
+        let (tx, rx) = oneshot::channel();
+        let objkey = ObjKey::extattr(namespace, &name);
+        let key = FSKey::new(ino, objkey);
+        // Data copy
+        let buf = Arc::new(DivBufShared::from(Vec::from(&data[..])));
+        let extent = InlineExtent::new(buf);
+        let extattr = InlineExtAttr {
+            namespace,
+            name: name.to_owned(),
+            extent
+        };
+        let value = FSValue::InlineExtAttr(extattr);
+        self.handle.spawn(
+            self.db.fswrite(self.tree, move |dataset| {
+                dataset.insert(key, value)
+                .map(move |_| tx.send(Ok(())).unwrap())
+            }).map_err(|e| panic!("{:?}", e))
+        ).unwrap();
+        rx.wait().unwrap()
+    }
+
     pub fn statvfs(&self) -> libc::statvfs {
         let (tx, rx) = oneshot::channel::<libc::statvfs>();
         self.handle.spawn(
@@ -1332,6 +1542,41 @@ fn rename_samedir() {
     assert_eq!(Ok(()), r);
 }
 
+/// Basic setextattr test, that does not rely on any other extattr
+/// functionality.
+#[test]
+fn setextattr() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let ino = 1;
+    let name = OsString::from("foo");
+    let name2 = name.clone();
+    let value = OsString::from("bar");
+    let value2 = value.clone();
+    let namespace = ExtAttrNamespace::User;
+
+    ds.expect_insert()
+    .called_once()
+    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        let extattr = args.1.as_extattr().unwrap();
+        let ie = extattr.as_inline().unwrap();
+        args.0.is_extattr() &&
+        args.0.objtype() == 3 &&
+        args.0.object() == ino &&
+        ie.namespace == namespace &&
+        ie.name == name2 &&
+        &ie.extent.buf.try().unwrap()[..] == value2.as_bytes()
+    })).returning(|_| Box::new(Ok(None).into_future()));
+
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.setextattr(ino, namespace, &name, value.as_bytes());
+    assert_eq!(Ok(()), r);
+}
+
 #[test]
 fn sync() {
     let (rt, mut db, tree_id) = setup();
@@ -1400,6 +1645,12 @@ fn unlink() {
             let extents = vec![(k0, v0), (k1, v1)];
             Box::new(stream::iter_ok(extents))
         });
+    ds.then().expect_range()
+        .called_once()
+        .with(FSKey::extattr_range(ino))
+        .returning(move |_| {
+            Box::new(stream::iter_ok(Vec::new()))
+        });
     ds.then().expect_delete_blob()
         .called_once()
         .with(passes(move |rid: &RID| blob_rid == *rid))
@@ -1467,6 +1718,111 @@ fn unlink_hardlink() {
             args.1.as_inode().unwrap().nlink == 1
         })).returning(|_| Box::new(Ok(None).into_future()));
 
+    let mut opt_ds = Some(ds);
+
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.unlink(1, &filename);
+    assert_eq!(Ok(()), r);
+}
+
+// Unlink a file with extended attributes, and don't forget to free them too!
+#[test]
+fn unlink_with_blob_extattr() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let parent_ino = 1;
+    let ino = 2;
+    let blob_rid = RID(99999);
+    let xattr_blob_rid = RID(88888);
+    let filename = OsString::from("x");
+    let filename2 = filename.clone();
+
+    ds.expect_remove()
+        .called_once()
+        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .returning(move |_| {
+            let dirent = Dirent {
+                ino,
+                dtype: libc::DT_REG,
+                name: filename2.clone()
+            };
+            let v = Some(FSValue::DirEntry(dirent));
+            Box::new(Ok(v).into_future())
+        });
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(ino, ObjKey::Inode))
+        .returning(move |_| {
+            let now = time::get_time();
+            let inode = Inode {
+                size: 4098,
+                nlink: 1,
+                flags: 0,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                birthtime: now,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Reg,
+                perm: 0o644,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
+
+    ds.then().expect_range()
+        .called_once()
+        .with(FSKey::extent_range(ino))
+        .returning(move |_| {
+            // Return one blob extent and one embedded extent
+            let k0 = FSKey::new(ino, ObjKey::Extent(0));
+            let be0 = BlobExtent{lsize: 4096, rid: blob_rid};
+            let v0 = FSValue::BlobExtent(be0);
+            let k1 = FSKey::new(ino, ObjKey::Extent(4096));
+            let dbs0 = Arc::new(DivBufShared::from(vec![0u8; 1]));
+            let v1 = FSValue::InlineExtent(InlineExtent::new(dbs0));
+            let extents = vec![(k0, v0), (k1, v1)];
+            Box::new(stream::iter_ok(extents))
+        });
+    // NB: there is no requirement that extents be deleted before extattrs, but
+    // Simulacrum forces us to choose, since you can't set two Simulacrum mocks
+    // for the same method in the same era.
+    ds.then().expect_range()
+        .called_once()
+        .with(FSKey::extattr_range(ino))
+        .returning(move |_| {
+            // Return one blob extattr and one inline extattr
+            let namespace = ExtAttrNamespace::User;
+            let name0 = OsString::from("foo");
+            let k0 = FSKey::new(ino, ObjKey::extattr(namespace, &name0));
+            let extent0 = BlobExtent{lsize: 4096, rid: xattr_blob_rid};
+            let be = BlobExtAttr{namespace, name: name0, extent: extent0};
+            let v0 = FSValue::BlobExtAttr(be);
+
+            let name1 = OsString::from("bar");
+            let k1 = FSKey::new(ino, ObjKey::extattr(namespace, &name1));
+            let dbs1 = Arc::new(DivBufShared::from(vec![0u8; 1]));
+            let extent1 = InlineExtent::new(dbs1);
+            let ie = InlineExtAttr{namespace, name: name1, extent: extent1};
+            let v1 = FSValue::InlineExtAttr(ie);
+            let extents = vec![(k0, v0), (k1, v1)];
+            Box::new(stream::iter_ok(extents))
+        });
+    ds.expect_delete_blob()
+        .called_once()
+        .with(passes(move |rid: &RID| blob_rid == *rid))
+        .returning(|_| Box::new(Ok(()).into_future()));
+    ds.then().expect_delete_blob()
+        .called_once()
+        .with(passes(move |rid: &RID| xattr_blob_rid == *rid))
+        .returning(|_| Box::new(Ok(()).into_future()));
+    ds.then().expect_range_delete()
+        .called_once()
+        .with(FSKey::obj_range(ino))
+        .returning(|_| Box::new(Ok(()).into_future()));
     let mut opt_ds = Some(ds);
 
     db.expect_fswrite()

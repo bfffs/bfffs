@@ -85,6 +85,26 @@ test_suite! {
         assert_eq!(parent_attr.nlink, 1);
     }
 
+    test deleteextattr(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = [1u8, 2, 3];
+        let ns = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
+        mocks.val.0.deleteextattr(ino, ns, &name).unwrap();
+        assert_eq!(mocks.val.0.getextattr(ino, ns, &name), Err(libc::ENOATTR));
+    }
+
+    test deleteextattr_enoattr(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let ns = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        assert_eq!(mocks.val.0.deleteextattr(ino, ns, &name),
+                   Err(libc::ENOATTR));
+    }
+
     // Dumps an FS tree, with enough data to create IntNodes
     test dump(mocks) {
         let ino_w = mocks.val.0.mkdir(1, &OsString::from("w"), 0o755, 1, 2)
@@ -379,6 +399,64 @@ root:
         assert_eq!(attr.mode.file_type(), libc::S_IFDIR);
     }
 
+    test getextattr(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = [1u8, 2, 3];
+        let namespace = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name).unwrap(),
+                   3);
+        let v = mocks.val.0.getextattr(ino, namespace, &name).unwrap();
+        assert_eq!(&v[..], &value);
+    }
+
+    // The same attribute name exists in two namespaces
+    test getextattr_dual_namespaces(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value1 = [1u8, 2, 3];
+        let value2 = [4u8, 5, 6, 7];
+        let ns1 = ExtAttrNamespace::User;
+        let ns2 = ExtAttrNamespace::System;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, ns1, &name, &value1[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns2, &name, &value2[..]).unwrap();
+
+        assert_eq!(mocks.val.0.getextattrlen(ino, ns1, &name).unwrap(), 3);
+        let v1 = mocks.val.0.getextattr(ino, ns1, &name).unwrap();
+        assert_eq!(&v1[..], &value1);
+
+        assert_eq!(mocks.val.0.getextattrlen(ino, ns2, &name).unwrap(), 4);
+        let v2 = mocks.val.0.getextattr(ino, ns2, &name).unwrap();
+        assert_eq!(&v2[..], &value2);
+    }
+
+    // The file exists, but its extended attribute does not
+    test getextattr_enoattr(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let namespace = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name),
+                   Err(libc::ENOATTR));
+        assert_eq!(mocks.val.0.getextattr(ino, namespace, &name),
+                   Err(libc::ENOATTR));
+    }
+
+    // The file does not exist.  Fortunately, VOP_GETEXTATTR(9) does not require
+    // us to distinguish this from the ENOATTR case.
+    test getextattr_enoent(mocks) {
+        let name = OsString::from("foo");
+        let namespace = ExtAttrNamespace::User;
+        let ino = 9999;
+        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name),
+                   Err(libc::ENOATTR));
+        assert_eq!(mocks.val.0.getextattr(ino, namespace, &name),
+                   Err(libc::ENOATTR));
+    }
+
     test link(mocks) {
         let src = OsString::from("src");
         let dst = OsString::from("dst");
@@ -392,6 +470,60 @@ root:
 
         // The parent should have a new directory entry
         assert_eq!(mocks.val.0.lookup(1, &dst).unwrap(), ino);
+    }
+
+    test listextattr(mocks) {
+        let filename = OsString::from("x");
+        let name1 = OsString::from("foo");
+        let name2 = OsString::from("bar");
+        let ns = ExtAttrNamespace::User;
+        let value = [0u8, 1, 2];
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, ns, &name1, &value[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns, &name2, &value[..]).unwrap();
+
+        // expected has the form of <length as u8><value as [u8]>...
+        // values are _not_ null terminated.
+        // There is no requirement on the order of names
+        let expected = [3u8, 0x62, 0x61, 0x72, 3, 0x66, 0x6f, 0x6f];
+
+        assert_eq!(mocks.val.0.listextattrlen(ino, None), Ok(8));
+        assert_eq!(&mocks.val.0.listextattr(ino, None, 64).unwrap()[..],
+                   &expected[..]);
+    }
+
+    test listextattr_dual_namespaces(mocks) {
+        let filename = OsString::from("x");
+        let name1 = OsString::from("foo");
+        let name2 = OsString::from("bean");
+        let ns1 = ExtAttrNamespace::User;
+        let ns2 = ExtAttrNamespace::System;
+        let value1 = [0u8, 1, 2];
+        let value2 = [3u8, 4, 5];
+
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns2, &name2, &value2[..]).unwrap();
+
+        // Test queries for a single namespace
+        assert_eq!(mocks.val.0.listextattrlen(ino, Some(ns1)), Ok(4));
+        assert_eq!(&mocks.val.0.listextattr(ino, Some(ns1), 64).unwrap()[..],
+                   &[3u8, 0x66, 0x6f, 0x6f][..]);
+        assert_eq!(mocks.val.0.listextattrlen(ino, Some(ns2)), Ok(5));
+        assert_eq!(&mocks.val.0.listextattr(ino, Some(ns2), 64).unwrap()[..],
+                   &[4u8, 0x62, 0x65, 0x61, 0x6e][..]);
+
+        // Now query all namespaces
+        assert_eq!(mocks.val.0.listextattrlen(ino, None), Ok(9));
+        assert_eq!(&mocks.val.0.listextattr(ino, None, 64).unwrap()[..],
+                   &[3u8, 0x66, 0x6f, 0x6f, 4u8, 0x62, 0x65, 0x61, 0x6e][..]);
+    }
+
+    test listextattr_empty(mocks) {
+        let filename = OsString::from("x");
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        assert_eq!(mocks.val.0.listextattrlen(ino, None), Ok(0));
+        assert!(mocks.val.0.listextattr(ino, None, 64).unwrap().is_empty());
     }
 
     test lookup_enoent(mocks) {
@@ -895,6 +1027,24 @@ root:
         assert_eq!(de.d_type, libc::DT_REG);
     }
 
+    // Rename a file with extended attributes.
+    test rename_reg_with_extattrs(mocks) {
+        let src = OsString::from("src");
+        let dst = OsString::from("dst");
+        let name = OsString::from("foo");
+        let value = [1u8, 2, 3];
+        let ns = ExtAttrNamespace::User;
+
+        let ino = mocks.val.0.create(1, &src, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
+
+        mocks.val.0.rename(1, &src, 1, &dst).unwrap();
+
+        let new_ino = mocks.val.0.lookup(1, &dst).unwrap();
+        let v = mocks.val.0.getextattr(new_ino, ns, &name).unwrap();
+        assert_eq!(&v[..], &value);
+    }
+
     #[cfg_attr(feature = "cargo-clippy",
                allow(clippy::block_in_if_condition_stmt))]
     test rmdir(mocks) {
@@ -998,6 +1148,20 @@ root:
         mocks.val.0.setattr(ino, attr).unwrap();
         let attr = mocks.val.0.getattr(ino).unwrap();
         assert(attr);
+    }
+
+    /// Overwrite an existing extended attribute
+    test setextattr_overwrite(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value1 = [0u8, 1, 2];
+        let value2 = [3u8, 4, 5, 6];
+        let ns = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, ns, &name, &value1[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns, &name, &value2[..]).unwrap();
+        let v = mocks.val.0.getextattr(ino, ns, &name).unwrap();
+        assert_eq!(&v[..], &value2);
     }
 
     test statvfs(mocks) {

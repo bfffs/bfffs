@@ -14,7 +14,7 @@ use metrohash::MetroHash64;
 use serde::de::DeserializeOwned;
 use std::{
     ffi::{OsString, OsStr},
-    hash::Hasher,
+    hash::{Hash, Hasher},
     mem,
     ops::Range,
     os::unix::ffi::OsStrExt,
@@ -31,12 +31,22 @@ struct TimespecDef {
     nsec: i32
 }
 
+// TODO: replace with libc constants EXTATTR_NAMESPACE_* after libc 0.2.44 gets
+// released.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, PartialOrd, Ord,
+         Serialize)]
+pub enum ExtAttrNamespace {
+    User = 1,
+    System = 2
+}
+
 /// Constants that discriminate different `ObjKey`s.  I don't know of a way to
 /// do this within the definition of ObjKey itself.
 enum ObjKeyDiscriminant {
     DirEntry = 0,
     Inode = 1,
     Extent = 2,
+    ExtAttr = 3,
 }
 
 /// The per-object portion of a `FSKey`
@@ -46,15 +56,20 @@ pub enum ObjKey {
     /// A directory entry.
     ///
     /// The value is a 56-bit hash of the entry's name.  This key is only valid
-    /// if the object is a directory or file.  If the latter, then the DirEntry
-    /// refers to one of the file's extended attributes.
+    /// if the object is a directory.
     DirEntry(u64),
     Inode,
+
     /// File extent
     ///
-    /// The value is the logical size of the extent, in bytes.  This key is only
-    /// valid if the object is a file or an extended attribute.
-    Extent(u64)
+    /// The value is the extent's offset into its object, in bytes.  This key is
+    /// only valid if the object is a file.
+    Extent(u64),
+
+    /// Extended attribute
+    ///
+    /// The first value is the 56-bit hash of the entry's name and namespace.
+    ExtAttr(u64)
 }
 
 impl ObjKey {
@@ -72,11 +87,23 @@ impl ObjKey {
         ObjKey::DirEntry(namehash)
     }
 
+    /// Create a 'ObjKey::ExtAttr' object from an extended attribute name
+    pub fn extattr(namespace: ExtAttrNamespace, name: &OsStr) -> Self {
+        let mut hasher = MetroHash64::new();
+        namespace.hash(&mut hasher);
+        hasher.write(name.as_bytes());
+        // TODO: use cuckoo hashing to deal with collisions
+        // TODO: use some salt to defend against DOS attacks
+        let namehash = hasher.finish() & ( (1<<56) - 1);
+        ObjKey::ExtAttr(namehash)
+    }
+
     fn discriminant(&self) -> u8 {
         let d = match self {
             ObjKey::DirEntry(_) => ObjKeyDiscriminant::DirEntry,
             ObjKey::Inode => ObjKeyDiscriminant::Inode,
-            ObjKey::Extent(_) => ObjKeyDiscriminant::Extent
+            ObjKey::Extent(_) => ObjKeyDiscriminant::Extent,
+            ObjKey::ExtAttr(_) => ObjKeyDiscriminant::ExtAttr,
         };
         d as u8
     }
@@ -86,6 +113,7 @@ impl ObjKey {
             ObjKey::DirEntry(x) => *x,
             ObjKey::Inode => 0,
             ObjKey::Extent(x) => *x,
+            ObjKey::ExtAttr(x) => *x,
         }
     }
 }
@@ -108,7 +136,16 @@ impl FSKey {
         let objkey = ObjKey::DirEntry(0);
         let start = FSKey::compose(ino, objkey.discriminant(), offset);
         let end = FSKey::compose(ino, objkey.discriminant() + 1, 0);
-        Range{start, end}
+        start..end
+    }
+
+    /// Create a range of `FSKey` that will include all the extended attribute
+    /// entries of file `ino`.
+    pub fn extattr_range(ino: u64) -> Range<Self> {
+        let objkey = ObjKey::ExtAttr(0);
+        let start = FSKey::compose(ino, objkey.discriminant(), 0);
+        let end = FSKey::compose(ino, objkey.discriminant() + 1, 0);
+        start..end
     }
 
     pub fn extent_range(ino: u64) -> Range<Self> {
@@ -119,6 +156,10 @@ impl FSKey {
 
     pub fn is_direntry(&self) -> bool {
         self.objtype() == ObjKeyDiscriminant::DirEntry as u8
+    }
+
+    pub fn is_extattr(&self) -> bool {
+        self.objtype() == ObjKeyDiscriminant::ExtAttr as u8
     }
 
     pub fn is_inode(&self) -> bool {
@@ -158,6 +199,53 @@ pub struct Dirent {
     pub ino:    u64,
     pub dtype:  u8,
     pub name:   OsString
+}
+
+/// In-memory representation of a small extended attribute
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct InlineExtAttr {
+    pub namespace: ExtAttrNamespace,
+    pub name:   OsString,
+    pub extent: InlineExtent
+}
+
+/// In-memory representation of a large extended attribute
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(bound(deserialize = "A: DeserializeOwned"))]
+pub struct BlobExtAttr<A: Addr> {
+    pub namespace: ExtAttrNamespace,
+    pub name:   OsString,
+    pub extent: BlobExtent<A>
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExtAttr<'a, A: Addr> {
+    Inline(&'a InlineExtAttr),
+    Blob(&'a BlobExtAttr<A>)
+}
+
+impl<'a, A: Addr> ExtAttr<'a, A> {
+    pub fn as_inline(&'a self) -> Option<&'a InlineExtAttr> {
+        if let ExtAttr::Inline(x) = self {
+            Some(x)
+        } else {
+            None
+        }
+    }
+
+    pub fn name(&'a self) -> &'a OsStr {
+        match self {
+            ExtAttr::Inline(x) => &x.name,
+            ExtAttr::Blob(x) => &x.name,
+        }
+    }
+
+    pub fn namespace(&self) -> ExtAttrNamespace {
+        match self {
+            ExtAttr::Inline(x) => x.namespace,
+            ExtAttr::Blob(x) => x.namespace,
+        }
+    }
 }
 
 /// Field of an `Inode`
@@ -302,10 +390,22 @@ pub enum FSValue<A: Addr> {
     Inode(Inode),
     InlineExtent(InlineExtent),
     BlobExtent(BlobExtent<A>),
+    InlineExtAttr(InlineExtAttr),
+    BlobExtAttr(BlobExtAttr<A>),
     None
 }
 
 impl<A: Addr> FSValue<A> {
+    pub fn as_extattr(&self) -> Option<ExtAttr<A>> {
+        if let FSValue::InlineExtAttr(extent) = self {
+            Some(ExtAttr::Inline(extent))
+        } else if let FSValue::BlobExtAttr(extent) = self {
+            Some(ExtAttr::Blob(extent))
+        } else {
+            None
+        }
+    }
+
     pub fn as_extent(&self) -> Option<Extent<A>> {
         if let FSValue::InlineExtent(extent) = self {
             Some(Extent::Inline(extent))
@@ -359,6 +459,23 @@ impl<A: Addr> Value for FSValue<A> {
                     let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
                     let be = BlobExtent{lsize, rid: rid_a};
                     FSValue::BlobExtent(be)
+                })) as Box<Future<Item=Self, Error=Error> + Send>
+        } else if let FSValue::InlineExtAttr(iea) = self {
+            let lsize = iea.extent.buf.len() as u32;
+            let namespace = iea.namespace;
+            let name = iea.name;
+            let dbs = Arc::try_unwrap(iea.extent.buf).unwrap();
+            Box::new(dml.put(dbs, Compression::None, txg)
+                .map(move |rid: D::Addr| {
+                    debug_assert_eq!(mem::size_of::<D::Addr>(),
+                                     mem::size_of::<A>());
+                    // Safe because D::Addr should always equal A.  If you ever
+                    // call this function with any other type for A, then you're
+                    // doing something wrong.
+                    let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
+                    let extent = BlobExtent{lsize, rid: rid_a};
+                    let bea = BlobExtAttr { namespace, name, extent };
+                    FSValue::BlobExtAttr(bea)
                 })) as Box<Future<Item=Self, Error=Error> + Send>
         } else {
             Box::new(Ok(self).into_future())

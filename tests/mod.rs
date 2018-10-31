@@ -1,3 +1,4 @@
+#![recursion_limit="128"]   // galvanic_test hits the recursion limit
 #![cfg_attr(feature = "cargo-clippy", feature(tool_lints))]
 // https://github.com/mindsbackyard/galvanic-test/pull/13
 #![cfg_attr(feature = "cargo-clippy", allow(clippy::unnecessary_mut_passed))]

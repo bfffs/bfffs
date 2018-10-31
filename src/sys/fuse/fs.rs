@@ -124,6 +124,12 @@ impl Filesystem for FuseFs {
         }
     }
 
+    fn getxattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr,
+                _size: u32, reply: ReplyXattr)
+    {
+        reply.error(libc::EOPNOTSUPP)   // TODO
+    }
+
     fn link(&mut self, _req: &Request, parent: u64, ino: u64,
             name: &OsStr, reply: ReplyEntry)
     {
@@ -134,6 +140,12 @@ impl Filesystem for FuseFs {
                reply: ReplyEntry)
     {
         self.reply_entry(self.fs.lookup(parent, name), reply);
+    }
+
+    fn listxattr(&mut self, _req: &Request, _ino: u64, _size: u32,
+                 reply: ReplyXattr)
+    {
+        reply.error(libc::EOPNOTSUPP)   // TODO
     }
 
     fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
@@ -213,6 +225,12 @@ impl Filesystem for FuseFs {
         }
     }
 
+    fn removexattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr,
+                   reply: ReplyEmpty)
+    {
+        reply.error(libc::EOPNOTSUPP)   // TODO
+    }
+
     // Note: rename is vulnerable to directory loops when linked against fuse2.
     // rust-fuse can't yet use fuse3.  See also:
     // https://github.com/zargony/rust-fuse/pull/97
@@ -274,6 +292,12 @@ impl Filesystem for FuseFs {
                 reply.error(e)
             }
         }
+    }
+
+    fn setxattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr,
+                _value: &[u8], _flags: u32, _position: u32, reply: ReplyEmpty)
+    {
+        reply.error(libc::EOPNOTSUPP)   // TODO
     }
 
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
