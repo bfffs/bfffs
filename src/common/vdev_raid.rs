@@ -669,7 +669,7 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(|_| { () }))
+        Box::new(fut.map(|_| () ))
     }
 
     /// Read a (possibly improper) subset of one stripe
@@ -697,7 +697,7 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(|_| { () }))
+        Box::new(fut.map(|_| () ))
     }
 
     /// Asynchronously reopen a zone on a RAID device

@@ -56,7 +56,7 @@ bitfield! {
 impl Mode {
     // Access the `file_type` field without shifting, so we can compare it to
     // the libc::S_IF* constants.
-    pub fn file_type(&self) -> u16 {
+    pub fn file_type(self) -> u16 {
         self.0 & libc::S_IFMT
     }
 }
@@ -994,7 +994,7 @@ impl Fs {
                         Box::new(Ok(()).into_future())
                             as Box<Future<Item=(), Error=Error> + Send>
                     };
-                    let np_nlink_fut = if isdir && !samedir && !r.is_some() {
+                    let np_nlink_fut = if isdir && !samedir && r.is_none() {
                         // 3b) Increment new parent dir's link count
                         let ds3 = ds.clone();
                         let newparent_ino_key = FSKey::new(newparent,

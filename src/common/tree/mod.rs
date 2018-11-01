@@ -1597,7 +1597,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // The left node may have become a common ancestor if we
                     // merged it with the right node, or if we stole some nodes
                     // from the right node.
-                    let common = !right_idx.is_some() || mm > 0 || stole;
+                    let common = right_idx.is_none() || mm > 0 || stole;
                     // Don't fix if it has no siblings; that can happen if we
                     // need to merge the root down.
                     if underflow(&child_guard, common) && guard.len() > 1 {

@@ -93,17 +93,15 @@ impl FuseFs {
 
     /// Split a packed xattr name of the form "namespace.name" into its
     /// components
-    fn split_xattr_name<'a>(packed_name: &'a OsStr)
-        -> (ExtAttrNamespace, &'a OsStr)
-    {
+    fn split_xattr_name(packed_name: &OsStr) -> (ExtAttrNamespace, &OsStr) {
         // FUSE packs namespace into the name, separated by a "."
         let mut groups = packed_name.as_bytes()
             .splitn(2, |&b| b == b'.')
             .take(2);
         let ns_str = OsStr::from_bytes(groups.next().unwrap());
-        let ns = if ns_str == &OsString::from("user") {
+        let ns = if ns_str == OsString::from("user") {
             ExtAttrNamespace::User
-        } else if ns_str == &OsString::from("system") {
+        } else if ns_str == OsString::from("system") {
             ExtAttrNamespace::System
         } else {
             panic!("Unknown namespace {:?}", ns_str)
@@ -362,7 +360,7 @@ impl Filesystem for FuseFs {
             mtime,
             ctime: chgtime,
             birthtime: crtime,
-            flags: flags.map(|f| f as u64)
+            flags: flags.map(u64::from)
         };
         let r = self.fs.setattr(ino, attr)
         .and_then(|_| self.do_getattr(ino));
