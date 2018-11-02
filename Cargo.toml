@@ -3,6 +3,10 @@ name = "bfffs"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
 
+[lib]
+# BFFFS doesn't use doctests, because it's not a real library.
+doctest = false
+
 [features]
 # Make mockers optional so we can still compile on stable
 mocks = ["mockers", "mockers_derive"]
