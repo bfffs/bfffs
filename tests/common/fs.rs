@@ -628,7 +628,7 @@ root:
         // expected has the form of <length as u8><value as [u8]>...
         // values are _not_ null terminated.
         // There is no requirement on the order of names
-        let expected = [3u8, 0x62, 0x61, 0x72, 3, 0x66, 0x6f, 0x6f];
+        let expected = b"\x03bar\x03foo";
 
         let lenf = self::listextattr_lenf(ns);
         let lsf = self::listextattr_lsf(ns);
@@ -696,12 +696,12 @@ root:
         let lsf = self::listextattr_lsf(ns1);
         assert_eq!(mocks.val.0.listextattrlen(ino, lenf), Ok(4));
         assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf).unwrap()[..],
-                   &[3u8, 0x66, 0x6f, 0x6f][..]);
+                   &b"\x03foo"[..]);
         let lenf = self::listextattr_lenf(ns2);
         let lsf = self::listextattr_lsf(ns2);
         assert_eq!(mocks.val.0.listextattrlen(ino, lenf), Ok(5));
         assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf).unwrap()[..],
-                   &[4u8, 0x62, 0x65, 0x61, 0x6e][..]);
+                   &b"\x04bean"[..]);
     }
 
     test listextattr_empty(mocks) {

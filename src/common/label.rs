@@ -17,8 +17,7 @@ use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
  * Pad:         variable    0-padding fills the remainder, up to 4 LBAs
  */
 /// The file magic is "BFFFS Vdev\0\0\0\0\0\0"
-const MAGIC: [u8; MAGIC_LEN] = [0x42, 0x46, 0x46, 0x46, 0x53, 0x20, 0x56, 0x64,
-                                0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+const MAGIC: &[u8; MAGIC_LEN] = b"BFFFS Vdev\0\0\0\0\0\0";
 const MAGIC_LEN: usize = 16;
 const CHECKSUM_LEN: usize = 8;
 const LENGTH_LEN: usize = 8;
