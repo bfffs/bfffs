@@ -458,46 +458,70 @@ impl Fs {
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(ino, objkey);
+        type MyFut = Box<Future<Item=DivBuf, Error=Error> + Send>;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 dataset.get(key)
                 .then(move |r| {
                     match r {
-                        Ok(Some(v)) => {
-                            // Verify that the extattr contains the right name
-                            // TODO: deal with hash collisions
-                            let xattr = v.as_extattr().unwrap();
-                            assert_eq!(xattr.name(), owned_name);
+                        Ok(Some(FSValue::ExtAttr(ref xattr)))
+                            if xattr.namespace() == ns &&
+                               xattr.name() == owned_name =>
+                        {
+                            // Found the right xattr
                             let fut = match xattr {
                                 ExtAttr::Inline(iea) => {
                                     let buf = iea.extent.buf.try().unwrap();
-                                    Box::new(Ok(buf).into_future())
-                                        as Box<Future<Item=_, Error=_> + Send>
+                                    Box::new(Ok(buf).into_future()) as MyFut
                                 },
                                 ExtAttr::Blob(bea) => {
                                     let bfut = dataset.get_blob(bea.extent.rid)
                                         .map(|bdb| *bdb);
-                                    Box::new(bfut)
-                                        as Box<Future<Item=_, Error=_> + Send>
+                                    Box::new(bfut) as MyFut
                                 }
-                            }.map(move |buf| {
-                                tx.send(Ok(buf)).unwrap();
-                            });
-                            Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                            };
+                            Box::new(fut) as MyFut
                         },
-                        Ok(None) => {
-                            tx.send(Err(Error::ENOATTR.into())).unwrap();
-                            Box::new(Ok(()).into_future())
-                                as Box<Future<Item=_, Error=_> + Send>
-                        },
-                        Err(e) => {
-                            tx.send(Err(e.into())).unwrap();
-                            Box::new(Ok(()).into_future())
-                                as Box<Future<Item=_, Error=_> + Send>
+                        Ok(Some(FSValue::ExtAttrs(ref xattrs))) => {
+                            // A bucket of multiple xattrs
+                            assert!(xattrs.len() > 1);
+                            if let Some(xattr) = xattrs.iter().find(|x| {
+                                x.namespace() == ns && x.name() == owned_name
+                            }) {
+                                // Found the right one
+                                let fut = match xattr {
+                                    ExtAttr::Inline(iea) => {
+                                        let buf = iea.extent.buf.try().unwrap();
+                                        Box::new(Ok(buf).into_future()) as MyFut
+                                    },
+                                    ExtAttr::Blob(bea) => {
+                                        let rid = bea.extent.rid;
+                                        let bfut = dataset.get_blob(rid)
+                                        .map(|bdb| *bdb);
+                                        Box::new(bfut) as MyFut
+                                    }
+                                };
+                                Box::new(fut) as MyFut
+                            } else {
+                                Box::new(Err(Error::ENOATTR).into_future())
+                                    as MyFut
+                            }
                         }
+                        Err(e) => {
+                            Box::new(Err(e).into_future()) as MyFut
+                        }
+                        _ => {
+                            Box::new(Err(Error::ENOATTR).into_future()) as MyFut
+                        },
                     }
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).then(move |r| {
+                match r {
+                    Ok(buf) => tx.send(Ok(buf)),
+                    Err(e) => tx.send(Err(e.into()))
+                }.unwrap();
+                Ok(()).into_future()
+            })
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -514,12 +538,12 @@ impl Fs {
             self.db.fsread(self.tree, move |dataset| {
                 dataset.get(key)
                 .then(move |r| {
-                    match r {
-                        Ok(Some(v)) => {
-                            // Verify that the extattr contains the right name
-                            // TODO: deal with hash collisions
-                            let xattr = v.as_extattr().unwrap();
-                            assert_eq!(xattr.name(), owned_name);
+                    let result = match r {
+                        Ok(Some(FSValue::ExtAttr(ref xattr)))
+                            if xattr.namespace() == ns &&
+                               xattr.name() == owned_name =>
+                        {
+                            // Found the right xattr
                             let len = match xattr {
                                 ExtAttr::Inline(iea) => {
                                     iea.extent.buf.len() as u32
@@ -528,15 +552,36 @@ impl Fs {
                                     bea.extent.lsize
                                 }
                             };
-                            tx.send(Ok(len))
+                            Ok(len)
                         },
-                        Ok(None) => {
-                            tx.send(Err(Error::ENOATTR.into()))
-                        },
-                        Err(e) => {
-                            tx.send(Err(e.into()))
+                        Ok(Some(FSValue::ExtAttrs(ref xattrs))) => {
+                            // A bucket of multiple xattrs
+                            assert!(xattrs.len() > 1);
+                            if let Some(xattr) = xattrs.iter().find(|x| {
+                                x.namespace() == ns && x.name() == owned_name
+                            }) {
+                                // Found the right one
+                                let len = match xattr {
+                                    ExtAttr::Inline(iea) => {
+                                        iea.extent.buf.len() as u32
+                                    },
+                                    ExtAttr::Blob(bea) => {
+                                        bea.extent.lsize
+                                    }
+                                };
+                                Ok(len)
+                            } else {
+                                Err(Error::ENOATTR.into())
+                            }
                         }
-                    }.unwrap();
+                        Err(e) => {
+                            Err(e.into())
+                        }
+                        _ => {
+                            Err(Error::ENOATTR.into())
+                        },
+                    };
+                    tx.send(result).unwrap();
                     future::ok::<(), Error>(())
                 })
             }).map_err(|e| panic!("{:?}", e))
@@ -631,9 +676,16 @@ impl Fs {
             self.db.fsread(self.tree, move |dataset| {
                 let buf = Vec::with_capacity(size as usize);
                 dataset.range(FSKey::extattr_range(ino))
-                .fold(buf, move |mut buf, (_k, v)| {
-                    let xattr = v.as_extattr().unwrap();
-                    f(&mut buf, &xattr);
+                .fold(buf, move |mut buf, (k, v)| {
+                    match v {
+                        FSValue::ExtAttr(xattr) => f(&mut buf, &xattr),
+                        FSValue::ExtAttrs(v) => {
+                            for xattr in v {
+                                f(&mut buf, &xattr);
+                            }
+                        },
+                        _ => panic!("Unexpected value {:?} for key {:?}", v, k)
+                    }
                     future::ok::<Vec<u8>, Error>(buf)
                 }).map(move |buf| tx.send(Ok(buf)).unwrap())
             }).map_err(|e: Error| panic!("{:?}", e))
@@ -660,9 +712,14 @@ impl Fs {
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 dataset.range(FSKey::extattr_range(ino))
-                .fold(0u32, move |mut len, (_k, v)| {
-                    let extattr = v.as_extattr().unwrap();
-                    len += f(&extattr);
+                .fold(0u32, move |mut len, (k, v)| {
+                    len += match v {
+                        FSValue::ExtAttr(xattr) => f(&xattr),
+                        FSValue::ExtAttrs(v) => {
+                            v.iter().map(|xattr| f(xattr)).sum()
+                        },
+                        _ => panic!("Unexpected value {:?} for key {:?}", v, k)
+                    };
                     future::ok::<u32, Error>(len)
                 }).map(move |l| tx.send(Ok(l)).unwrap())
             }).map_err(|e: Error| panic!("{:?}", e))
