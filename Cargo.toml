@@ -58,9 +58,11 @@ default-features = false
 features=  [ "suggestions", "color", "wrap_help" ]
 
 [dev-dependencies]
+chashmap = "2"
 galvanic-test = { git = "https://github.com/asomers/galvanic-test/", rev = "aca7983"}
 itertools = "0.7.1"
 log = "0.4"
+num_cpus = "1"
 permutohedron = "0.2"
 pretty_assertions = "0.5"
 # TODO: switch to rand 0.6 when it's released
