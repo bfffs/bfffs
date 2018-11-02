@@ -98,6 +98,80 @@ test_suite! {
         assert_eq!(mocks.val.0.getextattr(ino, ns, &name), Err(libc::ENOATTR));
     }
 
+    /// deleteextattr with a hash collision.
+    test deleteextattr_collision(mocks) {
+        let filename = OsString::from("x");
+        let ns0 = ExtAttrNamespace::User;
+        let ns1 = ExtAttrNamespace::System;
+        let name0 = OsString::from("BWCdLQkApB");
+        let name1 = OsString::from("D6tLLI4mys");
+        let value0 = [0u8, 1, 2];
+        let value1 = [3u8, 4, 5, 6];
+
+        {
+            use bfffs::common::fs_tree::ObjKey;
+
+            let objkey0 = ObjKey::extattr(ns0, &name0);
+            let objkey1 = ObjKey::extattr(ns1, &name1);
+            // If this assertion fails, then the on-disk format has changed.  If
+            // that was intentional, then generate new has collisions by running
+            // examples/hash_collision.rs.
+            assert_eq!(objkey0.offset(), objkey1.offset());
+        }
+
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+
+        // First try deleting the attributes in order
+        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.deleteextattr(ino, ns0, &name0).unwrap();
+        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_err());
+        assert!(mocks.val.0.getextattr(ino, ns1, &name1).is_ok());
+        mocks.val.0.deleteextattr(ino, ns1, &name1).unwrap();
+        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_err());
+        assert!(mocks.val.0.getextattr(ino, ns1, &name1).is_err());
+
+        // Repeat, this time out-of-order
+        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.deleteextattr(ino, ns1, &name1).unwrap();
+        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_ok());
+        assert!(mocks.val.0.getextattr(ino, ns1, &name1).is_err());
+        mocks.val.0.deleteextattr(ino, ns0, &name0).unwrap();
+        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_err());
+        assert!(mocks.val.0.getextattr(ino, ns1, &name1).is_err());
+    }
+
+    /// deleteextattr of a nonexistent attribute that hash-collides with an
+    /// existing one.
+    test deleteextattr_collision_enoattr(mocks) {
+        let filename = OsString::from("x");
+        let ns0 = ExtAttrNamespace::User;
+        let ns1 = ExtAttrNamespace::System;
+        let name0 = OsString::from("BWCdLQkApB");
+        let name1 = OsString::from("D6tLLI4mys");
+        let value0 = [0u8, 1, 2];
+
+        {
+            use bfffs::common::fs_tree::ObjKey;
+
+            let objkey0 = ObjKey::extattr(ns0, &name0);
+            let objkey1 = ObjKey::extattr(ns1, &name1);
+            // If this assertion fails, then the on-disk format has changed.  If
+            // that was intentional, then generate new has collisions by running
+            // examples/hash_collision.rs.
+            assert_eq!(objkey0.offset(), objkey1.offset());
+        }
+
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+
+        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
+
+        assert_eq!(mocks.val.0.deleteextattr(ino, ns1, &name1),
+                   Err(libc::ENOATTR));
+        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_ok());
+    }
+
     test deleteextattr_enoattr(mocks) {
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -414,6 +488,39 @@ root:
         assert_eq!(&v[..], &value);
     }
 
+    /// setextattr and getextattr with a hash collision.
+    test getextattr_collision(mocks) {
+        let filename = OsString::from("x");
+        let ns0 = ExtAttrNamespace::User;
+        let ns1 = ExtAttrNamespace::System;
+        let name0 = OsString::from("BWCdLQkApB");
+        let name1 = OsString::from("D6tLLI4mys");
+        let value0 = [0u8, 1, 2];
+        let value1 = [3u8, 4, 5, 6];
+
+        {
+            use bfffs::common::fs_tree::ObjKey;
+
+            let objkey0 = ObjKey::extattr(ns0, &name0);
+            let objkey1 = ObjKey::extattr(ns1, &name1);
+            // If this assertion fails, then the on-disk format has changed.  If
+            // that was intentional, then generate new has collisions by running
+            // examples/hash_collision.rs.
+            assert_eq!(objkey0.offset(), objkey1.offset());
+        }
+
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+
+        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(ino, ns0, &name0).unwrap(), 3);
+        let v0 = mocks.val.0.getextattr(ino, ns0, &name0).unwrap();
+        assert_eq!(&v0[..], &value0);
+        assert_eq!(mocks.val.0.getextattrlen(ino, ns1, &name1).unwrap(), 4);
+        let v1 = mocks.val.0.getextattr(ino, ns1, &name1).unwrap();
+        assert_eq!(&v1[..], &value1);
+    }
+
     // The same attribute name exists in two namespaces
     test getextattr_dual_namespaces(mocks) {
         let filename = OsString::from("x");
@@ -528,6 +635,47 @@ root:
         assert_eq!(mocks.val.0.listextattrlen(ino, lenf).unwrap(), 8);
         assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf).unwrap()[..],
                    &expected[..]);
+    }
+
+    /// setextattr and listextattr with a cross-namespace hash collision.
+    test listextattr_collision_separate_namespaces(mocks) {
+        let filename = OsString::from("x");
+        let ns0 = ExtAttrNamespace::User;
+        let ns1 = ExtAttrNamespace::System;
+        let name0 = OsString::from("BWCdLQkApB");
+        let name1 = OsString::from("D6tLLI4mys");
+        let value0 = [0u8, 1, 2];
+        let value1 = [3u8, 4, 5, 6];
+
+        {
+            use bfffs::common::fs_tree::ObjKey;
+
+            let objkey0 = ObjKey::extattr(ns0, &name0);
+            let objkey1 = ObjKey::extattr(ns1, &name1);
+            // If this assertion fails, then the on-disk format has changed.  If
+            // that was intentional, then generate new has collisions by running
+            // examples/hash_collision.rs.
+            assert_eq!(objkey0.offset(), objkey1.offset());
+        }
+
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+
+        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
+
+        let expected0 = b"\x0aBWCdLQkApB";
+        let lenf0 = self::listextattr_lenf(ns0);
+        let lsf0 = self::listextattr_lsf(ns0);
+        assert_eq!(mocks.val.0.listextattrlen(ino, lenf0).unwrap(), 11);
+        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf0).unwrap()[..],
+                   &expected0[..]);
+
+        let expected1 = b"\x0aD6tLLI4mys";
+        let lenf1 = self::listextattr_lenf(ns1);
+        let lsf1 = self::listextattr_lsf(ns1);
+        assert_eq!(mocks.val.0.listextattrlen(ino, lenf1).unwrap(), 11);
+        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf1).unwrap()[..],
+                   &expected1[..]);
     }
 
     test listextattr_dual_namespaces(mocks) {

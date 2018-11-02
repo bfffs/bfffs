@@ -106,7 +106,7 @@ impl ObjKey {
         d as u8
     }
 
-    fn offset(&self) -> u64 {
+    pub fn offset(&self) -> u64 {
         match self {
             ObjKey::DirEntry(x) => *x,
             ObjKey::Inode => 0,

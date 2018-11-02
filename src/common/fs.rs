@@ -212,6 +212,8 @@ impl Fs {
                                 Box::new(fut)
                                     as Box<Future<Item=(), Error=Error> + Send>
                             } else {
+                                // A 3 (or more) way hash collision between the
+                                // new value and at least two old ones.
                                 let v = FSValue::ExtAttrs(old);
                                 let fut = dataset.insert(key, v)
                                 .and_then(|_| Err(Error::ENOATTR).into_future());
@@ -352,6 +354,7 @@ impl Fs {
                 });
                 let extattr_stream = dataset.range(FSKey::extattr_range(ino))
                 .filter_map(move |(_k, v)| {
+                    // TODO: handle hash collisions.
                     if let ExtAttr::Blob(be) = v.as_extattr().unwrap()
                     {
                         Some(be.extent.rid)
@@ -1248,7 +1251,7 @@ impl Fs {
                                     as Box<Future<Item=(), Error=Error> + Send>
                             } else {
                                 // We had a hash collision setting an unrelated
-                                // xattr Get the old value back, and pack them
+                                // xattr. Get the old value back, and pack them
                                 // together.
                                 let fut = dataset.get(key)
                                 .and_then(move |r| {
@@ -1264,7 +1267,7 @@ impl Fs {
                             }
                         },
                         Some(FSValue::ExtAttrs(mut old)) => {
-                            // We previously had a hash collision.  Get the old
+                            // A three (or more)-way hash collision.  Get the old
                             // value back, and pack them together.
                             let fut = dataset.get(key)
                             .and_then(move |r| {
