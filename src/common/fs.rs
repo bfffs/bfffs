@@ -173,19 +173,65 @@ impl Fs {
     {
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
+        let name = name.to_owned();
         let key = FSKey::new(ino, objkey);
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
-                // TODO: check for hash collisions
                 dataset.remove(key)
-                .map(move |r| {
-                    if r.is_some() {
-                        tx.send(Ok(()))
-                    } else {
-                        tx.send(Err(libc::ENOATTR))
-                    }.unwrap()
+                .and_then(move |r| {
+                    match r {
+                        Some(FSValue::ExtAttr(ref old)) if old.namespace() == ns
+                            && old.name() == name =>
+                        {
+                            // This is the xattr we're looking for
+                            Box::new(Ok(()).into_future())
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        },
+                        Some(FSValue::ExtAttr(old)) =>
+                        {
+                            // Hash collision.  Put it back, and return ENOATTR
+                            let value = FSValue::ExtAttr(old);
+                            let fut = dataset.insert(key, value)
+                            .and_then(|_| Err(Error::ENOATTR).into_future());
+                            Box::new(fut)
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        },
+                        Some(FSValue::ExtAttrs(mut old)) => {
+                            // There was previously a hash collision.
+                            if let Some(i) = old.iter().position(|x| {
+                                x.namespace() == ns && x.name() == name
+                            }) {
+                                old.swap_remove(i);
+                                let v = if old.len() == 1 {
+                                    FSValue::ExtAttr(old.pop().unwrap())
+                                } else {
+                                    FSValue::ExtAttrs(old)
+                                };
+                                let fut = dataset.insert(key, v)
+                                .map(|_| ());
+                                Box::new(fut)
+                                    as Box<Future<Item=(), Error=Error> + Send>
+                            } else {
+                                let v = FSValue::ExtAttrs(old);
+                                let fut = dataset.insert(key, v)
+                                .and_then(|_| Err(Error::ENOATTR).into_future());
+                                Box::new(fut)
+                                    as Box<Future<Item=(), Error=Error> + Send>
+                            }
+                        },
+                        None => {
+                            Box::new(Err(Error::ENOATTR).into_future())
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        },
+                        x => panic!("Unexpected value {:?} for key {:?}",
+                                    x, key)
+                    }
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(|e| e.into())
+            .then(|r| {
+                tx.send(r).unwrap();
+                Ok(()).into_future()
+            })
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1117,25 +1163,80 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn setextattr(&self, ino: u64, namespace: ExtAttrNamespace,
+    pub fn setextattr(&self, ino: u64, ns: ExtAttrNamespace,
                       name: &OsStr, data: &[u8]) -> Result<(), i32>
     {
         let (tx, rx) = oneshot::channel();
-        let objkey = ObjKey::extattr(namespace, &name);
+        let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(ino, objkey);
         // Data copy
         let buf = Arc::new(DivBufShared::from(Vec::from(&data[..])));
         let extent = InlineExtent::new(buf);
-        let extattr = InlineExtAttr {
-            namespace,
+        let extattr = ExtAttr::Inline(InlineExtAttr {
+            namespace: ns,
             name: name.to_owned(),
             extent
-        };
-        let value = FSValue::InlineExtAttr(extattr);
+        });
+        let name2 = name.to_owned();
+        let value = FSValue::ExtAttr(extattr);
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
                 dataset.insert(key, value)
-                .map(move |_| tx.send(Ok(())).unwrap())
+                .and_then(move |r| {
+                    match r {
+                        Some(FSValue::ExtAttr(old)) => {
+                            if old.namespace() == ns && old.name() == name2 {
+                                // We're overwriting an existing xattr
+                                Box::new(future::ok::<(), Error>(()))
+                                    as Box<Future<Item=(), Error=Error> + Send>
+                            } else {
+                                // We had a hash collision setting an unrelated
+                                // xattr Get the old value back, and pack them
+                                // together.
+                                let fut = dataset.get(key)
+                                .and_then(move |r| {
+                                    let v = r.unwrap();
+                                    let extattr = v.into_extattr().unwrap();
+                                    let extattrs = vec![old, extattr];
+                                    let value = FSValue::ExtAttrs(extattrs);
+                                    dataset.insert(key, value)
+                                    .map(|_| ())
+                                });
+                                Box::new(fut)
+                                    as Box<Future<Item=(), Error=Error> + Send>
+                            }
+                        },
+                        Some(FSValue::ExtAttrs(mut old)) => {
+                            // We previously had a hash collision.  Get the old
+                            // value back, and pack them together.
+                            let fut = dataset.get(key)
+                            .and_then(move |r| {
+                                let v = r.unwrap();
+                                let extattr = v.into_extattr().unwrap();
+                                if let Some(i) = old.iter().position(|x| {
+                                    x.namespace() == ns && x.name() == name2
+                                }) {
+                                    // Replace the old xattr value
+                                    old[i] = extattr;
+                                } else {
+                                    // Append the new xattr
+                                    old.push(extattr);
+                                }
+                                dataset.insert(key, FSValue::ExtAttrs(old))
+                                .map(|_| ())
+                            });
+                            Box::new(fut)
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        },
+                        None => {
+                            // No previous value
+                            Box::new(future::ok::<(), Error>(()))
+                                as Box<Future<Item=(), Error=Error> + Send>
+                        },
+                        x => panic!("Unexpected value {:?} for key {:?}", x,
+                                    key)
+                    }
+                }).map(move |_| tx.send(Ok(())).unwrap())
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()
@@ -1802,14 +1903,14 @@ fn unlink_with_blob_extattr() {
             let k0 = FSKey::new(ino, ObjKey::extattr(namespace, &name0));
             let extent0 = BlobExtent{lsize: 4096, rid: xattr_blob_rid};
             let be = BlobExtAttr{namespace, name: name0, extent: extent0};
-            let v0 = FSValue::BlobExtAttr(be);
+            let v0 = FSValue::ExtAttr(ExtAttr::Blob(be));
 
             let name1 = OsString::from("bar");
             let k1 = FSKey::new(ino, ObjKey::extattr(namespace, &name1));
             let dbs1 = Arc::new(DivBufShared::from(vec![0u8; 1]));
             let extent1 = InlineExtent::new(dbs1);
             let ie = InlineExtAttr{namespace, name: name1, extent: extent1};
-            let v1 = FSValue::InlineExtAttr(ie);
+            let v1 = FSValue::ExtAttr(ExtAttr::Inline(ie));
             let extents = vec![(k0, v0), (k1, v1)];
             Box::new(stream::iter_ok(extents))
         });

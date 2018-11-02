@@ -9,7 +9,7 @@ use crate::common::{
     tree::*
 };
 use divbuf::DivBufShared;
-use futures::{Future, IntoFuture};
+use futures::{Future, IntoFuture, future};
 use metrohash::MetroHash64;
 use serde::de::DeserializeOwned;
 use std::{
@@ -81,7 +81,6 @@ impl ObjKey {
 
         let mut hasher = MetroHash64::new();
         hasher.write(name.as_bytes());
-        // TODO: use cuckoo hashing to deal with collisions
         // TODO: use some salt to defend against DOS attacks
         let namehash = hasher.finish() & ( (1<<56) - 1);
         ObjKey::DirEntry(namehash)
@@ -92,7 +91,6 @@ impl ObjKey {
         let mut hasher = MetroHash64::new();
         namespace.hash(&mut hasher);
         hasher.write(name.as_bytes());
-        // TODO: use cuckoo hashing to deal with collisions
         // TODO: use some salt to defend against DOS attacks
         let namehash = hasher.finish() & ( (1<<56) - 1);
         ObjKey::ExtAttr(namehash)
@@ -130,6 +128,12 @@ bitfield! {
 }
 
 impl FSKey {
+    fn compose(object: u64, objtype: u8, offset: u64) -> Self {
+        FSKey((u128::from(object) << 64)
+              | (u128::from(objtype) << 56)
+              | u128::from(offset))
+    }
+
     /// Create a range of `FSKey` that will include all the directory entries
     /// of directory `ino` beginning at `offset`
     pub fn dirent_range(ino: u64, offset: u64) -> Range<Self> {
@@ -179,12 +183,6 @@ impl FSKey {
         let end = FSKey::compose(ino + 1, 0, 0);
         start..end
     }
-
-    fn compose(object: u64, objtype: u8, offset: u64) -> Self {
-        FSKey((u128::from(object) << 64)
-              | (u128::from(objtype) << 56)
-              | u128::from(offset))
-    }
 }
 
 impl MinValue for FSKey {
@@ -209,6 +207,29 @@ pub struct InlineExtAttr {
     pub extent: InlineExtent
 }
 
+impl InlineExtAttr {
+    fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
+        -> impl Future<Item=ExtAttr<A>, Error=Error> + Send
+        where D: DML, D::Addr: 'static
+    {
+        let lsize = self.extent.buf.len() as u32;
+        let namespace = self.namespace;
+        let name = self.name;
+        let dbs = Arc::try_unwrap(self.extent.buf).unwrap();
+        dml.put(dbs, Compression::None, txg)
+        .map(move |rid: D::Addr| {
+            // Safe because D::Addr should always equal A.  If you ever
+            // call this function with any other type for A, then you're
+            // doing something wrong.
+            debug_assert_eq!(mem::size_of::<D::Addr>(), mem::size_of::<A>());
+            let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
+            let extent = BlobExtent{lsize, rid: rid_a};
+            let bea = BlobExtAttr { namespace, name, extent };
+            ExtAttr::Blob(bea)
+        })
+    }
+}
+
 /// In-memory representation of a large extended attribute
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned"))]
@@ -218,18 +239,36 @@ pub struct BlobExtAttr<A: Addr> {
     pub extent: BlobExtent<A>
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum ExtAttr<'a, A: Addr> {
-    Inline(&'a InlineExtAttr),
-    Blob(&'a BlobExtAttr<A>)
+impl<A: Addr> BlobExtAttr<A> {
+    fn flush(self) -> impl Future<Item=ExtAttr<A>, Error=Error> + Send
+    {
+        Ok(ExtAttr::Blob(self)).into_future()
+    }
 }
 
-impl<'a, A: Addr> ExtAttr<'a, A> {
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(bound(deserialize = "A: DeserializeOwned"))]
+pub enum ExtAttr<A: Addr> {
+    Inline(InlineExtAttr),
+    Blob(BlobExtAttr<A>)
+}
+
+impl<'a, A: Addr> ExtAttr<A> {
     pub fn as_inline(&'a self) -> Option<&'a InlineExtAttr> {
         if let ExtAttr::Inline(x) = self {
             Some(x)
         } else {
             None
+        }
+    }
+
+    fn flush<D>(self, dml: &D, txg: TxgT)
+        -> Box<Future<Item=ExtAttr<A>, Error=Error> + Send + 'static>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        match self {
+            ExtAttr::Inline(iea) => Box::new(iea.flush(dml, txg)),
+            ExtAttr::Blob(bea) => Box::new(bea.flush()),
         }
     }
 
@@ -355,6 +394,24 @@ pub struct InlineExtent {
 }
 
 impl InlineExtent {
+    fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
+        -> impl Future<Item=FSValue<A>, Error=Error> + Send + 'static
+        where D: DML, D::Addr: 'static
+    {
+        let lsize = self.buf.len() as u32;
+        let dbs = Arc::try_unwrap(self.buf).unwrap();
+        dml.put(dbs, Compression::None, txg)
+        .map(move |rid: D::Addr| {
+            debug_assert_eq!(mem::size_of::<D::Addr>(), mem::size_of::<A>());
+            // Safe because D::Addr should always equal A.  If you ever
+            // call this function with any other type for A, then you're
+            // doing something wrong.
+            let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
+            let be = BlobExtent{lsize, rid: rid_a};
+            FSValue::BlobExtent(be)
+        })
+    }
+
     pub fn new(buf: Arc<DivBufShared>) -> Self {
         InlineExtent{buf}
     }
@@ -390,17 +447,16 @@ pub enum FSValue<A: Addr> {
     Inode(Inode),
     InlineExtent(InlineExtent),
     BlobExtent(BlobExtent<A>),
-    InlineExtAttr(InlineExtAttr),
-    BlobExtAttr(BlobExtAttr<A>),
+    ExtAttr(ExtAttr<A>),
+    /// A whole Bucket of `ExtAttr`s, used in case of hash collisions
+    ExtAttrs(Vec<ExtAttr<A>>),
     None
 }
 
 impl<A: Addr> FSValue<A> {
-    pub fn as_extattr(&self) -> Option<ExtAttr<A>> {
-        if let FSValue::InlineExtAttr(extent) = self {
-            Some(ExtAttr::Inline(extent))
-        } else if let FSValue::BlobExtAttr(extent) = self {
-            Some(ExtAttr::Blob(extent))
+    pub fn as_extattr(&self) -> Option<&ExtAttr<A>> {
+        if let FSValue::ExtAttr(extent) = self {
+            Some(extent)
         } else {
             None
         }
@@ -439,46 +495,37 @@ impl<A: Addr> FSValue<A> {
             None
         }
     }
+
+    pub fn into_extattr(self) -> Option<ExtAttr<A>> {
+        if let FSValue::ExtAttr(extent) = self {
+            Some(extent)
+        } else {
+            None
+        }
+    }
 }
 
 impl<A: Addr> Value for FSValue<A> {
     fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Box<Future<Item=Self, Error=Error> + Send>
-        where D: DML, D::Addr: 'static
+        -> Box<Future<Item=Self, Error=Error> + Send + 'static>
+        where D: DML + 'static, D::Addr: 'static
     {
-        if let FSValue::InlineExtent(ie) = self {
-            let lsize = ie.buf.len() as u32;
-            let dbs = Arc::try_unwrap(ie.buf).unwrap();
-            Box::new(dml.put(dbs, Compression::None, txg)
-                .map(move |rid: D::Addr| {
-                    debug_assert_eq!(mem::size_of::<D::Addr>(),
-                                     mem::size_of::<A>());
-                    // Safe because D::Addr should always equal A.  If you ever
-                    // call this function with any other type for A, then you're
-                    // doing something wrong.
-                    let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
-                    let be = BlobExtent{lsize, rid: rid_a};
-                    FSValue::BlobExtent(be)
-                })) as Box<Future<Item=Self, Error=Error> + Send>
-        } else if let FSValue::InlineExtAttr(iea) = self {
-            let lsize = iea.extent.buf.len() as u32;
-            let namespace = iea.namespace;
-            let name = iea.name;
-            let dbs = Arc::try_unwrap(iea.extent.buf).unwrap();
-            Box::new(dml.put(dbs, Compression::None, txg)
-                .map(move |rid: D::Addr| {
-                    debug_assert_eq!(mem::size_of::<D::Addr>(),
-                                     mem::size_of::<A>());
-                    // Safe because D::Addr should always equal A.  If you ever
-                    // call this function with any other type for A, then you're
-                    // doing something wrong.
-                    let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
-                    let extent = BlobExtent{lsize, rid: rid_a};
-                    let bea = BlobExtAttr { namespace, name, extent };
-                    FSValue::BlobExtAttr(bea)
-                })) as Box<Future<Item=Self, Error=Error> + Send>
-        } else {
-            Box::new(Ok(self).into_future())
+        match self {
+            FSValue::InlineExtent(ie) => Box::new(ie.flush(dml, txg)),
+            FSValue::ExtAttr(extattr) => {
+                let fut = extattr.flush(dml, txg)
+                .map(|extattr| FSValue::ExtAttr(extattr));
+                Box::new(fut)
+            }
+            FSValue::ExtAttrs(v) => {
+                let fut = future::join_all(
+                    v.into_iter().map(|extattr| {
+                        extattr.flush(dml, txg)
+                    }).collect::<Vec<_>>()
+                ).map(|extattrs| FSValue::ExtAttrs(extattrs));
+                Box::new(fut) as Box<Future<Item=Self, Error=Error> + Send>
+            },
+            _ => Box::new(Ok(self).into_future())
                 as Box<Future<Item=Self, Error=Error> + Send>
         }
     }

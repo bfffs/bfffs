@@ -71,10 +71,11 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     // LCOV_EXCL_START   unreachable code
     fn flush<D>(self, _dml: &D, _txg: TxgT)
         -> Box<Future<Item=Self, Error=Error> + Send>
-        where D: DML, D::Addr: 'static
+        where D: DML + 'static, D::Addr: 'static
     {
         // should never be called since needs_flush is false.  Ideally, this
         // entire function should go away once generic specialization is stable
+        // https://github.com/rust-lang/rust/issues/31844
         unreachable!()
     }
     // LCOV_EXCL_STOP
@@ -212,7 +213,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
     /// that don't need it, perhaps using generics specialization
     pub fn flush<A, D>(self, d: &D, txg: TxgT)
         -> Box<Future<Item=Self, Error=Error> + Send>
-        where D: DML<Addr=A>, A: 'static
+        where D: DML<Addr=A> + 'static, A: 'static
     {
         if V::needs_flush() {
             let flush_futs = self.items.into_iter().map(|(k, v)| {
