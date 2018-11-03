@@ -203,8 +203,10 @@ impl Fs {
                             }) {
                                 old.swap_remove(i);
                                 let v = if old.len() == 1 {
+                                    // A 2-way collision; remove one
                                     FSValue::ExtAttr(old.pop().unwrap())
                                 } else {
+                                    // A 3 (or more) way collision; remove one
                                     FSValue::ExtAttrs(old)
                                 };
                                 let fut = dataset.insert(key, v)
@@ -213,7 +215,8 @@ impl Fs {
                                     as Box<Future<Item=(), Error=Error> + Send>
                             } else {
                                 // A 3 (or more) way hash collision between the
-                                // new value and at least two old ones.
+                                // accessed attribute and at least two different
+                                // ones.
                                 let v = FSValue::ExtAttrs(old);
                                 let fut = dataset.insert(key, v)
                                 .and_then(|_| Err(Error::ENOATTR).into_future());
@@ -1267,8 +1270,8 @@ impl Fs {
                             }
                         },
                         Some(FSValue::ExtAttrs(mut old)) => {
-                            // A three (or more)-way hash collision.  Get the old
-                            // value back, and pack them together.
+                            // There was previously a hash collision.  Get the
+                            // new value back, then pack them together.
                             let fut = dataset.get(key)
                             .and_then(move |r| {
                                 let v = r.unwrap();
@@ -1276,9 +1279,11 @@ impl Fs {
                                 if let Some(i) = old.iter().position(|x| {
                                     x.namespace() == ns && x.name() == name2
                                 }) {
-                                    // Replace the old xattr value
+                                    // A 2-way hash collision, overwriting one
+                                    // value.  Replace the old value.
                                     old[i] = extattr;
                                 } else {
+                                    // A three (or more)-way hash collision.
                                     // Append the new xattr
                                     old.push(extattr);
                                 }
@@ -1620,6 +1625,126 @@ fn debug_setattr() {
     assert_eq!("SetAttr { size: None, atime: None, mtime: None, ctime: None, birthtime: None, perm: None, uid: None, gid: None, flags: None }", s);
 }
 
+/// A 3-way hash collision of extended attributes.  deleteextattr removes one of
+/// them.
+#[test]
+fn deleteextattr_3way_collision() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let ino = 1;
+    // Three attributes share a bucket.  The test will delete name2
+    let name0 = OsString::from("foo");
+    let name0a = name0.clone();
+    let value0 = OsString::from("foov");
+    let name1 = OsString::from("bar");
+    let name1a = name1.clone();
+    let value1 = OsString::from("barf");
+    let name2 = OsString::from("baz");
+    let name2a = name2.clone();
+    let value2 = OsString::from("zoobo");
+    let namespace = ExtAttrNamespace::User;
+
+    ds.expect_remove()
+    .called_once()
+    .returning(move |_| {
+        // Return the three values
+        let dbs0 = Arc::new(DivBufShared::from(Vec::from(value0.as_bytes())));
+        let extent0 = InlineExtent::new(dbs0);
+        let name = name0a.clone();
+        let iea0 = InlineExtAttr{namespace, name, extent: extent0};
+        let extattr0 = ExtAttr::Inline(iea0);
+        let dbs1 = Arc::new(DivBufShared::from(Vec::from(value1.as_bytes())));
+        let extent1 = InlineExtent::new(dbs1);
+        let name = name1a.clone();
+        let iea1 = InlineExtAttr{namespace, name, extent: extent1};
+        let extattr1 = ExtAttr::Inline(iea1);
+        let dbs2 = Arc::new(DivBufShared::from(Vec::from(value2.as_bytes())));
+        let extent2 = InlineExtent::new(dbs2);
+        let name = name2a.clone();
+        let iea2 = InlineExtAttr{namespace, name, extent: extent2};
+        let extattr2 = ExtAttr::Inline(iea2);
+        let v = FSValue::ExtAttrs(vec![extattr0, extattr1, extattr2]);
+        Box::new(Ok(Some(v)).into_future())
+            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+    });
+    ds.then().expect_insert()
+    .called_once()
+    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        // name0 and name1 should be reinserted
+        let extattrs = args.1.as_extattrs().unwrap();
+        let ie0 = extattrs[0].as_inline().unwrap();
+        let ie1 = extattrs[1].as_inline().unwrap();
+        ie0.name == name0 && ie1.name == name1 && extattrs.len() == 2
+    })).returning(|_| {
+        Box::new(Ok(None).into_future())
+    });
+
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.deleteextattr(ino, namespace, &name2);
+    assert_eq!(Ok(()), r);
+}
+
+/// A 3-way hash collision of extended attributes.  Two are stored in one key,
+/// and deleteextattr tries to delete a third that hashes to the same key, but
+/// isn't stored there.
+#[test]
+fn deleteextattr_3way_collision_enoattr() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let ino = 1;
+    // name0 and name1 are stored.  The test tries to delete name2
+    let name0 = OsString::from("foo");
+    let name0a = name0.clone();
+    let value0 = OsString::from("foov");
+    let name1 = OsString::from("bar");
+    let name1a = name1.clone();
+    let value1 = OsString::from("barf");
+    let name2 = OsString::from("baz");
+    let namespace = ExtAttrNamespace::User;
+
+    ds.expect_remove()
+    .called_once()
+    .returning(move |_| {
+        // Return the first two values
+        let dbs0 = Arc::new(DivBufShared::from(Vec::from(value0.as_bytes())));
+        let extent0 = InlineExtent::new(dbs0);
+        let name = name0a.clone();
+        let iea0 = InlineExtAttr{namespace, name, extent: extent0};
+        let extattr0 = ExtAttr::Inline(iea0);
+        let dbs1 = Arc::new(DivBufShared::from(Vec::from(value1.as_bytes())));
+        let extent1 = InlineExtent::new(dbs1);
+        let name = name1a.clone();
+        let iea1 = InlineExtAttr{namespace, name, extent: extent1};
+        let extattr1 = ExtAttr::Inline(iea1);
+        let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
+        Box::new(Ok(Some(v)).into_future())
+            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+    });
+    ds.then().expect_insert()
+    .called_once()
+    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        // name0 and name1 should be reinserted
+        let extattrs = args.1.as_extattrs().unwrap();
+        let ie0 = extattrs[0].as_inline().unwrap();
+        let ie1 = extattrs[1].as_inline().unwrap();
+        ie0.name == name0 && ie1.name == name1 && extattrs.len() == 2
+    })).returning(|_| {
+        Box::new(Ok(None).into_future())
+    });
+
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.deleteextattr(ino, namespace, &name2);
+    assert_eq!(Err(libc::ENOATTR), r);
+}
+
 /// Reading the source returns EIO.  Don't delete the dest
 #[test]
 fn rename_eio() {
@@ -1737,6 +1862,99 @@ fn setextattr() {
         .returning(move |_| opt_ds.take().unwrap());
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.setextattr(ino, namespace, &name, value.as_bytes());
+    assert_eq!(Ok(()), r);
+}
+
+/// setextattr with a 3-way hash collision.  It's hard to programmatically
+/// generate 3-way hash collisions, so we simulate them using mocks
+#[test]
+fn setextattr_3way_collision() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let ino = 1;
+    // name0 and name1 are already set
+    let name0 = OsString::from("foo");
+    let name0a = name0.clone();
+    let value0 = OsString::from("foov");
+    let name1 = OsString::from("bar");
+    let name1a = name1.clone();
+    let value1 = OsString::from("barf");
+    // The test will set name3, and its hash will collide with name0
+    let name2 = OsString::from("baz");
+    let name2a = name2.clone();
+    let name2b = name2.clone();
+    let name2c = name2.clone();
+    let name2d = name2.clone();
+    let value2 = OsString::from("zoobo");
+    let value2a = value2.clone();
+    let value2b = value2.clone();
+    let namespace = ExtAttrNamespace::User;
+
+    ds.expect_insert()
+    .called_once()
+    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        let extattr = args.1.as_extattr().unwrap();
+        let ie = extattr.as_inline().unwrap();
+        ie.name == name2a
+    })).returning(move |_| {
+        // Return the previous two values
+        let dbs0 = Arc::new(DivBufShared::from(Vec::from(value0.as_bytes())));
+        let extent0 = InlineExtent::new(dbs0);
+        let name = name0a.clone();
+        let iea0 = InlineExtAttr{namespace, name, extent: extent0};
+        let extattr0 = ExtAttr::Inline(iea0);
+        let dbs1 = Arc::new(DivBufShared::from(Vec::from(value1.as_bytes())));
+        let extent1 = InlineExtent::new(dbs1);
+        let name = name1a.clone();
+        let iea1 = InlineExtAttr{namespace, name, extent: extent1};
+        let extattr1 = ExtAttr::Inline(iea1);
+        let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
+        Box::new(Ok(Some(v)).into_future())
+            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+    });
+    ds.then().expect_get()
+    .called_once()
+    .with(passes(move |arg: &FSKey| {
+        arg.is_extattr() &&
+        arg.objtype() == 3 &&
+        arg.object() == ino
+    })).returning(move |_| {
+        // Return the newly inserted value2
+        let dbs2 = Arc::new(DivBufShared::from(Vec::from(value2a.as_bytes())));
+        let extent2 = InlineExtent::new(dbs2);
+        let name = name2b.clone();
+        let iea2 = InlineExtAttr{namespace, name, extent: extent2};
+        let extattr2 = ExtAttr::Inline(iea2);
+        let v = FSValue::ExtAttr(extattr2);
+        Box::new(Ok(Some(v)).into_future())
+            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+    });
+    ds.then().expect_insert()
+    .called_once()
+    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        let extattrs = args.1.as_extattrs().unwrap();
+        let ie0 = extattrs[0].as_inline().unwrap();
+        let ie1 = extattrs[1].as_inline().unwrap();
+        let ie2 = extattrs[2].as_inline().unwrap();
+        ie0.name == name0 && ie1.name == name1 && ie2.name == name2c
+    })).returning(move |_| {
+        // Return a copy of the recently inserted value2
+        let dbs2 = Arc::new(DivBufShared::from(Vec::from(value2b.as_bytes())));
+        let extent2 = InlineExtent::new(dbs2);
+        let name = name2d.clone();
+        let iea2 = InlineExtAttr{namespace, name, extent: extent2};
+        let extattr2 = ExtAttr::Inline(iea2);
+        let v = FSValue::ExtAttr(extattr2);
+        Box::new(Ok(Some(v)).into_future())
+            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+    });
+
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.setextattr(ino, namespace, &name2, value2.as_bytes());
     assert_eq!(Ok(()), r);
 }
 

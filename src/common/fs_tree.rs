@@ -462,6 +462,17 @@ impl<A: Addr> FSValue<A> {
         }
     }
 
+// LCOV_EXCL_START
+    #[cfg(test)]
+    pub fn as_extattrs(&self) -> Option<&Vec<ExtAttr<A>>> {
+        if let FSValue::ExtAttrs(extents) = self {
+            Some(extents)
+        } else {
+            None
+        }
+    }
+// LCOV_EXCL_END
+
     pub fn as_extent(&self) -> Option<Extent<A>> {
         if let FSValue::InlineExtent(extent) = self {
             Some(Extent::Inline(extent))

@@ -1351,6 +1351,28 @@ root:
         assert_eq!(&v[..], &value2);
     }
 
+    /// Overwrite an existing extended attribute that hash-collided with a
+    /// different xattr
+    test setextattr_collision_overwrite(mocks) {
+        let filename = OsString::from("x");
+        let ns0 = ExtAttrNamespace::User;
+        let ns1 = ExtAttrNamespace::System;
+        let name0 = OsString::from("BWCdLQkApB");
+        let name1 = OsString::from("D6tLLI4mys");
+        let value0 = [0u8, 1, 2];
+        let value1 = [3u8, 4, 5, 6];
+        let value1a = [4u8, 7, 8, 9, 10];
+
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns1, &name1, &value1a[..]).unwrap();
+        let v0 = mocks.val.0.getextattr(ino, ns0, &name0).unwrap();
+        assert_eq!(&v0[..], &value0);
+        let v1 = mocks.val.0.getextattr(ino, ns1, &name1).unwrap();
+        assert_eq!(&v1[..], &value1a);
+    }
+
     test statvfs(mocks) {
         let statvfs = mocks.val.0.statvfs();
         assert_eq!(statvfs.f_blocks, 262_144);
