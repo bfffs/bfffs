@@ -16,6 +16,7 @@ use futures::{
     Sink,
     Stream,
     future,
+    stream,
     sync::{mpsc, oneshot}
 };
 use libc;
@@ -358,13 +359,27 @@ impl Fs {
                 let extattr_stream = dataset.range(FSKey::extattr_range(ino))
                 .filter_map(move |(_k, v)| {
                     // TODO: handle hash collisions.
-                    if let ExtAttr::Blob(be) = v.as_extattr().unwrap()
-                    {
-                        Some(be.extent.rid)
-                    } else {
-                        None
+                    match v {
+                        FSValue::ExtAttr(ExtAttr::Blob(be)) => {
+                            let s = Box::new(stream::once(Ok(be.extent.rid)))
+                                as Box<Stream<Item=RID, Error=Error> + Send>;
+                            Some(s)
+                        },
+                        FSValue::ExtAttrs(r) => {
+                            let rids = r.iter().filter_map(|v| {
+                                if let ExtAttr::Blob(be) = v {
+                                    Some(be.extent.rid)
+                                } else {
+                                    None
+                                }
+                            }).collect::<Vec<_>>();
+                            let s = Box::new(stream::iter_ok(rids))
+                                as Box<Stream<Item=RID, Error=Error> + Send>;
+                            Some(s)
+                        }
+                        _ => None
                     }
-                });
+                }).flatten();
                 let fut = extent_stream.chain(extattr_stream)
                 .for_each(move |rid| dataset2.delete_blob(rid))
                 .and_then(move |_| {
@@ -2213,5 +2228,99 @@ fn unlink_with_blob_extattr() {
     let r = fs.unlink(1, &filename);
     assert_eq!(Ok(()), r);
 }
+
+// Unlink a file with two extended attributes that hashed to the same bucket.
+// One is a blob, and must be freed
+#[test]
+fn unlink_with_extattr_hash_collision() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let parent_ino = 1;
+    let ino = 2;
+    let blob_rid = RID(99999);
+    let xattr_blob_rid = RID(88888);
+    let filename = OsString::from("x");
+    let filename2 = filename.clone();
+
+    ds.expect_remove()
+        .called_once()
+        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .returning(move |_| {
+            let dirent = Dirent {
+                ino,
+                dtype: libc::DT_REG,
+                name: filename2.clone()
+            };
+            let v = Some(FSValue::DirEntry(dirent));
+            Box::new(Ok(v).into_future())
+        });
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(ino, ObjKey::Inode))
+        .returning(move |_| {
+            let now = time::get_time();
+            let inode = Inode {
+                size: 0,
+                nlink: 1,
+                flags: 0,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                birthtime: now,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Reg,
+                perm: 0o644,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
+    ds.then().expect_range()
+        .called_once()
+        .with(FSKey::extent_range(ino))
+        .returning(move |_| {
+            // The file is empty
+            let extents = vec![];
+            Box::new(stream::iter_ok(extents))
+        });
+    ds.then().expect_range()
+        .called_once()
+        .with(FSKey::extattr_range(ino))
+        .returning(move |_| {
+            // Return one blob extattr and one inline extattr, in the same
+            // bucket
+            let namespace = ExtAttrNamespace::User;
+            let name0 = OsString::from("foo");
+            let k0 = FSKey::new(ino, ObjKey::extattr(namespace, &name0));
+            let extent0 = BlobExtent{lsize: 4096, rid: xattr_blob_rid};
+            let be = BlobExtAttr{namespace, name: name0, extent: extent0};
+            let extattr0 = ExtAttr::Blob(be);
+
+            let name1 = OsString::from("bar");
+            let dbs1 = Arc::new(DivBufShared::from(vec![0u8; 1]));
+            let extent1 = InlineExtent::new(dbs1);
+            let ie = InlineExtAttr{namespace, name: name1, extent: extent1};
+            let extattr1 = ExtAttr::Inline(ie);
+            let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
+            let extents = vec![(k0, v)];
+            Box::new(stream::iter_ok(extents))
+        });
+    ds.then().expect_delete_blob()
+        .called_once()
+        .with(passes(move |rid: &RID| xattr_blob_rid == *rid))
+        .returning(|_| Box::new(Ok(()).into_future()));
+    ds.then().expect_range_delete()
+        .called_once()
+        .with(FSKey::obj_range(ino))
+        .returning(|_| Box::new(Ok(()).into_future()));
+
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.unlink(1, &filename);
+    assert_eq!(Ok(()), r);
+}
+
 
 }
