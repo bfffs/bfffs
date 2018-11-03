@@ -546,6 +546,7 @@ impl<A: Addr> Value for FSValue<A> {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
 use super::*;
@@ -576,3 +577,4 @@ fn sort_fskey() {
 }
 
 }
+// LCOV_EXCL_END
