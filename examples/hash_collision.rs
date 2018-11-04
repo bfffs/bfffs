@@ -43,15 +43,60 @@ lazy_static! {
         CHashMap::with_capacity(4_000_000);
 }
 
-fn mkname(seed: &[u8; 16]) -> (ExtAttrNamespace, OsString) {
-    let mut this_rng = XorShiftRng::from_seed(*seed);
-    let v: Vec<u8> = this_rng.sample_iter(&Alphanumeric)
-        .map(|c| c as u8)
-        .take(10)
-        .collect();
-    let name = OsStr::from_bytes(&v[..]);
-    let ns = this_rng.choose(&NAMESPACES).unwrap();
-    (*ns, name.to_owned())
+trait Collidable {
+    fn dump(&self) -> String;
+    fn new(seed: &[u8; 16]) -> Self;
+    fn objkey(&self) -> ObjKey;
+}
+
+struct CDirent {
+    name: OsString
+}
+
+impl Collidable for CDirent {
+    fn dump(&self) -> String {
+        format!("{:?}", &self.name)
+    }
+
+    fn new(seed: &[u8; 16]) -> Self {
+        let mut this_rng = XorShiftRng::from_seed(*seed);
+        let v: Vec<u8> = this_rng.sample_iter(&Alphanumeric)
+            .map(|c| c as u8)
+            .take(10)
+            .collect();
+        let name = OsStr::from_bytes(&v[..]);
+        CDirent{name: name.to_owned()}
+    }
+
+    fn objkey(&self) -> ObjKey {
+        ObjKey::dir_entry(&self.name)
+    }
+}
+
+struct CExtattr {
+    namespace: ExtAttrNamespace,
+    name: OsString
+}
+
+impl Collidable for CExtattr {
+    fn dump(&self) -> String {
+        format!("({:?}, {:?})", self.namespace, &self.name)
+    }
+
+    fn new(seed: &[u8; 16]) -> Self {
+        let mut this_rng = XorShiftRng::from_seed(*seed);
+        let v: Vec<u8> = this_rng.sample_iter(&Alphanumeric)
+            .map(|c| c as u8)
+            .take(10)
+            .collect();
+        let name = OsStr::from_bytes(&v[..]);
+        let ns = this_rng.choose(&NAMESPACES).unwrap();
+        CExtattr{namespace: *ns, name: name.to_owned()}
+    }
+
+    fn objkey(&self) -> ObjKey {
+        ObjKey::extattr(self.namespace, &self.name)
+    }
 }
 
 fn report(collisions: u64, tries: u64) {
@@ -73,34 +118,31 @@ impl Worker {
     }
 
     /// Run forever
-    fn run(&mut self) {
+    fn run<T: Collidable>(&mut self) {
         loop {
-            let result = self.run_once();
+            let result = self.run_once::<T>();
             self.tx.send(result).unwrap();
         }
     }
 
-    fn run_once(&mut self) -> (u64, u64) {
+    fn run_once<T: Collidable>(&mut self) -> (u64, u64) {
         let mut tries = 0u64;
         let mut collisions = 0u64;
         for _ in 0..10_000 {
             let seed: [u8; 16] = self.rng.gen();
-            let (ns, name) = mkname(&seed);
-            let objkey = ObjKey::extattr(ns, &name);
+            let collidable = T::new(&seed);
+            let objkey = collidable.objkey();
             tries += 1;
-            if let ObjKey::ExtAttr(offset) = objkey {
-                // For testing hash_collision.rs itself, shorten the offset
-                //let offset = offset & ((1<<52) - 1);
-                let v = seed;
-                if let Some(old_seed) = self.hm.insert(offset, v) {
-                    let (old_ns, old_name) = mkname(&old_seed);
-                    println!("Hash collision: {:?} and {:?} have offset {:?}",
-                             (ns, name), (old_ns, old_name), offset);
-                    collisions += 1;
-                    continue;
-                }
-            } else {
-                unreachable!();
+            let offset = objkey.offset();
+            // For testing hash_collision.rs itself, shorten the offset
+            //let offset = offset & ((1<<52) - 1);
+            let v = seed;
+            if let Some(old_seed) = self.hm.insert(offset, v) {
+                let old_collidable = T::new(&old_seed);
+                println!("Hash collision: {} and {} have offset {:?}",
+                         collidable.dump(), old_collidable.dump(), offset);
+                collisions += 1;
+                continue;
             }
         }
         (tries, collisions)
@@ -110,7 +152,11 @@ impl Worker {
 fn main() {
     let app = clap::App::new("hash_collision")
     .about("Generate hash collisions for dirent and extattr storage in BFFFS")
-    .arg(clap::Arg::with_name("mem")
+    .arg(clap::Arg::with_name("extattr")
+         .long("extattr")
+         .short("x")
+         .help("Generate extended attributes instead of directory entries")
+    ).arg(clap::Arg::with_name("mem")
          .help("Memory limit in GB")
          .required(true)
     );
@@ -124,6 +170,7 @@ fn main() {
         };
         libc::setrlimit(libc::RLIMIT_AS, &rlimit);
     }
+    let extattr: bool = matches.is_present("extattr");
 
     let mut now = time::Instant::now();
     let mut tries = 0u64;
@@ -134,7 +181,11 @@ fn main() {
     for _ in 0..ncpu {
         let mut worker = Worker::new(&HM, tx.clone());
         thread::spawn(move || {
-            worker.run();
+            if extattr {
+                worker.run::<CExtattr>();
+            } else {
+                worker.run::<CDirent>();
+            }
         });
     }
     for (t, c) in rx {
