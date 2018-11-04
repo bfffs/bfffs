@@ -358,7 +358,6 @@ impl Fs {
                 });
                 let extattr_stream = dataset.range(FSKey::extattr_range(ino))
                 .filter_map(move |(_k, v)| {
-                    // TODO: handle hash collisions.
                     match v {
                         FSValue::ExtAttr(ExtAttr::Blob(be)) => {
                             let s = Box::new(stream::once(Ok(be.extent.rid)))
@@ -484,24 +483,27 @@ impl Fs {
             self.db.fsread(self.tree, move |dataset| {
                 dataset.get(key)
                 .then(move |r| {
+                    let read_extattr = |xattr: &ExtAttr<RID>| {
+                        let fut = match xattr {
+                            ExtAttr::Inline(iea) => {
+                                let buf = iea.extent.buf.try().unwrap();
+                                Box::new(Ok(buf).into_future()) as MyFut
+                            },
+                            ExtAttr::Blob(bea) => {
+                                let bfut = dataset.get_blob(bea.extent.rid)
+                                    .map(|bdb| *bdb);
+                                Box::new(bfut) as MyFut
+                            }
+                        };
+                        Box::new(fut) as MyFut
+                    };
                     match r {
                         Ok(Some(FSValue::ExtAttr(ref xattr)))
                             if xattr.namespace() == ns &&
                                xattr.name() == owned_name =>
                         {
                             // Found the right xattr
-                            let fut = match xattr {
-                                ExtAttr::Inline(iea) => {
-                                    let buf = iea.extent.buf.try().unwrap();
-                                    Box::new(Ok(buf).into_future()) as MyFut
-                                },
-                                ExtAttr::Blob(bea) => {
-                                    let bfut = dataset.get_blob(bea.extent.rid)
-                                        .map(|bdb| *bdb);
-                                    Box::new(bfut) as MyFut
-                                }
-                            };
-                            Box::new(fut) as MyFut
+                            read_extattr(xattr)
                         },
                         Ok(Some(FSValue::ExtAttrs(ref xattrs))) => {
                             // A bucket of multiple xattrs
@@ -510,19 +512,7 @@ impl Fs {
                                 x.namespace() == ns && x.name() == owned_name
                             }) {
                                 // Found the right one
-                                let fut = match xattr {
-                                    ExtAttr::Inline(iea) => {
-                                        let buf = iea.extent.buf.try().unwrap();
-                                        Box::new(Ok(buf).into_future()) as MyFut
-                                    },
-                                    ExtAttr::Blob(bea) => {
-                                        let rid = bea.extent.rid;
-                                        let bfut = dataset.get_blob(rid)
-                                        .map(|bdb| *bdb);
-                                        Box::new(bfut) as MyFut
-                                    }
-                                };
-                                Box::new(fut) as MyFut
+                                read_extattr(xattr)
                             } else {
                                 // A 3 (or more) way hash collision.  The
                                 // attribute we're looking up isn't found.
