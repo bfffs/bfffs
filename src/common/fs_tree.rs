@@ -366,6 +366,8 @@ pub struct Inode {
     pub file_type:   FileType
 }
 
+/// This module ought to be unreachable, but must exist to satisfy rustc
+// LCOV_EXCL_START
 #[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
 mod dbs_serializer {
     use super::*;
@@ -385,6 +387,7 @@ mod dbs_serializer {
         panic!("InlineExtents should be converted to BlobExtents before serializing")
     }
 }
+// LCOV_EXCL_END
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct InlineExtent {
@@ -556,6 +559,7 @@ use super::*;
 fn debug() {
     assert_eq!("Extent(0)", format!("{:?}", ObjKey::Extent(0)));
     assert_eq!("DirEntry(0)", format!("{:?}", ObjKey::DirEntry(0)));
+    assert_eq!("ExtAttr(0)", format!("{:?}", ObjKey::ExtAttr(0)));
 }
 
 /// For best locality of reference, keys of the same object should always

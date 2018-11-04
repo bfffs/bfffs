@@ -524,6 +524,8 @@ impl Fs {
                                 };
                                 Box::new(fut) as MyFut
                             } else {
+                                // A 3 (or more) way hash collision.  The
+                                // attribute we're looking up isn't found.
                                 Box::new(Err(Error::ENOATTR).into_future())
                                     as MyFut
                             }
@@ -2237,7 +2239,6 @@ fn unlink_with_extattr_hash_collision() {
     let mut ds = ReadWriteFilesystem::new();
     let parent_ino = 1;
     let ino = 2;
-    let blob_rid = RID(99999);
     let xattr_blob_rid = RID(88888);
     let filename = OsString::from("x");
     let filename2 = filename.clone();

@@ -488,6 +488,45 @@ root:
         assert_eq!(&v[..], &value);
     }
 
+    /// Read a large extattr as a blob
+    test getextattr_blob(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = vec![42u8; 4096];
+        let namespace = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
+
+        // Sync the filesystem to flush the InlineExtent to a BlobExtent
+        mocks.val.0.sync();
+
+        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name).unwrap(),
+                   4096);
+        let v = mocks.val.0.getextattr(ino, namespace, &name).unwrap();
+        assert_eq!(&v[..], &value[..]);
+    }
+
+    /// A collision between a blob extattr and an inline one.  Get the blob
+    /// extattr.
+    test getextattr_blob_collision(mocks) {
+        let filename = OsString::from("x");
+        let ns0 = ExtAttrNamespace::User;
+        let ns1 = ExtAttrNamespace::System;
+        let name0 = OsString::from("BWCdLQkApB");
+        let name1 = OsString::from("D6tLLI4mys");
+        let value0 = [0u8, 1, 2];
+        let value1 = vec![42u8; 4096];
+
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+
+        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.sync(); // Flush the large xattr into a blob
+        assert_eq!(mocks.val.0.getextattrlen(ino, ns1, &name1).unwrap(), 4096);
+        let v1 = mocks.val.0.getextattr(ino, ns1, &name1).unwrap();
+        assert_eq!(&v1[..], &value1[..]);
+    }
+
     /// setextattr and getextattr with a hash collision.
     test getextattr_collision(mocks) {
         let filename = OsString::from("x");
@@ -1275,6 +1314,23 @@ root:
         assert_eq!(mocks.val.0.rmdir(1, &dirname).unwrap_err(), libc::ENOTEMPTY);
     }
 
+    /// Remove a directory with an extended attribute
+    test rmdir_extattr(mocks) {
+        let dirname = OsString::from("x");
+        let xname = OsString::from("foo");
+        let xvalue1 = [0u8, 1, 2];
+        let ns = ExtAttrNamespace::User;
+        let ino = mocks.val.0.mkdir(1, &dirname, 0o755, 0, 0)
+        .unwrap();
+        mocks.val.0.setextattr(ino, ns, &xname, &xvalue1[..]).unwrap();
+        mocks.val.0.rmdir(1, &dirname).unwrap();
+
+        // Make sure the xattr is gone.  As I read things, POSIX allows us to
+        // return either ENOATTR or ENOENT in this case.
+        assert_eq!(mocks.val.0.getextattr(ino, ns, &xname).unwrap_err(),
+                   libc::ENOATTR);
+    }
+
     test setattr(mocks) {
         let filename = OsString::from("x");
         let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0)
@@ -1371,6 +1427,25 @@ root:
         assert_eq!(&v0[..], &value0);
         let v1 = mocks.val.0.getextattr(ino, ns1, &name1).unwrap();
         assert_eq!(&v1[..], &value1a);
+    }
+
+    /// The file already has a blob extattr.  Set another extattr and flush them
+    /// both.
+    test setextattr_with_blob(mocks) {
+        let filename = OsString::from("x");
+        let name1 = OsString::from("foo");
+        let value1 = vec![42u8; 4096];
+        let name2 = OsString::from("bar");
+        let value2 = [3u8, 4, 5, 6];
+        let ns = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, ns, &name1, &value1[..]).unwrap();
+        mocks.val.0.sync(); // Create a blob ExtAttr
+        mocks.val.0.setextattr(ino, ns, &name2, &value2[..]).unwrap();
+        mocks.val.0.sync(); // Achieve coverage of BlobExtAttr::flush
+
+        let v = mocks.val.0.getextattr(ino, ns, &name1).unwrap();
+        assert_eq!(&v[..], &value1[..]);
     }
 
     test statvfs(mocks) {
