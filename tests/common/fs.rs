@@ -62,6 +62,19 @@ test_suite! {
         }
     });
 
+    fn assert_extattrs_collide(ns0: ExtAttrNamespace, name0: &OsStr,
+                               ns1: ExtAttrNamespace, name1: &OsStr)
+    {
+        use bfffs::common::fs_tree::ObjKey;
+
+        let objkey0 = ObjKey::extattr(ns0, name0);
+        let objkey1 = ObjKey::extattr(ns1, name1);
+        // If this assertion fails, then the on-disk format has changed.  If
+        // that was intentional, then generate new has collisions by running
+        // examples/hash_collision.rs.
+        assert_eq!(objkey0.offset(), objkey1.offset());
+    }
+
     test create(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
@@ -105,19 +118,9 @@ test_suite! {
         let ns1 = ExtAttrNamespace::System;
         let name0 = OsString::from("BWCdLQkApB");
         let name1 = OsString::from("D6tLLI4mys");
+        assert_extattrs_collide(ns0, &name0, ns1, &name1);
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
-
-        {
-            use bfffs::common::fs_tree::ObjKey;
-
-            let objkey0 = ObjKey::extattr(ns0, &name0);
-            let objkey1 = ObjKey::extattr(ns1, &name1);
-            // If this assertion fails, then the on-disk format has changed.  If
-            // that was intentional, then generate new has collisions by running
-            // examples/hash_collision.rs.
-            assert_eq!(objkey0.offset(), objkey1.offset());
-        }
 
         let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
 
@@ -150,18 +153,8 @@ test_suite! {
         let ns1 = ExtAttrNamespace::System;
         let name0 = OsString::from("BWCdLQkApB");
         let name1 = OsString::from("D6tLLI4mys");
+        assert_extattrs_collide(ns0, &name0, ns1, &name1);
         let value0 = [0u8, 1, 2];
-
-        {
-            use bfffs::common::fs_tree::ObjKey;
-
-            let objkey0 = ObjKey::extattr(ns0, &name0);
-            let objkey1 = ObjKey::extattr(ns1, &name1);
-            // If this assertion fails, then the on-disk format has changed.  If
-            // that was intentional, then generate new has collisions by running
-            // examples/hash_collision.rs.
-            assert_eq!(objkey0.offset(), objkey1.offset());
-        }
 
         let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
 
@@ -514,6 +507,7 @@ root:
         let ns1 = ExtAttrNamespace::System;
         let name0 = OsString::from("BWCdLQkApB");
         let name1 = OsString::from("D6tLLI4mys");
+        assert_extattrs_collide(ns0, &name0, ns1, &name1);
         let value0 = [0u8, 1, 2];
         let value1 = vec![42u8; 4096];
 
@@ -534,19 +528,9 @@ root:
         let ns1 = ExtAttrNamespace::System;
         let name0 = OsString::from("BWCdLQkApB");
         let name1 = OsString::from("D6tLLI4mys");
+        assert_extattrs_collide(ns0, &name0, ns1, &name1);
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
-
-        {
-            use bfffs::common::fs_tree::ObjKey;
-
-            let objkey0 = ObjKey::extattr(ns0, &name0);
-            let objkey1 = ObjKey::extattr(ns1, &name1);
-            // If this assertion fails, then the on-disk format has changed.  If
-            // that was intentional, then generate new has collisions by running
-            // examples/hash_collision.rs.
-            assert_eq!(objkey0.offset(), objkey1.offset());
-        }
 
         let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
 
@@ -683,19 +667,9 @@ root:
         let ns1 = ExtAttrNamespace::System;
         let name0 = OsString::from("BWCdLQkApB");
         let name1 = OsString::from("D6tLLI4mys");
+        assert_extattrs_collide(ns0, &name0, ns1, &name1);
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
-
-        {
-            use bfffs::common::fs_tree::ObjKey;
-
-            let objkey0 = ObjKey::extattr(ns0, &name0);
-            let objkey1 = ObjKey::extattr(ns1, &name1);
-            // If this assertion fails, then the on-disk format has changed.  If
-            // that was intentional, then generate new has collisions by running
-            // examples/hash_collision.rs.
-            assert_eq!(objkey0.offset(), objkey1.offset());
-        }
 
         let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
 
@@ -1415,6 +1389,7 @@ root:
         let ns1 = ExtAttrNamespace::System;
         let name0 = OsString::from("BWCdLQkApB");
         let name1 = OsString::from("D6tLLI4mys");
+        assert_extattrs_collide(ns0, &name0, ns1, &name1);
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
         let value1a = [4u8, 7, 8, 9, 10];
