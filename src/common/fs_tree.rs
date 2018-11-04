@@ -453,7 +453,6 @@ pub enum FSValue<A: Addr> {
     ExtAttr(ExtAttr<A>),
     /// A whole Bucket of `ExtAttr`s, used in case of hash collisions
     ExtAttrs(Vec<ExtAttr<A>>),
-    None
 }
 
 impl<A: Addr> FSValue<A> {
