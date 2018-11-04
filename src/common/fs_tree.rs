@@ -453,9 +453,27 @@ pub enum FSValue<A: Addr> {
     ExtAttr(ExtAttr<A>),
     /// A whole Bucket of `ExtAttr`s, used in case of hash collisions
     ExtAttrs(Vec<ExtAttr<A>>),
+    /// A whole Bucket of `Dirent`s, used in case of hash collisions
+    DirEntries(Vec<Dirent>),
 }
 
 impl<A: Addr> FSValue<A> {
+    pub fn as_direntries(&self) -> Option<&Vec<Dirent>> {
+        if let FSValue::DirEntries(direntries) = self {
+            Some(direntries)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_direntry(&self) -> Option<&Dirent> {
+        if let FSValue::DirEntry(direntry) = self {
+            Some(direntry)
+        } else {
+            None
+        }
+    }
+
     pub fn as_extattr(&self) -> Option<&ExtAttr<A>> {
         if let FSValue::ExtAttr(extent) = self {
             Some(extent)
@@ -480,14 +498,6 @@ impl<A: Addr> FSValue<A> {
             Some(Extent::Inline(extent))
         } else if let FSValue::BlobExtent(extent) = self {
             Some(Extent::Blob(extent))
-        } else {
-            None
-        }
-    }
-
-    pub fn as_direntry(&self) -> Option<&Dirent> {
-        if let FSValue::DirEntry(direntry) = self {
-            Some(direntry)
         } else {
             None
         }

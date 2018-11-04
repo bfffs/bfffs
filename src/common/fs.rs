@@ -1592,6 +1592,77 @@ fn create() {
     assert_eq!(ino, fs.create(1, &filename, 0o644, 123, 456).unwrap());
 }
 
+/// Create experiences a hash collision when adding the new directory entry
+#[test]
+#[ignore("directory entry hash collisions are TODO")]
+fn create_hash_collision() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    // For the unit tests, we skip creating the "/" directory
+    let ino = 1;
+    let other_ino = 100;
+    let filename = OsString::from("x");
+    let filename2 = filename.clone();
+    let filename3 = filename.clone();
+    let filename4 = filename.clone();
+    let other_filename = OsString::from("y");
+    let other_filename2 = other_filename.clone();
+    ds.expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_inode()
+        })).returning(|_| Box::new(Ok(None).into_future()));
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_direntry()
+        })).returning(move |_| {
+            // Return a different directory entry
+            let name = other_filename2.clone();
+            let dirent = Dirent{ino: other_ino, dtype: libc::DT_REG, name};
+            let v = FSValue::DirEntry(dirent);
+            Box::new(Ok(Some(v)).into_future())
+        });
+    ds.then().expect_get()
+        .called_once()
+        .with(passes(move |args: &FSKey| {
+            args.is_direntry()
+        })).returning(move |_| {
+            // Return the dirent that we just inserted
+            let name = filename2.clone();
+            let dirent = Dirent{ino: 1, dtype: libc::DT_REG, name};
+            let v = FSValue::DirEntry(dirent);
+            Box::new(Ok(Some(v)).into_future())
+        });
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            // Check that we're inserting a bucket with both direntries
+            let dirents = args.1.as_direntries().unwrap();
+            args.0.is_direntry() &&
+            dirents[0].dtype == libc::DT_REG &&
+            dirents[0].name == filename3 &&
+            dirents[0].ino == ino &&
+            dirents[1].dtype == libc::DT_REG &&
+            dirents[1].name == other_filename &&
+            dirents[1].ino == other_ino
+        })).returning(move |_| {
+            // Return the dirent that we just inserted
+            let name = filename4.clone();
+            let dirent = Dirent{ino: 1, dtype: libc::DT_REG, name};
+            let v = FSValue::DirEntry(dirent);
+            Box::new(Ok(Some(v)).into_future())
+        });
+
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+
+    assert_eq!(ino, fs.create(1, &filename, 0o644, 123, 456).unwrap());
+}
+
 // Pet kcov
 #[test]
 fn debug_getattr() {

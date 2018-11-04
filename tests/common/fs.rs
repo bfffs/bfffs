@@ -19,10 +19,12 @@ test_suite! {
     use libc;
     use rand::{Rng, thread_rng};
     use std::{
-        ffi::{CString, CStr, OsString},
+        collections::HashSet,
+        ffi::{CString, CStr, OsString, OsStr},
         fs,
         os::raw::c_char,
         os::unix::ffi::OsStrExt,
+        slice,
         sync::{Arc, Mutex}
     };
     use tempdir::TempDir;
@@ -61,6 +63,17 @@ test_suite! {
             (fs, rt)
         }
     });
+
+    fn assert_dirents_collide(name0: &OsStr, name1: &OsStr) {
+        use bfffs::common::fs_tree::ObjKey;
+
+        let objkey0 = ObjKey::dir_entry(name0);
+        let objkey1 = ObjKey::dir_entry(name1);
+        // If this assertion fails, then the on-disk format has changed.  If
+        // that was intentional, then generate new has collisions by running
+        // examples/hash_collision.rs.
+        assert_eq!(objkey0.offset(), objkey1.offset());
+    }
 
     fn assert_extattrs_collide(ns0: ExtAttrNamespace, name0: &OsStr,
                                ns1: ExtAttrNamespace, name1: &OsStr)
@@ -1019,6 +1032,58 @@ root:
         assert_eq!(dot.d_fileno, 1);
     }
 
+    // Readdir of a directory with a hash collision
+    #[ignore("directory entry hash collisions are TODO")]
+    test readdir_collision(mocks) {
+        let filename0 = OsString::from("HsxUh682JQ");
+        let filename1 = OsString::from("4FatHJ8I6H");
+        assert_dirents_collide(&filename0, &filename1);
+
+        mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
+        mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
+
+        // There's no requirement for the order of readdir's output.
+        let mut expected = HashSet::new();
+        expected.insert(OsString::from("."));
+        expected.insert(OsString::from(".."));
+        expected.insert(filename0.clone());
+        expected.insert(filename1.clone());
+        for result in mocks.val.0.readdir(1, 0, 0) {
+            let entry = result.unwrap().0;
+            let nameptr = entry.d_name.as_ptr() as *const u8;
+            let namelen = usize::from(entry.d_namlen);
+            let name_s = unsafe{slice::from_raw_parts(nameptr, namelen)};
+            let name = OsStr::from_bytes(name_s);
+            assert!(expected.remove(name));
+        }
+        assert!(expected.is_empty());
+    }
+
+    // Readdir of a directory with a hash collision, and the two colliding files
+    // straddle the boundary of the client's buffer.  The client must call
+    // readdir again with the provided offset, and it must see neither duplicate
+    // nor missing entries
+    #[ignore("directory entry hash collisions are TODO")]
+    test readdir_collision_at_offset(mocks) {
+        let filename0 = OsString::from("HsxUh682JQ");
+        let filename1 = OsString::from("4FatHJ8I6H");
+        assert_dirents_collide(&filename0, &filename1);
+
+        mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
+        mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
+
+        // There's no requirement for the order of readdir's output.
+        let mut expected = HashSet::new();
+        expected.insert(OsString::from("."));
+        expected.insert(OsString::from(".."));
+        expected.insert(filename0.clone());
+        expected.insert(filename1.clone());
+        for result in mocks.val.0.readdir(1, 0, 0) {
+            println!("{:?}", &result.unwrap().0.d_name[..]);
+        }
+        unimplemented!()
+    }
+
     // It's allowed for the client of Fs::readdir to drop the iterator without
     // reading all entries.  The FUSE module does that when it runs out of space
     // in the kernel-provided buffer.
@@ -1043,6 +1108,45 @@ root:
 
     test readlink_enoent(mocks) {
         assert_eq!(Err(libc::ENOENT), mocks.val.0.readlink(1000));
+    }
+
+    // Rename a file that has a hash collision in both the source and
+    // destination directories
+    #[ignore("directory entry hash collisions are TODO")]
+    test rename_collision(mocks) {
+        let src = OsString::from("F0jS2Tptj7");
+        let src_c = OsString::from("PLe01T116a");
+        let srcdir = OsString::from("srcdir");
+        let dst = OsString::from("Gg1AG3wll2");
+        let dst_c = OsString::from("FDCIlvDxYn");
+        let dstdir = OsString::from("dstdir");
+        assert_dirents_collide(&src, &src_c);
+        assert_dirents_collide(&dst, &dst_c);
+
+        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0).unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0).unwrap();
+        let src_c_ino = mocks.val.0.create(srcdir_ino, &src_c, 0o644, 0, 0)
+        .unwrap();
+        let dst_c_ino = mocks.val.0.create(dstdir_ino, &dst_c, 0o644, 0, 0)
+        .unwrap();
+        let src_ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
+        .unwrap();
+        let dst_ino = mocks.val.0.create(dstdir_ino, &dst, 0o644, 0, 0)
+        .unwrap();
+
+        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(src_ino));
+        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
+        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(srcdir_inode.nlink, 2);
+        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        assert_eq!(dstdir_inode.nlink, 2);
+        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
+
+        // Finally, make sure we didn't upset the colliding files
+        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src_c), Ok(src_c_ino));
+        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst_c), Ok(dst_c_ino));
     }
 
     // Rename a directory.  The target is also a directory
@@ -1473,6 +1577,22 @@ root:
             dirent.d_name[0] == 'x' as i8
         }).nth(0);
         assert!(x_de.is_none(), "Directory entry was not removed");
+    }
+
+    // Unlink a file that has a name collision with another file in the same
+    // directory.
+    #[ignore("directory entry hash collisions are TODO")]
+    test unlink_collision(mocks) {
+        let filename0 = OsString::from("HsxUh682JQ");
+        let filename1 = OsString::from("4FatHJ8I6H");
+        assert_dirents_collide(&filename0, &filename1);
+        let ino0 = mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
+        let _ino1 = mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
+
+        mocks.val.0.unlink(1, &filename1).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(1, &filename0), Ok(ino0));
+        assert_eq!(mocks.val.0.lookup(1, &filename1), Err(libc::ENOENT));
     }
 
     test unlink_enoent(mocks) {
