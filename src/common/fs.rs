@@ -6,6 +6,7 @@ use bitfield::*;
 use crate::common::*;
 #[cfg(not(test))] use crate::common::database::*;
 #[cfg(test)] use crate::common::database_mock::DatabaseMock as Database;
+#[cfg(test)] use crate::common::database_mock::ReadOnlyFilesystem;
 #[cfg(test)] use crate::common::database_mock::ReadWriteFilesystem;
 use crate::common::database::TreeID;
 use crate::common::fs_tree::*;
@@ -35,6 +36,127 @@ pub use self::fs_tree::ExtAttr;
 pub use self::fs_tree::ExtAttrNamespace;
 
 const RECORDSIZE: usize = 4 * 1024;    // Default record size 4KB
+
+/// Operations used for data that is stored in in-BTree hash tables
+mod htable {
+    use super::*;
+
+    /// Get an item from an in-BTree hash table
+    pub(super) fn get<T>(dataset: &ReadOnlyFilesystem, key: FSKey,
+                         aux: T::Aux, name: OsString)
+        -> impl Future<Item=T, Error=Error> + Send
+        where T: HTItem
+    {
+        type MyFut<T> = Box<Future<Item=T, Error=Error> + Send>;
+        dataset.get(key)
+        .then(move |r| {
+            match r {
+                Ok(fsvalue) => {
+                    match T::from_table(fsvalue) {
+                        HTValue::Single(old) => {
+                            if old.same(aux, &name) {
+                                // Found the right item
+                                Box::new(Ok(old).into_future()) as MyFut<T>
+                            } else {
+                                Box::new(Err(T::ENOTFOUND).into_future())
+                                    as MyFut<T>
+                            }
+                        },
+                        HTValue::Bucket(old) => {
+                            assert!(old.len() > 1);
+                            if let Some(v) = old.into_iter().find(|x| {
+                                x.same(aux, &name)
+                            }) {
+                                // Found the right one
+                                Box::new(Ok(v).into_future()) as MyFut<T>
+                            } else {
+                                // A 3 (or more) way hash collision.  The
+                                // item we're looking up isn't found.
+                                Box::new(Err(T::ENOTFOUND).into_future())
+                                    as MyFut<T>
+                            }
+                        },
+                        HTValue::None => {
+                            Box::new(Err(T::ENOTFOUND).into_future())
+                                as MyFut<T>
+                        },
+                        HTValue::Other(x) =>
+                            panic!("Unexpected value {:?} for key {:?}", x, key)
+                    }
+                },
+                Err(e) => {
+                    Box::new(Err(e).into_future()) as MyFut<T>
+                }
+            }
+        })
+    }
+
+    /// Insert an item that is stored in a BTree hash table
+    pub(super) fn insert<D, T>(dataset: D, key: FSKey, value: T, name: OsString)
+        -> impl Future<Item=(), Error=Error> + Send
+        where D: AsRef<ReadWriteFilesystem> + Send + 'static,
+              T: HTItem
+    {
+        let aux = value.aux();
+        let fsvalue = value.into_fsvalue();
+        dataset.as_ref().insert(key, fsvalue)
+        .and_then(move |r| {
+            match T::from_table(r) {
+                HTValue::Single(old) => {
+                    if old.same(aux, &name) {
+                        // We're overwriting an existing item
+                        Box::new(future::ok::<(), Error>(()))
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    } else {
+                        // We had a hash collision setting an unrelated
+                        // item. Get the old value back, and pack them together.
+                        let fut = dataset.as_ref().get(key)
+                        .and_then(move |r| {
+                            let v = r.unwrap();
+                            let new = T::from_fsvalue(v).unwrap();
+                            let values = vec![old, new];
+                            let fsvalue = T::into_bucket(values);
+                            dataset.as_ref().insert(key, fsvalue)
+                            .map(|_| ())
+                        });
+                        Box::new(fut)
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    }
+                },
+                HTValue::Bucket(mut old) => {
+                    // There was previously a hash collision.  Get the new value
+                    // back, then pack them together.
+                    let fut = dataset.as_ref().get(key)
+                    .and_then(move |r| {
+                        let v = r.unwrap();
+                        let new = T::from_fsvalue(v).unwrap();
+                        if let Some(i) = old.iter().position(|x| {
+                            x.same(aux, &name)
+                        }) {
+                            // A 2-way hash collision, overwriting one value.
+                            // Replace the old value.
+                            old[i] = new;
+                        } else {
+                            // A three (or more)-way hash collision.  Append the
+                            // new item
+                            old.push(new);
+                        }
+                        dataset.as_ref().insert(key, T::into_bucket(old))
+                        .map(|_| ())
+                    });
+                    Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+                },
+                HTValue::Other(x) => {
+                    panic!("Unexpected value {:?} for key {:?}", x, key)
+                },
+                HTValue::None => {
+                    Box::new(future::ok::<(), Error>(()))
+                        as Box<Future<Item=(), Error=Error> + Send>
+                }
+            }
+        })
+    }
+}
 
 /// Generic Filesystem layer.
 ///
@@ -249,13 +371,13 @@ impl Fs {
         let ino = self.next_object();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         let parent_dirent_objkey = ObjKey::dir_entry(&args.name);
+        let name2 = args.name.clone();
         let parent_dirent = Dirent {
             ino,
             dtype: args.file_type.dtype(),
             name:   args.name
         };
         let parent_dirent_key = FSKey::new(args.parent, parent_dirent_objkey);
-        let parent_dirent_value = FSValue::DirEntry(parent_dirent);
 
         let now = time::get_time();
         let inode = Inode {
@@ -275,11 +397,11 @@ impl Fs {
 
         let cb = args.cb;
         self.handle.spawn(
-            self.db.fswrite(self.tree, move |ds| {
-                let dataset = Arc::new(ds);
-                let extra_fut = cb(&dataset, ino);
-                dataset.insert(inode_key, inode_value).join3(
-                    dataset.insert(parent_dirent_key, parent_dirent_value),
+            self.db.fswrite(self.tree, move |dataset| {
+                let ds = Arc::new(dataset);
+                let extra_fut = cb(&ds, ino);
+                ds.insert(inode_key, inode_value).join3(
+                    htable::insert(ds, parent_dirent_key, parent_dirent, name2),
                     extra_fut
                 ).map(move |_| tx.send(Ok(ino)).unwrap())
             }).map_err(|e| panic!("{:?}", e))
@@ -481,51 +603,18 @@ impl Fs {
         type MyFut = Box<Future<Item=DivBuf, Error=Error> + Send>;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
-                dataset.get(key)
-                .then(move |r| {
-                    let read_extattr = |xattr: &ExtAttr<RID>| {
-                        let fut = match xattr {
-                            ExtAttr::Inline(iea) => {
-                                let buf = iea.extent.buf.try().unwrap();
-                                Box::new(Ok(buf).into_future()) as MyFut
-                            },
-                            ExtAttr::Blob(bea) => {
-                                let bfut = dataset.get_blob(bea.extent.rid)
-                                    .map(|bdb| *bdb);
-                                Box::new(bfut) as MyFut
-                            }
-                        };
-                        Box::new(fut) as MyFut
-                    };
-                    match r {
-                        Ok(Some(FSValue::ExtAttr(ref xattr)))
-                            if xattr.namespace() == ns &&
-                               xattr.name() == owned_name =>
-                        {
-                            // Found the right xattr
-                            read_extattr(xattr)
+                htable::get(&dataset, key, ns, owned_name)
+                .and_then(move |extattr| {
+                    match extattr {
+                        ExtAttr::Inline(iea) => {
+                            let buf = iea.extent.buf.try().unwrap();
+                            Box::new(Ok(buf).into_future()) as MyFut
                         },
-                        Ok(Some(FSValue::ExtAttrs(ref xattrs))) => {
-                            // A bucket of multiple xattrs
-                            assert!(xattrs.len() > 1);
-                            if let Some(xattr) = xattrs.iter().find(|x| {
-                                x.namespace() == ns && x.name() == owned_name
-                            }) {
-                                // Found the right one
-                                read_extattr(xattr)
-                            } else {
-                                // A 3 (or more) way hash collision.  The
-                                // attribute we're looking up isn't found.
-                                Box::new(Err(Error::ENOATTR).into_future())
-                                    as MyFut
-                            }
+                        ExtAttr::Blob(bea) => {
+                            let bfut = dataset.get_blob(bea.extent.rid)
+                            .map(|bdb| *bdb);
+                            Box::new(bfut) as MyFut
                         }
-                        Err(e) => {
-                            Box::new(Err(e).into_future()) as MyFut
-                        }
-                        _ => {
-                            Box::new(Err(Error::ENOATTR).into_future()) as MyFut
-                        },
                     }
                 })
             }).then(move |r| {
@@ -645,22 +734,11 @@ impl Fs {
         let key = FSKey::new(parent, objkey);
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
-                dataset.get(key)
+                htable::get::<Dirent>(&dataset, key, 0, owned_name)
                 .then(move |r| {
                     match r {
-                        Ok(Some(v)) => {
-                            // Verify that the direntry contains the right name
-                            // TODO: deal with hash collisions
-                            let de = v.as_direntry().unwrap();
-                            assert_eq!(de.name, owned_name);
-                            tx.send(Ok(de.ino))
-                        },
-                        Ok(None) => {
-                            tx.send(Err(Error::ENOENT.into()))
-                        },
-                        Err(e) => {
-                            tx.send(Err(e.into()))
-                        }
+                        Ok(de) => tx.send(Ok(de.ino)),
+                        Err(e) => tx.send(Err(e.into()))
                     }.unwrap();
                     future::ok::<(), Error>(())
                 })
@@ -1242,73 +1320,16 @@ impl Fs {
         // Data copy
         let buf = Arc::new(DivBufShared::from(Vec::from(&data[..])));
         let extent = InlineExtent::new(buf);
+        let owned_name = name.to_owned();
         let extattr = ExtAttr::Inline(InlineExtAttr {
             namespace: ns,
-            name: name.to_owned(),
+            name: owned_name.clone(),
             extent
         });
-        let name2 = name.to_owned();
-        let value = FSValue::ExtAttr(extattr);
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
-                dataset.insert(key, value)
-                .and_then(move |r| {
-                    match r {
-                        Some(FSValue::ExtAttr(old)) => {
-                            if old.namespace() == ns && old.name() == name2 {
-                                // We're overwriting an existing xattr
-                                Box::new(future::ok::<(), Error>(()))
-                                    as Box<Future<Item=(), Error=Error> + Send>
-                            } else {
-                                // We had a hash collision setting an unrelated
-                                // xattr. Get the old value back, and pack them
-                                // together.
-                                let fut = dataset.get(key)
-                                .and_then(move |r| {
-                                    let v = r.unwrap();
-                                    let extattr = v.into_extattr().unwrap();
-                                    let extattrs = vec![old, extattr];
-                                    let value = FSValue::ExtAttrs(extattrs);
-                                    dataset.insert(key, value)
-                                    .map(|_| ())
-                                });
-                                Box::new(fut)
-                                    as Box<Future<Item=(), Error=Error> + Send>
-                            }
-                        },
-                        Some(FSValue::ExtAttrs(mut old)) => {
-                            // There was previously a hash collision.  Get the
-                            // new value back, then pack them together.
-                            let fut = dataset.get(key)
-                            .and_then(move |r| {
-                                let v = r.unwrap();
-                                let extattr = v.into_extattr().unwrap();
-                                if let Some(i) = old.iter().position(|x| {
-                                    x.namespace() == ns && x.name() == name2
-                                }) {
-                                    // A 2-way hash collision, overwriting one
-                                    // value.  Replace the old value.
-                                    old[i] = extattr;
-                                } else {
-                                    // A three (or more)-way hash collision.
-                                    // Append the new xattr
-                                    old.push(extattr);
-                                }
-                                dataset.insert(key, FSValue::ExtAttrs(old))
-                                .map(|_| ())
-                            });
-                            Box::new(fut)
-                                as Box<Future<Item=(), Error=Error> + Send>
-                        },
-                        None => {
-                            // No previous value
-                            Box::new(future::ok::<(), Error>(()))
-                                as Box<Future<Item=(), Error=Error> + Send>
-                        },
-                        x => panic!("Unexpected value {:?} for key {:?}", x,
-                                    key)
-                    }
-                }).map(move |_| tx.send(Ok(())).unwrap())
+                htable::insert(dataset, key, extattr, owned_name)
+                .map(move |_| tx.send(Ok(())).unwrap())
             }).map_err(|e| panic!("{:?}", e))
         ).unwrap();
         rx.wait().unwrap()
@@ -1594,7 +1615,6 @@ fn create() {
 
 /// Create experiences a hash collision when adding the new directory entry
 #[test]
-#[ignore("directory entry hash collisions are TODO")]
 fn create_hash_collision() {
     let (rt, mut db, tree_id) = setup();
     let mut ds = ReadWriteFilesystem::new();
@@ -1637,15 +1657,16 @@ fn create_hash_collision() {
     ds.then().expect_insert()
         .called_once()
         .with(passes(move |args: &(FSKey, FSValue<RID>)| {
-            // Check that we're inserting a bucket with both direntries
+            // Check that we're inserting a bucket with both direntries.  The
+            // order doesn't matter.
             let dirents = args.1.as_direntries().unwrap();
             args.0.is_direntry() &&
             dirents[0].dtype == libc::DT_REG &&
-            dirents[0].name == filename3 &&
-            dirents[0].ino == ino &&
+            dirents[0].name == other_filename &&
+            dirents[0].ino == other_ino &&
             dirents[1].dtype == libc::DT_REG &&
-            dirents[1].name == other_filename &&
-            dirents[1].ino == other_ino
+            dirents[1].name == filename3 &&
+            dirents[1].ino == ino
         })).returning(move |_| {
             // Return the dirent that we just inserted
             let name = filename4.clone();

@@ -280,6 +280,14 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
     }
 }
 
+impl<K, V> AsRef<ReadWriteDatasetMock<K, V>> for ReadWriteDatasetMock<K, V>
+    where K: Key, V: Value
+{
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
 // XXX totally unsafe!  But Simulacrum doesn't support mocking Send traits.  So
 // we have to cheat.  This works as long as the mocks are only used in
 // single-threaded unit tests.

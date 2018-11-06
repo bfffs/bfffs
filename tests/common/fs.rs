@@ -739,6 +739,18 @@ root:
         assert!(mocks.val.0.listextattr(ino, 64, lsf).unwrap().is_empty());
     }
 
+    /// Lookup of a directory entry that has a hash collision
+    test lookup_collision(mocks) {
+        let filename0 = OsString::from("HsxUh682JQ");
+        let filename1 = OsString::from("4FatHJ8I6H");
+        assert_dirents_collide(&filename0, &filename1);
+        let ino0 = mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
+        let ino1 = mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(1, &filename0), Ok(ino0));
+        assert_eq!(mocks.val.0.lookup(1, &filename1), Ok(ino1));
+    }
+
     test lookup_enoent(mocks) {
         let filename = OsString::from("nonexistent");
         assert_eq!(mocks.val.0.lookup(1, &filename), Err(libc::ENOENT));

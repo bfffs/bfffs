@@ -214,3 +214,11 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
         self.dataset.remove(k, self.txg)
     }
 }
+
+impl<K, V> AsRef<ReadWriteDataset<K, V>> for ReadWriteDataset<K, V>
+    where K: Key, V: Value
+{
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}

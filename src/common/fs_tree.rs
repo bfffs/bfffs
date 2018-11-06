@@ -191,12 +191,88 @@ impl MinValue for FSKey {
     }
 }
 
+/// `FSValue`s that are stored as in in-BTree hash tables
+pub trait HTItem: Clone + Send + Sized + 'static {
+    /// Some other type that may be used by the `same` method
+    type Aux: Clone + Copy + Send;
+
+    /// Error type that should be returned if the item can't be found
+    const ENOTFOUND: Error;
+
+    /// Retrieve this item's aux data.
+    fn aux(&self) -> Self::Aux;
+
+    /// Create an `HTItem` from an `FSValue` that is known to contain a single
+    /// item of the desired type.
+    fn from_fsvalue(fsvalue: FSValue<RID>) -> Option<Self>;
+
+    /// Create an `HTItem` from an `FSValue` whose contents are unknown.  It
+    /// could be a single item, a bucket, or even a totally different item type.
+    fn from_table(fsvalue: Option<FSValue<RID>>) -> HTValue<Self>;
+
+    /// Create a bucket of `HTItem`s from a vector of `Self`.  Used for putting
+    /// the bucket back into the Tree.
+    fn into_bucket(selves: Vec<Self>) -> FSValue<RID>;
+
+    /// Turn self into a regular `FSValue`, suitable for inserting into the Tree
+    fn into_fsvalue(self) -> FSValue<RID>;
+
+    /// Do these values represent the same item, even if their values aren't
+    /// identical?
+    fn same<T: AsRef<OsStr>>(&self, aux: Self::Aux, name: T) -> bool;
+}
+
+/// Return type for
+/// [`HTItem::from_table`](trait.HTItem.html#method.from_table)
+pub enum HTValue<T: HTItem> {
+    Single(T),
+    Bucket(Vec<T>),
+    Other(FSValue<RID>),
+    None
+}
+
 /// In-memory representation of a directory entry
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Dirent {
     pub ino:    u64,
     pub dtype:  u8,
     pub name:   OsString
+}
+
+impl HTItem for Dirent {
+    type Aux = u64;
+    const ENOTFOUND: Error = Error::ENOENT;
+
+    fn aux(&self) -> Self::Aux {
+        self.ino
+    }
+
+    fn from_fsvalue(fsvalue: FSValue<RID>) -> Option<Self> {
+        fsvalue.into_dirent()
+    }
+
+    fn from_table(fsvalue: Option<FSValue<RID>>) -> HTValue<Self> {
+        match fsvalue {
+            Some(FSValue::DirEntry(x)) => HTValue::Single(x),
+            Some(FSValue::DirEntries(x)) => HTValue::Bucket(x),
+            Some(x) => HTValue::Other(x),
+            None => HTValue::None
+        }
+    }
+
+    fn into_bucket(selves: Vec<Self>) -> FSValue<RID> {
+        FSValue::DirEntries(selves)
+    }
+
+    fn into_fsvalue(self) -> FSValue<RID> {
+        FSValue::DirEntry(self)
+    }
+
+    fn same<T: AsRef<OsStr>>(&self, _aux: Self::Aux, name: T) -> bool {
+        // We generally don't know the desired ino when calling this method, so
+        // just check the name
+        self.name == name.as_ref()
+    }
 }
 
 /// In-memory representation of a small extended attribute
@@ -284,6 +360,40 @@ impl<'a, A: Addr> ExtAttr<A> {
             ExtAttr::Inline(x) => x.namespace,
             ExtAttr::Blob(x) => x.namespace,
         }
+    }
+}
+
+impl HTItem for ExtAttr<RID> {
+    type Aux = ExtAttrNamespace;
+    const ENOTFOUND: Error = Error::ENOATTR;
+
+    fn aux(&self) -> Self::Aux {
+        self.namespace()
+    }
+
+    fn from_fsvalue(fsvalue: FSValue<RID>) -> Option<Self> {
+        fsvalue.into_extattr()
+    }
+
+    fn from_table(fsvalue: Option<FSValue<RID>>) -> HTValue<Self> {
+        match fsvalue {
+            Some(FSValue::ExtAttr(x)) => HTValue::Single(x),
+            Some(FSValue::ExtAttrs(x)) => HTValue::Bucket(x),
+            Some(x) => HTValue::Other(x),
+            None => HTValue::None
+        }
+    }
+
+    fn into_bucket(selves: Vec<Self>) -> FSValue<RID> {
+        FSValue::ExtAttrs(selves)
+    }
+
+    fn into_fsvalue(self) -> FSValue<RID> {
+        FSValue::ExtAttr(self)
+    }
+
+    fn same<T: AsRef<OsStr>>(&self, aux: Self::Aux, name: T) -> bool {
+        self.namespace() == aux && self.name() == name.as_ref()
     }
 }
 
@@ -514,6 +624,14 @@ impl<A: Addr> FSValue<A> {
     pub fn as_mut_inode(&mut self) -> Option<&mut Inode> {
         if let FSValue::Inode(ref mut inode) = self {
             Some(inode)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_dirent(self) -> Option<Dirent> {
+        if let FSValue::DirEntry(dirent) = self {
+            Some(dirent)
         } else {
             None
         }
