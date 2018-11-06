@@ -829,21 +829,23 @@ impl Fs {
                 dtype: libc::DT_DIR,
                 name:  OsString::from(".")
             };
-            let dot_dirent_objkey = ObjKey::dir_entry(OsStr::new("."));
+            let dot_filename = OsString::from(".");
+            let dot_dirent_objkey = ObjKey::dir_entry(&dot_filename);
             let dot_dirent_key = FSKey::new(ino, dot_dirent_objkey);
-            let dot_dirent_value = FSValue::DirEntry(dot_dirent);
 
             let dotdot_dirent = Dirent {
                 ino: parent,
                 dtype: libc::DT_DIR,
                 name:  OsString::from("..")
             };
-            let dotdot_dirent_objkey = ObjKey::dir_entry(OsStr::new(".."));
+            let dotdot_filename = OsString::from("..");
+            let dotdot_dirent_objkey = ObjKey::dir_entry(&dotdot_filename);
             let dotdot_dirent_key = FSKey::new(ino, dotdot_dirent_objkey);
-            let dotdot_dirent_value = FSValue::DirEntry(dotdot_dirent);
 
             let parent_inode_key = FSKey::new(parent, ObjKey::Inode);
             let dataset2 = dataset.clone();
+            let dataset3 = dataset.clone();
+            let dataset4 = dataset.clone();
             let nlink_fut = dataset.get(parent_inode_key)
                 .and_then(move |r| {
                     let mut value = r.unwrap();
@@ -851,9 +853,11 @@ impl Fs {
                     dataset2.insert(parent_inode_key, value)
                 });
 
-            let fut = dataset.insert(dot_dirent_key, dot_dirent_value).join3(
-                dataset.insert(dotdot_dirent_key, dotdot_dirent_value),
-                nlink_fut)
+            let dot_fut = htable::insert(dataset3, dot_dirent_key,
+                dot_dirent, dot_filename);
+            let dotdot_fut = htable::insert(dataset4, dotdot_dirent_key,
+                dotdot_dirent, dotdot_filename);
+            let fut = dot_fut.join3(dotdot_fut, nlink_fut)
             .map(|_| ());
             Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
         };

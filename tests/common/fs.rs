@@ -798,6 +798,20 @@ root:
         assert_eq!(parent_attr.nlink, 2);
     }
 
+    /// mkdir creates two directories whose names have a hash collision
+    // Note that it's practically impossible to find a collision for a specific
+    // name, like "." or "..", so those cases won't have test coverage
+    test mkdir_collision(mocks) {
+        let filename0 = OsString::from("HsxUh682JQ");
+        let filename1 = OsString::from("4FatHJ8I6H");
+        assert_dirents_collide(&filename0, &filename1);
+        let ino0 = mocks.val.0.mkdir(1, &filename0, 0o755, 0, 0).unwrap();
+        let ino1 = mocks.val.0.mkdir(1, &filename1, 0o755, 0, 0).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(1, &filename0), Ok(ino0));
+        assert_eq!(mocks.val.0.lookup(1, &filename1), Ok(ino1));
+    }
+
     test mkchar(mocks) {
         let ino = mocks.val.0.mkchar(1, &OsString::from("x"), 0o644, 0, 0, 42)
         .unwrap();
