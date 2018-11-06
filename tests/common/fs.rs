@@ -1607,7 +1607,6 @@ root:
 
     // Unlink a file that has a name collision with another file in the same
     // directory.
-    #[ignore("directory entry hash collisions are TODO")]
     test unlink_collision(mocks) {
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");

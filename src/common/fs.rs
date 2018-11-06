@@ -156,6 +156,72 @@ mod htable {
             }
         })
     }
+
+    /// Remove an item that is stored in a BTree hash table
+    ///
+    /// Return its aux data.  This sounds weird, but it satisfies all current
+    /// use cases and is cheaper than returning the entire item.
+    pub(super) fn remove<D, T>(dataset: D, key: FSKey, aux: T::Aux,
+                               name: OsString)
+        -> impl Future<Item=T::Aux, Error=Error> + Send
+        where D: AsRef<ReadWriteFilesystem> + Send + 'static,
+              T: HTItem
+    {
+        dataset.as_ref().remove(key)
+        .and_then(move |r| {
+            match T::from_table(r) {
+                HTValue::Single(ref old) if old.same(aux, name) => {
+                    // This is the item we're looking for
+                    Box::new(Ok(old.aux()).into_future())
+                        as Box<Future<Item=T::Aux, Error=Error> + Send>
+                },
+                HTValue::Single(old) =>
+                {
+                    // Hash collision.  Put it back, and return not found
+                    let value = old.into_fsvalue();
+                    let fut = dataset.as_ref().insert(key, value)
+                    .and_then(|_| Err(T::ENOTFOUND).into_future());
+                    Box::new(fut)
+                        as Box<Future<Item=T::Aux, Error=Error> + Send>
+                },
+                HTValue::Bucket(mut old) => {
+                    // There was previously a hash collision.
+                    if let Some(i) = old.iter().position(|x| {
+                        x.same(aux, &name)
+                    }) {
+                        // Desired item was found
+                        let aux = old[i].aux();
+                        old.swap_remove(i);
+                        let v = if old.len() == 1 {
+                            // A 2-way collision; remove one
+                            old.pop().unwrap().into_fsvalue()
+                        } else {
+                            // A 3 (or more) way collision; remove one
+                            T::into_bucket(old)
+                        };
+                        let fut = dataset.as_ref().insert(key, v)
+                        .map(move |_| aux);
+                        Box::new(fut)
+                            as Box<Future<Item=T::Aux, Error=Error> + Send>
+                    } else {
+                        // A 3 (or more) way hash collision between the
+                        // accessed item and at least two different ones.
+                        let v = T::into_bucket(old);
+                        let fut = dataset.as_ref().insert(key, v)
+                        .and_then(|_| Err(T::ENOTFOUND).into_future());
+                        Box::new(fut)
+                            as Box<Future<Item=T::Aux, Error=Error> + Send>
+                    }
+                },
+                HTValue::None => {
+                    Box::new(Err(T::ENOTFOUND).into_future())
+                        as Box<Future<Item=T::Aux, Error=Error> + Send>
+                },
+                HTValue::Other(x) =>
+                    panic!("Unexpected value {:?} for key {:?}", x, key)
+            }
+        })
+    }
 }
 
 /// Generic Filesystem layer.
@@ -300,62 +366,10 @@ impl Fs {
         let key = FSKey::new(ino, objkey);
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
-                dataset.remove(key)
-                .and_then(move |r| {
-                    match r {
-                        Some(FSValue::ExtAttr(ref old)) if old.namespace() == ns
-                            && old.name() == name =>
-                        {
-                            // This is the xattr we're looking for
-                            Box::new(Ok(()).into_future())
-                                as Box<Future<Item=(), Error=Error> + Send>
-                        },
-                        Some(FSValue::ExtAttr(old)) =>
-                        {
-                            // Hash collision.  Put it back, and return ENOATTR
-                            let value = FSValue::ExtAttr(old);
-                            let fut = dataset.insert(key, value)
-                            .and_then(|_| Err(Error::ENOATTR).into_future());
-                            Box::new(fut)
-                                as Box<Future<Item=(), Error=Error> + Send>
-                        },
-                        Some(FSValue::ExtAttrs(mut old)) => {
-                            // There was previously a hash collision.
-                            if let Some(i) = old.iter().position(|x| {
-                                x.namespace() == ns && x.name() == name
-                            }) {
-                                old.swap_remove(i);
-                                let v = if old.len() == 1 {
-                                    // A 2-way collision; remove one
-                                    FSValue::ExtAttr(old.pop().unwrap())
-                                } else {
-                                    // A 3 (or more) way collision; remove one
-                                    FSValue::ExtAttrs(old)
-                                };
-                                let fut = dataset.insert(key, v)
-                                .map(|_| ());
-                                Box::new(fut)
-                                    as Box<Future<Item=(), Error=Error> + Send>
-                            } else {
-                                // A 3 (or more) way hash collision between the
-                                // accessed attribute and at least two different
-                                // ones.
-                                let v = FSValue::ExtAttrs(old);
-                                let fut = dataset.insert(key, v)
-                                .and_then(|_| Err(Error::ENOATTR).into_future());
-                                Box::new(fut)
-                                    as Box<Future<Item=(), Error=Error> + Send>
-                            }
-                        },
-                        None => {
-                            Box::new(Err(Error::ENOATTR).into_future())
-                                as Box<Future<Item=(), Error=Error> + Send>
-                        },
-                        x => panic!("Unexpected value {:?} for key {:?}",
-                                    x, key)
-                    }
-                })
-            }).map_err(|e| e.into())
+                htable::remove::<ReadWriteFilesystem, ExtAttr<RID>>(dataset,
+                    key, ns, name)
+            }).map(|_| ())
+            .map_err(|e| e.into())
             .then(|r| {
                 tx.send(r).unwrap();
                 Ok(()).into_future()
@@ -1394,21 +1408,15 @@ impl Fs {
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
         self.handle.spawn(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, move |ds| {
+                let dataset = Arc::new(ds);
                 // 1) Lookup and remove the directory entry
                 let key = FSKey::new(parent, dekey);
-                dataset.remove(key)
-                .and_then(|r| {
-                    match r {
-                        Some(v) => {
-                            let de = v.as_direntry().unwrap();
-                            Ok(de.ino).into_future()
-                        },
-                        None => Err(Error::ENOENT).into_future()
-                    }
-                }).and_then(move |ino|  {
+                htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
+                    (dataset.clone(), key, 0, owned_name)
+                .and_then(move |ino|  {
                     // 2) Unlink the inode
-                    Fs::do_unlink(Arc::new(dataset), ino)
+                    Fs::do_unlink(dataset, ino)
                 }).then(move |r| {
                     match r {
                         Ok(_) => tx.send(Ok(())),
