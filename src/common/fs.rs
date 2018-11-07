@@ -453,7 +453,12 @@ impl Fs {
         // 2) Decrement the parent dir's link count
 
         // 1) range_delete its key range
-        let ino_fut = dataset.range_delete(FSKey::obj_range(ino));
+        let dataset2 = dataset.clone();
+        let dataset3 = dataset.clone();
+        let ino_fut = Fs::list_extattr_rids(&*dataset, ino)
+        .for_each(move |rid| {
+            dataset2.delete_blob(rid)
+        }).and_then(move |_| dataset3.range_delete(FSKey::obj_range(ino)));
 
         // 2) Decrement the parent dir's link count
         let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
@@ -512,29 +517,7 @@ impl Fs {
                         None
                     }
                 });
-                let extattr_stream = dataset.range(FSKey::extattr_range(ino))
-                .filter_map(move |(_k, v)| {
-                    match v {
-                        FSValue::ExtAttr(ExtAttr::Blob(be)) => {
-                            let s = Box::new(stream::once(Ok(be.extent.rid)))
-                                as Box<Stream<Item=RID, Error=Error> + Send>;
-                            Some(s)
-                        },
-                        FSValue::ExtAttrs(r) => {
-                            let rids = r.iter().filter_map(|v| {
-                                if let ExtAttr::Blob(be) = v {
-                                    Some(be.extent.rid)
-                                } else {
-                                    None
-                                }
-                            }).collect::<Vec<_>>();
-                            let s = Box::new(stream::iter_ok(rids))
-                                as Box<Stream<Item=RID, Error=Error> + Send>;
-                            Some(s)
-                        }
-                        _ => None
-                    }
-                }).flatten();
+                let extattr_stream = Fs::list_extattr_rids(&*dataset, ino);
                 let fut = extent_stream.chain(extattr_stream)
                 .for_each(move |rid| dataset2.delete_blob(rid))
                 .and_then(move |_| {
@@ -761,6 +744,36 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    /// List the RID of every blob extattr for a file
+    fn list_extattr_rids(dataset: &ReadWriteFilesystem, ino: u64)
+        -> impl Stream<Item=RID, Error=Error>
+    {
+        dataset.range(FSKey::extattr_range(ino))
+        .filter_map(move |(k, v)| {
+            match v {
+                FSValue::ExtAttr(ExtAttr::Inline(_)) => None,
+                FSValue::ExtAttr(ExtAttr::Blob(be)) => {
+                    let s = Box::new(stream::once(Ok(be.extent.rid)))
+                        as Box<Stream<Item=RID, Error=Error> + Send>;
+                    Some(s)
+                },
+                FSValue::ExtAttrs(r) => {
+                    let rids = r.iter().filter_map(|v| {
+                        if let ExtAttr::Blob(be) = v {
+                            Some(be.extent.rid)
+                        } else {
+                            None
+                        }
+                    }).collect::<Vec<_>>();
+                    let s = Box::new(stream::iter_ok(rids))
+                        as Box<Stream<Item=RID, Error=Error> + Send>;
+                    Some(s)
+                }
+                x => panic!("Unexpected value {:?} for key {:?}", x, k)
+            }
+        }).flatten()
+    }
+
     pub fn lookup(&self, parent: u64, name: &OsStr) -> Result<u64, i32>
     {
         let (tx, rx) = oneshot::channel();
@@ -977,7 +990,6 @@ impl Fs {
                 },
                 FSValue::ExtAttr(_) | FSValue::ExtAttrs(_) => {
                     // It's fine to remove a directory with extended attributes.
-                    // TODO: free Blob extattrs
                     Ok(found_inode).into_future()
                 },
                 FSValue::InlineExtent(_) | FSValue::BlobExtent(_) => {
@@ -2029,6 +2041,187 @@ fn rename_samedir() {
 
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.rename(1, &srcname, 1, &dstname);
+    assert_eq!(Ok(()), r);
+}
+
+// Rmdir a directory with extended attributes, and don't forget to free them
+// too!
+#[test]
+fn rmdir_with_blob_extattr() {
+    let (rt, mut db, tree_id) = setup();
+    let mut ds = ReadWriteFilesystem::new();
+    let parent_ino = 1;
+    let ino = 2;
+    let xattr_blob_rid = RID(88888);
+    let filename = OsString::from("x");
+    let filename2 = filename.clone();
+    let filename3 = filename.clone();
+
+    // First it must do a lookup
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .returning(move |_| {
+            let dirent = Dirent {
+                ino,
+                dtype: libc::DT_REG,
+                name: filename2.clone()
+            };
+            let v = Some(FSValue::DirEntry(dirent));
+            Box::new(Ok(v).into_future())
+        });
+    // This part comes from ok_to_rmdir
+    ds.then().expect_range()
+        .called_once()
+        .with(FSKey::obj_range(ino))
+        .returning(move |_| {
+            // Return one blob extattr, one inline extattr, one inode, and two
+            // directory entries for "." and ".."
+            let dotdot_name = OsString::from("..");
+            let k0 = FSKey::new(ino, ObjKey::dir_entry(&dotdot_name));
+            let dotdot_dirent = Dirent {
+                ino: parent_ino,
+                dtype: libc::DT_DIR,
+                name:  dotdot_name
+            };
+            let v0 = FSValue::DirEntry(dotdot_dirent);
+
+            let dot_name = OsString::from(".");
+            let k1 = FSKey::new(ino, ObjKey::dir_entry(&dot_name));
+            let dot_dirent = Dirent {
+                ino,
+                dtype: libc::DT_DIR,
+                name:  dot_name
+            };
+            let v1 = FSValue::DirEntry(dot_dirent);
+
+            let now = time::get_time();
+            let inode = Inode {
+                size: 0,
+                nlink: 2,
+                flags: 0,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                birthtime: now,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755,
+            };
+            let k2 = FSKey::new(ino, ObjKey::Inode);
+            let v2 = FSValue::Inode(inode);
+
+            let namespace = ExtAttrNamespace::User;
+            let name0 = OsString::from("foo");
+            let k3 = FSKey::new(ino, ObjKey::extattr(namespace, &name0));
+            let extent0 = BlobExtent{lsize: 4096, rid: xattr_blob_rid};
+            let be = BlobExtAttr{namespace, name: name0, extent: extent0};
+            let v3 = FSValue::ExtAttr(ExtAttr::Blob(be));
+
+            let name1 = OsString::from("bar");
+            let k4 = FSKey::new(ino, ObjKey::extattr(namespace, &name1));
+            let dbs1 = Arc::new(DivBufShared::from(vec![0u8; 1]));
+            let extent1 = InlineExtent::new(dbs1);
+            let ie = InlineExtAttr{namespace, name: name1, extent: extent1};
+            let v4 = FSValue::ExtAttr(ExtAttr::Inline(ie));
+            let items = vec![(k0, v0), (k1, v1), (k2, v2), (k3, v3), (k4, v4)];
+            Box::new(stream::iter_ok(items))
+        });
+    ds.then().expect_remove()
+        .called_once()
+        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .returning(move |_| {
+            let dirent = Dirent {
+                ino,
+                dtype: libc::DT_REG,
+                name: filename3.clone()
+            };
+            let v = Some(FSValue::DirEntry(dirent));
+            Box::new(Ok(v).into_future())
+        });
+    ds.expect_range_delete()
+        .called_once()
+        .with(FSKey::obj_range(ino))
+        .returning(|_| {
+            Box::new(Ok(()).into_future())
+        });
+    ds.expect_range()
+        .called_once()
+        .with(FSKey::extattr_range(ino))
+        .returning(move |_| {
+            // Return one blob extattr and one inline extattr
+            let namespace = ExtAttrNamespace::User;
+            let name0 = OsString::from("foo");
+            let k0 = FSKey::new(ino, ObjKey::extattr(namespace, &name0));
+            let extent0 = BlobExtent{lsize: 4096, rid: xattr_blob_rid};
+            let be = BlobExtAttr{namespace, name: name0, extent: extent0};
+            let v0 = FSValue::ExtAttr(ExtAttr::Blob(be));
+
+            let name1 = OsString::from("bar");
+            let k1 = FSKey::new(ino, ObjKey::extattr(namespace, &name1));
+            let dbs1 = Arc::new(DivBufShared::from(vec![0u8; 1]));
+            let extent1 = InlineExtent::new(dbs1);
+            let ie = InlineExtAttr{namespace, name: name1, extent: extent1};
+            let v1 = FSValue::ExtAttr(ExtAttr::Inline(ie));
+            let extents = vec![(k0, v0), (k1, v1)];
+            Box::new(stream::iter_ok(extents))
+        });
+    ds.expect_delete_blob()
+        .called_once()
+        .with(passes(move |rid: &RID| xattr_blob_rid == *rid))
+        .returning(|_| {
+            Box::new(Ok(()).into_future())
+         });
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(parent_ino, ObjKey::Inode))
+        .returning(|_| {
+            let now = time::get_time();
+            let inode = Inode {
+                size: 0,
+                nlink: 3,
+                flags: 0,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                birthtime: now,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
+    ds.expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0 == FSKey::new(parent_ino, ObjKey::Inode) &&
+            args.1.as_inode().unwrap().nlink == 2
+        })).returning(|_| {
+            let now = time::get_time();
+            let inode = Inode {
+                size: 0,
+                nlink: 2,
+                flags: 0,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                birthtime: now,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
+
+    let mut opt_ds = Some(ds);
+    db.expect_fswrite()
+        .called_once()
+        .returning(move |_| opt_ds.take().unwrap());
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let r = fs.rmdir(1, &filename);
     assert_eq!(Ok(()), r);
 }
 
