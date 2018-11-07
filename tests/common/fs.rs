@@ -1059,7 +1059,6 @@ root:
     }
 
     // Readdir of a directory with a hash collision
-    #[ignore("directory entry hash collisions are TODO")]
     test readdir_collision(mocks) {
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
@@ -1095,19 +1094,31 @@ root:
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
 
-        mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
-        mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
+        let ino0 = mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
+        let _ino1 = mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
 
-        // There's no requirement for the order of readdir's output.
+        // There's no requirement for the order of readdir's output, but
+        // filename0 happens to come first.
+        let mut stream0 = mocks.val.0.readdir(1, 0, 0);
+        let (result0, offset0) = stream0.next().unwrap().unwrap();
+        assert_eq!(result0.d_fileno as u64, ino0);
+
+        // Now interrupt the stream, and resume with the supplied offset.
         let mut expected = HashSet::new();
         expected.insert(OsString::from("."));
         expected.insert(OsString::from(".."));
-        expected.insert(filename0.clone());
         expected.insert(filename1.clone());
-        for result in mocks.val.0.readdir(1, 0, 0) {
-            println!("{:?}", &result.unwrap().0.d_name[..]);
+        drop(stream0);
+        let stream1 = mocks.val.0.readdir(1, 0, offset0);
+        for result in stream1 {
+            let entry = result.unwrap().0;
+            let nameptr = entry.d_name.as_ptr() as *const u8;
+            let namelen = usize::from(entry.d_namlen);
+            let name_s = unsafe{slice::from_raw_parts(nameptr, namelen)};
+            let name = OsStr::from_bytes(name_s);
+            assert!(expected.remove(name));
         }
-        unimplemented!()
+        assert!(expected.is_empty());
     }
 
     // It's allowed for the client of Fs::readdir to drop the iterator without

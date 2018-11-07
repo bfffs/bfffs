@@ -1090,9 +1090,28 @@ impl Fs {
     pub fn readdir(&self, ino: u64, _fh: u64, soffs: i64)
         -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>
     {
+        type T = Result<(libc::dirent, i64), i32>;
+        type LoopFut = Box<Future<Item=mpsc::Sender<T>, Error=Error> + Send>;
         // Big enough to fill a 4KB page with full-size dirents
         let chansize: usize = 14;
         let dirent_size = mem::size_of::<libc::dirent>() as u16;
+
+        let send = move |tx: mpsc::Sender<T>, k: &FSKey, dirent: &Dirent| {
+            let namlen = dirent.name.as_bytes().len();
+            let mut reply = libc::dirent {
+                d_fileno: dirent.ino as u32,
+                d_reclen: dirent_size,
+                d_type: dirent.dtype,
+                d_namlen: namlen as u8,
+                d_name: unsafe{mem::zeroed()}
+            };
+            // libc::dirent uses "char" when it should be using "unsigned char",
+            // so we need an unsafe conversion
+            let p = dirent.name.as_bytes() as *const [u8] as *const [i8];
+            reply.d_name[0..namlen].copy_from_slice(unsafe{&*p});
+            tx.send(Ok((reply, (k.offset() + 1) as i64)))
+            .map_err(|_| Error::EPIPE)
+        };
 
         let (tx, rx) = mpsc::channel(chansize);
         self.handle.spawn(
@@ -1104,22 +1123,19 @@ impl Fs {
                 let offs = soffs as u64;
                 let fut = dataset.range(FSKey::dirent_range(ino, offs))
                     .fold(tx, move |tx, (k, v)| {
-                        let dirent = v.as_direntry().unwrap();
-                        let namlen = dirent.name.as_bytes().len();
-                        let mut reply = libc::dirent {
-                            d_fileno: dirent.ino as u32,
-                            d_reclen: dirent_size,
-                            d_type: dirent.dtype,
-                            d_namlen: namlen as u8,
-                            d_name: unsafe{mem::zeroed()}
-                        };
-                        // libc::dirent uses "char" when it should be using
-                        // "unsigned char", so we need an unsafe conversion
-                        let p = dirent.name.as_bytes()
-                            as *const [u8] as *const [i8];
-                        reply.d_name[0..namlen].copy_from_slice(unsafe{&*p});
-                        tx.send(Ok((reply, (k.offset() + 1) as i64)))
-                            .map_err(|_| Error::EPIPE)
+                        match v {
+                            FSValue::DirEntry(dirent) =>
+                                Box::new(send(tx, &k, &dirent)) as LoopFut,
+                            FSValue::DirEntries(bucket) => {
+                                let fut = stream::iter_ok(bucket.into_iter())
+                                .fold(tx, move |tx, dirent| {
+                                    send(tx, &k, &dirent)
+                                });
+                                Box::new(fut) as LoopFut
+                            }
+                            x => panic!("Unexpected value {:?} for key {:?}",
+                                        x, k)
+                        }
                     }).map(|_| ());
                 Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
             }).map_err(|e| {
