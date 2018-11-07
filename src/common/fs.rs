@@ -179,30 +179,30 @@ mod htable {
 
     /// Remove an item that is stored in a BTree hash table
     ///
-    /// Return its aux data.  This sounds weird, but it satisfies all current
-    /// use cases and is cheaper than returning the entire item.
+    /// Return the old item, if any.
     pub(super) fn remove<D, T>(dataset: D, key: FSKey, aux: T::Aux,
                                name: OsString)
-        -> impl Future<Item=T::Aux, Error=Error> + Send
+        -> impl Future<Item=T, Error=Error> + Send
         where D: AsRef<ReadWriteFilesystem> + Send + 'static,
               T: HTItem
     {
         dataset.as_ref().remove(key)
         .and_then(move |r| {
             match T::from_table(r) {
-                HTValue::Single(ref old) if old.same(aux, name) => {
-                    // This is the item we're looking for
-                    Box::new(Ok(old.aux()).into_future())
-                        as Box<Future<Item=T::Aux, Error=Error> + Send>
-                },
                 HTValue::Single(old) =>
                 {
-                    // Hash collision.  Put it back, and return not found
-                    let value = old.into_fsvalue();
-                    let fut = dataset.as_ref().insert(key, value)
-                    .and_then(|_| Err(T::ENOTFOUND).into_future());
-                    Box::new(fut)
-                        as Box<Future<Item=T::Aux, Error=Error> + Send>
+                    if old.same(aux, name) {
+                        // This is the item we're looking for
+                        Box::new(Ok(old).into_future())
+                            as Box<Future<Item=T, Error=Error> + Send>
+                    } else {
+                        // Hash collision.  Put it back, and return not found
+                        let value = old.into_fsvalue();
+                        let fut = dataset.as_ref().insert(key, value)
+                        .and_then(|_| Err(T::ENOTFOUND).into_future());
+                        Box::new(fut)
+                            as Box<Future<Item=T, Error=Error> + Send>
+                    }
                 },
                 HTValue::Bucket(mut old) => {
                     // There was previously a hash collision.
@@ -210,8 +210,7 @@ mod htable {
                         x.same(aux, &name)
                     }) {
                         // Desired item was found
-                        let aux = old[i].aux();
-                        old.swap_remove(i);
+                        let r = old.swap_remove(i);
                         let v = if old.len() == 1 {
                             // A 2-way collision; remove one
                             old.pop().unwrap().into_fsvalue()
@@ -220,9 +219,9 @@ mod htable {
                             T::into_bucket(old)
                         };
                         let fut = dataset.as_ref().insert(key, v)
-                        .map(move |_| aux);
+                        .map(move |_| r);
                         Box::new(fut)
-                            as Box<Future<Item=T::Aux, Error=Error> + Send>
+                            as Box<Future<Item=T, Error=Error> + Send>
                     } else {
                         // A 3 (or more) way hash collision between the
                         // accessed item and at least two different ones.
@@ -230,12 +229,12 @@ mod htable {
                         let fut = dataset.as_ref().insert(key, v)
                         .and_then(|_| Err(T::ENOTFOUND).into_future());
                         Box::new(fut)
-                            as Box<Future<Item=T::Aux, Error=Error> + Send>
+                            as Box<Future<Item=T, Error=Error> + Send>
                     }
                 },
                 HTValue::None => {
                     Box::new(Err(T::ENOTFOUND).into_future())
-                        as Box<Future<Item=T::Aux, Error=Error> + Send>
+                        as Box<Future<Item=T, Error=Error> + Send>
                 },
                 HTValue::Other(x) =>
                     panic!("Unexpected value {:?} for key {:?}", x, key)
@@ -1450,9 +1449,9 @@ impl Fs {
                 let key = FSKey::new(parent, dekey);
                 htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
                     (dataset.clone(), key, 0, owned_name)
-                .and_then(move |ino|  {
+                .and_then(move |dirent|  {
                     // 2) Unlink the inode
-                    Fs::do_unlink(dataset, ino)
+                    Fs::do_unlink(dataset, dirent.ino)
                 }).then(move |r| {
                     match r {
                         Ok(_) => tx.send(Ok(())),
