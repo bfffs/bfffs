@@ -1092,15 +1092,15 @@ impl Fs {
     {
         type T = Result<(libc::dirent, i64), i32>;
         type LoopFut = Box<Future<Item=mpsc::Sender<T>, Error=Error> + Send>;
+        const DIRENT_SIZE: usize = mem::size_of::<libc::dirent>();
         // Big enough to fill a 4KB page with full-size dirents
-        let chansize: usize = 14;
-        let dirent_size = mem::size_of::<libc::dirent>() as u16;
+        const CHANSIZE: usize = 4096 / DIRENT_SIZE;
 
         let send = move |tx: mpsc::Sender<T>, k: &FSKey, dirent: &Dirent| {
             let namlen = dirent.name.as_bytes().len();
             let mut reply = libc::dirent {
                 d_fileno: dirent.ino as u32,
-                d_reclen: dirent_size,
+                d_reclen: DIRENT_SIZE as u16,
                 d_type: dirent.dtype,
                 d_namlen: namlen as u8,
                 d_name: unsafe{mem::zeroed()}
@@ -1113,7 +1113,7 @@ impl Fs {
             .map_err(|_| Error::EPIPE)
         };
 
-        let (tx, rx) = mpsc::channel(chansize);
+        let (tx, rx) = mpsc::channel(CHANSIZE);
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 // NB: the next two lines can be replaced by
