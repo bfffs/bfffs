@@ -78,6 +78,7 @@ mod htable {
                                 // Found the right item
                                 Box::new(Ok(old).into_future()) as MyFut<T>
                             } else {
+                                // Hash collision
                                 Box::new(Err(T::ENOTFOUND).into_future())
                                     as MyFut<T>
                             }
@@ -1177,55 +1178,63 @@ impl Fs {
         // 3cii) If dst existed and is a directory, remove it
         let (tx, rx) = oneshot::channel();
         let src_objkey = ObjKey::dir_entry(&name);
+        let owned_name = name.to_owned();
+        let owned_name2 = owned_name.clone();
         let dst_objkey = ObjKey::dir_entry(&newname);
         let owned_newname = newname.to_owned();
         let owned_newname2 = owned_newname.clone();
+        let owned_newname3 = owned_newname.clone();
         let samedir = parent == newparent;
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let ds4 = ds.clone();
                 let ds5 = ds.clone();
+                let ds6 = ds.clone();
                 let dst_de_key = FSKey::new(newparent, dst_objkey);
                 // 0) Check conditions
-                ds.get(dst_de_key)
-                .and_then(move |r| {
-                    if let Some(v) = r {
-                        let dirent = v.as_direntry().unwrap();
-                        // Is it not a directory?
-                        if dirent.dtype != libc::DT_DIR {
+                htable::get(htable::ReadFilesystem::ReadWrite(ds.as_ref()),
+                            dst_de_key, 0, owned_newname)
+                .then(move |r: Result<Dirent, Error>| {
+                    match r {
+                        Ok(dirent) => {
+                            if dirent.dtype != libc::DT_DIR {
+                                // Overwriting non-directories is allowed
+                                Box::new(Ok(()).into_future())
+                                    as Box<Future<Item=(), Error=Error> + Send>
+                            } else {
+                                // Is it a nonempty directory?
+                                Box::new(Fs::ok_to_rmdir(&ds4, dirent.ino,
+                                    newparent, owned_newname3))
+                                    as Box<Future<Item=(), Error=Error> + Send>
+                            }
+                        },
+                        Err(Error::ENOENT) => {
+                            // Destination doesn't exist.  No problem!
                             Box::new(Ok(()).into_future())
                                 as Box<Future<Item=(), Error=Error> + Send>
-                        } else {
-                            // Is it a nonempty directory?
-                            Box::new(Fs::ok_to_rmdir(&ds4, dirent.ino,
-                                                     newparent, owned_newname))
+                        },
+                        Err(e) => {
+                            // Other errors should propagate upwards
+                            Box::new(Err(e).into_future())
                                 as Box<Future<Item=(), Error=Error> + Send>
                         }
-                    } else {
-                        // Destination doesn't exist.  No problem!
-                        Box::new(Ok(()).into_future())
-                            as Box<Future<Item=(), Error=Error> + Send>
                     }
                 }).and_then(move |_| {
                     // 1) Remove the source directory entry
                     let src_de_key = FSKey::new(parent, src_objkey);
-                    ds5.remove(src_de_key)
-                }).and_then(move |r| {
-                    if let Some(v) = r {
-                        let dirent = v.as_direntry().unwrap();
-                        Ok(dirent.clone()).into_future()
-                    } else {
-                        Err(Error::ENOENT).into_future()
-                    }
+                    htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
+                        (ds5.clone(), src_de_key, 0, owned_name2)
                 }).and_then(move |mut dirent| {
                     // 2) Insert the new directory entry
                     let isdir = dirent.dtype == libc::DT_DIR;
-                    dirent.name = owned_newname2;
-                    let de_value = FSValue::DirEntry(dirent);
-                    ds.insert(dst_de_key, de_value)
-                    .map(move |r| (r, ds, isdir))
-                }).and_then(move |(r, ds, isdir)| {
+                    dirent.name = owned_newname2.clone();
+                    htable::insert(ds6, dst_de_key, dirent, owned_newname2)
+                    .map(move |r| {
+                        let old_dst_ino = r.map(|dirent| dirent.ino);
+                        (old_dst_ino, isdir)
+                    })
+                }).and_then(move |(old_dst_ino, isdir)| {
                     let p_nlink_fut = if isdir && !samedir {
                         // 3a) Decrement parent dir's link count
                         let ds2 = ds.clone();
@@ -1243,7 +1252,8 @@ impl Fs {
                         Box::new(Ok(()).into_future())
                             as Box<Future<Item=(), Error=Error> + Send>
                     };
-                    let np_nlink_fut = if isdir && !samedir && r.is_none() {
+                    let np_nlink_fut =
+                    if isdir && !samedir && old_dst_ino.is_none() {
                         // 3b) Increment new parent dir's link count
                         let ds3 = ds.clone();
                         let newparent_ino_key = FSKey::new(newparent,
@@ -1261,16 +1271,14 @@ impl Fs {
                         Box::new(Ok(()).into_future())
                             as Box<Future<Item=(), Error=Error> + Send>
                     };
-                    let unlink_fut = if let Some(v) = r {
-                        let dst_ino = v.as_direntry().unwrap().ino;
+                    let unlink_fut = if let Some(v) = old_dst_ino {
                         // 3ci) Decrement old dst's link count
                         if isdir {
-                            let fut = Fs::do_rmdir(ds, newparent, dst_ino,
-                                                   false);
+                            let fut = Fs::do_rmdir(ds, newparent, v, false);
                             Box::new(fut)
                                 as Box<Future<Item=(), Error=Error> + Send>
                         } else {
-                            let fut = Fs::do_unlink(ds.clone(), dst_ino)
+                            let fut = Fs::do_unlink(ds.clone(), v)
                             .map(|_| ());
                             Box::new(fut)
                                 as Box<Future<Item=(), Error=Error> + Send>

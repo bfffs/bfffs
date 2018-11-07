@@ -1138,7 +1138,6 @@ root:
 
     // Rename a file that has a hash collision in both the source and
     // destination directories
-    #[ignore("directory entry hash collisions are TODO")]
     test rename_collision(mocks) {
         let src = OsString::from("F0jS2Tptj7");
         let src_c = OsString::from("PLe01T116a");
