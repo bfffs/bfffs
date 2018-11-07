@@ -1088,7 +1088,6 @@ root:
     // straddle the boundary of the client's buffer.  The client must call
     // readdir again with the provided offset, and it must see neither duplicate
     // nor missing entries
-    #[ignore("directory entry hash collisions are TODO")]
     test readdir_collision_at_offset(mocks) {
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");

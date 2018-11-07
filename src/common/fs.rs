@@ -1092,11 +1092,32 @@ impl Fs {
     {
         type T = Result<(libc::dirent, i64), i32>;
         type LoopFut = Box<Future<Item=mpsc::Sender<T>, Error=Error> + Send>;
+
+        bitfield! {
+            struct Cursor(u64);
+            // Offset of the BTree key of the next dirent
+            u64; offset, _: 63, 8;
+            // Index within the bucket, if any, of the next dirent
+            u8; bucket_idx, _: 7, 0;
+        }
+        impl Cursor {
+            fn new(offset: u64, bucket_idx: usize) -> Self {
+                debug_assert!(bucket_idx <= u8::max_value() as usize,
+                    "A directory has a > 256-way hash collision?");
+                Cursor((offset << 8) | bucket_idx as u64)
+            }
+        }
+        impl From<i64> for Cursor {
+            fn from(t: i64) -> Self {
+                Cursor(t as u64)
+            }
+        }
+
         const DIRENT_SIZE: usize = mem::size_of::<libc::dirent>();
         // Big enough to fill a 4KB page with full-size dirents
         const CHANSIZE: usize = 4096 / DIRENT_SIZE;
 
-        let send = move |tx: mpsc::Sender<T>, k: &FSKey, dirent: &Dirent| {
+        let send = move |tx: mpsc::Sender<T>, offs: Cursor, dirent: &Dirent| {
             let namlen = dirent.name.as_bytes().len();
             let mut reply = libc::dirent {
                 d_fileno: dirent.ino as u32,
@@ -1109,27 +1130,38 @@ impl Fs {
             // so we need an unsafe conversion
             let p = dirent.name.as_bytes() as *const [u8] as *const [i8];
             reply.d_name[0..namlen].copy_from_slice(unsafe{&*p});
-            tx.send(Ok((reply, (k.offset() + 1) as i64)))
+            tx.send(Ok((reply, offs.0 as i64)))
             .map_err(|_| Error::EPIPE)
         };
 
         let (tx, rx) = mpsc::channel(CHANSIZE);
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
-                // NB: the next two lines can be replaced by
-                // u64::try_from(soffs) once that feature is stabilized
-                // https://github.com/rust-lang/rust/issues/33417
-                assert!(soffs >= 0);
-                let offs = soffs as u64;
+                let cursor = Cursor::from(soffs);
+                let offs = cursor.offset();
+                let bucket_idx = cursor.bucket_idx();
                 let fut = dataset.range(FSKey::dirent_range(ino, offs))
                     .fold(tx, move |tx, (k, v)| {
                         match v {
-                            FSValue::DirEntry(dirent) =>
-                                Box::new(send(tx, &k, &dirent)) as LoopFut,
+                            FSValue::DirEntry(dirent) => {
+                                let curs = Cursor::new(k.offset() + 1, 0);
+                                Box::new(send(tx, curs, &dirent)) as LoopFut
+                            },
                             FSValue::DirEntries(bucket) => {
-                                let fut = stream::iter_ok(bucket.into_iter())
-                                .fold(tx, move |tx, dirent| {
-                                    send(tx, &k, &dirent)
+                                let bucket_size = bucket.len();
+                                let fut = stream::iter_ok(
+                                    bucket.into_iter()
+                                    .skip(bucket_idx as usize)
+                                    .enumerate()
+                                )
+                                .fold(tx, move |tx, (i, dirent)| {
+                                    let idx = i + bucket_idx as usize;
+                                    let curs = if idx < bucket_size - 1 {
+                                        Cursor::new(k.offset(), idx + 1)
+                                    } else {
+                                        Cursor::new(k.offset() + 1, 0)
+                                    };
+                                    send(tx, curs, &dirent)
                                 });
                                 Box::new(fut) as LoopFut
                             }
