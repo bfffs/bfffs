@@ -7,7 +7,7 @@ IDML::clean_zone occasionally fails to fully clean           | owner:"hg.user", 
 node underflow after range_delete                            | owner:Alan Somers <asomers@gmail.com>, open:False, id:3a1c7688e20e3685d4cae6dc2fdb84f688b8536e, time:1540334405.58
 nchildren < 2 in fix_int during range_delete                 | owner:Alan Somers <asomers@gmail.com>, open:False, id:40b01ebb2240366623383aafbd96de5a6ca815cf, time:1540178983.24
 range_delete_pass2 doesn't fix underflowing nodes that get stolen | owner:Alan Somers <asomers@gmail.com>, open:False, id:4a99d7fbd8891cb8e0453d2b6306ce28c37e34a0, time:1539362545.92
-DowncastError ONLY ON NIGHTLY                                | owner:"hg.user", open:True, id:529defe6770c6591f6a7a1d8ff32d259993917a4, time:1535047452.46
+DowncastError ONLY ON NIGHTLY                                | owner:"hg.user", open:False, id:529defe6770c6591f6a7a1d8ff32d259993917a4, time:1535047452.46
 DDML::put_common tries to truncate DivBufShares that are still referenced | owner:"hg.user", open:False, id:709377ba5f51040cacb7f3e922d469400bfe422a, time:1535047528.71
 Indirect block has no reverse mapping in the allocation table | owner:Alan Somers <asomers@gmail.com>, open:False, id:9bdac7a9a2d47f2b379b960fc025d0fde0680613, time:1539901696.22
 Infinite iteration caused by 768:6805b1abde4a                | owner:Alan Somers <asomers@gmail.com>, open:False, id:b9597075cb50f930e78ddd8050b7bc997b7437b6, time:1539362332.72
