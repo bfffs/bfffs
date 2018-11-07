@@ -41,8 +41,28 @@ const RECORDSIZE: usize = 4 * 1024;    // Default record size 4KB
 mod htable {
     use super::*;
 
+    /// Argument type for `htable::get`.
+    // A more obvious approach would be to create a ReadDataset trait that is
+    // implemented by both filesystem types.  However, that would require extra
+    // allocations, since trait methods can't return `impl trait`.
+    pub(super) enum ReadFilesystem<'a> {
+        ReadOnly(&'a ReadOnlyFilesystem),
+        ReadWrite(&'a ReadWriteFilesystem)
+    }
+
+    impl<'a> ReadFilesystem<'a> {
+        fn get(&self, k: FSKey)
+            -> Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+        {
+            match self {
+                ReadFilesystem::ReadOnly(ds) => Box::new(ds.get(k)),
+                ReadFilesystem::ReadWrite(ds) => Box::new(ds.get(k))
+            }
+        }
+    }
+
     /// Get an item from an in-BTree hash table
-    pub(super) fn get<T>(dataset: &ReadOnlyFilesystem, key: FSKey,
+    pub(super) fn get<T>(dataset: ReadFilesystem, key: FSKey,
                          aux: T::Aux, name: OsString)
         -> impl Future<Item=T, Error=Error> + Send
         where T: HTItem
@@ -617,7 +637,8 @@ impl Fs {
         type MyFut = Box<Future<Item=DivBuf, Error=Error> + Send>;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
-                htable::get(&dataset, key, ns, owned_name)
+                htable::get(htable::ReadFilesystem::ReadOnly(&dataset), key, ns,
+                            owned_name)
                 .and_then(move |extattr| {
                     match extattr {
                         ExtAttr::Inline(iea) => {
@@ -748,7 +769,8 @@ impl Fs {
         let key = FSKey::new(parent, objkey);
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
-                htable::get::<Dirent>(&dataset, key, 0, owned_name)
+                let rfs = htable::ReadFilesystem::ReadOnly(&dataset);
+                htable::get::<Dirent>(rfs, key, 0, owned_name)
                 .then(move |r| {
                     match r {
                         Ok(de) => tx.send(Ok(de.ino)),
@@ -925,26 +947,42 @@ impl Fs {
     {
         ds.range(FSKey::obj_range(ino))
         .fold(false, |found_inode, (_, v)| {
-            if let Some(dirent) = v.as_direntry() {
-                if dirent.name != OsStr::new(".") &&
-                   dirent.name != OsStr::new("..") {
+            match v {
+                FSValue::DirEntry(dirent) => {
+                    if dirent.name != OsStr::new(".") &&
+                       dirent.name != OsStr::new("..") {
+                        Err(Error::ENOTEMPTY).into_future()
+                    } else {
+                        Ok(found_inode).into_future()
+                    }
+                },
+                FSValue::DirEntries(_) => {
+                    // It is known that "." and ".." do not have a hash
+                    // collision (otherwise it would be impossible to ever rmdir
+                    // anything).  So the mere presence of this value type
+                    // indicates ENOTEMPTY.  We don't need to check the
+                    // contents.
                     Err(Error::ENOTEMPTY).into_future()
-                } else {
+                },
+                FSValue::Inode(inode) => {
+                    // TODO: check permissions, file flags, etc
+                    // The VFS should've already checked that inode is a
+                    // directory.
+                    assert_eq!(inode.file_type, FileType::Dir,
+                               "rmdir of a non-directory");
+                    assert_eq!(inode.nlink, 2,
+                        "Hard links to directories are forbidden.  nlink={}",
+                        inode.nlink);
+                    Ok(true).into_future()
+                },
+                FSValue::ExtAttr(_) | FSValue::ExtAttrs(_) => {
+                    // It's fine to remove a directory with extended attributes.
+                    // TODO: free Blob extattrs
                     Ok(found_inode).into_future()
+                },
+                FSValue::InlineExtent(_) | FSValue::BlobExtent(_) => {
+                    panic!("Directories should not have extents")
                 }
-            } else if let Some(inode) = v.as_inode() {
-                // TODO: check permissions, file flags, etc
-                // The VFS should've already checked that inode is a
-                // directory.
-                assert_eq!(inode.file_type, FileType::Dir,
-                           "rmdir of a non-directory");
-                assert_eq!(inode.nlink, 2,
-                    "Hard links to directories are forbidden.  nlink={}",
-                    inode.nlink);
-                Ok(true).into_future()
-            } else {
-                // Probably an extended attribute or something.
-                Ok(found_inode).into_future()
             }
         }).map(move |found_inode| {
             assert!(found_inode,
@@ -1263,6 +1301,8 @@ impl Fs {
         // 4) Actually remove it
         let (tx, rx) = oneshot::channel();
         let owned_name = name.to_os_string();
+        let owned_name2 = owned_name.clone();
+        let owned_name3 = owned_name.clone();
         let objkey = ObjKey::dir_entry(&owned_name);
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
@@ -1270,23 +1310,19 @@ impl Fs {
                 let ds2 = ds.clone();
                 // 1) Lookup the directory
                 let key = FSKey::new(parent, objkey);
-                ds.get(key)
-                .and_then(|r| {
-                    match r {
-                        Some(v) => {
-                            let de = v.as_direntry().unwrap();
-                            Ok(de.ino).into_future()
-                        },
-                        None => Err(Error::ENOENT).into_future()
-                    }
-                }).and_then(move |ino| {
+                htable::get(htable::ReadFilesystem::ReadWrite(&ds), key, 0,
+                            owned_name3)
+                .and_then(move |de: Dirent| {
+                    let ino = de.ino;
                     // 2) Check that the directory is empty
-                    Fs::ok_to_rmdir(&ds, ino, parent, owned_name)
+                    Fs::ok_to_rmdir(&ds, ino, parent, owned_name2)
                     .map(move |_| ino)
                 }).and_then(move |ino| {
                     // 3) Remove the parent dir's dir_entry
                     let de_key = FSKey::new(parent, objkey);
-                    let dirent_fut = ds2.remove(de_key);
+                    let dirent_fut = htable::remove::<Arc<ReadWriteFilesystem>,
+                                                      Dirent>
+                        (ds2.clone(), de_key, 0, owned_name);
 
                     // 4) Actually remove the directory
                     let dfut = Fs::do_rmdir(ds2, parent, ino, true);

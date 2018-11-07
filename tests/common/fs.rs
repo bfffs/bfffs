@@ -1396,6 +1396,19 @@ root:
         assert_eq!(inode.nlink, 1);
     }
 
+    /// Remove a directory whose name has a hash collision
+    test rmdir_collision(mocks) {
+        let filename0 = OsString::from("HsxUh682JQ");
+        let filename1 = OsString::from("4FatHJ8I6H");
+        assert_dirents_collide(&filename0, &filename1);
+        let ino0 = mocks.val.0.mkdir(1, &filename0, 0o755, 0, 0).unwrap();
+        let _ino1 = mocks.val.0.mkdir(1, &filename1, 0o755, 0, 0).unwrap();
+        mocks.val.0.rmdir(1, &filename1).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(1, &filename0), Ok(ino0));
+        assert_eq!(mocks.val.0.lookup(1, &filename1), Err(libc::ENOENT));
+    }
+
     test rmdir_enoent(mocks) {
         let dirname = OsString::from("x");
         assert_eq!(mocks.val.0.rmdir(1, &dirname).unwrap_err(), libc::ENOENT);
@@ -1416,6 +1429,19 @@ root:
         mocks.val.0.mkdir(ino, &dirname, 0o755, 0, 0)
         .unwrap();
         assert_eq!(mocks.val.0.rmdir(1, &dirname).unwrap_err(), libc::ENOTEMPTY);
+    }
+
+    /// Try to remove a directory that isn't empty, and that has a hash
+    /// collision with another file or directory
+    test rmdir_enotempty_collision(mocks) {
+        let filename0 = OsString::from("basedir");
+        let filename1 = OsString::from("HsxUh682JQ");
+        let filename2 = OsString::from("4FatHJ8I6H");
+        assert_dirents_collide(&filename1, &filename2);
+        let ino0 = mocks.val.0.mkdir(1, &filename0, 0o755, 0, 0).unwrap();
+        let _ino1 = mocks.val.0.mkdir(ino0, &filename1, 0o755, 0, 0).unwrap();
+        let _ino2 = mocks.val.0.mkdir(ino0, &filename2, 0o755, 0, 0).unwrap();
+        assert_eq!(mocks.val.0.rmdir(1, &filename0), Err(libc::ENOTEMPTY));
     }
 
     /// Remove a directory with an extended attribute
