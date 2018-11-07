@@ -113,10 +113,11 @@ mod htable {
 
     /// Insert an item that is stored in a BTree hash table
     pub(super) fn insert<D, T>(dataset: D, key: FSKey, value: T, name: OsString)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Item=Option<T>, Error=Error> + Send
         where D: AsRef<ReadWriteFilesystem> + Send + 'static,
               T: HTItem
     {
+        type MyFut<T> = Box<Future<Item=Option<T>, Error=Error> + Send>;
         let aux = value.aux();
         let fsvalue = value.into_fsvalue();
         dataset.as_ref().insert(key, fsvalue)
@@ -125,8 +126,8 @@ mod htable {
                 HTValue::Single(old) => {
                     if old.same(aux, &name) {
                         // We're overwriting an existing item
-                        Box::new(future::ok::<(), Error>(()))
-                            as Box<Future<Item=(), Error=Error> + Send>
+                        Box::new(future::ok::<Option<T>, Error>(Some(old)))
+                            as MyFut<T>
                     } else {
                         // We had a hash collision setting an unrelated
                         // item. Get the old value back, and pack them together.
@@ -137,10 +138,9 @@ mod htable {
                             let values = vec![old, new];
                             let fsvalue = T::into_bucket(values);
                             dataset.as_ref().insert(key, fsvalue)
-                            .map(|_| ())
+                            .map(|_| None)
                         });
-                        Box::new(fut)
-                            as Box<Future<Item=(), Error=Error> + Send>
+                        Box::new(fut) as MyFut<T>
                     }
                 },
                 HTValue::Bucket(mut old) => {
@@ -150,28 +150,28 @@ mod htable {
                     .and_then(move |r| {
                         let v = r.unwrap();
                         let new = T::from_fsvalue(v).unwrap();
-                        if let Some(i) = old.iter().position(|x| {
+                        let r = if let Some(i) = old.iter().position(|x| {
                             x.same(aux, &name)
                         }) {
                             // A 2-way hash collision, overwriting one value.
                             // Replace the old value.
-                            old[i] = new;
+                            Some(mem::replace(&mut old[i], new))
                         } else {
                             // A three (or more)-way hash collision.  Append the
                             // new item
                             old.push(new);
-                        }
+                            None
+                        };
                         dataset.as_ref().insert(key, T::into_bucket(old))
-                        .map(|_| ())
+                        .map(|_| r)
                     });
-                    Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+                    Box::new(fut) as MyFut<T>
                 },
                 HTValue::Other(x) => {
                     panic!("Unexpected value {:?} for key {:?}", x, key)
                 },
                 HTValue::None => {
-                    Box::new(future::ok::<(), Error>(()))
-                        as Box<Future<Item=(), Error=Error> + Send>
+                    Box::new(future::ok::<Option<T>, Error>(None)) as MyFut<T>
                 }
             }
         })
