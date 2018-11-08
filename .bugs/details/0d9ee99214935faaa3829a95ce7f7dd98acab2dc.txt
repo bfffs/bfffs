@@ -1,0 +1,14 @@
+# Lines starting with '#' and sections without content
+# are not displayed by a call to 'details'
+#
+[paths]
+https://github.com/regexident/cargo-modules/issues/29
+
+[details]
+Revision 837:f6e1b98d15f2 introduced the new `crate` keyword.  cargo-modules
+doesn't understand it, and as a result use_graph.sh is broken.  It omits
+almost all edges from the graph.  I don't really want to revert r837, so
+I'll just wait until cargo-modules fixes the bug.
+
+[comments]
+# Comments and updates - leave your name
