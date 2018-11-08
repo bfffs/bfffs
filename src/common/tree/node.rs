@@ -209,8 +209,7 @@ pub(super) struct LeafData<K: Key, V> {
 impl<K: Key, V: Value> LeafData<K, V> {
     /// Flush all items to stable storage.
     ///
-    /// For most items, this is a nop.  TODO: eliminate the loop for Value types
-    /// that don't need it, perhaps using generics specialization
+    /// For most items, this is a nop.
     pub fn flush<A, D>(self, d: &D, txg: TxgT)
         -> Box<Future<Item=Self, Error=Error> + Send>
         where D: DML<Addr=A> + 'static, A: 'static
