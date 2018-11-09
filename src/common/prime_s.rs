@@ -13,6 +13,7 @@
 use fixedbitset::FixedBitSet;
 use crate::common::{*, declust::*};
 use modulo::Mod;
+use std::iter::FusedIterator;
 
 /// Return the multiplicative inverse of a, mod n.  n must be prime.
 ///
@@ -460,6 +461,8 @@ impl Iterator for PrimeSIter {
     }
 }
 
+impl FusedIterator for PrimeSIter {}
+
 /// Return type for [`PrimeS::iter_data`](struct.PrimeS.html#method.iter_data)
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrimeSIterData(PrimeSIter);
@@ -545,6 +548,8 @@ impl Iterator for PrimeSIterData {
     }
 }
 
+impl FusedIterator for PrimeSIterData {}
+
 // LCOV_EXCL_START
 #[cfg(test)]
 mod tests {
@@ -623,6 +628,10 @@ mod tests {
             // Now advance the iterator
             let _ = iter.next();
         }
+        assert!(iter.next().is_none());
+        // Check that repolling doesn't change the state
+        assert!(iter.next().is_none());
+
     }
 
     // Test creating data iterators from any starting point in a 7-5-2 PRIME-S
@@ -651,6 +660,9 @@ mod tests {
             // Now advance the iterator
             let _ = iter.next();
         }
+        assert!(iter.next().is_none());
+        // Check that repolling doesn't change the state
+        assert!(iter.next().is_none());
     }
 }
 // LCOV_EXCL_STOP
