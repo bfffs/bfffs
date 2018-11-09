@@ -2000,7 +2000,7 @@ test_suite! {
                 let piece: u64 = self.rng.gen_range(0, 4);
                 let ofs = 2048 * piece;
                 // Use a predictable fill value
-                let fill = (ino.wrapping_mul(piece) % u8::max_value as u64)
+                let fill = (ino.wrapping_mul(piece) % u8::max_value() as u64)
                     as u8;
                 let buf = [fill; 2048];
                 //self.rng.fill_bytes(&mut buf);
