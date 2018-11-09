@@ -5,13 +5,6 @@
 // https://github.com/rust-lang-nursery/rust-clippy/issues/3307
 #![cfg_attr(feature = "cargo-clippy", allow(clippy::range_plus_one))]
 
-// https://github.com/mindsbackyard/galvanic-test/pull/13
-//#![cfg_attr(feature = "cargo-clippy", allow(clippy::unnecessary_mut_passed))]
-
-// Simulacrum doesn't (yet) impl Default for Expectations
-// https://github.com/pcsm/simulacrum/pull/58
-//#![cfg_attr(feature = "cargo-clippy", allow(clippy::new_without_default))]
-
 // I don't find this lint very helpful
 #![cfg_attr(feature = "cargo-clippy", allow(clippy::type_complexity))]
 

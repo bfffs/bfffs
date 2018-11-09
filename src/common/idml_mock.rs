@@ -8,6 +8,7 @@ use futures::{Future, IntoFuture, Stream};
 use simulacrum::*;
 use std::io;
 
+#[derive(Default)]
 pub struct IDMLMock {
     e: Expectations
 }
@@ -140,12 +141,6 @@ impl IDMLMock {
         self.e.was_called_returning::<(),
             Box<Stream<Item=ClosedZone, Error=Error> + Send>>
             ("list_closed_zones", ())
-    }
-
-    pub fn new() -> Self {
-        Self {
-            e: Expectations::new()
-        }
     }
 
     pub fn shutdown(&self) {

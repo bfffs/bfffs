@@ -1,5 +1,10 @@
 // vim: tw=80
 // LCOV_EXCL_START
+
+//derive(Default) doesn't work here because FSValue can't implement Default
+#![cfg_attr(feature = "cargo-clippy",
+            allow(clippy::new_without_default_derive))]
+
 use crate::common::{
     *,
     dml::Compression,

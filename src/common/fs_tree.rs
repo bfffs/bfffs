@@ -655,7 +655,7 @@ impl<A: Addr> Value for FSValue<A> {
             FSValue::InlineExtent(ie) => Box::new(ie.flush(dml, txg)),
             FSValue::ExtAttr(extattr) => {
                 let fut = extattr.flush(dml, txg)
-                .map(|extattr| FSValue::ExtAttr(extattr));
+                .map(FSValue::ExtAttr);
                 Box::new(fut)
             }
             FSValue::ExtAttrs(v) => {
@@ -663,7 +663,7 @@ impl<A: Addr> Value for FSValue<A> {
                     v.into_iter().map(|extattr| {
                         extattr.flush(dml, txg)
                     }).collect::<Vec<_>>()
-                ).map(|extattrs| FSValue::ExtAttrs(extattrs));
+                ).map(FSValue::ExtAttrs);
                 Box::new(fut) as Box<Future<Item=Self, Error=Error> + Send>
             },
             _ => Box::new(Ok(self).into_future())

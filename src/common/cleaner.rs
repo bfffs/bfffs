@@ -158,7 +158,7 @@ use tokio_current_thread::TaskExecutor;
 /// Clean in the background
 #[test]
 fn background() {
-    let mut idml = IDML::new();
+    let mut idml = IDML::default();
     idml.expect_list_closed_zones()
         .called_once()
         .returning(|_| {
@@ -184,7 +184,7 @@ fn background() {
 /// No zone is less dirty than the threshold
 #[test]
 fn no_sufficiently_dirty_zones() {
-    let mut idml = IDML::new();
+    let mut idml = IDML::default();
     idml.expect_list_closed_zones()
         .called_once()
         .returning(|_| {
@@ -206,7 +206,7 @@ fn no_sufficiently_dirty_zones() {
 fn one_sufficiently_dirty_zone() {
     const TXG: TxgT = TxgT(42);
 
-    let mut idml = IDML::new();
+    let mut idml = IDML::default();
     idml.expect_list_closed_zones()
         .called_once()
         .returning(|_| {
@@ -236,7 +236,7 @@ fn one_sufficiently_dirty_zone() {
 fn two_sufficiently_dirty_zones() {
     const TXG: TxgT = TxgT(42);
 
-    let mut idml = IDML::new();
+    let mut idml = IDML::default();
     idml.expect_list_closed_zones()
         .called_once()
         .returning(|_| {

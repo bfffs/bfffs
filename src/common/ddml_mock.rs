@@ -12,6 +12,7 @@ use std::{
     borrow::Borrow,
 };
 
+#[derive(Default)]
 pub struct DDMLMock {
     e: Expectations,
 }
@@ -35,12 +36,6 @@ impl DDMLMock {
         -> Method<(ClusterT, ZoneT, TxgT), ()>
     {
         self.e.expect::<(ClusterT, ZoneT, TxgT), ()>("assert_clean_zone")
-    }
-
-    pub fn new() -> Self {
-        Self {
-            e: Expectations::new(),
-        }
     }
 
     pub fn expect_delete(&mut self) -> Method<(*const DRP, TxgT),

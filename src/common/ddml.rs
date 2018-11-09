@@ -573,7 +573,7 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let s = Scenario::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         // Ideally, we'd expect that Cache::remove gets called before
         // Pool::free.  But Simulacrum lacks that ability.
         cache.expect_remove()
@@ -600,7 +600,7 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let s = Scenario::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
@@ -619,7 +619,7 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let s = Scenario::new();
-        let cache = Cache::new();
+        let cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.read_call(check!(|dbm: &DivBufMut| {
             dbm.len() == 4096
@@ -639,7 +639,7 @@ mod t {
                       csize: 4096, checksum: 0};
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let s = Scenario::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         cache.expect_get()
             .called_once()
@@ -662,7 +662,7 @@ mod t {
         let owned_by_cache = Rc::new(RefCell::new(Vec::<Box<Cacheable>>::new()));
         let owned_by_cache2 = owned_by_cache.clone();
         let s = Scenario::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         // Ideally we'd assert that Pool::read gets called in between Cache::get
         // and Cache::insert.  But Simulacrum can't do that.
@@ -695,7 +695,7 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xdead_beef_dead_beef};
         let s = Scenario::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         cache.expect_get::<DivBuf>()
             .called_once()
@@ -718,7 +718,7 @@ mod t {
     #[test]
     fn list_closed_zones() {
         let s = Scenario::new();
-        let cache = Cache::new();
+        let cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
 
         // The first cluster has two closed zones
@@ -765,7 +765,7 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 4096, checksum: 0};
         let s = Scenario::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         cache.expect_remove()
             .called_once()
@@ -789,7 +789,7 @@ mod t {
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         cache.expect_remove()
             .called_once()
@@ -815,7 +815,7 @@ mod t {
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xdead_beef_dead_beef};
         let s = Scenario::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         cache.expect_remove()
             .called_once()
@@ -841,7 +841,7 @@ mod t {
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
-        let cache = Cache::new();
+        let cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         seq.expect(pool.read_call(ANY, pba)
                    .and_return(Box::new(future::ok::<(), Error>(()))));
@@ -859,7 +859,7 @@ mod t {
     #[test]
     fn put() {
         let s = Scenario::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let pba = PBA::default();
         cache.expect_insert()
             .called_once()
@@ -885,7 +885,7 @@ mod t {
     #[test]
     fn put_partial_lba() {
         let s = Scenario::new();
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let pba = PBA::default();
         cache.expect_insert()
             .called_once()
@@ -911,7 +911,7 @@ mod t {
     #[test]
     fn put_direct() {
         let s = Scenario::new();
-        let cache = Cache::new();
+        let cache = Cache::default();
         let pba = PBA::default();
         let pool = s.create_mock::<MockPool>();
         let txg = TxgT::from(42);
@@ -935,7 +935,7 @@ mod t {
     #[test]
     fn sync_all() {
         let s = Scenario::new();
-        let cache = Cache::new();
+        let cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.sync_all_call()
             .and_return(Box::new(future::ok::<(), Error>(())))

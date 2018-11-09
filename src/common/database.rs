@@ -488,7 +488,7 @@ mod t {
 
     #[test]
     fn shutdown() {
-        let mut idml = IDML::new();
+        let mut idml = IDML::default();
         idml.expect_shutdown()
             .called_once()
             .returning(|_| ());
@@ -506,7 +506,7 @@ mod t {
     /// shutdown should be idempotent
     #[test]
     fn shutdown_twice() {
-        let mut idml = IDML::new();
+        let mut idml = IDML::default();
         idml.expect_shutdown()
             .called_times(2)
             .returning(|_| ());
@@ -524,7 +524,7 @@ mod t {
 
     #[test]
     fn sync_transaction() {
-        let mut idml = IDML::new();
+        let mut idml = IDML::default();
         let mut forest = Tree::new();
 
         let mut rt = current_thread::Runtime::new().unwrap();

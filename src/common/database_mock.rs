@@ -17,6 +17,7 @@ use std::io;
 pub type ReadOnlyFilesystem = ReadOnlyDatasetMock<FSKey, FSValue<RID>>;
 pub type ReadWriteFilesystem = ReadWriteDatasetMock<FSKey, FSValue<RID>>;
 
+#[derive(Default)]
 pub struct DatabaseMock {
     e: Expectations
 }
@@ -64,12 +65,6 @@ impl DatabaseMock {
     {
         self.e.expect::<TreeID, ReadOnlyDatasetMock<FSKey, FSValue<RID>>>
             ("fsread")
-    }
-
-    pub fn new() -> Self {
-        Self {
-            e: Expectations::new()
-        }
     }
 
     pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> + Send

@@ -627,7 +627,7 @@ root:
         move |extattr: &ExtAttr<RID>| {
             if ns == extattr.namespace() {
                 let name = extattr.name();
-                assert!(name.len() as u32 <= u8::max_value() as u32);
+                assert!(name.len() as u32 <= u32::from(u8::max_value()));
                 1 + name.as_bytes().len() as u32
             } else {
                 0
@@ -1100,7 +1100,7 @@ root:
         // filename0 happens to come first.
         let mut stream0 = mocks.val.0.readdir(1, 0, 0);
         let (result0, offset0) = stream0.next().unwrap().unwrap();
-        assert_eq!(result0.d_fileno as u64, ino0);
+        assert_eq!(u64::from(result0.d_fileno), ino0);
 
         // Now interrupt the stream, and resume with the supplied offset.
         let mut expected = HashSet::new();
@@ -1361,7 +1361,7 @@ root:
         let (de, _) = mocks.val.0.readdir(dstdir_ino, 0, 0)
             .filter(|r| {
                 let dirent = r.unwrap().0;
-                dirent.d_fileno as u64 == src_ino
+                u64::from(dirent.d_fileno) == src_ino
             }).nth(0).unwrap().unwrap();
         assert_eq!(de.d_type, libc::DT_REG);
     }
@@ -1885,7 +1885,7 @@ test_suite! {
         fn new(db: Arc<Database>, fs: Fs, rng: XorShiftRng, rt: Runtime,
                w: Option<Vec<(Op, f64)>>) -> Self
         {
-            let w = w.unwrap_or(vec![
+            let w = w.unwrap_or_else(|| vec![
                 (Op::Clean, 0.001),
                 (Op::SyncAll, 0.003),
                 (Op::RmEnoent, 1.0),
@@ -1954,7 +1954,7 @@ test_suite! {
         }
 
         fn step(&mut self) {
-            match self.w[self.wi.sample(&mut self.rng)].0.clone() {
+            match self.w[self.wi.sample(&mut self.rng)].0 {
                 Op::Clean => self.clean(),
                 Op::Ls => self.ls(),
                 Op::Mkdir => self.mkdir(),
@@ -2000,7 +2000,8 @@ test_suite! {
                 let piece: u64 = self.rng.gen_range(0, 4);
                 let ofs = 2048 * piece;
                 // Use a predictable fill value
-                let fill = (ino.wrapping_mul(piece) % u8::max_value() as u64)
+                let fill = (ino.wrapping_mul(piece) %
+                            u64::from(u8::max_value()))
                     as u8;
                 let buf = [fill; 2048];
                 //self.rng.fill_bytes(&mut buf);

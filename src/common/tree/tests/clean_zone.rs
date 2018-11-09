@@ -66,7 +66,7 @@ fn basic() {
     ld8.insert(17, 17.0);
     let mut ln8 = Some(Arc::new(Node::new(NodeData::Leaf(ld8))));
 
-    let mut mock = DDMLMock::new();
+    let mut mock = DDMLMock::default();
     mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
         .called_any()
         .with(passes(move |arg: & *const DRP| {
@@ -367,7 +367,7 @@ fn dirty_root() {
     )));
     let drpir = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
 
-    let mut mock = DDMLMock::new();
+    let mut mock = DDMLMock::default();
     mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
         .called_any()
         .with(passes(move |arg: & *const DRP| unsafe { **arg == drpir } ))

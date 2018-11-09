@@ -3,16 +3,11 @@
 use crate::common::cache::*;
 use simulacrum::*;
 
+#[derive(Default)]
 pub struct CacheMock {
     e: Expectations,
 }
 impl CacheMock {
-    pub fn new() -> Self {
-        Self {
-            e: Expectations::new()
-        }
-    }
-
     pub fn get<T: CacheRef>(&mut self, key: &Key) -> Option<Box<T>> {
         self.e.was_called_returning::<*const Key, Option<Box<T>>>
             ("get", key as *const Key)

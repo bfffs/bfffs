@@ -1,5 +1,11 @@
 // vim: tw=80
 // LCOV_EXCL_START
+
+//derive(Default) doesn't work here because TreeMock can be instantiated with
+//types that don't implement Default
+#![cfg_attr(feature = "cargo-clippy",
+            allow(clippy::new_without_default_derive))]
+
 use bincode;
 use crate::common::*;
 use crate::common::{Error, TxgT};

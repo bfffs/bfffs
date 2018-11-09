@@ -546,7 +546,7 @@ fn open() {
         0x0807_0605_0403_0201
     );
     let on_disk = TreeOnDisk(v);
-    let mock = DDMLMock::new();
+    let mock = DDMLMock::default();
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, u32>::open(ddml, &on_disk).unwrap();
     assert_eq!(tree.i.height.load(Ordering::Relaxed), 1);
@@ -1283,7 +1283,7 @@ fn serialize_inner() {
         36, 0, 0, 0,                            // csize = 36
         1, 2, 3, 4, 5, 6, 7, 8,                 // checksum = 0x0807060504030201
     ];
-    let mock = DDMLMock::new();
+    let mock = DDMLMock::default();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
 ---

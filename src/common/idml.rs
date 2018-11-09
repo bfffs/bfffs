@@ -620,8 +620,8 @@ mod t {
     fn check_ridt_ok() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let cache = Cache::new();
-        let ddml = DDML::new();
+        let cache = Cache::default();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -634,8 +634,8 @@ mod t {
     fn check_ridt_extraneous_alloct() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let cache = Cache::new();
-        let ddml = DDML::new();
+        let cache = Cache::default();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -650,8 +650,8 @@ mod t {
     fn check_ridt_extraneous_ridt() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let cache = Cache::new();
-        let ddml = DDML::new();
+        let cache = Cache::default();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -668,8 +668,8 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let drp2 = DRP::random(Compression::None, 4096);
-        let cache = Cache::new();
-        let ddml = DDML::new();
+        let cache = Cache::default();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -686,7 +686,7 @@ mod t {
     fn delete_last() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
@@ -694,7 +694,7 @@ mod t {
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
-        let mut ddml = DDML::new();
+        let mut ddml = DDML::default();
         ddml.expect_delete_direct()
             .called_once()
             .with(passes(move |args: &(*const DRP, TxgT)|
@@ -716,8 +716,8 @@ mod t {
     fn delete_notlast() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let cache = Cache::new();
-        let ddml = DDML::new();
+        let cache = Cache::default();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -735,7 +735,7 @@ mod t {
     #[test]
     fn evict() {
         let rid = RID(42);
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
@@ -743,7 +743,7 @@ mod t {
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
-        let ddml = DDML::new();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
@@ -753,7 +753,7 @@ mod t {
     #[test]
     fn get_hot() {
         let rid = RID(42);
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         cache.expect_get()
             .called_once()
@@ -762,7 +762,7 @@ mod t {
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
-        let ddml = DDML::new();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
@@ -774,7 +774,7 @@ mod t {
     fn get_cold() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         let owned_by_cache = Rc::new(
             RefCell::new(Vec::<Box<Cacheable>>::new())
         );
@@ -791,7 +791,7 @@ mod t {
             })).returning(move |(_, dbs)| {;
                 owned_by_cache2.borrow_mut().push(dbs);
             });
-        let mut ddml = DDML::new();
+        let mut ddml = DDML::default();
         ddml.expect_get_direct::<DivBufShared>()
             .called_once()
             .with(passes(move |key: &*const DRP| {
@@ -814,8 +814,8 @@ mod t {
         let txgs = TxgT::from(0)..TxgT::from(2);
         let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100, zid: 0,
                             freed_blocks: 50, txgs};
-        let cache = Cache::new();
-        let ddml = DDML::new();
+        let cache = Cache::default();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -854,8 +854,8 @@ mod t {
         let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
         let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
         let drp1_c = drp1;
-        let mut cache = Cache::new();
-        let mut ddml = DDML::new();
+        let mut cache = Cache::default();
+        let mut ddml = DDML::default();
         cache.expect_get_ref()
             .called_once()
             .with(passes(move |key: &*const Key| {
@@ -912,8 +912,8 @@ mod t {
         let rid = RID(1);
         let drp0 = DRP::random(Compression::None, 4096);
         let drp1 = DRP::random(Compression::None, 4096);
-        let mut cache = Cache::new();
-        let mut ddml = DDML::new();
+        let mut cache = Cache::default();
+        let mut ddml = DDML::default();
         cache.expect_get_ref()
             .called_once()
             .with(passes(move |key: &*const Key| {
@@ -954,7 +954,7 @@ mod t {
     fn pop_hot_last() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
@@ -962,7 +962,7 @@ mod t {
             })).returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
-        let mut ddml = DDML::new();
+        let mut ddml = DDML::default();
         ddml.expect_delete()
             .called_once()
             .with(passes(move |args: &(*const DRP, TxgT)|
@@ -988,7 +988,7 @@ mod t {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         cache.expect_get()
             .called_once()
             .with(passes(move |key: &*const Key| {
@@ -996,7 +996,7 @@ mod t {
             })).returning(move |_| {
                 Some(Box::new(dbs.try().unwrap()))
             });
-        let ddml = DDML::new();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -1016,13 +1016,13 @@ mod t {
     fn pop_cold_last() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         cache.expect_remove()
             .called_once()
             .with(passes(move |key: &*const Key| {
                 unsafe {**key == Key::Rid(RID(42))}
             })).returning(|_| None );
-        let mut ddml = DDML::new();
+        let mut ddml = DDML::default();
         ddml.expect_pop_direct::<DivBufShared>()
             .called_once()
             .with(passes(move |key: &*const DRP| unsafe {**key == drp}))
@@ -1047,13 +1047,13 @@ mod t {
     fn pop_cold_notlast() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
-        let mut cache = Cache::new();
+        let mut cache = Cache::default();
         cache.expect_get::<DivBuf>()
             .called_once()
             .with(passes(move |key: &*const Key| {
                 unsafe {**key == Key::Rid(RID(42))}
             })).returning(|_| None );
-        let mut ddml = DDML::new();
+        let mut ddml = DDML::default();
         ddml.expect_get_direct()
             .called_once()
             .with(passes(move |key: &*const DRP| {
@@ -1079,8 +1079,8 @@ mod t {
 
     #[test]
     fn put() {
-        let mut cache = Cache::new();
-        let mut ddml = DDML::new();
+        let mut cache = Cache::default();
+        let mut ddml = DDML::default();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdead_beef);
         let rid = RID(0);
@@ -1115,8 +1115,8 @@ mod t {
     #[test]
     fn sync_all() {
         let rid = RID(42);
-        let cache = Cache::new();
-        let mut ddml = DDML::new();
+        let cache = Cache::default();
+        let mut ddml = DDML::default();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdead_beef);
         ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
@@ -1147,8 +1147,8 @@ mod t {
 
     #[test]
     fn advance_transaction() {
-        let cache = Cache::new();
-        let ddml = DDML::new();
+        let cache = Cache::default();
+        let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();

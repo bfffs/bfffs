@@ -62,7 +62,7 @@ mod htable {
     }
 
     /// Get an item from an in-BTree hash table
-    pub(super) fn get<T>(dataset: ReadFilesystem, key: FSKey,
+    pub(super) fn get<T>(dataset: &ReadFilesystem, key: FSKey,
                          aux: T::Aux, name: OsString)
         -> impl Future<Item=T, Error=Error> + Send
         where T: HTItem
@@ -620,8 +620,8 @@ impl Fs {
         type MyFut = Box<Future<Item=DivBuf, Error=Error> + Send>;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
-                htable::get(htable::ReadFilesystem::ReadOnly(&dataset), key, ns,
-                            owned_name)
+                htable::get(&htable::ReadFilesystem::ReadOnly(&dataset), key,
+                            ns, owned_name)
                 .and_then(move |extattr| {
                     match extattr {
                         ExtAttr::Inline(iea) => {
@@ -783,7 +783,7 @@ impl Fs {
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let rfs = htable::ReadFilesystem::ReadOnly(&dataset);
-                htable::get::<Dirent>(rfs, key, 0, owned_name)
+                htable::get::<Dirent>(&rfs, key, 0, owned_name)
                 .then(move |r| {
                     match r {
                         Ok(de) => tx.send(Ok(de.ino)),
@@ -1253,7 +1253,7 @@ impl Fs {
                 let ds6 = ds.clone();
                 let dst_de_key = FSKey::new(newparent, dst_objkey);
                 // 0) Check conditions
-                htable::get(htable::ReadFilesystem::ReadWrite(ds.as_ref()),
+                htable::get(&htable::ReadFilesystem::ReadWrite(ds.as_ref()),
                             dst_de_key, 0, owned_newname)
                 .then(move |r: Result<Dirent, Error>| {
                     match r {
@@ -1377,7 +1377,7 @@ impl Fs {
                 let ds2 = ds.clone();
                 // 1) Lookup the directory
                 let key = FSKey::new(parent, objkey);
-                htable::get(htable::ReadFilesystem::ReadWrite(&ds), key, 0,
+                htable::get(&htable::ReadFilesystem::ReadWrite(&ds), key, 0,
                             owned_name3)
                 .and_then(move |de: Dirent| {
                     let ino = de.ino;
@@ -1681,7 +1681,7 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .called_once()
         .returning(|_| Box::new(Ok(Some(FSKey::min_value())).into_future()));
     let mut opt_ds = Some(ds);
-    let mut db = Database::new();
+    let mut db = Database::default();
     db.expect_new_fs()
         .called_once()
         .returning(|_| Box::new(Ok(TreeID::Fs(0)).into_future()));
