@@ -149,7 +149,7 @@ impl VdevLeafApi for VdevFile {
             lbas_per_zone: self.lbas_per_zone,
             lbas: self.size
         };
-        label_writer.serialize(label).unwrap();
+        label_writer.serialize(&label).unwrap();
         let lba = label_writer.lba();
         let sglist = label_writer.into_sglist();
         Box::new(self.writev_at(sglist, lba))
@@ -195,6 +195,7 @@ impl VdevFile {
     /// used to construct other vdevs stacked on top of this one.
     ///
     /// * `path`    Pathname for the file.  It may be a device node.
+    // TODO: try the second label if the first is corrupt.
     pub fn open<P: AsRef<Path>>(path: P)
         -> impl Future<Item=(Self, LabelReader), Error=Error>
     {

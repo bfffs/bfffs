@@ -801,7 +801,7 @@ impl<'a> Cluster {
         -> impl Future<Item=(), Error=Error>
     {   // LCOV_EXCL_LINE   kcov false negative
         let label = self.fsm.borrow().serialize();
-        labeller.serialize(label).unwrap();
+        labeller.serialize(&label).unwrap();
         self.vdev.write_label(labeller)
     }
 }

@@ -910,7 +910,7 @@ impl VdevRaid {
             layout_algorithm: self.layout_algorithm,
             children: children_uuids
         };
-        labeller.serialize(label).unwrap();
+        labeller.serialize(&label).unwrap();
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_label(labeller.clone())
         }).collect::<Vec<_>>();

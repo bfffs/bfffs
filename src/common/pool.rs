@@ -680,7 +680,7 @@ impl<'a> Pool {
             uuid: self.uuid,
             children: cluster_uuids,
         };
-        labeller.serialize(label).unwrap();
+        labeller.serialize(&label).unwrap();
         let futs = self.clusters.iter().map(|cluster| {
             cluster.write_label(labeller.clone())
         }).collect::<Vec<_>>();

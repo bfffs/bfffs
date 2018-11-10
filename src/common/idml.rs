@@ -385,7 +385,7 @@ impl<'a> IDML {
                 ridt,
                 txg,
             };
-            labeller.serialize(label).unwrap();
+            labeller.serialize(&label).unwrap();
             ddml2.write_label(labeller)
         })
     }

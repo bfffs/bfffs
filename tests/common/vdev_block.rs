@@ -26,8 +26,8 @@ test_suite! {
 
     test lba2zone(vdev) {
         assert_eq!(vdev.val.0.lba2zone(0), None);
-        assert_eq!(vdev.val.0.lba2zone(3), None);
-        assert_eq!(vdev.val.0.lba2zone(4), Some(0));
+        assert_eq!(vdev.val.0.lba2zone(7), None);
+        assert_eq!(vdev.val.0.lba2zone(8), Some(0));
         assert_eq!(vdev.val.0.lba2zone((1 << 16) - 1), Some(0));
         assert_eq!(vdev.val.0.lba2zone(1 << 16), Some(1));
     }
@@ -37,7 +37,7 @@ test_suite! {
     }
 
     test zone_limits(vdev) {
-        assert_eq!(vdev.val.0.zone_limits(0), (4, 1 << 16));
+        assert_eq!(vdev.val.0.zone_limits(0), (8, 1 << 16));
         assert_eq!(vdev.val.0.zone_limits(1), (1 << 16, 2 << 16));
     }
 

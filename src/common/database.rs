@@ -166,7 +166,7 @@ impl Syncer {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
-    forest:             TreeOnDisk
+    forest: TreeOnDisk
 }
 
 struct Inner {
@@ -207,14 +207,13 @@ impl Inner {
     ///
     /// # Parameters
     ///
-    /// - `forest`:     A serialized Forest
-    /// - `label`:      0-based index of the label to write
+    /// - `label`:      A Database::Label to serialize
+    /// - `label_idx`:  0-based index of the label to write
     /// - `txg`:        The current transaction group of the database
-    fn write_label(&self, forest: TreeOnDisk, label: u32, txg: TxgT)
+    fn write_label(&self, label: &Label, label_idx: u32, txg: TxgT)
         -> impl Future<Item=(), Error=Error>
     {
-        let mut labeller = LabelWriter::new(label);
-        let label = Label { forest: forest };
+        let mut labeller = LabelWriter::new(label_idx);
         labeller.serialize(label).unwrap();
         self.idml.write_label(labeller, txg)
     }
@@ -419,14 +418,16 @@ impl Database {
         // 2) Sync the pool
         // 3) Write the label
         // 4) Sync the pool again
-        // TODO: use two labels, so the pool will be recoverable even if power
-        // is lost while writing a label.
+        // 5) Write the second label
+        // 6) Sync the pool again
         let inner2 = inner.clone();
-        let inner3 = inner.clone();
         inner.idml.advance_transaction(move |txg| {
+            let inner3 = inner2.clone();
             let inner4 = inner2.clone();
+            let inner5 = inner2.clone();
             let idml2 = inner2.idml.clone();
             let idml3 = inner2.idml.clone();
+            let idml4 = inner2.idml.clone();
             let fsfuts = {
                 let guard = inner2.fs_trees.lock().unwrap();
                 guard.iter()
@@ -442,8 +443,13 @@ impl Database {
             future::join_all(fsfuts)
             .and_then(move |_| Tree::flush(&inner3.forest, txg))
             .and_then(move |forest| idml2.sync_all(txg).map(move |_| forest))
-            .and_then(move |forest| inner2.write_label(forest, 0, txg))
-            .and_then(move |_| idml3.sync_all(txg))
+            .and_then(move |forest| {
+                let label = Label { forest: forest };
+                inner2.write_label(&label, 0, txg)
+                .map(|_| label)
+            }).and_then(move |label| idml3.sync_all(txg).map(move |_| label))
+            .and_then(move |label| inner5.write_label(&label, 1, txg))
+            .and_then(move |_| idml4.sync_all(txg))
         })
     }
 
@@ -554,6 +560,14 @@ mod t {
                 let tod = TreeOnDisk::default();
                 Box::new(future::ok::<TreeOnDisk, Error>(tod))
             });
+
+        idml.then().expect_write_label()
+            .called_once()
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+        idml.expect_sync_all()
+            .called_once()
+            .with(TxgT::from(0))
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
 
         idml.then().expect_write_label()
             .called_once()

@@ -21,7 +21,7 @@ const MAGIC: &[u8; MAGIC_LEN] = b"BFFFS Vdev\0\0\0\0\0\0";
 const MAGIC_LEN: usize = 16;
 const CHECKSUM_LEN: usize = 8;
 const LENGTH_LEN: usize = 8;
-const LABEL_COUNT: LbaT = 1;
+const LABEL_COUNT: LbaT = 2;
 // Actual label size is about 17 bytes for each RAID member plus 17 bytes for
 // each Cluster, plus a couple hundred bytes more.
 pub const LABEL_LBAS: LbaT = 4;
@@ -108,10 +108,10 @@ impl LabelWriter {
     /// Multiple calls to `serialize` take effect in LIFO order.  That is, the
     /// last `serialize` call's data will be encoded into the lowest position in
     /// the label.
-    pub fn serialize<T: Serialize>(&mut self, t: T)
+    pub fn serialize<T: Serialize>(&mut self, t: &T)
         -> serde_cbor::error::Result<()> {
 
-        serde_cbor::ser::to_vec(&t).map(|v| {
+        serde_cbor::ser::to_vec(t).map(|v| {
             let dbs = DivBufShared::from(v);
             self.buffers.push(dbs.try().unwrap());
         })
