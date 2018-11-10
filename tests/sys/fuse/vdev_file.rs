@@ -187,8 +187,9 @@ test_suite! {
     use futures::{future, Future};
     use std::{
         fs,
-        io::{Read, Write},
+        io::{self, Read},
         num::NonZeroU64,
+        os::unix::fs::FileExt,
         path::PathBuf
     };
     use std;
@@ -230,15 +231,80 @@ test_suite! {
         }
     });
 
-    // Open the golden master label
+    // NB: write_all_at can be replaced by
+    // std::os::unix::fs::FileExt::write_all_at once that stabilizes
+    // https://github.com/rust-lang/rust/issues/51984
+    fn write_all_at<T: FileExt>(t: &T, mut buf: &[u8], mut offset: u64)
+        -> io::Result<()>
+    {
+        while !buf.is_empty() {
+            match t.write_at(buf, offset) {
+                Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero,
+                    "failed to write whole buffer")),
+                Ok(n) => {
+                    buf = &buf[n..];
+                    offset += n as u64
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    /// Open the golden master label
     test open(fixture) {
         let golden_uuid = Uuid::parse_str(
             "414f2338-39cf-457f-b1cb-d461f5a7cc4b").unwrap();
         {
-            let mut f = std::fs::OpenOptions::new()
+            let f = std::fs::OpenOptions::new()
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
-            f.write_all(&GOLDEN).unwrap();
+            let offset0 = u64::from(LabelReader::lba(0)) * BYTES_PER_LBA as u64;
+            write_all_at(&f, &GOLDEN, offset0).unwrap();
+            let offset1 = u64::from(LabelReader::lba(1)) * BYTES_PER_LBA as u64;
+            write_all_at(&f, &GOLDEN, offset1).unwrap();
+        }
+        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+            VdevFile::open(fixture.val.0)
+                .and_then(|(vdev, _label_reader)| {
+                    assert_eq!(vdev.size(), 16_384);
+                    assert_eq!(vdev.uuid(), golden_uuid);
+                    Ok(())
+                })
+        })));
+        let _ = fixture.val.1;
+    }
+
+    // Open a device with only a corrupted label
+    test open_ecksum(fixture) {
+        let offset0 = u64::from(LabelReader::lba(0)) * BYTES_PER_LBA as u64;
+        {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(fixture.val.0.clone()).unwrap();
+            write_all_at(&f, &GOLDEN, offset0).unwrap();
+            let zeros = [0u8; 1];
+            // Corrupt the label's checksum
+            write_all_at(&f, &zeros, offset0 + 16).unwrap();
+        }
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let e = rt.block_on(future::lazy(|| {
+            VdevFile::open(fixture.val.0)
+        })).err().expect("Opening the file should've failed");
+        assert_eq!(e, Error::EINVAL);
+    }
+
+    /// Open a device that only has one valid label, the first one
+    test open_first_label_only(fixture) {
+        let golden_uuid = Uuid::parse_str(
+            "414f2338-39cf-457f-b1cb-d461f5a7cc4b").unwrap();
+        {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(fixture.val.0.clone()).unwrap();
+            let offset0 = u64::from(LabelReader::lba(0)) * BYTES_PER_LBA as u64;
+            write_all_at(&f, &GOLDEN, offset0).unwrap();
         }
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             VdevFile::open(fixture.val.0)
@@ -253,10 +319,34 @@ test_suite! {
 
     // Open a device without a valid label
     test open_invalid(fixture) {
-        let e = current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let e = rt.block_on(future::lazy(|| {
             VdevFile::open(fixture.val.0)
         })).err().expect("Opening the file should've failed");
         assert_eq!(e, Error::EINVAL);
+    }
+
+    /// Open a device that only has one valid label, the second one
+    test open_second_label_only(fixture) {
+        let golden_uuid = Uuid::parse_str(
+            "414f2338-39cf-457f-b1cb-d461f5a7cc4b").unwrap();
+        {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(fixture.val.0.clone()).unwrap();
+            let offset1 = u64::from(LabelReader::lba(1)) * BYTES_PER_LBA as u64;
+            println!("Writing label 1 to offset {:?}", offset1);
+            write_all_at(&f, &GOLDEN, offset1).unwrap();
+        }
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+            VdevFile::open(fixture.val.0)
+                .and_then(|(vdev, _label_reader)| {
+                    assert_eq!(vdev.size(), 16_384);
+                    assert_eq!(vdev.uuid(), golden_uuid);
+                    Ok(())
+                })
+        })).unwrap();
+        let _ = fixture.val.1;
     }
 
     // Write the label, and compare to a golden master

@@ -195,7 +195,6 @@ impl VdevFile {
     /// used to construct other vdevs stacked on top of this one.
     ///
     /// * `path`    Pathname for the file.  It may be a device node.
-    // TODO: try the second label if the first is corrupt.
     pub fn open<P: AsRef<Path>>(path: P)
         -> impl Future<Item=(Self, LabelReader), Error=Error>
     {
@@ -203,27 +202,46 @@ impl VdevFile {
         let f = File::open(path, handle.clone()).unwrap();
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
 
-        let lba = LabelReader::lba(0);
+        VdevFile::read_label(f, 0)
+        .or_else(move |(_e, f)| {
+            // Try the second label
+            VdevFile::read_label(f, 1)
+        }).and_then(move |(mut label_reader, f)| {
+            let label: Label = label_reader.deserialize().unwrap();
+            assert!(size >= label.lbas,
+                       "Vdev has shrunk since creation");
+            let vdev = VdevFile {
+                file: f,
+                handle,
+                lbas_per_zone: label.lbas_per_zone,
+                size: label.lbas,
+                uuid: label.uuid
+            };
+            Ok((vdev, label_reader))
+        }).map_err(|(e, _f)| e)
+    }
+
+    /// Read just one of a vdev's labels
+    fn read_label(f: File, label: u32)
+        -> impl Future<Item=(LabelReader, File), Error=(Error, File)>
+    {
+        let lba = LabelReader::lba(label);
+        let offset = u64::from(lba) * BYTES_PER_LBA as u64;
         let dbs = DivBufShared::from(vec![0u8; LABEL_SIZE]);
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
-        f.read_at(container, lba).unwrap()
-         .map_err(Error::from)
-         .and_then(move |aio_result| {
-            drop(aio_result);   // release reference on dbs
-            LabelReader::from_dbs(dbs).and_then(|mut label_reader| {
-                let label: Label = label_reader.deserialize().unwrap();
-                assert!(size >= label.lbas,
-                           "Vdev has shrunk since creation");
-                let vdev = VdevFile {
-                    file: f,
-                    handle,
-                    lbas_per_zone: label.lbas_per_zone,
-                    size: label.lbas,
-                    uuid: label.uuid
-                };
-                Ok((vdev, label_reader))
-            })
+        f.read_at(container, offset).unwrap()
+        .then(move |r| {
+            match r {
+                Ok(aio_result) => {
+                    drop(aio_result);   // release reference on dbs
+                    match LabelReader::from_dbs(dbs) {
+                        Ok(lr) => Ok((lr, f)),
+                        Err(e) => Err((e, f))
+                    }
+                },
+                Err(e) => Err((Error::from(e), f))
+            }
         })
     }
 
