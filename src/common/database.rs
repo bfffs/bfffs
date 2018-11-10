@@ -204,11 +204,17 @@ impl Inner {
     }
 
     /// Asynchronously write this `Database`'s label to its `IDML`
-    fn write_label(&self, tod: TreeOnDisk, txg: TxgT)
+    ///
+    /// # Parameters
+    ///
+    /// - `forest`:     A serialized Forest
+    /// - `label`:      0-based index of the label to write
+    /// - `txg`:        The current transaction group of the database
+    fn write_label(&self, forest: TreeOnDisk, label: u32, txg: TxgT)
         -> impl Future<Item=(), Error=Error>
     {
-        let mut labeller = LabelWriter::default();
-        let label = Label { forest: tod };
+        let mut labeller = LabelWriter::new(label);
+        let label = Label { forest: forest };
         labeller.serialize(label).unwrap();
         self.idml.write_label(labeller, txg)
     }
@@ -428,15 +434,15 @@ impl Database {
                         let inner5 = inner4.clone();
                         let tree_id2 = *tree_id;
                         itree.flush(txg)
-                            .and_then(move |tod| {
-                                inner5.forest.insert(tree_id2, tod, txg)
+                            .and_then(move |tree| {
+                                inner5.forest.insert(tree_id2, tree, txg)
                             })  // LCOV_EXCL_LINE   kcov false negative
                     }).collect::<Vec<_>>()
             };
             future::join_all(fsfuts)
             .and_then(move |_| Tree::flush(&inner3.forest, txg))
-            .and_then(move |tod| idml2.sync_all(txg).map(move |_| tod))
-            .and_then(move |tod| inner2.write_label(tod, txg))
+            .and_then(move |forest| idml2.sync_all(txg).map(move |_| forest))
+            .and_then(move |forest| inner2.write_label(forest, 0, txg))
             .and_then(move |_| idml3.sync_all(txg))
         })
     }

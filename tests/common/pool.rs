@@ -75,7 +75,7 @@ test_suite! {
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
         rt.block_on(future::lazy(|| {
-            let label_writer = LabelWriter::default();
+            let label_writer = LabelWriter::new(0);
             old_pool.write_label(label_writer)
         })).unwrap();
         drop(old_pool);
@@ -106,7 +106,7 @@ test_suite! {
     test write_label(objects()) {
         let (mut rt, old_pool, _tempdir, paths) = objects.val;
         rt.block_on(future::lazy(|| {
-            let label_writer = LabelWriter::default();
+            let label_writer = LabelWriter::new(0);
             old_pool.write_label(label_writer)
         })).unwrap();
         for path in paths {

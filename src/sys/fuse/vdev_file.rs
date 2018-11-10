@@ -64,7 +64,7 @@ impl BorrowMut<[u8]> for IoVecMutContainer {
 
 impl Vdev for VdevFile {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        if lba >= LABEL_LBAS {
+        if lba >= LABEL_REGION_LBAS {
             Some((lba / (self.lbas_per_zone as u64)) as ZoneT)
         } else {
             None
@@ -93,7 +93,7 @@ impl Vdev for VdevFile {
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         if zone == 0 {
-            (LABEL_LBAS, self.lbas_per_zone)
+            (LABEL_REGION_LBAS, self.lbas_per_zone)
         } else {
             (u64::from(zone) * self.lbas_per_zone,
              u64::from(zone + 1) * self.lbas_per_zone)
@@ -138,7 +138,7 @@ impl VdevLeafApi for VdevFile {
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
-        assert!(lba >= LABEL_LBAS, "Don't overwrite the label!");
+        assert!(lba >= LABEL_REGION_LBAS, "Don't overwrite the labels!");
         let container = Box::new(IoVecContainer(buf));
         Box::new(self.write_at_unchecked(container, lba))
     }
@@ -150,8 +150,9 @@ impl VdevLeafApi for VdevFile {
             lbas: self.size
         };
         label_writer.serialize(label).unwrap();
+        let lba = label_writer.lba();
         let sglist = label_writer.into_sglist();
-        Box::new(self.writev_at(sglist, 0))
+        Box::new(self.writev_at(sglist, lba))
     }
 
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
@@ -201,10 +202,11 @@ impl VdevFile {
         let f = File::open(path, handle.clone()).unwrap();
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
 
+        let lba = LabelReader::lba(0);
         let dbs = DivBufShared::from(vec![0u8; LABEL_SIZE]);
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
-        f.read_at(container, 0).unwrap()
+        f.read_at(container, lba).unwrap()
          .map_err(Error::from)
          .and_then(move |aio_result| {
             drop(aio_result);   // release reference on dbs

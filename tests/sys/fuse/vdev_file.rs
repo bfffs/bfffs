@@ -265,7 +265,7 @@ test_suite! {
         let vdev = VdevFile::create(fixture.val.0.clone(), lbas_per_zone)
             .unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let label_writer = LabelWriter::default();
+            let label_writer = LabelWriter::new(0);
             vdev.write_label(label_writer)
         })));
 

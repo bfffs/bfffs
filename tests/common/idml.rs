@@ -97,7 +97,7 @@ test_suite! {
         let (mut rt, old_idml, _tempdir, path) = objects.val;
         rt.block_on(
             old_idml.advance_transaction(|_| {
-                let label_writer = LabelWriter::default();
+                let label_writer = LabelWriter::new(0);
                 old_idml.write_label(label_writer, TxgT::from(42))
             })
         ).unwrap();
@@ -124,7 +124,7 @@ test_suite! {
         let (mut rt, idml, _tempdir, path) = objects.val;
         rt.block_on(
             idml.advance_transaction(|_| {
-                let label_writer = LabelWriter::default();
+                let label_writer = LabelWriter::new(0);
                 idml.write_label(label_writer, TxgT::from(42))
             })
         ).unwrap();

@@ -21,10 +21,12 @@ const MAGIC: &[u8; MAGIC_LEN] = b"BFFFS Vdev\0\0\0\0\0\0";
 const MAGIC_LEN: usize = 16;
 const CHECKSUM_LEN: usize = 8;
 const LENGTH_LEN: usize = 8;
+const LABEL_COUNT: LbaT = 1;
 // Actual label size is about 17 bytes for each RAID member plus 17 bytes for
 // each Cluster, plus a couple hundred bytes more.
 pub const LABEL_LBAS: LbaT = 4;
 pub const LABEL_SIZE: usize = LABEL_LBAS as usize * BYTES_PER_LBA;
+pub const LABEL_REGION_LBAS: LbaT = LABEL_COUNT * LABEL_LBAS;
 
 /// Used to read successive structs out of the label
 pub struct LabelReader {
@@ -75,15 +77,32 @@ impl<'de> LabelReader {
         let deserializer = serde_cbor::Deserializer::from_reader(cursor);
         Ok(LabelReader { _dbs: buffer, deserializer })
     }
+
+    /// Get the offset of the `label`th label.
+    pub fn lba(label: u32) -> LbaT {
+        LbaT::from(label) * LABEL_LBAS
+    }
 }
 
 /// Successively writes serialized structs into the label
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LabelWriter {
     buffers: SGList,
+    label: u32,
 }
 
 impl LabelWriter {
+    /// Create a new label in the `label`th position.
+    pub fn new(label: u32) -> Self {
+        assert!(LbaT::from(label) < LABEL_COUNT);
+        LabelWriter{buffers: SGList::default(), label}
+    }
+
+    /// Return the LBA at which to write this label
+    pub fn lba(&self) -> LbaT {
+        LbaT::from(self.label) * LABEL_LBAS
+    }
+
     /// Write a `T` into the label.
     ///
     /// Multiple calls to `serialize` take effect in LIFO order.  That is, the
