@@ -2,6 +2,8 @@ syntax: glob
 *.diff
 *.rej
 *.orig
+*.swn
+*.swo
 *.swp
 .byebug_history
 .nfs.*
