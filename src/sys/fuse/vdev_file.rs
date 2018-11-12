@@ -10,6 +10,7 @@ use std::{
     fs::OpenOptions,
     io,
     num::NonZeroU64,
+    os::unix::fs::OpenOptionsExt,
     path::Path
 };
 use tokio_file::{AioFut, File, LioFut};
@@ -182,6 +183,7 @@ impl VdevFile {
             .create(true)
             .read(true)
             .write(true)
+            .custom_flags(libc::O_DIRECT)
             .open(path)
             .map(File::new).unwrap();
         let lpz = match lbas_per_zone {
@@ -205,6 +207,7 @@ impl VdevFile {
         OpenOptions::new()
         .read(true)
         .write(true)
+        .custom_flags(libc::O_DIRECT)
         .open(path)
         .map(File::new)
         .into_future()
