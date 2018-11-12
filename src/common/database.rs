@@ -26,7 +26,11 @@ use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
     io,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+        Mutex
+    },
     time::{Duration, Instant}
 };
 use time;
@@ -170,6 +174,11 @@ struct Label {
 }
 
 struct Inner {
+    /// Has any part of the database been modified since the last transaction
+    /// sync?
+    // NB: This is likely to be highly contended and very slow.  Better to
+    // replace it with a per-cpu counter.
+    dirty: AtomicBool,
     fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
     forest: ITree<TreeID, TreeOnDisk>,
     idml: Arc<IDML>,
@@ -273,6 +282,7 @@ impl Database {
     /// complete.  However, there is no requirement to poll it.  The client may
     /// drop it, and cleaning will continue in the background.
     pub fn clean(&self) -> oneshot::Receiver<()> {
+        self.inner.dirty.store(true, Ordering::Relaxed);
         self.cleaner.clean()
     }
 
@@ -296,6 +306,7 @@ impl Database {
 
     /// Create a new, blank filesystem
     pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> {
+        self.inner.dirty.store(true, Ordering::Relaxed);
         let mut guard = self.inner.fs_trees.lock().unwrap();
         let k = (0..=u32::max_value()).filter(|i| {
             !guard.contains_key(&TreeID::Fs(*i))
@@ -365,8 +376,9 @@ impl Database {
         where E: Clone + Executor + 'static
     {
         let cleaner = Cleaner::new(handle.clone(), idml.clone(), None);
+        let dirty = AtomicBool::new(true);
         let fs_trees = Mutex::new(BTreeMap::new());
-        let inner = Arc::new(Inner{fs_trees, idml, forest});
+        let inner = Arc::new(Inner{dirty, fs_trees, idml, forest});
         let syncer = Syncer::new(handle, inner.clone());
         Database{cleaner, inner, syncer}
     }
@@ -421,7 +433,11 @@ impl Database {
         // 5) Write the second label
         // 6) Sync the pool again
         let inner2 = inner.clone();
-        inner.idml.advance_transaction(move |txg| {
+        if !inner.dirty.swap(false, Ordering::Relaxed) {
+            return Box::new(Ok(()).into_future())
+                as Box<Future<Item=(), Error=Error> + Send>;
+        }
+        let fut = inner.idml.advance_transaction(move |txg| {
             let inner3 = inner2.clone();
             let inner4 = inner2.clone();
             let inner5 = inner2.clone();
@@ -450,7 +466,8 @@ impl Database {
             }).and_then(move |label| idml3.sync_all(txg).map(move |_| label))
             .and_then(move |label| inner5.write_label(&label, 1, txg))
             .and_then(move |_| idml4.sync_all(txg))
-        })
+        });
+        Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
     }
 
     /// Perform a read-write operation on a Filesystem
@@ -465,6 +482,7 @@ impl Database {
         where F: FnOnce(ReadWriteFilesystem) -> B,
               B: Future<Item = R, Error = Error>,
     {
+        self.inner.dirty.store(true, Ordering::Relaxed);
         let inner2 = self.inner.clone();
         self.inner.idml.txg()
             .map_err(|_| Error::EPIPE)
@@ -580,6 +598,27 @@ mod t {
         rt.block_on(future::lazy(|| {
             let task_executor = TaskExecutor::current();
             let db = Database::new(Arc::new(idml), forest, task_executor);
+            db.sync_transaction()
+            .and_then(move |_| {
+                // Syncing a 2nd time should be a no-op, since the database
+                // isn't dirty.
+                db.sync_transaction()
+            })
+        })).unwrap();
+    }
+
+    /// Syncing a transaction that isn't dirty should be a no-op
+    #[test]
+    fn sync_transaction_empty() {
+        let idml = IDML::default();
+        let forest = Tree::new();
+
+        let mut rt = current_thread::Runtime::new().unwrap();
+
+        rt.block_on(future::lazy(|| {
+            let task_executor = TaskExecutor::current();
+            let db = Database::new(Arc::new(idml), forest, task_executor);
+            db.inner.dirty.store(false, Ordering::Relaxed);
             db.sync_transaction()
         })).unwrap();
     }
