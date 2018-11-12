@@ -2,15 +2,16 @@
 
 use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
 use divbuf::DivBufShared;
-use futures::{Async, Future, Poll, future};
+use futures::{Async, IntoFuture, Future, Poll, future};
+use num_traits::FromPrimitive;
 use serde_derive::*;
 use std::{
     borrow::{Borrow, BorrowMut},
+    fs::OpenOptions,
     io,
     num::NonZeroU64,
     path::Path
 };
-use tokio::reactor::Handle;
 use tokio_file::{AioFut, File, LioFut};
 use uuid::Uuid;
 
@@ -32,7 +33,6 @@ pub struct Label {
 #[derive(Debug)]
 pub struct VdevFile {
     file:   File,
-    handle: Handle,
     /// Number of LBAs per simulated zone
     lbas_per_zone:  LbaT,
     size:   LbaT,
@@ -178,15 +178,19 @@ impl VdevFile {
     pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>
     {
-        let handle = Handle::current();
-        let f = File::open(path, handle.clone())?;
+        let f = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(path)
+            .map(File::new).unwrap();
         let lpz = match lbas_per_zone {
             None => VdevFile::DEFAULT_LBAS_PER_ZONE,
             Some(x) => x.get()
         };
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
         let uuid = Uuid::new_v4();
-        Ok(VdevFile{file: f, handle, lbas_per_zone: lpz, size, uuid})
+        Ok(VdevFile{file: f, lbas_per_zone: lpz, size, uuid})
     }
 
     /// Open an existing `VdevFile`
@@ -198,27 +202,32 @@ impl VdevFile {
     pub fn open<P: AsRef<Path>>(path: P)
         -> impl Future<Item=(Self, LabelReader), Error=Error>
     {
-        let handle = Handle::current();
-        let f = File::open(path, handle.clone()).unwrap();
-        let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
-
-        VdevFile::read_label(f, 0)
-        .or_else(move |(_e, f)| {
-            // Try the second label
-            VdevFile::read_label(f, 1)
-        }).and_then(move |(mut label_reader, f)| {
-            let label: Label = label_reader.deserialize().unwrap();
-            assert!(size >= label.lbas,
-                       "Vdev has shrunk since creation");
-            let vdev = VdevFile {
-                file: f,
-                handle,
-                lbas_per_zone: label.lbas_per_zone,
-                size: label.lbas,
-                uuid: label.uuid
-            };
-            Ok((vdev, label_reader))
-        }).map_err(|(e, _f)| e)
+        OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map(File::new)
+        .into_future()
+        .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap())
+        .and_then(|f| {
+            VdevFile::read_label(f, 0)
+            .or_else(move |(_e, f)| {
+                // Try the second label
+                VdevFile::read_label(f, 1)
+            }).and_then(move |(mut label_reader, f)| {
+                let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
+                let label: Label = label_reader.deserialize().unwrap();
+                assert!(size >= label.lbas,
+                           "Vdev has shrunk since creation");
+                let vdev = VdevFile {
+                    file: f,
+                    lbas_per_zone: label.lbas_per_zone,
+                    size: label.lbas,
+                    uuid: label.uuid
+                };
+                Ok((vdev, label_reader))
+            }).map_err(|(e, _f)| e)
+        })
     }
 
     /// Read just one of a vdev's labels

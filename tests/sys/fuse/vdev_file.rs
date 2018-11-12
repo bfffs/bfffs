@@ -6,6 +6,7 @@ test_suite! {
 
     use bfffs::{
         common::{
+            Error,
             vdev::*,
             vdev_leaf::*
         },
@@ -59,6 +60,16 @@ test_suite! {
 
     test zones(vdev) {
         assert_eq!(vdev.val.0.zones(), 1);
+    }
+
+    test open_enoent() {
+        let dir = t!(TempDir::new("test_read_at"));
+        let path = dir.path().join("vdev");
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let e = rt.block_on(future::lazy(|| {
+            VdevFile::open(path)
+        })).err().unwrap();
+        assert_eq!(e, Error::ENOENT);
     }
 
     test read_at() {
