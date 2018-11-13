@@ -629,8 +629,16 @@ test_suite! {
         for path in raid.val.2 {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
-            f.seek(SeekFrom::Start(82)).unwrap();   // Skip the VdevLeaf label
+            f.seek(SeekFrom::Start(98)).unwrap();   // Skip the VdevLeaf label
             f.read_exact(&mut v).unwrap();
+            // Uncomment this block to save the binary label for inspection
+            /* {
+                use std::fs::File;
+                use std::io::Write;
+                let mut df = File::create("/tmp/label.bin").unwrap();
+                df.write_all(&v[..]).unwrap();
+                println!("UUID is {}", raid.val.0.uuid());
+            } */
             // Compare against the golden master, skipping the checksum and UUID
             // fields
             assert_eq!(&v[0..7], &GOLDEN_VDEV_RAID_LABEL[0..7]);

@@ -23,7 +23,9 @@ pub struct Label {
     /// Number of LBAs per simulated zone
     lbas_per_zone:  LbaT,
     /// Number of LBAs that were present at format time
-    lbas:           LbaT
+    lbas:           LbaT,
+    /// LBAs in the first zone reserved for storing labels and spacemap.
+    reserved_space:    LbaT
 }
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`
@@ -33,11 +35,13 @@ pub struct Label {
 ///
 #[derive(Debug)]
 pub struct VdevFile {
-    file:   File,
+    file:           File,
+    /// Number of reserved LBAS in first zone.
+    reserved_space: LbaT,
     /// Number of LBAs per simulated zone
     lbas_per_zone:  LbaT,
-    size:   LbaT,
-    uuid:   Uuid
+    size:           LbaT,
+    uuid:           Uuid
 }
 
 /// Tokio-File requires boxed `DivBufs`, but the upper layers of BFFFS don't.
@@ -65,7 +69,7 @@ impl BorrowMut<[u8]> for IoVecMutContainer {
 
 impl Vdev for VdevFile {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        if lba >= LABEL_REGION_LBAS {
+        if lba >= self.reserved_space {
             Some((lba / (self.lbas_per_zone as u64)) as ZoneT)
         } else {
             None
@@ -94,7 +98,7 @@ impl Vdev for VdevFile {
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         if zone == 0 {
-            (LABEL_REGION_LBAS, self.lbas_per_zone)
+            (self.reserved_space, self.lbas_per_zone)
         } else {
             (u64::from(zone) * self.lbas_per_zone,
              u64::from(zone + 1) * self.lbas_per_zone)
@@ -139,7 +143,7 @@ impl VdevLeafApi for VdevFile {
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
-        assert!(lba >= LABEL_REGION_LBAS, "Don't overwrite the labels!");
+        assert!(lba >= self.reserved_space, "Don't overwrite the labels!");
         let container = Box::new(IoVecContainer(buf));
         Box::new(self.write_at_unchecked(container, lba))
     }
@@ -147,6 +151,7 @@ impl VdevLeafApi for VdevFile {
     fn write_label(&self, mut label_writer: LabelWriter) -> Box<VdevFut> {
         let label = Label {
             uuid: self.uuid,
+            reserved_space: self.reserved_space,
             lbas_per_zone: self.lbas_per_zone,
             lbas: self.size
         };
@@ -191,8 +196,10 @@ impl VdevFile {
             Some(x) => x.get()
         };
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
+        let nzones = div_roundup(size, lpz);
+        let reserved_space = reserved_space(nzones);
         let uuid = Uuid::new_v4();
-        Ok(VdevFile{file: f, lbas_per_zone: lpz, size, uuid})
+        Ok(VdevFile{file: f, reserved_space, lbas_per_zone: lpz, size, uuid})
     }
 
     /// Open an existing `VdevFile`
@@ -220,10 +227,10 @@ impl VdevFile {
             }).and_then(move |(mut label_reader, f)| {
                 let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
                 let label: Label = label_reader.deserialize().unwrap();
-                assert!(size >= label.lbas,
-                           "Vdev has shrunk since creation");
+                assert!(size >= label.lbas, "Vdev has shrunk since creation");
                 let vdev = VdevFile {
                     file: f,
+                    reserved_space: label.reserved_space,
                     lbas_per_zone: label.lbas_per_zone,
                     size: label.lbas,
                     uuid: label.uuid
@@ -318,7 +325,8 @@ mod label {
     fn debug() {
         let label = Label{ uuid: Uuid::new_v4(),
             lbas_per_zone: 0,
-            lbas: 0
+            lbas: 0,
+            reserved_space: 0
         };
         format!("{:?}", label);
     }

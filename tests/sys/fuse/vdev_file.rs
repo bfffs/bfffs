@@ -7,6 +7,7 @@ test_suite! {
     use bfffs::{
         common::{
             Error,
+            label::LabelReader,
             vdev::*,
             vdev_leaf::*
         },
@@ -43,8 +44,8 @@ test_suite! {
 
     test lba2zone(vdev) {
         assert_eq!(vdev.val.0.lba2zone(0), None);
-        assert_eq!(vdev.val.0.lba2zone(7), None);
-        assert_eq!(vdev.val.0.lba2zone(8), Some(0));
+        assert_eq!(vdev.val.0.lba2zone(9), None);
+        assert_eq!(vdev.val.0.lba2zone(10), Some(0));
         assert_eq!(vdev.val.0.lba2zone((1 << 16) - 1), Some(0));
         assert_eq!(vdev.val.0.lba2zone(1 << 16), Some(1));
     }
@@ -54,12 +55,17 @@ test_suite! {
     }
 
     test zone_limits(vdev) {
-        assert_eq!(vdev.val.0.zone_limits(0), (8, 1 << 16));
+        assert_eq!(vdev.val.0.zone_limits(0), (10, 1 << 16));
         assert_eq!(vdev.val.0.zone_limits(1), (1 << 16, 2 << 16));
     }
 
     test zones(vdev) {
         assert_eq!(vdev.val.0.zones(), 1);
+    }
+
+    /// If the labels move, that's a change to the on-disk format
+    test label_location(vdev) {
+        assert_eq!(4, LabelReader::lba(1));
     }
 
     test open_enoent() {
@@ -79,7 +85,7 @@ test_suite! {
         let wbuf = vec![42u8; 4096];
         {
             let mut f = t!(fs::File::create(&path));
-            f.seek(SeekFrom::Start(4 * 4096)).unwrap();   // Skip the label
+            f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the labels
             t!(f.write_all(wbuf.as_slice()));
             t!(f.set_len(1 << 26));
         }
@@ -89,7 +95,7 @@ test_suite! {
         let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevFile::create(path, None).unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.read_at(rbuf, 4)
+            vdev.read_at(rbuf, 10)
         })));
         assert_eq!(&dbs.try().unwrap()[..], &wbuf[..]);
     }
@@ -101,7 +107,7 @@ test_suite! {
         let wbuf = vec![42u8; 4096];
         {
             let mut f = t!(fs::File::create(&path));
-            f.seek(SeekFrom::Start(4 * 4096)).unwrap();   // Skip the label
+            f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the labels
             t!(f.write_all(wbuf.as_slice()));
             t!(f.set_len(1 << 26));
         }
@@ -113,7 +119,7 @@ test_suite! {
         let rbufs = vec![rbuf0, rbuf1];
         let vdev = VdevFile::create(path, None).unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.readv_at(rbufs, 4)
+            vdev.readv_at(rbufs, 10)
         })));
         assert_eq!(&dbs.try().unwrap()[..], &wbuf[..]);
     }
@@ -123,10 +129,10 @@ test_suite! {
         let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf.clone(), 8)
+            vdev.val.0.write_at(wbuf.clone(), 10)
         })));
         let mut f = t!(fs::File::open(vdev.val.1));
-        f.seek(SeekFrom::Start(8 * 4096)).unwrap();   // Skip the label
+        f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
         t!(f.read_exact(&mut rbuf));
         assert_eq!(rbuf, wbuf.deref().deref());
     }
@@ -143,10 +149,10 @@ test_suite! {
         let wbuf = dbs.try().unwrap();
         let mut rbuf = vec![0u8; 4096];
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf.clone(), 9)
+            vdev.val.0.write_at(wbuf.clone(), 11)
         })));
         let mut f = t!(fs::File::open(vdev.val.1));
-        t!(f.seek(SeekFrom::Start(9 * 4096)));
+        t!(f.seek(SeekFrom::Start(11 * 4096)));
         t!(f.read_exact(&mut rbuf));
         assert_eq!(rbuf, wbuf.deref().deref());
     }
@@ -158,10 +164,10 @@ test_suite! {
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let mut rbuf = vec![0u8; 4096];
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.writev_at(wbufs, 8)
+            vdev.val.0.writev_at(wbufs, 10)
         })));
         let mut f = t!(fs::File::open(vdev.val.1));
-        t!(f.seek(SeekFrom::Start(8 * 4096)));
+        t!(f.seek(SeekFrom::Start(10 * 4096)));
         t!(f.read_exact(&mut rbuf));
         assert_eq!(&rbuf[0..1024], wbuf0.deref().deref());
         assert_eq!(&rbuf[1024..4096], wbuf1.deref().deref());
@@ -174,9 +180,9 @@ test_suite! {
         let dbsr = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbsr.try_mut().unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vd.write_at(wbuf.clone(), 8)
+            vd.write_at(wbuf.clone(), 10)
                 .and_then(|_| {
-                    vd.read_at(rbuf, 8)
+                    vd.read_at(rbuf, 10)
                 })
         })));
         assert_eq!(wbuf, dbsr.try().unwrap());
@@ -208,26 +214,28 @@ test_suite! {
     use tokio::runtime::current_thread;
     use uuid::Uuid;
 
-    const GOLDEN: [u8; 85] = [
+    const GOLDEN: [u8; 102] = [
         // First 16 bytes are file magic
         0x42, 0x46, 0x46, 0x46, 0x53, 0x20, 0x56, 0x64, // BFFFS Vd
         0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ev......
         // Next 8 bytes are a checksum
-        0x41, 0xd1, 0x12, 0xee, 0x9f, 0x1d, 0xdc, 0xa1,
+        0x1f, 0xb8, 0x8f, 0x58, 0xe2, 0x1d, 0x6f, 0x52,
         // Next 8 bytes are the contents length, in BE
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, // .......2
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, // .......2
         // The rest is a serialized VdevFile::Label object
-        0xa3, 0x64, 0x75, 0x75, 0x69, 0x64, 0x50,       // .duuidP
+        0xa4, 0x64, 0x75, 0x75, 0x69, 0x64, 0x50,       // .duuidP.
         // These 16 bytes are a UUID
-                                                  0x41,
-        0x4f, 0x23, 0x38, 0x39, 0xcf, 0x45, 0x7f, 0xb1,
-        0xcb, 0xd4, 0x61, 0xf5, 0xa7, 0xcc, 0x4b,
+                                                  0xec,
+        0x1a, 0x73, 0x6a, 0xe3, 0xf3, 0x43, 0xff, 0xa4,
+        0x4f, 0xc7, 0xf8, 0x44, 0xc0, 0x4b, 0x42,
         // This is the rest of the LabelData
                                                   0x6d, //        m
         0x6c, 0x62, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72, // lbas_per
         0x5f, 0x7a, 0x6f, 0x6e, 0x65, 0x1b, 0xde, 0xad, // _zone...
         0xbe, 0xef, 0x1a, 0x7e, 0xba, 0xbe, 0x64, 0x6c, // ...~..dl
-        0x62, 0x61, 0x73, 0x19, 0x40,                   // bas.@
+        0x62, 0x61, 0x73, 0x19, 0x40, 0x00, 0x6e, 0x72, // bas.@.nr
+        0x65, 0x73, 0x65, 0x72, 0x76, 0x65, 0x64, 0x5f, // eserved_
+        0x73, 0x70, 0x61, 0x63, 0x65, 0x0a,
     ];
 
     fixture!( fixture() -> (PathBuf, TempDir) {
@@ -266,7 +274,7 @@ test_suite! {
     /// Open the golden master label
     test open(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "414f2338-39cf-457f-b1cb-d461f5a7cc4b").unwrap();
+            "ec1a736a-e3f3-43ff-a44f-c7f844c04b42").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -309,7 +317,7 @@ test_suite! {
     /// Open a device that only has one valid label, the first one
     test open_first_label_only(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "414f2338-39cf-457f-b1cb-d461f5a7cc4b").unwrap();
+            "ec1a736a-e3f3-43ff-a44f-c7f844c04b42").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -340,7 +348,7 @@ test_suite! {
     /// Open a device that only has one valid label, the second one
     test open_second_label_only(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "414f2338-39cf-457f-b1cb-d461f5a7cc4b").unwrap();
+            "ec1a736a-e3f3-43ff-a44f-c7f844c04b42").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)

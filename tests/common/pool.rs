@@ -113,7 +113,7 @@ test_suite! {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
             // Skip leaf, raid, and cluster labels
-            f.seek(SeekFrom::Start(0xfd)).unwrap();
+            f.seek(SeekFrom::Start(0x10d)).unwrap();
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {

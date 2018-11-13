@@ -26,8 +26,8 @@ test_suite! {
 
     test lba2zone(vdev) {
         assert_eq!(vdev.val.0.lba2zone(0), None);
-        assert_eq!(vdev.val.0.lba2zone(7), None);
-        assert_eq!(vdev.val.0.lba2zone(8), Some(0));
+        assert_eq!(vdev.val.0.lba2zone(9), None);
+        assert_eq!(vdev.val.0.lba2zone(10), Some(0));
         assert_eq!(vdev.val.0.lba2zone((1 << 16) - 1), Some(0));
         assert_eq!(vdev.val.0.lba2zone(1 << 16), Some(1));
     }
@@ -37,7 +37,7 @@ test_suite! {
     }
 
     test zone_limits(vdev) {
-        assert_eq!(vdev.val.0.zone_limits(0), (8, 1 << 16));
+        assert_eq!(vdev.val.0.zone_limits(0), (10, 1 << 16));
         assert_eq!(vdev.val.0.zone_limits(1), (1 << 16, 2 << 16));
     }
 
@@ -46,7 +46,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 4095]);
         let wbuf = dbs.try().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf, 1)
+            vdev.val.0.write_at(wbuf, 10)
         })).unwrap();
     }
 
@@ -55,7 +55,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 4097]);
         let wbuf = dbs.try().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf, 1)
+            vdev.val.0.write_at(wbuf, 10)
         })).unwrap();
     }
 
@@ -64,7 +64,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 16_385]);
         let wbuf = dbs.try().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf, 1)
+            vdev.val.0.write_at(wbuf, 10)
         })).unwrap();
     }
 
@@ -76,7 +76,7 @@ test_suite! {
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0, wbuf1];
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.writev_at(wbufs, 1)
+            vdev.val.0.writev_at(wbufs, 10)
         })).unwrap();
     }
 

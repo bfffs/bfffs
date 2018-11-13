@@ -10,11 +10,20 @@ use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
 
 /*
  * On-disk Label Format:
+ *
  * Magic:       16 bytes
  * Checksum:    8 bytes     MetroHash64.  Covers all of Length and Contents.
  * Length:      8 bytes     Length of Contents in bytes
  * Contents:    variable    3 CBOR-encoded structs
  * Pad:         variable    0-padding fills the remainder, up to 4 LBAs
+ *
+ * On-disk Reserved Region Format:
+ *
+ * Label 0      4 LBAs
+ * Label 1      4 LBAs
+ * Spacemap0    variable    bincode-encoded spacemap.  Size is determined at
+ *                          format-time.
+ * Spacemap1    variable
  */
 /// The file magic is "BFFFS Vdev\0\0\0\0\0\0"
 const MAGIC: &[u8; MAGIC_LEN] = b"BFFFS Vdev\0\0\0\0\0\0";
@@ -24,9 +33,19 @@ const LENGTH_LEN: usize = 8;
 const LABEL_COUNT: LbaT = 2;
 // Actual label size is about 17 bytes for each RAID member plus 17 bytes for
 // each Cluster, plus a couple hundred bytes more.
-pub const LABEL_LBAS: LbaT = 4;
+const LABEL_LBAS: LbaT = 4;
 pub const LABEL_SIZE: usize = LABEL_LBAS as usize * BYTES_PER_LBA;
-pub const LABEL_REGION_LBAS: LbaT = LABEL_COUNT * LABEL_LBAS;
+/// Space allocated for storing the spacemap
+pub const SPACEMAP_BYTES_PER_ZONE: usize = 16;
+
+/// How many LBAs should be reserved for labels and spacemap?
+// This can be a const_fn once that feature is stabilized
+// https://github.com/rust-lang/rust/issues/24111
+pub fn reserved_space(nzones: u64) -> LbaT {
+    let fsm_lbas = div_roundup(nzones * SPACEMAP_BYTES_PER_ZONE as LbaT,
+        BYTES_PER_LBA as LbaT);
+    LABEL_COUNT * (LABEL_LBAS + fsm_lbas)
+}
 
 /// Used to read successive structs out of the label
 pub struct LabelReader {
