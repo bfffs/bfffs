@@ -49,11 +49,6 @@ pub use self::sgcursor::SGCursor;
 /// LBAs always use 4K LBAs, even if the underlying device supports smaller.
 pub const BYTES_PER_LBA: usize = 4096;
 
-/// A Fragment is the smallest amount of space that can be independently
-/// allocated.  Several small files can have their fragments packed into a
-/// single LBA.
-pub const BYTES_PER_FRAGMENT: usize = 256;
-
 /// Length of the global read-only `ZERO_REGION`
 pub const ZERO_REGION_LEN: usize = 8 * BYTES_PER_LBA;
 
