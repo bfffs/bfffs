@@ -47,7 +47,7 @@ test_suite! {
     fixture!( objects() -> (Runtime, Database, TempDir, PathBuf) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
-            let tempdir = t!(TempDir::new("test_idml_persistence"));
+            let tempdir = t!(TempDir::new("test_database_persistence"));
             let filename = tempdir.path().join("vdev");
             {
                 let file = t!(fs::File::create(&filename));
