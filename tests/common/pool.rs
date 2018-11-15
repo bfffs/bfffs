@@ -84,13 +84,15 @@ test_suite! {
                 .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
                     let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
-                    cluster::Cluster::open(vr,lr)
+                    cluster::Cluster::open(vr)
+                    .map(move |cluster| (cluster, lr))
             });
             let c1_fut = VdevFile::open(paths[1].clone())
                 .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
                     let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
-                    cluster::Cluster::open(vr, lr)
+                    cluster::Cluster::open(vr)
+                    .map(move |cluster| (cluster, lr))
             });
             c0_fut.join(c1_fut)
                 .and_then(move |((c0, c0r), (c1,c1r))| {
@@ -113,7 +115,7 @@ test_suite! {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
             // Skip leaf, raid, and cluster labels
-            f.seek(SeekFrom::Start(0x10d)).unwrap();
+            f.seek(SeekFrom::Start(0xd7)).unwrap();
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {

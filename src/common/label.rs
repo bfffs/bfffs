@@ -24,27 +24,27 @@ use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
  * Spacemap0    variable    bincode-encoded spacemap.  Size is determined at
  *                          format-time.
  * Spacemap1    variable
+ * TODO: checksum the spacemaps
  */
 /// The file magic is "BFFFS Vdev\0\0\0\0\0\0"
 const MAGIC: &[u8; MAGIC_LEN] = b"BFFFS Vdev\0\0\0\0\0\0";
 const MAGIC_LEN: usize = 16;
 const CHECKSUM_LEN: usize = 8;
 const LENGTH_LEN: usize = 8;
-const LABEL_COUNT: LbaT = 2;
+pub const LABEL_COUNT: LbaT = 2;
 // Actual label size is about 17 bytes for each RAID member plus 17 bytes for
 // each Cluster, plus a couple hundred bytes more.
-const LABEL_LBAS: LbaT = 4;
+pub const LABEL_LBAS: LbaT = 4;
 pub const LABEL_SIZE: usize = LABEL_LBAS as usize * BYTES_PER_LBA;
-/// Space allocated for storing the spacemap
-pub const SPACEMAP_BYTES_PER_ZONE: usize = 16;
+/// Space allocated for storing the spacemap.  This the number of zones whose
+/// information can be recorded in one LBA of storage.
+const SPACEMAP_ZONES_PER_LBA: usize = 256;
 
-/// How many LBAs should be reserved for labels and spacemap?
+/// How many LBAs should be reserved for each spacemap?
 // This can be a const_fn once that feature is stabilized
 // https://github.com/rust-lang/rust/issues/24111
-pub fn reserved_space(nzones: u64) -> LbaT {
-    let fsm_lbas = div_roundup(nzones * SPACEMAP_BYTES_PER_ZONE as LbaT,
-        BYTES_PER_LBA as LbaT);
-    LABEL_COUNT * (LABEL_LBAS + fsm_lbas)
+pub fn spacemap_space(nzones: u64) -> LbaT {
+    div_roundup(nzones, SPACEMAP_ZONES_PER_LBA as u64)
 }
 
 /// Used to read successive structs out of the label
@@ -99,6 +99,7 @@ impl<'de> LabelReader {
 
     /// Get the offset of the `label`th label.
     pub fn lba(label: u32) -> LbaT {
+        assert!(LbaT::from(label) < LABEL_COUNT);
         LbaT::from(label) * LABEL_LBAS
     }
 }
@@ -111,15 +112,20 @@ pub struct LabelWriter {
 }
 
 impl LabelWriter {
-    /// Create a new label in the `label`th position.
-    pub fn new(label: u32) -> Self {
-        assert!(LbaT::from(label) < LABEL_COUNT);
-        LabelWriter{buffers: SGList::default(), label}
+    /// Which label are we writing?
+    pub fn idx(&self) -> u32 {
+        self.label
     }
 
     /// Return the LBA at which to write this label
     pub fn lba(&self) -> LbaT {
         LbaT::from(self.label) * LABEL_LBAS
+    }
+
+    /// Create a new label in the `label`th position.
+    pub fn new(label: u32) -> Self {
+        assert!(LbaT::from(label) < LABEL_COUNT);
+        LabelWriter{buffers: SGList::default(), label}
     }
 
     /// Write a `T` into the label.

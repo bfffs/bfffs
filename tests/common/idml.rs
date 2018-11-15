@@ -107,7 +107,8 @@ test_suite! {
             .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
                     let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
-                    cluster::Cluster::open(vr,lr)
+                    cluster::Cluster::open(vr)
+                    .map(move |cluster| (cluster, lr))
             }).and_then(move |(cluster, reader)|{
                 let proxy = ClusterProxy::new(cluster);
                 Pool::open(None, vec![(proxy, reader)])
@@ -131,7 +132,7 @@ test_suite! {
         let mut f = fs::File::open(path).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, raid, cluster, and pool labels
-        f.seek(SeekFrom::Start(0x152)).unwrap();
+        f.seek(SeekFrom::Start(0x117)).unwrap();
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {

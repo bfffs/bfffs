@@ -7,7 +7,6 @@ test_suite! {
     use bfffs::{
         common::{
             Error,
-            label::LabelReader,
             vdev::*,
             vdev_leaf::*
         },
@@ -61,11 +60,6 @@ test_suite! {
 
     test zones(vdev) {
         assert_eq!(vdev.val.0.zones(), 1);
-    }
-
-    /// If the labels move, that's a change to the on-disk format
-    test label_location(vdev) {
-        assert_eq!(4, LabelReader::lba(1));
     }
 
     test open_enoent() {
@@ -214,28 +208,28 @@ test_suite! {
     use tokio::runtime::current_thread;
     use uuid::Uuid;
 
-    const GOLDEN: [u8; 102] = [
+    const GOLDEN: [u8; 103] = [
         // First 16 bytes are file magic
         0x42, 0x46, 0x46, 0x46, 0x53, 0x20, 0x56, 0x64, // BFFFS Vd
         0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ev......
         // Next 8 bytes are a checksum
-        0x1f, 0xb8, 0x8f, 0x58, 0xe2, 0x1d, 0x6f, 0x52,
+        0x7a, 0xbd, 0xf7, 0x77, 0x88, 0xb9, 0x29, 0x30,
         // Next 8 bytes are the contents length, in BE
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, // .......2
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
         // The rest is a serialized VdevFile::Label object
         0xa4, 0x64, 0x75, 0x75, 0x69, 0x64, 0x50,       // .duuidP.
         // These 16 bytes are a UUID
-                                                  0xec,
-        0x1a, 0x73, 0x6a, 0xe3, 0xf3, 0x43, 0xff, 0xa4,
-        0x4f, 0xc7, 0xf8, 0x44, 0xc0, 0x4b, 0x42,
+                                                  0x97,
+        0x35, 0xec, 0xfa, 0x74, 0xeb, 0x44, 0x7a, 0xac,
+        0xbe, 0x3a, 0xd7, 0x11, 0x14, 0x6e, 0xbb,
         // This is the rest of the LabelData
-                                                  0x6d, //        m
+                                                  0x6d, // .:...n.m
         0x6c, 0x62, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72, // lbas_per
         0x5f, 0x7a, 0x6f, 0x6e, 0x65, 0x1b, 0xde, 0xad, // _zone...
         0xbe, 0xef, 0x1a, 0x7e, 0xba, 0xbe, 0x64, 0x6c, // ...~..dl
-        0x62, 0x61, 0x73, 0x19, 0x40, 0x00, 0x6e, 0x72, // bas.@.nr
-        0x65, 0x73, 0x65, 0x72, 0x76, 0x65, 0x64, 0x5f, // eserved_
-        0x73, 0x70, 0x61, 0x63, 0x65, 0x0a,
+        0x62, 0x61, 0x73, 0x19, 0x40, 0x00, 0x6e, 0x73, // bas.@.ns
+        0x70, 0x61, 0x63, 0x65, 0x6d, 0x61, 0x70, 0x5f, // pacemap_
+        0x73, 0x70, 0x61, 0x63, 0x65, 0x01, 0x00
     ];
 
     fixture!( fixture() -> (PathBuf, TempDir) {
@@ -274,14 +268,14 @@ test_suite! {
     /// Open the golden master label
     test open(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "ec1a736a-e3f3-43ff-a44f-c7f844c04b42").unwrap();
+            "9735ecfa-74eb-447a-acbe-3ad711146ebb").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
-            let offset0 = u64::from(LabelReader::lba(0)) * BYTES_PER_LBA as u64;
+            let offset0 = 0;
             write_all_at(&f, &GOLDEN, offset0).unwrap();
-            let offset1 = u64::from(LabelReader::lba(1)) * BYTES_PER_LBA as u64;
+            let offset1 = 4 * BYTES_PER_LBA as u64;
             write_all_at(&f, &GOLDEN, offset1).unwrap();
         }
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
@@ -297,7 +291,7 @@ test_suite! {
 
     // Open a device with only a corrupted label
     test open_ecksum(fixture) {
-        let offset0 = u64::from(LabelReader::lba(0)) * BYTES_PER_LBA as u64;
+        let offset0 = 0;
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -317,12 +311,12 @@ test_suite! {
     /// Open a device that only has one valid label, the first one
     test open_first_label_only(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "ec1a736a-e3f3-43ff-a44f-c7f844c04b42").unwrap();
+            "9735ecfa-74eb-447a-acbe-3ad711146ebb").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
-            let offset0 = u64::from(LabelReader::lba(0)) * BYTES_PER_LBA as u64;
+            let offset0 = 0;
             write_all_at(&f, &GOLDEN, offset0).unwrap();
         }
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
@@ -348,12 +342,12 @@ test_suite! {
     /// Open a device that only has one valid label, the second one
     test open_second_label_only(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "ec1a736a-e3f3-43ff-a44f-c7f844c04b42").unwrap();
+            "9735ecfa-74eb-447a-acbe-3ad711146ebb").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
-            let offset1 = u64::from(LabelReader::lba(1)) * BYTES_PER_LBA as u64;
+            let offset1 = 4 * BYTES_PER_LBA as u64;
             println!("Writing label 1 to offset {:?}", offset1);
             write_all_at(&f, &GOLDEN, offset1).unwrap();
         }

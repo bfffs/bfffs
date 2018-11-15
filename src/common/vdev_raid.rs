@@ -34,9 +34,11 @@ pub trait VdevBlockTrait : Vdev {
     fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut>;
     fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
     fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
+    fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT) -> Box<VdevFut>;
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut>;
 }
 #[cfg(test)]
@@ -700,6 +702,14 @@ impl VdevRaid {
         Box::new(fut.map(|_| () ))
     }
 
+    /// Read the entire serialized spacemap.  `idx` selects which spacemap to
+    /// read, and should match whichever label is being read concurrently.
+    pub fn read_spacemap(&self, buf: IoVecMut, idx: u32)
+        -> impl Future<Item=(), Error=Error>
+    {
+        self.blockdevs[0].read_spacemap(buf, idx)
+    }
+
     /// Asynchronously reopen a zone on a RAID device
     ///
     /// The zone must've previously been opened and not closed before the device
@@ -913,6 +923,15 @@ impl VdevRaid {
         labeller.serialize(&label).unwrap();
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_label(labeller.clone())
+        }).collect::<Vec<_>>();
+        future::join_all(futs).map(|_| ())
+    }
+
+    pub fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT)
+        -> impl Future<Item=(), Error=Error>
+    {
+        let futs = self.blockdevs.iter().map(|bd| {
+            bd.write_spacemap(buf.clone(), idx, block)
         }).collect::<Vec<_>>();
         future::join_all(futs).map(|_| ())
     }
@@ -1297,9 +1316,12 @@ mock!{
         fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut> ;
         fn open_zone(&self, lba: LbaT) -> Box<VdevFut> ;
         fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
         fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
+        fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT)
+            -> Box<VdevFut>;
         fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
     }
 }

@@ -24,8 +24,8 @@ pub struct Label {
     lbas_per_zone:  LbaT,
     /// Number of LBAs that were present at format time
     lbas:           LbaT,
-    /// LBAs in the first zone reserved for storing labels and spacemap.
-    reserved_space:    LbaT
+    /// LBAs in the first zone reserved for storing each spacemap.
+    spacemap_space:    LbaT
 }
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`
@@ -36,8 +36,8 @@ pub struct Label {
 #[derive(Debug)]
 pub struct VdevFile {
     file:           File,
-    /// Number of reserved LBAS in first zone.
-    reserved_space: LbaT,
+    /// Number of reserved LBAS in first zone for each spacemap
+    spacemap_space: LbaT,
     /// Number of LBAs per simulated zone
     lbas_per_zone:  LbaT,
     size:           LbaT,
@@ -69,7 +69,7 @@ impl BorrowMut<[u8]> for IoVecMutContainer {
 
 impl Vdev for VdevFile {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        if lba >= self.reserved_space {
+        if lba >= self.reserved_space() {
             Some((lba / (self.lbas_per_zone as u64)) as ZoneT)
         } else {
             None
@@ -98,7 +98,7 @@ impl Vdev for VdevFile {
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         if zone == 0 {
-            (self.reserved_space, self.lbas_per_zone)
+            (self.reserved_space(), self.lbas_per_zone)
         } else {
             (u64::from(zone) * self.lbas_per_zone,
              u64::from(zone + 1) * self.lbas_per_zone)
@@ -133,6 +133,17 @@ impl VdevLeafApi for VdevFile {
         Box::new(fut)
     }
 
+    fn read_spacemap(&self, mut buf: IoVecMut, idx: u32) -> Box<VdevFut> {
+        assert!((idx as u64) < LABEL_COUNT);
+        let lba = u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
+        let spacemap_bytes = self.spacemap_space as usize * BYTES_PER_LBA;
+        buf.try_resize(spacemap_bytes, 0).unwrap();
+        let container = Box::new(IoVecMutContainer(buf));
+        let off = lba * (BYTES_PER_LBA as u64);
+        let fut = VdevFileFut(self.file.read_at(container, off).unwrap());
+        Box::new(fut)
+    }
+
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
         let off = lba * (BYTES_PER_LBA as u64);
         let containers = buf.into_iter().map(|iovec| {
@@ -142,8 +153,12 @@ impl VdevLeafApi for VdevFile {
         Box::new(fut)
     }
 
+    fn spacemap_space(&self) -> LbaT {
+        self.spacemap_space
+    }
+
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
-        assert!(lba >= self.reserved_space, "Don't overwrite the labels!");
+        assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
         let container = Box::new(IoVecContainer(buf));
         Box::new(self.write_at_unchecked(container, lba))
     }
@@ -151,7 +166,7 @@ impl VdevLeafApi for VdevFile {
     fn write_label(&self, mut label_writer: LabelWriter) -> Box<VdevFut> {
         let label = Label {
             uuid: self.uuid,
-            reserved_space: self.reserved_space,
+            spacemap_space: self.spacemap_space,
             lbas_per_zone: self.lbas_per_zone,
             lbas: self.size
         };
@@ -159,6 +174,16 @@ impl VdevLeafApi for VdevFile {
         let lba = label_writer.lba();
         let sglist = label_writer.into_sglist();
         Box::new(self.writev_at(sglist, lba))
+    }
+
+    fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT) -> Box<VdevFut>
+    {
+        assert!((idx as u64) < LABEL_COUNT);
+        let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
+        let buf_lbas = (buf.len() / BYTES_PER_LBA) as u64;
+        assert!(lba + buf_lbas <= self.reserved_space());
+        let container = Box::new(IoVecContainer(buf));
+        Box::new(self.write_at_unchecked(container, lba))
     }
 
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
@@ -197,9 +222,9 @@ impl VdevFile {
         };
         let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
         let nzones = div_roundup(size, lpz);
-        let reserved_space = reserved_space(nzones);
+        let spacemap_space = spacemap_space(nzones);
         let uuid = Uuid::new_v4();
-        Ok(VdevFile{file: f, reserved_space, lbas_per_zone: lpz, size, uuid})
+        Ok(VdevFile{file: f, spacemap_space, lbas_per_zone: lpz, size, uuid})
     }
 
     /// Open an existing `VdevFile`
@@ -230,7 +255,7 @@ impl VdevFile {
                 assert!(size >= label.lbas, "Vdev has shrunk since creation");
                 let vdev = VdevFile {
                     file: f,
-                    reserved_space: label.reserved_space,
+                    spacemap_space: label.spacemap_space,
                     lbas_per_zone: label.lbas_per_zone,
                     size: label.lbas,
                     uuid: label.uuid
@@ -262,6 +287,10 @@ impl VdevFile {
                 Err(e) => Err((Error::from(e), f))
             }
         })
+    }
+
+    fn reserved_space(&self) -> LbaT {
+        LABEL_COUNT * (LABEL_LBAS as u64 + self.spacemap_space)
     }
 
     fn write_at_unchecked(&self, buf: Box<Borrow<[u8]>>, lba: LbaT)
@@ -326,7 +355,7 @@ mod label {
         let label = Label{ uuid: Uuid::new_v4(),
             lbas_per_zone: 0,
             lbas: 0,
-            reserved_space: 0
+            spacemap_space: 0
         };
         format!("{:?}", label);
     }

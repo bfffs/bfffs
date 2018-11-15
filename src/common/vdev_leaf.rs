@@ -40,11 +40,23 @@ pub trait VdevLeafApi : Vdev {
     /// Return the number of bytes actually read.
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
 
+    /// Read one of the spacemaps from disk.
+    ///
+    /// # Parameters
+    /// - `buf`:        Place the still-serialized spacemap here.  `buf` will be
+    ///                 resized as needed.
+    /// - `idx`:        Index of the spacemap to read.  It should be the same as
+    ///                 whichever label is being used.
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
+
     /// The asynchronous scatter/gather read function.
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
     fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
+
+    /// Size of a single serialized spacemap, in LBAs, rounded up.
+    fn spacemap_space(&self) -> LbaT;
 
     /// Asynchronously write a contiguous portion of the vdev.
     ///
@@ -56,6 +68,17 @@ pub trait VdevLeafApi : Vdev {
     /// `label_writer` should already contain the serialized labels of every
     /// vdev stacked on top of this one.
     fn write_label(&self, label_writer: LabelWriter) -> Box<VdevFut>;
+
+    /// Asynchronously write to the Vdev's spacemap area.
+    ///
+    /// # Parameters
+    ///
+    /// - `buf`:        Buffer of data to write
+    /// - `idx`:        Index of the spacemap area to write: there are more than
+    ///                 one.  It should be the same as whichever label is being
+    ///                 written.
+    /// - `block`:      LBA-based offset from the start of the spacemap area
+    fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT) -> Box<VdevFut>;
 
     /// The asynchronous scatter/gather write function.
     ///

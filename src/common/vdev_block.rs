@@ -33,6 +33,7 @@ pub type VdevLeaf = VdevFile;
 enum Cmd {
     OpenZone,
     ReadAt(IoVecMut),
+    ReadSpacemap(IoVecMut, u32),
     ReadvAt(SGListMut),
     WriteAt(IoVec),
     WritevAt(SGList),
@@ -41,6 +42,7 @@ enum Cmd {
     // The extra LBA is the zone's starting LBA
     FinishZone(LbaT),
     WriteLabel(LabelWriter),
+    WriteSpacemap(IoVec, u32, LbaT),
     SyncAll,
 }
 
@@ -51,13 +53,15 @@ impl Cmd {
         match *self {
             Cmd::OpenZone => 0,
             Cmd::ReadAt(_) => 1,
-            Cmd::ReadvAt(_) => 2,
-            Cmd::WriteAt(_) => 3,
-            Cmd::WritevAt(_) => 4,
-            Cmd::EraseZone(_) => 5,
-            Cmd::FinishZone(_) => 6,
-            Cmd::WriteLabel(_) => 7,
-            Cmd::SyncAll => 8,
+            Cmd::ReadSpacemap(_, _) => 2,
+            Cmd::ReadvAt(_) => 3,
+            Cmd::WriteAt(_) => 4,
+            Cmd::WritevAt(_) => 5,
+            Cmd::EraseZone(_) => 6,
+            Cmd::FinishZone(_) => 7,
+            Cmd::WriteLabel(_) => 8,
+            Cmd::WriteSpacemap(_, _, _) => 9,
+            Cmd::SyncAll => 10,
         }
     }   // LCOV_EXCL_LINE   kcov false negative
 }
@@ -162,6 +166,12 @@ impl BlockOp {
         BlockOp { lba, cmd: Cmd::ReadAt(buf), sender}
     }
 
+    pub fn read_spacemap(buf: IoVecMut, lba: LbaT, idx: u32,
+                         sender: oneshot::Sender<()>) -> BlockOp
+    {
+        BlockOp { lba, cmd: Cmd::ReadSpacemap(buf, idx), sender}
+    }
+
     pub fn readv_at(bufs: SGListMut, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
         BlockOp { lba, cmd: Cmd::ReadvAt(bufs), sender}
@@ -179,6 +189,12 @@ impl BlockOp {
     pub fn write_label(labeller: LabelWriter,
                        sender: oneshot::Sender<()>) -> BlockOp {
         BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), sender}
+    }
+
+    pub fn write_spacemap(buf: IoVec, lba: LbaT, idx: u32, block: LbaT,
+                          sender: oneshot::Sender<()>) -> BlockOp
+    {
+        BlockOp { lba, cmd: Cmd::WriteSpacemap(buf, idx, block), sender}
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT,
@@ -330,11 +346,15 @@ impl Inner {
             Cmd::WriteAt(iovec) => self.leaf.write_at(iovec, lba),
             Cmd::ReadAt(iovec_mut) => self.leaf.read_at(iovec_mut, lba),
             Cmd::WritevAt(sglist) => self.leaf.writev_at(sglist, lba),
+            Cmd::ReadSpacemap(iovec_mut, idx) =>
+                self.leaf.read_spacemap(iovec_mut, idx),
             Cmd::ReadvAt(sglist_mut) => self.leaf.readv_at(sglist_mut, lba),
             Cmd::EraseZone(start) => self.leaf.erase_zone(start),
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
             Cmd::OpenZone => self.leaf.open_zone(lba),
             Cmd::WriteLabel(labeller) => self.leaf.write_label(labeller),
+            Cmd::WriteSpacemap(iovec, idx, block) =>
+                self.leaf.write_spacemap(iovec, idx, block),
             Cmd::SyncAll => self.leaf.sync_all(),
         };
         (block_op.sender, fut)
@@ -427,6 +447,9 @@ pub struct VdevBlock {
 
     /// Usable size of the vdev, in LBAs
     size:   LbaT,
+
+    /// Size of a single spacemap as stored in the leaf vdev
+    spacemap_space:  LbaT
 }
 
 impl VdevBlock {
@@ -552,6 +575,7 @@ impl VdevBlock {
     #[cfg(any(not(test), feature = "mocks"))]
     pub fn new(leaf: VdevLeaf) -> Self {
         let size = leaf.size();
+        let spacemap_space = leaf.spacemap_space();
         let inner = Rc::new(RefCell::new(Inner {
             delayed: None,
             optimum_queue_depth: leaf.optimum_queue_depth(),
@@ -568,6 +592,7 @@ impl VdevBlock {
         VdevBlock {
             inner,
             size,
+            spacemap_space
         }
     }
 
@@ -594,6 +619,20 @@ impl VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::read_at(buf, lba, sender);
+        self.new_fut(block_op, receiver)
+    }
+
+    /// Read the entire serialized spacemap.  `idx` selects which spacemap to
+    /// read, and should match whichever label is being read concurrently.
+    pub fn read_spacemap(&self, buf: IoVecMut, idx: u32)
+        -> impl Future<Item=(), Error=Error>
+    {
+        let (sender, receiver) = oneshot::channel::<()>();
+        // lba is for sorting purposes only.  It should sort before any other
+        // write operation, and different read_spacemap operations should sort
+        // in the same order as their true LBA order.
+        let lba = 1 + self.spacemap_space * LbaT::from(idx);
+        let block_op = BlockOp::read_spacemap(buf, lba, idx, sender);
         self.new_fut(block_op, receiver)
     }
 
@@ -633,6 +672,18 @@ impl VdevBlock {
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_label(labeller, sender);
+        self.new_fut(block_op, receiver)
+    }
+
+    pub fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT)
+        ->  impl Future<Item=(), Error=Error>
+    {
+        let (sender, receiver) = oneshot::channel::<()>();
+        // lba is for sorting purposes only.  It should sort after write_label,
+        // but before any other write operation, and different write_spacemap
+        // operations should sort in the same order as their true LBA order.
+        let lba = 1 + self.spacemap_space * LbaT::from(idx) + block;
+        let block_op = BlockOp::write_spacemap(buf, lba, idx, block, sender);
         self.new_fut(block_op, receiver)
     }
 
@@ -722,8 +773,9 @@ fn debug_cmd() {
     let sync_all = Cmd::SyncAll;
     let label_writer = LabelWriter::new(0);
     let write_label = Cmd::WriteLabel(label_writer);
-    format!("{:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at, erase_zone,
-            finish_zone, sync_all, write_label);
+    let write_spacemap = Cmd::WriteSpacemap(dbs.try().unwrap(), 0, 0);
+    format!("{:?} {:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at,
+            erase_zone, finish_zone, sync_all, write_label, write_spacemap);
 }
 
 test_suite! {
@@ -757,9 +809,13 @@ test_suite! {
             fn finish_zone(&self, lba: LbaT) -> Box<VdevFut>;
             fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
             fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+            fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
             fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
+            fn spacemap_space(&self) -> LbaT;
             fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
             fn write_label(&self, label_writer: LabelWriter) -> Box<VdevFut>;
+            fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT)
+                -> Box<VdevFut>;
             fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
         }
     }
@@ -779,12 +835,15 @@ test_suite! {
             let scenario = Scenario::new();
             let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
             scenario.expect(leaf.size_call()
-                                .and_return(16384));
+                                .and_return(262144));
             scenario.expect(leaf.lba2zone_call(matchers::in_range(1..1<<16))
                                 .and_return_clone(Some(0))
                                 .times(..));
             scenario.expect(leaf.optimum_queue_depth_call()
                                 .and_return_clone(10)
+                                .times(..));
+            scenario.expect(leaf.spacemap_space_call()
+                                .and_return_clone(1)
                                 .times(..));
             scenario.expect(leaf.zone_limits_call(0)
                                 .and_return_clone((1, 1 << 16))

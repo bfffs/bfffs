@@ -1,7 +1,8 @@
 // vim: tw=80
 
-use crate::common::{cluster, pool, vdev::Vdev, vdev_raid};
-#[cfg(not(test))] use crate::common::{Error, cache, database, ddml, idml, vdev_block};
+use crate::common::{pool, vdev::Vdev, vdev_raid};
+#[cfg(not(test))]
+use crate::common::{Error, cache, cluster, database, ddml, idml, vdev_block};
 use futures::{Future, future};
 #[cfg(not(test))] use futures::{stream, sync::oneshot};
 #[cfg(not(test))] use futures::Stream;
@@ -65,11 +66,12 @@ impl DevManager {
                 .and_then(move |vdev_blocks| {
                     let (vdev_raid, reader) =
                         vdev_raid::VdevRaid::open(Some(raid.uuid), vdev_blocks);
-                    cluster::Cluster::open(vdev_raid, reader)
-                }).map(|(cluster, reader)| {
-                    let proxy = pool::ClusterProxy::new(cluster);
-                    tx.send((proxy, reader))
-                        .ok().expect("channel dropped too soon");
+                    cluster::Cluster::open(vdev_raid)
+                    .map(move |cluster| {
+                        let proxy = pool::ClusterProxy::new(cluster);
+                        tx.send((proxy, reader))
+                            .ok().expect("channel dropped too soon");
+                    })
                 }).map_err(|e| panic!("{:?}", e));
                 executor::current_thread::TaskExecutor::current().spawn_local(
                     Box::new(fut)
@@ -121,11 +123,9 @@ impl DevManager {
                 (vdev_block::VdevBlock::new(leaf), reader)
             }).collect()
             .and_then(move |vdev_blocks| {
-                let (vdev_raid, reader) =
+                let (vdev_raid, _label_reader) =
                     vdev_raid::VdevRaid::open(Some(raid.uuid), vdev_blocks);
-                cluster::Cluster::open(vdev_raid, reader)
-            }).map(|(cluster, _reader)| {
-                cluster
+                cluster::Cluster::open(vdev_raid)
             })
         });
         future::join_all(cfuts)
@@ -156,7 +156,6 @@ impl DevManager {
                     inner.leaves.insert(vdev_file.uuid(), pathbuf);
                     let rl: vdev_raid::Label = reader.deserialize().unwrap();
                     inner.raids.insert(rl.uuid, rl);
-                    let _cl: cluster::Label = reader.deserialize().unwrap();
                     let pl: pool::Label = reader.deserialize().unwrap();
                     inner.pools.insert(pl.uuid, pl);
                 })
