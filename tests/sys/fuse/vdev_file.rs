@@ -348,7 +348,6 @@ test_suite! {
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
-            println!("Writing label 1 to offset {:?}", offset1);
             write_all_at(&f, &GOLDEN, offset1).unwrap();
         }
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
