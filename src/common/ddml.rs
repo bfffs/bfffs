@@ -326,8 +326,7 @@ impl DDML {
                         None => dbs
                     })
                 } else {
-                    // TODO: create a dedicated ECKSUM error type
-                    Err(Error::EIO)
+                    Err(Error::ECKSUM)
                 }
             })
         )
@@ -712,7 +711,7 @@ mod t {
         let err = rt.block_on(future::lazy(|| {
             ddml.get::<DivBufShared, DivBuf>(&drp)
         })).unwrap_err();
-        assert_eq!(err, Error::EIO);
+        assert_eq!(err, Error::ECKSUM);
     }
 
     #[test]
@@ -831,7 +830,7 @@ mod t {
         let err = rt.block_on(future::lazy(|| {
             ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
         })).unwrap_err();
-        assert_eq!(err, Error::EIO);
+        assert_eq!(err, Error::ECKSUM);
     }
 
     #[test]

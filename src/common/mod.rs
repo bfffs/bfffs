@@ -179,6 +179,7 @@ pub enum Error {
 
     //// BFFFS custom error types below
     EUNKNOWN        = 256,
+    ECKSUM          = 257,
 }
 
 impl From<nix::Error> for Error {
@@ -192,7 +193,13 @@ impl From<nix::Error> for Error {
 
 impl Into<i32> for Error {
     fn into(self) -> i32 {
-        self.to_i32().unwrap()
+        match self {
+            Error::EUNKNOWN =>
+                panic!("Unknown error codes should never be exposed"),
+            // Checksum errors are a special case of I/O errors
+            Error::ECKSUM => Error::EIO.to_i32().unwrap(),
+            _ => self.to_i32().unwrap()
+        }
     }
 }
 

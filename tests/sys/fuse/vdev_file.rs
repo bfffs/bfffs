@@ -289,23 +289,26 @@ test_suite! {
         let _ = fixture.val.1;
     }
 
-    // Open a device with only a corrupted label
+    // Open a device with only corrupted labels
     test open_ecksum(fixture) {
-        let offset0 = 0;
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
+            let offset0 = 0;
             write_all_at(&f, &GOLDEN, offset0).unwrap();
+            let offset1 = 4 * BYTES_PER_LBA as u64;
+            write_all_at(&f, &GOLDEN, offset1).unwrap();
             let zeros = [0u8; 1];
-            // Corrupt the label's checksum
+            // Corrupt the labels' checksum
             write_all_at(&f, &zeros, offset0 + 16).unwrap();
+            write_all_at(&f, &zeros, offset1 + 16).unwrap();
         }
         let mut rt = current_thread::Runtime::new().unwrap();
         let e = rt.block_on(future::lazy(|| {
             VdevFile::open(fixture.val.0)
         })).err().expect("Opening the file should've failed");
-        assert_eq!(e, Error::EINVAL);
+        assert_eq!(e, Error::ECKSUM);
     }
 
     /// Open a device that only has one valid label, the first one
