@@ -52,6 +52,8 @@ pub trait PoolTrait {
         -> Box<Future<Item=PBA, Error=Error> + Send>;
     fn write_label(&self, labeller: LabelWriter)
         -> Box<Future<Item=(), Error=Error> + Send>;
+    fn write_spacemap(&self, idx: u32)
+        -> Box<Future<Item=(), Error=Error> + Send>;
 }
 
 /// Part of an ugly hack for mocking a Send trait
@@ -108,6 +110,11 @@ impl PoolTrait for MockPoolWrapper {
         -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.0.write_label(labeller)
+    }
+    fn write_spacemap(&self, idx: u32)
+        -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        self.0.write_spacemap(idx)
     }
 }
 
@@ -423,6 +430,12 @@ impl DDML {
     {
         self.pool.write_label(labeller)
     }
+
+    pub fn write_spacemap(&self, idx: u32)
+        -> impl Future<Item=(), Error=Error>
+    {
+        self.pool.write_spacemap(idx)
+    }
 }
 
 impl DML for DDML {
@@ -539,6 +552,8 @@ mod t {
             fn write(&self, buf: IoVec, txg: TxgT)
                 -> Box<Future<Item=PBA, Error=Error> + Send>;
             fn write_label(&self, mut labeller: LabelWriter)
+                -> Box<Future<Item=(), Error=Error> + Send>;
+            fn write_spacemap(&self, idx: u32)
                 -> Box<Future<Item=(), Error=Error> + Send>;
         }
     }

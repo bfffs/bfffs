@@ -4,7 +4,6 @@ use galvanic_test::*;
 test_suite! {
     name persistence;
 
-    use bfffs::common::label::*;
     use bfffs::common::vdev_block::*;
     use bfffs::common::vdev_raid::*;
     use bfffs::common::cluster::*;
@@ -96,11 +95,10 @@ test_suite! {
         })).unwrap();
     }
 
-    test write_label(objects()) {
+    test write_spacemap(objects()) {
         let (mut rt, old_cluster, _tempdir, path) = objects.val;
         rt.block_on(future::lazy(|| {
-            let label_writer = LabelWriter::new(0);
-            old_cluster.write_label(label_writer)
+            old_cluster.write_spacemap(0)
         })).unwrap();
 
         let mut f = fs::File::open(path).unwrap();

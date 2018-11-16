@@ -869,14 +869,21 @@ impl<'a> Cluster {
         }).ok_or(Error::ENOSPC)
     }
 
-    /// Asynchronously write this Vdev's label to all component devices
+    /// Asynchronously write this cluster's label to all component devices
+    /// All data and spacemap should be written and synced first!
     pub fn write_label(&self, labeller: LabelWriter)
         -> impl Future<Item=(), Error=Error>
     {   // LCOV_EXCL_LINE   kcov false negative
+        self.vdev.write_label(labeller)
+    }
+
+    /// Asynchronously write this Cluster's spacemap to all component devices
+    /// `idx` is the index of the label being written.
+    pub fn write_spacemap(&self, idx: u32)
+        -> impl Future<Item=(), Error=Error>
+    {
         let fsm = self.fsm.borrow().serialize();
-        self.vdev.write_spacemap(fsm.try().unwrap(), labeller.idx(), 0)
-        .join(self.vdev.write_label(labeller))
-        .map(|_| ())
+        self.vdev.write_spacemap(fsm.try().unwrap(), idx, 0)
     }
 }
 

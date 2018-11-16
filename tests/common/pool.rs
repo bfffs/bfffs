@@ -76,7 +76,8 @@ test_suite! {
         let uuid = old_pool.uuid();
         rt.block_on(future::lazy(|| {
             let label_writer = LabelWriter::new(0);
-            old_pool.write_label(label_writer)
+            old_pool.write_spacemap(0)
+            .join(old_pool.write_label(label_writer))
         })).unwrap();
         drop(old_pool);
         let (pool, _label_reader) = rt.block_on(future::lazy(|| {

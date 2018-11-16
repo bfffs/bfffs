@@ -44,6 +44,7 @@ pub trait ClusterTrait {
     fn write(&self, buf: IoVec, txg: TxgT)
         -> Result<(LbaT, Box<PoolFut>), Error>;
     fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
+    fn write_spacemap(&self, idx: u32) -> Box<PoolFut>;
 }
 #[cfg(test)]
 pub type ClusterLike = Box<ClusterTrait>;
@@ -64,6 +65,7 @@ enum Rpc {
     SyncAll(oneshot::Sender<Result<(), Error>>),
     Write(IoVec, TxgT, oneshot::Sender<Result<LbaT, Error>>),
     WriteLabel(LabelWriter, oneshot::Sender<Result<(), Error>>),
+    WriteSpacemap(u32, oneshot::Sender<Result<(), Error>>),
     #[cfg(debug_assertions)]
     AssertCleanZone(ZoneT, TxgT),
 }
@@ -173,6 +175,14 @@ impl<'a> ClusterServer {
             },
             Rpc::WriteLabel(label_writer, tx) => {
                 let fut = self.cluster.write_label(label_writer)
+                .then(|r| {
+                    tx.send(r).unwrap();
+                    Ok(())
+                });
+                Box::new(fut) as Box<Future<Item=(), Error=()>>
+            },
+            Rpc::WriteSpacemap(idx, tx) => {
+                let fut = self.cluster.write_spacemap(idx)
                 .then(|r| {
                     tx.send(r).unwrap();
                     Ok(())
@@ -296,6 +306,15 @@ impl<'a> ClusterProxy {
         rx.map_err(|_| Error::EPIPE)
             .and_then(|result| result.into_future())
     }
+
+    fn write_spacemap(&self, idx: u32) -> impl Future<Item=(), Error=Error> {
+        let (tx, rx) = oneshot::channel::<Result<(), Error>>();
+        let rpc = Rpc::WriteSpacemap(idx, tx);
+        self.server.unbounded_send(rpc).unwrap();
+        rx.map_err(|_| Error::EPIPE)
+            .and_then(|result| result.into_future())
+    }
+
 }
 
 /// Public representation of a closed zone
@@ -686,6 +705,15 @@ impl<'a> Pool {
         }).collect::<Vec<_>>();
         future::join_all(futs).map(|_| ())
     }
+
+    pub fn write_spacemap(&self, idx: u32)
+        -> impl Future<Item=(), Error=Error>
+    {
+        let futs = self.clusters.iter().map(|cluster| {
+            cluster.write_spacemap(idx)
+        }).collect::<Vec<_>>();
+        future::join_all(futs).map(|_| ())
+    }
 }
 
 // LCOV_EXCL_START
@@ -733,6 +761,7 @@ mod pool {
             fn write(&self, buf: IoVec, txg: TxgT)
                 -> Result<(LbaT, Box<PoolFut>), Error>;
             fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
+            fn write_spacemap(&self, idx: u32) -> Box<PoolFut>;
         }
     }
 
