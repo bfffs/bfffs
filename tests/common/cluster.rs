@@ -50,7 +50,9 @@ test_suite! {
         0x3e, 0xb7, 0x96, 0xbd, 0x5f, 0x9e, 0xeb, 0x42, // >..._..B
         0x07,
     ];
-    const GOLDEN_SPACEMAP: [u8; 40] = [
+    const GOLDEN_SPACEMAP: [u8; 56] = [
+        1, 0, 0, 0, 0, 0, 0, 0,                         // 1 ZoneOnDisk
+        225, 77, 241, 146, 92, 56, 181, 129,            // Checksum
         0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ........
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ........
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ........
@@ -114,8 +116,8 @@ test_suite! {
             df.write_all(&v[..]).unwrap();
         } */
         // Compare against the golden master
-        assert_eq!(&v[0..40], &GOLDEN_SPACEMAP[..]);
+        assert_eq!(&v[0..56], &GOLDEN_SPACEMAP[..]);
         // Rest of the buffer should be zero-filled
-        assert!(v[40..].iter().all(|&x| x == 0));
+        assert!(v[56..].iter().all(|&x| x == 0));
     }
 }

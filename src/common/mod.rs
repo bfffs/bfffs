@@ -205,7 +205,7 @@ impl Into<i32> for Error {
 
 /// Transaction numbers.
 // 32-bits is enough for 1 per second for 100 years
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd,
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd,
          Serialize)]
 pub struct TxgT(u32);
 

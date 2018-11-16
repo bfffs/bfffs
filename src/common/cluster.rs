@@ -1,13 +1,17 @@
 // vim: tw=80
 
+use bincode;
 use crate::common::{*, label::*, vdev::{Vdev, VdevFut}};
 #[cfg(not(test))] use crate::common::vdev_raid::*;
 use futures::{ Future, IntoFuture, future};
+use itertools::Itertools;
+use metrohash::MetroHash64;
 use std::{
     cell::RefCell,
     cmp,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
     fmt::{self, Display, Formatter},
+    hash::Hash,
     rc::Rc,
     ops::Range
 };
@@ -168,31 +172,42 @@ impl<'a> FreeSpaceMap {
     fn deserialize(vdev: VdevRaidLike, buf: DivBuf, zones: ZoneT)
         -> bincode::Result<impl Future<Item=(Self, VdevRaidLike), Error=Error>>
     {
-        let zods: Vec<ZoneOnDisk> = bincode::deserialize(&buf[..])?;
         let mut fsm = FreeSpaceMap::new(zones);
-        assert_eq!(zods.len(), zones as usize);
         let mut oz_futs = Vec::new();
-        for (i, zod) in zods.into_iter().enumerate() {
-            let zid = i as ZoneT;
-            if zod.allocated_blocks > 0 {
-                let zl = vdev.zone_limits(zid);
-                fsm.open_zone(zid, zl.0, zl.1, 0, zod.txgs.start).unwrap();
-                if zod.allocated_blocks == u32::max_value() {
-                    // Zone is closed
-                    fsm.finish_zone(zid, zod.txgs.end - 1);
+        let sods = SpacemapOnDisk::deserialize(buf).unwrap();
+        let mut zid: ZoneT = 0;
+        for sod in sods.into_iter() {
+            if sod.is_err() {
+                let fut = Err(sod.unwrap_err()).into_future();
+                let r = Box::new(fut) as Box<Future<Item=_, Error=_>>;
+                return Ok(r);
+            }
+            for zod in sod.unwrap().zones.into_iter() {
+                if zod.allocated_blocks > 0 {
+                    let zl = vdev.zone_limits(zid);
+                    fsm.open_zone(zid, zl.0, zl.1, 0, zod.txgs.start).unwrap();
+                    if zod.allocated_blocks == u32::max_value() {
+                        // Zone is closed
+                        fsm.finish_zone(zid, zod.txgs.end - 1);
+                    } else {
+                        // Zone is Open
+                        let allocated = LbaT::from(zod.allocated_blocks);
+                        oz_futs.push(vdev.reopen_zone(zid, allocated));
+                        let azid = fsm.try_allocate(allocated).0.unwrap().0;
+                        assert_eq!(azid, zid);
+                    }
+                    fsm.zones[zid as usize].freed_blocks = zod.freed_blocks;
+                    fsm.zones[zid as usize].txgs = zod.txgs;
                 } else {
-                    // Zone is Open
-                    let allocated = LbaT::from(zod.allocated_blocks);
-                    oz_futs.push(vdev.reopen_zone(zid, allocated));
-                    assert_eq!( fsm.try_allocate(allocated).0.unwrap().0, zid);
+                    // Zone is empty
                 }
-                fsm.zones[i].freed_blocks = zod.freed_blocks;
-                fsm.zones[i].txgs = zod.txgs;
-            } else {
-                // Zone is empty
+                zid += 1;
             }
         }
-        Ok(future::join_all(oz_futs).map(|_| (fsm, vdev)))
+        assert_eq!(zid, zones);
+        let fut = Box::new(future::join_all(oz_futs).map(|_| (fsm, vdev)))
+            as Box<Future<Item=_, Error=Error>>;
+        Ok(fut)
     }
 
     /// Return Zone `zone_id` to an Empty state
@@ -399,26 +414,32 @@ impl<'a> FreeSpaceMap {
     /// Serialize this `FreeSpaceMap` so it can be written to a disk's reserved
     /// area
     fn serialize(&self) -> DivBufShared {
-        let fsm = (0..self.total_zones).map(|z| {
-            let allocated_blocks = if self.is_empty(z) {
-                0
-            } else {
-                match self.open_zones.get(&z) {
-                    Some(oz) => oz.allocated_blocks,
-                    None => u32::max_value()
-                }
-            };
-            let freed_blocks = if self.is_empty(z) {
-                0
-            } else {
-                self.zones[z as usize].freed_blocks
-            };
-            let txgs = if self.is_empty(z) {
-                TxgT::from(0)..TxgT::from(0)
-            } else {
-                self.zones[z as usize].txgs.clone()
-            };
-            ZoneOnDisk{allocated_blocks, freed_blocks, txgs}
+        let fsm = (0..self.total_zones).chunks(SPACEMAP_ZONES_PER_LBA)
+            .into_iter()
+            .enumerate()
+            .map(|(i, zids)| {
+            let v = zids.map(|z| {
+                let allocated_blocks = if self.is_empty(z) {
+                    0
+                } else {
+                    match self.open_zones.get(&z) {
+                        Some(oz) => oz.allocated_blocks,
+                        None => u32::max_value()
+                    }
+                };
+                let freed_blocks = if self.is_empty(z) {
+                    0
+                } else {
+                    self.zones[z as usize].freed_blocks
+                };
+                let txgs = if self.is_empty(z) {
+                    TxgT::from(0)..TxgT::from(0)
+                } else {
+                    self.zones[z as usize].txgs.clone()
+                };
+                ZoneOnDisk{allocated_blocks, freed_blocks, txgs}
+            }).collect::<Vec<_>>();
+            SpacemapOnDisk::new(i as u64, v)
         }).collect::<Vec<_>>();
         DivBufShared::from(bincode::serialize(&fsm).unwrap())
     }
@@ -558,9 +579,8 @@ impl Display for FreeSpaceMap {
 }
 
 /// Persists the `FreeSpaceMap` in the reserved region of the disk
-// LCOV_EXCL_START
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ZoneOnDisk {
+#[derive(Serialize, Deserialize, Debug, Hash)]
+struct ZoneOnDisk {
     /// The number of blocks that have been allocated in each Zone.  If zero,
     /// then the zone is empty.  If `u32::max_value()`, then the zone is closed.
     allocated_blocks: u32,
@@ -576,7 +596,48 @@ pub struct ZoneOnDisk {
     /// for empty zones.
     txgs: Range<TxgT>
 }
-// LCOV_EXCL_STOP
+
+/// Persists the `FreeSpaceMap` in the reserved region of the disk.  Each one of
+/// these structures stores the allocations of as many zones as can fit into
+/// 4KB.
+#[derive(Serialize, Deserialize, Debug)]
+struct SpacemapOnDisk {
+    /// MetroHash64 self-checksum.  Includes the index of this `SpacemapOnDisk`
+    /// within the overall spacemap, to detect misdirected writes.
+    checksum: u64,
+    zones: Vec<ZoneOnDisk>
+}
+
+impl SpacemapOnDisk {
+    fn deserialize(buf: DivBuf) -> bincode::Result<Vec<Result<Self, Error>>> {
+        bincode::deserialize::<Vec<SpacemapOnDisk>>(&buf[..])
+        .map(|v| {
+            v.into_iter()
+            .enumerate()
+            .map(|(i, sod)| {
+                let mut hasher = MetroHash64::new();
+                hasher.write_u64(i as u64);
+                sod.zones.hash(&mut hasher);
+                if hasher.finish() == sod.checksum {
+                    Ok(sod)
+                } else {
+                    Err(Error::ECKSUM)
+                }
+            }).collect::<Vec<_>>()
+        })
+    }
+
+    fn new(i: u64, v: Vec<ZoneOnDisk>) -> Self {
+        debug_assert!(v.len() <= SPACEMAP_ZONES_PER_LBA);
+        let mut hasher = MetroHash64::new();
+        hasher.write_u64(i);
+        v.hash(&mut hasher);
+        SpacemapOnDisk {
+            checksum: hasher.finish(),
+            zones: v
+        }
+    }
+}
 
 /// A `Cluster` is BFFFS's equivalent of ZFS's top-level Vdev.  It is the
 /// highest level `Vdev` that has its own LBA space.
@@ -1045,7 +1106,9 @@ mod cluster {
     #[test]
     fn freespacemap_open() {
         // Serialized spacemap
-        const SPACEMAP: [u8; 88] = [
+        const SPACEMAP: [u8; 104] = [
+            1, 0, 0, 0, 0, 0, 0, 0,         // 1 SOD
+            0xb2, 0x99, 0x6a, 0xb1, 0xa0, 0x6f, 0xb4, 0x9c, // Checksum
             5, 0, 0, 0, 0, 0, 0, 0,         // 5 entries
             255, 255, 255, 255,             // zone0: allocated_blocks
             0, 0, 0, 0,                     // zone0: freed blocks
@@ -1099,6 +1162,31 @@ mod cluster {
         assert_eq!(oz.start, 304);
         assert_eq!(oz.allocated_blocks, 77);
         assert!(fsm.is_empty(4));
+    }
+
+    // TODO: also, serde tests for > 1 SOD
+    #[test]
+    fn freespacemap_open_ecksum() {
+        // Serialized spacemap
+        const SPACEMAP: [u8; 24] = [
+            1, 0, 0, 0, 0, 0, 0, 0,         // 1 SOD
+            0, 0, 0, 0, 0, 0, 0, 0,         // Checksum
+            0, 0, 0, 0, 0, 0, 0, 0,         // 0 entries
+        ];
+        let s = Scenario::new();
+        let vr = s.create_mock::<MockVdevRaid>();
+        s.expect(vr.zones_call().and_return_clone(0).times(..));
+        s.expect(vr.read_spacemap_call(matchers::ANY, 0)
+                 .and_call(|mut dbm: DivBufMut, _idx: u32| {
+                     dbm.try_truncate(0).unwrap();
+                     dbm.extend(SPACEMAP.iter());
+                     Box::new(future::ok::<(), Error>(()))
+                 })
+        );
+
+        let mock_vr: Box<VdevRaidTrait> = Box::new(vr);
+        let r = FreeSpaceMap::open(mock_vr).wait();
+        assert_eq!(Error::ECKSUM, r.err().unwrap());
     }
 
     #[test]
@@ -1755,8 +1843,10 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
     // A trailing empty zone
     #[test]
     fn serialize() {
-        const EXPECTED: [u8; 72] = [
-            4, 0, 0, 0, 0, 0, 0, 0,         // 4 entries
+        const EXPECTED: [u8; 88] = [
+            1, 0, 0, 0, 0, 0, 0, 0,         // 1 SOD
+            18, 213, 216, 8, 231, 94, 198, 193, // Checksum
+            4, 0, 0, 0, 0, 0, 0, 0,         // 4 ZODs
             255, 255, 255, 255,             // zone0: allocated_blocks
             26, 0, 0, 0,                    // zone0: freed blocks
             1, 0, 0, 0, 3, 0, 0, 0,         // zone0 txgs: 1..3

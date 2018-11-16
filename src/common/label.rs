@@ -24,7 +24,6 @@ use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
  * Spacemap0    variable    bincode-encoded spacemap.  Size is determined at
  *                          format-time.
  * Spacemap1    variable
- * TODO: checksum the spacemaps
  */
 /// The file magic is "BFFFS Vdev\0\0\0\0\0\0"
 const MAGIC: &[u8; MAGIC_LEN] = b"BFFFS Vdev\0\0\0\0\0\0";
@@ -38,7 +37,7 @@ pub const LABEL_LBAS: LbaT = 4;
 pub const LABEL_SIZE: usize = LABEL_LBAS as usize * BYTES_PER_LBA;
 /// Space allocated for storing the spacemap.  This the number of zones whose
 /// information can be recorded in one LBA of storage.
-const SPACEMAP_ZONES_PER_LBA: usize = 256;
+pub const SPACEMAP_ZONES_PER_LBA: usize = 255;
 
 /// How many LBAs should be reserved for each spacemap?
 // This can be a const_fn once that feature is stabilized
