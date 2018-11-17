@@ -627,6 +627,16 @@ impl<A, D, K, V> Tree<A, D, K, V>
         )
     }
 
+    /// Has the Tree been modified since the last time it was flushed to disk?
+    pub fn is_dirty(&self) -> bool {
+        // If the root IntElem is not dirty, then the Tree isn't dirty.  If we
+        // can't get the lock, then somebody else must have it locked for
+        // writing, which means that it must be dirty.
+        self.i.root.try_read()
+        .map(|guard| guard.is_dirty())
+        .unwrap_or(true)
+    }
+
     /// Dump a YAMLized representation of the Tree to stdout.
     ///
     /// Must be called from the synchronous domain.

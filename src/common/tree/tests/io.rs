@@ -522,6 +522,45 @@ root:
 }
 
 #[test]
+fn is_dirty() {
+    let mut mock = DMLMock::new();
+    let node = Arc::new(Node::new(NodeData::Leaf(LeafData::default())));
+    let node_holder = RefCell::new(Some(node));
+    let addrl = 0;
+    mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
+        .called_once()
+        .with(passes(move |args: &(*const u32, TxgT)|
+                     unsafe {*args.0 == addrl} && args.1 == TxgT::from(42))
+        ).returning(move |_| {
+            // XXX simulacrum can't return a uniquely owned object in an
+            // expectation, so we must hack it with RefCell<Option<T>>
+            // https://github.com/pcsm/simulacrum/issues/52
+            let res = Box::new(node_holder.borrow_mut().take().unwrap());
+            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
+        });
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 42
+  ptr:
+    Addr: 0
+"#);
+
+    let mut rt = current_thread::Runtime::new().unwrap();
+    assert!(!tree.is_dirty());
+    rt.block_on(tree.insert(0, 0, TxgT::from(42))).unwrap();
+    assert!(tree.is_dirty());
+}
+
+#[test]
 fn open() {
     let v = vec![
         1u8, 0, 0, 0, 0, 0, 0, 0,               // Height = 1
