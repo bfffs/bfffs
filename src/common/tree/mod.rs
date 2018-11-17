@@ -1763,8 +1763,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }
     }
 
-    /// Flush all in-memory Nodes to disk, returning a serialized `TreeOnDisk`
-    /// object
+    /// Flush all in-memory Nodes to disk
     // Like range_delete, keep the entire Tree locked during flush.  That's
     // because we need to write child nodes before we have valid addresses for
     // their parents' child pointers.  It's also the only way to guarantee that
@@ -1775,10 +1774,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
     // Alternatively, it would be possible to create a streaming flusher like
     // RangeQuery that would descend through the tree multiple times, flushing a
     // portion at each time.  But it wouldn't be able to guarantee a clean tree.
-    pub fn flush(&self, txg: TxgT) -> impl Future<Item=TreeOnDisk, Error=Error>
+    pub fn flush(&self, txg: TxgT) -> impl Future<Item=(), Error=Error>
     {
         let dml2 = self.i.dml.clone();
-        let inner2 = self.i.clone();
         self.write()
             .and_then(move |root_guard| {
             if root_guard.ptr.is_dirty() {
@@ -1795,29 +1793,34 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         .map(move |(addr, txgs)| {
                             root_guard.ptr = TreePtr::Addr(addr);
                             root_guard.txgs = txgs;
-                            root_guard
                         })
                 });
                 Box::new(fut) as Box<Future<Item=_, Error=Error> + Send>
             } else {
-                Box::new(future::ok::<_, Error>(root_guard))
+                Box::new(future::ok::<_, Error>(()))
             }
         })
-        .map(move |root_guard| {
+    }
+
+    /// Render the Tree into a `TreeOnDisk` object.  Requires that the Tree
+    /// already be flushed.  Will fail if the Tree is dirty.
+    pub fn serialize(&self) -> Result<TreeOnDisk, Error> {
+        self.i.root.try_read()
+        .map(|root_guard| {
             let root = IntElem::<A, K, V>{
                 key: root_guard.key,
                 txgs: root_guard.txgs.clone(),
                 ptr: TreePtr::Addr(*root_guard.ptr.as_addr())
             };
             let iod = InnerOnDisk{
-                height: inner2.height.load(Ordering::Relaxed),
-                min_fanout: inner2.min_fanout,
-                max_fanout: inner2.max_fanout,
-                _max_size: inner2._max_size,
+                height: self.i.height.load(Ordering::Relaxed),
+                min_fanout: self.i.min_fanout,
+                max_fanout: self.i.max_fanout,
+                _max_size: self.i._max_size,
                 root
             };
             TreeOnDisk(bincode::serialize(&iod).unwrap())
-        })
+        }).or(Err(Error::EDEADLK))
     }
 
     // Clippy has a false positive on `node`

@@ -93,18 +93,18 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     }
 
     pub fn flush(&self, txg: TxgT)
-        -> Box<Future<Item=TreeOnDisk, Error=Error> + Send>
+        -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<TxgT,
-            Box<Future<Item=TreeOnDisk, Error=Error> + Send>>
+            Box<Future<Item=(), Error=Error> + Send>>
             ("flush", txg)
     }
 
     pub fn expect_flush(&mut self) -> Method<TxgT,
-        Box<Future<Item=TreeOnDisk, Error=Error> + Send>>
+        Box<Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<TxgT,
-            Box<Future<Item=TreeOnDisk, Error=Error> + Send>>("flush")
+            Box<Future<Item=(), Error=Error> + Send>>("flush")
     }
 
     pub fn get(&self, k: K) -> Box<Future<Item=Option<V>, Error=Error> + Send>
@@ -216,6 +216,16 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     {
         self.e.expect::<(K, TxgT),
             Box<Future<Item=Option<V>, Error=Error> + Send>>("remove")
+    }
+
+    pub fn serialize(&self) -> Result<TreeOnDisk, Error> {
+        self.e.was_called_returning::<(), Result<TreeOnDisk, Error>>
+        ("serialize", ())
+    }
+
+    pub fn expect_serialize(&mut self) -> Method<(), Result<TreeOnDisk, Error>>
+    {
+        self.e.expect::<(), Result<TreeOnDisk, Error>>("serialize")
     }
 
     pub fn then(&mut self) -> &mut Self {

@@ -1303,7 +1303,7 @@ root:
           5: 5.0"#);
 }
 
-// Tree::flush should serialize the Tree::Inner object
+// Tree::serialize should serialize the Tree::Inner object
 #[test]
 fn serialize_inner() {
     let expected = vec![
@@ -1346,9 +1346,7 @@ root:
       checksum: 0x0807060504030201
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush(TxgT::from(42)));
-    assert_eq!(&expected[..], &r.unwrap().0[..])
+    assert_eq!(&expected[..], &tree.serialize().unwrap().0[..])
 }
 
 // If the tree isn't dirty, then there's nothing to do

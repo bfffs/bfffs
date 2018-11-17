@@ -439,7 +439,6 @@ impl Database {
         }
         let fut = inner.idml.advance_transaction(move |txg| {
             let inner3 = inner2.clone();
-            let inner4 = inner2.clone();
             let inner5 = inner2.clone();
             let idml2 = inner2.idml.clone();
             let idml3 = inner2.idml.clone();
@@ -447,19 +446,24 @@ impl Database {
             let fsfuts = {
                 let guard = inner2.fs_trees.lock().unwrap();
                 guard.iter()
-                    .map(move |(tree_id, itree)| {
-                        let inner5 = inner4.clone();
-                        let tree_id2 = *tree_id;
-                        itree.flush(txg)
-                            .and_then(move |tree| {
-                                inner5.forest.insert(tree_id2, tree, txg)
-                            })  // LCOV_EXCL_LINE   kcov false negative
-                    }).collect::<Vec<_>>()
+                .map(move |(_, itree)| {
+                    itree.flush(txg)
+                }).collect::<Vec<_>>()
             };
             future::join_all(fsfuts)
-            .and_then(move |_| Tree::flush(&inner3.forest, txg))
-            .and_then(move |forest| idml2.sync_all(txg).map(move |_| forest))
-            .and_then(move |forest| {
+            .and_then(move |_| {
+                 let forest_futs = inner3.fs_trees.lock().unwrap().iter()
+                .map(|(tree_id, itree)| {
+                    let tod = itree.serialize().unwrap();
+                    inner3.forest.insert(*tree_id, tod, txg)
+                }).collect::<Vec<_>>();
+                future::join_all(forest_futs)
+                .map(move |_| inner3)
+            }).and_then(move |inner3| {
+                Tree::flush(&inner3.forest, txg)
+            }).and_then(move |_| idml2.sync_all(txg))
+            .and_then(move |_| {
+                let forest = inner2.forest.serialize().unwrap();
                 let label = Label { forest: forest };
                 inner2.write_label(&label, 0, txg)
                 .map(|_| label)
@@ -575,8 +579,12 @@ mod t {
             .called_once()
             .with(TxgT::from(0))
             .returning(|_| {
-                let tod = TreeOnDisk::default();
-                Box::new(future::ok::<TreeOnDisk, Error>(tod))
+                Box::new(future::ok::<(), Error>(()))
+            });
+        forest.expect_serialize()
+            .called_once()
+            .returning(|_| {
+                Ok(TreeOnDisk::default())
             });
 
         idml.then().expect_write_label()

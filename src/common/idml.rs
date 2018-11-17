@@ -375,20 +375,23 @@ impl<'a> IDML {
         debug_assert!(self.transaction.try_read().is_err(),
             "IDML::write_label must be called with the txg lock held");
         let ddml2 = self.ddml.clone();
+        let trees2 = self.trees.clone();
         let next_rid = self.next_rid.load(Ordering::Relaxed);
         let idx = labeller.idx();
         self.trees.alloct.flush(txg)
         .join(self.trees.ridt.flush(txg))
-        .and_then(move |(alloct, ridt)| {
+        .and_then(move |_| {
             ddml2.write_spacemap(idx)
-            .map(|_| (ddml2, alloct, ridt))
-        }).and_then(move |(ddml2, alloct, ridt)| {
+            .map(|_| ddml2)
+        }).and_then(move |ddml2| {
             // NB: this is partially redundant with the sync_all in
             // Database::sync_transaction_priv.  It would be more efficient to
             // reorder things to combine the two syncs.
             ddml2.sync_all(txg)
-            .map(|_| (ddml2, alloct, ridt))
-        }).and_then(move |(ddml2, alloct, ridt)| {
+            .map(|_| ddml2)
+        }).and_then(move |ddml2| {
+            let alloct = trees2.alloct.serialize().unwrap();
+            let ridt = trees2.ridt.serialize().unwrap();
             let label = Label {
                 alloct,
                 next_rid,
