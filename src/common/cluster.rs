@@ -3,6 +3,7 @@
 use bincode;
 use crate::common::{*, label::*, vdev::{Vdev, VdevFut}};
 #[cfg(not(test))] use crate::common::vdev_raid::*;
+use fixedbitset::FixedBitSet;
 use futures::{ Future, IntoFuture, future};
 use itertools::Itertools;
 use metrohash::MetroHash64;
@@ -118,6 +119,9 @@ impl OpenZone {
 // * Find all zones modified in a certain txg range
 #[derive(Debug)]
 struct FreeSpaceMap {
+    /// Which Zones have been modified since the last Cluster::flush?
+    dirty: FixedBitSet,
+
     /// Stores the set of empty zones with id less than zones.len().  All zones
     /// with id greater than or equal to zones.len() are implicitly empty
     empty_zones: BTreeSet<ZoneT>,
@@ -169,6 +173,12 @@ impl<'a> FreeSpaceMap {
         }
     }
 
+    /// Mark all zones as clean.  Call this method after writing the
+    /// FreeSpaceMap to disk.
+    fn clear_dirty_zones(&mut self) {
+        self.dirty.clear();
+    }
+
     fn deserialize(vdev: VdevRaidLike, buf: DivBuf, zones: ZoneT)
         -> bincode::Result<impl Future<Item=(Self, VdevRaidLike), Error=Error>>
     {
@@ -205,13 +215,21 @@ impl<'a> FreeSpaceMap {
             }
         }
         assert_eq!(zid, zones);
+        fsm.clear_dirty_zones();
         let fut = Box::new(future::join_all(oz_futs).map(|_| (fsm, vdev)))
             as Box<Future<Item=_, Error=Error>>;
         Ok(fut)
     }
 
+    /// Mark zone `zone_id` as dirty
+    fn dirty_zone(&mut self, zone_id: ZoneT) {
+        let block = zone_id as usize / SPACEMAP_ZONES_PER_LBA;
+        self.dirty.insert(block);
+    }
+
     /// Return Zone `zone_id` to an Empty state
     fn erase_zone(&mut self, zone_id: ZoneT) {
+        self.dirty_zone(zone_id);
         let zone_idx = zone_id as usize;
         assert!(!self.is_open(zone_id),
             "Can't erase an open zone");
@@ -249,6 +267,7 @@ impl<'a> FreeSpaceMap {
 
     /// Mark the Zone as closed.  `txg` is the current transaction group
     fn finish_zone(&mut self, zone_id: ZoneT, txg: TxgT) {
+        self.dirty_zone(zone_id);
         let available = self.available(zone_id) as u32;
         assert!(self.open_zones.remove(&zone_id).is_some(),
             "Can't finish a Zone that isn't open");
@@ -257,6 +276,7 @@ impl<'a> FreeSpaceMap {
     }
 
     fn free(&mut self, zone_id: ZoneT, length: LbaT) {
+        self.dirty_zone(zone_id);
         assert!(!self.is_empty(zone_id), "Can't free from an empty zone");
         let zone = self.zones.get_mut(zone_id as usize).expect(
             "Can't free from an empty zone");
@@ -334,10 +354,14 @@ impl<'a> FreeSpaceMap {
     }
 
     fn new(total_zones: ZoneT) -> Self {
-        FreeSpaceMap{empty_zones: BTreeSet::new(),
-                     open_zones: BTreeMap::new(),
-                     total_zones,
-                     zones: Vec::new()}
+        let spacemap_blocks = spacemap_space(u64::from(total_zones));
+        FreeSpaceMap{
+            dirty: FixedBitSet::with_capacity(spacemap_blocks as usize),
+            empty_zones: BTreeSet::new(),
+            open_zones: BTreeMap::new(),
+            total_zones,
+            zones: Vec::new()
+        }
     }
 
     /// Open an Empty zone, and optionally try to allocate from it.
@@ -361,6 +385,7 @@ impl<'a> FreeSpaceMap {
     /// the requested zone has insufficient space, return ENOSPC.
     fn open_zone(&mut self, id: ZoneT, start: LbaT, end: LbaT, lbas: LbaT,
                  txg: TxgT) -> Result<Option<(ZoneT, LbaT)>, Error> {
+        self.dirty_zone(id);
         let idx = id as usize;
         let space = end - start;
         assert!(self.is_empty(id), "Can only open empty zones");
@@ -454,31 +479,37 @@ impl<'a> FreeSpaceMap {
     fn try_allocate(&mut self, space: LbaT)
         -> (Option<(ZoneT, LbaT)>, Vec<ZoneT>)
     {
-        let zones = &self.zones;
         let mut nearly_full_zones = Vec::with_capacity(1);
-        let result = self.open_zones.iter_mut().find(|&(zone_id, ref oz)| {
-            let zone = &zones[*zone_id as usize];
-            let avail_lbas = zone.total_blocks - oz.allocated_blocks;
-            // NB the next two lines can be replaced by u32::try_from(space),
-            // once that feature is stabilized
-            // https://github.com/rust-lang/rust/issues/33417
-            assert!(space < LbaT::from(u32::max_value()));
-            if avail_lbas < space as u32 {
-                nearly_full_zones.push(*zone_id);
-                false
-            } else {
-                true
-            }
-        }).and_then(|(zone_id, oz)| {
+        let result = {
+            let zones = &self.zones;
+            self.open_zones.iter_mut().find(|&(zone_id, ref oz)| {
+                let zone = &zones[*zone_id as usize];
+                let avail_lbas = zone.total_blocks - oz.allocated_blocks;
+                // NB the next two lines can be replaced by
+                // u32::try_from(space), once that feature is stabilized
+                // https://github.com/rust-lang/rust/issues/33417
+                assert!(space < LbaT::from(u32::max_value()));
+                if avail_lbas < space as u32 {
+                    nearly_full_zones.push(*zone_id);
+                    false
+                } else {
+                    true
+                }
+            })
+        }.and_then(|(zone_id, oz)| {
             let lba = oz.write_pointer();
             oz.allocated_blocks += space as u32;
             Some((*zone_id, lba))
         });
+        if let Some((zid, _)) = result {
+            self.dirty_zone(zid);
+        }
         (result, nearly_full_zones)
     }
 
     /// Mark the next `space` LBAs in zone `zid` as wasted
     fn waste_space(&mut self, zid: ZoneT, space: LbaT) {
+        self.dirty_zone(zid);
         let oz = self.open_zones.get_mut(&zid).unwrap();
         oz.waste_space(space);
         self.zones[zid as usize].freed_blocks += space as u32;
@@ -747,6 +778,7 @@ impl<'a> Cluster {
         // Since FreeSpaceMap::waste_space is synchronous, we can serialize the
         // FSM here; we don't need to copy it into a Future's continuation.
         let serialized_fsm = fsm.serialize();
+        fsm.clear_dirty_zones();
         future::join_all(flush_futs)
         .and_then(move |_| {
             vdev2.write_spacemap(serialized_fsm.try().unwrap(), idx, 0)
@@ -1183,6 +1215,7 @@ mod cluster {
         assert_eq!(oz.start, 304);
         assert_eq!(oz.allocated_blocks, 77);
         assert!(fsm.is_empty(4));
+        assert_eq!(0, fsm.dirty.count_ones(..));
     }
 
     // TODO: also, serde tests for > 1 SOD
@@ -1302,6 +1335,7 @@ mod cluster {
         let fsm = cluster.fsm.borrow();
         assert_eq!(fsm.open_zones[&0].write_pointer(), 6);
         assert_eq!(fsm.zones[0].freed_blocks, 5);
+        assert_eq!(0, fsm.dirty.count_ones(..));
     }
 
     #[test]
@@ -1493,6 +1527,50 @@ mod free_space_map {
         fsm.open_zone(4, 5000, 7000, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(4, TxgT::from(0));
         assert_eq!(3700, fsm.allocated());
+    }
+
+    #[test]
+    fn dirty() {
+        let mut fsm = FreeSpaceMap::new(4096);
+        // A freshly created FreeSpaceMap should be all clean
+        assert_eq!(0, fsm.dirty.count_ones(..));
+
+        // open_zone should dirty a zone
+        fsm.open_zone(0, 100, 200, 20, TxgT::from(0)).unwrap();
+        assert_eq!(&[0b1], fsm.dirty.as_slice());
+
+        // clear_dirty_zones should clear it
+        fsm.clear_dirty_zones();
+        assert_eq!(0, fsm.dirty.count_ones(..));
+
+        // Allocating should dirty a zone, too
+        fsm.try_allocate(64);
+        assert_eq!(&[0b1], fsm.dirty.as_slice());
+
+        // Wasting space should dirty a zone, too
+        fsm.clear_dirty_zones();
+        fsm.waste_space(0, 10);
+        assert_eq!(&[0b1], fsm.dirty.as_slice());
+
+        // Finishing a zone should also dirty it
+        fsm.clear_dirty_zones();
+        fsm.finish_zone(0, TxgT::from(0));
+        assert_eq!(&[0b1], fsm.dirty.as_slice());
+
+        // As should freeing
+        fsm.clear_dirty_zones();
+        fsm.free(0, 10);
+        assert_eq!(&[0b1], fsm.dirty.as_slice());
+
+        // Finally, so should erasing a zone
+        fsm.clear_dirty_zones();
+        fsm.erase_zone(0);
+        assert_eq!(&[0b1], fsm.dirty.as_slice());
+
+        // The dirty bitmap should also work for zones in other spacemap blocks
+        fsm.open_zone(512, 51200, 51300, 0, TxgT::from(0)).unwrap();
+        fsm.open_zone(2048, 204000, 204900, 0, TxgT::from(0)).unwrap();
+        assert_eq!(&[0b100000101], fsm.dirty.as_slice());
     }
 
     // FreeSpaceMap::display with the following conditions:
