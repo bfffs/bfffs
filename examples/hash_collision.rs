@@ -19,7 +19,8 @@ use rand::{
     FromEntropy,
     Rng,
     SeedableRng,
-    distributions::Alphanumeric
+    distributions::Alphanumeric,
+    seq::SliceRandom
 };
 use std::{
     ffi::{OsStr, OsString},
@@ -90,7 +91,7 @@ impl Collidable for CExtattr {
             .take(10)
             .collect();
         let name = OsStr::from_bytes(&v[..]);
-        let ns = this_rng.choose(&NAMESPACES).unwrap();
+        let ns = NAMESPACES.choose(&mut this_rng).unwrap();
         CExtattr{namespace: *ns, name: name.to_owned()}
     }
 
