@@ -35,6 +35,7 @@ pub trait ClusterTrait {
     fn allocated(&self) -> LbaT;
     fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT);
     fn find_closed_zone(&self, zid: ZoneT) -> Option<cluster::ClosedZone>;
+    fn flush(&self, idx: u32) -> Box<PoolFut>;
     fn free(&self, lba: LbaT, length: LbaT) -> Box<PoolFut>;
     fn optimum_queue_depth(&self) -> u32;
     fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut>;
@@ -44,7 +45,6 @@ pub trait ClusterTrait {
     fn write(&self, buf: IoVec, txg: TxgT)
         -> Result<(LbaT, Box<PoolFut>), Error>;
     fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
-    fn write_spacemap(&self, idx: u32) -> Box<PoolFut>;
 }
 #[cfg(test)]
 pub type ClusterLike = Box<ClusterTrait>;
@@ -57,6 +57,7 @@ pub type ClusterLike = cluster::Cluster;
 enum Rpc {
     Allocated(oneshot::Sender<LbaT>),
     FindClosedZone(ZoneT, oneshot::Sender<Option<cluster::ClosedZone>>),
+    Flush(u32, oneshot::Sender<Result<(), Error>>),
     Free(LbaT, LbaT, oneshot::Sender<Result<(), Error>>),
     OptimumQueueDepth(oneshot::Sender<u32>),
     Read(IoVecMut, LbaT, oneshot::Sender<Result<(), Error>>),
@@ -65,7 +66,6 @@ enum Rpc {
     SyncAll(oneshot::Sender<Result<(), Error>>),
     Write(IoVec, TxgT, oneshot::Sender<Result<LbaT, Error>>),
     WriteLabel(LabelWriter, oneshot::Sender<Result<(), Error>>),
-    WriteSpacemap(u32, oneshot::Sender<Result<(), Error>>),
     #[cfg(debug_assertions)]
     AssertCleanZone(ZoneT, TxgT),
 }
@@ -115,6 +115,14 @@ impl<'a> ClusterServer {
                 tx.send(self.cluster.find_closed_zone(zid)).unwrap();
                 Box::new(future::ok::<(), ()>(()))
                     as Box<Future<Item=(), Error=()>>
+            },
+            Rpc::Flush(idx, tx) => {
+                let fut = self.cluster.flush(idx)
+                .then(|r| {
+                    tx.send(r).unwrap();
+                    Ok(())
+                });
+                Box::new(fut) as Box<Future<Item=(), Error=()>>
             },
             Rpc::Free(lba, length, tx) => {
                 let fut = self.cluster.free(lba, length)
@@ -181,14 +189,6 @@ impl<'a> ClusterServer {
                 });
                 Box::new(fut) as Box<Future<Item=(), Error=()>>
             },
-            Rpc::WriteSpacemap(idx, tx) => {
-                let fut = self.cluster.write_spacemap(idx)
-                .then(|r| {
-                    tx.send(r).unwrap();
-                    Ok(())
-                });
-                Box::new(fut) as Box<Future<Item=(), Error=()>>
-            },
         }
     }
 }
@@ -213,6 +213,14 @@ impl<'a> ClusterProxy {
     fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT) {
         let rpc = Rpc::AssertCleanZone(zone, txg);
         self.server.unbounded_send(rpc).unwrap();
+    }
+
+    fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error> {
+        let (tx, rx) = oneshot::channel::<Result<(), Error>>();
+        let rpc = Rpc::Flush(idx, tx);
+        self.server.unbounded_send(rpc).unwrap();
+        rx.map_err(|_| Error::EPIPE)
+            .and_then(|result| result.into_future())
     }
 
     fn free(&self, lba: LbaT, length: LbaT)
@@ -306,15 +314,6 @@ impl<'a> ClusterProxy {
         rx.map_err(|_| Error::EPIPE)
             .and_then(|result| result.into_future())
     }
-
-    fn write_spacemap(&self, idx: u32) -> impl Future<Item=(), Error=Error> {
-        let (tx, rx) = oneshot::channel::<Result<(), Error>>();
-        let rpc = Rpc::WriteSpacemap(idx, tx);
-        self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::EPIPE)
-            .and_then(|result| result.into_future())
-    }
-
 }
 
 /// Public representation of a closed zone
@@ -486,6 +485,14 @@ impl<'a> Pool {
         -> impl Future<Item=Self, Error=Error>
     {
         Pool::new(name, Uuid::new_v4(), clusters)
+    }
+
+    pub fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error> {
+        future::join_all(
+            self.clusters.iter()
+            .map(|cp| cp.flush(idx))
+            .collect::<Vec<_>>()
+        ).map(|_| ())
     }
 
     /// Mark `length` LBAs beginning at PBA `pba` as unused, but do not delete
@@ -705,15 +712,6 @@ impl<'a> Pool {
         }).collect::<Vec<_>>();
         future::join_all(futs).map(|_| ())
     }
-
-    pub fn write_spacemap(&self, idx: u32)
-        -> impl Future<Item=(), Error=Error>
-    {
-        let futs = self.clusters.iter().map(|cluster| {
-            cluster.write_spacemap(idx)
-        }).collect::<Vec<_>>();
-        future::join_all(futs).map(|_| ())
-    }
 }
 
 // LCOV_EXCL_START
@@ -751,6 +749,7 @@ mod pool {
             fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT);
             fn find_closed_zone(&self, zid: ZoneT)
                 -> Option<cluster::ClosedZone>;
+            fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error>>;
             fn free(&self, lba: LbaT, length: LbaT)
                 -> Box<Future<Item=(), Error=Error>>;
             fn optimum_queue_depth(&self) -> u32;
@@ -761,7 +760,6 @@ mod pool {
             fn write(&self, buf: IoVec, txg: TxgT)
                 -> Result<(LbaT, Box<PoolFut>), Error>;
             fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
-            fn write_spacemap(&self, idx: u32) -> Box<PoolFut>;
         }
     }
 

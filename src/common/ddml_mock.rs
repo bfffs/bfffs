@@ -62,6 +62,19 @@ impl DDMLMock {
             ("delete_direct")
     }
 
+    pub fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error> + Send> {
+        self.e.was_called_returning::<u32,
+            Box<Future<Item=(), Error=Error> + Send>>
+            ("flush", idx)
+    }
+
+    pub fn expect_flush(&mut self) -> Method<u32,
+        Box<Future<Item=(), Error=Error> + Send>>
+    {
+        self.e.expect::<u32, Box<Future<Item=(), Error=Error> + Send>>
+            ("flush")
+    }
+
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const DRP,
         Box<Future<Item=Box<R>, Error=Error> + Send>>
     {
@@ -200,21 +213,6 @@ impl DDMLMock {
     {
         self.e.expect::<LabelWriter, Box<Future<Item=(), Error=Error> + Send>>
             ("write_label")
-    }
-
-    pub fn write_spacemap(&self, idx: u32)
-        -> impl Future<Item=(), Error=Error> + Send
-    {
-        self.e.was_called_returning::<u32,
-                                      Box<Future<Item=(), Error=Error> + Send>>
-            ("write_spacemap", idx)
-    }
-
-    pub fn expect_write_spacemap(&mut self)
-        -> Method<u32, Box<Future<Item=(), Error=Error> + Send>>
-    {
-        self.e.expect::<u32, Box<Future<Item=(), Error=Error> + Send>>
-            ("write_spacemap")
     }
 }
 

@@ -427,11 +427,12 @@ impl Database {
     {
         // Outline:
         // 1) Flush the trees
-        // 2) Sync the pool
+        // 2) Sync the pool, so the label will be accurate.
         // 3) Write the label
-        // 4) Sync the pool again
+        // 4) Sync the pool again, to commit the first label
         // 5) Write the second label
-        // 6) Sync the pool again
+        // 6) Sync the pool again, in case we're about to physically pull the
+        //    disk or power off.
         let inner2 = inner.clone();
         if !inner.dirty.swap(false, Ordering::Relaxed) {
             return Box::new(Ok(()).into_future())
@@ -441,8 +442,6 @@ impl Database {
             let inner3 = inner2.clone();
             let inner5 = inner2.clone();
             let idml2 = inner2.idml.clone();
-            let idml3 = inner2.idml.clone();
-            let idml4 = inner2.idml.clone();
             let fsfuts = {
                 let guard = inner2.fs_trees.lock().unwrap();
                 guard.iter()
@@ -461,15 +460,27 @@ impl Database {
                 .map(move |_| inner3)
             }).and_then(move |inner3| {
                 Tree::flush(&inner3.forest, txg)
-            }).and_then(move |_| idml2.sync_all(txg))
-            .and_then(move |_| {
+            }).and_then(move |_| idml2.flush(0, txg).map(move |_| idml2))
+            .and_then(move |idml2| idml2.sync_all(txg).map(move |_| idml2))
+            .and_then(move |idml2| {
                 let forest = inner2.forest.serialize().unwrap();
                 let label = Label { forest: forest };
                 inner2.write_label(&label, 0, txg)
-                .map(|_| label)
-            }).and_then(move |label| idml3.sync_all(txg).map(move |_| label))
-            .and_then(move |label| inner5.write_label(&label, 1, txg))
-            .and_then(move |_| idml4.sync_all(txg))
+                .map(|_| (idml2, label))
+            }).and_then(move |(idml2, label)| {
+                idml2.flush(1, txg).map(move |_| (idml2, label))
+            }).and_then(move |(idml2, label)| {
+                // The only time we need to read the second label is if we lose
+                // power while writing the first.  The fact that we reached this
+                // point means that that won't happen, at least not until the
+                // _next_ transaction sync.  So we don't need an additional
+                // sync_all between idml2.flush(1, ...) and idml2.sync_all(...).
+                idml2.sync_all(txg)
+                .map(move |_| (idml2, label))
+            }).and_then(move |(idml2, label)| {
+                inner5.write_label(&label, 1, txg)
+                .map(move |_| idml2)
+            }).and_then(move |idml2| idml2.sync_all(txg))
         });
         Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
     }
@@ -567,12 +578,7 @@ mod t {
             .called_once()
             .returning(|_| TxgT::from(0));
 
-        idml.expect_sync_all()
-            .called_once()
-            .with(TxgT::from(0))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
-
-        // forest.flush should be called inbetween the two sync_all()s, but
+        // forest.flush should be called before IDML::sync_all, but
         // Simulacrum isn't able to verify the order of calls to different
         // objects
         forest.expect_flush()
@@ -587,18 +593,31 @@ mod t {
                 Ok(TreeOnDisk::default())
             });
 
-        idml.then().expect_write_label()
+        idml.expect_flush()
             .called_once()
+            .with((0, TxgT::from(0)))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
-        idml.expect_sync_all()
+        idml.then().expect_sync_all()
             .called_once()
             .with(TxgT::from(0))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
-
         idml.then().expect_write_label()
             .called_once()
             .returning(|_| Box::new(future::ok::<(), Error>(())));
-        idml.expect_sync_all()
+
+        idml.expect_flush()
+            .called_once()
+            .with((1, TxgT::from(0)))
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+        idml.then().expect_sync_all()
+            .called_once()
+            .with(TxgT::from(0))
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+        idml.then().expect_write_label()
+            .called_once()
+            .returning(|_| Box::new(future::ok::<(), Error>(())));
+
+        idml.then().expect_sync_all()
             .called_once()
             .with(TxgT::from(0))
             .returning(|_| Box::new(future::ok::<(), Error>(())));

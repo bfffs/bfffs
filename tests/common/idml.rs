@@ -62,7 +62,7 @@ test_suite! {
 
     const POOLNAME: &str = &"TestPool";
 
-    fixture!( objects() -> (Runtime, IDML, TempDir, PathBuf) {
+    fixture!( objects() -> (Runtime, Arc<IDML>, TempDir, PathBuf) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
             let tempdir = t!(TempDir::new("test_idml_persistence"));
@@ -85,7 +85,7 @@ test_suite! {
             })).unwrap();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
-            let idml = IDML::create(ddml, cache);
+            let idml = Arc::new(IDML::create(ddml, cache));
             (rt, idml, tempdir, filename)
         }
     });
@@ -95,10 +95,15 @@ test_suite! {
     // check that we can open-after-write
     test open(objects()) {
         let (mut rt, old_idml, _tempdir, path) = objects.val;
+        let txg = TxgT::from(42);
+        let old_idml2 = old_idml.clone();
         rt.block_on(
             old_idml.advance_transaction(|_| {
                 let label_writer = LabelWriter::new(0);
-                old_idml.write_label(label_writer, TxgT::from(42))
+                old_idml2.flush(0, txg)
+                .and_then(move |_| {
+                    old_idml2.write_label(label_writer, txg)
+                })
             })
         ).unwrap();
         drop(old_idml);
@@ -123,10 +128,15 @@ test_suite! {
 
     test write_label(objects()) {
         let (mut rt, idml, _tempdir, path) = objects.val;
+        let txg = TxgT::from(42);
+        let idml2 = idml.clone();
         rt.block_on(
-            idml.advance_transaction(|_| {
-                let label_writer = LabelWriter::new(0);
-                idml.write_label(label_writer, TxgT::from(42))
+            idml.advance_transaction(move |_| {
+                idml2.flush(0, txg)
+                .and_then(move |_| {
+                    let label_writer = LabelWriter::new(0);
+                    idml2.write_label(label_writer, txg)
+                })
             })
         ).unwrap();
         let mut f = fs::File::open(path).unwrap();

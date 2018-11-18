@@ -84,6 +84,21 @@ impl IDMLMock {
         Ok(())
     }
 
+    pub fn flush(&self, idx: u32, txg: TxgT)
+        -> impl Future<Item=(), Error=Error> + Send
+    {
+         self.e.was_called_returning::<(u32, TxgT),
+            Box<Future<Item=(), Error=Error> + Send>>
+            ("flush", (idx, txg))
+    }
+
+    pub fn expect_flush(&mut self) -> Method<(u32, TxgT),
+        Box<Future<Item=(), Error=Error> + Send>>
+    {
+        self.e.expect::<(u32, TxgT), Box<Future<Item=(), Error=Error> + Send>>
+        ("flush")
+    }
+
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const RID,
         Box<Future<Item=Box<R>, Error=Error>>>
     {

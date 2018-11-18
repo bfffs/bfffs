@@ -731,6 +731,28 @@ impl<'a> Cluster {
             })
     }
 
+    /// Flush all data and metadata to disk, but don't sync yet.  This should
+    /// normally be called just before [`sync_all`](#method.sync_all).  `idx` is
+    /// the index of the label that is about to be written.
+    pub fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error>
+    {
+        let mut fsm = self.fsm.borrow_mut();
+        let vdev2 = self.vdev.clone();
+        let zone_ids = fsm.open_zone_ids().cloned().collect::<Vec<_>>();
+        let flush_futs = zone_ids.iter().map(|&zone_id| {
+            let (gap, fut) = self.vdev.flush_zone(zone_id);
+            fsm.waste_space(zone_id, gap);
+            fut
+        }).collect::<Vec<_>>();
+        // Since FreeSpaceMap::waste_space is synchronous, we can serialize the
+        // FSM here; we don't need to copy it into a Future's continuation.
+        let serialized_fsm = fsm.serialize();
+        future::join_all(flush_futs)
+        .and_then(move |_| {
+            vdev2.write_spacemap(serialized_fsm.try().unwrap(), idx, 0)
+        })
+    }
+
     /// Mark `length` LBAs beginning at LBA `lba` as unused, and possibly delete
     /// them from the underlying storage.
     ///
@@ -799,17 +821,9 @@ impl<'a> Cluster {
     /// Sync the `Cluster`, ensuring that all data written so far reaches stable
     /// storage.
     pub fn sync_all(&self) -> impl Future<Item=(), Error=Error> {
-        let mut fsm = self.fsm.borrow_mut();
-        let zone_ids = fsm.open_zone_ids().cloned().collect::<Vec<_>>();
-        let flush_futs = zone_ids.iter().map(|&zone_id| {
-            let (gap, fut) = self.vdev.flush_zone(zone_id);
-            fsm.waste_space(zone_id, gap);
-            fut
-        }).collect::<Vec<_>>();
-        let flush_fut = future::join_all(flush_futs);
-        let vdev2 = self.vdev.clone();
-        flush_fut.and_then(move |_| vdev2.sync_all())
-    }   // LCOV_EXCL_LINE   kcov false negative
+        // TODO: assert that the FreeSpaceMap isn't dirty
+        self.vdev.sync_all()
+    }
 
     /// Return the `Cluster`'s UUID.  It's the same as its RAID device's.
     pub fn uuid(&self) -> Uuid {
@@ -906,7 +920,7 @@ mod open_zone {
 mod cluster {
     use super::super::*;
     use divbuf::DivBufShared;
-    use mockers::{Scenario, check, matchers};
+    use mockers::{Scenario, Sequence, check, matchers};
     use mockers_derive::mock;
     use tokio::runtime::current_thread;
 
@@ -1249,26 +1263,31 @@ mod cluster {
         let _ = cluster.write(db0, TxgT::from(0)).expect("write failed early");
     }
 
-    // Cluster.sync_all should flush all open VdevRaid zones, then sync_all the
+    // During transaction sync, Cluster::flush should flush all open VdevRaid
+    // zones and write the spacemap.  Then Cluster.sync_all should sync_all the
     // VdevRaid
     #[test]
-    fn sync_all() {
+    fn txg_sync() {
         let s = Scenario::new();
+        let mut seq = Sequence::new();
         let vr = s.create_mock::<MockVdevRaid>();
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
-        s.expect(vr.open_zone_call(0)
+        seq.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
+        seq.expect(vr.write_at_call(check!(move |buf: &IoVec| {
                 buf.len() == BYTES_PER_LBA
             }),
             0,  // Zone
             0   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.flush_zone_call(0)
+        seq.expect(vr.flush_zone_call(0)
                  .and_return((5, Box::new(future::ok::<(), Error>(())))));
-        s.expect(vr.sync_all_call()
+        seq.expect(vr.write_spacemap_call(matchers::ANY, 0, 0)
                  .and_return(Box::new(future::ok::<(), Error>(()))));
+        seq.expect(vr.sync_all_call()
+                 .and_return(Box::new(future::ok::<(), Error>(()))));
+        s.expect(seq);
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new(fsm, Box::new(vr));
 
@@ -1277,7 +1296,8 @@ mod cluster {
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let (_, fut) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
-            fut.and_then(|_| cluster.sync_all())
+            fut.and_then(|_| cluster.flush(0))
+            .and_then(|_| cluster.sync_all())
         })).unwrap();
         let fsm = cluster.fsm.borrow();
         assert_eq!(fsm.open_zones[&0].write_pointer(), 6);

@@ -39,6 +39,7 @@ pub trait PoolTrait {
     fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
         -> Box<Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
                       Error=Error>>;
+    fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error> + Send>;
     fn free(&self, pba: PBA, length: LbaT)
         -> Box<Future<Item=(), Error=Error> + Send>;
     fn name(&self) -> &str;
@@ -51,8 +52,6 @@ pub trait PoolTrait {
     fn write(&self, buf: IoVec, txg: TxgT)
         -> Box<Future<Item=PBA, Error=Error> + Send>;
     fn write_label(&self, labeller: LabelWriter)
-        -> Box<Future<Item=(), Error=Error> + Send>;
-    fn write_spacemap(&self, idx: u32)
         -> Box<Future<Item=(), Error=Error> + Send>;
 }
 
@@ -73,6 +72,10 @@ impl PoolTrait for MockPoolWrapper {
                       Error=Error>>
     {
         self.0.find_closed_zone(clust, zid)
+    }
+    fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        self.0.flush(idx)
     }
     fn free(&self, pba: PBA, length: LbaT)
         -> Box<Future<Item=(), Error=Error> + Send>
@@ -110,11 +113,6 @@ impl PoolTrait for MockPoolWrapper {
         -> Box<Future<Item=(), Error=Error> + Send>
     {
         self.0.write_label(labeller)
-    }
-    fn write_spacemap(&self, idx: u32)
-        -> Box<Future<Item=(), Error=Error> + Send>
-    {
-        self.0.write_spacemap(idx)
     }
 }
 
@@ -252,6 +250,10 @@ impl DDML {
         -> impl Future<Item=(), Error=Error> + Send
     {
         self.pool.free(drp.pba, drp.asize())
+    }
+
+    pub fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error> + Send> {
+        Box::new(self.pool.flush(idx))
     }
 
     pub fn new(pool: PoolLike, cache: Arc<Mutex<Cache>>) -> Self {
@@ -430,12 +432,6 @@ impl DDML {
     {
         self.pool.write_label(labeller)
     }
-
-    pub fn write_spacemap(&self, idx: u32)
-        -> impl Future<Item=(), Error=Error>
-    {
-        self.pool.write_spacemap(idx)
-    }
 }
 
 impl DML for DDML {
@@ -539,6 +535,8 @@ mod t {
                 -> Box<Future<Item=(Option<ClosedZone>,
                                     Option<(ClusterT, ZoneT)>),
                               Error=Error>>;
+            fn flush(&self, idx: u32)
+                -> Box<Future<Item=(), Error=Error> + Send>;
             fn free(&self, pba: PBA, length: LbaT)
                 -> Box<Future<Item=(), Error=Error> + Send>;
             fn name(&self) -> &str;
@@ -552,8 +550,6 @@ mod t {
             fn write(&self, buf: IoVec, txg: TxgT)
                 -> Box<Future<Item=PBA, Error=Error> + Send>;
             fn write_label(&self, mut labeller: LabelWriter)
-                -> Box<Future<Item=(), Error=Error> + Send>;
-            fn write_spacemap(&self, idx: u32)
                 -> Box<Future<Item=(), Error=Error> + Send>;
         }
     }
