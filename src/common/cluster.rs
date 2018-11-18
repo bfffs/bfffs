@@ -922,15 +922,6 @@ impl<'a> Cluster {
     {   // LCOV_EXCL_LINE   kcov false negative
         self.vdev.write_label(labeller)
     }
-
-    /// Asynchronously write this Cluster's spacemap to all component devices
-    /// `idx` is the index of the label being written.
-    pub fn write_spacemap(&self, idx: u32)
-        -> impl Future<Item=(), Error=Error>
-    {
-        let fsm = self.fsm.borrow().serialize();
-        self.vdev.write_spacemap(fsm.try().unwrap(), idx, 0)
-    }
 }
 
 // LCOV_EXCL_START

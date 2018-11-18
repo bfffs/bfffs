@@ -95,10 +95,10 @@ test_suite! {
         })).unwrap();
     }
 
-    test write_spacemap(objects()) {
+    test flush(objects()) {
         let (mut rt, old_cluster, _tempdir, path) = objects.val;
         rt.block_on(future::lazy(|| {
-            old_cluster.write_spacemap(0)
+            old_cluster.flush(0)
         })).unwrap();
 
         let mut f = fs::File::open(path).unwrap();
