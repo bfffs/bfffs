@@ -464,7 +464,7 @@ impl Database {
             .and_then(move |idml2| idml2.sync_all(txg).map(move |_| idml2))
             .and_then(move |idml2| {
                 let forest = inner2.forest.serialize().unwrap();
-                let label = Label { forest: forest };
+                let label = Label {forest};
                 inner2.write_label(&label, 0, txg)
                 .map(|_| (idml2, label))
             }).and_then(move |(idml2, label)| {

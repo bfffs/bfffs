@@ -35,7 +35,8 @@ pub trait VdevRaidTrait : Vdev {
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> Box<VdevFut>;
     fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-    fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT) -> Box<VdevFut>;
+    fn write_spacemap(&self, buf: &IoVec, idx: u32, block: LbaT)
+        -> Box<VdevFut>;
 }
 #[cfg(test)]
 pub type VdevRaidLike = Box<VdevRaidTrait>;
@@ -185,7 +186,7 @@ impl<'a> FreeSpaceMap {
         let mut oz_futs = Vec::new();
         let mut zid: ZoneT = 0;
         for (i, db) in buf.into_chunks(BYTES_PER_LBA).enumerate() {
-            let sod = SpacemapOnDisk::deserialize(i as u64, db).unwrap();
+            let sod = SpacemapOnDisk::deserialize(i as u64, &db).unwrap();
             if sod.is_err() {
                 let fut = Err(sod.unwrap_err()).into_future();
                 let r = Box::new(fut) as Box<Future<Item=_, Error=_>>;
@@ -470,7 +471,7 @@ impl<'a> FreeSpaceMap {
                 };
                 ZoneOnDisk{allocated_blocks, freed_blocks, txgs}
             }).collect::<Vec<_>>();
-            let sod = SpacemapOnDisk::new(block as u64, v);
+            let sod = SpacemapOnDisk::new(u64::from(block), v);
             let dbs = DivBufShared::from(bincode::serialize(&sod).unwrap());
             (LbaT::from(block), dbs)
         })
@@ -647,7 +648,7 @@ struct SpacemapOnDisk {
 }
 
 impl SpacemapOnDisk {
-    fn deserialize(block: LbaT, buf: DivBuf)
+    fn deserialize(block: LbaT, buf: &DivBuf)
         -> bincode::Result<Result<Self, Error>>
     {
         bincode::deserialize::<SpacemapOnDisk>(&buf[..])
@@ -784,7 +785,7 @@ impl<'a> Cluster {
         // FSM here; we don't need to copy it into a Future's continuation.
         let sm_futs = fsm.serialize()
         .map(|(block, dbs)| {
-            vdev2.write_spacemap(dbs.try().unwrap(), idx, block)
+            vdev2.write_spacemap(&dbs.try().unwrap(), idx, block)
         }).collect::<Vec<_>>();
         let fut = future::join_all(flush_futs)
         .and_then(move |_| future::join_all(sm_futs))
@@ -950,8 +951,10 @@ mod open_zone {
 mod cluster {
     use super::super::*;
     use divbuf::DivBufShared;
+    use itertools::Itertools;
     use mockers::{Scenario, Sequence, check, matchers};
     use mockers_derive::mock;
+    use std::iter;
     use tokio::runtime::current_thread;
 
     mock!{
@@ -978,7 +981,7 @@ mod cluster {
             fn write_at(&self, buf: IoVec, zone: ZoneT,
                         lba: LbaT) -> Box<VdevFut>;
             fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-            fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT)
+            fn write_spacemap(&self, buf: &IoVec, idx: u32, block: LbaT)
                 -> Box<VdevFut>;
         }
     }
@@ -1183,9 +1186,7 @@ mod cluster {
                  .and_call(|mut dbm: DivBufMut, _idx: u32| {
                      assert_eq!(dbm.len(), BYTES_PER_LBA);
                      dbm[0..96].copy_from_slice(&SPACEMAP[..]);
-                     for i in 96..4096 {
-                         dbm[i] = 0;
-                     }
+                     dbm[96..4096].iter_mut().set_from(iter::repeat(0));
                      Box::new(future::ok::<(), Error>(()))
                  })
         );
@@ -1245,13 +1246,9 @@ mod cluster {
                  .and_call(|mut dbm: DivBufMut, _idx: u32| {
                      assert_eq!(dbm.len(), 8192);
                      dbm[0..32].copy_from_slice(&SPACEMAP_B0[..]);
-                     for i in 32..4096 {
-                         dbm[i] = 0;
-                     }
+                     dbm[32..4096].iter_mut().set_from(iter::repeat(0));
                      dbm[4096..4128].copy_from_slice(&SPACEMAP_B1[..]);
-                     for i in 4128..dbm.len() {
-                         dbm[i] = 0;
-                     }
+                     dbm[4192..8192].iter_mut().set_from(iter::repeat(0));
                      Box::new(future::ok::<(), Error>(()))
                  })
         );
@@ -1592,7 +1589,7 @@ mod free_space_map {
     fn dirty() {
         let mut fsm = FreeSpaceMap::new(4096);
         // A freshly created FreeSpaceMap should be all dirty
-        assert_eq!(&[0b11111111111111111], fsm.dirty.as_slice());
+        assert_eq!(&[0b1_1111_1111_1111_1111], fsm.dirty.as_slice());
 
         // clear_dirty_zones should clear it
         fsm.clear_dirty_zones();
@@ -1628,8 +1625,8 @@ mod free_space_map {
 
         // The dirty bitmap should also work for zones in other spacemap blocks
         fsm.open_zone(512, 51200, 51300, 0, TxgT::from(0)).unwrap();
-        fsm.open_zone(2048, 204000, 204900, 0, TxgT::from(0)).unwrap();
-        assert_eq!(&[0b100000101], fsm.dirty.as_slice());
+        fsm.open_zone(2048, 204_000, 204_900, 0, TxgT::from(0)).unwrap();
+        assert_eq!(&[0b1_0000_0101], fsm.dirty.as_slice());
     }
 
     // FreeSpaceMap::display with the following conditions:

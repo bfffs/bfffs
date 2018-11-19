@@ -927,7 +927,7 @@ impl VdevRaid {
         future::join_all(futs).map(|_| ())
     }
 
-    pub fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT)
+    pub fn write_spacemap(&self, buf: &IoVec, idx: u32, block: LbaT)
         -> impl Future<Item=(), Error=Error>
     {
         let futs = self.blockdevs.iter().map(|bd| {

@@ -134,7 +134,7 @@ impl VdevLeafApi for VdevFile {
     }
 
     fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut> {
-        assert!((idx as u64) < LABEL_COUNT);
+        assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         let container = Box::new(IoVecMutContainer(buf));
         let off = lba * (BYTES_PER_LBA as u64);
@@ -176,7 +176,7 @@ impl VdevLeafApi for VdevFile {
 
     fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT) -> Box<VdevFut>
     {
-        assert!((idx as u64) < LABEL_COUNT);
+        assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         let buf_lbas = (buf.len() / BYTES_PER_LBA) as u64;
         assert!(lba + buf_lbas <= self.reserved_space());
@@ -268,7 +268,7 @@ impl VdevFile {
         -> impl Future<Item=(LabelReader, File), Error=(Error, File)>
     {
         let lba = LabelReader::lba(label);
-        let offset = u64::from(lba) * BYTES_PER_LBA as u64;
+        let offset = lba * BYTES_PER_LBA as u64;
         let dbs = DivBufShared::from(vec![0u8; LABEL_SIZE]);
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));

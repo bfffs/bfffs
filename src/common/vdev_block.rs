@@ -835,7 +835,7 @@ test_suite! {
             let scenario = Scenario::new();
             let leaf = Box::new(scenario.create_mock::<MockVdevLeaf2>());
             scenario.expect(leaf.size_call()
-                                .and_return(262144));
+                                .and_return(262_144));
             scenario.expect(leaf.lba2zone_call(matchers::in_range(1..1<<16))
                                 .and_return_clone(Some(0))
                                 .times(..));
