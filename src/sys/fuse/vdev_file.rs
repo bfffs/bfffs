@@ -133,11 +133,9 @@ impl VdevLeafApi for VdevFile {
         Box::new(fut)
     }
 
-    fn read_spacemap(&self, mut buf: IoVecMut, idx: u32) -> Box<VdevFut> {
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut> {
         assert!((idx as u64) < LABEL_COUNT);
         let lba = u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
-        let spacemap_bytes = self.spacemap_space as usize * BYTES_PER_LBA;
-        buf.try_resize(spacemap_bytes, 0).unwrap();
         let container = Box::new(IoVecMutContainer(buf));
         let off = lba * (BYTES_PER_LBA as u64);
         let fut = VdevFileFut(self.file.read_at(container, off).unwrap());
