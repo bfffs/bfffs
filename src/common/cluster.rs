@@ -35,7 +35,7 @@ pub trait VdevRaidTrait : Vdev {
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> Box<VdevFut>;
     fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-    fn write_spacemap(&self, buf: &IoVec, idx: u32, block: LbaT)
+    fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
         -> Box<VdevFut>;
 }
 #[cfg(test)]
@@ -785,7 +785,7 @@ impl<'a> Cluster {
         // FSM here; we don't need to copy it into a Future's continuation.
         let sm_futs = fsm.serialize()
         .map(|(block, dbs)| {
-            vdev2.write_spacemap(&dbs.try().unwrap(), idx, block)
+            vdev2.write_spacemap(&vec![dbs.try().unwrap()], idx, block)
         }).collect::<Vec<_>>();
         let fut = future::join_all(flush_futs)
         .and_then(move |_| future::join_all(sm_futs))
@@ -981,7 +981,7 @@ mod cluster {
             fn write_at(&self, buf: IoVec, zone: ZoneT,
                         lba: LbaT) -> Box<VdevFut>;
             fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-            fn write_spacemap(&self, buf: &IoVec, idx: u32, block: LbaT)
+            fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
                 -> Box<VdevFut>;
         }
     }

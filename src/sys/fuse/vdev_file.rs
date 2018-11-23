@@ -174,14 +174,20 @@ impl VdevLeafApi for VdevFile {
         Box::new(self.writev_at(sglist, lba))
     }
 
-    fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT) -> Box<VdevFut>
+    fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT) -> Box<VdevFut>
     {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
-        let buf_lbas = (buf.len() / BYTES_PER_LBA) as u64;
+        let buf_lbas: LbaT = buf.iter()
+            .map(|b| b.len() as u64)
+            .sum::<u64>() / BYTES_PER_LBA as LbaT;
         assert!(lba + buf_lbas <= self.reserved_space());
-        let container = Box::new(IoVecContainer(buf));
-        Box::new(self.write_at_unchecked(container, lba))
+        let containers = buf.into_iter().map(|iovec| {
+            Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
+        }).collect();
+        let off = lba * (BYTES_PER_LBA as u64);
+        let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
+        Box::new(fut)
     }
 
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {

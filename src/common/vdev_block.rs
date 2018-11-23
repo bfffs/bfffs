@@ -42,7 +42,7 @@ enum Cmd {
     // The extra LBA is the zone's starting LBA
     FinishZone(LbaT),
     WriteLabel(LabelWriter),
-    WriteSpacemap(IoVec, u32, LbaT),
+    WriteSpacemap(SGList, u32, LbaT),
     SyncAll,
 }
 
@@ -191,10 +191,10 @@ impl BlockOp {
         BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), sender}
     }
 
-    pub fn write_spacemap(buf: IoVec, lba: LbaT, idx: u32, block: LbaT,
+    pub fn write_spacemap(sglist: SGList, lba: LbaT, idx: u32, block: LbaT,
                           sender: oneshot::Sender<()>) -> BlockOp
     {
-        BlockOp { lba, cmd: Cmd::WriteSpacemap(buf, idx, block), sender}
+        BlockOp { lba, cmd: Cmd::WriteSpacemap(sglist, idx, block), sender}
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT,
@@ -353,8 +353,8 @@ impl Inner {
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
             Cmd::OpenZone => self.leaf.open_zone(lba),
             Cmd::WriteLabel(labeller) => self.leaf.write_label(labeller),
-            Cmd::WriteSpacemap(iovec, idx, block) =>
-                self.leaf.write_spacemap(iovec, idx, block),
+            Cmd::WriteSpacemap(sglist, idx, block) =>
+                self.leaf.write_spacemap(sglist, idx, block),
             Cmd::SyncAll => self.leaf.sync_all(),
         };
         (block_op.sender, fut)
@@ -675,7 +675,7 @@ impl VdevBlock {
         self.new_fut(block_op, receiver)
     }
 
-    pub fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT)
+    pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         ->  impl Future<Item=(), Error=Error>
     {
         let (sender, receiver) = oneshot::channel::<()>();
@@ -683,7 +683,7 @@ impl VdevBlock {
         // but before any other write operation, and different write_spacemap
         // operations should sort in the same order as their true LBA order.
         let lba = 1 + self.spacemap_space * LbaT::from(idx) + block;
-        let block_op = BlockOp::write_spacemap(buf, lba, idx, block, sender);
+        let block_op = BlockOp::write_spacemap(sglist, lba, idx, block, sender);
         self.new_fut(block_op, receiver)
     }
 
@@ -773,7 +773,7 @@ fn debug_cmd() {
     let sync_all = Cmd::SyncAll;
     let label_writer = LabelWriter::new(0);
     let write_label = Cmd::WriteLabel(label_writer);
-    let write_spacemap = Cmd::WriteSpacemap(dbs.try().unwrap(), 0, 0);
+    let write_spacemap = Cmd::WriteSpacemap(vec![dbs.try().unwrap()], 0, 0);
     format!("{:?} {:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at,
             erase_zone, finish_zone, sync_all, write_label, write_spacemap);
 }
@@ -814,7 +814,7 @@ test_suite! {
             fn spacemap_space(&self) -> LbaT;
             fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
             fn write_label(&self, label_writer: LabelWriter) -> Box<VdevFut>;
-            fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT)
+            fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
                 -> Box<VdevFut>;
             fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
         }

@@ -38,7 +38,8 @@ pub trait VdevBlockTrait : Vdev {
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
     fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-    fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT) -> Box<VdevFut>;
+    fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        -> Box<VdevFut>;
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut>;
 }
 #[cfg(test)]
@@ -927,11 +928,11 @@ impl VdevRaid {
         future::join_all(futs).map(|_| ())
     }
 
-    pub fn write_spacemap(&self, buf: &IoVec, idx: u32, block: LbaT)
+    pub fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
         -> impl Future<Item=(), Error=Error>
     {
         let futs = self.blockdevs.iter().map(|bd| {
-            bd.write_spacemap(buf.clone(), idx, block)
+            bd.write_spacemap(sglist.clone(), idx, block)
         }).collect::<Vec<_>>();
         future::join_all(futs).map(|_| ())
     }
@@ -1320,7 +1321,7 @@ mock!{
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
         fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-        fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT)
+        fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             -> Box<VdevFut>;
         fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
     }

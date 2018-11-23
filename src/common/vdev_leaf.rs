@@ -73,12 +73,13 @@ pub trait VdevLeafApi : Vdev {
     ///
     /// # Parameters
     ///
-    /// - `buf`:        Buffer of data to write
+    /// - `sglist`:     Buffers of data to write
     /// - `idx`:        Index of the spacemap area to write: there are more than
     ///                 one.  It should be the same as whichever label is being
     ///                 written.
     /// - `block`:      LBA-based offset from the start of the spacemap area
-    fn write_spacemap(&self, buf: IoVec, idx: u32, block: LbaT) -> Box<VdevFut>;
+    fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        -> Box<VdevFut>;
 
     /// The asynchronous scatter/gather write function.
     ///
