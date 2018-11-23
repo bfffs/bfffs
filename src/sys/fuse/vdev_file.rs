@@ -178,10 +178,12 @@ impl VdevLeafApi for VdevFile {
     {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
-        let buf_lbas: LbaT = buf.iter()
+        let bytes: LbaT = buf.iter()
             .map(|b| b.len() as u64)
-            .sum::<u64>() / BYTES_PER_LBA as LbaT;
-        assert!(lba + buf_lbas <= self.reserved_space());
+            .sum::<u64>();
+        debug_assert_eq!(bytes % BYTES_PER_LBA as u64, 0);
+        let lbas = bytes / BYTES_PER_LBA as LbaT;
+        assert!(lba + lbas <= self.reserved_space());
         let containers = buf.into_iter().map(|iovec| {
             Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
         }).collect();

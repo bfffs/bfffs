@@ -785,7 +785,16 @@ impl<'a> Cluster {
         // FSM here; we don't need to copy it into a Future's continuation.
         let sm_futs = fsm.serialize()
         .map(|(block, dbs)| {
-            vdev2.write_spacemap(&vec![dbs.try().unwrap()], idx, block)
+            let db = dbs.try().unwrap();
+            let sglist = if db.len() % BYTES_PER_LBA != 0 {
+                // This can happen in the last blockof the spacemap.  Pad out.
+                let padlen = BYTES_PER_LBA - db.len() % BYTES_PER_LBA;
+                let pad = ZERO_REGION.try().unwrap().slice_to(padlen);
+                vec![db, pad]
+            } else {
+                vec![db]
+            };
+            vdev2.write_spacemap(&sglist, idx, block)
         }).collect::<Vec<_>>();
         let fut = future::join_all(flush_futs)
         .and_then(move |_| future::join_all(sm_futs))
@@ -1359,7 +1368,7 @@ mod cluster {
         let s = Scenario::new();
         let mut seq = Sequence::new();
         let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
+        s.expect(vr.zones_call().and_return_clone(100).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
         seq.expect(vr.open_zone_call(0)
             .and_return(Box::new( future::ok::<(), Error>(()))));
@@ -1371,8 +1380,10 @@ mod cluster {
             .and_return(Box::new( future::ok::<(), Error>(()))));
         seq.expect(vr.flush_zone_call(0)
                  .and_return((5, Box::new(future::ok::<(), Error>(())))));
-        seq.expect(vr.write_spacemap_call(matchers::ANY, 0, 0)
-                 .and_return(Box::new(future::ok::<(), Error>(()))));
+        seq.expect(vr.write_spacemap_call(matchers::check(|sglist: &&SGList| {
+                sglist.iter().map(|b| b.len()).sum::<usize>() == 4096
+            }), 0, 0)
+            .and_return(Box::new(future::ok::<(), Error>(()))));
         seq.expect(vr.sync_all_call()
                  .and_return(Box::new(future::ok::<(), Error>(()))));
         s.expect(seq);
