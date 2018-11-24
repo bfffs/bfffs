@@ -1482,9 +1482,7 @@ root:
         let mtime = Timespec {sec: 3, nsec: 4};
         let ctime = Timespec {sec: 5, nsec: 6};
         let birthtime = Timespec {sec: 7, nsec: 8};
-        let flags = 1;
-        // TODO: define UF_NODUMP in libc and use that here.
-        //let flags = libc::UF_NODUMP;
+        let flags = libc::UF_NODUMP;
 
         let assert = |attr: GetAttr| {
             assert_eq!(attr.nlink, 1); // Shouldn't have been changed

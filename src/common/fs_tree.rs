@@ -10,6 +10,7 @@ use crate::common::{
 };
 use divbuf::DivBufShared;
 use futures::{Future, IntoFuture, future};
+use libc;
 use metrohash::MetroHash64;
 use serde::de::DeserializeOwned;
 use std::{
@@ -31,13 +32,11 @@ struct TimespecDef {
     nsec: i32
 }
 
-// TODO: replace with libc constants EXTATTR_NAMESPACE_* after libc 0.2.44 gets
-// released.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, PartialOrd, Ord,
          Serialize)]
 pub enum ExtAttrNamespace {
-    User = 1,
-    System = 2
+    User = libc::EXTATTR_NAMESPACE_USER as isize,
+    System = libc::EXTATTR_NAMESPACE_SYSTEM as isize
 }
 
 /// Constants that discriminate different `ObjKey`s.  I don't know of a way to
