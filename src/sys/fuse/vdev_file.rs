@@ -226,7 +226,7 @@ impl VdevFile {
             None => VdevFile::DEFAULT_LBAS_PER_ZONE,
             Some(x) => x.get()
         };
-        let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
+        let size = f.len().unwrap() / BYTES_PER_LBA as u64;
         let nzones = div_roundup(size, lpz);
         let spacemap_space = spacemap_space(nzones);
         let uuid = Uuid::new_v4();
@@ -256,7 +256,7 @@ impl VdevFile {
                 // Try the second label
                 VdevFile::read_label(f, 1)
             }).and_then(move |(mut label_reader, f)| {
-                let size = f.metadata().unwrap().len() / BYTES_PER_LBA as u64;
+                let size = f.len().unwrap() / BYTES_PER_LBA as u64;
                 let label: Label = label_reader.deserialize().unwrap();
                 assert!(size >= label.lbas, "Vdev has shrunk since creation");
                 let vdev = VdevFile {
@@ -302,6 +302,10 @@ impl VdevFile {
     fn write_at_unchecked(&self, buf: Box<Borrow<[u8]>>, lba: LbaT)
         -> impl Future<Item = (), Error = Error>
     {
+        {
+            let b: &[u8] = (*buf).borrow();
+            debug_assert!(b.len() % BYTES_PER_LBA == 0);
+        }
         let off = lba * (BYTES_PER_LBA as u64);
         VdevFileFut(self.file.write_at(buf, off).unwrap())
     }
@@ -337,10 +341,11 @@ impl Future for VdevFileLioFut {
     // See comments for VdevFileFut::poll
     fn poll(&mut self) -> Poll<(), Error>{
         match self.0.poll() {
-            Ok(Async::Ready(lio_result)) => {
+            Ok(Async::Ready(mut lio_result_iter)) => {
                 // We must drain the iterator to free the AioCb resources
-                lio_result.map(|_| ()).count();
-                Ok(Async::Ready(()))
+                lio_result_iter.find(|ref r| r.value.is_err())
+                .map(|r| Err(Error::from(r.value.unwrap_err())))
+                .unwrap_or(Ok(Async::Ready(())))
             },
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Err(e) => Err(Error::from(e))

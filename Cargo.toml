@@ -38,7 +38,7 @@ mockers_derive = { version = "=0.12.2", optional = true }
 # remove this crate.
 # https://github.com/rust-lang/rust/issues/49048
 modulo = "0.1.2"
-nix = "0.11.0"
+nix = { git = "https://github.com/asomers/nix", rev = "f7be5da" }
 num-traits = "^0.1"
 serde = "1.0.60"
 serde_cbor = "0.8"
@@ -47,7 +47,7 @@ serde_yaml = "0.8.6"
 time = "0.1"	# needed for FUSE
 tokio = "0.1.8"
 tokio-current-thread = "0.1.1"
-tokio-file = "0.4.0"
+tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "57e24cd"}
 tokio-io-pool = "0.1.4"
 tokio-signal = "0.2.2"
 uuid = { version = "0.6", features = ["serde", "v4"]}
