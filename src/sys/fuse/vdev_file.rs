@@ -3,6 +3,10 @@
 use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
 use divbuf::DivBufShared;
 use futures::{Async, IntoFuture, Future, Poll, future};
+use nix::{
+    convert_ioctl_res, ioc, ioctl_write_ptr, request_code_write,
+    libc::off_t
+};
 use num_traits::FromPrimitive;
 use serde_derive::*;
 use std::{
@@ -10,11 +14,20 @@ use std::{
     fs::OpenOptions,
     io,
     num::NonZeroU64,
-    os::unix::fs::OpenOptionsExt,
+    os::unix::{
+        fs::OpenOptionsExt,
+        io::AsRawFd
+    },
     path::Path
 };
 use tokio_file::{AioFut, File, LioFut};
 use uuid::Uuid;
+
+ioctl_write_ptr! {
+    /// FreeBSD's catch-all ioctl for hole-punching, TRIM, UNMAP, Deallocate,
+    /// and EraseWritePointer
+    diocgdelete, b'd', 136, [off_t; 2]
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Label {
@@ -111,9 +124,23 @@ impl Vdev for VdevFile {
 }
 
 impl VdevLeafApi for VdevFile {
-    fn erase_zone(&self, _lba: LbaT) -> Box<VdevFut> {
-        // ordinary files don't have Zone operations
-        Box::new(future::ok::<(), Error>(()))
+    fn erase_zone(&self, lba: LbaT) -> Box<VdevFut> {
+        // There isn't (yet) a way to asynchronously trim, so use a synchronous
+        // ioctl.
+        let off = lba as off_t * (BYTES_PER_LBA as off_t);
+        let len = self.lbas_per_zone as off_t * BYTES_PER_LBA as off_t;
+        let args = [off, len];
+        let r = unsafe {
+            diocgdelete(self.file.as_raw_fd(), &args)
+        }.map(|_| ())
+        .map_err(Error::from);
+        let fut = if r == Err(Error::ENOTTY) {
+            // This vdev doesn't support DIOCGDELETE
+            Ok(())
+        } else {
+            r
+        }.into_future();
+        Box::new(fut)
     }
 
     fn finish_zone(&self, _lba: LbaT) -> Box<VdevFut> {
