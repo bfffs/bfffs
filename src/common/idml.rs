@@ -205,7 +205,7 @@ impl<'a> IDML {
                 .and_then(move |_| {
                     trees3.alloct.clean_zone(pba_range, zone.txgs, txg)
                 });
-            czfut.join(atfut).map(|_| ())
+            czfut.join(atfut).map(drop)
         }).map(move |_| {
             #[cfg(debug_assertions)]
             ddml3.assert_clean_zone(pba.cluster, zid, txg)
@@ -428,7 +428,7 @@ impl DML for IDML {
                      ) as Box<Future<Item=(), Error=Error> + Send>
                 } else {
                     let ridt_fut = trees2.ridt.insert(rid, entry, txg)
-                        .map(|_| ());
+                        .map(drop);
                     Box::new(ridt_fut)
                     as Box<Future<Item=(), Error=Error> + Send>
                 }
@@ -1089,7 +1089,7 @@ mod t {
         cache.expect_insert()
             .called_once()
             .with(params!(Key::Rid(rid), any()))
-            .returning(|_| ());
+            .returning(drop);
         ddml.expect_put_direct::<Box<CacheRef>>()
             .called_once()
             .returning(move |(_, _, _)|

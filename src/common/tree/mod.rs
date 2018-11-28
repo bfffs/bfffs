@@ -493,7 +493,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     .and_then(move |guard| Tree::addresses_r(dml2, height - 1,
                                                              guard, tx2, txgs2))
                 }).collect::<Vec<_>>();
-                Box::new(future::join_all(child_futs).map(|_| ()))
+                Box::new(future::join_all(child_futs).map(drop))
                     as Box<Future<Item=(), Error=Error> + Send>
             } else {
                 Box::new(Ok(()).into_future())

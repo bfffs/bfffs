@@ -100,7 +100,7 @@ impl Vdev for VdevFile {
 
     fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
         let fut = self.file.sync_all().unwrap()
-            .map(|_| ())
+            .map(drop)
             .map_err(Error::from);
         Box::new(fut)
     }
@@ -132,7 +132,7 @@ impl VdevLeafApi for VdevFile {
         let args = [off, len];
         let r = unsafe {
             diocgdelete(self.file.as_raw_fd(), &args)
-        }.map(|_| ())
+        }.map(drop)
         .map_err(Error::from);
         let fut = if r == Err(Error::ENOTTY) {
             // This vdev doesn't support DIOCGDELETE

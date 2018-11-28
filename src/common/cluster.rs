@@ -798,7 +798,7 @@ impl<'a> Cluster {
         }).collect::<Vec<_>>();
         let fut = future::join_all(flush_futs)
         .and_then(move |_| future::join_all(sm_futs))
-        .map(|_| ());
+        .map(drop);
         fsm.clear_dirty_zones();
         fut
     }
@@ -927,7 +927,7 @@ impl<'a> Cluster {
                 wfut
             }
             );
-            fut = Box::new(future::join_all(finish_futs).join(owfut).map(|_| ()));
+            fut = Box::new(future::join_all(finish_futs).join(owfut).map(drop));
             (lba, fut)
         }).ok_or(Error::ENOSPC)
     }

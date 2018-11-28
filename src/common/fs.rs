@@ -388,7 +388,7 @@ impl Fs {
             self.db.fswrite(self.tree, move |dataset| {
                 htable::remove::<ReadWriteFilesystem, ExtAttr<RID>>(dataset,
                     key, ns, name)
-            }).map(|_| ())
+            }).map(drop)
             .map_err(|e| e.into())
             .then(|r| {
                 tx.send(r).unwrap();
@@ -468,7 +468,7 @@ impl Fs {
                 let mut value = r.unwrap();
                 value.as_mut_inode().unwrap().nlink -= 1;
                 dataset.insert(parent_ino_key, value)
-                .map(|_| ())
+                .map(drop)
             });
             Box::new(fut)
                 as Box<Future<Item=_, Error=_> + Send>
@@ -477,7 +477,7 @@ impl Fs {
                 as Box<Future<Item=_, Error=_> + Send>
         };
         ino_fut.join(nlink_fut)
-        .map(|_| ())
+        .map(drop)
     }
 
     /// Unlink a file whose inode number is known and whose directory entry is
@@ -907,7 +907,7 @@ impl Fs {
             let dotdot_fut = htable::insert(dataset4, dotdot_dirent_key,
                 dotdot_dirent, dotdot_filename);
             let fut = dot_fut.join3(dotdot_fut, nlink_fut)
-            .map(|_| ());
+            .map(drop);
             Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
         };
 
@@ -1180,7 +1180,7 @@ impl Fs {
                             x => panic!("Unexpected value {:?} for key {:?}",
                                         x, k)
                         }
-                    }).map(|_| ());
+                    }).map(drop);
                 Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
             }).map_err(|e| {
                 // An EPIPE here means that the caller dropped the iterator
@@ -1304,7 +1304,7 @@ impl Fs {
                             let mut value = r.unwrap();
                             value.as_mut_inode().unwrap().nlink -= 1;
                             ds2.insert(parent_ino_key, value)
-                            .map(|_| ())
+                            .map(drop)
                         });
                         Box::new(fut)
                             as Box<Future<Item=(), Error=Error> + Send>
@@ -1323,7 +1323,7 @@ impl Fs {
                             let mut value = r.unwrap();
                             value.as_mut_inode().unwrap().nlink += 1;
                             ds3.insert(newparent_ino_key, value)
-                            .map(|_| ())
+                            .map(drop)
                         });
                         Box::new(fut)
                             as Box<Future<Item=(), Error=Error> + Send>
@@ -1339,7 +1339,7 @@ impl Fs {
                                 as Box<Future<Item=(), Error=Error> + Send>
                         } else {
                             let fut = Fs::do_unlink(ds.clone(), v)
-                            .map(|_| ());
+                            .map(drop);
                             Box::new(fut)
                                 as Box<Future<Item=(), Error=Error> + Send>
                         }

@@ -73,7 +73,7 @@ impl Syncer {
     fn kick(&self) -> impl Future<Item=(), Error=Error> {
         self.tx.clone()
             .send(SyncerMsg::Kick)
-            .map(|_| ())
+            .map(drop)
             .map_err(|e| panic!("{:?}", e))
     }
 
@@ -110,7 +110,7 @@ impl Syncer {
                 .map_err(|e| panic!("{:?}", e));
 
             delay_fut.select2(rx_fut)
-                .map_err(|_| ())
+                .map_err(drop)
                 .and_then(move |r| {
                     type LoopFutFut = Box<Future<Item=LoopFut,
                                                  Error=()> + Send>;
@@ -146,7 +146,7 @@ impl Syncer {
                         }
                     }
                 })
-        }).map(|_| ());
+        }).map(drop);
         handle.spawn(Box::new(taskfut)).unwrap();
     }
 
@@ -419,7 +419,7 @@ impl Database {
     /// Finish the current transaction group and start a new one.
     pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> {
         self.syncer.kick().join(Database::sync_transaction_priv(&self.inner))
-            .map(|_| ())
+            .map(drop)
     }
 
     fn sync_transaction_priv(inner: &Arc<Inner>)
@@ -536,7 +536,7 @@ mod t {
         let mut idml = IDML::default();
         idml.expect_shutdown()
             .called_once()
-            .returning(|_| ());
+            .returning(drop);
         let forest = Tree::new();
 
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -554,7 +554,7 @@ mod t {
         let mut idml = IDML::default();
         idml.expect_shutdown()
             .called_times(2)
-            .returning(|_| ());
+            .returning(drop);
         let forest = Tree::new();
 
         let mut rt = current_thread::Runtime::new().unwrap();

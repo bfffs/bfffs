@@ -405,7 +405,7 @@ impl VdevRaid {
         let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
             blockdev.erase_zone(start, end - 1)
         }).collect();
-        future::join_all(futs).map(|_| ())
+        future::join_all(futs).map(drop)
     }
 
     /// Asynchronously finish a zone on a RAID device
@@ -438,7 +438,7 @@ impl VdevRaid {
 
         assert!(sbs.remove(&zone).is_some());
 
-        sbfut.join(future::join_all(futs)).map(|_| ())
+        sbfut.join(future::join_all(futs)).map(drop)
     }
 
     /// Asynchronously flush the `StripeBuffer` for the given zone.
@@ -528,7 +528,7 @@ impl VdevRaid {
                 blockdev.open_zone(first_disk_lba).join(zero_fut)
             }).collect();
 
-        future::join_all(futs).map(|_| ())
+        future::join_all(futs).map(drop)
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -672,7 +672,7 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(|_| () ))
+        Box::new(fut.map(drop ))
     }
 
     /// Read a (possibly improper) subset of one stripe
@@ -700,7 +700,7 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(|_| () ))
+        Box::new(fut.map(drop ))
     }
 
     /// Read the entire serialized spacemap.  `idx` selects which spacemap to
@@ -785,7 +785,7 @@ impl VdevRaid {
                 Box::new(self.write_at_multi(writable_buf, lba))
             });
         }
-        future::join_all(futs).map(|_| ())
+        future::join_all(futs).map(drop)
     }
 
     /// Write two or more whole stripes
@@ -871,7 +871,7 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::new(fut.map(move |_| ()))
+        Box::new(fut.map(drop))
     }
 
     /// Write exactly one stripe
@@ -904,7 +904,7 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::new(data_fut.join(parity_fut).map(move |_| ()))
+        Box::new(data_fut.join(parity_fut).map(drop))
     }
 
     /// Asynchronously write this Vdev's label to all component devices
@@ -925,7 +925,7 @@ impl VdevRaid {
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        future::join_all(futs).map(|_| ())
+        future::join_all(futs).map(drop)
     }
 
     pub fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
@@ -934,7 +934,7 @@ impl VdevRaid {
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_spacemap(sglist.clone(), idx, block)
         }).collect::<Vec<_>>();
-        future::join_all(futs).map(|_| ())
+        future::join_all(futs).map(drop)
     }
 
     /// Write exactly one stripe, with SGLists.
@@ -983,7 +983,7 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        data_fut.join(parity_fut).map(move |_| () )
+        data_fut.join(parity_fut).map(drop )
     }
 }
 
@@ -1039,7 +1039,7 @@ impl Vdev for VdevRaid {
                 self.blockdevs.iter()
                 .map(|bd| bd.sync_all())
                 .collect::<Vec<_>>()
-            ).map(|_| ())   // LCOV_EXCL_LINE kcov false negative
+            ).map(drop)   // LCOV_EXCL_LINE kcov false negative
         )
     }
 

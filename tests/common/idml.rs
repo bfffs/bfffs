@@ -229,7 +229,7 @@ test_suite! {
                 .and_then(move |txg| {
                     let dbs = DivBufShared::from(vec![0u8; 4096]);
                     idml2.put(dbs, Compression::None, *txg)
-                }).map(|_| ())
+                }).map(drop)
             }).and_then(move |_| {
                 idml3.txg()
                 .map_err(|_| Error::EPIPE)

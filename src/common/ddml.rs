@@ -874,7 +874,7 @@ mod t {
         cache.expect_insert()
             .called_once()
             .with(params!(Key::PBA(pba), any()))
-            .returning(|_| ());
+            .returning(drop);
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.write_call(ANY, TxgT::from(42))
             .and_return(Box::new(future::ok::<PBA, Error>(pba)))
@@ -900,7 +900,7 @@ mod t {
         cache.expect_insert()
             .called_once()
             .with(params!(Key::PBA(pba), any()))
-            .returning(|_| ());
+            .returning(drop);
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.write_call(ANY, TxgT::from(42))
             .and_return(Box::new(future::ok::<PBA, Error>(pba)))

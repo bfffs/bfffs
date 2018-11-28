@@ -492,7 +492,7 @@ impl<'a> Pool {
             self.clusters.iter()
             .map(|cp| cp.flush(idx))
             .collect::<Vec<_>>()
-        ).map(|_| ())
+        ).map(drop)
     }
 
     /// Mark `length` LBAs beginning at PBA `pba` as unused, but do not delete
@@ -662,7 +662,7 @@ impl<'a> Pool {
             self.clusters.iter()
             .map(|bd| bd.sync_all())
             .collect::<Vec<_>>()
-        ).map(|_| ())
+        ).map(drop)
     }
 
     /// Return the `Pool`'s UUID.
@@ -710,7 +710,7 @@ impl<'a> Pool {
         let futs = self.clusters.iter().map(|cluster| {
             cluster.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        future::join_all(futs).map(|_| ())
+        future::join_all(futs).map(drop)
     }
 }
 
