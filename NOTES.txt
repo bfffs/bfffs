@@ -1,0 +1,21 @@
+Profiling
+=========
+
+Tokio code is difficult to profile due to the heavy use of lambda functions.
+The problem is that functions like Future::map and Future::and_then are generic
+in their function argument.  That means that they get monomorphized at every
+single call site.  Also, the function argument always get inlined, since it
+always has just a single caller.  The result is that every single map or
+and_then continuation has a nearly identical function name in the stack trace,
+something like
+`_$LT$futures..future..and_then..AndThen$LT$A$C$$u20$B$C$$u20$F$GT$$u20$as$u20$futures..future..Future$GT$::poll::ha43c08c8950bc47f`.
+
+The best profiling technique I've found is to generate a flame graph with
+Dtrace, like this:
+
+* Disable LTO, which reduces inlining.
+* Build in release mode
+* Invoke the daemon like this: sudo dtrace -c "/path/to/bfffsd <args>" -o /tmp/out.stacks -n 'profile-997 /execname == "bfffsd"/ { @[ustack(100)] = count(); }'
+* Generate some load
+* sudo umount /tmp/mnt
+* Process the output with stackcollapse.pl out.stacks | flamegraph.pl | sed -e 's/\$LT\$/\&lt;/g' -e 's/\$GT\$/\&gt;/g' -e 's/\$RF\$/\&amp;/g' -e 's/\$u20\$/ /g' -e 's/\$u27\$/'"'"'/g' -e 's/\$u5b\$/[/g' -e 's/\$u5d\$/]/g' -e 's/\$u7b\$/{/g' -e 's/\$u7d\$/}/g' -e 's/\$LP\$/(/g' -e 's/\$RP\$/)/g' -e 's/\$C\$/,/g' -e 's/\.\./::/g' > flame.svg
