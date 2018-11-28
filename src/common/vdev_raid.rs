@@ -114,7 +114,7 @@ impl StripeBuffer {
 
     /// Number of bytes worth of data contained in the buffer
     fn len(&self) -> usize {
-        let bytes: usize = self.buf.iter().map(|iovec| iovec.len()).sum();
+        let bytes: usize = self.buf.iter().map(DivBuf::len).sum();
         bytes
     }
 
@@ -559,7 +559,7 @@ impl VdevRaid {
             end_lba >= stripe_buffer.unwrap().lba() {
 
             // We need to service part of the read from the StripeBuffer
-            let mut cursor = SGCursor::from(&stripe_buffer.unwrap().peek()[..]);
+            let mut cursor = SGCursor::from(stripe_buffer.unwrap().peek());
             let direct_len = if stripe_buffer.unwrap().lba() > lba {
                 (stripe_buffer.unwrap().lba() - lba) as usize * BYTES_PER_LBA
             } else {
@@ -950,7 +950,7 @@ impl VdevRaid {
         let m = self.codec.stripesize() as usize - f as usize;
 
         let mut dcols = Vec::<SGList>::with_capacity(m);
-        let mut dcursor = SGCursor::from(buf);
+        let mut dcursor = SGCursor::from(&buf);
         for _ in 0..m {
             let mut l = 0;
             let mut col = SGList::new();

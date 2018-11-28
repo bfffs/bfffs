@@ -389,7 +389,7 @@ impl Fs {
                 htable::remove::<ReadWriteFilesystem, ExtAttr<RID>>(dataset,
                     key, ns, name)
             }).map(drop)
-            .map_err(|e| e.into())
+            .map_err(Error::into)
             .then(|r| {
                 tx.send(r).unwrap();
                 Ok(()).into_future()
@@ -617,7 +617,7 @@ impl Fs {
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(ino, objkey);
-        type MyFut = Box<Future<Item=DivBuf, Error=Error> + Send>;
+        type MyFut = Box<Future<Item=Box<DivBuf>, Error=Error> + Send>;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 htable::get(&htable::ReadFilesystem::ReadOnly(&dataset), key,
@@ -625,19 +625,18 @@ impl Fs {
                 .and_then(move |extattr| {
                     match extattr {
                         ExtAttr::Inline(iea) => {
-                            let buf = iea.extent.buf.try().unwrap();
+                            let buf = Box::new(iea.extent.buf.try().unwrap());
                             Box::new(Ok(buf).into_future()) as MyFut
                         },
                         ExtAttr::Blob(bea) => {
-                            let bfut = dataset.get_blob(bea.extent.rid)
-                            .map(|bdb| *bdb);
+                            let bfut = dataset.get_blob(bea.extent.rid);
                             Box::new(bfut) as MyFut
                         }
                     }
                 })
-            }).then(move |r| {
+            }).then(|r| {
                 match r {
-                    Ok(buf) => tx.send(Ok(buf)),
+                    Ok(buf) => tx.send(Ok(*buf)),
                     Err(e) => tx.send(Err(e.into()))
                 }.unwrap();
                 Ok(()).into_future()
@@ -856,7 +855,7 @@ impl Fs {
                     len += match v {
                         FSValue::ExtAttr(xattr) => f(&xattr),
                         FSValue::ExtAttrs(v) => {
-                            v.iter().map(|xattr| f(xattr)).sum()
+                            v.iter().map(&f).sum()
                         },
                         _ => panic!("Unexpected value {:?} for key {:?}", v, k)
                     };
@@ -1037,13 +1036,13 @@ impl Fs {
                                 match item.as_extent().unwrap() {
                                     Extent::Inline(ile) => {
                                         let buf = ile.buf.try().unwrap();
-                                        Box::new(Ok(buf).into_future())
+                                        let bbuf = Box::new(buf);
+                                        Box::new(Ok(bbuf).into_future())
                                             as Box<Future<Item=_,
                                                           Error=_> + Send>
                                     },
                                     Extent::Blob(be) => {
-                                        let bfut = dataset2.get_blob(be.rid)
-                                            .map(|bdb| *bdb);
+                                        let bfut = dataset2.get_blob(be.rid);
                                         Box::new(bfut)
                                             as Box<Future<Item=_,
                                                           Error=_> + Send>
@@ -1058,11 +1057,12 @@ impl Fs {
                                     let dbs = DivBufShared::from(v);
                                     dbs.try().unwrap()
                                 };
-                                Box::new(Ok(db).into_future())
-                                    as Box<Future<Item=DivBuf,
+                                Box::new(Ok(Box::new(db)).into_future())
+                                    as Box<Future<Item=Box<DivBuf>,
                                                   Error=Error> + Send>
                             }
-                        }).map(move |mut db| {
+                        }).map(move |bdb| {
+                            let mut db = *bdb;
                             if rec == 0 {
                                 // Trim the beginning
                                 db.split_to((offset - baseoffset) as usize);
@@ -1191,7 +1191,7 @@ impl Fs {
                 }
             })
         ).unwrap();
-        rx.wait().map(|r| r.unwrap())
+        rx.wait().map(Result::unwrap)
     }
 
     pub fn readlink(&self, ino: u64) -> Result<OsString, i32> {

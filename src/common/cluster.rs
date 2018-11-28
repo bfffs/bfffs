@@ -538,11 +538,10 @@ impl Display for FreeSpaceMap {
         let c = self.zones.len() - o - le;
         let e = (t as usize) - c - o;
         let max_txg: u32 = cmp::max(1, (0..self.zones.len())
-            .map(|idx| idx as ZoneT)
-            .filter(|zid| !self.is_empty(*zid))
+            .filter(|zid| !self.is_empty(*zid as ZoneT))
             .map(|zid| {
                 let z = &self.zones[zid as usize];
-                if self.is_open(zid) {
+                if self.is_open(zid as ZoneT) {
                     z.txgs.start
                 } else {
                     cmp::max(z.txgs.start, z.txgs.end)
@@ -742,7 +741,7 @@ impl<'a> Cluster {
                                     lbas_per_zone, redundancy, paths);
         let total_zones = vdev.zones();
         let fsm = FreeSpaceMap::new(total_zones);
-        Cluster::new(fsm, vdev)
+        Cluster::new((fsm, vdev))
     }
 
     /// Dump the FreeSpaceMap in human-readable form, for debugging purposes
@@ -832,7 +831,8 @@ impl<'a> Cluster {
 
     /// Construct a new `Cluster` from an already constructed
     /// [`VdevRaid`](struct.VdevRaid.html)
-    fn new(fsm: FreeSpaceMap, vdev: VdevRaidLike) -> Self {
+    fn new(args: (FreeSpaceMap, VdevRaidLike)) -> Self {
+        let (fsm, vdev) = args;
         Cluster{fsm: RefCell::new(fsm), vdev: Rc::new(vdev)}
     }
 
@@ -844,7 +844,7 @@ impl<'a> Cluster {
     pub fn open(vdev_raid: VdevRaidLike) -> impl Future<Item=Self, Error=Error>
     {
         FreeSpaceMap::open(vdev_raid)
-            .map(move |(fsm, vdev_raid)| (Cluster::new(fsm, vdev_raid)))
+            .map(Cluster::new)
     }
 
     /// Returns the "best" number of operations to queue to this `Cluster`.  A
@@ -1016,7 +1016,7 @@ mod cluster {
             .and_return(Box::new( future::ok::<(), Error>(()))));
 
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
@@ -1058,7 +1058,7 @@ mod cluster {
             .and_return(Box::new( future::ok::<(), Error>(()))));
 
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
@@ -1105,7 +1105,7 @@ mod cluster {
             .and_return(Box::new( future::ok::<(), Error>(()))));
 
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
@@ -1142,7 +1142,7 @@ mod cluster {
         s.expect(vr.lba2zone_call(1099).and_return_clone(Some(1)).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
         cluster.free(900, 200);
     }
 
@@ -1155,7 +1155,7 @@ mod cluster {
         s.expect(vr.lba2zone_call(1000).and_return_clone(None).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
         cluster.free(1000, 10);
     }
 
@@ -1322,7 +1322,7 @@ mod cluster {
         fsm.finish_zone(3, TxgT::from(3));
         fsm.open_zone(4, 4, 5, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(4, TxgT::from(0));
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
         assert_eq!(cluster.find_closed_zone(0).unwrap(),
             ClosedZone{zid: 0, start: 0, freed_blocks: 1, total_blocks: 1,
                        txgs: TxgT::from(0)..TxgT::from(1)});
@@ -1352,7 +1352,7 @@ mod cluster {
             0   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
@@ -1380,14 +1380,14 @@ mod cluster {
         seq.expect(vr.flush_zone_call(0)
                  .and_return((5, Box::new(future::ok::<(), Error>(())))));
         seq.expect(vr.write_spacemap_call(matchers::check(|sglist: &&SGList| {
-                sglist.iter().map(|b| b.len()).sum::<usize>() == 4096
+                sglist.iter().map(DivBuf::len).sum::<usize>() == 4096
             }), 0, 0)
             .and_return(Box::new(future::ok::<(), Error>(()))));
         seq.expect(vr.sync_all_call()
                  .and_return(Box::new(future::ok::<(), Error>(()))));
         s.expect(seq);
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
         cluster.fsm.borrow_mut().clear_dirty_zones();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -1411,7 +1411,7 @@ mod cluster {
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1)).times(..));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -1429,7 +1429,7 @@ mod cluster {
         s.expect(vr.zones_call().and_return_clone(0).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 0)).times(..));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let result = cluster.write(dbs.try().unwrap(), TxgT::from(0));
@@ -1451,7 +1451,7 @@ mod cluster {
             0   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
@@ -1485,7 +1485,7 @@ mod cluster {
             1   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try().unwrap();
@@ -1531,7 +1531,7 @@ mod cluster {
             3   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new(fsm, Box::new(vr));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs.try().unwrap();

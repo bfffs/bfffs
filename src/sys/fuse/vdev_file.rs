@@ -1,7 +1,7 @@
 // vim: tw=80
 
 use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
-use divbuf::DivBufShared;
+use divbuf::{DivBufShared, DivBuf};
 use futures::{Async, IntoFuture, Future, Poll, future};
 use nix::{
     convert_ioctl_res, ioc, ioctl_write_ptr, request_code_write,
@@ -205,9 +205,9 @@ impl VdevLeafApi for VdevFile {
     {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
-        let bytes: LbaT = buf.iter()
-            .map(|b| b.len() as u64)
-            .sum::<u64>();
+        let bytes: u64 = buf.iter()
+            .map(DivBuf::len)
+            .sum::<usize>() as u64;
         debug_assert_eq!(bytes % BYTES_PER_LBA as u64, 0);
         let lbas = bytes / BYTES_PER_LBA as LbaT;
         assert!(lba + lbas <= self.reserved_space());
