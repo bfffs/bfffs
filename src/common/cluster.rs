@@ -796,8 +796,7 @@ impl<'a> Cluster {
             };
             vdev2.write_spacemap(&sglist, idx, block)
         }).collect::<Vec<_>>();
-        let fut = future::join_all(flush_futs)
-        .and_then(move |_| future::join_all(sm_futs))
+        let fut = future::join_all(flush_futs).join(future::join_all(sm_futs))
         .map(drop);
         fsm.clear_dirty_zones();
         fut
