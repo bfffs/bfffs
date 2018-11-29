@@ -462,7 +462,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 Box::new(Ok(()).into_future())
                     as Box<Future<Item=(), Error=Error> + Send>
             }
-        }).map_err(|e| panic!("{:?}", e));
+        }).map_err(Error::unhandled);
         DefaultExecutor::current().spawn(Box::new(task)).unwrap();
         rx
     }

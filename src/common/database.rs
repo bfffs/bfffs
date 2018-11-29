@@ -74,7 +74,7 @@ impl Syncer {
         self.tx.clone()
             .send(SyncerMsg::Kick)
             .map(drop)
-            .map_err(|e| panic!("{:?}", e))
+            .map_err(Error::unhandled_error)
     }
 
     fn new<E: Executor + 'static>(handle: E, inner: Arc<Inner>) -> Self {
@@ -98,7 +98,7 @@ impl Syncer {
         let duration = Duration::new(5, 0);
         let initial = Box::new(
             rx.into_future()
-              .map_err(|e| panic!("{:?}", e))
+              .map_err(Error::unhandled)
         ) as LoopFut;
 
         let taskfut = stream::repeat(())
@@ -107,7 +107,7 @@ impl Syncer {
             let wakeup_time = Instant::now() + duration;
             let delay = timer::Delay::new(wakeup_time);
             let delay_fut = delay
-                .map_err(|e| panic!("{:?}", e));
+                .map_err(Error::unhandled);
 
             delay_fut.select2(rx_fut)
                 .map_err(drop)
@@ -119,7 +119,7 @@ impl Syncer {
                             //Time's up.  Sync the database
                             Box::new(
                                 Database::sync_transaction_priv(&i2)
-                                .map_err(|e| panic!("{:?}", e))
+                                .map_err(Error::unhandled)
                                 .map(move |_| rx_fut)
                                 //)
                             ) as LoopFutFut
@@ -129,7 +129,7 @@ impl Syncer {
                                     // We got kicked.  Restart the wait
                                     let b = Box::new(
                                         remainder.into_future()
-                                         .map_err(|e| panic!("{:?}", e))
+                                         .map_err(Error::unhandled)
                                     ) as LoopFut;
                                     Box::new(Ok(b).into_future()) as LoopFutFut
                                 }, SyncerMsg::Shutdown(tx) => {
@@ -156,7 +156,7 @@ impl Syncer {
         .send(SyncerMsg::Shutdown(tx))
         .then(|r| {
             match r {
-                Ok(_) => Box::new(rx.map_err(|e| panic!("{:?}", e)))
+                Ok(_) => Box::new(rx.map_err(Error::unhandled))
                     as Box<Future<Item=_, Error=_> + Send>,
                 Err(_) => {
                     // Syncer must already be shutdown

@@ -68,10 +68,10 @@ impl DevManager {
                         tx.send((proxy, reader))
                             .ok().expect("channel dropped too soon");
                     })
-                }).map_err(|e| panic!("{:?}", e));
+                }).map_err(Error::unhandled);
                 executor::current_thread::TaskExecutor::current().spawn_local(
                     Box::new(fut)
-                ).map_err(|e| panic!("{:?}", e))
+                ).map_err(Error::unhandled)
             }))
             ).unwrap();
             rx

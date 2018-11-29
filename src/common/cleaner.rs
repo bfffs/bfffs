@@ -126,7 +126,7 @@ impl Cleaner {
             let sync_cleaner = SyncCleaner::new(idml, thresh);
             rx.for_each(move |tx| {
                 sync_cleaner.clean_now()
-                    .map_err(|e| panic!("{:?}", e))
+                    .map_err(Error::unhandled)
                     .map(move |_| {
                         // Ignore errors.  An error here indicates that the
                         // client doesn't want to be notified.
@@ -176,7 +176,7 @@ fn background() {
         let te = TaskExecutor::current();
         let cleaner = Cleaner::new(te, Arc::new(idml), None);
         cleaner.clean()
-            .map_err(|e| panic!("{:?}", e))
+            .map_err(Error::unhandled)
     }));
     rt.run().unwrap();
 }

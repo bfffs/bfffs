@@ -438,7 +438,7 @@ impl Fs {
                     htable::insert(ds, parent_dirent_key, parent_dirent, name2),
                     extra_fut
                 ).map(move |_| tx.send(Ok(ino)).unwrap())
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -537,7 +537,7 @@ impl Fs {
             database.fsread(tree, |dataset| {
                 dataset.last_key()
                     .map(move |k| tx.send(k).unwrap())
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         let last_key = rx.wait().unwrap();
         let next_object = Atomic::new(last_key.unwrap().object() + 1);
@@ -604,7 +604,7 @@ impl Fs {
                     }.unwrap();
                     future::ok::<(), Error>(())
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -703,7 +703,7 @@ impl Fs {
                     tx.send(result).unwrap();
                     future::ok::<(), Error>(())
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -738,7 +738,7 @@ impl Fs {
 
                     ifut.join(dfut)
                 }).map(move |_| tx.send(Ok(ino)).unwrap())
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -790,7 +790,7 @@ impl Fs {
                     }.unwrap();
                     future::ok::<(), Error>(())
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1092,7 +1092,7 @@ impl Fs {
                         tx.send(Ok(sglist)).unwrap();
                     })
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1219,7 +1219,7 @@ impl Fs {
                     }.unwrap();
                     future::ok::<(), Error>(())
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1355,7 +1355,7 @@ impl Fs {
                     }.expect("FS::rename: send failed");
                     Ok(()).into_future()
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1401,7 +1401,7 @@ impl Fs {
                     }.expect("FS::rmdir: send failed");
                     Ok(()).into_future()
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1427,7 +1427,7 @@ impl Fs {
                     iv.uid = attr.uid.unwrap_or(iv.uid);
                     dataset.insert(inode_key, FSValue::Inode(iv))
                 }).map(move |_| tx.send(Ok(())).unwrap())
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1451,7 +1451,7 @@ impl Fs {
             self.db.fswrite(self.tree, move |dataset| {
                 htable::insert(dataset, key, extattr, owned_name)
                 .map(move |_| tx.send(Ok(())).unwrap())
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1477,7 +1477,7 @@ impl Fs {
                 };
                 tx.send(r).ok().expect("Fs::statvfs: send failed");
                 Ok(()).into_future()
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1497,7 +1497,7 @@ impl Fs {
         let (tx, rx) = oneshot::channel::<()>();
         self.handle.spawn(
             self.db.sync_transaction()
-            .map_err(|e| panic!("{:?}", e))
+            .map_err(Error::unhandled)
             .map(|_| tx.send(()).unwrap())
         ).unwrap();
         rx.wait().unwrap()
@@ -1527,7 +1527,7 @@ impl Fs {
                     }.expect("FS::unlink: send failed");
                     Ok(()).into_future()
                 })
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }
@@ -1585,7 +1585,7 @@ impl Fs {
                         dataset2.insert(inode_key, inode_value)
                     })
                 }).map(move |_| tx.send(Ok(datalen as u32)).unwrap())
-            }).map_err(|e| panic!("{:?}", e))
+            }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
     }

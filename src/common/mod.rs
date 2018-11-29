@@ -2,6 +2,7 @@
 
 use divbuf::{DivBuf, DivBufMut, DivBufShared};
 use enum_primitive_derive::Primitive;
+use futures;
 use lazy_static::lazy_static;
 use libc;
 use nix;
@@ -180,6 +181,22 @@ pub enum Error {
     //// BFFFS custom error types below
     EUNKNOWN        = 256,
     ECKSUM          = 257,
+}
+
+impl Error {
+    // TODO: replace the return type with `!` once that feature is stable.  Then
+    // combine these three methods.  It may also need futures::Never from
+    // futures-0.2
+    // https://github.com/rust-lang/rust/issues/35121
+    pub fn unhandled<E: fmt::Debug>(e: E) {
+        panic!("Unhandled error {:?}", e)
+    }
+    pub fn unhandled_canceled<E: fmt::Debug>(e: E) -> futures::Canceled {
+        panic!("Unhandled error {:?}", e)
+    }
+    pub fn unhandled_error<E: fmt::Debug>(e: E) -> Error {
+        panic!("Unhandled error {:?}", e)
+    }
 }
 
 impl From<nix::Error> for Error {

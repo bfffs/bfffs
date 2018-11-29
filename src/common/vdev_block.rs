@@ -275,7 +275,7 @@ impl Inner {
                         let inner = weakself.upgrade().expect(
                             "VdevBlock dropped with outstanding I/O");
                         inner.borrow_mut().issue_all();
-                    }).map_err(|e| panic!("{:?}", e));
+                    }).map_err(Error::unhandled);
                     tokio_current_thread::spawn(delay_fut);
                 }
                 break;

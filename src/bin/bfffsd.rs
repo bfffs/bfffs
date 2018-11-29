@@ -10,9 +10,14 @@ extern crate tokio;
 extern crate tokio_io_pool;
 extern crate tokio_signal;
 
-use bfffs::common::database::*;
-use bfffs::common::device_manager::DevManager;
-use bfffs::sys::fs::FuseFs;
+use bfffs::{
+    common::{
+        Error,
+        database::*,
+        device_manager::DevManager,
+    },
+    sys::fs::FuseFs
+};
 use clap::crate_version;
 use futures::{Future, Stream, future};
 use std::{
@@ -68,10 +73,10 @@ fn main() {
     // is very handy for debugging the cleaner.
     let sigusr1 = Signal::new(SIGUSR1).flatten_stream();
     rt.spawn(
-        sigusr1.map_err(|e| panic!("{:?}", e))
+        sigusr1.map_err(Error::unhandled_canceled)
         .for_each(move |_| {
             db2.clean()
-        }).map_err(|e| panic!("{:?}", e))
+        }).map_err(Error::unhandled)
     ).unwrap();
 
     thr_handle.join().unwrap()
