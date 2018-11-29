@@ -928,6 +928,8 @@ impl VdevRaid {
         future::join_all(futs).map(drop)
     }
 
+    // Allow &Vec arguments so we can clone them.
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::ptr_arg))]
     pub fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
         -> impl Future<Item=(), Error=Error>
     {
