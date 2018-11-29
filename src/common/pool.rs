@@ -219,8 +219,7 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::Flush(idx, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::EPIPE)
-            .and_then(|result| result.into_future())
+        ClusterProxy::rx_unit_result(rx)
     }
 
     fn free(&self, lba: LbaT, length: LbaT)
@@ -229,8 +228,7 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::Free(lba, length, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::EPIPE)
-            .and_then(|result| result.into_future())
+        ClusterProxy::rx_unit_result(rx)
     }
 
     fn find_closed_zone(&self, zid: ZoneT)
@@ -265,6 +263,13 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::Read(buf, lba, tx);
         self.server.unbounded_send(rpc).unwrap();
+        ClusterProxy::rx_unit_result(rx)
+    }
+
+    /// Helper that collapses a Future<Item=Result<_>, Error=_>.
+    fn rx_unit_result(rx: oneshot::Receiver<Result<(), Error>>)
+        -> impl Future<Item=(), Error=Error>
+    {
         rx.map_err(|_| Error::EPIPE)
             .and_then(|result| result.into_future())
     }
@@ -287,8 +292,7 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::SyncAll(tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::EPIPE)
-            .and_then(|result| result.into_future())
+        ClusterProxy::rx_unit_result(rx)
     }
 
     fn uuid(&self) -> Uuid {
@@ -311,8 +315,7 @@ impl<'a> ClusterProxy {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::WriteLabel(labeller, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::EPIPE)
-            .and_then(|result| result.into_future())
+        ClusterProxy::rx_unit_result(rx)
     }
 }
 
@@ -520,17 +523,17 @@ impl<'a> Pool {
         -> impl Future<Item=Self, Error=Error>
     {
         let size_fut = future::join_all(clusters.iter()
-            .map(|cluster| cluster.size())
+            .map(ClusterProxy::size)
             .collect::<Vec<_>>()
         );
         let allocated_fut = future::join_all(clusters.iter()
             .map(|cluster| cluster.allocated()
-            .map(Atomic::new)
+                .map(Atomic::new)
             ).collect::<Vec<_>>()
         );
         let oqd_fut = future::join_all(clusters.iter()
             .map(|cluster| cluster.optimum_queue_depth()
-            .map(f64::from)
+                .map(f64::from)
             ).collect::<Vec<_>>()
         );
         let queue_depth: Vec<_> = clusters.iter()
@@ -660,7 +663,7 @@ impl<'a> Pool {
     pub fn sync_all(&self) -> impl Future<Item=(), Error=Error> {
         future::join_all(
             self.clusters.iter()
-            .map(|bd| bd.sync_all())
+            .map(ClusterProxy::sync_all)
             .collect::<Vec<_>>()
         ).map(drop)
     }
@@ -699,7 +702,7 @@ impl<'a> Pool {
     pub fn write_label(&self, mut labeller: LabelWriter)
         -> impl Future<Item=(), Error=Error>
     {
-        let cluster_uuids = self.clusters.iter().map(|cluster| cluster.uuid())
+        let cluster_uuids = self.clusters.iter().map(ClusterProxy::uuid)
             .collect::<Vec<_>>();
         let label = Label {
             name: self.name.clone(),

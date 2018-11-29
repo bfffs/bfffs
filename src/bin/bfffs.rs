@@ -26,7 +26,7 @@ pub fn main(args: &clap::ArgMatches) {
     let poolname = args.value_of("name").unwrap();
     let disks = args.values_of("disks").unwrap();
     let dev_manager = DevManager::default();
-    for dev in disks.map(|s| s.to_string())
+    for dev in disks.map(str::to_string)
     {
         dev_manager.taste(dev);
     }

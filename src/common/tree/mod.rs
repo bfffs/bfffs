@@ -1536,9 +1536,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     }
                 })
             })
-        }).map(|tree_guard| {
-            drop(tree_guard);
-        })
+        }).map(drop)
     }
 
     fn range_delete_pass2_r<R, T>(inner: Arc<Inner<A, D, K, V>>,

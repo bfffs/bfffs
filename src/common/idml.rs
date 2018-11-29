@@ -397,6 +397,16 @@ impl<'a> IDML {
     }
 }
 
+/// Private helper function for several IDML methods
+fn unwrap_or_enoent(r: Option<RidtEntry>)
+    -> impl Future<Item=RidtEntry, Error=Error>
+{
+    match r {
+        None => Err(Error::ENOENT).into_future(),
+        Some(entry) => Ok(entry).into_future()
+    }
+}
+
 impl DML for IDML {
     type Addr = RID;
 
@@ -408,12 +418,8 @@ impl DML for IDML {
         let trees2 = self.trees.clone();
         let rid = *ridp;
         let fut = self.trees.ridt.get(rid)
-            .and_then(|r| {
-                match r {
-                    None => Err(Error::ENOENT).into_future(),
-                    Some(entry) => Ok(entry).into_future()
-                }
-            }).and_then(move |mut entry| {
+            .and_then(unwrap_or_enoent)
+            .and_then(move |mut entry| {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
                     cache2.lock().unwrap().remove(&Key::Rid(rid));
@@ -451,12 +457,8 @@ impl DML for IDML {
             let cache2 = self.cache.clone();
             let ddml2 = self.ddml.clone();
             let fut = self.trees.ridt.get(rid)
-                .and_then(|r| {
-                    match r {
-                        None => Err(Error::ENOENT).into_future(),
-                        Some(entry) => Ok(entry).into_future()
-                    }
-                }).and_then(move |entry| {
+                .and_then(unwrap_or_enoent)
+                .and_then(move |entry| {
                     ddml2.get_direct(&entry.drp)
                 }).map(move |cacheable: Box<T>| {
                     let r = cacheable.make_ref();
@@ -477,12 +479,8 @@ impl DML for IDML {
         let ddml3 = self.ddml.clone();
         let trees2 = self.trees.clone();
         let fut = self.trees.ridt.get(rid)
-            .and_then(|r| {
-                match r {
-                    None => Err(Error::ENOENT).into_future(),
-                    Some(entry) => Ok(entry).into_future()
-                }
-            }).and_then(move |mut entry| {
+            .and_then(unwrap_or_enoent)
+            .and_then(move |mut entry| {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
                     let cacheval = cache2.lock().unwrap()

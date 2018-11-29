@@ -2,7 +2,8 @@
 
 use crate::common::{pool, vdev::Vdev, vdev_raid};
 #[cfg(not(test))]
-use crate::common::{Error, cache, cluster, database, ddml, idml, vdev_block};
+use crate::common::{Error, cache, cluster, database, ddml, idml, label,
+    vdev_block};
 use futures::{Future, future};
 #[cfg(not(test))] use futures::{stream, sync::oneshot};
 #[cfg(not(test))] use futures::Stream;
@@ -52,17 +53,12 @@ impl DevManager {
             (pool, raids, leaves)
         };
         let proxies = raids.into_iter().map(move |raid| {
-            let leaf_paths = leaves.remove(&raid.uuid).unwrap();
+            let leaf_paths: Vec<PathBuf> = leaves.remove(&raid.uuid).unwrap();
             let (tx, rx) = oneshot::channel();
             // The top-level Executor spawn puts each Cluster onto a different
             // thread, when using tokio-io-pool
             DefaultExecutor::current().spawn(Box::new(future::lazy(move || {
-                let fut = stream::iter_ok(leaf_paths.into_iter())
-                    .and_then(|path| {
-                    vdev_file::VdevFile::open(path)
-                }).map(|(leaf, reader)| {
-                    (vdev_block::VdevBlock::new(leaf), reader)
-                }).collect()
+                let fut = DevManager::open_vdev_blocks(leaf_paths)
                 .and_then(move |vdev_blocks| {
                     let (vdev_raid, reader) =
                         vdev_raid::VdevRaid::open(Some(raid.uuid), vdev_blocks);
@@ -116,12 +112,7 @@ impl DevManager {
         };
         let cfuts = raids.into_iter().map(move |raid| {
             let leaf_paths = leaves.remove(&raid.uuid).unwrap();
-            stream::iter_ok(leaf_paths.into_iter())
-                .and_then(|path| {
-                vdev_file::VdevFile::open(path)
-            }).map(|(leaf, reader)| {
-                (vdev_block::VdevBlock::new(leaf), reader)
-            }).collect()
+            DevManager::open_vdev_blocks(leaf_paths)
             .and_then(move |vdev_blocks| {
                 let (vdev_raid, _label_reader) =
                     vdev_raid::VdevRaid::open(Some(raid.uuid), vdev_blocks);
@@ -138,6 +129,18 @@ impl DevManager {
             .map(|(_uuid, label)| {
                 (label.name.clone(), label.uuid)
             }).collect::<Vec<_>>()
+    }
+
+    #[cfg(not(test))]
+    fn open_vdev_blocks(leaf_paths: Vec<PathBuf>)
+        -> impl Future<Item=Vec<(vdev_block::VdevBlock, label::LabelReader)>,
+                       Error=Error>
+    {
+        stream::iter_ok(leaf_paths.into_iter())
+        .and_then(vdev_file::VdevFile::open)
+        .map(|(leaf, reader)| {
+            (vdev_block::VdevBlock::new(leaf), reader)
+        }).collect()
     }
 
     /// Taste the device identified by `p` for an BFFFS label.

@@ -149,7 +149,7 @@ impl Codec {
         while l < len {
             let ncl =
                 cursors.iter()
-                       .map(|c| c.peek_len())
+                       .map(SGCursor::peek_len)
                        .min().unwrap();
             let (refs, _iovecs) : (Vec<_>, Vec<_>) =
                 cursors.iter_mut()

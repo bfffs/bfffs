@@ -150,7 +150,7 @@ impl LabelWriter {
         let mut header = header_dbs.try_mut().unwrap();
         header.extend(&MAGIC[..]);
         let contents = self.buffers.into_iter().rev().collect::<Vec<_>>();
-        let contents_len: usize = contents.iter().map(|x| x.len()).sum();
+        let contents_len: usize = contents.iter().map(DivBuf::len).sum();
         let mut hasher = MetroHash64::new();
         (contents_len as u64).to_be().hash(&mut hasher);
         checksum_sglist(&contents, &mut hasher);

@@ -274,7 +274,7 @@ impl VdevRaid {
         if num_disks == 1 {
             (LayoutAlgorithm::NullRaid, 1)
         } else {
-            let chunksize = chunksize.map(|cs| cs.get())
+            let chunksize = chunksize.map(NonZeroU64::get)
                 .unwrap_or(VdevRaid::DEFAULT_CHUNKSIZE);
             (LayoutAlgorithm::PrimeS, chunksize)
         }
@@ -343,9 +343,9 @@ impl VdevRaid {
         // NB: the optimum queue depth should actually be a little higher for
         // healthy reads than for writes or degraded reads.  This calculation
         // computes the optimum for writes and degraded reads.
-        let optimum_queue_depth = blockdevs.iter().map(|bd| {
-            bd.optimum_queue_depth()
-        }).sum::<u32>() / (codec.stripesize() as u32);
+        let optimum_queue_depth = blockdevs.iter()
+        .map(|bd| bd.optimum_queue_depth())
+        .sum::<u32>() / (codec.stripesize() as u32);
 
         VdevRaid { chunksize, codec, locator, blockdevs, layout_algorithm,
                    optimum_queue_depth,
@@ -897,7 +897,7 @@ impl VdevRaid {
         }
 
         self.codec.encode(col_len, &drefs, &prefs);
-        let pw = parity.into_iter().map(|p| p.freeze());
+        let pw = parity.into_iter().map(DivBufMut::freeze);
 
         let data_fut = issue_1stripe_ops!(self, dcols, lba, false, write_at);
         let parity_fut = issue_1stripe_ops!(self, pw, lba, true, write_at);
@@ -976,7 +976,7 @@ impl VdevRaid {
         }
 
         self.codec.encodev(col_len, &dcols, &mut pcols);
-        let pw = pcols.into_iter().map(|p| p.freeze());
+        let pw = pcols.into_iter().map(DivBufMut::freeze);
 
         let data_fut = issue_1stripe_ops!(self, dcols, lba, false, writev_at);
         let parity_fut = issue_1stripe_ops!(self, pw, lba, true, write_at);

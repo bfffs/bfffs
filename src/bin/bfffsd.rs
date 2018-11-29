@@ -38,7 +38,7 @@ fn main() {
     let poolname = matches.value_of("name").unwrap().to_string();
     let mountpoint = matches.value_of("mountpoint").unwrap().to_string();
     let devices = matches.values_of("devices").unwrap()
-        .map(|s| s.to_string())
+        .map(str::to_string)
         .collect::<Vec<_>>();
 
     let dev_manager = DevManager::default();
