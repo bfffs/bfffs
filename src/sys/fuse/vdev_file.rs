@@ -3,30 +3,66 @@
 use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
 use divbuf::{DivBufShared, DivBuf};
 use futures::{Async, IntoFuture, Future, Poll, future};
-use nix::{
-    convert_ioctl_res, ioc, ioctl_write_ptr, request_code_write,
-    libc::off_t
-};
+use nix::libc::{c_int, off_t};
 use num_traits::FromPrimitive;
 use serde_derive::*;
 use std::{
     borrow::{Borrow, BorrowMut},
     fs::OpenOptions,
     io,
+    mem,
     num::NonZeroU64,
     os::unix::{
         fs::OpenOptionsExt,
-        io::AsRawFd
+        io::{AsRawFd, RawFd}
     },
     path::Path
 };
 use tokio_file::{AioFut, File, LioFut};
 use uuid::Uuid;
 
-ioctl_write_ptr! {
-    /// FreeBSD's catch-all ioctl for hole-punching, TRIM, UNMAP, Deallocate,
-    /// and EraseWritePointer
-    diocgdelete, b'd', 136, [off_t; 2]
+/// FFI definitions that don't belong in libc.  The ioctls can't go in libc
+/// because they use Nix's macros.  The structs probably shouldn't go in libc,
+/// because they're not really intended to be a stable interface.
+#[doc(hidden)]
+mod ffi {
+    use nix::{
+        convert_ioctl_res, ioc, ioctl_readwrite, ioctl_write_ptr,
+        request_code_readwrite, request_code_write,
+        libc::{c_int, off_t}
+    };
+    const DISK_IDENT_SIZE: usize = 256;
+
+    #[repr(C)]
+    #[doc(hidden)]
+    pub union diocgattr_arg_value {
+        pub c_str:  [u8; DISK_IDENT_SIZE],
+        pub off: off_t,
+        pub i: c_int,
+        pub c_u16: u16
+    }
+
+    #[repr(C)]
+    #[doc(hidden)]
+    // This should be pub(super), but it must be plain pub instead because Nix's
+    // ioctl macros make the ioctl functions `pub`.
+    pub struct diocgattr_arg {
+        pub name: [u8; 64],
+        pub len: c_int,
+        pub value: diocgattr_arg_value
+    }
+
+    ioctl_readwrite! {
+        #[doc(hidden)]
+        diocgattr, b'd', 142, diocgattr_arg
+    }
+
+    ioctl_write_ptr! {
+        /// FreeBSD's catch-all ioctl for hole-punching, TRIM, UNMAP,
+        /// Deallocate, and EraseWritePointer
+        #[doc(hidden)]
+        diocgdelete, b'd', 136, [off_t; 2]
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -54,7 +90,9 @@ pub struct VdevFile {
     /// Number of LBAs per simulated zone
     lbas_per_zone:  LbaT,
     size:           LbaT,
-    uuid:           Uuid
+    uuid:           Uuid,
+    ///// Does the underlying file or device support delete-like operations?
+    candelete:      bool
 }
 
 /// Tokio-File requires boxed `DivBufs`, but the upper layers of BFFFS don't.
@@ -125,21 +163,20 @@ impl Vdev for VdevFile {
 
 impl VdevLeafApi for VdevFile {
     fn erase_zone(&self, lba: LbaT) -> Box<VdevFut> {
-        // There isn't (yet) a way to asynchronously trim, so use a synchronous
-        // ioctl.
-        let off = lba as off_t * (BYTES_PER_LBA as off_t);
-        let len = self.lbas_per_zone as off_t * BYTES_PER_LBA as off_t;
-        let args = [off, len];
-        let r = unsafe {
-            diocgdelete(self.file.as_raw_fd(), &args)
-        }.map(drop)
-        .map_err(Error::from);
-        let fut = if r == Err(Error::ENOTTY) {
-            // This vdev doesn't support DIOCGDELETE
-            Ok(())
+        let fut = if self.candelete {
+            // There isn't (yet) a way to asynchronously trim, so use a
+            // synchronous ioctl.
+            let off = lba as off_t * (BYTES_PER_LBA as off_t);
+            let len = self.lbas_per_zone as off_t * BYTES_PER_LBA as off_t;
+            let args = [off, len];
+            unsafe {
+                ffi::diocgdelete(self.file.as_raw_fd(), &args)
+            }.map(drop)
+            .map_err(Error::from)
         } else {
-            r
-        }.into_future();
+            Ok(())
+        }
+        .into_future();
         Box::new(fut)
     }
 
@@ -233,6 +270,25 @@ impl VdevFile {
     /// Size of a simulated zone
     const DEFAULT_LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
 
+    fn candelete(fd: RawFd) -> Result<bool, Error> {
+        let mut name: [u8; 64] = unsafe { mem::uninitialized() };
+        name[0..16].copy_from_slice(b"GEOM::candelete\0");
+        let len = mem::size_of::<c_int>() as c_int;
+        let value: ffi::diocgattr_arg_value = unsafe { mem::uninitialized() };
+        let mut arg = ffi::diocgattr_arg{name, len, value};
+        let r = unsafe {
+            ffi::diocgattr(fd, &mut arg)
+        }.map(|_| unsafe { arg.value.i } != 0)
+        .map_err(Error::from);
+        if r == Err(Error::ENOTTY) {
+            // This vdev doesn't support DIOCGATTR, so it must not support
+            // DIOCGDELETE either.
+            Ok(false)
+        } else {
+            r
+        }
+    }
+
     /// Create a new Vdev, backed by a file
     ///
     /// * `path`:           Pathname for the file.  It may be a device node.
@@ -253,11 +309,19 @@ impl VdevFile {
             None => VdevFile::DEFAULT_LBAS_PER_ZONE,
             Some(x) => x.get()
         };
+        let candelete = VdevFile::candelete(f.as_raw_fd()).unwrap();
         let size = f.len().unwrap() / BYTES_PER_LBA as u64;
         let nzones = div_roundup(size, lpz);
         let spacemap_space = spacemap_space(nzones);
         let uuid = Uuid::new_v4();
-        Ok(VdevFile{file: f, spacemap_space, lbas_per_zone: lpz, size, uuid})
+        Ok(VdevFile{
+            file: f,
+            spacemap_space,
+            lbas_per_zone: lpz,
+            size,
+            uuid,
+            candelete
+        })
     }
 
     /// Open an existing `VdevFile`
@@ -283,6 +347,7 @@ impl VdevFile {
                 // Try the second label
                 VdevFile::read_label(f, 1)
             }).and_then(move |(mut label_reader, f)| {
+                let candelete = VdevFile::candelete(f.as_raw_fd()).unwrap();
                 let size = f.len().unwrap() / BYTES_PER_LBA as u64;
                 let label: Label = label_reader.deserialize().unwrap();
                 assert!(size >= label.lbas, "Vdev has shrunk since creation");
@@ -291,7 +356,8 @@ impl VdevFile {
                     spacemap_space: label.spacemap_space,
                     lbas_per_zone: label.lbas_per_zone,
                     size: label.lbas,
-                    uuid: label.uuid
+                    uuid: label.uuid,
+                    candelete
                 };
                 Ok((vdev, label_reader))
             }).map_err(|(e, _f)| e)
