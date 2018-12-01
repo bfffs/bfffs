@@ -21,47 +21,47 @@ use std::iter::FusedIterator;
 /// PRIME-S algorithm, we could use Fermat's little theorem instead, but I'm not
 /// sure it would be any faster.
 fn invmod(a: i16, n: i16) -> i16 {
-	let mut t = 0;
-	let mut r = n;
-	let mut newt = 1;
-	let mut newr = a;
+    let mut t = 0;
+    let mut r = n;
+    let mut newt = 1;
+    let mut newr = a;
 
-	while newr > 0 {
-		let q = r / newr;
-		let mut temp = newt;
-		newt = t - q * newt;
-		t = temp;
-		temp = newr;
-		newr = r - q * newr;
-		r = temp;
-	}
-
-	assert_eq!(r, 1);
-
-	if t < 0 {
-		t += n;
+    while newr > 0 {
+        let q = r / newr;
+        let mut temp = newt;
+        newt = t - q * newt;
+        t = temp;
+        temp = newr;
+        newr = r - q * newr;
+        r = temp;
     }
 
-	t
+    assert_eq!(r, 1);
+
+    if t < 0 {
+        t += n;
+    }
+
+    t
 }
 
 /// A simple primality tester.  Optimized for size, not speed
 fn is_prime(n: i16) -> bool {
     if n <= 1 {
-		return false;
+        return false;
     } else if n <= 3 {
-		return true;
+        return true;
     } else if n % 2 == 0 || n % 3 == 0 {
-		return false;
+        return false;
     }
     let mut i = 5;
     while i * i <= n {
-		if n % i == 0 || n % (i + 2) == 0 {
-			return false;
+        if n % i == 0 || n % (i + 2) == 0 {
+            return false;
         }
         i += 6;
-	}
-	true
+    }
+    true
 }
 
 /// Internal struture that captures some of the intermediate values used in
