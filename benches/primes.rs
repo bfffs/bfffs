@@ -3,12 +3,12 @@
 extern crate bfffs;
 extern crate test;
 
-use bfffs::common::{declust::*, prime_s::*};
+use bfffs::common::{declust::*, prime_s::{self, *}};
 use test::Bencher;
 
 /// Benchmark the speed of `PrimeS::id2loc` using a largeish layout
 #[bench]
-fn bench_primes_id2loc(bench: &mut Bencher) {
+fn id2loc(bench: &mut Bencher) {
     let n = 23;
     let k = 19;
     let f = 3;
@@ -20,9 +20,17 @@ fn bench_primes_id2loc(bench: &mut Bencher) {
     });
 }
 
+/// Benchmark prime_s::invmod<i16>
+#[bench]
+fn invmod(bench: &mut Bencher) {
+    bench.iter(move || {
+        prime_s::invmod(500i16, 523i16)
+    });
+}
+
 /// Benchmark the speed of `PrimeS::PrimeSIter::next` using a largeish layout
 #[bench]
-fn bench_primesiter_next(bench: &mut Bencher) {
+fn iter_next(bench: &mut Bencher) {
     let n = 23;
     let k = 19;
     let f = 3;

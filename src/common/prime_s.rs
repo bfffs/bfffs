@@ -13,32 +13,44 @@
 use fixedbitset::FixedBitSet;
 use crate::common::{*, declust::*};
 use modulo::Mod;
-use std::iter::FusedIterator;
+use std::{
+    fmt::Debug,
+    iter::FusedIterator,
+    ops::{Mul, Neg},
+};
 
 /// Return the multiplicative inverse of a, mod n.  n must be prime.
 ///
 /// Use the extended Euclidean algorithm.  Since n is always prime for the
 /// PRIME-S algorithm, we could use Fermat's little theorem instead, but I'm not
 /// sure it would be any faster.
-fn invmod(a: i16, n: i16) -> i16 {
-    let mut t = 0;
+// Implement it for all signed integer types
+// Hide the docs.  It's only pub so it's available to the benchmark code
+#[doc(hidden)]
+pub fn invmod<T>(a: T, n: T) -> T
+    where T: AddAssign<T> + Copy + Debug + Eq + From<i8> + Neg + PartialOrd<T>,
+          T: Div<T> + From<<T as Div>::Output>,
+          T: Mul<T> + From<<T as Mul>::Output>,
+          T: Sub<T> + From<<T as Sub>::Output>,
+{
+    let mut t = T::from(0);
     let mut r = n;
-    let mut newt = 1;
+    let mut newt = T::from(1);
     let mut newr = a;
 
-    while newr > 0 {
-        let q = r / newr;
+    while newr > T::from(0) {
+        let q = T::from(r / newr);
         let mut temp = newt;
-        newt = t - q * newt;
+        newt = T::from(t - T::from(newt * q));
         t = temp;
         temp = newr;
-        newr = r - q * newr;
+        newr = T::from(r - T::from(newr * q));
         r = temp;
     }
 
-    assert_eq!(r, 1);
+    debug_assert_eq!(r, T::from(1), "{:?} is not invertible mod {:?}", a, n);
 
-    if t < 0 {
+    if t < T::from(0) {
         t += n;
     }
 
@@ -590,11 +602,20 @@ mod tests {
 
     #[test]
     fn test_invmod() {
-        assert_eq!(invmod(2, 3), 2);
-        assert_eq!(invmod(2, 5), 3);
-        assert_eq!(invmod(3, 11), 4);
-        assert_eq!(invmod(17, 19), 9);
-        assert_eq!(invmod(128, 251), 151);
+        assert_eq!(invmod(2i8, 3i8), 2i8);
+        assert_eq!(invmod(2i8, 5i8), 3i8);
+        assert_eq!(invmod(3i8, 11i8), 4i8);
+        assert_eq!(invmod(17i8, 19i8), 9i8);
+        assert_eq!(invmod(100i8, 127i8), 47i8);
+
+        assert_eq!(invmod(100i16, 127i16), 47i16);
+        assert_eq!(invmod(128i16, 251i16), 151i16);
+        assert_eq!(invmod(500i16, 523i16), 432i16);
+
+        assert_eq!(invmod(50_000i32, 100_003i32), 66668i32);
+
+        assert_eq!(invmod(5_000_000_000i64, 5_000_000_029i64),
+                          1_724_137_941i64);
     }
 
     /// Test basic info about a 5-4-2 layout
