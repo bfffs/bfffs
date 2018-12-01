@@ -186,11 +186,11 @@ fn iter_7_5_2() {
 // Large layouts work.  In particular, they don't cause integer overflow errors.
 #[test]
 fn large_layout() {
-    let n = 251;
+    let n = 211;
     let k = 37;
     let f = 5;
     let id = ChunkId::Parity(12_345_664, 1);
-    let loc = Chunkloc{disk:167, offset:56871};
+    let loc = Chunkloc{disk:92, offset:67652};
 
     let locator = PrimeS::new(n, k, f);
 
