@@ -36,7 +36,7 @@ impl Locator for NullRaid {
         1
     }
 
-    fn depth(&self) -> i16 {
+    fn depth(&self) -> u32 {
         1
     }
 

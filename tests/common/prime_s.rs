@@ -183,6 +183,21 @@ fn iter_7_5_2() {
     assert!(iter_data.next().is_none());
 }
 
+// Large layouts work.  In particular, they don't cause integer overflow errors.
+#[test]
+fn large_layout() {
+    let n = 251;
+    let k = 37;
+    let f = 5;
+    let id = ChunkId::Parity(12_345_664, 1);
+    let loc = Chunkloc{disk:167, offset:56871};
+
+    let locator = PrimeS::new(n, k, f);
+
+    assert_eq!(locator.id2loc(id), loc);
+    assert_eq!(locator.loc2id(loc), id);
+}
+
 // Test parallel_read_count for a typical layout
 #[test]
 fn parallel_read_count() {

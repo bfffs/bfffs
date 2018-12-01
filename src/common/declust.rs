@@ -96,7 +96,7 @@ pub trait Locator : Send + Sync {
     fn datachunks(&self) -> u64;
 
     /// Number of rows in a single repetition of the layout
-    fn depth(&self) -> i16;
+    fn depth(&self) -> u32;
 
     /// Get an iterator that will iterate through many `ChunkId`s.
     ///
