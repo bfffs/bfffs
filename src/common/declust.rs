@@ -64,7 +64,7 @@ impl ChunkId {
 }
 
 /// Describes the location of a Chunk within the declustering layout
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chunkloc {
     /// Which disk (0-indexed) this chunk is mapped to
     pub disk: i16,

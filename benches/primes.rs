@@ -43,3 +43,17 @@ fn iter_next(bench: &mut Bencher) {
         iter.next()
     });
 }
+
+#[bench]
+fn loc2id(bench: &mut Bencher) {
+    let n = 23;
+    let k = 19;
+    let f = 3;
+
+    let locator = PrimeS::new(n, k, f);
+    let chunkloc = locator.id2loc(ChunkId::Parity(1_234_567, 1));
+
+    bench.iter(move || {
+        locator.loc2id(chunkloc.clone())
+    });
+}
