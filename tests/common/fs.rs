@@ -1786,6 +1786,30 @@ root:
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[4096..8192]);
     }
+
+    // Write one hold record and a partial one to an initially empty file.
+    test write_one_and_a_half_records(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let mut buf = vec![0u8; 6144];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(6144), r);
+
+        // Check the file size
+        let inode = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(inode.size, 6144);
+
+        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf[0..4096]);
+        let sglist = mocks.val.0.read(ino, 4096, 2048).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf[4096..6144]);
+    }
 }
 
 test_suite! {

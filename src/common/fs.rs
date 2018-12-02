@@ -726,8 +726,8 @@ impl Fs {
                     let dtype = iv.file_type.dtype();
                     // FUSE is single-threaded, so we don't have to worry that
                     // the target gets deleted before we increase its link
-                    // count.  The real VFS will provide a held vnode rather than an
-                    // inode.  So in neither case is there a race here.
+                    // count.  The real VFS will provide a held vnode rather
+                    // than an inode.  So in neither case is there a race here.
                     let ifut = ds.insert(inode_key, FSValue::Inode(iv));
 
                     let dirent_objkey = ObjKey::dir_entry(&name);
@@ -1555,6 +1555,8 @@ impl Fs {
         let sglist = (0..nrecs).map(|rec| {
             let range = if rec == 0 {
                 0..reclen1
+            } else if rec == nrecs - 1 {
+                (reclen1 + (rec - 1) * RECORDSIZE)..datalen
             } else {
                 (reclen1 + (rec - 1) * RECORDSIZE)..(reclen1 + rec * RECORDSIZE)
             };
@@ -1629,19 +1631,19 @@ impl Fs {
                     // Data copy, because we can't modify cache
                     let mut base = Vec::from(&db[..]);
                     let overlay = dbs.try().unwrap();
-                    let l = overlay.len() as u64;
-                    if i == 0 {
+                    let l = overlay.len();
+                    let r = if i == 0 {
                         let s = (offset - baseoffset) as usize;
-                        let e = (offset - baseoffset + l) as usize;
-                        let r = s..e;
-                        if e > base.len() {
-                            // We must be appending
-                            base.resize(e, 0);
-                        }
-                        base[r].copy_from_slice(&overlay[..]);
+                        let e = s + l;
+                        s..e
                     } else {
-                        base[0..l as usize].copy_from_slice(&overlay[..]);
+                        0..l
+                    };
+                    if r.end > base.len() {
+                        // We must be appending
+                        base.resize(r.end, 0);
                     }
+                    base[r].copy_from_slice(&overlay[..]);
                     let new_dbs = Arc::new(
                         DivBufShared::from(base)
                     );
