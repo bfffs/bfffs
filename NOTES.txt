@@ -1,3 +1,9 @@
+Benchmarking
+============
+
+For best performance, use RUSTFLAGS="-C target-cpu=native".  But for
+consistency's sake, don't use it during normal development.
+
 Profiling
 =========
 
