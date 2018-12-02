@@ -480,6 +480,29 @@ impl Fs {
         .map(drop)
     }
 
+    fn do_setattr<T>(dataset: T, ino: u64, attr: SetAttr)
+        -> impl Future<Item=(), Error=Error> + Send
+        where T: AsRef<ReadWriteFilesystem> + Send + 'static
+    {
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
+        dataset.as_ref().get(inode_key)
+        .and_then(move |r| {
+            let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
+            iv.perm = attr.perm.unwrap_or(iv.perm);
+            iv.uid = attr.uid.unwrap_or(iv.uid);
+            iv.gid = attr.gid.unwrap_or(iv.gid);
+            iv.size = attr.size.unwrap_or(iv.size);
+            iv.atime = attr.atime.unwrap_or(iv.atime);
+            iv.mtime = attr.mtime.unwrap_or(iv.mtime);
+            iv.ctime = attr.ctime.unwrap_or(iv.ctime);
+            iv.birthtime = attr.birthtime.unwrap_or(iv.birthtime);
+            iv.flags = attr.flags.unwrap_or(iv.flags);
+            iv.uid = attr.uid.unwrap_or(iv.uid);
+            dataset.as_ref().insert(inode_key, FSValue::Inode(iv))
+            .map(drop)
+        })
+    }
+
     /// Unlink a file whose inode number is known and whose directory entry is
     /// already deleted.  Returns the new link count.
     fn do_unlink(dataset: Arc<ReadWriteFilesystem>, ino: u64)
@@ -1408,25 +1431,10 @@ impl Fs {
 
     pub fn setattr(&self, ino: u64, attr: SetAttr) -> Result<(), i32> {
         let (tx, rx) = oneshot::channel();
-        let inode_key = FSKey::new(ino, ObjKey::Inode);
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
-                let dataset = Arc::new(ds);
-                dataset.get(inode_key)
-                .and_then(move |r| {
-                    let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
-                    iv.perm = attr.perm.unwrap_or(iv.perm);
-                    iv.uid = attr.uid.unwrap_or(iv.uid);
-                    iv.gid = attr.gid.unwrap_or(iv.gid);
-                    iv.size = attr.size.unwrap_or(iv.size);
-                    iv.atime = attr.atime.unwrap_or(iv.atime);
-                    iv.mtime = attr.mtime.unwrap_or(iv.mtime);
-                    iv.ctime = attr.ctime.unwrap_or(iv.ctime);
-                    iv.birthtime = attr.birthtime.unwrap_or(iv.birthtime);
-                    iv.flags = attr.flags.unwrap_or(iv.flags);
-                    iv.uid = attr.uid.unwrap_or(iv.uid);
-                    dataset.insert(inode_key, FSValue::Inode(iv))
-                }).map(move |_| tx.send(Ok(())).unwrap())
+                Fs::do_setattr::<ReadWriteFilesystem>(ds, ino, attr)
+                .map(move |_| tx.send(Ok(())).unwrap())
             }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
