@@ -21,6 +21,8 @@ use bfffs::{
 use clap::crate_version;
 use futures::{Future, Stream, future};
 use std::{
+    ffi::OsStr,
+    os::unix::ffi::OsStrExt,
     sync::Arc,
     thread
 };
@@ -66,7 +68,11 @@ fn main() {
     let db2 = db.clone();
     let thr_handle = thread::spawn(move || {
         let fs = FuseFs::new(db, handle2, tree_id);
-        fuse::mount(fs, &mountpoint, &[]).unwrap();
+        let opts = [
+            OsStr::from_bytes(b"-o"),
+            OsStr::from_bytes(b"allow_other"),
+        ];
+        fuse::mount(fs, &mountpoint, &opts[..]).unwrap();
     });
 
     // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term, this
