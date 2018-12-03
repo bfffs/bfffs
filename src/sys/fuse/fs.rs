@@ -257,6 +257,7 @@ impl Filesystem for FuseFs {
             size: u32, reply: ReplyData)
     {
         match self.fs.read(ino, offset as u64, size as usize) {
+            Ok(ref sglist) if sglist.is_empty() => reply.data(&[]),
             Ok(sglist) => reply.data(&sglist[0][..]),
             Err(errno) => reply.error(errno)
         }
