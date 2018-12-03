@@ -301,7 +301,7 @@ pub struct GetAttr {
 }
 
 /// File attributes, as set by `setattr`
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SetAttr {
     /// File size in bytes
     pub size:       Option<u64>,
@@ -336,20 +336,20 @@ struct CreateArgs
     nlink: u64,
     // NB: this could be a Box<FnOnce> after bug 28796 is fixed
     // https://github.com/rust-lang/rust/issues/28796
-    cb: Box<Fn(&Arc<ReadWriteFilesystem>, u64)
+    cb: Box<Fn(&Arc<ReadWriteFilesystem>, u64, u64)
         -> Box<Future<Item=(), Error=Error> + Send + 'static> + Send >
 }
 
 impl CreateArgs {
     pub fn callback<F>(mut self, f: F) -> Self
-        where F: Fn(&Arc<ReadWriteFilesystem>, u64)
+        where F: Fn(&Arc<ReadWriteFilesystem>, u64, u64)
         -> Box<Future<Item=(), Error=Error> + Send + 'static> + Send + 'static
     {
         self.cb = Box::new(f);
         self
     }
 
-    fn default_cb(_: &Arc<ReadWriteFilesystem>, _: u64)
+    fn default_cb(_: &Arc<ReadWriteFilesystem>, _: u64, _: u64)
         -> Box<Future<Item=(), Error=Error> + Send + 'static>
     {
         Box::new(Ok(()).into_future())
@@ -430,10 +430,11 @@ impl Fs {
         let inode_value = FSValue::Inode(inode);
 
         let cb = args.cb;
+        let parent_ino = args.parent;
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
-                let extra_fut = cb(&ds, ino);
+                let extra_fut = cb(&ds, parent_ino, ino);
                 ds.insert(inode_key, inode_value).join3(
                     htable::insert(ds, parent_dirent_key, parent_dirent, name2),
                     extra_fut
@@ -450,7 +451,7 @@ impl Fs {
     {
         // Outline:
         // 1) range_delete its key range
-        // 2) Decrement the parent dir's link count
+        // 2) Decrement the parent dir's link count and update its timestamps
 
         // 1) range_delete its key range
         let dataset2 = dataset.clone();
@@ -460,13 +461,19 @@ impl Fs {
             dataset2.delete_blob(rid)
         }).and_then(move |_| dataset3.range_delete(FSKey::obj_range(ino)));
 
-        // 2) Decrement the parent dir's link count
+        // 2) Update the parent dir's link count and timestamps
         let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
         let nlink_fut = if dec_nlink {
             let fut = dataset.get(parent_ino_key)
             .and_then(move |r| {
                 let mut value = r.unwrap();
-                value.as_mut_inode().unwrap().nlink -= 1;
+                {
+                    let inode = value.as_mut_inode().unwrap();
+                    let now = time::get_time();
+                    inode.mtime = now;
+                    inode.ctime = now;
+                    inode.nlink -= 1;
+                }
                 dataset.insert(parent_ino_key, value)
                 .map(drop)
             });
@@ -577,8 +584,21 @@ impl Fs {
                   gid: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Reg);
+                                          FileType::Reg)
+        .callback(Fs::create_ts_callback);
         self.do_create(create_args)
+    }
+
+    fn create_ts_callback(dataset: &Arc<ReadWriteFilesystem>, parent: u64,
+                          _ino: u64)
+        -> Box<Future<Item=(), Error=Error> + Send>
+    {
+        let now = time::get_time();
+        let mut attr = SetAttr::default();
+        attr.ctime = Some(now);
+        attr.mtime = Some(now);
+        Box::new(Fs::do_setattr(dataset.clone(), parent, attr))
+            as Box<Future<Item=(), Error=Error> + Send>
     }
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
@@ -737,6 +757,7 @@ impl Fs {
         // Outline:
         // * Increase the target's link count
         // * Add the new directory entry
+        // * Update the parent's mtime and ctime
         let (tx, rx) = oneshot::channel();
         let name = name.to_owned();
         self.handle.spawn(
@@ -759,7 +780,13 @@ impl Fs {
                     let dirent_value = FSValue::DirEntry(dirent);
                     let dfut = ds.insert(dirent_key, dirent_value);
 
-                    ifut.join(dfut)
+                    let now = time::get_time();
+                    let mut attr = SetAttr::default();
+                    attr.ctime = Some(now);
+                    attr.mtime = Some(now);
+                    let ts_fut = Fs::do_setattr(ds, parent, attr);
+
+                    ifut.join3(dfut, ts_fut)
                 }).map(move |_| tx.send(Ok(ino)).unwrap())
             }).map_err(Error::unhandled)
         ).unwrap();
@@ -894,7 +921,7 @@ impl Fs {
     {
         let nlink = 2;  // One for the parent dir, and one for "."
 
-        let f = move |dataset: &Arc<ReadWriteFilesystem>, ino| {
+        let f = move |dataset: &Arc<ReadWriteFilesystem>, _parent, ino| {
             let dot_dirent = Dirent {
                 ino,
                 dtype: libc::DT_DIR,
@@ -920,7 +947,13 @@ impl Fs {
             let nlink_fut = dataset.get(parent_inode_key)
                 .and_then(move |r| {
                     let mut value = r.unwrap();
-                    value.as_mut_inode().unwrap().nlink += 1;
+                    {
+                        let inode = value.as_mut_inode().unwrap();
+                        inode.nlink += 1;
+                        let now = time::get_time();
+                        inode.mtime = now;
+                        inode.ctime = now;
+                    }
                     dataset2.insert(parent_inode_key, value)
                 });
 
@@ -946,7 +979,8 @@ impl Fs {
                    gid: u32, rdev: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Block(rdev));
+                                          FileType::Block(rdev))
+        .callback(Fs::create_ts_callback);
         self.do_create(create_args)
     }
 
@@ -955,7 +989,8 @@ impl Fs {
                   gid: u32, rdev: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Char(rdev));
+                                          FileType::Char(rdev))
+        .callback(Fs::create_ts_callback);
         self.do_create(create_args)
     }
 
@@ -963,7 +998,8 @@ impl Fs {
                   gid: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Fifo);
+                                          FileType::Fifo)
+        .callback(Fs::create_ts_callback);
         self.do_create(create_args)
     }
 
@@ -971,7 +1007,8 @@ impl Fs {
                   gid: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Socket);
+                                          FileType::Socket)
+        .callback(Fs::create_ts_callback);
         self.do_create(create_args)
     }
 
@@ -1032,12 +1069,18 @@ impl Fs {
         let (tx, rx) = oneshot::channel();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         self.handle.spawn(
-            self.db.fsread(self.tree, move |ds| {
+            self.db.fswrite(self.tree, move |ds| {
                 let dataset = Arc::new(ds);
                 // First lookup the inode to get the file size
                 dataset.get(inode_key)
-                .and_then(move |value| {
-                    let fsize = value.unwrap().as_inode().unwrap().size;
+                .and_then(move |r| {
+                    let mut value = r.unwrap();
+                    {
+                        let inode = value.as_mut_inode().unwrap();
+                        let now = time::get_time();
+                        inode.atime = now;
+                    }
+                    let fsize = value.as_inode().unwrap().size;
                     // Truncate read to file size
                     size = size.min((fsize.saturating_sub(offset)) as usize);
                     let rs = RECORDSIZE as u64;
@@ -1110,8 +1153,9 @@ impl Fs {
                             }
                         })
                     }).collect::<Vec<_>>();
-                    future::join_all(futs)
-                    .map(|sglist| {
+                    let atime_fut = dataset.insert(inode_key, value);
+                    future::join_all(futs).join(atime_fut)
+                    .map(|(sglist, _)| {
                         tx.send(Ok(sglist)).unwrap();
                     })
                 })
@@ -1254,9 +1298,9 @@ impl Fs {
         // 0)  Check conditions
         // 1)  Remove the source dirent
         // 2)  Insert the dst dirent
-        // 3a) If source was a directory decrement parent's nlink
-        // 3b) If source was a directory and target did not exist, increment
-        //     newparent's nlink
+        // 3a) Update old parent's attributes
+        // 3b) Update new parent's attributes, unless it's the same as old
+        //     parent.
         // 3ci) If dst existed and is not a directory, decrement its link count
         // 3cii) If dst existed and is a directory, remove it
         let (tx, rx) = oneshot::channel();
@@ -1318,25 +1362,26 @@ impl Fs {
                         (old_dst_ino, isdir)
                     })
                 }).and_then(move |(old_dst_ino, isdir)| {
-                    let p_nlink_fut = if isdir && !samedir {
-                        // 3a) Decrement parent dir's link count
-                        let ds2 = ds.clone();
-                        let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
-                        let fut = ds.get(parent_ino_key)
-                        .and_then(move |r| {
-                            let mut value = r.unwrap();
-                            value.as_mut_inode().unwrap().nlink -= 1;
-                            ds2.insert(parent_ino_key, value)
-                            .map(drop)
-                        });
-                        Box::new(fut)
-                            as Box<Future<Item=(), Error=Error> + Send>
-                    } else {
-                        Box::new(Ok(()).into_future())
-                            as Box<Future<Item=(), Error=Error> + Send>
-                    };
+                    // 3a) Decrement parent dir's link count
+                    let ds2 = ds.clone();
+                    let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
+                    let p_nlink_fut = ds.get(parent_ino_key)
+                    .and_then(move |r| {
+                        let mut value = r.unwrap();
+                        {
+                            let inode = value.as_mut_inode().unwrap();
+                            let now = time::get_time();
+                            inode.mtime = now;
+                            inode.ctime = now;
+                            if isdir && !samedir {
+                                inode.nlink -= 1;
+                            }
+                        }
+                        ds2.insert(parent_ino_key, value)
+                        .map(drop)
+                    });
                     let np_nlink_fut =
-                    if isdir && !samedir && old_dst_ino.is_none() {
+                    if !samedir {
                         // 3b) Increment new parent dir's link count
                         let ds3 = ds.clone();
                         let newparent_ino_key = FSKey::new(newparent,
@@ -1344,7 +1389,15 @@ impl Fs {
                         let fut = ds.get(newparent_ino_key)
                         .and_then(move |r| {
                             let mut value = r.unwrap();
-                            value.as_mut_inode().unwrap().nlink += 1;
+                            {
+                                let inode = value.as_mut_inode().unwrap();
+                                let now = time::get_time();
+                                inode.mtime = now;
+                                inode.ctime = now;
+                                if isdir && old_dst_ino.is_none() {
+                                    inode.nlink += 1;
+                                }
+                            }
                             ds3.insert(newparent_ino_key, value)
                             .map(drop)
                         });
@@ -1416,6 +1469,7 @@ impl Fs {
 
                     // 4) Actually remove the directory
                     let dfut = Fs::do_rmdir(ds2, parent, ino, true);
+
                     dirent_fut.join(dfut)
                 }).then(move |r| {
                     match r {
@@ -1429,11 +1483,17 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn setattr(&self, ino: u64, attr: SetAttr) -> Result<(), i32> {
+    pub fn setattr(&self, ino: u64, mut attr: SetAttr) -> Result<(), i32> {
         let (tx, rx) = oneshot::channel();
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
-                Fs::do_setattr::<ReadWriteFilesystem>(ds, ino, attr)
+                if attr.ctime.is_none() {
+                    let now = time::get_time();
+                    if attr.ctime.is_none() {
+                        attr.ctime = Some(now);
+                    }
+                }
+                Fs::do_setattr(ds, ino, attr)
                 .map(move |_| tx.send(Ok(())).unwrap())
             }).map_err(Error::unhandled)
         ).unwrap();
@@ -1497,7 +1557,8 @@ impl Fs {
     {
         let file_type = FileType::Link(link.to_os_string());
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          file_type);
+                                          file_type)
+        .callback(Fs::create_ts_callback);
         self.do_create(create_args)
     }
 
@@ -1515,6 +1576,7 @@ impl Fs {
         // Outline:
         // 1) Lookup and remove the directory entry
         // 2) Unlink the Inode
+        // 3) Update parent's mtime and ctime
         let (tx, rx) = oneshot::channel();
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
@@ -1527,7 +1589,13 @@ impl Fs {
                     (dataset.clone(), key, 0, owned_name)
                 .and_then(move |dirent|  {
                     // 2) Unlink the inode
-                    Fs::do_unlink(dataset, dirent.ino)
+                    let unlink_fut = Fs::do_unlink(dataset.clone(), dirent.ino);
+                    let now = time::get_time();
+                    let mut attr = SetAttr::default();
+                    attr.ctime = Some(now);
+                    attr.mtime = Some(now);
+                    let ts_fut = Fs::do_setattr(dataset, parent, attr);
+                    unlink_fut.join(ts_fut)
                 }).then(move |r| {
                     match r {
                         Ok(_) => tx.send(Ok(())),
@@ -1575,25 +1643,28 @@ impl Fs {
 
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
-                let inode_key = FSKey::new(ino, ObjKey::Inode);
                 let dataset = Arc::new(ds);
-                let dataset2 = dataset.clone();
+                let inode_key = FSKey::new(ino, ObjKey::Inode);
                 dataset.get(inode_key)
                 .and_then(move |r| {
-                    let mut inode_value = r.unwrap();
-                    let filesize = inode_value.as_inode().unwrap().size;
+                    let mut value = r.unwrap();
+                    let filesize = value.as_inode().unwrap().size;
                     let data_futs = sglist.into_iter()
                         .enumerate()
                         .map(|(i, dbs)| {
                         let ds3 = dataset.clone();
                         Fs::write_record(ino, filesize, offset, i, dbs, ds3)
                     }).collect::<Vec<_>>();
-                    future::join_all(data_futs).and_then(move |_| {
-                        let new_size = cmp::max(filesize,
-                                                offset + datalen as u64);
-                        inode_value.as_mut_inode().unwrap().size = new_size;
-                        dataset2.insert(inode_key, inode_value)
-                    })
+                    let new_size = cmp::max(filesize, offset + datalen as u64);
+                    {
+                        let inode = value.as_mut_inode().unwrap();
+                        inode.size = new_size;
+                        let now = time::get_time();
+                        inode.mtime = now;
+                        inode.ctime = now;
+                    }
+                    let ino_fut = dataset.insert(inode_key, value);
+                    future::join_all(data_futs).join(ino_fut)
                 }).map(move |_| tx.send(Ok(datalen as u32)).unwrap())
             }).map_err(Error::unhandled)
         ).unwrap();
@@ -1710,7 +1781,27 @@ fn create() {
     let ino = 1;
     let filename = OsString::from("x");
     let filename2 = filename.clone();
-    ds.expect_insert()
+    let old_ts = time::Timespec::new(0, 0);
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::Inode))
+        .returning(move |_| {
+            let inode = Inode {
+                size: 0,
+                nlink: 2,
+                flags: 0,
+                atime: old_ts,
+                mtime: old_ts,
+                ctime: old_ts,
+                birthtime: old_ts,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
+    ds.then().expect_insert()
         .called_once()
         .with(passes(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
@@ -1728,6 +1819,16 @@ fn create() {
             args.1.as_direntry().unwrap().dtype == libc::DT_REG &&
             args.1.as_direntry().unwrap().name == filename2 &&
             args.1.as_direntry().unwrap().ino == ino
+        })).returning(|_| Box::new(Ok(None).into_future()));
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_inode() &&
+            args.1.as_inode().unwrap().file_type == FileType::Dir &&
+            args.1.as_inode().unwrap().atime == old_ts &&
+            args.1.as_inode().unwrap().mtime != old_ts &&
+            args.1.as_inode().unwrap().ctime != old_ts &&
+            args.1.as_inode().unwrap().birthtime == old_ts
         })).returning(|_| Box::new(Ok(None).into_future()));
     let mut opt_ds = Some(ds);
     db.expect_fswrite()
@@ -1752,7 +1853,27 @@ fn create_hash_collision() {
     let filename4 = filename.clone();
     let other_filename = OsString::from("y");
     let other_filename2 = other_filename.clone();
-    ds.expect_insert()
+    let old_ts = time::Timespec::new(0, 0);
+    ds.expect_get()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::Inode))
+        .returning(move |_| {
+            let inode = Inode {
+                size: 0,
+                nlink: 2,
+                flags: 0,
+                atime: old_ts,
+                mtime: old_ts,
+                ctime: old_ts,
+                birthtime: old_ts,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
+    ds.then().expect_insert()
         .called_once()
         .with(passes(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode()
@@ -1799,6 +1920,16 @@ fn create_hash_collision() {
             let v = FSValue::DirEntry(dirent);
             Box::new(Ok(Some(v)).into_future())
         });
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_inode() &&
+            args.1.as_inode().unwrap().file_type == FileType::Dir &&
+            args.1.as_inode().unwrap().atime == old_ts &&
+            args.1.as_inode().unwrap().mtime != old_ts &&
+            args.1.as_inode().unwrap().ctime != old_ts &&
+            args.1.as_inode().unwrap().birthtime == old_ts
+        })).returning(|_| Box::new(Ok(None).into_future()));
 
     let mut opt_ds = Some(ds);
     db.expect_fswrite()
@@ -2003,55 +2134,6 @@ fn rename_eio() {
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.rename(1, &srcname, 1, &dstname);
     assert_eq!(Err(libc::EIO), r);
-}
-
-/// Rename a file within the same directory.  The parent directory's inode
-/// should not be modified.
-#[test]
-fn rename_samedir() {
-    let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
-    let srcname = OsString::from("x");
-    let dstname = OsString::from("y");
-    let src_dirent = Dirent {
-        ino: 2,
-        dtype: libc::DT_REG,
-        name: srcname.clone()
-    };
-    let new_dirent = Dirent {
-        ino: 2,
-        dtype: libc::DT_REG,
-        name: dstname.clone()
-    };
-    let new_de_value = FSValue::DirEntry(new_dirent);
-    ds.expect_get()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::dir_entry(&dstname)))
-        .returning(move |_| {
-            Box::new(Ok(None).into_future())
-        });
-    ds.then().expect_remove()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::dir_entry(&srcname)))
-        .returning(move |_| {
-            let v = FSValue::DirEntry(src_dirent.clone());
-            Box::new(Ok(Some(v)).into_future())
-        });
-    ds.then().expect_insert()
-        .called_once()
-        .with((FSKey::new(1, ObjKey::dir_entry(&dstname)), new_de_value))
-        .returning(move |_| {
-            Box::new(Ok(None).into_future())
-        });
-
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
-
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.rename(1, &srcname, 1, &dstname);
-    assert_eq!(Ok(()), r);
 }
 
 // Rmdir a directory with extended attributes, and don't forget to free them
@@ -2396,7 +2478,7 @@ fn unlink() {
             let v = Some(FSValue::DirEntry(dirent));
             Box::new(Ok(v).into_future())
         });
-    ds.expect_get()
+    ds.then().expect_get()
         .called_once()
         .with(FSKey::new(ino, ObjKey::Inode))
         .returning(move |_| {
@@ -2417,6 +2499,26 @@ fn unlink() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
 
+    let old_ts = time::Timespec::new(0, 0);
+    ds.then().expect_get()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::Inode))
+        .returning(move |_| {
+            let inode = Inode {
+                size: 0,
+                nlink: 2,
+                flags: 0,
+                atime: old_ts,
+                mtime: old_ts,
+                ctime: old_ts,
+                birthtime: old_ts,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
     ds.then().expect_range()
         .called_once()
         .with(FSKey::extent_range(ino))
@@ -2445,6 +2547,16 @@ fn unlink() {
         .called_once()
         .with(FSKey::obj_range(ino))
         .returning(|_| Box::new(Ok(()).into_future()));
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_inode() &&
+            args.1.as_inode().unwrap().file_type == FileType::Dir &&
+            args.1.as_inode().unwrap().atime == old_ts &&
+            args.1.as_inode().unwrap().mtime != old_ts &&
+            args.1.as_inode().unwrap().ctime != old_ts &&
+            args.1.as_inode().unwrap().birthtime == old_ts
+        })).returning(|_| Box::new(Ok(None).into_future()));
     let mut opt_ds = Some(ds);
 
     db.expect_fswrite()
@@ -2497,11 +2609,41 @@ fn unlink_hardlink() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
+    let old_ts = time::Timespec::new(0, 0);
+    ds.then().expect_get()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::Inode))
+        .returning(move |_| {
+            let inode = Inode {
+                size: 0,
+                nlink: 2,
+                flags: 0,
+                atime: old_ts,
+                mtime: old_ts,
+                ctime: old_ts,
+                birthtime: old_ts,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
     ds.then().expect_insert()
         .called_once()
         .with(passes(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().nlink == 1
+        })).returning(|_| Box::new(Ok(None).into_future()));
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_inode() &&
+            args.1.as_inode().unwrap().file_type == FileType::Dir &&
+            args.1.as_inode().unwrap().atime == old_ts &&
+            args.1.as_inode().unwrap().mtime != old_ts &&
+            args.1.as_inode().unwrap().ctime != old_ts &&
+            args.1.as_inode().unwrap().birthtime == old_ts
         })).returning(|_| Box::new(Ok(None).into_future()));
 
     let mut opt_ds = Some(ds);
@@ -2558,6 +2700,26 @@ fn unlink_with_blob_extattr() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
+    let old_ts = time::Timespec::new(0, 0);
+    ds.then().expect_get()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::Inode))
+        .returning(move |_| {
+            let inode = Inode {
+                size: 0,
+                nlink: 2,
+                flags: 0,
+                atime: old_ts,
+                mtime: old_ts,
+                ctime: old_ts,
+                birthtime: old_ts,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
 
     ds.then().expect_range()
         .called_once()
@@ -2609,6 +2771,16 @@ fn unlink_with_blob_extattr() {
         .called_once()
         .with(FSKey::obj_range(ino))
         .returning(|_| Box::new(Ok(()).into_future()));
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_inode() &&
+            args.1.as_inode().unwrap().file_type == FileType::Dir &&
+            args.1.as_inode().unwrap().atime == old_ts &&
+            args.1.as_inode().unwrap().mtime != old_ts &&
+            args.1.as_inode().unwrap().ctime != old_ts &&
+            args.1.as_inode().unwrap().birthtime == old_ts
+        })).returning(|_| Box::new(Ok(None).into_future()));
     let mut opt_ds = Some(ds);
 
     db.expect_fswrite()
@@ -2663,6 +2835,26 @@ fn unlink_with_extattr_hash_collision() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
+    let old_ts = time::Timespec::new(0, 0);
+    ds.then().expect_get()
+        .called_once()
+        .with(FSKey::new(1, ObjKey::Inode))
+        .returning(move |_| {
+            let inode = Inode {
+                size: 0,
+                nlink: 2,
+                flags: 0,
+                atime: old_ts,
+                mtime: old_ts,
+                ctime: old_ts,
+                birthtime: old_ts,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755,
+            };
+            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+        });
     ds.then().expect_range()
         .called_once()
         .with(FSKey::extent_range(ino))
@@ -2701,6 +2893,16 @@ fn unlink_with_extattr_hash_collision() {
         .called_once()
         .with(FSKey::obj_range(ino))
         .returning(|_| Box::new(Ok(()).into_future()));
+    ds.then().expect_insert()
+        .called_once()
+        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+            args.0.is_inode() &&
+            args.1.as_inode().unwrap().file_type == FileType::Dir &&
+            args.1.as_inode().unwrap().atime == old_ts &&
+            args.1.as_inode().unwrap().mtime != old_ts &&
+            args.1.as_inode().unwrap().ctime != old_ts &&
+            args.1.as_inode().unwrap().birthtime == old_ts
+        })).returning(|_| Box::new(Ok(None).into_future()));
 
     let mut opt_ds = Some(ds);
     db.expect_fswrite()

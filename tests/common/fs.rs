@@ -2,7 +2,8 @@
 use galvanic_test::*;
 use log::*;
 
-/// Constructs a real filesystem and tests the common FS routines, without mounting
+/// Constructs a real filesystem and tests the common FS routines, without
+/// mounting
 test_suite! {
     name fs;
 
@@ -88,6 +89,34 @@ test_suite! {
         assert_eq!(objkey0.offset(), objkey1.offset());
     }
 
+    /// Assert that some combination of timestamps have changed since they were
+    /// last cleared.
+    fn assert_ts_changed(ds: &Fs, ino: u64, atime: bool, mtime: bool,
+                         ctime: bool, birthtime: bool)
+    {
+        let attr = ds.getattr(ino).unwrap();
+        let ts0 = Timespec{sec: 0, nsec: 0};
+        assert!(atime ^ (attr.atime == ts0));
+        assert!(mtime ^ (attr.mtime == ts0));
+        assert!(ctime ^ (attr.ctime == ts0));
+        assert!(birthtime ^ (attr.birthtime == ts0));
+    }
+
+    fn clear_timestamps(ds: &Fs, ino: u64) {
+        let attr = SetAttr {
+            perm: None,
+            uid: None,
+            gid: None,
+            size: None,
+            atime: Some(Timespec{sec: 0, nsec: 0}),
+            mtime: Some(Timespec{sec: 0, nsec: 0}),
+            ctime: Some(Timespec{sec: 0, nsec: 0}),
+            birthtime: Some(Timespec{sec: 0, nsec: 0}),
+            flags: None,
+        };
+        ds.setattr(ino, attr).unwrap();
+    }
+
     test create(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
@@ -111,6 +140,14 @@ test_suite! {
         // The parent dir's link count should not have increased
         let parent_attr = mocks.val.0.getattr(1).unwrap();
         assert_eq!(parent_attr.nlink, 1);
+    }
+
+    /// Create should update the parent dir's timestamps
+    test create_timestamps(mocks) {
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
     }
 
     test deleteextattr(mocks) {
@@ -187,6 +224,20 @@ test_suite! {
                    Err(libc::ENOATTR));
     }
 
+    /// rmextattr(2) should not modify any timestamps
+    test deleteextattr_timestamps(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = [1u8, 2, 3];
+        let ns = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
+        clear_timestamps(&mocks.val.0, ino);
+
+        mocks.val.0.deleteextattr(ino, ns, &name).unwrap();
+        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
+    }
+
     // Dumps an FS tree, with enough data to create IntNodes
     test dump(mocks) {
         let ino_w = mocks.val.0.mkdir(1, &OsString::from("w"), 0o755, 1, 2)
@@ -197,23 +248,11 @@ test_suite! {
         .unwrap();
         let ino_z = mocks.val.0.mkdir(1, &OsString::from("z"), 0o755, 7, 8)
         .unwrap();
-        // Zero out the timestamp strings
-        let attr = SetAttr {
-            perm: None,
-            uid: None,
-            gid: None,
-            size: None,
-            atime: Some(Timespec{sec: 0, nsec: 0}),
-            mtime: Some(Timespec{sec: 0, nsec: 0}),
-            ctime: Some(Timespec{sec: 0, nsec: 0}),
-            birthtime: Some(Timespec{sec: 0, nsec: 0}),
-            flags: None,
-        };
-        mocks.val.0.setattr(1, attr).unwrap();
-        mocks.val.0.setattr(ino_w, attr).unwrap();
-        mocks.val.0.setattr(ino_x, attr).unwrap();
-        mocks.val.0.setattr(ino_y, attr).unwrap();
-        mocks.val.0.setattr(ino_z, attr).unwrap();
+        clear_timestamps(&mocks.val.0, 1);
+        clear_timestamps(&mocks.val.0, ino_w);
+        clear_timestamps(&mocks.val.0, ino_x);
+        clear_timestamps(&mocks.val.0, ino_y);
+        clear_timestamps(&mocks.val.0, ino_z);
         mocks.val.0.sync();
 
         let mut buf = Vec::with_capacity(1024);
@@ -602,6 +641,20 @@ root:
                    Err(libc::ENOATTR));
     }
 
+    /// getextattr(2) should not modify any timestamps
+    test getextattr_timestamps(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = [1u8, 2, 3];
+        let namespace = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
+        clear_timestamps(&mocks.val.0, ino);
+
+        mocks.val.0.getextattr(ino, namespace, &name).unwrap();
+        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
+    }
+
     test link(mocks) {
         let src = OsString::from("src");
         let dst = OsString::from("dst");
@@ -616,6 +669,18 @@ root:
         // The parent should have a new directory entry
         assert_eq!(mocks.val.0.lookup(1, &dst).unwrap(), ino);
     }
+
+    ///link(2) should update the parent's mtime and ctime
+    test link_timestamps(mocks) {
+        let src = OsString::from("src");
+        let dst = OsString::from("dst");
+        let ino = mocks.val.0.create(1, &src, 0o644, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.link(1, ino, &dst).unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+    }
+
 
     /// Helper for FreeBSD-style VFS
     ///
@@ -812,6 +877,14 @@ root:
         assert_eq!(mocks.val.0.lookup(1, &filename1), Ok(ino1));
     }
 
+    /// mkdir(2) should update the parent dir's timestamps
+    test mkdir_timestamps(mocks) {
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.mkdir(1, &OsString::from("x"), 0o755, 0, 0).unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+    }
+
     test mkchar(mocks) {
         let ino = mocks.val.0.mkchar(1, &OsString::from("x"), 0o644, 0, 0, 42)
         .unwrap();
@@ -833,6 +906,14 @@ root:
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
         assert_eq!(u64::from(dirent.d_fileno), ino);
+    }
+
+    /// mknod(2) should update the parent dir's timestamps
+    test mkchar_timestamps(mocks) {
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.mkchar(1, &OsString::from("x"), 0o644, 0, 0, 42).unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
     }
 
     test mkblock(mocks) {
@@ -858,6 +939,14 @@ root:
         assert_eq!(u64::from(dirent.d_fileno), ino);
     }
 
+    /// mknod(2) should update the parent dir's timestamps
+    test mkblock_timestamps(mocks) {
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.mkblock(1, &OsString::from("x"), 0o644, 0, 0, 42).unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+    }
+
     test mkfifo(mocks) {
         let ino = mocks.val.0.mkfifo(1, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
@@ -880,6 +969,14 @@ root:
         assert_eq!(u64::from(dirent.d_fileno), ino);
     }
 
+    /// mkfifo(2) should update the parent dir's timestamps
+    test mkfifo_timestamps(mocks) {
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.mkfifo(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+    }
+
     test mksock(mocks) {
         let ino = mocks.val.0.mksock(1, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
@@ -900,6 +997,14 @@ root:
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
         assert_eq!(u64::from(dirent.d_fileno), ino);
+    }
+
+    /// mksock(2) should update the parent dir's timestamps
+    test mksock_timestamps(mocks) {
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.mkfifo(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
     }
 
     // Read a single BlobExtent record
@@ -1002,6 +1107,18 @@ root:
 
         let sglist = mocks.val.0.read(ino, 2048, 1024).unwrap();
         assert!(sglist.is_empty());
+    }
+
+    /// read(2) should update the file's atime
+    test read_timestamps(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let buf = vec![42u8; 4096];
+        mocks.val.0.write(ino, 0, &buf[..], 0).unwrap();
+        clear_timestamps(&mocks.val.0, ino);
+
+        mocks.val.0.read(ino, 0, 4096).unwrap();
+        assert_ts_changed(&mocks.val.0, ino, true, false, false, false);
     }
 
     // A read that's split across two records
@@ -1129,6 +1246,16 @@ root:
         let _ = entries.next().unwrap().unwrap();
     }
 
+    /// readdir(2) should not update any timestamps
+    test readdir_timestamps(mocks) {
+        clear_timestamps(&mocks.val.0, 1);
+
+        let mut entries = mocks.val.0.readdir(1, 0, 0);
+        entries.next().unwrap().unwrap();
+        entries.next().unwrap().unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, false, false, false);
+    }
+
     test readlink(mocks) {
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
@@ -1144,6 +1271,18 @@ root:
 
     test readlink_enoent(mocks) {
         assert_eq!(Err(libc::ENOENT), mocks.val.0.readlink(1000));
+    }
+
+    /// readlink(2) should not update any timestamps
+    test readlink_timestamps(mocks) {
+        let dstname = OsString::from("dst");
+        let srcname = OsString::from("src");
+        let ino = mocks.val.0.symlink(1, &srcname, 0o642, 0, 0, &dstname)
+        .unwrap();
+        clear_timestamps(&mocks.val.0, ino);
+
+        assert_eq!(dstname, mocks.val.0.readlink(ino).unwrap());
+        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
     }
 
     // Rename a file that has a hash collision in both the source and
@@ -1384,6 +1523,31 @@ root:
         assert_eq!(&v[..], &value);
     }
 
+    // rename updates a file's parent directories' ctime and mtime
+    test rename_timestamps(mocks) {
+        let src = OsString::from("src");
+        let srcdir = OsString::from("srcdir");
+        let dst = OsString::from("dst");
+        let dstdir = OsString::from("dstdir");
+        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        .unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0)
+        .unwrap();
+        let ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
+        .unwrap();
+        clear_timestamps(&mocks.val.0, srcdir_ino);
+        clear_timestamps(&mocks.val.0, dstdir_ino);
+        clear_timestamps(&mocks.val.0, ino);
+
+        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+
+        // Timestamps should've been updated for parent directories, but not for
+        // the file itself
+        assert_ts_changed(&mocks.val.0, srcdir_ino, false, true, true, false);
+        assert_ts_changed(&mocks.val.0, dstdir_ino, false, true, true, false);
+        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
+    }
+
     #[cfg_attr(feature = "cargo-clippy",
                allow(clippy::block_in_if_condition_stmt))]
     test rmdir(mocks) {
@@ -1470,6 +1634,18 @@ root:
                    libc::ENOATTR);
     }
 
+    /// Removing a directory should update its parent's timestamps
+    test rmdir_timestamps(mocks) {
+        let dirname = OsString::from("x");
+        mocks.val.0.mkdir(1, &dirname, 0o755, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.rmdir(1, &dirname).unwrap();
+
+        // Timestamps should've been updated
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+    }
+
     test setattr(mocks) {
         let filename = OsString::from("x");
         let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0)
@@ -1521,13 +1697,37 @@ root:
             size: None,
             atime: None,
             mtime: None,
-            ctime: None,
+            // ctime will get updated to "now" if we don't explicitly set it
+            ctime: Some(ctime),
             birthtime: None,
             flags: None,
         };
         mocks.val.0.setattr(ino, attr).unwrap();
         let attr = mocks.val.0.getattr(ino).unwrap();
         assert(attr);
+    }
+
+    // setattr updates a file's ctime and mtime
+    test setattr_timestamps(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        clear_timestamps(&mocks.val.0, ino);
+
+        let attr = SetAttr {
+            perm: None,
+            uid: None,
+            gid: None,
+            size: None,
+            atime: None,
+            mtime: None,
+            ctime: None,
+            birthtime: None,
+            flags: None,
+        };
+        mocks.val.0.setattr(ino, attr).unwrap();
+
+        // Timestamps should've been updated
+        assert_ts_changed(&mocks.val.0, ino, false, false, true, false);
     }
 
     /// Overwrite an existing extended attribute
@@ -1565,6 +1765,19 @@ root:
         assert_eq!(&v0[..], &value0);
         let v1 = mocks.val.0.getextattr(ino, ns1, &name1).unwrap();
         assert_eq!(&v1[..], &value1a);
+    }
+
+    /// setextattr(2) should not update any timestamps
+    test setextattr_timestamps(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = [0u8, 1, 2];
+        let ns = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, ino);
+
+        mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
+        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
     }
 
     /// The file already has a blob extattr.  Set another extattr and flush them
@@ -1615,6 +1828,16 @@ root:
 
         let attr = mocks.val.0.getattr(ino).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFLNK | 0o642);
+    }
+
+    /// symlink should update the parent dir's timestamps
+    test symlink_timestamps(mocks) {
+        let dstname = OsString::from("dst");
+        let srcname = OsString::from("src");
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.symlink(1, &srcname, 0o642, 0, 0, &dstname).unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
     }
 
     test unlink(mocks) {
@@ -1679,6 +1902,16 @@ root:
         assert_eq!(mocks.val.0.lookup(1, &name1), Err(libc::ENOENT));
         assert_eq!(mocks.val.0.lookup(1, &name2), Err(libc::ENOENT));
         assert_eq!(mocks.val.0.getattr(ino), Err(libc::ENOENT));
+    }
+
+    /// unlink(2) should update the parent dir's timestamps
+    test unlink_timestamps(mocks) {
+        let filename = OsString::from("x");
+        mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, 1);
+
+        mocks.val.0.unlink(1, &filename).unwrap();
+        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
     }
 
     // A very simple single record write to an empty file
@@ -1761,6 +1994,20 @@ root:
         assert_eq!(&db[0..512], &buf0[0..512]);
         assert_eq!(&db[512..2560], &buf1[..]);
         assert_eq!(&db[2560..], &buf0[2560..]);
+    }
+
+    // write updates a file's ctime and mtime
+    test write_timestamps(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        clear_timestamps(&mocks.val.0, ino);
+
+        let buf = vec![42u8; 4096];
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(4096), r);
+
+        // Timestamps should've been updated
+        assert_ts_changed(&mocks.val.0, ino, false, true, true, false);
     }
 
     // A write to an empty file that's split across two records
