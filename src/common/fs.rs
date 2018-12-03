@@ -504,7 +504,6 @@ impl Fs {
             iv.ctime = attr.ctime.unwrap_or(iv.ctime);
             iv.birthtime = attr.birthtime.unwrap_or(iv.birthtime);
             iv.flags = attr.flags.unwrap_or(iv.flags);
-            iv.uid = attr.uid.unwrap_or(iv.uid);
             dataset.as_ref().insert(inode_key, FSValue::Inode(iv))
             .map(drop)
         })
