@@ -6802,6 +6802,52 @@ root:
           1: 1.0"#);
 }
 
+#[test]
+fn range_empty_range() {
+    let dml = Arc::new(DMLMock::new());
+    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
+---
+height: 2
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 0
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    0: 0.0
+                    1: 1.0
+          - key: 3
+            txgs:
+              start: 0
+              end: 42
+            ptr:
+              Mem:
+                Leaf:
+                  items:
+                    3: 3.0
+                    4: 4.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(
+        tree.range(1..1).collect()
+    );
+    assert_eq!(r, Ok(vec![]));
+}
+
 // Empty tree
 #[test]
 fn range_empty_tree() {
