@@ -1132,8 +1132,24 @@ root:
         assert!(sglist.is_empty());
     }
 
-    // TODO: a read that spans at least 3 records, where the middle record is a
-    // hole
+    /// A read that spans 3 records, where the middle record is a hole
+    test read_spans_hole(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let mut buf = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        assert_eq!(4096, mocks.val.0.write(ino, 0, &buf[..], 0).unwrap());
+        assert_eq!(4096, mocks.val.0.write(ino, 8192, &buf[..], 0).unwrap());
+
+        let sglist = mocks.val.0.read(ino, 0, 12288).unwrap();
+        assert_eq!(sglist.len(), 3);
+        assert_eq!(&sglist[0][..], &buf[..]);
+        assert_eq!(&sglist[1][..], &[0u8; 4096][..]);
+        assert_eq!(&sglist[2][..], &buf[..]);
+    }
 
     /// read(2) should update the file's atime
     test read_timestamps(mocks) {
