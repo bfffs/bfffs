@@ -1128,28 +1128,59 @@ impl Fs {
                             }
                         }).map(move |bdb| {
                             let mut db = *bdb;
-                            if rec == 0 {
+                            if nrecs == 1 {
+                                let l = db.len();
+                                let s = (offset - baseoffset) as usize;
+                                db.split_to(cmp::min(l, s));
+                                let l = db.len();
+                                db.split_off(cmp::min(l, size));
+                                if db.len() < size {
+                                    // A partial hole.  We got some data, but
+                                    // not enough.  Copy to a new buffer
+                                    // TODO: use zero_region
+                                    let mut v = vec![0u8; size];
+                                    v[0..db.len()].copy_from_slice(&db[..]);
+                                    db = DivBufShared::from(v).try().unwrap();
+                                }
+                            } else if rec == 0 {
                                 // Trim the beginning
-                                db.split_to((offset - baseoffset) as usize);
-                            }
+                                let l = db.len();
+                                if offset > baseoffset {
+                                    let s = (offset - baseoffset) as usize;
+                                    db.split_to(cmp::min(l, s));
+                                    let e = cmp::min(size as u64,
+                                                     rs - offset % rs);
+                                    let e = e as usize;
+                                    if db.len() < e {
+                                        // A partial hole.  We got some data,
+                                        // but not enough.  Copy to a new buffer
+                                        // TODO: use zero_region
+                                        let mut v = vec![0u8; e];
+                                        v[0..db.len()].copy_from_slice(&db[..]);
+                                        db = DivBufShared::from(v)
+                                            .try().unwrap();
+                                    }
+                                }
+                            } else
                             if rec == nrecs - 1 {
                                 // Trim the end
-                                let end = RECORDSIZE
-                                    - ((nrecs * rs) as usize - size);
-                                if db.len() >= end {
-                                    db.split_off(RECORDSIZE
-                                        - ((nrecs * rs) as usize - size));
-                                    db
-                                } else {
-                                    // A partial hole.  We got some data,
-                                    // but not enough.  Copy to a new buffer
-                                    let mut v = vec![0u8; end];
-                                    v[0..db.len()].copy_from_slice(&db[..]);
-                                    DivBufShared::from(v).try().unwrap()
+                                let e = ((size as u64 + offset) % rs) as usize;
+                                if e > 0 {
+                                    if db.len() >= e {
+                                        db.split_off(e);
+                                    }
+                                    if db.len() < e {
+                                        // A partial hole.  We got some data,
+                                        // but not enough.  Copy to a new buffer
+                                        // TODO: use zero_region
+                                        let mut v = vec![0u8; e];
+                                        v[0..db.len()].copy_from_slice(&db[..]);
+                                        db = DivBufShared::from(v)
+                                            .try().unwrap();
+                                    }
                                 }
-                            } else {
-                                db
                             }
+                            db
                         })
                     }).collect::<Vec<_>>();
                     let atime_fut = dataset.insert(inode_key, value);

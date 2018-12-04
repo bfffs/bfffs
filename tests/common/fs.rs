@@ -1071,10 +1071,32 @@ root:
         assert_eq!(Ok(2048), r);
 
         // The file should now have a hole from offset 2048 to 4096
-        let sglist = mocks.val.0.read(ino, 2048, 2048).unwrap();
+        let sglist = mocks.val.0.read(ino, 3072, 1024).unwrap();
         let db = &sglist[0];
-        let expected = [0u8; 2048];
+        let expected = [0u8; 1024];
         assert_eq!(&db[..], &expected[..]);
+    }
+
+    // Read a chunk of a file that includes a partial hole at the beginning and
+    // data at the end.
+    test read_partial_hole_trailing_edge(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let mut buf = vec![0u8; 2048];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(2048), r);
+        let r = mocks.val.0.write(ino, 4096, &buf[..], 0);
+        assert_eq!(Ok(2048), r);
+
+        // The file should now have a hole from offset 2048 to 4096
+        let sglist = mocks.val.0.read(ino, 3072, 2048).unwrap();
+        assert_eq!(sglist.len(), 2);
+        assert_eq!(&sglist[0][..], &[0u8; 1024][..]);
+        assert_eq!(&sglist[1][..], &buf[0..1024]);
     }
 
     // A read that's smaller than a record, at both ends
@@ -1091,6 +1113,7 @@ root:
 
         let sglist = mocks.val.0.read(ino, 1024, 2048).unwrap();
         let db = &sglist[0];
+        assert_eq!(db.len(), 2048);
         assert_eq!(&db[..], &buf[1024..3072]);
     }
 
@@ -1108,6 +1131,9 @@ root:
         let sglist = mocks.val.0.read(ino, 2048, 1024).unwrap();
         assert!(sglist.is_empty());
     }
+
+    // TODO: a read that spans at least 3 records, where the middle record is a
+    // hole
 
     /// read(2) should update the file's atime
     test read_timestamps(mocks) {
