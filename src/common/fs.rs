@@ -1142,9 +1142,10 @@ impl Fs {
         })
     }
 
-    pub fn read(&self, ino: u64, offset: u64, mut size: usize)
+    pub fn read(&self, ino: u64, offset: u64, size: usize)
         -> Result<SGList, i32>
     {
+        let mut size64 = size as u64;
         let (tx, rx) = oneshot::channel();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         self.handle.spawn(
@@ -1153,6 +1154,7 @@ impl Fs {
                 // First lookup the inode to get the file size
                 dataset.get(inode_key)
                 .and_then(move |r| {
+                    let dataset2 = dataset.clone();
                     let mut value = r.unwrap();
                     {
                         let inode = value.as_mut_inode().unwrap();
@@ -1161,110 +1163,73 @@ impl Fs {
                     }
                     let fsize = value.as_inode().unwrap().size;
                     // Truncate read to file size
-                    size = size.min((fsize.saturating_sub(offset)) as usize);
+                    size64 = size64.min(fsize.saturating_sub(offset));
                     let rs = RECORDSIZE as u64;
-                    let nrecs = if size == 0 {
-                        0
-                    } else {
-                        div_roundup(offset + size as u64, rs) - (offset / rs)
-                    };
                     let baseoffset = offset - (offset % rs);
-                    let futs = (0..nrecs).map(|rec| {
-                        let dataset2 = dataset.clone();
-                        let offs = baseoffset + rec * rs;
-                        debug_assert!(fsize > offs);
-                        let k = FSKey::new(ino, ObjKey::Extent(offs));
-                        // Lookup the extent
-                        dataset2.get(k)
-                        .and_then(move |v| {
-                            if let Some(item) = v {
-                                match item.as_extent().unwrap() {
-                                    Extent::Inline(ile) => {
-                                        let buf = ile.buf.try().unwrap();
-                                        let bbuf = Box::new(buf);
-                                        Box::new(Ok(bbuf).into_future())
-                                            as Box<Future<Item=_,
-                                                          Error=_> + Send>
-                                    },
-                                    Extent::Blob(be) => {
-                                        let bfut = dataset2.get_blob(be.rid);
-                                        Box::new(bfut)
-                                            as Box<Future<Item=_,
-                                                          Error=_> + Send>
-                                    }
-                                }
-                            } else {
-                                // No extent found; it's a hole
-                                let db = if ZERO_REGION_LEN <= RECORDSIZE {
-                                    ZERO_REGION.try().unwrap()
-                                } else {
-                                    let v = vec![0u8; RECORDSIZE];
-                                    let dbs = DivBufShared::from(v);
-                                    dbs.try().unwrap()
-                                };
-                                Box::new(Ok(Box::new(db)).into_future())
-                                    as Box<Future<Item=Box<DivBuf>,
-                                                  Error=Error> + Send>
+
+                    let end = offset + size64;
+                    let erange = FSKey::extent_range(ino, baseoffset..end);
+                    let initial = (Vec::<IoVec>::new(), offset, 0usize);
+                    type T = (u64, DivBuf);
+                    let data_fut = dataset.range(erange)
+                    .and_then(move |(k, v)| {
+                        let ofs = k.offset();
+                        match v.as_extent().unwrap() {
+                            Extent::Inline(ile) => {
+                                let buf = ile.buf.try().unwrap();
+                                Box::new(Ok((ofs, buf)).into_future())
+                                    as Box<Future<Item=T, Error=Error> + Send>
+                            },
+                            Extent::Blob(be) => {
+                                let bfut = dataset.get_blob(be.rid)
+                                .map(move |bbuf| (ofs, *bbuf));
+                                Box::new(bfut)
+                                    as Box<Future<Item=T, Error=Error> + Send>
                             }
-                        }).map(move |bdb| {
-                            let mut db = *bdb;
-                            if nrecs == 1 {
-                                let l = db.len();
-                                let s = (offset - baseoffset) as usize;
-                                db.split_to(cmp::min(l, s));
-                                let l = db.len();
-                                db.split_off(cmp::min(l, size));
-                                if db.len() < size {
-                                    // A partial hole.  We got some data, but
-                                    // not enough.  Copy to a new buffer
-                                    // TODO: use zero_region
-                                    let mut v = vec![0u8; size];
-                                    v[0..db.len()].copy_from_slice(&db[..]);
-                                    db = DivBufShared::from(v).try().unwrap();
-                                }
-                            } else if rec == 0 {
-                                // Trim the beginning
-                                let l = db.len();
-                                if offset > baseoffset {
-                                    let s = (offset - baseoffset) as usize;
-                                    db.split_to(cmp::min(l, s));
-                                    let e = cmp::min(size as u64,
-                                                     rs - offset % rs);
-                                    let e = e as usize;
-                                    if db.len() < e {
-                                        // A partial hole.  We got some data,
-                                        // but not enough.  Copy to a new buffer
-                                        // TODO: use zero_region
-                                        let mut v = vec![0u8; e];
-                                        v[0..db.len()].copy_from_slice(&db[..]);
-                                        db = DivBufShared::from(v)
-                                            .try().unwrap();
-                                    }
-                                }
-                            } else
-                            if rec == nrecs - 1 {
-                                // Trim the end
-                                let e = ((size as u64 + offset) % rs) as usize;
-                                if e > 0 {
-                                    if db.len() >= e {
-                                        db.split_off(e);
-                                    }
-                                    if db.len() < e {
-                                        // A partial hole.  We got some data,
-                                        // but not enough.  Copy to a new buffer
-                                        // TODO: use zero_region
-                                        let mut v = vec![0u8; e];
-                                        v[0..db.len()].copy_from_slice(&db[..]);
-                                        db = DivBufShared::from(v)
-                                            .try().unwrap();
-                                    }
-                                }
+                        }
+                    }).fold(initial, move |acc, (ofs, mut db)| {
+                        let (mut sglist, mut p, rec) = acc;
+                        if ofs < p {
+                            // Trim the beginning of the buffer, if this is the
+                            // first record.  Trim the end, too, if it's the
+                            // last.
+                            assert_eq!(rec, 0);
+                            let s = p - ofs;
+                            let e = cmp::min(db.len() as u64, p + size64 - ofs);
+                            if e > s {
+                                let tb = db.slice(s as usize, e as usize);
+                                p += tb.len() as u64;
+                                sglist.push(tb);
                             }
-                            db
-                        })
-                    }).collect::<Vec<_>>();
-                    let atime_fut = dataset.insert(inode_key, value);
-                    future::join_all(futs).join(atime_fut)
+                        } else {
+                            // Fill in any hole
+                            while ofs > p {
+                                let l = (ofs - p) as usize;
+                                let zb = ZERO_REGION.try().unwrap().slice_to(l);
+                                p += zb.len() as u64;
+                                sglist.push(zb);
+                            }
+                            // Trim the end of the buffer.
+                            if ofs + db.len() as u64 > offset + size64 {
+                                db.split_off((offset + size64 - ofs) as usize);
+                            }
+                            p += db.len() as u64;
+                            sglist.push(db);
+                        }
+                        future::ok::<(SGList, u64, usize), Error>
+                            ((sglist, p, rec + 1))
+                    }).map(move |(mut sglist, mut p, _rec)| {
+                        // Fill in any hole at the end.
+                        while p - offset < size64 {
+                            let l = (size64 - (p - offset)) as usize;
+                            let zb = ZERO_REGION.try().unwrap().slice_to(l);
+                            p += zb.len() as u64;
+                            sglist.push(zb);
+                        }
+                        sglist
+                    });
+                    let atime_fut = dataset2.insert(inode_key, value);
+                    data_fut.join(atime_fut)
                     .map(|(sglist, _)| {
                         tx.send(Ok(sglist)).unwrap();
                     })
