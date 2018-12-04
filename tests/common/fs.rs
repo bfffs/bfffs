@@ -1756,6 +1756,56 @@ root:
         assert_ts_changed(&mocks.val.0, ino, false, false, true, false);
     }
 
+    // truncating a file should delete data past the truncation point
+    test setattr_truncate(mocks) {
+        // First write two records
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let buf = vec![42u8; 8192];
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(8192), r);
+
+        // Then truncate one of them.
+        let mut attr = SetAttr::default();
+        attr.size = Some(4096);
+        mocks.val.0.setattr(ino, attr).unwrap();
+
+        // Now extend the file past the truncated record
+        attr.size = Some(8192);
+        mocks.val.0.setattr(ino, attr).unwrap();
+
+        // Finally, read the truncated record.  It should be a hole
+        let sglist = mocks.val.0.read(ino, 4096, 4096).unwrap();
+        let db = &sglist[0];
+        let expected = [0u8; 4096];
+        assert_eq!(&db[..], &expected[..]);
+    }
+
+    // Like setattr_truncate, but everything happens within a single record
+    test setattr_truncate_partial_records(mocks) {
+        // First write one records
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let buf = vec![42u8; 4096];
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(4096), r);
+
+        // Then truncate one of them.
+        let mut attr = SetAttr::default();
+        attr.size = Some(1000);
+        mocks.val.0.setattr(ino, attr).unwrap();
+
+        // Now extend the file past the truncated record
+        attr.size = Some(4000);
+        mocks.val.0.setattr(ino, attr).unwrap();
+
+        // Finally, read from the truncated area.  It should be a hole
+        let sglist = mocks.val.0.read(ino, 2000, 1000).unwrap();
+        let db = &sglist[0];
+        let expected = [0u8; 1000];
+        assert_eq!(&db[..], &expected[..]);
+    }
+
     /// Overwrite an existing extended attribute
     test setextattr_overwrite(mocks) {
         let filename = OsString::from("x");

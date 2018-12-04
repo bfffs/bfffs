@@ -151,9 +151,12 @@ impl FSKey {
         start..end
     }
 
-    pub fn extent_range(ino: u64) -> Range<Self> {
-        let start = FSKey::compose(ino, ObjKeyDiscriminant::Extent as u8, 0);
-        let end = FSKey::compose(ino, ObjKeyDiscriminant::Extent as u8 + 1, 0);
+    /// Create a range of `FSKey` that will encompass all of a file's extents
+    /// that begin at or after `start`.
+    pub fn extent_range(ino: u64, start: u64) -> Range<Self> {
+        let discriminant = ObjKeyDiscriminant::Extent as u8;
+        let start = FSKey::compose(ino, discriminant, start);
+        let end = FSKey::compose(ino, discriminant + 1, 0);
         start..end
     }
 

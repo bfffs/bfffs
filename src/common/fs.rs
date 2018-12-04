@@ -487,26 +487,105 @@ impl Fs {
         .map(drop)
     }
 
-    fn do_setattr<T>(dataset: T, ino: u64, attr: SetAttr)
+    fn do_setattr(dataset: Arc<ReadWriteFilesystem>, ino: u64, attr: SetAttr)
         -> impl Future<Item=(), Error=Error> + Send
-        where T: AsRef<ReadWriteFilesystem> + Send + 'static
     {
         let inode_key = FSKey::new(ino, ObjKey::Inode);
-        dataset.as_ref().get(inode_key)
+        dataset.get(inode_key)
         .and_then(move |r| {
             let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
             iv.perm = attr.perm.unwrap_or(iv.perm);
             iv.uid = attr.uid.unwrap_or(iv.uid);
             iv.gid = attr.gid.unwrap_or(iv.gid);
-            iv.size = attr.size.unwrap_or(iv.size);
+            let old_size = iv.size;
+            let new_size = attr.size.unwrap_or(iv.size);
+            iv.size = new_size;
             iv.atime = attr.atime.unwrap_or(iv.atime);
             iv.mtime = attr.mtime.unwrap_or(iv.mtime);
             iv.ctime = attr.ctime.unwrap_or(iv.ctime);
             iv.birthtime = attr.birthtime.unwrap_or(iv.birthtime);
             iv.flags = attr.flags.unwrap_or(iv.flags);
-            dataset.as_ref().insert(inode_key, FSValue::Inode(iv))
+
+            let truncate_fut = if new_size < old_size {
+                assert!(iv.file_type.dtype() == libc::DT_REG);
+                Box::new(Fs::do_truncate(dataset.clone(), ino, new_size))
+                    as Box<Future<Item=(), Error=Error> + Send>
+            } else {
+                let fut = Ok(()).into_future();
+                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+            };
+
+            dataset.insert(inode_key, FSValue::Inode(iv))
+            .join(truncate_fut)
             .map(drop)
         })
+    }
+
+    /// Remove all of a file's data past `size`.  This routine does _not_ update
+    /// the Inode
+    fn do_truncate(dataset: Arc<ReadWriteFilesystem>, ino: u64, size: u64)
+        -> impl Future<Item=(), Error=Error> + Send
+    {
+        // Delete data past the truncation point
+        let dataset2 = dataset.clone();
+        let dataset3 = dataset.clone();
+        let full_fut = dataset.range(FSKey::extent_range(ino, size))
+        .filter_map(move |(_k, v)| {
+            if let Extent::Blob(be) = v.as_extent().unwrap()
+            {
+                Some(be.rid)
+            } else {
+                None
+            }
+        }).for_each(move |rid| dataset2.delete_blob(rid))
+        .and_then(move |_| {
+            dataset3.range_delete(FSKey::extent_range(ino, size))
+        });
+        let partial_fut = if size % RECORDSIZE as u64 > 0 {
+            let ofs = size - size % RECORDSIZE as u64;
+            let len = (size - ofs) as usize;
+            let k = FSKey::new(ino, ObjKey::Extent(ofs));
+            let fut = dataset.get(k)
+            .and_then(move |v| {
+                match v {
+                    None => {
+                        // It's a hole; nothing to do
+                        Box::new(Ok(()).into_future())
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    },
+                    Some(FSValue::InlineExtent(ile)) => {
+                        let mut b = ile.buf.try_mut().unwrap();
+                        b.try_truncate(len).unwrap();
+                        let extent = InlineExtent::new(ile.buf);
+                        let v = FSValue::InlineExtent(extent);
+                        Box::new(dataset.insert(k, v).map(drop))
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    },
+                    Some(FSValue::BlobExtent(be)) => {
+                        let fut = dataset.get_blob(be.rid)
+                        .and_then(move |db: Box<DivBuf>| {
+                            // TODO: eliminate this data copy by adding
+                            // a pop_blob method
+                            let dbs = DivBufShared::from(&db[0..len]);
+                            let adbs = Arc::new(dbs);
+                            let extent = InlineExtent::new(adbs);
+                            let v = FSValue::InlineExtent(extent);
+                            dataset.insert(k, v)
+                            .map(drop)
+                        });
+                        Box::new(fut)
+                            as Box<Future<Item=(), Error=Error> + Send>
+                    },
+                    x => panic!("Unexpectec value {:?} for key {:?}",
+                                x, k)
+                }
+            });
+            Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+        } else {
+            let fut = Ok(()).into_future();
+            Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+        };
+        full_fut.join(partial_fut).map(drop)
     }
 
     /// Unlink a file whose inode number is known and whose directory entry is
@@ -537,7 +616,7 @@ impl Fs {
             } else {
                 let dataset2 = dataset.clone();
                 // 2b) delete its blob extents and blob extended attributes
-                let extent_stream = dataset.range(FSKey::extent_range(ino))
+                let extent_stream = dataset.range(FSKey::extent_range(ino, 0))
                 .filter_map(move |(_k, v)| {
                     if let Extent::Blob(be) = v.as_extent().unwrap()
                     {
@@ -760,7 +839,8 @@ impl Fs {
         let (tx, rx) = oneshot::channel();
         let name = name.to_owned();
         self.handle.spawn(
-            self.db.fswrite(self.tree, move |ds| {
+            self.db.fswrite(self.tree, move |dataset| {
+                let ds = Arc::new(dataset);
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
                 ds.get(inode_key)
                 .and_then(move |r| {
@@ -1516,7 +1596,8 @@ impl Fs {
     pub fn setattr(&self, ino: u64, mut attr: SetAttr) -> Result<(), i32> {
         let (tx, rx) = oneshot::channel();
         self.handle.spawn(
-            self.db.fswrite(self.tree, move |ds| {
+            self.db.fswrite(self.tree, move |dataset| {
+                let ds = Arc::new(dataset);
                 if attr.ctime.is_none() {
                     let now = time::get_time();
                     if attr.ctime.is_none() {
@@ -2551,7 +2632,7 @@ fn unlink() {
         });
     ds.then().expect_range()
         .called_once()
-        .with(FSKey::extent_range(ino))
+        .with(FSKey::extent_range(ino, 0))
         .returning(move |_| {
             // Return one blob extent and one embedded extent
             let k0 = FSKey::new(ino, ObjKey::Extent(0));
@@ -2753,7 +2834,7 @@ fn unlink_with_blob_extattr() {
 
     ds.then().expect_range()
         .called_once()
-        .with(FSKey::extent_range(ino))
+        .with(FSKey::extent_range(ino, 0))
         .returning(move |_| {
             // Return one blob extent and one embedded extent
             let k0 = FSKey::new(ino, ObjKey::Extent(0));
@@ -2887,7 +2968,7 @@ fn unlink_with_extattr_hash_collision() {
         });
     ds.then().expect_range()
         .called_once()
-        .with(FSKey::extent_range(ino))
+        .with(FSKey::extent_range(ino, 0))
         .returning(move |_| {
             // The file is empty
             let extents = vec![];
