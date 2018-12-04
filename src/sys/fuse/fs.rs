@@ -258,7 +258,22 @@ impl Filesystem for FuseFs {
     {
         match self.fs.read(ino, offset as u64, size as usize) {
             Ok(ref sglist) if sglist.is_empty() => reply.data(&[]),
-            Ok(sglist) => reply.data(&sglist[0][..]),
+            Ok(sglist) => {
+                if sglist.len() == 1 {
+                    reply.data(&sglist[0][..])
+                } else {
+                    // Vectored data requires an additional data copy, thanks to
+                    // https://github.com/zargony/rust-fuse/issues/120
+                    let total_len = sglist.iter()
+                        .map(|iovec| iovec.len())
+                        .sum();
+                    let mut v = Vec::with_capacity(total_len);
+                    for iov in sglist.into_iter() {
+                        v.extend_from_slice(&iov[..]);
+                    }
+                    reply.data(&v[..])
+                }
+            }
             Err(errno) => reply.error(errno)
         }
     }
