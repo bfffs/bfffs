@@ -529,7 +529,7 @@ impl Fs {
         // Delete data past the truncation point
         let dataset2 = dataset.clone();
         let dataset3 = dataset.clone();
-        let full_fut = dataset.range(FSKey::extent_range(ino, size))
+        let full_fut = dataset.range(FSKey::extent_range(ino, size..))
         .filter_map(move |(_k, v)| {
             if let Extent::Blob(be) = v.as_extent().unwrap()
             {
@@ -539,7 +539,7 @@ impl Fs {
             }
         }).for_each(move |rid| dataset2.delete_blob(rid))
         .and_then(move |_| {
-            dataset3.range_delete(FSKey::extent_range(ino, size))
+            dataset3.range_delete(FSKey::extent_range(ino, size..))
         });
         let partial_fut = if size % RECORDSIZE as u64 > 0 {
             let ofs = size - size % RECORDSIZE as u64;
@@ -616,7 +616,7 @@ impl Fs {
             } else {
                 let dataset2 = dataset.clone();
                 // 2b) delete its blob extents and blob extended attributes
-                let extent_stream = dataset.range(FSKey::extent_range(ino, 0))
+                let extent_stream = dataset.range(FSKey::extent_range(ino, ..))
                 .filter_map(move |(_k, v)| {
                     if let Extent::Blob(be) = v.as_extent().unwrap()
                     {
@@ -2632,7 +2632,7 @@ fn unlink() {
         });
     ds.then().expect_range()
         .called_once()
-        .with(FSKey::extent_range(ino, 0))
+        .with(FSKey::extent_range(ino, ..))
         .returning(move |_| {
             // Return one blob extent and one embedded extent
             let k0 = FSKey::new(ino, ObjKey::Extent(0));
@@ -2834,7 +2834,7 @@ fn unlink_with_blob_extattr() {
 
     ds.then().expect_range()
         .called_once()
-        .with(FSKey::extent_range(ino, 0))
+        .with(FSKey::extent_range(ino, ..))
         .returning(move |_| {
             // Return one blob extent and one embedded extent
             let k0 = FSKey::new(ino, ObjKey::Extent(0));
@@ -2968,7 +2968,7 @@ fn unlink_with_extattr_hash_collision() {
         });
     ds.then().expect_range()
         .called_once()
-        .with(FSKey::extent_range(ino, 0))
+        .with(FSKey::extent_range(ino, ..))
         .returning(move |_| {
             // The file is empty
             let extents = vec![];

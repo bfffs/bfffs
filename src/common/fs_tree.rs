@@ -17,7 +17,7 @@ use std::{
     ffi::{OsString, OsStr},
     hash::{Hash, Hasher},
     mem,
-    ops::Range,
+    ops::{Bound, Range, RangeBounds},
     os::unix::ffi::OsStrExt,
     sync::Arc
 };
@@ -152,11 +152,29 @@ impl FSKey {
     }
 
     /// Create a range of `FSKey` that will encompass all of a file's extents
-    /// that begin at or after `start`.
-    pub fn extent_range(ino: u64, start: u64) -> Range<Self> {
+    /// that whose beginnings lie in the range `offsets`
+    pub fn extent_range<R>(ino: u64, offsets: R) -> Range<Self>
+        where R: RangeBounds<u64>
+    {
         let discriminant = ObjKeyDiscriminant::Extent as u8;
-        let start = FSKey::compose(ino, discriminant, start);
-        let end = FSKey::compose(ino, discriminant + 1, 0);
+        let start = match offsets.start_bound() {
+            Bound::Included(s) => {
+                FSKey::compose(ino, discriminant, *s)
+            },
+            Bound::Unbounded => {
+                FSKey::compose(ino, discriminant, 0)
+            },
+            _ => unimplemented!()
+        };
+        let end = match offsets.end_bound() {
+            Bound::Excluded(e) => {
+                FSKey::compose(ino, discriminant, *e)
+            },
+            Bound::Unbounded => {
+                FSKey::compose(ino, discriminant + 1, 0)
+            },
+            _ => unimplemented!()
+        };
         start..end
     }
 
