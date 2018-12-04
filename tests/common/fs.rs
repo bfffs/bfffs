@@ -8,7 +8,7 @@ test_suite! {
     name fs;
 
     use bfffs::{
-        common::RID,
+        common::{RID, ZERO_REGION_LEN},
         common::cache::*,
         common::database::*,
         common::ddml::*,
@@ -1005,6 +1005,26 @@ root:
 
         mocks.val.0.mkfifo(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
         assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+    }
+
+    // Read a hole that's bigger than the zero region
+    test read_big_hole(mocks) {
+        let holesize = 2 * ZERO_REGION_LEN;
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let mut buf = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, holesize as u64, &buf[..], 0);
+        assert_eq!(Ok(4096), r);
+
+        let sglist = mocks.val.0.read(ino, 0, holesize).unwrap();
+        let expected = vec![0u8; ZERO_REGION_LEN];
+        assert_eq!(sglist.len(), 2);
+        assert_eq!(&sglist[0][..], &expected[..]);
+        assert_eq!(&sglist[1][..], &expected[..]);
     }
 
     // Read a single BlobExtent record

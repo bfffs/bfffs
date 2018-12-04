@@ -1145,6 +1145,14 @@ impl Fs {
     pub fn read(&self, ino: u64, offset: u64, size: usize)
         -> Result<SGList, i32>
     {
+        // Populate a hole region in an sglist.
+        let fill_hole = |sglist: &mut SGList, p: &mut u64, l: usize| {
+            let l = cmp::min(l, ZERO_REGION_LEN);
+            let zb = ZERO_REGION.try().unwrap().slice_to(l);
+            *p += zb.len() as u64;
+            sglist.push(zb);
+        };
+
         let mut size64 = size as u64;
         let (tx, rx) = oneshot::channel();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
@@ -1205,9 +1213,7 @@ impl Fs {
                             // Fill in any hole
                             while ofs > p {
                                 let l = (ofs - p) as usize;
-                                let zb = ZERO_REGION.try().unwrap().slice_to(l);
-                                p += zb.len() as u64;
-                                sglist.push(zb);
+                                fill_hole(&mut sglist, &mut p, l);
                             }
                             // Trim the end of the buffer.
                             if ofs + db.len() as u64 > offset + size64 {
@@ -1222,9 +1228,7 @@ impl Fs {
                         // Fill in any hole at the end.
                         while p - offset < size64 {
                             let l = (size64 - (p - offset)) as usize;
-                            let zb = ZERO_REGION.try().unwrap().slice_to(l);
-                            p += zb.len() as u64;
-                            sglist.push(zb);
+                            fill_hole(&mut sglist, &mut p, l);
                         }
                         sglist
                     });
