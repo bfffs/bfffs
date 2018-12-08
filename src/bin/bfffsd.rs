@@ -71,6 +71,8 @@ fn main() {
         let opts = [
             OsStr::from_bytes(b"-o"),
             OsStr::from_bytes(b"allow_other"),
+            OsStr::from_bytes(b"-o"),
+            OsStr::from_bytes(b"direct_io"),
         ];
         fuse::mount(fs, &mountpoint, &opts[..]).unwrap();
     });
