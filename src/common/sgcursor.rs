@@ -20,7 +20,7 @@ pub struct SGCursor<'a> {
     iovec_idx: usize
 }
 
-impl<'a> SGCursor<'a> {
+impl SGCursor<'_> {
     /// Return a contiguous segment from the beginning of the Cursor.
     ///
     /// It will be at most `max` bytes long, but it may be less.  If the

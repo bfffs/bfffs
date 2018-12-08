@@ -50,7 +50,7 @@ mod htable {
         ReadWrite(&'a ReadWriteFilesystem)
     }
 
-    impl<'a> ReadFilesystem<'a> {
+    impl ReadFilesystem<'_> {
         fn get(&self, k: FSKey)
             -> Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
         {
