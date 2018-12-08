@@ -78,9 +78,9 @@ mod tests {
         let dbs0 = DivBufShared::from(vec![0, 1, 2, 3, 4]);
         let dbs1 = DivBufShared::from(vec![5, 6, 7, 8, 9]);
         let dbs2 = DivBufShared::from(vec![10, 11, 12, 13, 14]);
-        let db0 = dbs0.try().unwrap();
-        let db1 = dbs1.try().unwrap();
-        let db2 = dbs2.try().unwrap();
+        let db0 = dbs0.try_const().unwrap();
+        let db1 = dbs1.try_const().unwrap();
+        let db2 = dbs2.try_const().unwrap();
         let sglist : SGList = vec![db0, db1, db2];
         let mut cursor = SGCursor::from(&sglist);
         assert_eq!(cursor.peek_len(), 5);
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     pub fn test_one_segment() {
         let dbs = DivBufShared::from(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
-        let divbuf = dbs.try().unwrap();
+        let divbuf = dbs.try_const().unwrap();
         let sglist : SGList = vec![divbuf.clone()];
         {
             let mut cursor = SGCursor::from(&sglist);

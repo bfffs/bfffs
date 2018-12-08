@@ -329,7 +329,7 @@ impl DDML {
                 let checksum = hasher.finish();
                 if checksum == drp.checksum {
                     // Decompress
-                    let db = dbs.try().unwrap();
+                    let db = dbs.try_const().unwrap();
                     Ok(match drp.compression.decompress(&db) {
                         Some(decompressed) => decompressed,
                         None => dbs
@@ -388,7 +388,7 @@ impl DDML {
         let compressed_dbs = compression.compress(&serialized);
         let compressed_db = match &compressed_dbs {
             Some(dbs) => {
-                dbs.try().unwrap()
+                dbs.try_const().unwrap()
             },
             None => {
                 serialized
@@ -656,7 +656,7 @@ mod t {
             .with(passes(move |key: &*const Key| {
                 unsafe {**key == Key::PBA(pba)}
             })).returning(move |_| {
-                Some(Box::new(dbs.try().unwrap()))
+                Some(Box::new(dbs.try_const().unwrap()))
             });
 
         let pool_wrapper = MockPoolWrapper(Box::new(pool));
@@ -932,7 +932,7 @@ mod t {
         let pool_wrapper = MockPoolWrapper(Box::new(pool));
         let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let db = Box::new(dbs.try().unwrap()) as Box<CacheRef>;
+        let db = Box::new(dbs.try_const().unwrap()) as Box<CacheRef>;
         let mut rt = current_thread::Runtime::new().unwrap();
         let drp = rt.block_on(
             ddml.put_direct(&db, Compression::None, txg)

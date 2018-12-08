@@ -100,17 +100,17 @@ test_suite! {
     fn write_read_n_stripes(vr: &VdevRaid, chunksize: LbaT, k: i16, f: i16,
                             s: usize) {
         let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
-        let wbuf0 = dbsw.try().unwrap();
-        let wbuf1 = dbsw.try().unwrap();
+        let wbuf0 = dbsw.try_const().unwrap();
+        let wbuf1 = dbsw.try_const().unwrap();
         write_read0(vr, vec![wbuf1], vec![dbsr.try_mut().unwrap()]);
-        assert_eq!(wbuf0, dbsr.try().unwrap());
+        assert_eq!(wbuf0, dbsr.try_const().unwrap());
     }
 
     fn writev_read_n_stripes(vr: &VdevRaid, chunksize: LbaT, k: i16, f: i16,
                              s: usize) {
         let zl = vr.zone_limits(0);
         let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(wbuf.len() / 2);
         let sglist = vec![wbuf_l, wbuf_r];
@@ -121,14 +121,14 @@ test_suite! {
                     vr.read_at(dbsr.try_mut().unwrap(), zl.0)
                 })
         })).expect("read_at");
-        assert_eq!(wbuf, dbsr.try().unwrap());
+        assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     // read_at should work when directed at the middle of the stripe buffer
     test read_partial_at_middle_of_stripe(raid((3, 3, 1, 16))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let mut wbuf = dbsw.try().unwrap().slice_to(2 * BYTES_PER_LBA);
+        let mut wbuf = dbsw.try_const().unwrap().slice_to(2 * BYTES_PER_LBA);
         let _ = wbuf.split_off(2 * BYTES_PER_LBA);
         {
             let mut rbuf = dbsr.try_mut().unwrap();
@@ -138,9 +138,9 @@ test_suite! {
                         vec![rbuf_begin, rbuf_middle]);
         }
         assert_eq!(&wbuf[..],
-                   &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA],
+                   &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA],
                    "{:#?}\n{:#?}", &wbuf[..],
-                   &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA]);
+                   &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA]);
     }
 
     // Read a stripe in several pieces, from disk
@@ -148,7 +148,7 @@ test_suite! {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let cs = *raid.params.chunksize as usize;
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         {
             let mut rbuf0 = dbsr.try_mut().unwrap();
             // rbuf0 will get the first part of the first chunk
@@ -167,14 +167,14 @@ test_suite! {
             write_read0(&raid.val.0, vec![wbuf.clone()],
                         vec![rbuf0, rbuf1, rbuf2, rbuf3, rbuf4, rbuf5, rbuf6]);
         }
-        assert_eq!(&wbuf[..], &dbsr.try().unwrap()[..]);
+        assert_eq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
     }
 
     // Read the end of one stripe and the beginning of another
     test read_partial_stripes(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         {
             let mut rbuf_m = dbsr.try_mut().unwrap();
             let rbuf_b = rbuf_m.split_to(BYTES_PER_LBA);
@@ -183,14 +183,14 @@ test_suite! {
             write_read0(&raid.val.0, vec![wbuf.clone()],
                         vec![rbuf_b, rbuf_m, rbuf_e]);
         }
-        assert_eq!(wbuf, dbsr.try().unwrap());
+        assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     #[should_panic]
     test read_past_end_of_stripe_buffer(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         let rbuf = dbsr.try_mut().unwrap();
         write_read0(&raid.val.0, vec![wbuf_short], vec![rbuf]);
@@ -200,7 +200,7 @@ test_suite! {
     test read_starts_past_end_of_stripe_buffer(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         let mut rbuf = dbsr.try_mut().unwrap();
         let rbuf_r = rbuf.split_off(BYTES_PER_LBA);
@@ -244,12 +244,12 @@ test_suite! {
     test write_completes_a_partial_stripe(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
         write_read0(&raid.val.0, vec![wbuf_l, wbuf_r],
                     vec![dbsr.try_mut().unwrap()]);
-        assert_eq!(wbuf, dbsr.try().unwrap());
+        assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     test write_completes_a_partial_stripe_and_writes_a_bit_more(raid((3, 3, 1, 2))) {
@@ -264,34 +264,35 @@ test_suite! {
             dbrm.try_truncate(dbwm_len - BYTES_PER_LBA).expect("truncate");
         }
         {
-            let mut wbuf_l = dbsw.try().unwrap();
+            let mut wbuf_l = dbsw.try_const().unwrap();
             let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
             let rbuf = dbsr.try_mut().unwrap();
             write_read0(&raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf]);
         }
-        assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
+        assert_eq!(&dbsw.try_const().unwrap()[..],
+                   &dbsr.try_const().unwrap()[..]);
     }
 
     test write_completes_a_partial_stripe_and_writes_another(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
         write_read0(&raid.val.0, vec![wbuf_l, wbuf_r],
                     vec![dbsr.try_mut().unwrap()]);
-        assert_eq!(wbuf, dbsr.try().unwrap());
+        assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     test write_completes_a_partial_stripe_and_writes_two_more(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 3);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
         write_read0(&raid.val.0, vec![wbuf_l, wbuf_r],
                     vec![dbsr.try_mut().unwrap()]);
-        assert_eq!(wbuf, dbsr.try().unwrap());
+        assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     test write_completes_a_partial_stripe_and_writes_two_more_with_leftovers(raid((3, 3, 1, 2))) {
@@ -306,18 +307,19 @@ test_suite! {
             dbrm.try_truncate(dbwm_len - BYTES_PER_LBA).expect("truncate");
         }
         {
-            let mut wbuf_l = dbsw.try().unwrap();
+            let mut wbuf_l = dbsw.try_const().unwrap();
             let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
             let rbuf = dbsr.try_mut().unwrap();
             write_read0(&raid.val.0, vec![wbuf_l, wbuf_r], vec![rbuf]);
         }
-        assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
+        assert_eq!(&dbsw.try_const().unwrap()[..],
+                   &dbsr.try_const().unwrap()[..]);
     }
 
     test write_partial_at_start_of_stripe(raid((3, 3, 1, 2))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         {
             let mut rbuf = dbsr.try_mut().unwrap();
@@ -327,7 +329,7 @@ test_suite! {
             drop(dbsw);
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
-                   &dbsr.try().unwrap()[0..BYTES_PER_LBA]);
+                   &dbsr.try_const().unwrap()[0..BYTES_PER_LBA]);
     }
 
     // Write less than an LBA at the start of a stripe
@@ -335,7 +337,7 @@ test_suite! {
     test write_tiny_at_start_of_stripe(raid((1, 1, 0, 1))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA * 3 / 4);
         {
             let mut rbuf = dbsr.try_mut().unwrap();
@@ -345,18 +347,18 @@ test_suite! {
             drop(dbsw);
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA * 3 / 4],
-                   &dbsr.try().unwrap()[0..BYTES_PER_LBA * 3 / 4]);
+                   &dbsr.try_const().unwrap()[0..BYTES_PER_LBA * 3 / 4]);
         // The remainder of the LBA should've been zero-filled
         let zbuf = vec![0u8; BYTES_PER_LBA * 1 / 4];
         assert_eq!(&zbuf[..],
-                   &dbsr.try().unwrap()[BYTES_PER_LBA * 3 / 4..]);
+                   &dbsr.try_const().unwrap()[BYTES_PER_LBA * 3 / 4..]);
     }
 
     // Write a whole stripe plus a fraction of an LBA more
     test write_stripe_and_a_bit_more(raid((1, 1, 0, 1))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let wcut = wbuf.len() / 2 + 1024;
         let rcut = wbuf.len() / 2 + BYTES_PER_LBA;
         let wbuf_short = wbuf.slice_to(wcut);
@@ -368,11 +370,11 @@ test_suite! {
             drop(dbsw);
         }
         assert_eq!(&wbuf[0..wcut],
-                   &dbsr.try().unwrap()[0..wcut]);
+                   &dbsr.try_const().unwrap()[0..wcut]);
         // The remainder of the LBA should've been zero-filled
         let zbuf = vec![0u8; rcut - wcut];
         assert_eq!(&zbuf[..],
-                   &dbsr.try().unwrap()[wcut..]);
+                   &dbsr.try_const().unwrap()[wcut..]);
     }
 
     // Test that write_at works when directed at the middle of the StripeBuffer.
@@ -380,7 +382,7 @@ test_suite! {
     test write_partial_at_middle_of_stripe(raid((3, 3, 1, 16))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf = dbsw.try().unwrap().slice_to(2 * BYTES_PER_LBA);
+        let wbuf = dbsw.try_const().unwrap().slice_to(2 * BYTES_PER_LBA);
         let wbuf_begin = wbuf.slice_to(BYTES_PER_LBA);
         let wbuf_middle = wbuf.slice_from(BYTES_PER_LBA);
         {
@@ -389,9 +391,9 @@ test_suite! {
             write_read0(&raid.val.0, vec![wbuf_begin, wbuf_middle], vec![rbuf]);
         }
         assert_eq!(&wbuf[..],
-                   &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA],
+                   &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA],
                    "{:#?}\n{:#?}", &wbuf[..],
-                   &dbsr.try().unwrap()[0..2 * BYTES_PER_LBA]);
+                   &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA]);
     }
 
     test write_two_stripes_with_leftovers(raid((3, 3, 1, 2))) {
@@ -406,11 +408,12 @@ test_suite! {
             dbrm.try_truncate(dbwm_len - BYTES_PER_LBA).expect("truncate");
         }
         {
-            let wbuf = dbsw.try().unwrap();
+            let wbuf = dbsw.try_const().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
             write_read0(&raid.val.0, vec![wbuf], vec![rbuf]);
         }
-        assert_eq!(&dbsw.try().unwrap()[..], &dbsr.try().unwrap()[..]);
+        assert_eq!(&dbsw.try_const().unwrap()[..],
+                   &dbsr.try_const().unwrap()[..]);
     }
 
     test writev_read_one_stripe(raid) {
@@ -433,8 +436,8 @@ test_suite! {
         let zl = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf0 = dbsw.try().unwrap();
-        let wbuf1 = dbsw.try().unwrap();
+        let wbuf0 = dbsw.try_const().unwrap();
+        let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             raid.val.0.write_at(wbuf0, zone, zl.0)
@@ -444,7 +447,7 @@ test_suite! {
                     raid.val.0.read_at(rbuf, zl.0)
                 })
         })).expect("current_thread::Runtime::block_on");
-        assert_eq!(wbuf1, dbsr.try().unwrap());
+        assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
     // Close a zone with an incomplete StripeBuffer, then read back from it
@@ -453,7 +456,7 @@ test_suite! {
         let zl = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         {
             let mut rbuf = dbsr.try_mut().unwrap();
@@ -468,7 +471,7 @@ test_suite! {
             })).expect("current_thread::Runtime::block_on");
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
-                   &dbsr.try().unwrap()[0..BYTES_PER_LBA]);
+                   &dbsr.try_const().unwrap()[0..BYTES_PER_LBA]);
     }
 
     #[should_panic]
@@ -478,15 +481,15 @@ test_suite! {
         let (start, _) = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf0 = dbsw.try().unwrap();
-        let wbuf1 = dbsw.try().unwrap();
+        let wbuf0 = dbsw.try_const().unwrap();
+        let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
         current_thread::Runtime::new().unwrap().block_on(
             raid.val.0.open_zone(zone)
             .and_then(|_| raid.val.0.finish_zone(zone))
         ).expect("open and finish");
         write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
-        assert_eq!(wbuf1, dbsr.try().unwrap());
+        assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
     #[should_panic]
@@ -495,7 +498,7 @@ test_suite! {
         let zone = 1;
         let (start, _) = raid.val.0.zone_limits(zone);
         let dbsw = DivBufShared::from(vec![0;4096]);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         raid.val.0.write_at(wbuf, zone, start);
     }
 
@@ -505,14 +508,14 @@ test_suite! {
         let (start, _) = raid.val.0.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
-        let wbuf0 = dbsw.try().unwrap();
-        let wbuf1 = dbsw.try().unwrap();
+        let wbuf0 = dbsw.try_const().unwrap();
+        let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
         current_thread::Runtime::new().unwrap().block_on(
             raid.val.0.open_zone(zone)
         ).expect("open_zone");
         write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
-        assert_eq!(wbuf1, dbsr.try().unwrap());
+        assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
     // Two zones can be open simultaneously
@@ -522,14 +525,14 @@ test_suite! {
             let (start, _) = vdev_raid.zone_limits(zone);
             let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                          *raid.params.f, 1);
-            let wbuf0 = dbsw.try().unwrap();
-            let wbuf1 = dbsw.try().unwrap();
+            let wbuf0 = dbsw.try_const().unwrap();
+            let wbuf1 = dbsw.try_const().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
             current_thread::Runtime::new().unwrap().block_on(
                 vdev_raid.open_zone(zone)
             ).expect("open_zone");
             write_read(&vdev_raid, vec![wbuf0], vec![rbuf], zone, start);
-            assert_eq!(wbuf1, dbsr.try().unwrap());
+            assert_eq!(wbuf1, dbsr.try_const().unwrap());
         }
     }
 }

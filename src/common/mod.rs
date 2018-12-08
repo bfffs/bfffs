@@ -356,9 +356,9 @@ fn zero_sglist(len: usize) -> SGList {
     let zero_bufs = div_roundup(len, zero_region_len);
     let mut sglist = SGList::new();
     for _ in 0..(zero_bufs - 1) {
-        sglist.push(ZERO_REGION.try().unwrap())
+        sglist.push(ZERO_REGION.try_const().unwrap())
     }
-    sglist.push(ZERO_REGION.try().unwrap().slice_to(
+    sglist.push(ZERO_REGION.try_const().unwrap().slice_to(
             len - (zero_bufs - 1) * zero_region_len));
     sglist
 }

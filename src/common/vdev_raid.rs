@@ -89,7 +89,7 @@ impl StripeBuffer {
             if partial != 0 {
                 debug_assert_eq!(iovec.len(), 0);
                 let remainder = BYTES_PER_LBA - partial;
-                let zbuf = ZERO_REGION.try().unwrap().slice_to(remainder);
+                let zbuf = ZERO_REGION.try_const().unwrap().slice_to(remainder);
                 self.buf.push(zbuf);
             }
         }
@@ -139,9 +139,9 @@ impl StripeBuffer {
         let zero_region_len = ZERO_REGION.len();
         let zero_bufs = div_roundup(padlen, zero_region_len);
         for _ in 0..(zero_bufs - 1) {
-            self.fill(ZERO_REGION.try().unwrap());
+            self.fill(ZERO_REGION.try_const().unwrap());
         }
-        self.fill(ZERO_REGION.try().unwrap().slice_to(
+        self.fill(ZERO_REGION.try_const().unwrap().slice_to(
                 padlen - (zero_bufs - 1) * zero_region_len));
         debug_assert!(self.is_full());
         debug_assert_eq!(padlen % BYTES_PER_LBA, 0);
@@ -1153,7 +1153,7 @@ fn stripe_buffer_empty() {
     assert!(sglist.is_empty());
     // Adding an empty iovec should change nothing, but add a useless sender
     let dbs = DivBufShared::from(vec![0; 4096]);
-    let db = dbs.try().unwrap();
+    let db = dbs.try_const().unwrap();
     let db0 = db.slice(0, 0);
     assert!(sb.fill(db0).is_empty());
     assert!(!sb.is_full());
@@ -1169,9 +1169,9 @@ fn stripe_buffer_empty() {
 #[test]
 fn stripe_buffer_fill_when_full() {
     let dbs0 = DivBufShared::from(vec![0; 24576]);
-    let db0 = dbs0.try().unwrap();
+    let db0 = dbs0.try_const().unwrap();
     let dbs1 = DivBufShared::from(vec![1; 4096]);
-    let db1 = dbs1.try().unwrap();
+    let db1 = dbs1.try_const().unwrap();
     {
         let mut sb = StripeBuffer::new(96, 6);
         assert!(sb.fill(db0).is_empty());
@@ -1187,7 +1187,7 @@ fn stripe_buffer_fill_when_full() {
 fn stripe_buffer_one_iovec() {
     let mut sb = StripeBuffer::new(96, 6);
     let dbs = DivBufShared::from(vec![0; 4096]);
-    let db = dbs.try().unwrap();
+    let db = dbs.try_const().unwrap();
     assert!(sb.fill(db).is_empty());
     assert!(!sb.is_full());
     assert!(!sb.is_empty());
@@ -1211,7 +1211,7 @@ fn stripe_buffer_pad() {
     let stripesize = 2 * zero_region_lbas + 1;
     let mut sb = StripeBuffer::new(102, stripesize);
     let dbs = DivBufShared::from(vec![0; BYTES_PER_LBA]);
-    let db = dbs.try().unwrap();
+    let db = dbs.try_const().unwrap();
     assert!(sb.fill(db).is_empty());
     assert!(sb.pad() == stripesize - 1);
     let sglist = sb.pop();
@@ -1233,7 +1233,7 @@ fn stripe_buffer_reset() {
 fn stripe_buffer_reset_nonempty() {
     let mut sb = StripeBuffer::new(96, 6);
     let dbs = DivBufShared::from(vec![0; 4096]);
-    let db = dbs.try().unwrap();
+    let db = dbs.try_const().unwrap();
     let _ = sb.fill(db);
     sb.reset(108);
 }
@@ -1242,10 +1242,10 @@ fn stripe_buffer_reset_nonempty() {
 fn stripe_buffer_two_iovecs() {
     let mut sb = StripeBuffer::new(96, 6);
     let dbs0 = DivBufShared::from(vec![0; 8192]);
-    let db0 = dbs0.try().unwrap();
+    let db0 = dbs0.try_const().unwrap();
     assert!(sb.fill(db0).is_empty());
     let dbs1 = DivBufShared::from(vec![1; 4096]);
-    let db1 = dbs1.try().unwrap();
+    let db1 = dbs1.try_const().unwrap();
     assert!(sb.fill(db1).is_empty());
     assert!(!sb.is_full());
     assert!(!sb.is_empty());
@@ -1268,10 +1268,10 @@ fn stripe_buffer_two_iovecs() {
 fn stripe_buffer_two_iovecs_overflow() {
     let mut sb = StripeBuffer::new(96, 6);
     let dbs0 = DivBufShared::from(vec![0; 16384]);
-    let db0 = dbs0.try().unwrap();
+    let db0 = dbs0.try_const().unwrap();
     assert!(sb.fill(db0).is_empty());
     let dbs1 = DivBufShared::from(vec![1; 16384]);
-    let db1 = dbs1.try().unwrap();
+    let db1 = dbs1.try_const().unwrap();
     assert_eq!(sb.fill(db1).len(), 8192);
     assert!(sb.is_full());
     assert!(!sb.is_empty());
@@ -1635,7 +1635,7 @@ fn sync_all_unflushed() {
 
     vdev_raid.open_zone(1);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
-    let wbuf = dbs.try().unwrap();
+    let wbuf = dbs.try_const().unwrap();
     vdev_raid.write_at(wbuf, 1, 120_000);
     // Don't flush zone 1 before syncing.  Syncing should panic
     vdev_raid.sync_all();
@@ -1709,7 +1709,7 @@ fn write_at_one_stripe() {
                                       blockdevs.into_boxed_slice());
         vdev_raid.open_zone(1);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         vdev_raid.write_at(wbuf, 1, 131_072);
 }
 
@@ -1778,7 +1778,7 @@ fn write_at_and_flush_zone() {
                                   blockdevs.into_boxed_slice());
     vdev_raid.open_zone(1);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
-    let wbuf = dbs.try().unwrap();
+    let wbuf = dbs.try_const().unwrap();
     vdev_raid.write_at(wbuf, 1, 120_000);
     vdev_raid.flush_zone(1);
 }
@@ -1936,7 +1936,7 @@ fn open_zone_reopen() {
                                   blockdevs.into_boxed_slice());
     vdev_raid.reopen_zone(1, 100);
     let dbs = DivBufShared::from(vec![0u8; 4096]);
-    let wbuf = dbs.try().unwrap();
+    let wbuf = dbs.try_const().unwrap();
     vdev_raid.write_at(wbuf, 1, 4196);
 }
 

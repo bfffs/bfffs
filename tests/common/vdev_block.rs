@@ -44,7 +44,7 @@ test_suite! {
     #[should_panic]
     test check_block_granularity_under(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4095]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.val.0.write_at(wbuf, 10)
         })).unwrap();
@@ -53,7 +53,7 @@ test_suite! {
     #[should_panic]
     test check_block_granularity_over(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4097]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.val.0.write_at(wbuf, 10)
         })).unwrap();
@@ -62,7 +62,7 @@ test_suite! {
     #[should_panic]
     test check_block_granularity_over_multiple_sectors(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 16_385]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.val.0.write_at(wbuf, 10)
         })).unwrap();
@@ -71,7 +71,7 @@ test_suite! {
     #[should_panic]
     test check_block_granularity_writev(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4097]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         let wbuf0 = wbuf.slice_to(1024);
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0, wbuf1];
@@ -83,7 +83,7 @@ test_suite! {
     #[should_panic]
     test check_iovec_bounds_over(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let size = vdev.val.0.size();
             vdev.val.0.write_at(wbuf, size)
@@ -93,7 +93,7 @@ test_suite! {
     #[should_panic]
     test check_iovec_bounds_spans(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 8192]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let size = vdev.val.0.size() - 1;
             vdev.val.0.write_at(wbuf, size)
@@ -103,7 +103,7 @@ test_suite! {
     #[should_panic]
     test check_sglist_bounds_over(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         let wbuf0 = wbuf.slice_to(1024);
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
@@ -116,7 +116,7 @@ test_suite! {
     #[should_panic]
     test check_sglist_bounds_spans(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 8192]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         let wbuf0 = wbuf.slice_to(5120);
         let wbuf1 = wbuf.slice_from(5120);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];

@@ -65,7 +65,7 @@ impl Cacheable for DivBufShared {
 
     fn eq(&self, other: &Cacheable) -> bool {
         if let Ok(other_dbs) = other.downcast_ref::<DivBufShared>() {
-            self.try().unwrap()[..] == other_dbs.try().unwrap()[..]
+            self.try_const().unwrap()[..] == other_dbs.try_const().unwrap()[..]
         } else {
             // other isn't even the same concrete type
             false
@@ -77,7 +77,7 @@ impl Cacheable for DivBufShared {
     }
 
     fn make_ref(&self) -> Box<CacheRef> {
-        Box::new(self.try().unwrap())
+        Box::new(self.try_const().unwrap())
     }
 }
 
@@ -473,7 +473,7 @@ fn test_insert_dup_value() {
     let mut cache = Cache::with_capacity(100);
     let dbs1 = Box::new(DivBufShared::from(vec![0u8; 6]));
     let dbs2 = Box::new(DivBufShared::from(vec![0u8; 6]));
-    let db1 = dbs1.try().unwrap();
+    let db1 = dbs1.try_const().unwrap();
     let key = Key::Rid(RID(0));
     cache.insert(key, dbs1);
     cache.insert(key, dbs2);

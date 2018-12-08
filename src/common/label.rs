@@ -63,7 +63,7 @@ impl<'de> LabelReader {
 
     /// Construct a `LabelReader` using the raw buffer read from disk
     pub fn from_dbs(buffer: DivBufShared) -> Result<Self, Error> {
-        let db = buffer.try().unwrap();
+        let db = buffer.try_const().unwrap();
         if db.len() < MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN {
             return Err(Error::EINVAL);
         }
@@ -137,7 +137,7 @@ impl LabelWriter {
 
         serde_cbor::ser::to_vec(t).map(|v| {
             let dbs = DivBufShared::from(v);
-            self.buffers.push(dbs.try().unwrap());
+            self.buffers.push(dbs.try_const().unwrap());
         })
     }   // LCOV_EXCL_LINE   kcov false negative
 

@@ -60,7 +60,8 @@ test_suite! {
                 }).and_then(move |_| {
                     ddml2.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
                 }).map(|dbs: Box<DivBufShared>| {
-                    assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 4096][..]);
+                    assert_eq!(&dbs.try_const().unwrap()[..],
+                               &vec![42u8; 4096][..]);
                 }).and_then(move |_| {
                     // Even though the record has been removed from cache, it
                     // should still be on disk
@@ -97,7 +98,8 @@ test_suite! {
                 }).and_then(move |_| {
                     ddml2.pop::<DivBufShared, DivBuf>(&drp, txg)
                 }).map(|dbs: Box<DivBufShared>| {
-                    assert_eq!(&dbs.try().unwrap()[..], &vdev_raid_contents[..]);
+                    assert_eq!(&dbs.try_const().unwrap()[..],
+                               &vdev_raid_contents[..]);
                 }).and_then(move |_| {
                     // Even though the record has been removed from cache, it
                     // should still be on disk
@@ -124,7 +126,8 @@ test_suite! {
                 }).and_then(move |_| {
                     ddml2.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
                 }).map(|dbs: Box<DivBufShared>| {
-                    assert_eq!(&dbs.try().unwrap()[..], &vec![42u8; 1024][..]);
+                    assert_eq!(&dbs.try_const().unwrap()[..],
+                               &vec![42u8; 1024][..]);
                 }).and_then(move |_| {
                     // Even though the record has been removed from cache, it
                     // should still be on disk

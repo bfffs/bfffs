@@ -324,7 +324,7 @@ impl<'a> IDML {
                     let ddml4 = ddml2.clone();
                     let fut = ddml2.get_direct::<DivBufShared>(&drp_uc)
                     .and_then(move |dbs| {
-                        let db = dbs.try().unwrap();
+                        let db = dbs.try_const().unwrap();
                         ddml3.put_direct(&db, Compression::None, txg)
                     }).and_then(move |drp| {
                         ddml4.delete_direct(&entry.drp, txg)
@@ -760,7 +760,7 @@ mod t {
             .with(passes(move |key: &*const Key| {
                 unsafe {**key == Key::Rid(RID(42))}
             })).returning(move |_| {
-                Some(Box::new(dbs.try().unwrap()))
+                Some(Box::new(dbs.try_const().unwrap()))
             });
         let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);
@@ -871,7 +871,7 @@ mod t {
                     (**key).compression() == Compression::None
                 }
             })).returning(move |_| {
-                let r = DivBufShared::from(&dbs.try().unwrap()[..]);
+                let r = DivBufShared::from(&dbs.try_const().unwrap()[..]);
                 Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
             });
         ddml.expect_put_direct::<DivBuf>()
@@ -919,7 +919,7 @@ mod t {
             .with(passes(move |key: &*const Key| {
                 unsafe {**key == Key::Rid(rid)}
             })).returning(move |_| {
-                Some(Box::new(dbs.try().unwrap()))
+                Some(Box::new(dbs.try_const().unwrap()))
             });
         ddml.expect_put_direct::<DivBuf>()
             .called_once()
@@ -994,7 +994,7 @@ mod t {
             .with(passes(move |key: &*const Key| {
                 unsafe {**key == Key::Rid(RID(42))}
             })).returning(move |_| {
-                Some(Box::new(dbs.try().unwrap()))
+                Some(Box::new(dbs.try_const().unwrap()))
             });
         let ddml = DDML::default();
         let arc_ddml = Arc::new(ddml);

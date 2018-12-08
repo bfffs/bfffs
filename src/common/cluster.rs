@@ -432,7 +432,8 @@ impl<'a> FreeSpaceMap {
         let dbm = dbs.try_mut().unwrap();
         vdev.read_spacemap(dbm, 0)
         .and_then(move |_| {
-            FreeSpaceMap::deserialize(vdev, dbs.try().unwrap(), total_zones)
+            FreeSpaceMap::deserialize(vdev, dbs.try_const().unwrap(),
+                                      total_zones)
             .unwrap()
         })
     }
@@ -785,11 +786,11 @@ impl<'a> Cluster {
         // FSM here; we don't need to copy it into a Future's continuation.
         let sm_futs = fsm.serialize()
         .map(|(block, dbs)| {
-            let db = dbs.try().unwrap();
+            let db = dbs.try_const().unwrap();
             let sglist = if db.len() % BYTES_PER_LBA != 0 {
                 // This can happen in the last blockof the spacemap.  Pad out.
                 let padlen = BYTES_PER_LBA - db.len() % BYTES_PER_LBA;
-                let pad = ZERO_REGION.try().unwrap().slice_to(padlen);
+                let pad = ZERO_REGION.try_const().unwrap().slice_to(padlen);
                 vec![db, pad]
             } else {
                 vec![db]
@@ -1020,7 +1021,7 @@ mod cluster {
         let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
         let db1 = db0.clone();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let (lba, fut1) = cluster.write(db0, TxgT::from(0))
@@ -1063,8 +1064,8 @@ mod cluster {
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
-        let db0 = dbs0.try().unwrap();
-        let db1 = dbs1.try().unwrap();
+        let db0 = dbs0.try_const().unwrap();
+        let db1 = dbs1.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let (lba, fut1) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
@@ -1110,9 +1111,9 @@ mod cluster {
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
-        let db0 = dbs0.try().unwrap();
-        let db1 = dbs0.try().unwrap();
-        let db2 = dbs1.try().unwrap();
+        let db0 = dbs0.try_const().unwrap();
+        let db1 = dbs0.try_const().unwrap();
+        let db2 = dbs1.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let (lba, fut1) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
@@ -1356,7 +1357,7 @@ mod cluster {
         let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
         let _ = cluster.write(db0, TxgT::from(0)).expect("write failed early");
     }
 
@@ -1392,7 +1393,7 @@ mod cluster {
         cluster.fsm.borrow_mut().clear_dirty_zones();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let (_, fut) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
@@ -1417,7 +1418,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let mut rt = current_thread::Runtime::new().unwrap();
         let result = rt.block_on(future::lazy(|| {
-            cluster.write(dbs.try().unwrap(), TxgT::from(0))
+            cluster.write(dbs.try_const().unwrap(), TxgT::from(0))
         }));
         assert_eq!(result.err().unwrap(), Error::ENOSPC);
     }
@@ -1433,7 +1434,7 @@ mod cluster {
         let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let result = cluster.write(dbs.try().unwrap(), TxgT::from(0));
+        let result = cluster.write(dbs.try_const().unwrap(), TxgT::from(0));
         assert_eq!(result.err().unwrap(), Error::ENOSPC);
     }
 
@@ -1455,7 +1456,7 @@ mod cluster {
         let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
         let mut rt = current_thread::Runtime::new().unwrap();
         let result = rt.block_on(future::lazy(|| {
             let (lba, fut) = cluster.write(db0, TxgT::from(0))
@@ -1489,8 +1490,8 @@ mod cluster {
         let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
-        let db1 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
+        let db1 = dbs.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let cluster_ref = &cluster;
             let (_, fut0) = cluster.write(db0, TxgT::from(0))
@@ -1535,8 +1536,8 @@ mod cluster {
         let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
-        let db0 = dbs.try().unwrap();
-        let db1 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
+        let db1 = dbs.try_const().unwrap();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let cluster_ref = &cluster;
             let (_, fut0) = cluster.write(db0, TxgT::from(0))
@@ -2041,7 +2042,7 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         let mut fsm_iter = fsm.serialize();
         let (block, dbs) = fsm_iter.next().unwrap();
         assert_eq!(0, block);
-        let db = dbs.try().unwrap();
+        let db = dbs.try_const().unwrap();
         assert_eq!(&EXPECTED[..], &db[..80]);
         assert!(&db[80..].iter().all(|&x| x == 0));
         assert!(fsm_iter.next().is_none());

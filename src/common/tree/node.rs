@@ -855,7 +855,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
 
 impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized {
-        let db = dbs.try().unwrap();
+        let db = dbs.try_const().unwrap();
         let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
         Arc::new(Node(RwLock::new(node_data)))
     }
@@ -916,7 +916,7 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
 
 impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
     fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized {
-        let db = dbs.try().unwrap();
+        let db = dbs.try_const().unwrap();
         let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
         let node = Arc::new(Node(RwLock::new(node_data)));
         Box::new(node)
@@ -927,7 +927,7 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
             "Shouldn't be serializing a Node that's locked for writing");
         let v = bincode::serialize(&g.deref()).unwrap();
         let dbs = DivBufShared::from(v);
-        dbs.try().unwrap()
+        dbs.try_const().unwrap()
     }   // LCOV_EXCL_LINE kcov false negative
 
     fn to_owned(self) -> Box<Cacheable> {

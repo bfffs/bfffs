@@ -64,14 +64,14 @@ pub fn encodev() {
     let db0p3 = DivBufShared::from(Vec::from(&da0[14..len]));
     // final segments are identically sized
     let db1p3 = DivBufShared::from(Vec::from(&da1[14..len]));
-    let sgb0 = vec![db0p0.try().unwrap(),
-                    db0p1.try().unwrap(),
-                    db0p2.try().unwrap(),
-                    db0p3.try().unwrap()];
-    let sgb1 = vec![db1p0.try().unwrap(),
-                    db1p1.try().unwrap(),
-                    db1p2.try().unwrap(),
-                    db1p3.try().unwrap()];
+    let sgb0 = vec![db0p0.try_const().unwrap(),
+                    db0p1.try_const().unwrap(),
+                    db0p2.try_const().unwrap(),
+                    db0p3.try_const().unwrap()];
+    let sgb1 = vec![db1p0.try_const().unwrap(),
+                    db1p1.try_const().unwrap(),
+                    db1p2.try_const().unwrap(),
+                    db1p3.try_const().unwrap()];
     let data = vec![sgb0, sgb1];
     let pa1 = vec![0u8;len];
     let mut pslice = [pa1];

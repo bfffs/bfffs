@@ -552,7 +552,7 @@ impl InlineExtent {
 
 impl PartialEq for InlineExtent {
     fn eq(self: &Self, other: &Self) -> bool {
-        self.buf.try().unwrap() == other.buf.try().unwrap()
+        self.buf.try_const().unwrap() == other.buf.try_const().unwrap()
     }
 }
 

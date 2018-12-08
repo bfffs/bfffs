@@ -17,7 +17,7 @@ bincode = { version = "1.0.1", features = ["i128"] }
 bitfield = "0.13.1"
 blosc = "0.1"
 byteorder = "1.2.3"
-divbuf = "0.3"
+divbuf = "0.3.1"
 downcast = "0.8"
 enum-primitive-derive = "^0.1"
 env_logger = "0.5"

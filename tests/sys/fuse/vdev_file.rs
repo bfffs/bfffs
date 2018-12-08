@@ -91,7 +91,7 @@ test_suite! {
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.read_at(rbuf, 10)
         })));
-        assert_eq!(&dbs.try().unwrap()[..], &wbuf[..]);
+        assert_eq!(&dbs.try_const().unwrap()[..], &wbuf[..]);
     }
 
     test readv_at() {
@@ -115,12 +115,12 @@ test_suite! {
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.readv_at(rbufs, 10)
         })));
-        assert_eq!(&dbs.try().unwrap()[..], &wbuf[..]);
+        assert_eq!(&dbs.try_const().unwrap()[..], &wbuf[..]);
     }
 
     test write_at(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.val.0.write_at(wbuf.clone(), 10)
@@ -134,13 +134,13 @@ test_suite! {
     #[should_panic]
     test write_at_overwrite_label(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         vdev.val.0.write_at(wbuf.clone(), 0);
     }
 
     test write_at_lba(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.val.0.write_at(wbuf.clone(), 11)
@@ -153,7 +153,7 @@ test_suite! {
 
     test writev_at(vdev) {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let mut wbuf0 = dbs.try().unwrap();
+        let mut wbuf0 = dbs.try_const().unwrap();
         let wbuf1 = wbuf0.split_off(1024);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let mut rbuf = vec![0u8; 4096];
@@ -170,7 +170,7 @@ test_suite! {
     test read_after_write(vdev) {
         let vd = vdev.val.0;
         let dbsw = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = dbsw.try().unwrap();
+        let wbuf = dbsw.try_const().unwrap();
         let dbsr = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbsr.try_mut().unwrap();
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
@@ -179,7 +179,7 @@ test_suite! {
                     vd.read_at(rbuf, 10)
                 })
         })));
-        assert_eq!(wbuf, dbsr.try().unwrap());
+        assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 }
 

@@ -746,7 +746,8 @@ impl Fs {
                 .and_then(move |extattr| {
                     match extattr {
                         ExtAttr::Inline(iea) => {
-                            let buf = Box::new(iea.extent.buf.try().unwrap());
+                            let buf = Box::new(iea.extent.buf.try_const()
+                                               .unwrap());
                             Box::new(Ok(buf).into_future()) as MyFut
                         },
                         ExtAttr::Blob(bea) => {
@@ -1148,7 +1149,7 @@ impl Fs {
         // Populate a hole region in an sglist.
         let fill_hole = |sglist: &mut SGList, p: &mut u64, l: usize| {
             let l = cmp::min(l, ZERO_REGION_LEN);
-            let zb = ZERO_REGION.try().unwrap().slice_to(l);
+            let zb = ZERO_REGION.try_const().unwrap().slice_to(l);
             *p += zb.len() as u64;
             sglist.push(zb);
         };
@@ -1184,7 +1185,7 @@ impl Fs {
                         let ofs = k.offset();
                         match v.as_extent().unwrap() {
                             Extent::Inline(ile) => {
-                                let buf = ile.buf.try().unwrap();
+                                let buf = ile.buf.try_const().unwrap();
                                 Box::new(Ok((ofs, buf)).into_future())
                                     as Box<Future<Item=T, Error=Error> + Send>
                             },
@@ -1771,12 +1772,13 @@ impl Fs {
                         // Either a hole, or beyond EOF
                         let hsize = cmp::min(filesize, i as u64 * rs) as usize;
                         let v = vec![0u8; hsize];
-                        let r = Box::new(DivBufShared::from(v).try().unwrap());
+                        let r = Box::new(DivBufShared::from(v).try_const()
+                                         .unwrap());
                         Box::new(Ok(r).into_future())
                             as Box<Future<Item=_, Error=_> + Send>
                     },
                     Some(FSValue::InlineExtent(ile)) => {
-                        let r = Box::new(ile.buf.try().unwrap());
+                        let r = Box::new(ile.buf.try_const().unwrap());
                         Box::new(Ok(r).into_future())
                             as Box<Future<Item=_, Error=_> + Send>
                     },
@@ -1789,7 +1791,7 @@ impl Fs {
                 }.and_then(move |db: Box<DivBuf>| {
                     // Data copy, because we can't modify cache
                     let mut base = Vec::from(&db[..]);
-                    let overlay = dbs.try().unwrap();
+                    let overlay = dbs.try_const().unwrap();
                     let l = overlay.len();
                     let r = if i == 0 {
                         let s = (offset - baseoffset) as usize;
@@ -2420,7 +2422,7 @@ fn setextattr() {
         args.0.object() == ino &&
         ie.namespace == namespace &&
         ie.name == name2 &&
-        &ie.extent.buf.try().unwrap()[..] == value2.as_bytes()
+        &ie.extent.buf.try_const().unwrap()[..] == value2.as_bytes()
     })).returning(|_| Box::new(Ok(None).into_future()));
 
     let mut opt_ds = Some(ds);

@@ -766,14 +766,15 @@ fn debug_cmd() {
         let readv_at = Cmd::ReadvAt(vec![dbs.try_mut().unwrap()]);
         format!("{:?}", readv_at);
     }
-    let write_at = Cmd::WriteAt(dbs.try().unwrap());
-    let writev_at = Cmd::WritevAt(vec![dbs.try().unwrap()]);
+    let write_at = Cmd::WriteAt(dbs.try_const().unwrap());
+    let writev_at = Cmd::WritevAt(vec![dbs.try_const().unwrap()]);
     let erase_zone = Cmd::EraseZone(0);
     let finish_zone = Cmd::FinishZone(0);
     let sync_all = Cmd::SyncAll;
     let label_writer = LabelWriter::new(0);
     let write_label = Cmd::WriteLabel(label_writer);
-    let write_spacemap = Cmd::WriteSpacemap(vec![dbs.try().unwrap()], 0, 0);
+    let write_spacemap = Cmd::WriteSpacemap(vec![dbs.try_const().unwrap()],
+                                            0, 0);
     format!("{:?} {:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at,
             erase_zone, finish_zone, sync_all, write_label, write_spacemap);
 }
@@ -1032,7 +1033,7 @@ test_suite! {
         let vdev = VdevBlock::new(leaf);
         let mut inner = vdev.inner.borrow_mut();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
-        let dummy_buffer = dummy_dbs.try().unwrap();
+        let dummy_buffer = dummy_dbs.try_const().unwrap();
 
         // Start with some intermedia LBA and schedule some ops
         let same_lba = 1000;
@@ -1130,7 +1131,7 @@ test_suite! {
         let vdev = VdevBlock::new(leaf);
         let mut inner = vdev.inner.borrow_mut();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
-        let dummy = dummy_dbs.try().unwrap();
+        let dummy = dummy_dbs.try_const().unwrap();
 
         inner.last_lba = 1 << 16;   // In zone 1
         // Write to zones that lie behind, around, and ahead of the scheduler,
@@ -1178,7 +1179,7 @@ test_suite! {
         let vdev = VdevBlock::new(leaf);
         let mut inner = vdev.inner.borrow_mut();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
-        let dummy = dummy_dbs.try().unwrap();
+        let dummy = dummy_dbs.try_const().unwrap();
 
         inner.last_lba = 1 << 16;   // In zone 1
         // Open zones 0 and 2 and write to both.  Note that it is illegal for
@@ -1229,7 +1230,7 @@ test_suite! {
         let vdev = VdevBlock::new(leaf);
         let mut inner = vdev.inner.borrow_mut();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
-        let dummy_buffer = dummy_dbs.try().unwrap();
+        let dummy_buffer = dummy_dbs.try_const().unwrap();
 
         // Start with some intermediate LBA and schedule ops both before and
         // after
@@ -1329,7 +1330,7 @@ test_suite! {
                             }));
         scenario.expect(seq);
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         let vdev = VdevBlock::new(leaf);
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             // First schedule all operations.  There are too many to issue them
@@ -1368,7 +1369,7 @@ test_suite! {
                     .and_return(Box::new(future::ok::<(), Error>(()))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = dbs.try().unwrap();
+        let wbuf = dbs.try_const().unwrap();
         let vdev = VdevBlock::new(leaf);
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.write_at(wbuf, 1)
@@ -1383,7 +1384,7 @@ test_suite! {
                     .and_return(Box::new(future::ok::<(), Error>(()))));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = vec![dbs.try().unwrap()];
+        let wbuf = vec![dbs.try_const().unwrap()];
         let vdev = VdevBlock::new(leaf);
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             vdev.writev_at(wbuf, 1)

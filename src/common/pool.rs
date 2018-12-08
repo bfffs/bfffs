@@ -932,7 +932,7 @@ mod pool {
         let pba = PBA::new(0, 10);
         let result = rt.block_on(pool.read(dbm0, pba));
         assert!(result.is_ok());
-        let db0 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
         assert_eq!(&db0[..], &vec![99u8; 4096][..]);
     }
 
@@ -1012,7 +1012,7 @@ mod pool {
         })).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
         let result = rt.block_on( pool.write(db0, TxgT::from(42)));
         assert_eq!(result.unwrap(), PBA::new(0, 0));
     }
@@ -1037,7 +1037,7 @@ mod pool {
         })).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
         let result = rt.block_on( pool.write(db0, TxgT::from(42)));
         assert_eq!(result.unwrap_err(), e);
     }
@@ -1061,7 +1061,7 @@ mod pool {
         })).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let db0 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
         let result = rt.block_on( pool.write(db0, TxgT::from(42)));
         assert_eq!(result.unwrap_err(), e);
     }
@@ -1087,7 +1087,7 @@ mod pool {
         })).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 1024]);
-        let db0 = dbs.try().unwrap();
+        let db0 = dbs.try_const().unwrap();
         let drp = rt.block_on( pool.write(db0, TxgT::from(42))).unwrap();
         assert!(pool.stats.allocated_space[0].load(Ordering::Relaxed) > 0);
         rt.block_on( pool.free(drp, 1)).unwrap();
@@ -1111,7 +1111,7 @@ mod rpc {
             oneshot::channel().0));
         format!("{:?}", Rpc::Size(oneshot::channel().0));
         format!("{:?}", Rpc::SyncAll(oneshot::channel().0));
-        format!("{:?}", Rpc::Write(dbs.try().unwrap(), TxgT(0),
+        format!("{:?}", Rpc::Write(dbs.try_const().unwrap(), TxgT(0),
             oneshot::channel().0));
         format!("{:?}", Rpc::WriteLabel(lw, oneshot::channel().0));
         #[cfg(debug_assertions)]
