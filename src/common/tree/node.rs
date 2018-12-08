@@ -816,7 +816,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
             NodeData::Int(int) => {
                 let other_children = &mut other.as_int_mut().children;
                 let cutoff_idx = other_children.len() - keys_to_share;
-                let mut other_right_half =
+                let other_right_half =
                     other_children.split_off(cutoff_idx);
                 int.children.splice(0..0, other_right_half.into_iter());
             },
@@ -935,7 +935,9 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
     }
 }
 #[derive(Debug)]
-pub(in common) struct Node<A, K, V> (pub(super) RwLock<NodeData<A, K, V>>)
+pub(in crate::common) struct Node<A, K, V> (
+    pub(super) RwLock<NodeData<A, K, V>>
+)
     where A: Addr, K: Key, V: Value;
 
 impl<A: Addr, K: Key, V: Value> Node<A, K, V> {

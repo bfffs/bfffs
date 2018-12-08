@@ -65,7 +65,7 @@ test_suite! {
             let fname = format!("{}/vdev", tempdir.path().display());
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
-            let mut rt = Runtime::new().unwrap();
+            let rt = Runtime::new().unwrap();
             let lpz = NonZeroU64::new(65536);
             let cluster = Cluster::create(None, 1, 1, lpz, 0, &[fname.clone()]);
             (rt, cluster, tempdir, fname)

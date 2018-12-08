@@ -40,7 +40,7 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let cs = NonZeroU64::new(*self.chunksize);
-            let mut vdev_raid = VdevRaid::create(cs,
+            let vdev_raid = VdevRaid::create(cs,
                 *self.n, *self.k, None, *self.f, &paths);
             current_thread::Runtime::new().unwrap().block_on(
                 vdev_raid.open_zone(0)
@@ -597,8 +597,7 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let cs = NonZeroU64::new(2);
-            let mut vdev_raid = VdevRaid::create(cs, num_disks, 3, None, 1,
-                                                 &paths);
+            let vdev_raid = VdevRaid::create(cs, num_disks, 3, None, 1, &paths);
             (vdev_raid, tempdir, paths)
         }
     });

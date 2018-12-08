@@ -493,7 +493,7 @@ impl Iterator for PrimeSIter {
                     self.stripe_iter = 0;
                     if self.z == self.iterations_per_rep() - 1 {
                         // Roll over to the next repetition
-                        for mut o in &mut self.o {
+                        for o in &mut self.o {
                             *o = 0;
                         }
                         self.a = 0;
@@ -581,7 +581,7 @@ impl Iterator for PrimeSIterData {
                     self.0.stripe_iter = 0;
                     if self.0.z == self.0.iterations_per_rep() - 1 {
                         // Roll over to the next repetition
-                        for mut o in &mut self.0.o {
+                        for o in &mut self.0.o {
                             *o = 0;
                         }
                         self.0.a = 0;

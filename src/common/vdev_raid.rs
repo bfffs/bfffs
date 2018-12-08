@@ -807,7 +807,7 @@ impl VdevRaid {
             //codec::encode will actually fill the column
             unsafe { v.set_len(stripes * col_len) };
             let col = DivBufShared::from(v);
-            let mut dbm = col.try_mut().unwrap();
+            let dbm = col.try_mut().unwrap();
             parity.push(dbm);
         }
 

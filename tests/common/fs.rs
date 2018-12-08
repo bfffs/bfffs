@@ -2430,7 +2430,7 @@ test_suite! {
             })).unwrap();
             let tree_id = rt.block_on(db.new_fs()).unwrap();
             let fs = Fs::new(db.clone(), rt.handle().clone(), tree_id);
-            let mut seed = self.seed.unwrap_or_else(|| {
+            let seed = self.seed.unwrap_or_else(|| {
                 let mut seed = [0u8; 16];
                 let mut seeder = thread_rng();
                 seeder.fill_bytes(&mut seed);
