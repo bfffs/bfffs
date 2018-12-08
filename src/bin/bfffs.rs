@@ -1,9 +1,3 @@
-extern crate bfffs;
-extern crate clap;
-extern crate futures;
-extern crate tokio;
-extern crate tokio_io_pool;
-
 use bfffs::common::device_manager::DevManager;
 use clap::crate_version;
 use futures::future;

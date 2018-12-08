@@ -1,15 +1,5 @@
 // vim: tw=80
 
-extern crate bfffs;
-extern crate clap;
-extern crate env_logger;
-extern crate fuse;
-extern crate futures;
-extern crate nix;
-extern crate tokio;
-extern crate tokio_io_pool;
-extern crate tokio_signal;
-
 use bfffs::{
     common::{
         Error,

@@ -2,15 +2,6 @@
 //! Generates extended attribute names that result in hash collisions in the
 //! B-Tree
 
-extern crate bfffs;
-extern crate chashmap;
-extern crate clap;
-extern crate lazy_static;
-extern crate libc;
-extern crate num_cpus;
-extern crate rand;
-extern crate rand_xorshift;
-
 use bfffs::common::fs_tree::*;
 use chashmap::CHashMap;
 use lazy_static::lazy_static;

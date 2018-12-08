@@ -1,8 +1,5 @@
 #![feature(test)]
 
-extern crate bfffs;
-extern crate test;
-
 use bfffs::common::{declust::*, prime_s::{self, *}};
 use test::Bencher;
 
