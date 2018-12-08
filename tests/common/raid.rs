@@ -112,7 +112,7 @@ pub fn encode_update_decode() {
 // Roundtrip data through the codec for various array sizes and erasure sets
 #[test]
 // Clippy bug https://github.com/rust-lang-nursery/rust-clippy/issues/3308
-#[cfg_attr(feature = "cargo-clippy", allow(clippy::explicit_counter_loop))]
+#[allow(clippy::explicit_counter_loop)]
 pub fn comprehensive() {
     let cfgs = [
         (3, 1), (9, 1),

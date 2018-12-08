@@ -1,6 +1,6 @@
 #![recursion_limit="128"]   // galvanic_test hits the recursion limit
 // https://github.com/mindsbackyard/galvanic-test/pull/13
-#![cfg_attr(feature = "cargo-clippy", allow(clippy::unnecessary_mut_passed))]
+#![allow(clippy::unnecessary_mut_passed)]
 
 macro_rules! t {
     ($e:expr) => (match $e {

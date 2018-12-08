@@ -498,7 +498,7 @@ pub struct Inode {
 
 /// This module ought to be unreachable, but must exist to satisfy rustc
 // LCOV_EXCL_START
-#[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
+#[allow(clippy::needless_pass_by_value)]
 mod dbs_serializer {
     use super::*;
     use serde::{de::Deserializer, Serializer};

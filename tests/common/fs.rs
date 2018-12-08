@@ -1610,8 +1610,7 @@ root:
         assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
     }
 
-    #[cfg_attr(feature = "cargo-clippy",
-               allow(clippy::block_in_if_condition_stmt))]
+    #[allow(clippy::block_in_if_condition_stmt)]
     test rmdir(mocks) {
         let dirname = OsString::from("x");
         let ino = mocks.val.0.mkdir(1, &dirname, 0o755, 0, 0)

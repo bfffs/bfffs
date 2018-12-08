@@ -333,7 +333,7 @@ test_suite! {
     }
 
     // Write less than an LBA at the start of a stripe
-    #[cfg_attr(feature = "cargo-clippy", allow(clippy::identity_op))]
+    #[allow(clippy::identity_op)]
     test write_tiny_at_start_of_stripe(raid((1, 1, 0, 1))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);

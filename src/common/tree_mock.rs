@@ -3,8 +3,7 @@
 
 //derive(Default) doesn't work here because TreeMock can be instantiated with
 //types that don't implement Default
-#![cfg_attr(feature = "cargo-clippy",
-            allow(clippy::new_without_default_derive))]
+#![allow(clippy::new_without_default_derive)]
 
 use bincode;
 use crate::common::*;
@@ -82,7 +81,7 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
             Box<Future<Item=(), Error=Error> + Send>>("clean_zone")
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn create(_dml: Arc<D>) -> Self {
         Self::new()
     }
@@ -159,7 +158,7 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
         }
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn open(_dml: Arc<D>, _on_disk: &TreeOnDisk) -> bincode::Result<Self> {
         Ok(Self::new())
     }

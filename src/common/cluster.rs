@@ -35,7 +35,7 @@ pub trait VdevRaidTrait : Vdev {
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> Box<VdevFut>;
     fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> Box<VdevFut>;
     fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-    #[cfg_attr(feature = "cargo-clippy", allow(clippy::ptr_arg))]
+    #[allow(clippy::ptr_arg)]
     fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
         -> Box<VdevFut>;
 }
@@ -327,7 +327,7 @@ impl<'a> FreeSpaceMap {
     }
 
     /// Find the next closed zone including or after `start`
-    #[cfg_attr(feature = "cargo-clippy", allow(clippy::if_same_then_else))]
+    #[allow(clippy::if_same_then_else)]
     fn find_closed_zone(&'a self, start: ZoneT) -> Option<ClosedZone>
     {
         if start as usize >= self.zones.len() {

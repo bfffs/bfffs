@@ -20,7 +20,7 @@ pub enum Key {
 
 /// Types that implement `Cacheable` may be stored in the cache
 // Things in Cache will never be empty, so they don't need is_empty
-#[cfg_attr(feature = "cargo-clippy", allow(clippy::len_without_is_empty))]
+#[allow(clippy::len_without_is_empty)]
 pub trait Cacheable: Any + Debug + Send + Sync {
     /// Deserialize a buffer into Self.  Will panic if deserialization fails.
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized;

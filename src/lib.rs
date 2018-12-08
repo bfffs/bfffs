@@ -3,10 +3,10 @@
 // Disable the range_plus_one lint until this bug is fixed.  It generates many
 // false positive in the Tree code.
 // https://github.com/rust-lang-nursery/rust-clippy/issues/3307
-#![cfg_attr(feature = "cargo-clippy", allow(clippy::range_plus_one))]
+#![allow(clippy::range_plus_one)]
 
 // I don't find this lint very helpful
-#![cfg_attr(feature = "cargo-clippy", allow(clippy::type_complexity))]
+#![allow(clippy::type_complexity)]
 
 extern crate atomic;
 extern crate bincode;
