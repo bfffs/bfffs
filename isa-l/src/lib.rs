@@ -7,7 +7,7 @@ use std::{
     result::Result
 };
 
-pub fn version() -> u32 {
+pub const fn version() -> u32 {
     ffi::ISAL_MAJOR_VERSION * 0x10000 +
     ffi::ISAL_MINOR_VERSION * 0x100 +
     ffi::ISAL_PATCH_VERSION

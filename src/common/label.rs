@@ -40,8 +40,6 @@ pub const LABEL_SIZE: usize = LABEL_LBAS as usize * BYTES_PER_LBA;
 pub const SPACEMAP_ZONES_PER_LBA: usize = 255;
 
 /// How many LBAs should be reserved for each spacemap?
-// This can be a const_fn once that feature is stabilized
-// https://github.com/rust-lang/rust/issues/24111
 pub fn spacemap_space(nzones: u64) -> LbaT {
     div_roundup(nzones, SPACEMAP_ZONES_PER_LBA as u64)
 }
