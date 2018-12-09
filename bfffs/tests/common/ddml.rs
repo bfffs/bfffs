@@ -83,8 +83,14 @@ test_suite! {
             .parent().unwrap()
             .parent().unwrap()
             .parent().unwrap()
+            .parent().unwrap()
             .join("src/common/vdev_raid.rs");
-        let mut file = t!(fs::File::open(&filename));
+        println!("filename is {:?}", filename);
+        let mut file = fs::File::open(&Path::new("src/common/vdev_raid.rs"))
+            .unwrap_or_else(|_|
+            fs::File::open(&Path::new("bfffs/src/common/vdev_raid.rs"))
+            .unwrap()
+        );
         let mut vdev_raid_contents = Vec::new();
         file.read_to_end(&mut vdev_raid_contents).unwrap();
         let dbs = DivBufShared::from(vdev_raid_contents.clone());

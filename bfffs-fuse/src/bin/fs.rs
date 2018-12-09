@@ -1,9 +1,8 @@
 // vim: tw=80
 //! FUSE filesystem access
 
-#[cfg(not(test))] use crate::common::database::*;
-#[cfg(test)] use crate::common::database_mock::DatabaseMock as Database;
-use crate::common::{
+use bfffs::common::database::*;
+use bfffs::common::{
     RID,
     database::TreeID,
     fs::{ExtAttr, ExtAttrNamespace, Fs, SetAttr}

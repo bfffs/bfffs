@@ -6,7 +6,6 @@ use bfffs::{
         database::*,
         device_manager::DevManager,
     },
-    sys::fs::FuseFs
 };
 use clap::crate_version;
 use futures::{Future, Stream, future};
@@ -17,6 +16,10 @@ use std::{
     thread
 };
 use tokio_signal::unix::{Signal, SIGUSR1};
+
+mod fs;
+
+use crate::fs::FuseFs;
 
 fn main() {
     env_logger::init();

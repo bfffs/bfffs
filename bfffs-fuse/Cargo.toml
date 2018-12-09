@@ -1,0 +1,20 @@
+[package]
+name = "bfffs-fuse"
+version = "0.1.0"
+authors = ["Alan Somers <asomers@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+bfffs = { path = "../bfffs" }
+env_logger = "0.5"
+fuse = "0.3"
+futures = "0.1.14"
+libc = "0.2.44"
+time = "0.1"
+tokio-signal = "0.2.2"
+tokio-io-pool = "0.1.4"
+
+[dependencies.clap]
+version = "2"
+default-features = false
+features=  [ "suggestions", "color", "wrap_help" ]
