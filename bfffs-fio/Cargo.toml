@@ -1,0 +1,20 @@
+[package]
+name = "bfffs-fio"
+version = "0.1.0"
+authors = ["Alan Somers <asomers@gmail.com>"]
+edition = "2018"
+# As a fio external ioengine, we must depend pretty intimately on fio's
+# internals.  So this crate must be GPL-2 too.
+license = "GPL-2.0"
+
+[build-dependencies]
+cc = "1.0"
+
+[dependencies]
+bfffs = { path = "../bfffs" }
+lazy_static = "1.0"
+libc = "0.2.44"
+tokio-io-pool = "0.1.4"
+
+[lib]
+crate-type = ["cdylib"]

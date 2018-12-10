@@ -1,0 +1,8 @@
+[global]
+ioengine=external:../target/debug/libbfffs_fio.so
+rw=write
+bs=64k
+size=512m
+
+[iodepth1]
+iodepth=1
