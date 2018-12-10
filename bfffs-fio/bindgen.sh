@@ -22,10 +22,11 @@ bindgen --no-rustfmt-bindings \
 	--whitelist-type 'fio_opt_type.*' \
 	--whitelist-type 'ioengine_ops' \
 	--whitelist-type 'io_u' \
+	--whitelist-type 'opt_category.*' \
 	--whitelist-type 'thread_data' \
 	--whitelist-var 'FIO_IOOPS_VERSION' \
 	--blacklist-type 'timespec' \
 	--ctypes-prefix libc \
-	--rust-target 1.0 \
+	--rust-target 1.27 \
 	src/ffi.h -- -I$FIOPATH >> src/ffi.rs
-rustfmt --force --write-mode replace src/ffi.rs
+rustup run nightly-2018-11-28-x86_64-unknown-freebsd rustfmt --edition 2018 src/ffi.rs
