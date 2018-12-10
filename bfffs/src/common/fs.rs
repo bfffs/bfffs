@@ -1689,7 +1689,7 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn write(&mut self, ino: u64, offset: u64, data: &[u8], _flags: u32)
+    pub fn write(&self, ino: u64, offset: u64, data: &[u8], _flags: u32)
         -> Result<u32, i32>
     {
         // Outline:
