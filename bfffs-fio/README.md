@@ -11,10 +11,10 @@ poolname and vdev name.  Then run fio.
 ```sh
 cd /path/to/bfffs
 target/release/bfffs pool create <poolname> <vdevs>
-cd /path/to/bfffs/bfffs-fio
-cargo build
-vim bfffs.fio
-fio bfffs.fio /
+cd /path/to/bfffs
+cargo build --release --all
+vim bfffs-fio/bfffs.fio
+fio bfffs-fio/bfffs.fio /
 ```
 
 # License
