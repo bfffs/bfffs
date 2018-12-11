@@ -64,6 +64,7 @@ struct BfffsOptions {
 static mut OPTIONS: Option<[fio_option; 3]> = None;
 
 #[link_section = ".init_array"]
+#[used] //  Don't allow the optimizer to eliminate this symbol!
 pub static INITIALIZE: extern "C" fn() = rust_ctor;
 
 /// Initialize global statics.
