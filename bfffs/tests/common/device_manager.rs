@@ -62,17 +62,29 @@ test_suite! {
         assert!(mocks.val.1.importable_pools().is_empty());
     }
 
-    // Import a single pool
-    test import(mocks) {
+    // Import a single pool by its name
+    test import_by_name(mocks) {
+        let (mut rt, dm, paths, _tempdir) = mocks.val;
+        dm.taste(&paths[2]);
+        dm.taste(&paths[1]);
+        dm.taste(&paths[0]);
+        let _db = rt.block_on(future::lazy(move || {
+            let te = TaskExecutor::current();
+            dm.import_by_name("test_device_manager", te).unwrap()
+        })).unwrap();
+    }
+
+    // Import a single pool by its UUID
+    test import_by_uuid(mocks) {
         let (mut rt, dm, paths, _tempdir) = mocks.val;
         dm.taste(&paths[2]);
         dm.taste(&paths[1]);
         dm.taste(&paths[0]);
         let (name, uuid) = dm.importable_pools().pop().unwrap();
         assert_eq!(name, "test_device_manager");
-        let _idml = rt.block_on(future::lazy(move || {
+        let _db = rt.block_on(future::lazy(move || {
             let te = TaskExecutor::current();
-            dm.import(uuid, te)
+            dm.import_by_uuid(uuid, te)
         })).unwrap();
     }
 

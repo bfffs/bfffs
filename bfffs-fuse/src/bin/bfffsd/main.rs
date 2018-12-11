@@ -54,7 +54,7 @@ fn main() {
     let handle = rt.handle().clone();
     let handle2 = rt.handle().clone();
     let db = Arc::new(rt.block_on(future::lazy(move || {
-        dev_manager.import(uuid, handle)
+        dev_manager.import_by_uuid(uuid, handle)
     })).unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);

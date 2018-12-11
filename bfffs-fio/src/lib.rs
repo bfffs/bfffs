@@ -1,10 +1,11 @@
 // vim: tw=80
 use bfffs::common::{
+    Error,
     database::TreeID,
     device_manager::DevManager,
     fs::Fs,
 };
-use futures::future;
+use futures::{IntoFuture, Future, future};
 use lazy_static::lazy_static;
 use memoffset::offset_of;
 use std::{
@@ -161,22 +162,33 @@ pub extern fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
             // TODO: allow using multiple vdevs
             let borrowed_vdev: &str = vdev.borrow();
             dev_manager.taste(borrowed_vdev);
-            let uuid = dev_manager.importable_pools().iter()
-            .filter(|(name, _uuid)| {
-                *name == pool.borrow()
-            }).nth(0).unwrap().1;
             let handle = rt.handle().clone();
-            let db = Arc::new(rt.block_on(future::lazy(move || {
-                dev_manager.import(uuid, handle)
-            })).unwrap());
-
-            // For now, hardcode tree_id to 0
-            let tree_id = TreeID::Fs(0);
-            let root_fs = Fs::new(db.clone(), rt.handle().clone(), tree_id);
-            *fs = Some(root_fs);
+            let r = rt.block_on(future::lazy(move || {
+                if let Ok(fut) = dev_manager.import_by_name(pool, handle) {
+                    Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                } else {
+                    Box::new(Err(Error::ENOENT).into_future())
+                        as Box<Future<Item=_, Error=_> + Send>
+                }
+            }));
+            if let Ok(db) = r {
+                let adb = Arc::new(db);
+                // For now, hardcode tree_id to 0
+                let tree_id = TreeID::Fs(0);
+                let root_fs = Fs::new(adb, rt.handle().clone(), tree_id);
+                *fs = Some(root_fs);
+                0
+            } else {
+                eprintln!("Pool not found");
+                1
+            }
+        } else {
+            eprintln!("Upgrade fio to 3.12 or later");
+            1
         }
+    } else {
+        0
     }
-    0
 }
 
 #[no_mangle]

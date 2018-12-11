@@ -5,15 +5,18 @@ use crate::common::{pool, vdev::Vdev, vdev_raid};
 use crate::common::{Error, cache, cluster, database, ddml, idml, label,
     vdev_block};
 use futures::{Future, future};
-#[cfg(not(test))] use futures::{stream, sync::oneshot};
-#[cfg(not(test))] use futures::Stream;
+#[cfg(not(test))] use futures::{
+    Stream,
+    stream,
+    sync::oneshot
+};
 use std::{
     borrow::ToOwned,
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Mutex
 };
-#[cfg(not(test))] use std::sync::Arc;
+#[cfg(not(test))] use std::sync::{Arc, MutexGuard};
 use crate::sys::vdev_file;
 use uuid::Uuid;
 use tokio::runtime::current_thread;
@@ -32,12 +35,51 @@ pub struct DevManager {
 }
 
 impl DevManager {
-    /// Import a pool by its UUID
+    /// Import a pool by its pool name
+    // It would be nice to return a Future instead of a Result<Future>.  But if
+    // we do that, then we can't automatically infer whether the result should
+    // be Send (it's based on whether E: Send).  So until specialization is
+    // available, we must do it like this.
     #[cfg(not(test))]
-    pub fn import<E: Clone + Executor + 'static>(&self, uuid: Uuid, handle: E)
-        -> impl Future<Item = database::Database, Error = Error>
+    pub fn import_by_name<E, S>(&self, name: S, handle: E)
+        -> Result<impl Future<Item = database::Database, Error = Error>, Error>
+        where E: Clone + Executor + 'static,
+              S: AsRef<str>
     {
-        let (_pool, raids, mut leaves) = self.open_labels(uuid);
+        let inner = self.inner.lock().unwrap();
+        inner.pools.iter()
+        .filter_map(|(uuid, label)| {
+            if label.name == name.as_ref() {
+                Some(uuid.clone())
+            } else {
+                None
+            }
+        })
+        .nth(0)
+        .ok_or(Error::ENOENT)
+        .map(move |uuid| {
+            self.import(uuid, handle, inner)
+        })
+    }
+
+    /// Import a pool by its UUID
+    // TODO: handle the ENOENT case
+    #[cfg(not(test))]
+    pub fn import_by_uuid<E>(&self, uuid: Uuid, handle: E)
+        -> impl Future<Item = database::Database, Error = Error>
+        where E: Clone + Executor + 'static
+    {
+        let inner = self.inner.lock().unwrap();
+        self.import(uuid, handle, inner)
+    }
+
+    /// Import a pool that is already known to exist
+    #[cfg(not(test))]
+    fn import<E>(&self, uuid: Uuid, handle: E, inner: MutexGuard<Inner>)
+        -> impl Future<Item = database::Database, Error = Error>
+        where E: Clone + Executor + 'static
+    {
+        let (_pool, raids, mut leaves) = self.open_labels(uuid, inner);
         let proxies = raids.into_iter().map(move |raid| {
             let leaf_paths: Vec<PathBuf> = leaves.remove(&raid.uuid).unwrap();
             let (tx, rx) = oneshot::channel();
@@ -54,7 +96,7 @@ impl DevManager {
                     Box::new(fut)
                 ).map_err(Error::unhandled)
             }))
-            ).unwrap();
+            ).expect("DefaultExecutor::spawn failed");
             rx
         });
         future::join_all(proxies).map_err(|_| Error::EPIPE)
@@ -76,7 +118,8 @@ impl DevManager {
     pub fn import_clusters(&self, uuid: Uuid)
         -> impl Future<Item = Vec<cluster::Cluster>, Error = Error>
     {
-        let (_pool, raids, mut leaves) = self.open_labels(uuid);
+        let inner = self.inner.lock().unwrap();
+        let (_pool, raids, mut leaves) = self.open_labels(uuid, inner);
         let cfuts = raids.into_iter().map(move |raid| {
             let leaf_paths = leaves.remove(&raid.uuid).unwrap();
             DevManager::open_cluster(leaf_paths, raid.uuid)
@@ -108,10 +151,9 @@ impl DevManager {
     }
 
     #[cfg(not(test))]
-    fn open_labels(&self, uuid: Uuid)
+    fn open_labels(&self, uuid: Uuid, mut inner: MutexGuard<Inner>)
         -> (pool::Label, Vec<vdev_raid::Label>, BTreeMap<Uuid, Vec<PathBuf>>)
     {
-        let mut inner = self.inner.lock().unwrap();
         let pool = inner.pools.remove(&uuid).unwrap();
         let raids = pool.children.iter()
             .map(|child_uuid| inner.raids.remove(child_uuid).unwrap())

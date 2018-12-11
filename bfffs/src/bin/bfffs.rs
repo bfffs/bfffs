@@ -1,7 +1,10 @@
 use bfffs::common::device_manager::DevManager;
 use clap::crate_version;
 use futures::future;
-use std::sync::Arc;
+use std::{
+    process::exit,
+    sync::Arc
+};
 use tokio::{
     executor::current_thread::TaskExecutor,
     runtime::current_thread::Runtime
@@ -17,22 +20,22 @@ use super::*;
 // * RIDT contains no orphan entries not found in the FSTrees
 // * Spacemaps match actual usage
 pub fn main(args: &clap::ArgMatches) {
-    let poolname = args.value_of("name").unwrap();
+    let poolname = args.value_of("name").unwrap().to_owned();
     let disks = args.values_of("disks").unwrap();
     let dev_manager = DevManager::default();
     for dev in disks.map(str::to_string)
     {
         dev_manager.taste(dev);
     }
-    let uuid = dev_manager.importable_pools().iter()
-        .filter(|(name, _uuid)| {
-            *name == poolname
-        }).nth(0).unwrap().1;
 
     let mut rt = tokio_io_pool::Runtime::new();
     let handle = rt.handle().clone();
     let db = Arc::new(rt.block_on(future::lazy(move || {
-        dev_manager.import(uuid, handle)
+        dev_manager.import_by_name(poolname, handle)
+        .unwrap_or_else(|_e| {
+            eprintln!("Error: pool not found");
+            exit(1);
+        })
     })).unwrap());
     rt.block_on(future::lazy(move || {
         db.check()
