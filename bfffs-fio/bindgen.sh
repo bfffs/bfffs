@@ -24,8 +24,9 @@ bindgen --no-rustfmt-bindings \
 	--whitelist-type 'io_u' \
 	--whitelist-type 'opt_category.*' \
 	--whitelist-type 'thread_data' \
-	--whitelist-var 'FIO_IOOPS_VERSION' \
+	--whitelist-type 'fio_ioengine_flags' \
 	--blacklist-type 'timespec' \
+	--whitelist-var 'FIO_IOOPS_VERSION' \
 	--ctypes-prefix libc \
 	--rust-target 1.27 \
 	src/ffi.h -- -I$FIOPATH >> src/ffi.rs

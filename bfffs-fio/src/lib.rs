@@ -1,14 +1,46 @@
-use bfffs::common::fs::Fs;
+// vim: tw=80
+use bfffs::common::{
+    database::TreeID,
+    device_manager::DevManager,
+    fs::Fs,
+};
+use futures::future;
 use lazy_static::lazy_static;
+use memoffset::offset_of;
 use std::{
+    borrow::Borrow,
+    ffi::{CStr, OsStr},
+    mem,
+    os::unix::ffi::OsStrExt,
     ptr,
-    sync::Mutex,
+    slice,
+    sync::{Arc, Mutex},
 };
 use tokio_io_pool::Runtime;
 
 mod ffi;
 
 use crate::ffi::*;
+
+impl fio_option {
+    fn new(name: &[u8], lname: &[u8], type_: fio_opt_type, off1: usize,
+           help: &[u8], def: &[u8], category: opt_category,
+           group: opt_category_group)
+        -> Self
+    {
+        fio_option {
+            name: name as *const _ as *const libc::c_char,
+            lname: lname as *const _ as *const libc::c_char,
+            type_,
+            off1: off1 as libc::c_uint,
+            help: help as *const _ as *const libc::c_char,
+            def: def as *const _ as *const libc::c_char,
+            category: u64::from(category),
+            group,
+            ..  unsafe{mem::zeroed()}
+        }
+    }
+}
 
 impl flist_head {
     const fn zeroed() -> Self {
@@ -19,108 +51,72 @@ impl flist_head {
     }
 }
 
-impl value_pair {
-    const fn zeroed() -> Self {
-        value_pair {
-            ival: ptr::null(),
-            oval: 0,
-            help: ptr::null(),
-            orval: 0,
-            cb: ptr::null_mut(),
-        }
+#[repr(C)]
+struct BfffsOptions {
+    /// silly fio can't handle an offset of 0
+    _pad: u32,
+    pool_name: *const libc::c_char,
+    /// The name of the device that backs the pool.  If there are multiple
+    /// devices, then they should be space-separated
+    vdev: *const libc::c_char,
+}
+
+static mut OPTIONS: Option<[fio_option; 3]> = None;
+
+#[link_section = ".init_array"]
+pub static INITIALIZE: extern "C" fn() = rust_ctor;
+
+/// Initialize global statics.
+///
+/// If mem::zeroed were a const_fn, then we wouldn't need this.
+#[no_mangle]
+pub extern "C" fn rust_ctor() {
+    unsafe {
+        OPTIONS = Some([
+            fio_option::new(b"pool\0",
+                            b"pool\0",
+                            fio_opt_type_FIO_OPT_STR_STORE,
+                            offset_of!(BfffsOptions, pool_name),
+                            b"Name of BFFFS pool\0",
+                            b"\0",
+                            opt_category___FIO_OPT_C_ENGINE,
+                            opt_category_group_FIO_OPT_G_INVALID
+            ),
+            fio_option::new(b"vdev\0",
+                            b"vdev\0",
+                            fio_opt_type_FIO_OPT_STR_STORE,
+                            offset_of!(BfffsOptions, vdev),
+                            b"Name of BFFFS vdev\0",
+                            b"\0",
+                            opt_category___FIO_OPT_C_ENGINE,
+                            opt_category_group_FIO_OPT_G_INVALID
+            ),
+            mem::zeroed()
+        ]);
+        IOENGINE.options = OPTIONS.as_ref().unwrap() as *const _ as *mut _;
     }
 }
-const FIO_BFFFS_OPTIONS: [fio_option; 1] = [
-    fio_option {
-        name: ptr::null(),
-        lname: ptr::null(),
-        alias: ptr::null(),
-        type_: fio_opt_type_FIO_OPT_INVALID,
-        off1: 0,
-        off2: 0,
-        off3: 0,
-        off4: 0,
-        off5: 0,
-        off6: 0,
-        maxval: 0,
-        minval: 0,
-        maxfp: 0.0,
-        minfp: 0.0,
-        interval: 0,
-        maxlen: 0,
-        neg: 0,
-        prio: 0,
-        cb: ptr::null_mut(),
-        help: ptr::null(),
-        def: ptr::null(),
-        posval: [
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-            value_pair::zeroed(),
-        ],
-        parent: ptr::null(),
-        hide: 0,
-        hide_on_set: 0,
-        inverse: ptr::null(),
-        inv_opt: ptr::null_mut(),
-        verify: None,
-        prof_name: ptr::null(),
-        prof_opts: ptr::null_mut(),
-        category: 0,
-        group: 0,
-        gui_data: ptr::null_mut(),
-        is_seconds: 0,
-        is_time: 0,
-        no_warn_def: 0,
-        pow2: 0,
-        no_free: 0,
-    }
-];
 
 lazy_static! {
     static ref RUNTIME: Mutex<Runtime> = Mutex::new(Runtime::new());
     // TODO: remove the Mutex once there is a fs::Handle that is Sync
-    static ref FS: Mutex<Fs> = {
-        let handle = {
-            RUNTIME.lock().unwrap().handle().clone()
-        };
-
-        unimplemented!()
-    };
+    static ref FS: Mutex<Option<Fs>> = Mutex::new(None);
 }
 
 #[no_mangle]
-pub extern fn fio_bfffs_close(_td: *mut thread_data, _f: *mut fio_file)
+pub extern fn fio_bfffs_close(_td: *mut thread_data, f: *mut fio_file)
     -> libc::c_int
 {
+    unsafe {
+        (*f).fd = -1;
+    }
     0
 }
 
 #[no_mangle]
 pub extern fn fio_bfffs_commit(_td: *mut thread_data) -> libc::c_int
 {
-    0
+    1
 }
 
 #[no_mangle]
@@ -139,30 +135,120 @@ pub extern fn fio_bfffs_getevents(_td: *mut thread_data, _min: libc::c_uint,
 }
 
 #[no_mangle]
-pub extern fn fio_bfffs_init(_td: *mut thread_data) -> libc::c_int {
+pub extern fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
+    let mut fs = FS.lock().unwrap();
+    if fs.is_none() {
+        let mut rt = RUNTIME.lock().unwrap();
+        let opts = unsafe {(*td).eo} as *mut BfffsOptions;
+        if opts as isize != -1 {
+            let (pool, vdev) = unsafe {
+                let pool = if (*opts).pool_name.is_null() {
+                    eprintln!("Error: pool option is required");
+                    return 1
+                } else {
+                    CStr::from_ptr((*opts).pool_name).to_string_lossy()
+                };
+                let vdev = if (*opts).vdev.is_null() {
+                    eprintln!("Error: vdev option is required");
+                    return 1;
+                } else {
+                    CStr::from_ptr((*opts).vdev).to_string_lossy()
+                };
+                (pool, vdev)
+            };
+            let dev_manager = DevManager::default();
+            // TODO: allow using multiple vdevs
+            let borrowed_vdev: &str = vdev.borrow();
+            dev_manager.taste(borrowed_vdev);
+            let uuid = dev_manager.importable_pools().iter()
+            .filter(|(name, _uuid)| {
+                *name == pool.borrow()
+            }).nth(0).unwrap().1;
+            let handle = rt.handle().clone();
+            let db = Arc::new(rt.block_on(future::lazy(move || {
+                dev_manager.import(uuid, handle)
+            })).unwrap());
+
+            // For now, hardcode tree_id to 0
+            let tree_id = TreeID::Fs(0);
+            let root_fs = Fs::new(db.clone(), rt.handle().clone(), tree_id);
+            *fs = Some(root_fs);
+        }
+    }
     0
 }
 
 #[no_mangle]
-pub extern fn fio_bfffs_open(_td: *mut thread_data, _f: *mut fio_file)
+pub extern fn fio_bfffs_invalidate(_td: *mut thread_data, _f: *mut fio_file)
     -> libc::c_int
 {
-    -1
+    // TODO: invalidate cache
+    0
 }
 
 #[no_mangle]
-pub extern fn fio_bfffs_queue(_td: *mut thread_data, _io_u: *mut io_u)
-    -> libc::c_uint
+pub extern fn fio_bfffs_open(_td: *mut thread_data, f: *mut fio_file)
+    -> libc::c_int
 {
-    0
+    let file_name = unsafe {
+        OsStr::from_bytes(CStr::from_ptr((*f).file_name).to_bytes())
+    };
+    let mut fs_opt = FS.lock().unwrap();
+    let fs = fs_opt.as_mut().unwrap();
+    match fs.create(1, file_name, 0600, 0, 0) {
+        Ok(ino) => {
+            unsafe {
+                // Store the inode number where fio would put its file
+                // descriptor
+                (*f).fd = ino as i32;
+            }
+            0
+        },
+        Err(e) => {
+            eprintln!("fio_bfffs_open: {:?}", e);
+            1
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(non_upper_case_globals)]
+pub extern fn fio_bfffs_queue(_td: *mut thread_data, io_u: *mut io_u)
+    -> fio_q_status
+{
+    let fs_opt = FS.lock().unwrap();
+    let fs = fs_opt.as_ref().unwrap();
+
+    let (ddir, ino, offset, data) = unsafe {
+        let data: &[u8] = slice::from_raw_parts((*io_u).xfer_buf as *mut u8,
+                                                (*io_u).xfer_buflen as usize);
+        let ino = (*(*io_u).file).fd as u64;
+        ((*io_u).ddir, ino, (*io_u).offset, data)
+    };
+
+    match ddir {
+        fio_ddir_DDIR_READ => {
+            fs.read(ino, offset, data.len()).unwrap();
+        },
+        fio_ddir_DDIR_WRITE => {
+            fs.write(ino, offset, data, 0).unwrap();
+        },
+        fio_ddir_DDIR_SYNC => {
+            // Until we support fsync, we must sync the entire filesystem
+            fs.sync()
+        }
+        _ => unimplemented!()
+    }
+
+    fio_q_status_FIO_Q_COMPLETED
 }
 
 #[export_name = "ioengine"]
 pub static mut IOENGINE: ioengine_ops = ioengine_ops {
-    name: &b"bfffs" as *const _ as *const libc::c_char,
+    name: b"bfffs\0" as *const _ as *const libc::c_char,
     version: FIO_IOOPS_VERSION as i32,
     init: Some(fio_bfffs_init),
-    flags: 0,   // TODO
+    flags: fio_ioengine_flags_FIO_SYNCIO as i32,
     setup: None,
     prep: None,
     queue: Some(fio_bfffs_queue),
@@ -174,7 +260,7 @@ pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     cleanup: None,
     open_file: Some(fio_bfffs_open),
     close_file: Some(fio_bfffs_close),
-    invalidate: None,
+    invalidate: Some(fio_bfffs_invalidate),
     unlink_file: None,
     get_file_size: None,
     terminate: None,
@@ -183,6 +269,6 @@ pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     io_u_init: None,
     io_u_free: None,
     list: flist_head::zeroed(),
-    option_struct_size: 0,  // TODO
-    options: &FIO_BFFFS_OPTIONS as *const _ as *mut _
+    option_struct_size: mem::size_of::<BfffsOptions>() as i32,
+    options: ptr::null_mut(),
 };

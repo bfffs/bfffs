@@ -601,6 +601,21 @@ pub struct ioengine_ops {
     pub option_struct_size: libc::c_int,
     pub options: *mut fio_option,
 }
+pub const fio_ioengine_flags_FIO_SYNCIO: fio_ioengine_flags = 1;
+pub const fio_ioengine_flags_FIO_RAWIO: fio_ioengine_flags = 2;
+pub const fio_ioengine_flags_FIO_DISKLESSIO: fio_ioengine_flags = 4;
+pub const fio_ioengine_flags_FIO_NOEXTEND: fio_ioengine_flags = 8;
+pub const fio_ioengine_flags_FIO_NODISKUTIL: fio_ioengine_flags = 16;
+pub const fio_ioengine_flags_FIO_UNIDIR: fio_ioengine_flags = 32;
+pub const fio_ioengine_flags_FIO_NOIO: fio_ioengine_flags = 64;
+pub const fio_ioengine_flags_FIO_PIPEIO: fio_ioengine_flags = 128;
+pub const fio_ioengine_flags_FIO_BARRIER: fio_ioengine_flags = 256;
+pub const fio_ioengine_flags_FIO_MEMALIGN: fio_ioengine_flags = 512;
+pub const fio_ioengine_flags_FIO_BIT_BASED: fio_ioengine_flags = 1024;
+pub const fio_ioengine_flags_FIO_FAKEIO: fio_ioengine_flags = 2048;
+pub const fio_ioengine_flags_FIO_NOSTATS: fio_ioengine_flags = 4096;
+pub const fio_ioengine_flags_FIO_NOFILEHASH: fio_ioengine_flags = 8192;
+pub type fio_ioengine_flags = u32;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct io_stat {

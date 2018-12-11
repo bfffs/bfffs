@@ -1,8 +1,19 @@
 [global]
 ioengine=external:../target/debug/libbfffs_fio.so
-rw=write
+# Basic jobs ettings
 bs=64k
 size=512m
-
-[iodepth1]
 iodepth=1
+# Must use end_fsync to flush write caches at the end of the write stage
+end_fsync=1
+# Don't precreate files and zero-fill them.
+create_on_open=1
+# Your pool info goes here:
+pool=foo
+vdev=/tmp/da0
+
+[write]
+rw=write
+
+[read]
+rw=read
