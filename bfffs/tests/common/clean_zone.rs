@@ -76,7 +76,7 @@ test_suite! {
     // it, and does not reopen it.  We just have to sort-of take it on faith
     // that zone 0 is clean, because the public API doesn't expose zones.
     test clean_zone(mocks(1 << 20, 32)) {
-        let (db, mut fs, _rt) = mocks.val;
+        let (db, fs, _rt) = mocks.val;
         let small_filename = OsString::from("small");
         let small_ino = fs.create(1, &small_filename, 0o644, 0, 0).unwrap();
         let buf = vec![42u8; 4096];
