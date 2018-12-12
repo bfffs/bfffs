@@ -321,12 +321,13 @@ impl Database {
     /// `std::fs::File`.
     ///
     /// Must be called from the synchronous domain.
-    pub fn dump(&self, f: &mut io::Write, tree: TreeID) {
-        // Database::dump is just a debugging utility that probably won't be
-        // used on running filesystems.  So we don't handle contested locks.
-        self.inner.fs_trees.try_lock().unwrap()
-        .get(&tree).unwrap()
-        .dump(f).unwrap();
+    pub fn dump(&self, f: &mut io::Write, tree: TreeID) -> Result<(), Error> {
+        self.inner.fs_trees.try_lock()
+        .map_err(|_| Error::EDEADLK)
+        .map(|guard| {
+            guard.get(&tree).unwrap()
+            .dump(f).unwrap();
+        })
     }
 
     /// Create a new, blank filesystem

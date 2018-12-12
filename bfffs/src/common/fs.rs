@@ -681,8 +681,9 @@ impl Fs {
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
     /// `std::fs::File`.
-    pub fn dump(&self, f: &mut io::Write) {
+    pub fn dump(&self, f: &mut io::Write) -> Result<(), i32> {
         self.db.dump(f, self.tree)
+        .map_err(|e| e.into())
     }
 
     pub fn getattr(&self, ino: u64) -> Result<GetAttr, i32> {

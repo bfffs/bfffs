@@ -32,8 +32,8 @@ impl DatabaseMock {
         self.e.expect::<(), oneshot::Receiver<()>>("clean")
     }
 
-    pub fn dump(&self, _f: &io::Write, tree: TreeID) {
-        self.e.was_called_returning::<TreeID, ()>("dump", tree)
+    pub fn dump(&self, _f: &io::Write, tree: TreeID) -> Result<(), Error> {
+        self.e.was_called_returning::<TreeID, Result<(), Error>>("dump", tree)
     }
 
     pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> + Send {

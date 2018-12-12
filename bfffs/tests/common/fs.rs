@@ -256,7 +256,7 @@ test_suite! {
         mocks.val.0.sync();
 
         let mut buf = Vec::with_capacity(1024);
-        mocks.val.0.dump(&mut buf);
+        mocks.val.0.dump(&mut buf).unwrap();
         let fs_tree = String::from_utf8(buf).unwrap();
         assert_eq!(fs_tree,
 r#"---
