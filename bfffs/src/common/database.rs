@@ -21,6 +21,7 @@ use futures::{
     stream,
     sync::{mpsc, oneshot}
 };
+use futures_locks::Mutex;
 use libc;
 use std::collections::BTreeMap;
 use std::{
@@ -29,7 +30,6 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-        Mutex
     },
     time::{Duration, Instant}
 };
@@ -186,22 +186,27 @@ struct Inner {
 
 impl Inner {
     fn open_filesystem(inner: &Arc<Inner>, tree_id: TreeID)
-        -> Box<Future<Item=Arc<ITree<FSKey, FSValue<RID>>>, Error=Error> + Send>
+        -> impl Future<Item=Arc<ITree<FSKey, FSValue<RID>>>, Error=Error> + Send
     {
-        if let Some(fs) = inner.fs_trees.lock().unwrap().get(&tree_id) {
-            return Box::new(Ok(fs.clone()).into_future());
-        }
-
-        let idml2 = inner.idml.clone();
         let inner2 = inner.clone();
-        let fut = inner.forest.get(tree_id)
-            .map(move |tod| {
-                let tree = Arc::new(ITree::open(idml2, &tod.unwrap()).unwrap());
-                inner2.fs_trees.lock().unwrap()
-                    .insert(tree_id, tree.clone());
-                tree
-            });
-        Box::new(fut)
+        inner.fs_trees.lock()
+        .map_err(|_| Error::EPIPE)
+        .and_then(move |mut guard| {
+            if let Some(fs) = guard.get(&tree_id) {
+                Box::new(Ok(fs.clone()).into_future())
+                    as Box<Future<Item=_, Error=_> + Send>
+            } else {
+                let fut = inner2.forest.get(tree_id)
+                .map(move |tod| {
+                    let idml2 = inner2.idml.clone();
+                    let tree = ITree::open(idml2, &tod.unwrap()).unwrap();
+                    let atree = Arc::new(tree);
+                    guard.insert(tree_id, atree.clone());
+                    atree
+                });
+                Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+            }
+        })
     }
 
     fn rw_filesystem(inner: &Arc<Inner>, tree_id: TreeID, txg: TxgT)
@@ -210,6 +215,24 @@ impl Inner {
         let idml2 = inner.idml.clone();
         Inner::open_filesystem(&inner, tree_id)
             .map(move |fs| ReadWriteFilesystem::new(idml2, fs, txg))
+    }
+
+    fn fswrite<F, B, R>(inner: Arc<Self>, tree_id: TreeID, f: F)
+        -> impl Future<Item = R, Error = Error>
+        where F: FnOnce(ReadWriteFilesystem) -> B,
+              B: Future<Item = R, Error = Error>,
+    {
+        inner.dirty.store(true, Ordering::Relaxed);
+        inner.idml.txg()
+        .map_err(|_| Error::EPIPE)
+        .and_then(move |txg| {
+            Inner::rw_filesystem(&inner, tree_id, *txg)
+                .and_then(|ds| f(ds).into_future())
+                .map(move |r| {
+                    drop(txg);
+                    r
+                })
+        })
     }
 
     /// Asynchronously write this `Database`'s label to its `IDML`
@@ -299,7 +322,9 @@ impl Database {
     ///
     /// Must be called from the synchronous domain.
     pub fn dump(&self, f: &mut io::Write, tree: TreeID) {
-        self.inner.fs_trees.lock().unwrap()
+        // Database::dump is just a debugging utility that probably won't be
+        // used on running filesystems.  So we don't handle contested locks.
+        self.inner.fs_trees.try_lock().unwrap()
         .get(&tree).unwrap()
         .dump(f).unwrap();
     }
@@ -307,57 +332,63 @@ impl Database {
     /// Create a new, blank filesystem
     pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> {
         self.inner.dirty.store(true, Ordering::Relaxed);
-        let mut guard = self.inner.fs_trees.lock().unwrap();
-        let k = (0..=u32::max_value()).filter(|i| {
-            !guard.contains_key(&TreeID::Fs(*i))
-        }).nth(0).expect("Maximum number of filesystems reached");
-        let tree_id = TreeID::Fs(k);
-        let fs = Arc::new(ITree::create(self.inner.idml.clone()));
-        guard.insert(tree_id, fs);
+        let idml2 = self.inner.idml.clone();
+        let inner2 = self.inner.clone();
+        self.inner.fs_trees.lock()
+        .map_err(|_| Error::EPIPE)
+        .and_then(|mut guard: futures_locks::MutexGuard<_>| {
+            let k = (0..=u32::max_value()).filter(|i| {
+                !guard.contains_key(&TreeID::Fs(*i))
+            }).nth(0).expect("Maximum number of filesystems reached");
+            let tree_id: TreeID = TreeID::Fs(k);
+            let fs = Arc::new(ITree::create(idml2));
+            guard.insert(tree_id, fs);
+            drop(guard);
 
-        // Create the filesystem's root directory
-        self.fswrite(tree_id, move |dataset| {
-            let ino = 1;    // FUSE requires root dir to have inode 1
-            let inode_key = FSKey::new(ino, ObjKey::Inode);
-            let now = time::get_time();
-            let inode = Inode {
-                size: 0,
-                nlink: 1,   // for "."
-                flags: 0,
-                atime: now,
-                mtime: now,
-                ctime: now,
-                birthtime: now,
-                uid: 0,
-                gid: 0,
-                file_type: FileType::Dir,
-                perm: 0o755
-            };
-            let inode_value = FSValue::Inode(inode);
+            // Create the filesystem's root directory
+            Inner::fswrite(inner2, tree_id, move |dataset| {
+                let ino = 1;    // FUSE requires root dir to have inode 1
+                let inode_key = FSKey::new(ino, ObjKey::Inode);
+                let now = time::get_time();
+                let inode = Inode {
+                    size: 0,
+                    nlink: 1,   // for "."
+                    flags: 0,
+                    atime: now,
+                    mtime: now,
+                    ctime: now,
+                    birthtime: now,
+                    uid: 0,
+                    gid: 0,
+                    file_type: FileType::Dir,
+                    perm: 0o755
+                };
+                let inode_value = FSValue::Inode(inode);
 
-            // Create the /. and /.. directory entries
-            let dot_dirent = Dirent {
-                ino,
-                dtype: libc::DT_DIR,
-                name:  OsString::from(".")
-            };
-            let dot_objkey = ObjKey::dir_entry(OsStr::new("."));
-            let dot_key = FSKey::new(ino, dot_objkey);
-            let dot_value = FSValue::DirEntry(dot_dirent);
+                // Create the /. and /.. directory entries
+                let dot_dirent = Dirent {
+                    ino,
+                    dtype: libc::DT_DIR,
+                    name:  OsString::from(".")
+                };
+                let dot_objkey = ObjKey::dir_entry(OsStr::new("."));
+                let dot_key = FSKey::new(ino, dot_objkey);
+                let dot_value = FSValue::DirEntry(dot_dirent);
 
-            let dotdot_dirent = Dirent {
-                ino: 1,     // The VFS replaces this
-                dtype: libc::DT_DIR,
-                name:  OsString::from("..")
-            };
-            let dotdot_objkey = ObjKey::dir_entry(OsStr::new(".."));
-            let dotdot_key = FSKey::new(ino, dotdot_objkey);
-            let dotdot_value = FSValue::DirEntry(dotdot_dirent);
+                let dotdot_dirent = Dirent {
+                    ino: 1,     // The VFS replaces this
+                    dtype: libc::DT_DIR,
+                    name:  OsString::from("..")
+                };
+                let dotdot_objkey = ObjKey::dir_entry(OsStr::new(".."));
+                let dotdot_key = FSKey::new(ino, dotdot_objkey);
+                let dotdot_value = FSValue::DirEntry(dotdot_dirent);
 
-            dataset.insert(inode_key, inode_value)
-                .join3(dataset.insert(dot_key, dot_value),
-                       dataset.insert(dotdot_key, dotdot_value))
-        }).map(move |_| tree_id)
+                dataset.insert(inode_key, inode_value)
+                    .join3(dataset.insert(dot_key, dot_value),
+                           dataset.insert(dotdot_key, dotdot_value))
+            }).map(move |_| tree_id)
+        })
     }
 
     /// Perform a read-only operation on a Filesystem
@@ -442,22 +473,24 @@ impl Database {
             let inner3 = inner2.clone();
             let inner5 = inner2.clone();
             let idml2 = inner2.idml.clone();
-            let fsfuts = {
-                let guard = inner2.fs_trees.lock().unwrap();
-                guard.iter()
+            inner2.fs_trees.lock()
+            .map_err(|_| Error::EPIPE)
+            .and_then(move |guard| {
+                let fsfuts = guard.iter()
                 .map(move |(_, itree)| {
                     itree.flush(txg)
-                }).collect::<Vec<_>>()
-            };
-            future::join_all(fsfuts)
-            .and_then(move |_| {
-                 let forest_futs = inner3.fs_trees.lock().unwrap().iter()
-                .map(|(tree_id, itree)| {
-                    let tod = itree.serialize().unwrap();
-                    inner3.forest.insert(*tree_id, tod, txg)
                 }).collect::<Vec<_>>();
-                future::join_all(forest_futs)
-                .map(move |_| inner3)
+                future::join_all(fsfuts)
+                .and_then(move |_| {
+                    let forest_futs = guard.iter()
+                    .map(|(tree_id, itree)| {
+                        let tod = itree.serialize().unwrap();
+                        inner3.forest.insert(*tree_id, tod, txg)
+                    }).collect::<Vec<_>>();
+                    drop(guard);
+                    future::join_all(forest_futs)
+                    .map(move |_| inner3)
+                })
             }).and_then(move |inner3| {
                 Tree::flush(&inner3.forest, txg)
             }).and_then(move |_| idml2.flush(0, txg).map(move |_| idml2))
@@ -497,18 +530,7 @@ impl Database {
         where F: FnOnce(ReadWriteFilesystem) -> B,
               B: Future<Item = R, Error = Error>,
     {
-        self.inner.dirty.store(true, Ordering::Relaxed);
-        let inner2 = self.inner.clone();
-        self.inner.idml.txg()
-            .map_err(|_| Error::EPIPE)
-            .and_then(move |txg| {
-                Inner::rw_filesystem(&inner2, tree_id, *txg)
-                    .and_then(|ds| f(ds).into_future())
-                    .map(move |r| {
-                        drop(txg);
-                        r
-                    })
-            })
+        Inner::fswrite(self.inner.clone(), tree_id, f)
     }
 }
 
