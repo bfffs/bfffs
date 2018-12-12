@@ -88,10 +88,6 @@ fn dump_tree<P: AsRef<Path>>(poolname: String, disks: &[P]) {
     })).unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
-    let db2 = db.clone();
-    rt.block_on(future::lazy(move || {
-        db2.fsread(tree_id, |_| future::ok::<(), bfffs::common::Error>(()))
-    })).unwrap();
     db.dump(&mut std::io::stdout(), tree_id).unwrap()
 }
 

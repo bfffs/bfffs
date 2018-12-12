@@ -36,7 +36,10 @@ use std::{
     time::{Duration, Instant}
 };
 use time;
-use tokio::executor::Executor;
+use tokio::{
+    executor::Executor,
+    runtime::current_thread
+};
 use tokio::timer;
 
 #[cfg(not(test))] use crate::common::idml::IDML;
@@ -351,6 +354,8 @@ impl Database {
     ///
     /// Must be called from the synchronous domain.
     pub fn dump(&self, f: &mut io::Write, tree: TreeID) -> Result<(), Error> {
+        let mut rt = current_thread::Runtime::new().unwrap();
+        rt.block_on(Inner::open_filesystem(&self.inner, tree)).unwrap();
         self.inner.fs_trees.try_lock()
         .map_err(|_| Error::EDEADLK)
         .map(|guard| {
