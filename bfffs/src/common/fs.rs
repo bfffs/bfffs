@@ -438,7 +438,13 @@ impl Fs {
                 ds.insert(inode_key, inode_value).join3(
                     htable::insert(ds, parent_dirent_key, parent_dirent, name2),
                     extra_fut
-                ).map(move |_| tx.send(Ok(ino)).unwrap())
+                ).map(move |(inode_r, dirent_r, _)| {
+                    assert!(dirent_r.is_none(),
+                    "Create of an existing file.  The VFS should prevent this");
+                    assert!(inode_r.is_none(),
+                    "Inode double-create detected, ino={}", ino);
+                    tx.send(Ok(ino)).unwrap()
+                })
             }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()

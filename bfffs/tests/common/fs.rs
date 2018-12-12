@@ -142,6 +142,16 @@ test_suite! {
         assert_eq!(parent_attr.nlink, 1);
     }
 
+    /// Creating a file that already exists should panic.  It is the
+    /// responsibility of the VFS to prevent this error when you call
+    /// open(_, O_CREAT)
+    #[should_panic]
+    test create_eexist(mocks) {
+        let filename = OsString::from("x");
+        let _ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+    }
+
     /// Create should update the parent dir's timestamps
     test create_timestamps(mocks) {
         clear_timestamps(&mocks.val.0, 1);
