@@ -133,3 +133,92 @@ test_suite! {
         assert!(v[64..].iter().all(|&x| x == 0));
     }
 }
+
+test_suite! {
+    name t;
+
+    use bfffs::common::{
+        cache::*,
+        database::*,
+        pool::*,
+        property::*,
+        ddml::*,
+        idml::*,
+    };
+    use futures::{Future, future};
+    use std::{
+        fs,
+        num::NonZeroU64,
+        sync::{Arc, Mutex}
+    };
+    use tempdir::TempDir;
+    use tokio::{
+        executor::current_thread::TaskExecutor,
+        runtime::current_thread::Runtime
+    };
+
+    const POOLNAME: &str = &"TestPool";
+
+    fixture!( objects() -> (Runtime, Database, TempDir, TreeID) {
+        setup(&mut self) {
+            let len = 1 << 26;  // 64 MB
+            let tempdir = t!(TempDir::new("test_database_t"));
+            let filename = tempdir.path().join("vdev");
+            {
+                let file = t!(fs::File::create(&filename));
+                t!(file.set_len(len));
+            }
+            let paths = [filename.clone()];
+            let mut rt = Runtime::new().unwrap();
+            let pool = rt.block_on(future::lazy(|| {
+                let cs = NonZeroU64::new(1);
+                let cluster = Pool::create_cluster(cs, 1, 1, None, 0, &paths);
+                let clusters = vec![cluster];
+                future::join_all(clusters)
+                    .map_err(|_| unreachable!())
+                    .and_then(|clusters|
+                        Pool::create(POOLNAME.to_string(), clusters)
+                    )
+            })).unwrap();
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let idml = Arc::new(IDML::create(ddml, cache));
+            let db = rt.block_on(future::lazy(|| {
+                let te = TaskExecutor::current();
+                let db = Database::create(idml, te);
+                future::ok::<Database, ()>(db)
+            })).unwrap();
+            let tree_id = rt.block_on(db.new_fs()).unwrap();
+            (rt, db, tempdir, tree_id)
+        }
+    });
+
+    test get_prop_default(objects()) {
+        let (mut rt, db, _tempdir, tree_id) = objects.val;
+
+        let (val, source) = rt.block_on(future::lazy(|| {
+            db.get_prop(tree_id, PropertyName::Atime)
+        })).unwrap();
+        assert_eq!(val, Property::default_value(PropertyName::Atime));
+        assert_eq!(source, PropertySource::Default);
+    }
+
+    test set_prop(objects()) {
+        let (mut rt, db, _tempdir, tree_id) = objects.val;
+
+        let (val, source) = rt.block_on(future::lazy(|| {
+            db.set_prop(tree_id, Property::Atime(false))
+            .and_then(move |_| {
+                db.get_prop(tree_id, PropertyName::Atime)
+            })
+        })).unwrap();
+        assert_eq!(val, Property::Atime(false));
+        assert_eq!(source, PropertySource::Local);
+    }
+
+    // TODO: add a test for getting a non-cached property, once it's possible to
+    // make multiple datasets
+
+    // TODO: add tests for inherited properties, once it's possible to make
+    // multiple datasets.
+}

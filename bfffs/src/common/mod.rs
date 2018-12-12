@@ -36,6 +36,7 @@ pub mod label;
 pub mod null_raid;
 pub mod pool;
 pub mod prime_s;
+pub mod property;
 pub mod raid;
 mod sgcursor;
 pub mod tree;

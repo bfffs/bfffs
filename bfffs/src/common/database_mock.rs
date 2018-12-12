@@ -5,6 +5,7 @@ use crate::common::{
     dataset_mock::*,
     database::TreeID,
     fs_tree::*,
+    property::*
 };
 use futures::{
     Future,
@@ -65,6 +66,22 @@ impl DatabaseMock {
     {
         self.e.expect::<TreeID, ReadOnlyDatasetMock<FSKey, FSValue<RID>>>
             ("fsread")
+    }
+
+    pub fn get_prop(&self, tree_id: TreeID, name: PropertyName)
+        -> impl Future<Item=(Property, PropertySource), Error=Error>
+    {
+        self.e.was_called_returning::<(TreeID, PropertyName),
+            Box<Future<Item=(Property, PropertySource), Error=Error> + Send>>
+                ("get_prop", (tree_id, name))
+    }
+
+    pub fn expect_get_prop(&mut self) -> Method<(TreeID, PropertyName),
+        Box<Future<Item=(Property, PropertySource), Error=Error> + Send>>
+    {
+        self.e.expect::<(TreeID, PropertyName),
+            Box<Future<Item=(Property, PropertySource), Error=Error> + Send>>
+                ("get_prop")
     }
 
     pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> + Send

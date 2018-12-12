@@ -6,6 +6,7 @@ use bitfield::*;
 use crate::common::{
     *,
     dml::*,
+    property::*,
     tree::*
 };
 use divbuf::DivBufShared;
@@ -46,6 +47,7 @@ enum ObjKeyDiscriminant {
     Inode = 1,
     Extent = 2,
     ExtAttr = 3,
+    Property = 4,
 }
 
 /// The per-object portion of a `FSKey`
@@ -68,7 +70,10 @@ pub enum ObjKey {
     /// Extended attribute
     ///
     /// The first value is the 56-bit hash of the entry's name and namespace.
-    ExtAttr(u64)
+    ExtAttr(u64),
+
+    /// A Dataset property.  Only relevant for object 0.
+    Property(PropertyName)
 }
 
 impl ObjKey {
@@ -101,6 +106,7 @@ impl ObjKey {
             ObjKey::Inode => ObjKeyDiscriminant::Inode,
             ObjKey::Extent(_) => ObjKeyDiscriminant::Extent,
             ObjKey::ExtAttr(_) => ObjKeyDiscriminant::ExtAttr,
+            ObjKey::Property(_) => ObjKeyDiscriminant::Property,
         };
         d as u8
     }
@@ -111,6 +117,7 @@ impl ObjKey {
             ObjKey::Inode => 0,
             ObjKey::Extent(x) => *x,
             ObjKey::ExtAttr(x) => *x,
+            ObjKey::Property(prop) => *prop as u64
         }
     }
 }
@@ -580,11 +587,15 @@ pub enum FSValue<A: Addr> {
     Inode(Inode),
     InlineExtent(InlineExtent),
     BlobExtent(BlobExtent<A>),
+    /// An Extended Attribute, for inodes >= 1.  Or a dataset User Property, for
+    /// inode 0.
     ExtAttr(ExtAttr<A>),
     /// A whole Bucket of `ExtAttr`s, used in case of hash collisions
     ExtAttrs(Vec<ExtAttr<A>>),
     /// A whole Bucket of `Dirent`s, used in case of hash collisions
     DirEntries(Vec<Dirent>),
+    /// A native dataset property.
+    Property(Property),
 }
 
 impl<A: Addr> FSValue<A> {

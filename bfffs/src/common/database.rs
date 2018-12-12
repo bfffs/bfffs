@@ -11,6 +11,7 @@ use crate::common::dataset::*;
 use crate::common::dml::DML;
 use crate::common::fs_tree::*;
 use crate::common::label::*;
+use crate::common::property::*;
 use crate::common::tree::{MinValue, TreeOnDisk};
 use futures::{
     Future,
@@ -27,6 +28,7 @@ use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
     io,
+    ops::Range,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -56,6 +58,25 @@ pub enum TreeID {
 impl MinValue for TreeID {
     fn min_value() -> Self {
         TreeID::Fs(u32::min_value())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+struct PropCacheKey {
+    prop: PropertyName,
+    tree: TreeID
+}
+
+impl PropCacheKey {
+    fn new(prop: PropertyName, tree: TreeID) -> Self {
+        PropCacheKey{prop, tree}
+    }
+
+    /// Construct a range that encompasses the named property for every dataset
+    fn range(name: PropertyName) -> Range<Self> {
+        let start = PropCacheKey::new(name, TreeID::Fs(0));
+        let end = PropCacheKey::new(name.next(), TreeID::Fs(0));
+        start..end
     }
 }
 
@@ -182,9 +203,17 @@ struct Inner {
     fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
     forest: ITree<TreeID, TreeOnDisk>,
     idml: Arc<IDML>,
+    propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>
 }
 
 impl Inner {
+    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>) -> Self {
+        let dirty = AtomicBool::new(true);
+        let fs_trees = Mutex::new(BTreeMap::new());
+        let propcache = Mutex::new(BTreeMap::new());
+        Inner{dirty, fs_trees, idml, forest, propcache}
+    }
+
     fn open_filesystem(inner: &Arc<Inner>, tree_id: TreeID)
         -> impl Future<Item=Arc<ITree<FSKey, FSValue<RID>>>, Error=Error> + Send
     {
@@ -330,6 +359,52 @@ impl Database {
         })
     }
 
+    /// Get the value of the `name` property for the dataset identified by
+    /// `tree`.
+    pub fn get_prop(&self, tree_id: TreeID, name: PropertyName)
+        -> impl Future<Item=(Property, PropertySource), Error=Error>
+    {
+        // Outline:
+        // 1) Look for the property in the propcache
+        // 2) If not present, open the dataset's tree and look for it there.
+        // 3) If not present, open that dataset's parent and recurse
+        // 4) If present nowhere, get the default value.
+        // 5) Add it to the propcache.
+        let inner2 = self.inner.clone();
+        self.inner.propcache.lock()
+        .map_err(|_| Error::EPIPE)
+        .and_then(move |mut guard| {
+            let key = PropCacheKey::new(name, tree_id);
+            if let Some((prop, source)) = guard.get(&key) {
+                Box::new(Ok((prop.clone(), *source)).into_future())
+                    as Box<Future<Item=_, Error=_> + Send>
+            } else {
+                let objkey = ObjKey::Property(name);
+                let key = FSKey::new(PROPERTY_OBJECT, objkey);
+                let fut = Inner::open_filesystem(&inner2, tree_id)
+                .and_then(move |fs| {
+                    fs.get(key)
+                }).map(move |r| {
+                    let (prop, source) = if let Some(v) = r {
+                        match v {
+                            FSValue::Property(p) => (p, PropertySource::Local),
+                            _ => panic!("Unexpected value {:?} for key {:?}",
+                                        v, key)
+                        }
+                    } else {
+                        // No value found; use the default
+                        // TODO: look through parent datasets
+                        (Property::default_value(name), PropertySource::Default)
+                    };
+                    let cache_key = PropCacheKey::new(name, tree_id);
+                    guard.insert(cache_key, (prop.clone(), source));
+                    (prop, source)
+                });
+                Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+            }
+        })
+    }
+
     /// Create a new, blank filesystem
     pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> {
         self.inner.dirty.store(true, Ordering::Relaxed);
@@ -408,9 +483,7 @@ impl Database {
         where E: Clone + Executor + 'static
     {
         let cleaner = Cleaner::new(handle.clone(), idml.clone(), None);
-        let dirty = AtomicBool::new(true);
-        let fs_trees = Mutex::new(BTreeMap::new());
-        let inner = Arc::new(Inner{dirty, fs_trees, idml, forest});
+        let inner = Arc::new(Inner::new(idml, forest));
         let syncer = Syncer::new(handle, inner.clone());
         Database{cleaner, inner, syncer}
     }
@@ -437,6 +510,44 @@ impl Database {
         let idml2 = self.inner.idml.clone();
         Inner::open_filesystem(&self.inner, tree_id)
             .map(|fs| ReadOnlyFilesystem::new(idml2, fs))
+    }
+
+    pub fn set_prop(&self, tree_id: TreeID, prop: Property)
+        -> impl Future<Item=(), Error=Error>
+    {
+        // Outline:
+        // 1) Open the dataset's tree and set the property there.
+        // 2) Invalidate that property from the propcache.  Since it's hard to
+        //    tell which datasets might be inherited from this one, just
+        //    invalidate all cached values for this property.
+        // 3) Insert the new value into the propcache.
+        let inner2 = self.inner.clone();
+        self.inner.propcache.lock()
+        .map_err(|_| Error::EPIPE)
+        .and_then(move |mut guard| {
+            let name = prop.name();
+            let prop2 = prop.clone();
+            Inner::fswrite(inner2, tree_id, move |dataset| {
+                let objkey = ObjKey::Property(name);
+                let key = FSKey::new(PROPERTY_OBJECT, objkey);
+                let value = FSValue::Property(prop);
+                dataset.insert(key, value)
+                .map(drop)
+            }).then(move |r| {
+                // BTreeMap sadly doesn't have a range_delete method.
+                // https://github.com/rust-lang/rust/issues/42849
+                let keys = guard.range(PropCacheKey::range(name))
+                .map(|(k, _v)| k.clone())
+                .collect::<Vec<_>>();
+                for k in keys.into_iter() {
+                    guard.remove(&k);
+                }
+
+                let key = PropCacheKey::new(name, tree_id);
+                guard.insert(key, (prop2, PropertySource::Local));
+                r
+            })
+        })
     }
 
     /// Shutdown all background tasks
@@ -540,7 +651,19 @@ impl Database {
 #[cfg(test)]
 #[cfg(feature = "mocks")]
 mod t {
-    use super::*;
+mod prop_cache_key {
+    use super::super::*;
+
+    #[test]
+    fn range() {
+        let atime_range = PropCacheKey::range(PropertyName::Atime);
+        let recsize_range = PropCacheKey::range(PropertyName::RecordSize);
+        assert_eq!(atime_range.end, recsize_range.start);
+    }
+}
+
+mod database {
+    use super::super::*;
     use futures::future;
     use tokio::{
         executor::current_thread::TaskExecutor,
@@ -672,4 +795,5 @@ mod t {
             db.sync_transaction()
         })).unwrap();
     }
+}
 }

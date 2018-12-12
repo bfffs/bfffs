@@ -1134,7 +1134,11 @@ impl Fs {
                 },
                 FSValue::InlineExtent(_) | FSValue::BlobExtent(_) => {
                     panic!("Directories should not have extents")
-                }
+                },
+                FSValue::Property(_) => {
+                    panic!("Directories should not have properties")
+                },
+
             }
         }).map(move |found_inode| {
             assert!(found_inode,
