@@ -1,7 +1,11 @@
-use bfffs::common::device_manager::DevManager;
+use bfffs::common::{
+    database::TreeID,
+    device_manager::DevManager
+};
 use clap::crate_version;
 use futures::future;
 use std::{
+    path::Path,
     process::exit,
     sync::Arc
 };
@@ -49,17 +53,14 @@ mod debug {
 use super::*;
 use tokio::runtime::current_thread::Runtime;
 
-fn dump(args: &clap::ArgMatches) {
-    let poolname = args.value_of("name").unwrap();
-    let disks = args.values_of("disks").unwrap();
-
+fn dump_fsm<P: AsRef<Path>, S: AsRef<str>>(poolname: S, disks: &[P]) {
     let dev_manager = DevManager::default();
     for disk in disks {
         dev_manager.taste(disk);
     }
     let uuid = dev_manager.importable_pools().iter()
         .filter(|(name, _uuid)| {
-            *name == poolname
+            *name == poolname.as_ref()
         }).nth(0).unwrap().1;
     let mut rt = Runtime::new().unwrap();
     let clusters = rt.block_on(future::lazy(move || {
@@ -70,9 +71,42 @@ fn dump(args: &clap::ArgMatches) {
     }
 }
 
+fn dump_tree<P: AsRef<Path>>(poolname: String, disks: &[P]) {
+    let poolname2 = poolname.to_owned();
+    let dev_manager = DevManager::default();
+    for disk in disks {
+        dev_manager.taste(disk);
+    }
+    let mut rt = tokio_io_pool::Runtime::new();
+    let handle = rt.handle().clone();
+    let db = Arc::new(rt.block_on(future::lazy(move || {
+        dev_manager.import_by_name(poolname2, handle)
+        .unwrap_or_else(|_e| {
+            eprintln!("Error: pool not found");
+            exit(1);
+        })
+    })).unwrap());
+    // For now, hardcode tree_id to 0
+    let tree_id = TreeID::Fs(0);
+    let db2 = db.clone();
+    rt.block_on(future::lazy(move || {
+        db2.fsread(tree_id, |_| future::ok::<(), bfffs::common::Error>(()))
+    })).unwrap();
+    db.dump(&mut std::io::stdout(), tree_id).unwrap()
+}
+
 pub fn main(args: &clap::ArgMatches) {
     match args.subcommand() {
-        ("dump", Some(args)) => dump(args),
+        ("dump", Some(args)) => {
+            let poolname = args.value_of("name").unwrap();
+            let disks = args.values_of("disks").unwrap().collect::<Vec<&str>>();
+            if args.is_present("fsm") {
+                dump_fsm(&poolname, &disks[..]);
+            }
+            if args.is_present("tree") {
+                dump_tree(poolname.to_string(), &disks[..]);
+            }
+        },
         _ => {
             println!("Error: subcommand required\n{}", args.usage());
             std::process::exit(2);
@@ -255,7 +289,15 @@ fn main() {
             .about("Debugging tools")
             .subcommand(clap::SubCommand::with_name("dump")
                 .about("Dump internal filesystem information")
-                .arg(clap::Arg::with_name("name")
+                .arg(clap::Arg::with_name("fsm")
+                     .help("Dump the Free Space Map")
+                     .long("fsm")
+                     .short("f")
+                ).arg(clap::Arg::with_name("tree")
+                     .help("Dump the file system tree")
+                     .long("tree")
+                     .short("t")
+                ).arg(clap::Arg::with_name("name")
                      .help("Pool name")
                      .required(true)
                 ).arg(clap::Arg::with_name("disks")
