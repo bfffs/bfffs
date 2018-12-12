@@ -208,7 +208,9 @@ pub extern fn fio_bfffs_open(_td: *mut thread_data, f: *mut fio_file)
     };
     let mut fs_opt = FS.lock().unwrap();
     let fs = fs_opt.as_mut().unwrap();
-    match fs.create(1, file_name, 0600, 0, 0) {
+    let r = fs.lookup(1, file_name)
+    .or_else(|_| fs.create(1, file_name, 0o600, 0, 0));
+    match r {
         Ok(ino) => {
             unsafe {
                 // Store the inode number where fio would put its file
