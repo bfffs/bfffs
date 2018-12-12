@@ -14,7 +14,8 @@ target/release/bfffs pool create <poolname> <vdevs>
 cd /path/to/bfffs
 cargo build --release --all
 vim bfffs-fio/bfffs.fio
-fio bfffs-fio/bfffs.fio /
+fio bfffs-fio/bfffs.fio --rw=write
+fio bfffs-fio/bfffs.fio --rw=read
 ```
 
 # License

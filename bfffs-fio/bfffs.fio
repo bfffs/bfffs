@@ -1,5 +1,8 @@
 [global]
+# Comment toggle next two lines when running fio outside of the jail
 ioengine=external:target/debug/libbfffs_fio.so
+#ioengine=external:/iocage/jails/rustup2/root/localhome/somers/src/rust/bfffs/target/release/libbfffs_fio.so
+
 # Basic jobs settings
 bs=64k
 size=512m
@@ -12,8 +15,4 @@ create_on_open=1
 pool=foo
 vdev=/tmp/da0
 
-[write]
-rw=write
-
-[read]
-rw=read
+[fio_test_file]
