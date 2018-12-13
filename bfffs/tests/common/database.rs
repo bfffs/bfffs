@@ -188,7 +188,9 @@ test_suite! {
                 let db = Database::create(idml, te);
                 future::ok::<Database, ()>(db)
             })).unwrap();
-            let tree_id = rt.block_on(db.new_fs()).unwrap();
+            let tree_id = rt.block_on(future::lazy(|| {
+                db.new_fs()
+            })).unwrap();
             (rt, db, tempdir, tree_id)
         }
     });

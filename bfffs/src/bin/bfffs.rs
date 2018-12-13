@@ -251,9 +251,9 @@ impl Builder {
                 Database::create(idml, task_executor)
             })
         })).unwrap();
-        self.rt.block_on(
+        self.rt.block_on(future::lazy(|| {
             db.new_fs().and_then(|_tree_id| db.sync_transaction())
-        ).unwrap();
+        })).unwrap();
     }
 }
 

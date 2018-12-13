@@ -206,7 +206,7 @@ struct Inner {
     fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
     forest: ITree<TreeID, TreeOnDisk>,
     idml: Arc<IDML>,
-    propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>
+    propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>,
 }
 
 impl Inner {
@@ -217,13 +217,12 @@ impl Inner {
         Inner{dirty, fs_trees, idml, forest, propcache}
     }
 
+    // Must be called from within a Tokio executor context
     fn open_filesystem(inner: &Arc<Inner>, tree_id: TreeID)
         -> impl Future<Item=Arc<ITree<FSKey, FSValue<RID>>>, Error=Error> + Send
     {
         let inner2 = inner.clone();
-        inner.fs_trees.lock()
-        .map_err(|_| Error::EPIPE)
-        .and_then(move |mut guard| {
+        inner.fs_trees.with(move |mut guard| {
             if let Some(fs) = guard.get(&tree_id) {
                 Box::new(Ok(fs.clone()).into_future())
                     as Box<Future<Item=_, Error=_> + Send>
@@ -238,7 +237,7 @@ impl Inner {
                 });
                 Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
             }
-        })
+        }).unwrap()
     }
 
     fn rw_filesystem(inner: &Arc<Inner>, tree_id: TreeID, txg: TxgT)
@@ -355,7 +354,9 @@ impl Database {
     /// Must be called from the synchronous domain.
     pub fn dump(&self, f: &mut io::Write, tree: TreeID) -> Result<(), Error> {
         let mut rt = current_thread::Runtime::new().unwrap();
-        rt.block_on(Inner::open_filesystem(&self.inner, tree)).unwrap();
+        rt.block_on(future::lazy(|| {
+            Inner::open_filesystem(&self.inner, tree)
+        })).unwrap();
         self.inner.fs_trees.try_lock()
         .map_err(|_| Error::EDEADLK)
         .map(|guard| {
@@ -376,9 +377,7 @@ impl Database {
         // 4) If present nowhere, get the default value.
         // 5) Add it to the propcache.
         let inner2 = self.inner.clone();
-        self.inner.propcache.lock()
-        .map_err(|_| Error::EPIPE)
-        .and_then(move |mut guard| {
+        self.inner.propcache.with(move |mut guard| {
             let key = PropCacheKey::new(name, tree_id);
             if let Some((prop, source)) = guard.get(&key) {
                 Box::new(Ok((prop.clone(), *source)).into_future())
@@ -407,17 +406,17 @@ impl Database {
                 });
                 Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
             }
-        })
+        }).unwrap()
     }
 
     /// Create a new, blank filesystem
+    ///
+    /// Must be called from the tokio domain.
     pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> {
         self.inner.dirty.store(true, Ordering::Relaxed);
         let idml2 = self.inner.idml.clone();
         let inner2 = self.inner.clone();
-        self.inner.fs_trees.lock()
-        .map_err(|_| Error::EPIPE)
-        .and_then(|mut guard: futures_locks::MutexGuard<_>| {
+        self.inner.fs_trees.with(move |mut guard| {
             let k = (0..=u32::max_value()).filter(|i| {
                 !guard.contains_key(&TreeID::Fs(*i))
             }).nth(0).expect("Maximum number of filesystems reached");
@@ -469,7 +468,7 @@ impl Database {
                     .join3(dataset.insert(dot_key, dot_value),
                            dataset.insert(dotdot_key, dotdot_value))
             }).map(move |_| tree_id)
-        })
+        }).unwrap()
     }
 
     /// Perform a read-only operation on a Filesystem
@@ -512,11 +511,16 @@ impl Database {
     fn ro_filesystem(&self, tree_id: TreeID)
         -> impl Future<Item=ReadOnlyFilesystem, Error=Error>
     {
+        let inner2 = self.inner.clone();
         let idml2 = self.inner.idml.clone();
-        Inner::open_filesystem(&self.inner, tree_id)
-            .map(|fs| ReadOnlyFilesystem::new(idml2, fs))
+        future::lazy(move || {
+            Inner::open_filesystem(&inner2, tree_id)
+                .map(|fs| ReadOnlyFilesystem::new(idml2, fs))
+        })
     }
 
+    // TODO: Make prop an Option.  A None value will signify that the property
+    // should be inherited.
     pub fn set_prop(&self, tree_id: TreeID, prop: Property)
         -> impl Future<Item=(), Error=Error>
     {
@@ -527,9 +531,7 @@ impl Database {
         //    invalidate all cached values for this property.
         // 3) Insert the new value into the propcache.
         let inner2 = self.inner.clone();
-        self.inner.propcache.lock()
-        .map_err(|_| Error::EPIPE)
-        .and_then(move |mut guard| {
+        self.inner.propcache.with(move |mut guard| {
             let name = prop.name();
             let prop2 = prop.clone();
             Inner::fswrite(inner2, tree_id, move |dataset| {
@@ -552,7 +554,7 @@ impl Database {
                 guard.insert(key, (prop2, PropertySource::Local));
                 r
             })
-        })
+        }).unwrap()
     }
 
     /// Shutdown all background tasks

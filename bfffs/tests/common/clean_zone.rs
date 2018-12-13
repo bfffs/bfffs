@@ -54,8 +54,14 @@ test_suite! {
                     })
                 })
             })).unwrap();
-            let tree_id = rt.block_on(db.new_fs()).unwrap();
-            let fs = Fs::new(db.clone(), rt.handle().clone(), tree_id);
+            let handle = rt.handle().clone();
+            let (db, fs) = rt.block_on(future::lazy(move || {
+                db.new_fs()
+                .map(move |tree_id| {
+                    let fs = Fs::new(db.clone(), handle, tree_id);
+                    (db, fs)
+                })
+            })).unwrap();
             (db, fs, rt)
         }
     });

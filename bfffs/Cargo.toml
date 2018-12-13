@@ -23,7 +23,7 @@ downcast = "0.8"
 enum-primitive-derive = "^0.1"
 fixedbitset = "0.1.8"
 futures = "0.1.14"
-futures-locks = "0.1.1"
+futures-locks = "0.3"
 itertools = "0.7"
 isa-l = { path = "../isa-l" }
 lazy_static = "1.0"
