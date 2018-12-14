@@ -250,6 +250,8 @@ impl Inner {
             .map(move |fs| ReadWriteFilesystem::new(idml2, fs, txg))
     }
 
+    // IDMLMock::txg has a slightly different signature than IDML::txg
+    #[cfg_attr(test, allow(clippy::drop_ref))]
     fn fswrite<F, B, R>(inner: Arc<Self>, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
         where F: FnOnce(ReadWriteFilesystem) -> B,

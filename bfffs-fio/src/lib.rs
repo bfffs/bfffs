@@ -24,6 +24,7 @@ mod ffi;
 use crate::ffi::*;
 
 impl fio_option {
+    #[allow(clippy::too_many_arguments)]
     fn new(name: &[u8], lname: &[u8], type_: fio_opt_type, off1: usize,
            help: &[u8], def: &[u8], category: opt_category,
            group: opt_category_group)
@@ -106,12 +107,10 @@ lazy_static! {
 }
 
 #[no_mangle]
-pub extern fn fio_bfffs_close(_td: *mut thread_data, f: *mut fio_file)
+pub unsafe extern fn fio_bfffs_close(_td: *mut thread_data, f: *mut fio_file)
     -> libc::c_int
 {
-    unsafe {
-        (*f).fd = -1;
-    }
+    (*f).fd = -1;
     0
 }
 
@@ -137,13 +136,13 @@ pub extern fn fio_bfffs_getevents(_td: *mut thread_data, _min: libc::c_uint,
 }
 
 #[no_mangle]
-pub extern fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
+pub unsafe extern fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
     let mut fs = FS.lock().unwrap();
     if fs.is_none() {
         let mut rt = RUNTIME.lock().unwrap();
-        let opts = unsafe {(*td).eo} as *mut BfffsOptions;
+        let opts = (*td).eo as *mut BfffsOptions;
         if opts as isize != -1 {
-            let (pool, vdev) = unsafe {
+            let (pool, vdev) = {
                 let pool = if (*opts).pool_name.is_null() {
                     eprintln!("Error: pool option is required");
                     return 1
@@ -200,23 +199,21 @@ pub extern fn fio_bfffs_invalidate(_td: *mut thread_data, _f: *mut fio_file)
 }
 
 #[no_mangle]
-pub extern fn fio_bfffs_open(_td: *mut thread_data, f: *mut fio_file)
+pub unsafe extern fn fio_bfffs_open(_td: *mut thread_data, f: *mut fio_file)
     -> libc::c_int
 {
-    let file_name = unsafe {
-        OsStr::from_bytes(CStr::from_ptr((*f).file_name).to_bytes())
-    };
+    let file_name = OsStr::from_bytes(
+        CStr::from_ptr((*f).file_name).to_bytes()
+    );
     let mut fs_opt = FS.lock().unwrap();
     let fs = fs_opt.as_mut().unwrap();
     let r = fs.lookup(1, file_name)
     .or_else(|_| fs.create(1, file_name, 0o600, 0, 0));
     match r {
         Ok(ino) => {
-            unsafe {
-                // Store the inode number where fio would put its file
-                // descriptor
-                (*f).fd = ino as i32;
-            }
+            // Store the inode number where fio would put its file
+            // descriptor
+            (*f).fd = ino as i32;
             0
         },
         Err(e) => {
@@ -228,13 +225,13 @@ pub extern fn fio_bfffs_open(_td: *mut thread_data, f: *mut fio_file)
 
 #[no_mangle]
 #[allow(non_upper_case_globals)]
-pub extern fn fio_bfffs_queue(_td: *mut thread_data, io_u: *mut io_u)
+pub unsafe extern fn fio_bfffs_queue(_td: *mut thread_data, io_u: *mut io_u)
     -> fio_q_status
 {
     let fs_opt = FS.lock().unwrap();
     let fs = fs_opt.as_ref().unwrap();
 
-    let (ddir, ino, offset, data) = unsafe {
+    let (ddir, ino, offset, data) = {
         let data: &[u8] = slice::from_raw_parts((*io_u).xfer_buf as *mut u8,
                                                 (*io_u).xfer_buflen as usize);
         let ino = (*(*io_u).file).fd as u64;
