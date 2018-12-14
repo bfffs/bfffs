@@ -676,9 +676,7 @@ impl Fs {
     fn next_object(&self) -> u64 {
         self.next_object.fetch_add(1, Ordering::Relaxed)
     }
-}
 
-impl Fs {
     pub fn create(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
                   gid: u32) -> Result<u64, i32>
     {
@@ -1630,6 +1628,29 @@ impl Fs {
             }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
+    }
+
+    /// Change filesystem properties
+    pub fn set_props(&mut self, props: Vec<Property>) {
+        for prop in props.iter() {
+            match prop {
+                Property::Atime(atime) => self._atime = *atime,
+                Property::RecordSize(exp) => self._record_size = 1 << *exp
+            }
+        }
+
+        // Update on-disk properties in the background
+        let db2 = self.db.clone();
+        let tree_id = self.tree;
+        self.handle.spawn(future::lazy(move || {
+            future::join_all(
+                props.into_iter()
+                .map(move |prop| {
+                    db2.set_prop(tree_id, prop)
+                }).collect::<Vec<_>>()
+            ).map_err(Error::unhandled)
+            .map(drop)
+        })).unwrap();
     }
 
     pub fn statvfs(&self) -> libc::statvfs {

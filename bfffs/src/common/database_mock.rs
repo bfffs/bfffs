@@ -88,6 +88,22 @@ impl DatabaseMock {
                 ("get_prop")
     }
 
+    pub fn set_prop(&self, tree_id: TreeID, prop: Property)
+        -> impl Future<Item=(), Error=Error> + Send
+    {
+        self.e.was_called_returning::<(TreeID, Property),
+            Box<Future<Item=(), Error=Error> + Send>>
+                ("set_prop", (tree_id, prop))
+    }
+
+    pub fn expect_set_prop(&mut self) -> Method<(TreeID, Property),
+        Box<Future<Item=(), Error=Error> + Send>>
+    {
+        self.e.expect::<(TreeID, Property),
+            Box<Future<Item=(), Error=Error> + Send>>
+                ("set_prop")
+    }
+
     pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> + Send
     {
         self.e.was_called_returning::<(),
@@ -123,3 +139,10 @@ impl DatabaseMock {
         self
     }
 }
+
+// XXX totally unsafe!  But Simulacrum doesn't support mocking Send traits.  So
+// we have to cheat.  This works as long as DatabaseMock is only used in
+// single-threaded unit tests.
+unsafe impl Send for DatabaseMock {}
+unsafe impl Sync for DatabaseMock {}
+// LCOV_EXCL_STOP
