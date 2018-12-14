@@ -1,7 +1,15 @@
 // vim: tw=80
 
 use bincode;
-use crate::common::{*, label::*, vdev::{Vdev, VdevFut}};
+use crate::{
+    boxfut,
+    common::{
+        *,
+        label::*,
+        vdev::Vdev
+    }
+};
+#[cfg(test)] use crate::common::vdev::VdevFut;
 #[cfg(not(test))] use crate::common::vdev_raid::*;
 use fixedbitset::FixedBitSet;
 use futures::{ Future, IntoFuture, future};
@@ -190,8 +198,7 @@ impl<'a> FreeSpaceMap {
             let sod = SpacemapOnDisk::deserialize(i as u64, &db).unwrap();
             if sod.is_err() {
                 let fut = Err(sod.unwrap_err()).into_future();
-                let r = Box::new(fut) as Box<Future<Item=_, Error=_>>;
-                return Ok(r);
+                return Ok(boxfut!(fut, _, _, 'static));
             }
             for zod in sod.unwrap().zones.into_iter() {
                 if zod.allocated_blocks > 0 {
@@ -217,9 +224,8 @@ impl<'a> FreeSpaceMap {
         }
         assert_eq!(zid, zones);
         fsm.clear_dirty_zones();
-        let fut = Box::new(future::join_all(oz_futs).map(|_| (fsm, vdev)))
-            as Box<Future<Item=_, Error=Error>>;
-        Ok(fut)
+        let fut = future::join_all(oz_futs).map(|_| (fsm, vdev));
+        Ok(boxfut!(fut, _, _, 'static))
     }
 
     /// Mark zone `zone_id` as dirty
@@ -912,10 +918,8 @@ impl<'a> Cluster {
                                                         space, txg);
                 match e {
                     Ok(Some((zone_id, lba))) => {
-                        let oz_fut = Box::new(
-                            vdev2.open_zone(zone_id)
-                        ) as Box<VdevFut>;
-                        Some((zone_id, lba, oz_fut))
+                        let fut = vdev2.open_zone(zone_id);
+                        Some((zone_id, lba, boxfut!(fut, _, _, 'static)))
                     },
                     Err(_) => None,
                     Ok(None) => panic!("Tried a 0-length write?"),

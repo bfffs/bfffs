@@ -3,11 +3,14 @@
 //! Data types used by trees representing filesystems
 
 use bitfield::*;
-use crate::common::{
+use crate::{
     *,
-    dml::*,
-    property::*,
-    tree::*
+    common::{
+        *,
+        dml::*,
+        property::*,
+        tree::*
+    }
 };
 use divbuf::DivBufShared;
 use futures::{Future, IntoFuture, future};
@@ -695,10 +698,9 @@ impl<A: Addr> Value for FSValue<A> {
                         extattr.flush(dml, txg)
                     }).collect::<Vec<_>>()
                 ).map(FSValue::ExtAttrs);
-                Box::new(fut) as Box<Future<Item=Self, Error=Error> + Send>
+                boxfut!(fut)
             },
-            _ => Box::new(Ok(self).into_future())
-                as Box<Future<Item=Self, Error=Error> + Send>
+            _ => boxfut!(Ok(self).into_future())
         }
     }
 

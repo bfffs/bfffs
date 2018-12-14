@@ -162,6 +162,7 @@ test_suite! {
 test_suite! {
     name t;
 
+    use bfffs::*;
     use bfffs::common::*;
     use bfffs::common::cache::*;
     use bfffs::common::pool::*;
@@ -238,8 +239,7 @@ test_suite! {
                     idml3.list_closed_zones()
                     .take(1)
                     .for_each(move  |cz| {
-                        Box::new(idml5.clean_zone(cz, *txg))
-                            as Box<Future<Item=(), Error=Error>>
+                        boxfut!(idml5.clean_zone(cz, *txg))
                     })
                 })
             }).and_then(move |_| {

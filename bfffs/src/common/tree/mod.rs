@@ -8,8 +8,10 @@
 // https://github.com/rust-lang/rust/issues/32976
 use atomic::{Atomic, Ordering};
 use bincode;
-use crate::common::*;
-use crate::common::dml::*;
+use crate::{
+    boxfut,
+    common::{*, dml::*}
+};
 use futures::{
     Async,
     Future,
@@ -456,11 +458,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 .and_then(move |guard| Tree::addresses_r(dml, height - 1,
                                                          guard, tx, txgs2))
                 .map(move |_| drop(tree_guard));
-                Box::new(fut)
-                    as Box<Future<Item=(), Error=Error> + Send>
+                boxfut!(fut)
             } else {
-                Box::new(Ok(()).into_future())
-                    as Box<Future<Item=(), Error=Error> + Send>
+                boxfut!(Ok(()).into_future())
             }
         }).map_err(Error::unhandled);
         DefaultExecutor::current().spawn(Box::new(task)).unwrap();
@@ -493,14 +493,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     .and_then(move |guard| Tree::addresses_r(dml2, height - 1,
                                                              guard, tx2, txgs2))
                 }).collect::<Vec<_>>();
-                Box::new(future::join_all(child_futs).map(drop))
-                    as Box<Future<Item=(), Error=Error> + Send>
+                boxfut!(future::join_all(child_futs).map(drop))
             } else {
-                Box::new(Ok(()).into_future())
-                    as Box<Future<Item=(), Error=Error> + Send>
+                boxfut!(Ok(()).into_future())
             }
         });
-        Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+        boxfut!(fut)
     }
 
     /// Audit the whole Tree for consistency and invariants
@@ -518,8 +516,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 let root_ok = guard.check(tree_guard.key, height - 1, true,
                                           min_fanout, max_fanout);
                 if height == 1 {
-                    Box::new(Ok(root_ok).into_future())
-                        as Box<Future<Item=bool, Error=Error> + Send>
+                    boxfut!(Ok(root_ok).into_future())
                 } else {
                     let fut = Tree::check_r(&inner.dml, height - 1, &guard,
                                             min_fanout, max_fanout)
@@ -534,7 +531,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             root_ok && r.0
                         }
                     });
-                    Box::new(fut) as Box<Future<Item=bool, Error=Error> + Send>
+                    boxfut!(fut)
                 }
             })
         })
@@ -722,8 +719,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             }
             node
         });
-        Box::new(fut) as Box<Future<Item=TreeReadGuard<A, K, V>,
-                                    Error=Error> + 'a>
+        boxfut!(fut, _, _, 'a)
     }
 
     /// Fix an Int node in danger of being underfull, returning the parent guard
@@ -1004,7 +1000,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             Bound::Excluded(x) => Bound::Excluded(x.clone()),
                             Bound::Unbounded => Bound::Unbounded
                         };
-                        Box::new(
+                        boxfut!(
                             int.children[child_idx + 1].rlock(&dml2)
                             .map(move |g| {
                                 // The minimum key rule means that even though
@@ -1021,30 +1017,24 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                     None
                                 }
                             })
-                        ) as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
-                                        Error=Error> + Send>
+                        )
                     } else {
-                        Box::new(Ok(None).into_future())
-                            as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
-                                          Error=Error> + Send>
+                        boxfut!(Ok(None).into_future())
                     }
                 } else {
-                    Box::new(Ok(next_guard).into_future())
-                        as Box<Future<Item=Option<TreeReadGuard<A, K, V>>,
-                                      Error=Error> + Send>
+                    boxfut!(Ok(next_guard).into_future())
                 };
                 let child_fut = child_elem.rlock(&dml2);
                 (child_fut, next_fut)
             } // LCOV_EXCL_LINE kcov false negative
         };
-        Box::new(
+        boxfut!(
             child_fut.join(next_fut)
                 .and_then(move |(child_guard, next_guard)| {
                     drop(guard);
                     Tree::get_range_r(dml, child_guard, next_guard, range)
                 })
-        ) as Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
-                        Error=Error> + Send>
+        )
     }
 
     /// Return the highest valued key in the `Tree`
@@ -1264,8 +1254,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             guard.as_leaf_mut().range_delete(range);
             let map = HashSet::<usize>::with_capacity(HASHSET_CAPACITY);
             let danger = guard.len() < min_fanout;
-            return Box::new(Ok((map, danger, guard.len())).into_future())
-                as Box<Future<Item=_, Error=_> + Send>;
+            return boxfut!(Ok((map, danger, guard.len())).into_future());
         } else {
             debug_assert!(!guard.is_leaf());
         }
@@ -1383,7 +1372,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         };
         let middle_fut = Tree::range_delete_purge(dml, height, wholly_deleted,
                                                   guard, txg);
-        Box::new(
+        boxfut!(
             left_fut.join3(middle_fut, right_fut)
             .map(move |((lelem, mut lmap, ldanger, llen),
                         mut guard,
@@ -1441,7 +1430,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     rdanger == Some(true);
                 (lmap, danger, guard.len())
             })
-        ) as Box<Future<Item=_, Error=_> + Send>
+        )
     }
 
     /// Delete the indicated range of children from the Tree
@@ -1452,8 +1441,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         if height == 0 {
             // Simply delete the leaves
             debug_assert!(guard.is_leaf());
-            Box::new(Ok(guard).into_future())
-                as Box<Future<Item=_, Error=Error> + Send>
+            boxfut!(Ok(guard).into_future())
         } else if height == 1 {
             debug_assert!(!guard.is_leaf());
             // If the child elements point to leaves, just delete them.
@@ -1464,13 +1452,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     dml.delete(&addr, txg)
                 } else {
                     // Simply drop in-memory leaves
-                    Box::new(Ok(()).into_future())
-                        as Box<Future<Item=(), Error=Error> + Send>
+                    boxfut!(Ok(()).into_future())
                 }
             }).collect::<Vec<_>>();
             let fut = future::join_all(futs).map(|_| guard);
-            Box::new(fut.into_future())
-                as Box<Future<Item=_, Error=Error> + Send>
+            boxfut!(fut.into_future())
         } else {
             debug_assert!(!guard.is_leaf());
             // If the IntElems point to IntNodes, we must recurse
@@ -1479,8 +1465,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 Tree::range_delete_purge(dml.clone(), height - 1, range, guard,
                                          txg)
             }).map(|(guard, _)| guard);
-            Box::new(fut.into_future())
-                as Box<Future<Item=_, Error=Error> + Send>
+            boxfut!(fut.into_future())
         }
     }
 
@@ -1623,11 +1608,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                 Loop::Continue(r)
                             })
                         });
-                        Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                        boxfut!(fut)
                     } else {
                         let r = Loop::Break((guard, child_guard, mb, mm));
-                        let fut = Ok(r).into_future();
-                        Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                        boxfut!(Ok(r).into_future())
                     }
                 })
             }).and_then(move |(guard, child_guard, mb, mm):
@@ -1654,7 +1638,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                      (guard, child_guard, mb, mm + nmb as usize)
                                  )
                             });
-                            Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                            boxfut!(fut)
                         } else {
                             let r = Ok((guard, child_guard, mb, mm));
                             Box::new(r.into_future())
@@ -1665,13 +1649,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                                    range, txg)
                         .map(move |map| (guard, map, mb, mm))
                     });
-                    Box::new(fut) as Box<Future<Item=_, Error=Error> + Send>
+                    boxfut!(fut)
                 } else {
-                    Box::new(Ok((guard, map, mb, mm)).into_future())
-                        as Box<Future<Item=_, Error=Error> + Send>
+                    boxfut!(Ok((guard, map, mb, mm)).into_future())
                 }
             }).map(|(_guard, map, _mb, _mm)| map);
-            Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+            boxfut!(fut)
         }
     }
 
@@ -1793,7 +1776,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             root_guard.txgs = txgs;
                         })
                 });
-                Box::new(fut) as Box<Future<Item=_, Error=Error> + Send>
+                boxfut!(fut)
             } else {
                 Box::new(future::ok::<_, Error>(()))
             }
@@ -1869,11 +1852,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 }).map(move |(addr, txgs)| {
                     IntElem::new(key, txgs, TreePtr::Addr(addr))
                 });
-                Box::new(fut)
-                    as Box<Future<Item=IntElem<A, K, V>, Error=Error> + Send>
+                boxfut!(fut, IntElem<A, K, V>, Error)
             } else { // LCOV_EXCL_LINE kcov false negative
-                Box::new(future::ok(elem))
-                    as Box<Future<Item=IntElem<A, K, V>, Error=Error> + Send>
+                boxfut!(future::ok(elem), IntElem<A, K, V>, Error)
             }
         })
         .collect::<Vec<_>>();
@@ -2083,9 +2064,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                     } else {   // LCOV_EXCL_LINE   kcov false negative
                         VecDeque::new()
                     };
-                    Box::new(future::ok((dirty, None)))
-                        as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
-                                      Error=Error> + Send>
+                    boxfut!(future::ok((dirty, None)))
                 } else {
                     let dml2 = inner.dml.clone();
                     let fut = tree_guard.rlock(&dml2)
@@ -2094,9 +2073,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                              Tree::get_dirty_nodes_r(dml2, guard, h - 1, None,
                                                      params)
                          });
-                    Box::new(fut)
-                        as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
-                                      Error=Error> + Send>
+                    boxfut!(fut)
                 }
             })
     }
@@ -2141,16 +2118,15 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                 next_key
             };
             let child_fut = guard.as_int().children[idx].rlock(&dml);
-            Box::new(
+            boxfut!(
                 child_fut.and_then(move |child_guard| {
                     drop(guard);
                     Tree::get_dirty_nodes_r(dml, child_guard, height - 1,
                                             next_key, params)
                 })
-            ) as Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
-                            Error=Error> + Send>
+            )
         } else {
-            Box::new(future::ok((VecDeque::new(), next_key)))
+            boxfut!(future::ok((VecDeque::new(), next_key)))
         }
     }
 
@@ -2168,8 +2144,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                 if guard.ptr.is_mem() {
                     // Another thread has already dirtied the root.  Nothing to
                     // do!
-                    let fut = Box::new(future::ok(()));
-                    return fut as Box<Future<Item=(), Error=Error> + Send>;
+                    return boxfut!(future::ok(()));
                 }
                 let fut = dml2.pop::<Arc<Node<ddml::DRP, K, V>>,
                                      Arc<Node<ddml::DRP, K, V>>>(
@@ -2180,14 +2155,14 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                         let new = TreePtr::Addr(addr);
                         guard.ptr = new;
                     });
-                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+                boxfut!(fut)
             } else {
                 let fut = Tree::xlock_root(&dml2, guard, txg)
                      .and_then(move |(_root_guard, child_guard)| {
                          Tree::rewrite_node_r(dml2, child_guard, h - 1, node,
                                               txg)
                      });
-                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+                boxfut!(fut)
             }
         })
     }

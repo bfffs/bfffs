@@ -1,7 +1,10 @@
 // vim: tw=80
 
 use atomic::{Atomic, Ordering};
-use crate::common::{*, label::*};
+use crate::{
+    boxfut,
+    common::{*, label::*}
+};
 #[cfg(not(test))] use crate::common::cluster;
 use futures::{
     Future,
@@ -103,18 +106,15 @@ impl<'a> ClusterServer {
             #[cfg(debug_assertions)]
             Rpc::AssertCleanZone(zone, txg) => {
                 self.cluster.assert_clean_zone(zone, txg);
-                Box::new(future::ok::<(), ()>(()))
-                    as Box<Future<Item=(), Error=()>>
+                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
             },
             Rpc::Allocated(tx) => {
                 tx.send(self.cluster.allocated()).unwrap();
-                Box::new(future::ok::<(), ()>(()))
-                    as Box<Future<Item=(), Error=()>>
+                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
             },
             Rpc::FindClosedZone(zid, tx) => {
                 tx.send(self.cluster.find_closed_zone(zid)).unwrap();
-                Box::new(future::ok::<(), ()>(()))
-                    as Box<Future<Item=(), Error=()>>
+                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
             },
             Rpc::Flush(idx, tx) => {
                 let fut = self.cluster.flush(idx)
@@ -122,7 +122,7 @@ impl<'a> ClusterServer {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                Box::new(fut) as Box<Future<Item=(), Error=()>>
+                boxfut!(fut, _, _, 'static)
             },
             Rpc::Free(lba, length, tx) => {
                 let fut = self.cluster.free(lba, length)
@@ -130,12 +130,11 @@ impl<'a> ClusterServer {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                Box::new(fut) as Box<Future<Item=(), Error=()>>
+                boxfut!(fut, _, _, 'static)
             }
             Rpc::OptimumQueueDepth(tx) => {
                 tx.send(self.cluster.optimum_queue_depth()).unwrap();
-                Box::new(future::ok::<(), ()>(()))
-                    as Box<Future<Item=(), Error=()>>
+                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
             },
             Rpc::Read(buf, lba, tx) => {
                 let fut = self.cluster.read(buf, lba)
@@ -143,15 +142,14 @@ impl<'a> ClusterServer {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                Box::new(fut) as Box<Future<Item=(), Error=()>>
+                boxfut!(fut, _, _, 'static)
             },
             Rpc::Shutdown() => {
                 Box::new(future::err::<(), ()>(()))
             },
             Rpc::Size(tx) => {
                 tx.send(self.cluster.size()).unwrap();
-                Box::new(future::ok::<(), ()>(()))
-                    as Box<Future<Item=(), Error=()>>
+                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
             },
             Rpc::SyncAll(tx) => {
                 let fut = self.cluster.sync_all()
@@ -159,7 +157,7 @@ impl<'a> ClusterServer {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                Box::new(fut) as Box<Future<Item=(), Error=()>>
+                boxfut!(fut, _, _, 'static)
             },
             Rpc::Write(buf, txg, tx) => {
                 match self.cluster.write(buf, txg) {
@@ -172,12 +170,11 @@ impl<'a> ClusterServer {
                                 }.unwrap();
                                 Ok(())
                             });
-                        Box::new(txfut) as Box<Future<Item=(), Error=()>>
+                        boxfut!(txfut, _, _, 'static)
                     },
                     Err(e) => {
                         tx.send(Err(e)).unwrap();
-                        Box::new(Ok(()).into_future())
-                            as Box<Future<Item=(), Error=()>>
+                        boxfut!(Ok(()).into_future(), _, _, 'static)
                     }
                 }
             },
@@ -187,7 +184,7 @@ impl<'a> ClusterServer {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                Box::new(fut) as Box<Future<Item=(), Error=()>>
+                boxfut!(fut, _, _, 'static)
             },
         }
     }

@@ -2,8 +2,10 @@
 
 //! Nodes for Trees (private module)
 use bincode;
-use crate::common::*;
-use crate::common::dml::*;
+use crate::{
+    boxfut,
+    common::{*, dml::*}
+};
 use futures::{Future, IntoFuture, future};
 use futures_locks::*;
 use serde::{Serialize, de::DeserializeOwned};
@@ -223,10 +225,9 @@ impl<K: Key, V: Value> LeafData<K, V> {
                 .map(|items| {
                     LeafData{items: BTreeMap::from_iter(items.into_iter())}
                 });
-            Box::new(fut)  as Box<Future<Item=LeafData<K, V>, Error=Error> + Send>
+            boxfut!(fut)
         } else {
-            Box::new(Ok(self).into_future())
-                as Box<Future<Item=LeafData<K, V>, Error=Error> + Send>
+            boxfut!(Ok(self).into_future())
         }
     }
 
@@ -473,10 +474,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
         .map(move |elem| {
             let dml2 = dml.clone();
             let lock_fut = if elem.ptr.is_mem() {
-                Box::new(
-                    elem.ptr.as_mem().xlock()
-                ) as Box<Future<Item=TreeWriteGuard<A, K, V>,
-                                Error=Error> + Send>
+                boxfut!(elem.ptr.as_mem().xlock())
             } else {
                 let addr = *elem.ptr.as_addr();
                 let fut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
@@ -488,8 +486,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                         child_node.0.try_write().unwrap()
                     )
                 });
-                Box::new(fut) as Box<Future<Item= TreeWriteGuard<A, K, V>,
-                                            Error=Error> + Send>
+                boxfut!(fut)
             };
             let f2 = f.clone();
             lock_fut.and_then(move |guard| {

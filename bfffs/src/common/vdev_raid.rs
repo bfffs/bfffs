@@ -1,6 +1,15 @@
 // vim: tw=80
 
-use crate::common::{*, declust::*, label::*, vdev::*, raid::*};
+use crate::{
+    boxfut,
+    common::{
+        *,
+        declust::*,
+        label::*,
+        vdev::*,
+        raid::*
+    }
+};
 #[cfg(not(test))] use crate::common::vdev_block::*;
 use crate::common::{null_raid::*, prime_s::*};
 use divbuf::DivBufShared;
@@ -427,7 +436,7 @@ impl VdevRaid {
                 let sgl = sb.pop();
                 Box::new(self.writev_at_one(&sgl, lba))
             } else {    // LCOV_EXCL_LINE kcov false negative
-                Box::new(future::ok::<(), Error>(())) as Box<VdevFut>
+                boxfut!(future::ok::<(), Error>(()), _, _, 'static)
             }
         };
         let (start, end) = self.blockdevs[0].zone_limits(zone);
@@ -522,7 +531,7 @@ impl VdevRaid {
                     let sglist = zero_sglist(zero_len);
                     Box::new(blockdev.writev_at(sglist, first_disk_lba))
                 } else {
-                    Box::new(future::ok::<(), Error>(())) as Box<VdevFut>
+                    boxfut!(future::ok::<(), Error>(()), _, _, 'static)
                 };
 
                 blockdev.open_zone(first_disk_lba).join(zero_fut)
@@ -652,9 +661,9 @@ impl VdevRaid {
                 let new = SGListMut::with_capacity(max_chunks_per_disk - 1);
                 let old = mem::replace(&mut sglists[disk], new);
                 let lba = start_lbas[disk];
-                futs.push(Box::new(
-                    self.blockdevs[disk].readv_at(old, lba)
-                ) as Box<VdevFut>);
+                futs.push(boxfut!(
+                    self.blockdevs[disk].readv_at(old, lba), _, _, 'static
+                ));
                 start_lbas[disk] = disk_lba;
             }
             sglists[disk as usize].push(col);
@@ -665,7 +674,10 @@ impl VdevRaid {
                               sglists.into_iter(),
                               start_lbas.into_iter()))  // LCOV_EXCL_LINE   kcov false neg
             .filter(|&(_, _, lba)| lba != SENTINEL)
-            .map(|(blockdev, sglist, lba)| Box::new(blockdev.readv_at(sglist, lba)) as Box<VdevFut>));
+            .map(|(blockdev, sglist, lba)| {
+                boxfut!(blockdev.readv_at(sglist, lba), _, _, 'static)
+            })
+        );
         let fut = future::join_all(futs);
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.

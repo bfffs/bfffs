@@ -5,10 +5,13 @@
 /// disk, and hash operations.  A Direct Record is a record that can never be
 /// duplicated, either through snapshots, clones, or deduplication.
 
-use crate::common::{
-    *,
-    cache::{Cacheable, CacheRef, Key},
-    label::*,
+use crate::{
+    boxfut,
+    common::{
+        *,
+        cache::{Cacheable, CacheRef, Key},
+        label::*,
+    }
 };
 #[cfg(not(test))] use crate::common::pool::*;
 use futures::{Future, Stream, future, stream};
@@ -456,8 +459,7 @@ impl DML for DDML {
         // 2) Read from disk, then insert into cache
         let pba = drp.pba;
         self.cache.lock().unwrap().get::<R>(&Key::PBA(pba)).map(|t| {
-            Box::new(future::ok::<Box<R>, Error>(t))
-                as Box<Future<Item=Box<R>, Error=Error> + Send>
+            boxfut!(future::ok::<Box<R>, Error>(t))
         }).unwrap_or_else(|| {
             let cache2 = self.cache.clone();
             Box::new(
@@ -477,12 +479,9 @@ impl DML for DDML {
         let pba = drp.pba;
         self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|cacheable| {
             let t = cacheable.downcast::<T>().unwrap();
-            Box::new(self.pool.free(pba, lbas).map(|_| t))
-                as Box<Future<Item=Box<T>, Error=Error> + Send>
+            boxfut!(self.pool.free(pba, lbas).map(|_| t))
         }).unwrap_or_else(|| {
-            Box::new(
-                self.pop_direct::<T>(drp)
-            ) as Box<Future<Item=Box<T>, Error=Error> + Send>
+            boxfut!( self.pop_direct::<T>(drp))
         })
     }
 

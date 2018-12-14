@@ -5,14 +5,19 @@
 //! Clients use the Database to obtain references to the Datasets.  The Database
 //! also owns the Forest and manages Transactions.
 
-use crate::common::*;
-use crate::common::cleaner::*;
-use crate::common::dataset::*;
-use crate::common::dml::DML;
-use crate::common::fs_tree::*;
-use crate::common::label::*;
-use crate::common::property::*;
-use crate::common::tree::{MinValue, TreeOnDisk};
+use crate::{
+    *,
+    common::{
+        *,
+        cleaner::*,
+        dataset::*,
+        dml::DML,
+        fs_tree::*,
+        label::*,
+        property::*,
+        tree::{MinValue, TreeOnDisk}
+    }
+};
 use futures::{
     Future,
     IntoFuture,
@@ -180,12 +185,10 @@ impl Syncer {
         .send(SyncerMsg::Shutdown(tx))
         .then(|r| {
             match r {
-                Ok(_) => Box::new(rx.map_err(Error::unhandled))
-                    as Box<Future<Item=_, Error=_> + Send>,
+                Ok(_) => boxfut!(rx.map_err(Error::unhandled)),
                 Err(_) => {
                     // Syncer must already be shutdown
-                    Box::new(Ok(()).into_future())
-                    as Box<Future<Item=_, Error=_> + Send>
+                    boxfut!(Ok(()).into_future())
                 }
             }
         })
@@ -224,8 +227,7 @@ impl Inner {
         let inner2 = inner.clone();
         inner.fs_trees.with(move |mut guard| {
             if let Some(fs) = guard.get(&tree_id) {
-                Box::new(Ok(fs.clone()).into_future())
-                    as Box<Future<Item=_, Error=_> + Send>
+                boxfut!(Ok(fs.clone()).into_future())
             } else {
                 let fut = inner2.forest.get(tree_id)
                 .map(move |tod| {
@@ -235,7 +237,7 @@ impl Inner {
                     guard.insert(tree_id, atree.clone());
                     atree
                 });
-                Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                boxfut!(fut)
             }
         }).unwrap()
     }
@@ -380,8 +382,7 @@ impl Database {
         self.inner.propcache.with(move |mut guard| {
             let key = PropCacheKey::new(name, tree_id);
             if let Some((prop, source)) = guard.get(&key) {
-                Box::new(Ok((prop.clone(), *source)).into_future())
-                    as Box<Future<Item=_, Error=_> + Send>
+                boxfut!(Ok((prop.clone(), *source)).into_future())
             } else {
                 let objkey = ObjKey::Property(name);
                 let key = FSKey::new(PROPERTY_OBJECT, objkey);
@@ -404,7 +405,7 @@ impl Database {
                     guard.insert(cache_key, (prop.clone(), source));
                     (prop, source)
                 });
-                Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                boxfut!(fut)
             }
         }).unwrap()
     }
@@ -602,8 +603,7 @@ impl Database {
         //    disk or power off.
         let inner2 = inner.clone();
         if !inner.dirty.swap(false, Ordering::Relaxed) {
-            return Box::new(Ok(()).into_future())
-                as Box<Future<Item=(), Error=Error> + Send>;
+            return boxfut!(Ok(()).into_future());
         }
         let fut = inner.idml.advance_transaction(move |txg| {
             let inner3 = inner2.clone();
@@ -651,7 +651,7 @@ impl Database {
                 .map(move |_| idml2)
             }).and_then(move |idml2| idml2.sync_all(txg))
         });
-        Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+        boxfut!(fut)
     }
 
     /// Perform a read-write operation on a Filesystem

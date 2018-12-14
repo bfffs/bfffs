@@ -9,13 +9,16 @@
 // use the atomic crate since libstd's AtomicU64 type is still unstable
 // https://github.com/rust-lang/rust/issues/32976
 use atomic::{Atomic, Ordering};
-use crate::common::{
-    *,
-    dml::*,
-    ddml::DRP,
-    cache::{Cacheable, CacheRef, Key},
-    label::*,
-    tree::*
+use crate::{
+    boxfut,
+    common::{
+        *,
+        dml::*,
+        ddml::DRP,
+        cache::{Cacheable, CacheRef, Key},
+        label::*,
+        tree::*
+    }
 };
 use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
@@ -431,12 +434,11 @@ impl DML for IDML {
                              .map(|(_, old_rid, _old_ridt_entry)| {
                                  assert!(old_rid.is_some());
                              })
-                     ) as Box<Future<Item=(), Error=Error> + Send>
+                     )
                 } else {
                     let ridt_fut = trees2.ridt.insert(rid, entry, txg)
                         .map(drop);
-                    Box::new(ridt_fut)
-                    as Box<Future<Item=(), Error=Error> + Send>
+                    boxfut!(ridt_fut)
                 }
             });
         Box::new(fut)
@@ -451,8 +453,7 @@ impl DML for IDML {
     {
         let rid = *ridp;
         self.cache.lock().unwrap().get::<R>(&Key::Rid(rid)).map(|t| {
-            Box::new(future::ok::<Box<R>, Error>(t))
-                as Box<Future<Item=Box<R>, Error=Error> + Send>
+            boxfut!(future::ok::<Box<R>, Error>(t))
         }).unwrap_or_else(|| {
             let cache2 = self.cache.clone();
             let ddml2 = self.ddml.clone();
@@ -488,38 +489,37 @@ impl DML for IDML {
                     let bfut = cacheval
                         .map(move |cacheable| {
                             let t = cacheable.downcast::<T>().unwrap();
-                            Box::new(ddml2.delete(&entry.drp, txg)
+                            boxfut!(ddml2.delete(&entry.drp, txg)
                                               .map(move |_| t)
-                            ) as Box<Future<Item=Box<T>, Error=Error> + Send>
+                            )
                         }).unwrap_or_else(||{
-                            Box::new(ddml3.pop_direct::<T>(&entry.drp))
-                        }) as Box<Future<Item=Box<T>, Error=Error> + Send>;
+                            boxfut!(ddml3.pop_direct::<T>(&entry.drp))
+                        });
                     let alloct_fut = trees2.alloct.remove(entry.drp.pba(), txg);
                     let ridt_fut = trees2.ridt.remove(rid, txg);
-                    Box::new(
+                    boxfut!(
                         bfut.join3(alloct_fut, ridt_fut)
                              .map(|(cacheable, old_rid, _old_ridt_entry)| {
                                  assert!(old_rid.is_some());
                                  cacheable
                              })
-                     ) as Box<Future<Item=Box<T>, Error=Error> + Send>
+                     )
                 } else {
                     let cacheval = cache2.lock().unwrap()
                         .get::<R>(&Key::Rid(rid));
                     let bfut = cacheval.map(|cacheref: Box<R>|{
                         let t = cacheref.to_owned().downcast::<T>().unwrap();
-                        Box::new(future::ok(t))
-                            as Box<Future<Item=Box<T>, Error=Error> + Send>
+                        boxfut!(future::ok(t))
                     }).unwrap_or_else(|| {
                         Box::new(ddml2.get_direct::<T>(&entry.drp))
                     });
                     let ridt_fut = trees2.ridt.insert(rid, entry, txg);
-                    Box::new(
+                    boxfut!(
                         bfut.join(ridt_fut)
                             .map(|(cacheable, _)| {
                                 cacheable
                             })
-                    ) as Box<Future<Item=Box<T>, Error=Error> + Send>
+                    )
                 }
             });
         Box::new(fut)

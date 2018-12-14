@@ -8,10 +8,13 @@ use crate::common::*;
 #[cfg(test)] use crate::common::database_mock::DatabaseMock as Database;
 #[cfg(test)] use crate::common::database_mock::ReadOnlyFilesystem;
 #[cfg(test)] use crate::common::database_mock::ReadWriteFilesystem;
-use crate::common::{
-    database::TreeID,
-    fs_tree::*,
-    property::*
+use crate::{
+    *,
+    common::{
+        database::TreeID,
+        fs_tree::*,
+        property::*
+    }
 };
 use divbuf::{DivBufShared, DivBuf};
 use futures::{
@@ -197,15 +200,13 @@ mod htable {
                 {
                     if old.same(aux, name) {
                         // This is the item we're looking for
-                        Box::new(Ok(old).into_future())
-                            as Box<Future<Item=T, Error=Error> + Send>
+                        boxfut!(Ok(old).into_future())
                     } else {
                         // Hash collision.  Put it back, and return not found
                         let value = old.into_fsvalue();
                         let fut = dataset.as_ref().insert(key, value)
                         .and_then(|_| Err(T::ENOTFOUND).into_future());
-                        Box::new(fut)
-                            as Box<Future<Item=T, Error=Error> + Send>
+                        boxfut!(fut)
                     }
                 },
                 HTValue::Bucket(mut old) => {
@@ -224,21 +225,18 @@ mod htable {
                         };
                         let fut = dataset.as_ref().insert(key, v)
                         .map(move |_| r);
-                        Box::new(fut)
-                            as Box<Future<Item=T, Error=Error> + Send>
+                        boxfut!(fut)
                     } else {
                         // A 3 (or more) way hash collision between the
                         // accessed item and at least two different ones.
                         let v = T::into_bucket(old);
                         let fut = dataset.as_ref().insert(key, v)
                         .and_then(|_| Err(T::ENOTFOUND).into_future());
-                        Box::new(fut)
-                            as Box<Future<Item=T, Error=Error> + Send>
+                        boxfut!(fut)
                     }
                 },
                 HTValue::None => {
-                    Box::new(Err(T::ENOTFOUND).into_future())
-                        as Box<Future<Item=T, Error=Error> + Send>
+                    boxfut!(Err(T::ENOTFOUND).into_future())
                 },
                 HTValue::Other(x) =>
                     panic!("Unexpected value {:?} for key {:?}", x, key)
@@ -493,11 +491,9 @@ impl Fs {
                 dataset.insert(parent_ino_key, value)
                 .map(drop)
             });
-            Box::new(fut)
-                as Box<Future<Item=_, Error=_> + Send>
+            boxfut!(fut)
         } else {
-            Box::new(Ok(()).into_future())
-                as Box<Future<Item=_, Error=_> + Send>
+            boxfut!(Ok(()).into_future())
         };
         ino_fut.join(nlink_fut)
         .map(drop)
@@ -524,11 +520,10 @@ impl Fs {
 
             let truncate_fut = if new_size < old_size {
                 assert!(iv.file_type.dtype() == libc::DT_REG);
-                Box::new(Fs::do_truncate(dataset.clone(), ino, new_size))
-                    as Box<Future<Item=(), Error=Error> + Send>
+               boxfut!(Fs::do_truncate(dataset.clone(), ino, new_size))
             } else {
                 let fut = Ok(()).into_future();
-                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+                boxfut!(fut)
             };
 
             dataset.insert(inode_key, FSValue::Inode(iv))
@@ -566,16 +561,14 @@ impl Fs {
                 match v {
                     None => {
                         // It's a hole; nothing to do
-                        Box::new(Ok(()).into_future())
-                            as Box<Future<Item=(), Error=Error> + Send>
+                        boxfut!(Ok(()).into_future())
                     },
                     Some(FSValue::InlineExtent(ile)) => {
                         let mut b = ile.buf.try_mut().unwrap();
                         b.try_truncate(len).unwrap();
                         let extent = InlineExtent::new(ile.buf);
                         let v = FSValue::InlineExtent(extent);
-                        Box::new(dataset.insert(k, v).map(drop))
-                            as Box<Future<Item=(), Error=Error> + Send>
+                        boxfut!(dataset.insert(k, v).map(drop))
                     },
                     Some(FSValue::BlobExtent(be)) => {
                         let fut = dataset.get_blob(be.rid)
@@ -589,17 +582,16 @@ impl Fs {
                             dataset.insert(k, v)
                             .map(drop)
                         });
-                        Box::new(fut)
-                            as Box<Future<Item=(), Error=Error> + Send>
+                        boxfut!(fut)
                     },
                     x => panic!("Unexpectec value {:?} for key {:?}",
                                 x, k)
                 }
             });
-            Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+            boxfut!(fut)
         } else {
             let fut = Ok(()).into_future();
-            Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+            boxfut!(fut)
         };
         full_fut.join(partial_fut).map(drop)
     }
@@ -628,7 +620,7 @@ impl Fs {
                 let nlink = iv.nlink;
                 let fut = dataset.insert(key, FSValue::Inode(iv))
                 .map(move |_| nlink);
-                Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                boxfut!(fut)
             } else {
                 let dataset2 = dataset.clone();
                 // 2b) delete its blob extents and blob extended attributes
@@ -648,7 +640,7 @@ impl Fs {
                     // 2c) range_delete its key range
                     dataset.range_delete(FSKey::obj_range(ino))
                 }).map(|_| 0u64);
-                Box::new(fut) as Box<Future<Item=_, Error=_> + Send>
+                boxfut!(fut)
             }
         })
     }
@@ -694,8 +686,7 @@ impl Fs {
         let mut attr = SetAttr::default();
         attr.ctime = Some(now);
         attr.mtime = Some(now);
-        Box::new(Fs::do_setattr(dataset.clone(), parent, attr))
-            as Box<Future<Item=(), Error=Error> + Send>
+        boxfut!(Fs::do_setattr(dataset.clone(), parent, attr))
     }
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
@@ -902,8 +893,7 @@ impl Fs {
             match v {
                 FSValue::ExtAttr(ExtAttr::Inline(_)) => None,
                 FSValue::ExtAttr(ExtAttr::Blob(be)) => {
-                    let s = Box::new(stream::once(Ok(be.extent.rid)))
-                        as Box<Stream<Item=RID, Error=Error> + Send>;
+                    let s = boxstream!(stream::once(Ok(be.extent.rid)));
                     Some(s)
                 },
                 FSValue::ExtAttrs(r) => {
@@ -914,8 +904,7 @@ impl Fs {
                             None
                         }
                     }).collect::<Vec<_>>();
-                    let s = Box::new(stream::iter_ok(rids))
-                        as Box<Stream<Item=RID, Error=Error> + Send>;
+                    let s = boxstream!(stream::iter_ok(rids));
                     Some(s)
                 }
                 x => panic!("Unexpected value {:?} for key {:?}", x, k)
@@ -1063,7 +1052,7 @@ impl Fs {
                 dotdot_dirent, dotdot_filename);
             let fut = dot_fut.join3(dotdot_fut, nlink_fut)
             .map(drop);
-            Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+            boxfut!(fut)
         };
 
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
@@ -1211,14 +1200,12 @@ impl Fs {
                         match v.as_extent().unwrap() {
                             Extent::Inline(ile) => {
                                 let buf = ile.buf.try_const().unwrap();
-                                Box::new(Ok((ofs, buf)).into_future())
-                                    as Box<Future<Item=T, Error=Error> + Send>
+                                boxfut!(Ok((ofs, buf)).into_future(), T, Error)
                             },
                             Extent::Blob(be) => {
                                 let bfut = dataset.get_blob(be.rid)
                                 .map(move |bbuf| (ofs, *bbuf));
-                                Box::new(bfut)
-                                    as Box<Future<Item=T, Error=Error> + Send>
+                                boxfut!(bfut, T, Error)
                             }
                         }
                     }).fold(initial, move |acc, (ofs, mut db)| {
@@ -1353,7 +1340,7 @@ impl Fs {
                                         x, k)
                         }
                     }).map(drop);
-                Box::new(fut) as Box<Future<Item=(), Error=Error> + Send>
+                boxfut!(fut)
             }).map_err(|e| {
                 // An EPIPE here means that the caller dropped the iterator
                 // without reading all entries, probably because it found the
@@ -1432,24 +1419,20 @@ impl Fs {
                         Ok(dirent) => {
                             if dirent.dtype != libc::DT_DIR {
                                 // Overwriting non-directories is allowed
-                                Box::new(Ok(()).into_future())
-                                    as Box<Future<Item=(), Error=Error> + Send>
+                                boxfut!(Ok(()).into_future())
                             } else {
                                 // Is it a nonempty directory?
-                                Box::new(Fs::ok_to_rmdir(&ds4, dirent.ino,
+                                boxfut!(Fs::ok_to_rmdir(&ds4, dirent.ino,
                                     newparent, owned_newname3))
-                                    as Box<Future<Item=(), Error=Error> + Send>
                             }
                         },
                         Err(Error::ENOENT) => {
                             // Destination doesn't exist.  No problem!
-                            Box::new(Ok(()).into_future())
-                                as Box<Future<Item=(), Error=Error> + Send>
+                            boxfut!(Ok(()).into_future())
                         },
                         Err(e) => {
                             // Other errors should propagate upwards
-                            Box::new(Err(e).into_future())
-                                as Box<Future<Item=(), Error=Error> + Send>
+                            boxfut!(Err(e).into_future())
                         }
                     }
                 }).and_then(move |_| {
@@ -1506,27 +1489,22 @@ impl Fs {
                             ds3.insert(newparent_ino_key, value)
                             .map(drop)
                         });
-                        Box::new(fut)
-                            as Box<Future<Item=(), Error=Error> + Send>
+                        boxfut!(fut)
                     } else {
-                        Box::new(Ok(()).into_future())
-                            as Box<Future<Item=(), Error=Error> + Send>
+                        boxfut!(Ok(()).into_future())
                     };
                     let unlink_fut = if let Some(v) = old_dst_ino {
                         // 3ci) Decrement old dst's link count
                         if isdir {
                             let fut = Fs::do_rmdir(ds, newparent, v, false);
-                            Box::new(fut)
-                                as Box<Future<Item=(), Error=Error> + Send>
+                            boxfut!(fut)
                         } else {
                             let fut = Fs::do_unlink(ds.clone(), v)
                             .map(drop);
-                            Box::new(fut)
-                                as Box<Future<Item=(), Error=Error> + Send>
+                            boxfut!(fut)
                         }
                     } else {
-                        Box::new(Ok(()).into_future())
-                            as Box<Future<Item=(), Error=Error> + Send>
+                        boxfut!(Ok(()).into_future())
                     };
                     unlink_fut.join3(p_nlink_fut, np_nlink_fut)
                 }).then(move |r| {
@@ -1822,17 +1800,14 @@ impl Fs {
                         let v = vec![0u8; hsize];
                         let r = Box::new(DivBufShared::from(v).try_const()
                                          .unwrap());
-                        Box::new(Ok(r).into_future())
-                            as Box<Future<Item=_, Error=_> + Send>
+                        boxfut!(Ok(r).into_future())
                     },
                     Some(FSValue::InlineExtent(ile)) => {
                         let r = Box::new(ile.buf.try_const().unwrap());
-                        Box::new(Ok(r).into_future())
-                            as Box<Future<Item=_, Error=_> + Send>
+                        boxfut!(Ok(r).into_future())
                     },
                     Some(FSValue::BlobExtent(be)) => {
-                        Box::new(dataset4.get_blob(be.rid))
-                            as Box<Future<Item=_, Error=_> + Send>
+                        boxfut!(dataset4.get_blob(be.rid))
                     },
                     x => panic!("Unexpected value {:?} for key {:?}",
                                 x, k)
@@ -1861,12 +1836,10 @@ impl Fs {
                     dataset.insert(k, new_v)
                 })
             });
-            Box::new(fut)
-                as Box<Future<Item=_, Error=_> + Send>
+            boxfut!(fut)
         } else {
             let v = FSValue::InlineExtent(InlineExtent::new(dbs));
-            Box::new(dataset.insert(k, v))
-                as Box<Future<Item=_, Error=_> + Send>
+            boxfut!(dataset.insert(k, v))
         }
     }
 }
@@ -2156,8 +2129,7 @@ fn deleteextattr_3way_collision() {
         let iea2 = InlineExtAttr{namespace, name, extent: extent2};
         let extattr2 = ExtAttr::Inline(iea2);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1, extattr2]);
-        Box::new(Ok(Some(v)).into_future())
-            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+        boxfut!(Ok(Some(v)).into_future())
     });
     ds.then().expect_insert()
     .called_once()
@@ -2213,8 +2185,7 @@ fn deleteextattr_3way_collision_enoattr() {
         let iea1 = InlineExtAttr{namespace, name, extent: extent1};
         let extattr1 = ExtAttr::Inline(iea1);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
-        Box::new(Ok(Some(v)).into_future())
-            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+        boxfut!(Ok(Some(v)).into_future())
     });
     ds.then().expect_insert()
     .called_once()
@@ -2533,8 +2504,7 @@ fn setextattr_3way_collision() {
         let iea1 = InlineExtAttr{namespace, name, extent: extent1};
         let extattr1 = ExtAttr::Inline(iea1);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
-        Box::new(Ok(Some(v)).into_future())
-            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+        boxfut!(Ok(Some(v)).into_future())
     });
     ds.then().expect_get()
     .called_once()
@@ -2550,8 +2520,7 @@ fn setextattr_3way_collision() {
         let iea2 = InlineExtAttr{namespace, name, extent: extent2};
         let extattr2 = ExtAttr::Inline(iea2);
         let v = FSValue::ExtAttr(extattr2);
-        Box::new(Ok(Some(v)).into_future())
-            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+        boxfut!(Ok(Some(v)).into_future())
     });
     ds.then().expect_insert()
     .called_once()
@@ -2569,8 +2538,7 @@ fn setextattr_3way_collision() {
         let iea2 = InlineExtAttr{namespace, name, extent: extent2};
         let extattr2 = ExtAttr::Inline(iea2);
         let v = FSValue::ExtAttr(extattr2);
-        Box::new(Ok(Some(v)).into_future())
-            as Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+        boxfut!(Ok(Some(v)).into_future())
     });
 
     let mut opt_ds = Some(ds);
