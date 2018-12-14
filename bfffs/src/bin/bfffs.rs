@@ -251,8 +251,10 @@ impl Builder {
                 Database::create(idml, task_executor)
             })
         })).unwrap();
+        let props = Vec::new();
         self.rt.block_on(future::lazy(|| {
-            db.new_fs().and_then(|_tree_id| db.sync_transaction())
+            db.new_fs(props)
+            .and_then(|_tree_id| db.sync_transaction())
         })).unwrap();
     }
 }

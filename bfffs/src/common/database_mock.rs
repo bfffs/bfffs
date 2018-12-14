@@ -37,15 +37,19 @@ impl DatabaseMock {
         self.e.was_called_returning::<TreeID, Result<(), Error>>("dump", tree)
     }
 
-    pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> + Send {
-        self.e.was_called_returning::<(),
-            Box<Future<Item=TreeID, Error=Error> + Send>>("new_fs", ())
+    pub fn new_fs(&self, props: Vec<Property>)
+        -> impl Future<Item=TreeID, Error=Error> + Send
+    {
+        self.e.was_called_returning::<Vec<Property>,
+            Box<Future<Item=TreeID, Error=Error> + Send>>
+            ("new_fs", props)
     }
 
-    pub fn expect_new_fs(&mut self) -> Method<(),
+    pub fn expect_new_fs(&mut self) -> Method<Vec<Property>,
         Box<Future<Item=TreeID, Error=Error> + Send>>
     {
-        self.e.expect::<(), Box<Future<Item=TreeID, Error=Error> + Send>>
+        self.e.expect::<Vec<Property>,
+            Box<Future<Item=TreeID, Error=Error> + Send>>
             ("new_fs")
     }
 

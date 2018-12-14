@@ -409,10 +409,23 @@ impl Database {
         }).unwrap()
     }
 
+    /// Insert a property into the filesystem, but don't modify the propcache
+    fn insert_prop(dataset: &ReadWriteFilesystem, prop: Property)
+        -> impl Future<Item=(), Error=Error>
+    {
+        let objkey = ObjKey::Property(prop.name());
+        let key = FSKey::new(PROPERTY_OBJECT, objkey);
+        let value = FSValue::Property(prop);
+        dataset.insert(key, value)
+        .map(drop)
+    }
+
     /// Create a new, blank filesystem
     ///
     /// Must be called from the tokio domain.
-    pub fn new_fs(&self) -> impl Future<Item=TreeID, Error=Error> {
+    pub fn new_fs(&self, props: Vec<Property>)
+        -> impl Future<Item=TreeID, Error=Error>
+    {
         self.inner.dirty.store(true, Ordering::Relaxed);
         let idml2 = self.inner.idml.clone();
         let inner2 = self.inner.clone();
@@ -464,9 +477,17 @@ impl Database {
                 let dotdot_key = FSKey::new(ino, dotdot_objkey);
                 let dotdot_value = FSValue::DirEntry(dotdot_dirent);
 
+                // Set initial properties
+                let props_fut = future::join_all(
+                    props.iter().map(|prop| {
+                        Database::insert_prop(&dataset, prop.clone())
+                    }).collect::<Vec<_>>()
+                );
+
                 dataset.insert(inode_key, inode_value)
-                    .join3(dataset.insert(dot_key, dot_value),
-                           dataset.insert(dotdot_key, dotdot_value))
+                    .join4(dataset.insert(dot_key, dot_value),
+                           dataset.insert(dotdot_key, dotdot_value),
+                           props_fut)
             }).map(move |_| tree_id)
         }).unwrap()
     }
@@ -535,11 +556,7 @@ impl Database {
             let name = prop.name();
             let prop2 = prop.clone();
             Inner::fswrite(inner2, tree_id, move |dataset| {
-                let objkey = ObjKey::Property(name);
-                let key = FSKey::new(PROPERTY_OBJECT, objkey);
-                let value = FSValue::Property(prop);
-                dataset.insert(key, value)
-                .map(drop)
+                Database::insert_prop(&dataset, prop)
             }).then(move |r| {
                 // BTreeMap sadly doesn't have a range_delete method.
                 // https://github.com/rust-lang/rust/issues/42849

@@ -61,7 +61,7 @@ test_suite! {
             })).unwrap();
             let handle = rt.handle().clone();
             let fs = rt.block_on(future::lazy(move || {
-                db.new_fs()
+                db.new_fs(Vec::new())
                 .map(move |tree_id| {
                     Fs::new(db.clone(), handle, tree_id)
                 })
@@ -2444,7 +2444,7 @@ test_suite! {
             })).unwrap();
             let handle = rt.handle().clone();
             let (db, fs) = rt.block_on(future::lazy(move || {
-                db.new_fs()
+                db.new_fs(Vec::new())
                 .map(move |tree_id| {
                     let fs = Fs::new(db.clone(), handle, tree_id);
                     (db, fs)

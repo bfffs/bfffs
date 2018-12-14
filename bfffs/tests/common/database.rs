@@ -78,7 +78,7 @@ test_suite! {
             // label will have unpredictable results if we create a root
             // filesystem.  TODO: make it predictable by using utimensat on the
             // root filesystem
-            // let tree_id = rt.block_on(db.new_fs()).unwrap();
+            // let tree_id = rt.block_on(db.new_fs(Vec::new())).unwrap();
             (rt, db, tempdir, filename)
         }
     });
@@ -189,7 +189,7 @@ test_suite! {
                 future::ok::<Database, ()>(db)
             })).unwrap();
             let tree_id = rt.block_on(future::lazy(|| {
-                db.new_fs()
+                db.new_fs(Vec::new())
             })).unwrap();
             (rt, db, tempdir, tree_id)
         }
@@ -203,6 +203,19 @@ test_suite! {
         })).unwrap();
         assert_eq!(val, Property::default_value(PropertyName::Atime));
         assert_eq!(source, PropertySource::Default);
+    }
+
+    test new_fs_with_props(objects()) {
+        let (mut rt, db, _tempdir, _first_tree_id) = objects.val;
+        let props = vec![Property::RecordSize(5)];
+        let tree_id = rt.block_on(future::lazy(|| {
+            db.new_fs(props)
+        })).unwrap();
+        let (val, source) = rt.block_on(future::lazy(|| {
+            db.get_prop(tree_id, PropertyName::RecordSize)
+        })).unwrap();
+        assert_eq!(val, Property::RecordSize(5));
+        assert_eq!(source, PropertySource::Local);
     }
 
     test set_prop(objects()) {

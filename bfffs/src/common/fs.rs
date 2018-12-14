@@ -1862,7 +1862,7 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
     db.expect_fsread()
         .called_once()
         .returning(move |_| opt_ds.take().unwrap());
-    let tree_id = rt.block_on(db.new_fs()).unwrap();
+    let tree_id = rt.block_on(db.new_fs(Vec::new())).unwrap();
     (rt, db, tree_id)
 }
 
