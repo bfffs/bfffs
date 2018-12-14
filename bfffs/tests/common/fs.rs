@@ -1198,6 +1198,9 @@ root:
         assert_ts_changed(&mocks.val.0, ino, true, false, false, false);
     }
 
+    // TODO: add a read_timestamps test when atime is disabled, once I have a
+    // way to set filesystem properties.
+
     // A read that's split across two records
     test read_two_recs(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)

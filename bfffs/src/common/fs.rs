@@ -8,8 +8,11 @@ use crate::common::*;
 #[cfg(test)] use crate::common::database_mock::DatabaseMock as Database;
 #[cfg(test)] use crate::common::database_mock::ReadOnlyFilesystem;
 #[cfg(test)] use crate::common::database_mock::ReadWriteFilesystem;
-use crate::common::database::TreeID;
-use crate::common::fs_tree::*;
+use crate::common::{
+    database::TreeID,
+    fs_tree::*,
+    property::*
+};
 use divbuf::{DivBufShared, DivBuf};
 use futures::{
     Future,
@@ -253,6 +256,13 @@ pub struct Fs {
     next_object: Atomic<u64>,
     handle: tokio_io_pool::Handle,
     tree: TreeID,
+
+    // These options may only be changed when the filesystem is mounting or
+    // remounting the filesystem.
+    /// Update files' atimes when reading?
+    _atime: bool,
+    /// Record size for new files, in bytes
+    _record_size: usize
 }
 
 bitfield! {
@@ -646,16 +656,21 @@ impl Fs {
     pub fn new(database: Arc<Database>, handle: tokio_io_pool::Handle,
                tree: TreeID) -> Self
     {
-        let (tx, rx) = oneshot::channel::<Option<FSKey>>();
+        let (tx, rx) = oneshot::channel();
+        let db2 = database.clone();
         handle.spawn(
-            database.fsread(tree, |dataset| {
+            database.fsread(tree, move |dataset| {
                 dataset.last_key()
-                    .map(move |k| tx.send(k).unwrap())
+                .join3(db2.get_prop(tree, PropertyName::Atime),
+                       db2.get_prop(tree, PropertyName::RecordSize))
+                .map(move |r| tx.send(r).unwrap())
             }).map_err(Error::unhandled)
         ).unwrap();
-        let last_key = rx.wait().unwrap();
+        let (last_key, (atimep, _), (recsizep, _)) = rx.wait().unwrap();
         let next_object = Atomic::new(last_key.unwrap().object() + 1);
-        Fs{db: database, next_object, handle, tree}
+        let _atime = atimep.as_bool();
+        let _record_size = 1 << recsizep.as_u8();
+        Fs{db: database, next_object, handle, tree, _atime, _record_size}
     }
 
     fn next_object(&self) -> u64 {
@@ -1179,6 +1194,7 @@ impl Fs {
                     {
                         let inode = value.as_mut_inode().unwrap();
                         let now = time::get_time();
+                        // TODO: only update if self.atime
                         inode.atime = now;
                     }
                     let fsize = value.as_inode().unwrap().size;
@@ -1862,6 +1878,13 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
     db.expect_fsread()
         .called_once()
         .returning(move |_| opt_ds.take().unwrap());
+    db.expect_get_prop()
+        .called_times(2)
+        .returning(|(_tree_id, propname)| {
+            let prop = Property::default_value(propname);
+            let source = PropertySource::Default;
+            Box::new(Ok((prop, source)).into_future())
+        });
     let tree_id = rt.block_on(db.new_fs(Vec::new())).unwrap();
     (rt, db, tree_id)
 }
