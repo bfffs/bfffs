@@ -37,7 +37,7 @@ pub trait Cacheable: Any + Debug + Send + Sync {
     ///
     /// As long as this handle is alive, the object will not be evicted from
     /// cache.
-    fn make_ref(&self) -> Box<CacheRef>;
+    fn make_ref(&self) -> Box<dyn CacheRef>;
 }
 
 downcast!(Cacheable);
@@ -46,14 +46,14 @@ downcast!(Cacheable);
 pub trait CacheRef: Any + Send {
     /// Deserialize a buffer into the kind of `Cacheable` that's associated with
     /// this `CacheRef`.  Will panic if deserialization fails.
-    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized;
+    fn deserialize(dbs: DivBufShared) -> Box<dyn Cacheable> where Self: Sized;
 
     /// Serialize to a `DivBuf`.
     fn serialize(&self) -> DivBuf;
 
     /// Convert this shared `CacheRef` into an owned `Cacheable`, which may or
     /// may not involve copying
-    fn to_owned(self) -> Box<Cacheable>;
+    fn to_owned(self) -> Box<dyn Cacheable>;
 }
 
 downcast!(CacheRef);
@@ -76,13 +76,13 @@ impl Cacheable for DivBufShared {
         self.len()
     }
 
-    fn make_ref(&self) -> Box<CacheRef> {
+    fn make_ref(&self) -> Box<dyn CacheRef> {
         Box::new(self.try_const().unwrap())
     }
 }
 
 impl CacheRef for DivBuf {
-    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized {
+    fn deserialize(dbs: DivBufShared) -> Box<dyn Cacheable> where Self: Sized {
         Box::new(dbs)
     }
 
@@ -90,7 +90,7 @@ impl CacheRef for DivBuf {
         self.clone()
     }
 
-    fn to_owned(self) -> Box<Cacheable> {
+    fn to_owned(self) -> Box<dyn Cacheable> {
         Box::new(DivBufShared::from(self[..].to_vec()))
     }
 }
@@ -102,7 +102,7 @@ impl Borrow<CacheRef> for DivBuf {
 }
 
 struct LruEntry {
-    buf: Box<Cacheable>,
+    buf: Box<dyn Cacheable>,
     // TODO: switch from Keys to pointers for faster, albeit unsafe, access
     /// Pointer to the next less recently used entry
     lru: Option<Key>,
@@ -180,7 +180,7 @@ impl Cache {
     /// The returned reference will not be downcastted to a concrete type, and
     /// the cache's internal state will not be updated.  That is, this method
     /// does not count as an access for the cache replacement algorithm.
-    pub fn get_ref(&self, key: &Key) -> Option<Box<CacheRef>> {
+    pub fn get_ref(&self, key: &Key) -> Option<Box<dyn CacheRef>> {
         self.store.get(key).map(|v| {
             v.buf.make_ref()
         })
@@ -189,7 +189,7 @@ impl Cache {
     /// Add a new block to the cache.
     ///
     /// The block will be marked as the most recently used.
-    pub fn insert(&mut self, key: Key, buf: Box<Cacheable>) {
+    pub fn insert(&mut self, key: Key, buf: Box<dyn Cacheable>) {
         while self.size + buf.len() > self.capacity {
             self.expire();
         }
@@ -224,7 +224,7 @@ impl Cache {
     ///
     /// Unlike `get`, the block will be returned in an owned form, if it was
     /// present at all.
-    pub fn remove(&mut self, key: &Key) -> Option<Box<Cacheable>> {
+    pub fn remove(&mut self, key: &Key) -> Option<Box<dyn Cacheable>> {
         self.store.remove(key).map(|v| {
             self.size -= v.buf.len();
             if v.mru.is_some() {

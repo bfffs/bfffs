@@ -285,7 +285,7 @@ impl<'a> IDML {
                    ddml: &Arc<DDML>, rid: RID, txg: TxgT)
         -> impl Future<Item=DRP, Error=Error> + Send
     {
-        type MyFut = Box<Future<Item=DRP, Error=Error> + Send>;
+        type MyFut = Box<dyn Future<Item=DRP, Error=Error> + Send>;
 
         // Even if the cache contains the target record, we must also do an RIDT
         // lookup because we're going to rewrite the RIDT
@@ -414,7 +414,7 @@ impl DML for IDML {
     type Addr = RID;
 
     fn delete(&self, ridp: &Self::Addr, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
@@ -449,7 +449,7 @@ impl DML for IDML {
     }
 
     fn get<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr)
-        -> Box<Future<Item=Box<R>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>
     {
         let rid = *ridp;
         self.cache.lock().unwrap().get::<R>(&Key::Rid(rid)).map(|t| {
@@ -472,7 +472,7 @@ impl DML for IDML {
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr, txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
     {
         let rid = *ridp;
         let cache2 = self.cache.clone();
@@ -526,7 +526,7 @@ impl DML for IDML {
     }
 
     fn put<T>(&self, cacheable: T, compression: Compression, txg: TxgT)
-        -> Box<Future<Item=Self::Addr, Error=Error> + Send>
+        -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>
         where T: Cacheable
     {
         // Outline:
@@ -558,7 +558,7 @@ impl DML for IDML {
     }
 
     fn sync_all(&self, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.ddml.sync_all(txg)
     }
@@ -776,7 +776,7 @@ mod t {
         let drp = DRP::random(Compression::None, 4096);
         let mut cache = Cache::default();
         let owned_by_cache = Rc::new(
-            RefCell::new(Vec::<Box<Cacheable>>::new())
+            RefCell::new(Vec::<Box<dyn Cacheable>>::new())
         );
         let owned_by_cache2 = owned_by_cache.clone();
         cache.expect_get::<DivBuf>()
@@ -1088,7 +1088,7 @@ mod t {
             .called_once()
             .with(params!(Key::Rid(rid), any()))
             .returning(drop);
-        ddml.expect_put_direct::<Box<CacheRef>>()
+        ddml.expect_put_direct::<Box<dyn CacheRef>>()
             .called_once()
             .returning(move |(_, _, _)|
                        Box::new(Ok(drp).into_future())

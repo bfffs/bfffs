@@ -40,27 +40,27 @@ pub trait PoolTrait {
     fn allocated(&self) -> LbaT;
     fn assert_clean_zone(&self, clust: ClusterT, zid: ZoneT, txg: TxgT);
     fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
-        -> Box<Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
+        -> Box<dyn Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
                       Error=Error>>;
-    fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error> + Send>;
+    fn flush(&self, idx: u32) -> Box<dyn Future<Item=(), Error=Error> + Send>;
     fn free(&self, pba: PBA, length: LbaT)
-        -> Box<Future<Item=(), Error=Error> + Send>;
+        -> Box<dyn Future<Item=(), Error=Error> + Send>;
     fn name(&self) -> &str;
     fn read(&self, buf: IoVecMut, pba: PBA)
-        -> Box<Future<Item=(), Error=Error> + Send>;
+        -> Box<dyn Future<Item=(), Error=Error> + Send>;
     fn shutdown(&self);
     fn size(&self) -> LbaT;
-    fn sync_all(&self) -> Box<Future<Item=(), Error=Error> + Send>;
+    fn sync_all(&self) -> Box<dyn Future<Item=(), Error=Error> + Send>;
     fn uuid(&self) -> Uuid;
     fn write(&self, buf: IoVec, txg: TxgT)
-        -> Box<Future<Item=PBA, Error=Error> + Send>;
+        -> Box<dyn Future<Item=PBA, Error=Error> + Send>;
     fn write_label(&self, labeller: LabelWriter)
-        -> Box<Future<Item=(), Error=Error> + Send>;
+        -> Box<dyn Future<Item=(), Error=Error> + Send>;
 }
 
 /// Part of an ugly hack for mocking a Send trait
 #[cfg(test)]
-pub struct MockPoolWrapper(Box<PoolTrait>);
+pub struct MockPoolWrapper(Box<dyn PoolTrait>);
 
 #[cfg(test)]
 impl PoolTrait for MockPoolWrapper {
@@ -71,17 +71,17 @@ impl PoolTrait for MockPoolWrapper {
         self.0.assert_clean_zone(clust, zid, txg)
     }
     fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
-        -> Box<Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
+        -> Box<dyn Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
                       Error=Error>>
     {
         self.0.find_closed_zone(clust, zid)
     }
-    fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error> + Send>
+    fn flush(&self, idx: u32) -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.0.flush(idx)
     }
     fn free(&self, pba: PBA, length: LbaT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.0.free(pba, length)
     }
@@ -89,7 +89,7 @@ impl PoolTrait for MockPoolWrapper {
         self.0.name()
     }
     fn read(&self, buf: IoVecMut, pba: PBA)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.0.read(buf, pba)
     }
@@ -100,7 +100,7 @@ impl PoolTrait for MockPoolWrapper {
         self.0.size()
     }
     fn sync_all(&self)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.0.sync_all()
     }
@@ -108,12 +108,12 @@ impl PoolTrait for MockPoolWrapper {
         self.0.uuid()
     }
     fn write(&self, buf: IoVec, txg: TxgT)
-        -> Box<Future<Item=PBA, Error=Error> + Send>
+        -> Box<dyn Future<Item=PBA, Error=Error> + Send>
     {
         self.0.write(buf, txg)
     }
     fn write_label(&self, labeller: LabelWriter)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.0.write_label(labeller)
     }
@@ -255,7 +255,7 @@ impl DDML {
         self.pool.free(drp.pba, drp.asize())
     }
 
-    pub fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error> + Send> {
+    pub fn flush(&self, idx: u32) -> Box<dyn Future<Item=(), Error=Error> + Send> {
         Box::new(self.pool.flush(idx))
     }
 
@@ -441,7 +441,7 @@ impl DML for DDML {
     type Addr = DRP;
 
     fn delete(&self, drp: &DRP, _txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
         Box::new(self.pool.free(drp.pba, drp.asize()))
@@ -452,7 +452,7 @@ impl DML for DDML {
     }
 
     fn get<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<R>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>
     {
         // Outline:
         // 1) Fetch from cache, or
@@ -473,7 +473,7 @@ impl DML for DDML {
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP, _txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
     {
         let lbas = drp.asize();
         let pba = drp.pba;
@@ -487,7 +487,7 @@ impl DML for DDML {
 
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<Future<Item=DRP, Error=Error> + Send>
+        -> Box<dyn Future<Item=DRP, Error=Error> + Send>
     {
         let cache2 = self.cache.clone();
         let db = cacheable.make_ref();
@@ -502,7 +502,7 @@ impl DML for DDML {
     }
 
     fn sync_all(&self, _txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         Box::new(self.pool.sync_all())
     }
@@ -668,7 +668,7 @@ mod t {
         let pba = PBA::default();
         let drp = DRP{pba, compression: Compression::None, lsize: 4096,
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
-        let owned_by_cache = Rc::new(RefCell::new(Vec::<Box<Cacheable>>::new()));
+        let owned_by_cache = Rc::new(RefCell::new(Vec::<Box<dyn Cacheable>>::new()));
         let owned_by_cache2 = owned_by_cache.clone();
         let s = Scenario::new();
         let mut cache = Cache::default();
@@ -931,7 +931,7 @@ mod t {
         let pool_wrapper = MockPoolWrapper(Box::new(pool));
         let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let db = Box::new(dbs.try_const().unwrap()) as Box<CacheRef>;
+        let db = Box::new(dbs.try_const().unwrap()) as Box<dyn CacheRef>;
         let mut rt = current_thread::Runtime::new().unwrap();
         let drp = rt.block_on(
             ddml.put_direct(&db, Compression::None, txg)

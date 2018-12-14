@@ -58,7 +58,7 @@ mod htable {
 
     impl ReadFilesystem<'_> {
         fn get(&self, k: FSKey)
-            -> Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+            -> Box<dyn Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
         {
             match self {
                 ReadFilesystem::ReadOnly(ds) => Box::new(ds.get(k)),
@@ -73,7 +73,7 @@ mod htable {
         -> impl Future<Item=T, Error=Error> + Send
         where T: HTItem
     {
-        type MyFut<T> = Box<Future<Item=T, Error=Error> + Send>;
+        type MyFut<T> = Box<dyn Future<Item=T, Error=Error> + Send>;
         dataset.get(key)
         .then(move |r| {
             match r {
@@ -124,7 +124,7 @@ mod htable {
         where D: AsRef<ReadWriteFilesystem> + Send + 'static,
               T: HTItem
     {
-        type MyFut<T> = Box<Future<Item=Option<T>, Error=Error> + Send>;
+        type MyFut<T> = Box<dyn Future<Item=Option<T>, Error=Error> + Send>;
         let aux = value.aux();
         let fsvalue = value.into_fsvalue();
         dataset.as_ref().insert(key, fsvalue)
@@ -345,20 +345,20 @@ struct CreateArgs
     // NB: this could be a Box<FnOnce> after bug 28796 is fixed
     // https://github.com/rust-lang/rust/issues/28796
     cb: Box<Fn(&Arc<ReadWriteFilesystem>, u64, u64)
-        -> Box<Future<Item=(), Error=Error> + Send + 'static> + Send >
+        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static> + Send >
 }
 
 impl CreateArgs {
     pub fn callback<F>(mut self, f: F) -> Self
         where F: Fn(&Arc<ReadWriteFilesystem>, u64, u64)
-        -> Box<Future<Item=(), Error=Error> + Send + 'static> + Send + 'static
+        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static> + Send + 'static
     {
         self.cb = Box::new(f);
         self
     }
 
     fn default_cb(_: &Arc<ReadWriteFilesystem>, _: u64, _: u64)
-        -> Box<Future<Item=(), Error=Error> + Send + 'static>
+        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>
     {
         Box::new(Ok(()).into_future())
     }
@@ -680,7 +680,7 @@ impl Fs {
 
     fn create_ts_callback(dataset: &Arc<ReadWriteFilesystem>, parent: u64,
                           _ino: u64)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         let now = time::get_time();
         let mut attr = SetAttr::default();
@@ -749,7 +749,7 @@ impl Fs {
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(ino, objkey);
-        type MyFut = Box<Future<Item=Box<DivBuf>, Error=Error> + Send>;
+        type MyFut = Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 htable::get(&htable::ReadFilesystem::ReadOnly(&dataset), key,
@@ -1262,7 +1262,7 @@ impl Fs {
         -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>
     {
         type T = Result<(libc::dirent, i64), i32>;
-        type LoopFut = Box<Future<Item=mpsc::Sender<T>, Error=Error> + Send>;
+        type LoopFut = Box<dyn Future<Item=mpsc::Sender<T>, Error=Error> + Send>;
 
         bitfield! {
             struct Cursor(u64);
@@ -1782,7 +1782,7 @@ impl Fs {
     #[inline]
     fn write_record(ino: u64, filesize: u64, offset: u64, i: usize,
                     dbs: Arc<DivBufShared>, dataset: Arc<ReadWriteFilesystem>)
-        -> Box<Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
     {
         let rs = RECORDSIZE as u64;
         let baseoffset = offset - (offset % rs);

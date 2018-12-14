@@ -14,27 +14,27 @@ pub struct DMLMock {
 
 impl DMLMock {
     pub fn expect_delete(&mut self) -> Method<(*const u32, TxgT),
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<(*const u32, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("delete")
     }
 
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const u32,
-        Box<Future<Item=Box<R>, Error=Error> + Send>>
+        Box<dyn Future<Item=Box<R>, Error=Error> + Send>>
     {
         self.e.expect::<*const u32,
-                        Box<Future<Item=Box<R>, Error=Error> + Send>>
+                        Box<dyn Future<Item=Box<R>, Error=Error> + Send>>
             ("get")
     }
 
     pub fn expect_pop<T: Cacheable, R:CacheRef>(&mut self)
         -> Method<(*const u32, TxgT),
-                  Box<Future<Item=Box<T>, Error=Error> + Send>>
+                  Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
     {
         self.e.expect::<(*const u32, TxgT),
-                        Box<Future<Item=Box<T>, Error=Error> + Send>>
+                        Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
             ("pop")
     }
 
@@ -45,10 +45,10 @@ impl DMLMock {
     // dynamically construct the method name.
     // https://github.com/pcsm/simulacrum/issues/55"]
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
-        Box<Future<Item=u32, Error=Error> + Send>>
+        Box<dyn Future<Item=u32, Error=Error> + Send>>
     {
         self.e.expect::<(T, Compression, TxgT),
-                        Box<Future<Item=u32, Error=Error> + Send>>
+                        Box<dyn Future<Item=u32, Error=Error> + Send>>
             (&DMLMock::generic_method_name::<T>())
     }
 
@@ -72,10 +72,10 @@ impl DML for DMLMock {
     type Addr = u32;
 
     fn delete(&self, addr: &u32, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const u32, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("delete", (addr as *const u32, txg))
     }
 
@@ -84,35 +84,35 @@ impl DML for DMLMock {
     }
 
     fn get<T: Cacheable, R: CacheRef>(&self, addr: &u32)
-        -> Box<Future<Item=Box<R>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>
     {
         self.e.was_called_returning::<*const u32,
-            Box<Future<Item=Box<R>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<R>, Error=Error> + Send>>
             ("get", addr as *const u32)
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, addr: &u32, txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const u32, TxgT),
-            Box<Future<Item=Box<T>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
             ("pop", (addr as *const u32, txg))
     }
 
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                          txg:TxgT)
-        -> Box<Future<Item=u32, Error=Error> + Send>
+        -> Box<dyn Future<Item=u32, Error=Error> + Send>
     {
         let method_name = DMLMock::generic_method_name::<T>();
         self.e.was_called_returning::<(T, Compression, TxgT),
-            (Box<Future<Item=u32, Error=Error> + Send>)>
+            (Box<dyn Future<Item=u32, Error=Error> + Send>)>
             (&method_name, (cacheable, compression, txg))
     }
 
-    fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error> + Send>
+    fn sync_all(&self, txg: TxgT) -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<TxgT,
-                                      Box<Future<Item=(), Error=Error> + Send>>
+                                      Box<dyn Future<Item=(), Error=Error> + Send>>
             ("sync_all", txg)
     }
 }

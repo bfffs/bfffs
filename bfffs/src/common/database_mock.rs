@@ -41,15 +41,15 @@ impl DatabaseMock {
         -> impl Future<Item=TreeID, Error=Error> + Send
     {
         self.e.was_called_returning::<Vec<Property>,
-            Box<Future<Item=TreeID, Error=Error> + Send>>
+            Box<dyn Future<Item=TreeID, Error=Error> + Send>>
             ("new_fs", props)
     }
 
     pub fn expect_new_fs(&mut self) -> Method<Vec<Property>,
-        Box<Future<Item=TreeID, Error=Error> + Send>>
+        Box<dyn Future<Item=TreeID, Error=Error> + Send>>
     {
         self.e.expect::<Vec<Property>,
-            Box<Future<Item=TreeID, Error=Error> + Send>>
+            Box<dyn Future<Item=TreeID, Error=Error> + Send>>
             ("new_fs")
     }
 
@@ -76,15 +76,15 @@ impl DatabaseMock {
         -> impl Future<Item=(Property, PropertySource), Error=Error>
     {
         self.e.was_called_returning::<(TreeID, PropertyName),
-            Box<Future<Item=(Property, PropertySource), Error=Error> + Send>>
+            Box<dyn Future<Item=(Property, PropertySource), Error=Error> + Send>>
                 ("get_prop", (tree_id, name))
     }
 
     pub fn expect_get_prop(&mut self) -> Method<(TreeID, PropertyName),
-        Box<Future<Item=(Property, PropertySource), Error=Error> + Send>>
+        Box<dyn Future<Item=(Property, PropertySource), Error=Error> + Send>>
     {
         self.e.expect::<(TreeID, PropertyName),
-            Box<Future<Item=(Property, PropertySource), Error=Error> + Send>>
+            Box<dyn Future<Item=(Property, PropertySource), Error=Error> + Send>>
                 ("get_prop")
     }
 
@@ -92,28 +92,28 @@ impl DatabaseMock {
         -> impl Future<Item=(), Error=Error> + Send
     {
         self.e.was_called_returning::<(TreeID, Property),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
                 ("set_prop", (tree_id, prop))
     }
 
     pub fn expect_set_prop(&mut self) -> Method<(TreeID, Property),
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<(TreeID, Property),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
                 ("set_prop")
     }
 
     pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> + Send
     {
         self.e.was_called_returning::<(),
-            Box<Future<Item=(), Error=Error> + Send>>("sync_transaction", ())
+            Box<dyn Future<Item=(), Error=Error> + Send>>("sync_transaction", ())
     }
 
     pub fn expect_sync_transaction(&mut self) -> Method<(),
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<(), Box<Future<Item=(), Error=Error> + Send>>
+        self.e.expect::<(), Box<dyn Future<Item=(), Error=Error> + Send>>
             ("sync_transaction")
     }
 

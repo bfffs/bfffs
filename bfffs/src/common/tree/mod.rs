@@ -124,8 +124,8 @@ pub struct RangeQuery<A, D, K, T, V>
     /// Data that can be returned immediately
     data: VecDeque<(K, V)>,
     end: Bound<T>,
-    last_fut: Option<Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
-                       Error=Error> + Send>>,
+    last_fut: Option<Box<dyn Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
+                                    Error=Error> + Send>>,
     /// Handle to the tree's inner
     inner: Arc<Inner<A, D, K, V>>,
 }
@@ -212,8 +212,8 @@ struct CleanZonePass1Inner<D, K, V>
     echelon: u8,
 
     /// Used when an operation must block
-    last_fut: Option<Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
-                       Error=Error> + Send>>,
+    last_fut: Option<Box<dyn Future<Item=(VecDeque<NodeId<K>>, Option<K>),
+                                    Error=Error> + Send>>,
 
     /// Range of addresses to move
     pbas: Range<PBA>,
@@ -401,8 +401,8 @@ struct InnerOnDisk<A: Addr, K: Key, V: Value> {
 }
 
 /// The return type of `Tree::check_r`
-type CheckR<K> = Box<Future<Item=(bool, RangeInclusive<K>, Range<TxgT>),
-                                 Error=Error> + Send>;
+type CheckR<K> = Box<dyn Future<Item=(bool, RangeInclusive<K>, Range<TxgT>),
+                                Error=Error> + Send>;
 
 
 /// In-memory representation of a COW B+-Tree
@@ -433,7 +433,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         // Keep the whole tree locked so no new addresses come into use and no
         // old ones get freed while we're working
-        type SenderFut<A, K, V> = Box<Future<Item=(mpsc::Sender<A>,
+        type SenderFut<A, K, V> = Box<dyn Future<Item=(mpsc::Sender<A>,
             RwLockReadGuard<IntElem<A, K, V>>), Error=Error> + Send>;
         let (tx, rx) = mpsc::channel(self.i.max_fanout as usize);
         let height = self.i.height.load(Ordering::Relaxed) as u8;
@@ -469,7 +469,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     fn addresses_r<R, T>(dml: Arc<D>, height: u8, guard: TreeReadGuard<A, K, V>,
                          tx: mpsc::Sender<A>, txgs: R)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
         where TxgT: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + Send
@@ -683,10 +683,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     fn dump_r<'a>(dml: Arc<D>, node: TreeReadGuard<A, K, V>,
                   f: Rc<RefCell<&'a mut io::Write>>)
-        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
+        -> Box<dyn Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
     {
         type ChildFut<'a, A, K, V> =
-            Box<Future<Item=Vec<TreeReadGuard<A, K, V>>, Error=Error> + 'a>;
+            Box<dyn Future<Item=Vec<TreeReadGuard<A, K, V>>, Error=Error> + 'a>;
         let f2 = f.clone();
         let fut = if let NodeData::Int(ref int) = *node {
             let futs = int.children.iter().map(move |child| {
@@ -812,8 +812,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn insert_int(inner: Arc<Inner<A, D, K, V>>,
                   mut parent: TreeWriteGuard<A, K, V>, child_idx: usize,
                   mut child: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + Send> {
-
+        -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
+    {
         // First, split the node, if necessary
         if (*child).should_split(inner.max_fanout) {
             let (old_txgs, new_elem) = child.split(txg);
@@ -845,7 +845,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn insert_locked(inner: Arc<Inner<A, D, K, V>>,
                      mut relem: RwLockWriteGuard<IntElem<A, K, V>>,
                      mut rnode: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         // First, split the root node, if necessary
         if rnode.should_split(inner.max_fanout) {
@@ -901,7 +901,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Lookup the value of key `k` in a node, which must already be locked.
     fn get_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>, k: K)
-        -> Box<Future<Item=Option<V>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         let next_node_fut = match *node {
             NodeData::Leaf(ref leaf) => {
@@ -948,8 +948,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// levels) from `guard`.
     fn get_range_r<R, T>(dml: Arc<D>, guard: TreeReadGuard<A, K, V>,
                          next_guard: Option<TreeReadGuard<A, K, V>>, range: R)
-        -> Box<Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
-                      Error=Error> + Send>
+        -> Box<dyn Future<Item=(VecDeque<(K, V)>, Option<Bound<T>>),
+                          Error=Error> + Send>
         where K: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + Send + 'static
@@ -1053,7 +1053,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Find the last key amongst a node (which must already be locked), and its
     /// children
     fn last_key_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>)
-        -> Box<Future<Item=Option<K>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>
     {
         let next_node_fut = match *node {
             NodeData::Leaf(ref leaf) => {
@@ -1328,10 +1328,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml2 = dml.clone();
         let dml3 = dml.clone();
         let range2 = range.clone();
-        type CutFut<A, K, V> = Box<Future<Item=(Option<IntElem<A, K, V>>,
-                                                HashSet<usize>,
-                                                Option<bool>, Option<usize>),
-                                          Error=Error> + Send>;
+        type CutFut<A, K, V> =
+            Box<dyn Future<Item=(Option<IntElem<A, K, V>>, HashSet<usize>,
+                                 Option<bool>, Option<usize>),
+                           Error=Error> + Send>;
         let left_fut = if let Some(i) = left_in_cut {
             let new_ubound = guard.as_int().children.get(i + 1)
                 .map_or(ubound, |elem| Some(elem.key));
@@ -1527,7 +1527,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn range_delete_pass2_r<R, T>(inner: Arc<Inner<A, D, K, V>>,
         guard: TreeWriteGuard<A, K, V>, mut map: HashSet<usize>, range: R,
         txg: TxgT)
-        -> Box<Future<Item=HashSet<usize>, Error=Error> + Send>
+        -> Box<dyn Future<Item=HashSet<usize>, Error=Error> + Send>
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
@@ -1688,7 +1688,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, child: TreeWriteGuard<A, K, V>, k: K,
                   txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         // First, fix the node, if necessary.  Merge/steal even if the node
         // currently satifisfies the min_fanout, because we may remove end up
@@ -1727,7 +1727,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Remove key `k` from a node, but don't try to fixup the node.
     fn remove_no_fix(inner: Arc<Inner<A, D, K, V>>,
                      mut node: TreeWriteGuard<A, K, V>, k: K, txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
 
         if node.is_leaf() {
@@ -1818,7 +1818,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     fn flush_r(dml: Arc<D>, mut node: Node<A, K, V>, txg: TxgT)
-        -> Box<Future<Item=(D::Addr, Range<TxgT>), Error=Error> + Send>
+        -> Box<dyn Future<Item=(D::Addr, Range<TxgT>), Error=Error> + Send>
     {
         if node.0.get_mut().expect("node.0.get_mut").is_leaf() {
             let fut = Tree::write_leaf(dml, node, txg)
@@ -1910,9 +1910,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                        Error=Error> + Send
     {
         type MyFut<A, K, V> =
-            Box<Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
-                             TreeWriteGuard<A, K, V>),
-                       Error=Error> + Send>;
+            Box<dyn Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
+                                 TreeWriteGuard<A, K, V>),
+                           Error=Error> + Send>;
         // First, lock the root IntElem
         // If it's not a leaf and has a single child:
         //     Drop the root's intelem lock
@@ -1956,8 +1956,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// memory, then COW it.
     fn xlock_root(dml: &Arc<D>, mut guard: RwLockWriteGuard<IntElem<A, K, V>>,
                   txg: TxgT)
-        -> (Box<Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
-                             TreeWriteGuard<A, K, V>), Error=Error> + Send>)
+        -> (Box<dyn Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
+                                 TreeWriteGuard<A, K, V>), Error=Error> + Send>)
     {
         guard.txgs.end = txg + 1;
         if guard.ptr.is_mem() {
@@ -2086,8 +2086,8 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                          height: u8,
                          next_key: Option<K>,
                          params: GetDirtyNodeParams<K>)
-        -> Box<Future<Item=(VecDeque<NodeId<K>>, Option<K>),
-                      Error=Error> + Send>
+        -> Box<dyn Future<Item=(VecDeque<NodeId<K>>, Option<K>),
+                          Error=Error> + Send>
     {
         if height == params.echelon + 1 {
             let nodes = guard.as_int().children.iter().filter_map(|child| {
@@ -2169,7 +2169,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
 
     fn rewrite_node_r(dml: Arc<D>, mut guard: TreeWriteGuard<ddml::DRP, K, V>,
                       height: u8, node: NodeId<K>, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         debug_assert!(height > 0);
         let child_idx = guard.as_int().position(&node.key);

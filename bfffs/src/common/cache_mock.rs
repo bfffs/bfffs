@@ -17,35 +17,35 @@ impl CacheMock {
         self.e.expect::<*const Key, Option<Box<T>>>("get")
     }
 
-    pub fn get_ref(&self, key: &Key) -> Option<Box<CacheRef>> {
-        self.e.was_called_returning::<*const Key, Option<Box<CacheRef>>>
+    pub fn get_ref(&self, key: &Key) -> Option<Box<dyn CacheRef>> {
+        self.e.was_called_returning::<*const Key, Option<Box<dyn CacheRef>>>
             ("get_ref", key as *const Key)
     }
 
     pub fn expect_get_ref(&mut self)
-        -> Method<*const Key, Option<Box<CacheRef>>>
+        -> Method<*const Key, Option<Box<dyn CacheRef>>>
     {
-        self.e.expect::<*const Key, Option<Box<CacheRef>>>("get_ref")
+        self.e.expect::<*const Key, Option<Box<dyn CacheRef>>>("get_ref")
     }
 
-    pub fn insert(&mut self, key: Key, buf: Box<Cacheable>) {
-        self.e.was_called_returning::<(Key, Box<Cacheable>), ()>
+    pub fn insert(&mut self, key: Key, buf: Box<dyn Cacheable>) {
+        self.e.was_called_returning::<(Key, Box<dyn Cacheable>), ()>
             ("insert", (key, buf))
     }
 
-    pub fn expect_insert(&mut self) -> Method<(Key, Box<Cacheable>), ()> {
-        self.e.expect::<(Key, Box<Cacheable>), ()>("insert")
+    pub fn expect_insert(&mut self) -> Method<(Key, Box<dyn Cacheable>), ()> {
+        self.e.expect::<(Key, Box<dyn Cacheable>), ()>("insert")
     }
 
-    pub fn remove(&mut self, key: &Key) -> Option<Box<Cacheable>> {
-        self.e.was_called_returning::<*const Key, Option<Box<Cacheable>>>
+    pub fn remove(&mut self, key: &Key) -> Option<Box<dyn Cacheable>> {
+        self.e.was_called_returning::<*const Key, Option<Box<dyn Cacheable>>>
             ("remove", key as *const Key)
     }
 
     pub fn expect_remove(&mut self)
-        -> Method<*const Key, Option<Box<Cacheable>>>
+        -> Method<*const Key, Option<Box<dyn Cacheable>>>
     {
-        self.e.expect::<*const Key, Option<Box<Cacheable>>>("remove")
+        self.e.expect::<*const Key, Option<Box<dyn Cacheable>>>("remove")
     }
 
     pub fn size(&self) -> usize {

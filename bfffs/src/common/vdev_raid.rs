@@ -52,7 +52,7 @@ pub trait VdevBlockTrait : Vdev {
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut>;
 }
 #[cfg(test)]
-pub type VdevBlockLike = Box<VdevBlockTrait>;
+pub type VdevBlockLike = Box<dyn VdevBlockTrait>;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type VdevBlockLike = VdevBlock;
@@ -207,7 +207,7 @@ pub struct VdevRaid {
     codec: Codec,
 
     /// Locator, declustering or otherwise
-    locator: Box<Locator>,
+    locator: Box<dyn Locator>,
 
     /// Underlying block devices.  Order is important!
     blockdevs: Box<[VdevBlockLike]>,
@@ -333,7 +333,7 @@ impl VdevRaid {
     {
         let num_disks = blockdevs.len() as i16;
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
-        let locator: Box<Locator> = match layout_algorithm {
+        let locator: Box<dyn Locator> = match layout_algorithm {
             LayoutAlgorithm::NullRaid => Box::new(
                 NullRaid::new(num_disks, disks_per_stripe, redundancy)),
             LayoutAlgorithm::PrimeS => Box::new(
@@ -758,7 +758,7 @@ impl VdevRaid {
                                   .expect("Can't write to a closed zone");
         assert_eq!(stripe_buffer.next_lba(), lba);
 
-        let mut futs = Vec::<Box<Future<Item=(), Error=Error>>>::new();
+        let mut futs = Vec::<Box<dyn Future<Item=(), Error=Error>>>::new();
         let mut buf3 = if !stripe_buffer.is_empty() ||
             buf.len() < stripe_len {
 
@@ -1038,7 +1038,7 @@ impl Vdev for VdevRaid {
             self.chunksize / (self.locator.depth() as LbaT)
     }
 
-    fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
+    fn sync_all(&self) -> Box<dyn Future<Item = (), Error = Error>> {
         #[cfg(debug_assertions)]
         // Don't flush zones ourselves; the Cluster layer must be in charge of
         // that, so it can update the spacemap.
@@ -1366,7 +1366,7 @@ test_suite! {
 
         setup(&mut self) {
             let s = Scenario::new();
-            let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+            let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
             for _ in 0..*self.n {
                 let mock = Box::new(s.create_mock::<MockVdevBlock>());
                 s.expect(mock.size_call()
@@ -1511,7 +1511,7 @@ fn read_at_one_stripe() {
         const CHUNKSIZE : LbaT = 2;
 
         let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+        let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262_144).times(..));
         s.expect(m0.open_zone_call(65536).and_return(
@@ -1573,7 +1573,7 @@ fn sync_all() {
     let zl0 = (1, 60_000);
 
     let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
@@ -1613,7 +1613,7 @@ fn sync_all_unflushed() {
     let zl1 = (60_000, 120_000);
 
     let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
@@ -1662,7 +1662,7 @@ fn write_at_one_stripe() {
         const CHUNKSIZE : LbaT = 2;
 
         let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+        let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
         let m0 = Box::new(s.create_mock::<MockVdevBlock>());
         s.expect(m0.size_call().and_return_clone(262_144).times(..));
         s.expect(m0.lba2zone_call(65536).and_return_clone(Some(1)).times(..));
@@ -1734,7 +1734,7 @@ fn write_at_and_flush_zone() {
     let zl1 = (60_000, 120_000);
 
     let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
@@ -1806,7 +1806,7 @@ fn erase_zone() {
     let zl1 = (60_000, 120_000);
 
     let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
@@ -1845,7 +1845,7 @@ fn flush_zone_closed() {
     let zl0 = (1, 60_000);
 
     let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
@@ -1881,7 +1881,7 @@ fn flush_zone_empty_stripe_buffer() {
     let zl1 = (60_000, 120_000);
 
     let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
 
     let bd = || {
         let bd = Box::new(s.create_mock::<MockVdevBlock>());
@@ -1939,7 +1939,7 @@ fn open_zone_reopen() {
     s.expect(bd.write_at_call(ANY, 4196)
         .and_return( Box::new( future::ok::<(), Error>(())))
     );
-    let blockdevs: Vec<Box<VdevBlockTrait + 'static>> = vec![Box::new(bd)];
+    let blockdevs: Vec<Box<dyn VdevBlockTrait + 'static>> = vec![Box::new(bd)];
 
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
@@ -1963,7 +1963,7 @@ fn open_zone_zero_fill_wasted_chunks() {
         let zl1 = (32, 64);
 
         let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+        let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
 
         let bd = || {
             let bd = Box::new(s.create_mock::<MockVdevBlock>());
@@ -2010,7 +2010,7 @@ fn open_zone_zero_fill_wasted_stripes() {
         let zl1 = (32, 64);
 
         let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<VdevBlockTrait>>::new();
+        let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
 
         let bd = |gap_chunks: LbaT| {
             let bd = Box::new(s.create_mock::<MockVdevBlock>());

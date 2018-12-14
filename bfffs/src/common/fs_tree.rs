@@ -369,7 +369,7 @@ impl<'a, A: Addr> ExtAttr<A> {
     }
 
     fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Box<Future<Item=ExtAttr<A>, Error=Error> + Send + 'static>
+        -> Box<dyn Future<Item=ExtAttr<A>, Error=Error> + Send + 'static>
         where D: DML + 'static, D::Addr: 'static
     {
         match self {
@@ -682,7 +682,7 @@ impl<A: Addr> FSValue<A> {
 
 impl<A: Addr> Value for FSValue<A> {
     fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Box<Future<Item=Self, Error=Error> + Send + 'static>
+        -> Box<dyn Future<Item=Self, Error=Error> + Send + 'static>
         where D: DML + 'static, D::Addr: 'static
     {
         match self {

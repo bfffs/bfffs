@@ -61,7 +61,7 @@ pub struct TreeMock<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
 impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     pub fn check(&self) -> impl Future<Item=bool, Error=Error> + Send {
         self.e.was_called_returning::<(),
-            Box<Future<Item=bool, Error=Error> + Send>>
+            Box<dyn Future<Item=bool, Error=Error> + Send>>
             ("check", ())
     }
 
@@ -69,16 +69,16 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
         -> impl Future<Item=(), Error=Error> + Send
     {
         self.e.was_called_returning::<(Range<PBA>, Range<TxgT>, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("clean_zone", (pbas, txgs, txg))
     }
 
     pub fn expect_clean_zone(&mut self)
         -> Method<(Range<PBA>, Range<TxgT>, TxgT),
-                   Box<Future<Item=(), Error=Error> + Send>>
+                   Box<dyn Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<(Range<PBA>, Range<TxgT>, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>("clean_zone")
+            Box<dyn Future<Item=(), Error=Error> + Send>>("clean_zone")
     }
 
     #[allow(clippy::needless_pass_by_value)]
@@ -92,60 +92,60 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     }
 
     pub fn flush(&self, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<TxgT,
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("flush", txg)
     }
 
     pub fn expect_flush(&mut self) -> Method<TxgT,
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<TxgT,
-            Box<Future<Item=(), Error=Error> + Send>>("flush")
+            Box<dyn Future<Item=(), Error=Error> + Send>>("flush")
     }
 
-    pub fn get(&self, k: K) -> Box<Future<Item=Option<V>, Error=Error> + Send>
+    pub fn get(&self, k: K) -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         self.e.was_called_returning::<K,
-            Box<Future<Item=Option<V>, Error=Error> + Send>>
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
             ("get", k)
     }
 
     pub fn expect_get(&mut self) -> Method<K,
-        Box<Future<Item=Option<V>, Error=Error> + Send>>
+        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
     {
         self.e.expect::<K,
-            Box<Future<Item=Option<V>, Error=Error> + Send>>("get")
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("get")
     }
 
     pub fn insert(&self, k: K, v: V, txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(K, V, TxgT),
-            Box<Future<Item=Option<V>, Error=Error> + Send>>
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
             ("insert", (k, v, txg))
     }
 
     pub fn expect_insert(&mut self) -> Method<(K, V, TxgT),
-        Box<Future<Item=Option<V>, Error=Error> + Send>>
+        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
     {
         self.e.expect::<(K, V, TxgT),
-            Box<Future<Item=Option<V>, Error=Error> + Send>>("insert")
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("insert")
     }
 
-    pub fn last_key(&self) -> Box<Future<Item=Option<K>, Error=Error> + Send> {
+    pub fn last_key(&self) -> Box<dyn Future<Item=Option<K>, Error=Error> + Send> {
         self.e.was_called_returning::<(),
-            Box<Future<Item=Option<K>, Error=Error> + Send>>
+            Box<dyn Future<Item=Option<K>, Error=Error> + Send>>
             ("last_key", ())
     }
 
     pub fn expect_last_key(&mut self) -> Method<(),
-        Box<Future<Item=Option<K>, Error=Error> + Send>>
+        Box<dyn Future<Item=Option<K>, Error=Error> + Send>>
     {
         self.e.expect::<(),
-            Box<Future<Item=Option<K>, Error=Error> + Send>>("last_key")
+            Box<dyn Future<Item=Option<K>, Error=Error> + Send>>("last_key")
     }
 
     pub fn new() -> Self {
@@ -182,39 +182,39 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     }
 
     pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
               T: Ord + Clone + Send + 'static
     {
         self.e.was_called_returning::<(R, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("range_delete", (range, txg))
     }
 
     pub fn expect_range_delete<R, T>(&mut self)
-        -> Method<(R, TxgT), Box<Future<Item=(), Error=Error> + Send>>
+        -> Method<(R, TxgT), Box<dyn Future<Item=(), Error=Error> + Send>>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
               T: Ord + Clone + Send + 'static
     {
         self.e.expect::<(R, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>("range_delete")
+            Box<dyn Future<Item=(), Error=Error> + Send>>("range_delete")
     }
 
     pub fn remove(&self, k: K, txg: TxgT)
-        -> Box<Future<Item=Option<V>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(K, TxgT),
-            Box<Future<Item=Option<V>, Error=Error> + Send>>
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
             ("remove", (k, txg))
     }
 
     pub fn expect_remove(&mut self) -> Method<(K, TxgT),
-        Box<Future<Item=Option<V>, Error=Error> + Send>>
+        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
     {
         self.e.expect::<(K, TxgT),
-            Box<Future<Item=Option<V>, Error=Error> + Send>>("remove")
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("remove")
     }
 
     pub fn serialize(&self) -> Result<TreeOnDisk, Error> {

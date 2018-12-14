@@ -72,7 +72,7 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     /// Prepare this `Value` to be written to disk
     // LCOV_EXCL_START   unreachable code
     fn flush<D>(self, _dml: &D, _txg: TxgT)
-        -> Box<Future<Item=Self, Error=Error> + Send>
+        -> Box<dyn Future<Item=Self, Error=Error> + Send>
         where D: DML + 'static, D::Addr: 'static
     {
         // should never be called since needs_flush is false.  Ideally, this
@@ -213,7 +213,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
     ///
     /// For most items, this is a nop.
     pub fn flush<A, D>(self, d: &D, txg: TxgT)
-        -> Box<Future<Item=Self, Error=Error> + Send>
+        -> Box<dyn Future<Item=Self, Error=Error> + Send>
         where D: DML<Addr=A> + 'static, A: 'static
     {
         if V::needs_flush() {
@@ -357,9 +357,9 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     // Consuming and returning self prevents lifetime checker issues that
     // interfere with lock coupling.
     pub fn xlock<D>(mut self, dml: &Arc<D>, child_idx: usize, txg: TxgT)
-        -> (Box<Future<Item=(TreeWriteGuard<A, K, V>,
-                             TreeWriteGuard<A, K, V>),
-                       Error=Error> + Send>)
+        -> (Box<dyn Future<Item=(TreeWriteGuard<A, K, V>,
+                                 TreeWriteGuard<A, K, V>),
+                           Error=Error> + Send>)
         where D: DML<Addr=A> + 'static
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
@@ -411,9 +411,9 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// leak!  `height` is the height of `self`, not the target.  Leaves are 0.
     pub fn xlock_nc<D>(&mut self, dml: &Arc<D>, child_idx: usize, height: u8,
                        txg: TxgT)
-        -> (Box<Future<Item=(Option<IntElem<A, K, V>>,
-                             TreeWriteGuard<A, K, V>),
-                       Error=Error> + Send>)
+        -> (Box<dyn Future<Item=(Option<IntElem<A, K, V>>,
+                                 TreeWriteGuard<A, K, V>),
+                           Error=Error> + Send>)
         where D: DML<Addr=A> + 'static
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
@@ -547,7 +547,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
 
     /// Lock nonexclusively
     pub fn rlock<D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: &Arc<D>)
-        -> Box<Future<Item=TreeReadGuard<A, K, V>, Error=Error> + Send>
+        -> Box<dyn Future<Item=TreeReadGuard<A, K, V>, Error=Error> + Send>
     {
         match self.ptr {
             TreePtr::Mem(ref node) => {
@@ -906,13 +906,13 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
         }
     }
 
-    fn make_ref(&self) -> Box<CacheRef> {
+    fn make_ref(&self) -> Box<dyn CacheRef> {
         Box::new(self.clone())
     }
 }
 
 impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
-    fn deserialize(dbs: DivBufShared) -> Box<Cacheable> where Self: Sized {
+    fn deserialize(dbs: DivBufShared) -> Box<dyn Cacheable> where Self: Sized {
         let db = dbs.try_const().unwrap();
         let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
         let node = Arc::new(Node(RwLock::new(node_data)));
@@ -927,7 +927,7 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
         dbs.try_const().unwrap()
     }   // LCOV_EXCL_LINE kcov false negative
 
-    fn to_owned(self) -> Box<Cacheable> {
+    fn to_owned(self) -> Box<dyn Cacheable> {
         Box::new(self)
     }
 }

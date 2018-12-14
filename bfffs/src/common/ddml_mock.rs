@@ -39,56 +39,56 @@ impl DDMLMock {
     }
 
     pub fn expect_delete(&mut self) -> Method<(*const DRP, TxgT),
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<(*const DRP, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("delete")
     }
 
     pub fn delete_direct(&self, drp: &DRP, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const DRP, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("delete_direct", (drp as *const DRP, txg))
     }
 
     pub fn expect_delete_direct(&mut self) -> Method<(*const DRP, TxgT),
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<(*const DRP, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("delete_direct")
     }
 
-    pub fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error> + Send> {
+    pub fn flush(&self, idx: u32) -> Box<dyn Future<Item=(), Error=Error> + Send> {
         self.e.was_called_returning::<u32,
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("flush", idx)
     }
 
     pub fn expect_flush(&mut self) -> Method<u32,
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<u32, Box<Future<Item=(), Error=Error> + Send>>
+        self.e.expect::<u32, Box<dyn Future<Item=(), Error=Error> + Send>>
             ("flush")
     }
 
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<R>, Error=Error> + Send>>
+        Box<dyn Future<Item=Box<R>, Error=Error> + Send>>
     {
         self.e.expect::<*const DRP,
-                        Box<Future<Item=Box<R>, Error=Error> + Send>>
+                        Box<dyn Future<Item=Box<R>, Error=Error> + Send>>
             ("get")
     }
 
     pub fn expect_pop<T: Cacheable, R:CacheRef>(&mut self)
         -> Method<(*const DRP, TxgT),
-                  Box<Future<Item=Box<T>, Error=Error> + Send>>
+                  Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
     {
         self.e.expect::<(*const DRP, TxgT),
-                        Box<Future<Item=Box<T>, Error=Error> + Send>>
+                        Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
             ("pop")
     }
 
@@ -99,18 +99,18 @@ impl DDMLMock {
     // dynamically construct the method name.
     // https://github.com/pcsm/simulacrum/issues/55"]
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
-        Box<Future<Item=DRP, Error=Error> + Send>>
+        Box<dyn Future<Item=DRP, Error=Error> + Send>>
     {
         self.e.expect::<(T, Compression, TxgT),
-                        Box<Future<Item=DRP, Error=Error> + Send>>
+                        Box<dyn Future<Item=DRP, Error=Error> + Send>>
             (&DDMLMock::generic_method_name::<T>())
     }
 
     pub fn expect_sync_all(&mut self)
-        -> Method<TxgT, Box<Future<Item=(), Error=Error> + Send>>
+        -> Method<TxgT, Box<dyn Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<TxgT,
-                        Box<Future<Item=(), Error=Error> + Send>>("sync_all")
+                        Box<dyn Future<Item=(), Error=Error> + Send>>("sync_all")
     }
 
     fn generic_method_name<T: 'static + ?Sized>() -> String {
@@ -118,17 +118,17 @@ impl DDMLMock {
     }
 
     pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error> + Send> {
+        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send> {
         self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<T>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
             ("get_direct", drp as *const DRP)
     }
 
     pub fn expect_get_direct<T: Cacheable>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<T>, Error=Error> + Send>>
+        Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
     {
         self.e.expect::<*const DRP,
-                        Box<Future<Item=Box<T>, Error=Error> + Send>>
+                        Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
             ("get_direct")
     }
 
@@ -148,38 +148,38 @@ impl DDMLMock {
     }
 
     pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<T>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
     {
         self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<T>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
             ("pop_direct", drp as *const DRP)
     }
 
     pub fn expect_pop_direct<T: Cacheable>(&mut self) -> Method<*const DRP,
-        Box<Future<Item=Box<T>, Error=Error> + Send>>
+        Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
     {
         self.e.expect::<*const DRP,
-                        Box<Future<Item=Box<T>, Error=Error> + Send>>
+                        Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
             ("pop_direct")
     }
 
     pub fn put_direct<T>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
-        -> Box<Future<Item=DRP, Error=Error> + Send>
+        -> Box<dyn Future<Item=DRP, Error=Error> + Send>
         where T: Borrow<CacheRef> + 'static
     {
         let ptr = cacheref as *const T;
         self.e.was_called_returning::<(*const T, Compression, TxgT),
-            Box<Future<Item=DRP, Error=Error> + Send>>
+            Box<dyn Future<Item=DRP, Error=Error> + Send>>
             ("put_direct", (ptr, compression, txg))
     }
 
     pub fn expect_put_direct<T>(&mut self) -> Method<(*const T, Compression, TxgT),
-        Box<Future<Item=DRP, Error=Error> + Send>>
+        Box<dyn Future<Item=DRP, Error=Error> + Send>>
         where T: Borrow<CacheRef> + 'static
     {
         self.e.expect::<(*const T, Compression, TxgT),
-                        Box<Future<Item=DRP, Error=Error> + Send>>
+                        Box<dyn Future<Item=DRP, Error=Error> + Send>>
             ("put_direct")
     }
 
@@ -204,14 +204,14 @@ impl DDMLMock {
         -> impl Future<Item=(), Error=Error> + Send
     {
         self.e.was_called_returning::<LabelWriter,
-                                      Box<Future<Item=(), Error=Error> + Send>>
+                                      Box<dyn Future<Item=(), Error=Error> + Send>>
             ("write_label", labeller)
     }
 
     pub fn expect_write_label(&mut self)
-        -> Method<LabelWriter, Box<Future<Item=(), Error=Error> + Send>>
+        -> Method<LabelWriter, Box<dyn Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<LabelWriter, Box<Future<Item=(), Error=Error> + Send>>
+        self.e.expect::<LabelWriter, Box<dyn Future<Item=(), Error=Error> + Send>>
             ("write_label")
     }
 }
@@ -220,10 +220,10 @@ impl DML for DDMLMock {
     type Addr = DRP;
 
     fn delete(&self, drp: &DRP, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const DRP, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("delete", (drp as *const DRP, txg))
     }
 
@@ -232,35 +232,35 @@ impl DML for DDMLMock {
     }
 
     fn get<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
-        -> Box<Future<Item=Box<R>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>
     {
         self.e.was_called_returning::<*const DRP,
-            Box<Future<Item=Box<R>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<R>, Error=Error> + Send>>
             ("get", drp as *const DRP)
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP, txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const DRP, TxgT),
-            Box<Future<Item=Box<T>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
             ("pop", (drp as *const DRP, txg))
     }
 
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                          txg:TxgT)
-        -> Box<Future<Item=DRP, Error=Error> + Send>
+        -> Box<dyn Future<Item=DRP, Error=Error> + Send>
     {
         let method_name = DDMLMock::generic_method_name::<T>();
         self.e.was_called_returning::<(T, Compression, TxgT),
-            (Box<Future<Item=DRP, Error=Error> + Send>)>
+            (Box<dyn Future<Item=DRP, Error=Error> + Send>)>
             (&method_name, (cacheable, compression, txg))
     }
 
-    fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error> + Send>
+    fn sync_all(&self, txg: TxgT) -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<TxgT,
-                                      Box<Future<Item=(), Error=Error> + Send>>
+                                      Box<dyn Future<Item=(), Error=Error> + Send>>
             ("sync_all", txg)
     }
 }

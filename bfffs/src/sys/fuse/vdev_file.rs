@@ -136,7 +136,7 @@ impl Vdev for VdevFile {
         self.size
     }
 
-    fn sync_all(&self) -> Box<Future<Item = (), Error = Error>> {
+    fn sync_all(&self) -> Box<dyn Future<Item = (), Error = Error>> {
         let fut = self.file.sync_all().unwrap()
             .map(drop)
             .map_err(Error::from);

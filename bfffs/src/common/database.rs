@@ -119,9 +119,9 @@ impl Syncer {
         where E: Executor + 'static
     {
         // The Future type used for the accumulator in the fold loop
-        type LoopFut = Box<Future<Item=(Option<SyncerMsg>,
-                                        mpsc::Receiver<SyncerMsg>),
-                                  Error=()> + Send>;
+        type LoopFut = Box<dyn Future<Item=(Option<SyncerMsg>,
+                                            mpsc::Receiver<SyncerMsg>),
+                                      Error=()> + Send>;
 
         // Fixed 5-second duration
         let duration = Duration::new(5, 0);
@@ -141,8 +141,8 @@ impl Syncer {
             delay_fut.select2(rx_fut)
                 .map_err(drop)
                 .and_then(move |r| {
-                    type LoopFutFut = Box<Future<Item=LoopFut,
-                                                 Error=()> + Send>;
+                    type LoopFutFut = Box<dyn Future<Item=LoopFut,
+                                                     Error=()> + Send>;
                     match r {
                         future::Either::A((_, rx_fut)) => {
                             //Time's up.  Sync the database

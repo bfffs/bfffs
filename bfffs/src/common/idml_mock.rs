@@ -44,37 +44,37 @@ impl IDMLMock {
 
     pub fn check(&self) -> impl Future<Item=bool, Error=Error> {
          self.e.was_called_returning::<(),
-            Box<Future<Item=bool, Error=Error> + Send>>
+            Box<dyn Future<Item=bool, Error=Error> + Send>>
             ("check", ())
     }
 
     pub fn expect_check(&mut self) -> Method<(),
-        Box<Future<Item=bool, Error=Error> + Send>>
+        Box<dyn Future<Item=bool, Error=Error> + Send>>
     {
-        self.e.expect::<(), Box<Future<Item=bool, Error=Error> + Send>>("check")
+        self.e.expect::<(), Box<dyn Future<Item=bool, Error=Error> + Send>>("check")
     }
 
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Item=(), Error=Error> + Send
     {
          self.e.was_called_returning::<(ClosedZone, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("clean_zone", (zone, txg))
     }
 
     pub fn expect_clean_zone(&mut self) -> Method<(ClosedZone, TxgT),
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<(ClosedZone, TxgT),
-                        Box<Future<Item=(), Error=Error> + Send>>
+                        Box<dyn Future<Item=(), Error=Error> + Send>>
             ("clean_zone")
     }
 
     pub fn expect_delete(&mut self) -> Method<(*const RID, TxgT),
-        Box<Future<Item=(), Error=Error>>>
+        Box<dyn Future<Item=(), Error=Error>>>
     {
         self.e.expect::<(*const RID, TxgT),
-            Box<Future<Item=(), Error=Error>>>
+            Box<dyn Future<Item=(), Error=Error>>>
             ("delete")
     }
 
@@ -88,21 +88,21 @@ impl IDMLMock {
         -> impl Future<Item=(), Error=Error> + Send
     {
          self.e.was_called_returning::<(u32, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("flush", (idx, txg))
     }
 
     pub fn expect_flush(&mut self) -> Method<(u32, TxgT),
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<(u32, TxgT), Box<Future<Item=(), Error=Error> + Send>>
+        self.e.expect::<(u32, TxgT), Box<dyn Future<Item=(), Error=Error> + Send>>
         ("flush")
     }
 
     pub fn expect_get<R: CacheRef>(&mut self) -> Method<*const RID,
-        Box<Future<Item=Box<R>, Error=Error>>>
+        Box<dyn Future<Item=Box<R>, Error=Error>>>
     {
-        self.e.expect::<*const RID, Box<Future<Item=Box<R>, Error=Error>>>
+        self.e.expect::<*const RID, Box<dyn Future<Item=Box<R>, Error=Error>>>
             ("get")
     }
 
@@ -114,39 +114,39 @@ impl IDMLMock {
     }
 
     pub fn expect_pop<T: Cacheable, R:CacheRef>(&mut self)
-        -> Method<(*const RID, TxgT), Box<Future<Item=Box<T>, Error=Error>>>
+        -> Method<(*const RID, TxgT), Box<dyn Future<Item=Box<T>, Error=Error>>>
     {
         self.e.expect::<(*const RID, TxgT),
-                        Box<Future<Item=Box<T>, Error=Error>>>
+                        Box<dyn Future<Item=Box<T>, Error=Error>>>
             ("pop")
     }
 
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
-        Box<Future<Item=RID, Error=Error>>>
+        Box<dyn Future<Item=RID, Error=Error>>>
     {
         self.e.expect::<(T, Compression, TxgT),
-                        Box<Future<Item=RID, Error=Error>>>
+                        Box<dyn Future<Item=RID, Error=Error>>>
             ("put")
     }
 
     pub fn expect_sync_all(&mut self)
-        -> Method<TxgT, Box<Future<Item=(), Error=Error> + Send>>
+        -> Method<TxgT, Box<dyn Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<TxgT, Box<Future<Item=(), Error=Error> + Send>>
+        self.e.expect::<TxgT, Box<dyn Future<Item=(), Error=Error> + Send>>
             ("sync_all")
     }
 
     pub fn expect_sync_transaction(&mut self)
-        -> Method<(), Box<Future<Item=(), Error=Error>>>
+        -> Method<(), Box<dyn Future<Item=(), Error=Error>>>
     {
         self.e.expect::<(),
-                        Box<Future<Item=(), Error=Error>>>("sync_transaction")
+                        Box<dyn Future<Item=(), Error=Error>>>("sync_transaction")
     }
 
     pub fn expect_txg(&mut self)
-        -> Method<(), Box<Future<Item=&'static TxgT, Error=Error> + Send>>
+        -> Method<(), Box<dyn Future<Item=&'static TxgT, Error=Error> + Send>>
     {
-        self.e.expect::<(), Box<Future<Item=&'static TxgT, Error=Error> + Send>>
+        self.e.expect::<(), Box<dyn Future<Item=&'static TxgT, Error=Error> + Send>>
             ("txg")
     }
 
@@ -174,14 +174,14 @@ impl IDMLMock {
         self.e.expect::<(), LbaT>("size")
     }
 
-    pub fn txg(&self) -> Box<Future<Item=&'static TxgT, Error=Error> + Send> {
+    pub fn txg(&self) -> Box<dyn Future<Item=&'static TxgT, Error=Error> + Send> {
         self.e.was_called_returning::<(),
-            Box<Future<Item=&'static TxgT, Error=Error> + Send>>
+            Box<dyn Future<Item=&'static TxgT, Error=Error> + Send>>
             ("txg", ())
     }
 
     pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> {
-        self.e.was_called_returning::<(), Box<Future<Item=(), Error=Error>>>
+        self.e.was_called_returning::<(), Box<dyn Future<Item=(), Error=Error>>>
             ("sync_transaction", ())
     }
 
@@ -191,18 +191,18 @@ impl IDMLMock {
     }
 
     pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<(LabelWriter, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("write_label", (labeller, txg))
     }
 
     pub fn expect_write_label(&mut self)
-        -> Method<(LabelWriter, TxgT), Box<Future<Item=(), Error=Error> + Send>>
+        -> Method<(LabelWriter, TxgT), Box<dyn Future<Item=(), Error=Error> + Send>>
     {
         self.e.expect::<(LabelWriter, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("write_label")
     }
 
@@ -212,10 +212,10 @@ impl DML for IDMLMock {
     type Addr = RID;
 
     fn delete(&self, rid: &RID, txg: TxgT)
-        -> Box<Future<Item=(), Error=Error> + Send>
+        -> Box<dyn Future<Item=(), Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const RID, TxgT),
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("delete", (rid as *const RID, txg))
     }
 
@@ -224,33 +224,33 @@ impl DML for IDMLMock {
     }
 
     fn get<T: Cacheable, R: CacheRef>(&self, rid: &RID)
-        -> Box<Future<Item=Box<R>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>
     {
         self.e.was_called_returning::<*const RID,
-            Box<Future<Item=Box<R>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<R>, Error=Error> + Send>>
             ("get", rid as *const RID)
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, rid: &RID, txg: TxgT)
-        -> Box<Future<Item=Box<T>, Error=Error> + Send>
+        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(*const RID, TxgT),
-            Box<Future<Item=Box<T>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<T>, Error=Error> + Send>>
             ("pop", (rid as *const RID, txg))
     }
 
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                          txg:TxgT)
-        -> Box<Future<Item=RID, Error=Error> + Send>
+        -> Box<dyn Future<Item=RID, Error=Error> + Send>
     {
         self.e.was_called_returning::<(T, Compression, TxgT),
-                                      Box<Future<Item=RID, Error=Error> + Send>>
+                                      Box<dyn Future<Item=RID, Error=Error> + Send>>
             ("put", (cacheable, compression, txg))
     }
 
-    fn sync_all(&self, txg: TxgT) -> Box<Future<Item=(), Error=Error> + Send> {
+    fn sync_all(&self, txg: TxgT) -> Box<dyn Future<Item=(), Error=Error> + Send> {
         self.e.was_called_returning::<TxgT,
-                                      Box<Future<Item=(), Error=Error> + Send>>
+                                      Box<dyn Future<Item=(), Error=Error> + Send>>
             ("sync_all", txg)
     }
 }

@@ -48,7 +48,7 @@ pub trait VdevRaidTrait : Vdev {
         -> Box<VdevFut>;
 }
 #[cfg(test)]
-pub type VdevRaidLike = Box<VdevRaidTrait>;
+pub type VdevRaidLike = Box<dyn VdevRaidTrait>;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type VdevRaidLike = VdevRaid;
@@ -815,7 +815,7 @@ impl<'a> Cluster {
     /// Deleting data in increments other than it was written is unsupported.
     /// In particular, it is not allowed to delete across zone boundaries.
     pub fn free(&self, lba: LbaT, length: LbaT)
-        -> Box<Future<Item=(), Error=Error>>
+        -> Box<dyn Future<Item=(), Error=Error>>
     {
         let start_zone = self.vdev.lba2zone(lba).expect(
             "Can't free from inter-zone padding");
@@ -926,7 +926,7 @@ impl<'a> Cluster {
                 }
             })  // LCOV_EXCL_LINE   kcov false negative
         }).map(|(zone_id, lba, oz_fut)| {
-            let fut : Box<Future<Item = (), Error = Error>>;
+            let fut : Box<dyn Future<Item = (), Error = Error>>;
             let wfut = vdev3.write_at(buf, zone_id, lba);
             let owfut = oz_fut.and_then(move |_| {
                 wfut
@@ -1213,7 +1213,7 @@ mod cluster {
         s.expect(vr.zone_limits_call(2).and_return_clone((204, 296)).times(..));
         s.expect(vr.zone_limits_call(3).and_return_clone((304, 396)).times(..));
         s.expect(vr.zone_limits_call(4).and_return_clone((404, 496)).times(..));
-        let mock_vr: Box<VdevRaidTrait> = Box::new(vr);
+        let mock_vr: Box<dyn VdevRaidTrait> = Box::new(vr);
         let (fsm, _mock_vr) = FreeSpaceMap::open(mock_vr).wait().unwrap();
         assert_eq!(fsm.zones.len(), 4);
         assert_eq!(fsm.zones[0].freed_blocks, 0);
@@ -1274,7 +1274,7 @@ mod cluster {
                  }).times(..)
         );
 
-        let mock_vr: Box<VdevRaidTrait> = Box::new(vr);
+        let mock_vr: Box<dyn VdevRaidTrait> = Box::new(vr);
         let (fsm, _mock_vr) = FreeSpaceMap::open(mock_vr).wait().unwrap();
         assert_eq!(fsm.zones.len(), 256);
         assert_eq!(fsm.zones[0].freed_blocks, 0);
@@ -1307,7 +1307,7 @@ mod cluster {
                  })
         );
 
-        let mock_vr: Box<VdevRaidTrait> = Box::new(vr);
+        let mock_vr: Box<dyn VdevRaidTrait> = Box::new(vr);
         let r = FreeSpaceMap::open(mock_vr).wait();
         assert_eq!(Error::ECKSUM, r.err().unwrap());
     }

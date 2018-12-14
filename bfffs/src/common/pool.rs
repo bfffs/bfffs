@@ -50,7 +50,7 @@ pub trait ClusterTrait {
     fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
 }
 #[cfg(test)]
-pub type ClusterLike = Box<ClusterTrait>;
+pub type ClusterLike = Box<dyn ClusterTrait>;
 #[cfg(not(test))]
 #[doc(hidden)]
 pub type ClusterLike = cluster::Cluster;

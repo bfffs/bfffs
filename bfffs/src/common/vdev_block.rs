@@ -25,7 +25,7 @@ use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
 use crate::sys::vdev_file::*;
 
 #[cfg(test)]
-pub type VdevLeaf = Box<VdevLeafApi>;
+pub type VdevLeaf = Box<dyn VdevLeafApi>;
 #[cfg(not(test))]
 pub type VdevLeaf = VdevFile;
 

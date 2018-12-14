@@ -36,20 +36,20 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
     }
 
     pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> + Send {
-        self.e.was_called_returning::<(), Box<Future<Item=(), Error=Error> + Send>>
+        self.e.was_called_returning::<(), Box<dyn Future<Item=(), Error=Error> + Send>>
             ("dump_trees", ())
     }
 
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.e.was_called_returning::<K,
-            Box<Future<Item=Option<V>, Error=Error> + Send>>("get", k)
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("get", k)
     }
 
     pub fn expect_get(&mut self) -> Method<K,
-        Box<Future<Item=Option<V>, Error=Error> + Send>>
+        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
     {
-        self.e.expect::<K, Box<Future<Item=Option<V>, Error=Error> + Send>>
+        self.e.expect::<K, Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
             ("get")
     }
 
@@ -57,15 +57,15 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
         -> impl Future<Item=Box<DivBuf>, Error=Error> + Send
     {
         self.e.was_called_returning::<RID,
-            Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
             ("get_blob", rid)
     }
 
     pub fn expect_get_blob(&mut self) -> Method<RID,
-        Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>
+        Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
     {
         self.e.expect::<RID,
-            Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
+            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
     }
 
     pub fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
@@ -91,13 +91,13 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
     pub fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error>
     {
         self.e.was_called_returning::<(),
-            Box<Future<Item=Option<K>, Error=Error> + Send>>("last_key", ())
+            Box<dyn Future<Item=Option<K>, Error=Error> + Send>>("last_key", ())
     }
 
     pub fn expect_last_key(&mut self) -> Method<(),
-        Box<Future<Item=Option<K>, Error=Error> + Send>>
+        Box<dyn Future<Item=Option<K>, Error=Error> + Send>>
     {
-        self.e.expect::<(), Box<Future<Item=Option<K>, Error=Error> + Send>>
+        self.e.expect::<(), Box<dyn Future<Item=Option<K>, Error=Error> + Send>>
             ("last_key")
     }
 
@@ -140,27 +140,27 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
 
     pub fn delete_blob(&self, rid: RID) -> impl Future<Item=(), Error=Error> {
         self.e.was_called_returning::<RID,
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("delete_blob", rid)
     }
 
     pub fn expect_delete_blob(&mut self) -> Method<RID,
-        Box<Future<Item=(), Error=Error> + Send>>
+        Box<dyn Future<Item=(), Error=Error> + Send>>
     {
-        self.e.expect::<RID, Box<Future<Item=(), Error=Error> + Send>>
+        self.e.expect::<RID, Box<dyn Future<Item=(), Error=Error> + Send>>
             ("delete_blob")
     }
 
     pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.e.was_called_returning::<K,
-            Box<Future<Item=Option<V>, Error=Error> + Send>>("get", k)
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("get", k)
     }
 
     pub fn expect_get(&mut self) -> Method<K,
-        Box<Future<Item=Option<V>, Error=Error> + Send>>
+        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
     {
-        self.e.expect::<K, Box<Future<Item=Option<V>, Error=Error> + Send>>
+        self.e.expect::<K, Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
             ("get")
     }
 
@@ -168,27 +168,27 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
         -> impl Future<Item=Box<DivBuf>, Error=Error> + Send
     {
         self.e.was_called_returning::<RID,
-            Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>
+            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
             ("get_blob", rid)
     }
 
     pub fn expect_get_blob(&mut self) -> Method<RID,
-        Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>
+        Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
     {
         self.e.expect::<RID,
-            Box<Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
+            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
     }
 
     pub fn insert(&self, k: K, v: V) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.e.was_called_returning::<(K, V),
-            Box<Future<Item=Option<V>, Error=Error> + Send>>("insert", (k, v))
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("insert", (k, v))
     }
 
     pub fn expect_insert(&mut self) -> Method<(K, V),
-        Box<Future<Item=Option<V>, Error=Error> + Send>>
+        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
     {
-        self.e.expect::<(K, V), Box<Future<Item=Option<V>, Error=Error> + Send>>
+        self.e.expect::<(K, V), Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
             ("insert")
     }
 
@@ -204,15 +204,15 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
         -> impl Future<Item=RID, Error=Error> + Send
     {
         self.e.was_called_returning::<(DivBufShared, Compression),
-            Box<Future<Item=RID, Error=Error> + Send>>("put_blob",
+            Box<dyn Future<Item=RID, Error=Error> + Send>>("put_blob",
             (dbs, compression))
     }
 
     pub fn expect_put_blob(&mut self) -> Method<(DivBufShared, Compression),
-        Box<Future<Item=RID, Error=Error> + Send>>
+        Box<dyn Future<Item=RID, Error=Error> + Send>>
     {
         self.e.expect::<(DivBufShared, Compression),
-                        Box<Future<Item=RID, Error=Error> + Send>>
+                        Box<dyn Future<Item=RID, Error=Error> + Send>>
             ("put_blob")
     }
 
@@ -243,30 +243,30 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
               T: Ord + Clone + Send + 'static
     {
         self.e.was_called_returning::<R,
-            Box<Future<Item=(), Error=Error> + Send>>
+            Box<dyn Future<Item=(), Error=Error> + Send>>
             ("range_delete", range)
     }
 
     pub fn expect_range_delete<R, T>(&mut self)
-        -> Method<R, Box<Future<Item=(), Error=Error> + Send>>
+        -> Method<R, Box<dyn Future<Item=(), Error=Error> + Send>>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
               T: Ord + Clone + Send + 'static
     {
-        self.e.expect::<R, Box<Future<Item=(), Error=Error> + Send>>
+        self.e.expect::<R, Box<dyn Future<Item=(), Error=Error> + Send>>
             ("range_delete")
     }
 
     pub fn remove(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
     {
         self.e.was_called_returning::<K,
-            Box<Future<Item=Option<V>, Error=Error> + Send>>("remove", k)
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("remove", k)
     }
 
     pub fn expect_remove(&mut self) -> Method<K,
-        Box<Future<Item=Option<V>, Error=Error> + Send>>
+        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
     {
-        self.e.expect::<K, Box<Future<Item=Option<V>, Error=Error> + Send>>
+        self.e.expect::<K, Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
             ("remove")
     }
 
