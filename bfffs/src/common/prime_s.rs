@@ -194,8 +194,8 @@ impl PrimeS {
         // The repetition and iteration
         let (r, z) = self.id2rep_and_iter(chunkid);
         // The stripe
-        let s = a / self.m as i32;
-        debug_assert!(s <= i16::max_value() as i32);
+        let s = a / i32::from(self.m);
+        debug_assert!(s <= i32::from(i16::max_value()));
         // The stride
         let y = (z.modulo(i16::from(self.n - 1))) + 1;
         ChunklocInt{a, r, s: s as i16, y, z}
@@ -210,8 +210,8 @@ impl PrimeS {
         // https://github.com/rust-lang/rust/issues/49048
         let rep = id / self.datachunks as u64;
         let iter = id.modulo(self.datachunks as u64) as i32 /
-                   (self.m as i32 * self.n as i32);
-        debug_assert!(iter <= i16::max_value() as i32);
+                   (i32::from(self.m) * i32::from(self.n));
+        debug_assert!(iter <= i32::from(i16::max_value()));
         (rep, iter as i16)
     }
 
@@ -259,7 +259,7 @@ impl PrimeS {
             ChunkId::Data(_) => a - i32::from(s * i16::from(m)),
             ChunkId::Parity(_, i) => i32::from(m) + i32::from(i)
         };
-        debug_assert!(b < u8::max_value() as i32);
+        debug_assert!(b < i32::from(u8::max_value()));
         b as u8
     }
 
@@ -321,7 +321,7 @@ impl Locator for PrimeS {
         let offset = chunkloc.offset.modulo(self.depth as u64) as i32;
         // iteration
         let z = offset / i32::from(self.k);
-        debug_assert!(z < i16::max_value() as i32);
+        debug_assert!(z < i32::from(i16::max_value()));
         let z = z as i16;
         // stride
         let y = z.modulo(i16::from(self.n - 1)) + 1;
@@ -344,9 +344,9 @@ impl Locator for PrimeS {
         let b = (disk * y_inv - i32::from(s) * i32::from(self.m))
             .modulo(i32::from(self.n)) as u8;
         // number of data chunks preceding this repetition
-        let o = u64::from(r) * self.datachunks() as u64;
+        let o = r * self.datachunks() as u64;
         if b >= self.m {
-            ChunkId::Parity(o + (s as u64 * self.m as u64),
+            ChunkId::Parity(o + (s as u64 * u64::from(self.m)),
                             i16::from(b - self.m))
         } else {
             ChunkId::Data(o + s as u64 * u64::from(self.m) + u64::from(b))
@@ -364,7 +364,7 @@ impl Locator for PrimeS {
     }
 
     fn stripes(&self) -> u32 {
-        self.stripes as u32
+        u32::from(self.stripes)
     }
 
     fn stripesize(&self) -> i16 {
@@ -403,7 +403,7 @@ impl PrimeSIter {
         let b = PrimeS::offset_within_stripe(start, cli.a, cli.s, layout.m);
         debug_assert!(b < layout.k);
         // Start with offset contributions from previous iterations
-        let o0 = i16::from(layout.k) * i16::from(cli.z);
+        let o0 = i16::from(layout.k) * cli.z;
         let mut o: Vec<i16> = vec![o0; layout.n as usize];
         for s in 0..=i32::from(s_z) {
             let end = if s == i32::from(s_z) { b } else { layout.k };
@@ -479,7 +479,7 @@ impl Iterator for PrimeSIter {
                 ChunkId::Data(i + 1)
             } else {
                 self.a = i32::from(self.stripe) * i32::from(self.m);
-                ChunkId::Parity(i - (self.m - 1) as u64, 0)
+                ChunkId::Parity(i - u64::from(self.m - 1), 0)
             }
         },
         ChunkId::Parity(a, i) => {
@@ -514,7 +514,7 @@ impl Iterator for PrimeSIter {
                     self.stripe_iter += 1;
                     self.stripe += 1;
                 }
-                ChunkId::Data(a + self.m as u64)
+                ChunkId::Data(a + u64::from(self.m))
             }
         }
         };

@@ -9,6 +9,7 @@ cat > src/ffi.rs << HERE
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 #![allow(unused)]
+#![allow(clippy::all)]
 use libc::timespec;
 HERE
 

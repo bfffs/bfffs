@@ -69,7 +69,7 @@ pub enum PropertyName {
 }
 
 impl PropertyName {
-    pub fn next(&self) -> PropertyName {
+    pub fn next(self) -> PropertyName {
         match self {
             PropertyName::Atime => PropertyName::RecordSize,
             PropertyName::RecordSize => PropertyName::Invalid,

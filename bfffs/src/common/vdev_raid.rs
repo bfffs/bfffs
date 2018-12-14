@@ -1035,7 +1035,7 @@ impl Vdev for VdevRaid {
     fn size(&self) -> LbaT {
         let disk_size_in_chunks = self.blockdevs[0].size() / self.chunksize;
         disk_size_in_chunks * self.locator.datachunks() *
-            self.chunksize / (self.locator.depth() as LbaT)
+            self.chunksize / LbaT::from(self.locator.depth())
     }
 
     fn sync_all(&self) -> Box<dyn Future<Item = (), Error = Error>> {

@@ -50,7 +50,7 @@ impl DevManager {
         inner.pools.iter()
         .filter_map(|(uuid, label)| {
             if label.name == name.as_ref() {
-                Some(uuid.clone())
+                Some(*uuid)
             } else {
                 None
             }

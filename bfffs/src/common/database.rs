@@ -562,7 +562,7 @@ impl Database {
                 // BTreeMap sadly doesn't have a range_delete method.
                 // https://github.com/rust-lang/rust/issues/42849
                 let keys = guard.range(PropCacheKey::range(name))
-                .map(|(k, _v)| k.clone())
+                .map(|(k, _v)| *k)
                 .collect::<Vec<_>>();
                 for k in keys.into_iter() {
                     guard.remove(&k);
