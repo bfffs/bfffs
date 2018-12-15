@@ -259,7 +259,7 @@ pub struct Fs {
     // These options may only be changed when the filesystem is mounting or
     // remounting the filesystem.
     /// Update files' atimes when reading?
-    _atime: bool,
+    atime: bool,
     /// Record size for new files, in bytes
     _record_size: usize
 }
@@ -457,6 +457,79 @@ impl Fs {
             }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
+    }
+
+    /// Asynchronously read from a file.
+    fn do_read<DS>(dataset: DS, ino: u64, fsize: u64, offset: u64, size: usize)
+        -> impl Future<Item=SGList, Error=Error>
+        where DS: ReadDataset<FSKey, FSValue<RID>>
+    {
+        // Populate a hole region in an sglist.
+        let fill_hole = |sglist: &mut SGList, p: &mut u64, l: usize| {
+            let l = cmp::min(l, ZERO_REGION_LEN);
+            let zb = ZERO_REGION.try_const().unwrap().slice_to(l);
+            *p += zb.len() as u64;
+            sglist.push(zb);
+        };
+
+        let mut size64 = size as u64;
+        size64 = size64.min(fsize.saturating_sub(offset));
+        let rs = RECORDSIZE as u64;
+        let baseoffset = offset - (offset % rs);
+
+        let end = offset + size64;
+        let erange = FSKey::extent_range(ino, baseoffset..end);
+        let initial = (Vec::<IoVec>::new(), offset, 0usize);
+        type T = (u64, DivBuf);
+        dataset.range(erange)
+        .and_then(move |(k, v)| {
+            let ofs = k.offset();
+            match v.as_extent().unwrap() {
+                Extent::Inline(ile) => {
+                    let buf = ile.buf.try_const().unwrap();
+                    boxfut!(Ok((ofs, buf)).into_future(), T, Error)
+                },
+                Extent::Blob(be) => {
+                    let bfut = dataset.get_blob(be.rid)
+                    .map(move |bbuf| (ofs, *bbuf));
+                    boxfut!(bfut, T, Error)
+                }
+            }
+        }).fold(initial, move |acc, (ofs, mut db)| {
+            let (mut sglist, mut p, rec) = acc;
+            if ofs < p {
+                // Trim the beginning of the buffer, if this is the first
+                // record.  Trim the end, too, if it's the last.
+                assert_eq!(rec, 0);
+                let s = p - ofs;
+                let e = cmp::min(db.len() as u64, p + size64 - ofs);
+                if e > s {
+                    let tb = db.slice(s as usize, e as usize);
+                    p += tb.len() as u64;
+                    sglist.push(tb);
+                }
+            } else {
+                // Fill in any hole
+                while ofs > p {
+                    let l = (ofs - p) as usize;
+                    fill_hole(&mut sglist, &mut p, l);
+                }
+                // Trim the end of the buffer.
+                if ofs + db.len() as u64 > offset + size64 {
+                    db.split_off((offset + size64 - ofs) as usize);
+                }
+                p += db.len() as u64;
+                sglist.push(db);
+            }
+            future::ok::<(SGList, u64, usize), Error>((sglist, p, rec + 1))
+        }).map(move |(mut sglist, mut p, _rec)| {
+            // Fill in any hole at the end.
+            while p - offset < size64 {
+                let l = (size64 - (p - offset)) as usize;
+                fill_hole(&mut sglist, &mut p, l);
+            }
+            sglist
+        })
     }
 
     /// Actually remove a directory, after all checks have passed
@@ -661,9 +734,9 @@ impl Fs {
         ).unwrap();
         let (last_key, (atimep, _), (recsizep, _)) = rx.wait().unwrap();
         let next_object = Atomic::new(last_key.unwrap().object() + 1);
-        let _atime = atimep.as_bool();
+        let atime = atimep.as_bool();
         let _record_size = 1 << recsizep.as_u8();
-        Fs{db: database, next_object, handle, tree, _atime, _record_size}
+        Fs{db: database, next_object, handle, tree, atime, _record_size}
     }
 
     fn next_object(&self) -> u64 {
@@ -1160,100 +1233,45 @@ impl Fs {
     pub fn read(&self, ino: u64, offset: u64, size: usize)
         -> Result<SGList, i32>
     {
-        // Populate a hole region in an sglist.
-        let fill_hole = |sglist: &mut SGList, p: &mut u64, l: usize| {
-            let l = cmp::min(l, ZERO_REGION_LEN);
-            let zb = ZERO_REGION.try_const().unwrap().slice_to(l);
-            *p += zb.len() as u64;
-            sglist.push(zb);
-        };
-
-        let mut size64 = size as u64;
-        let (tx, rx) = oneshot::channel();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
-        self.handle.spawn(
-            self.db.fswrite(self.tree, move |ds| {
-                let dataset = Arc::new(ds);
-                // First lookup the inode to get the file size
-                dataset.get(inode_key)
-                .and_then(move |r| {
-                    let dataset2 = dataset.clone();
-                    let mut value = r.unwrap();
-                    {
-                        let inode = value.as_mut_inode().unwrap();
-                        let now = time::get_time();
-                        // TODO: only update if self.atime
-                        inode.atime = now;
-                    }
-                    let fsize = value.as_inode().unwrap().size;
-                    // Truncate read to file size
-                    size64 = size64.min(fsize.saturating_sub(offset));
-                    let rs = RECORDSIZE as u64;
-                    let baseoffset = offset - (offset % rs);
-
-                    let end = offset + size64;
-                    let erange = FSKey::extent_range(ino, baseoffset..end);
-                    let initial = (Vec::<IoVec>::new(), offset, 0usize);
-                    type T = (u64, DivBuf);
-                    let data_fut = dataset.range(erange)
-                    .and_then(move |(k, v)| {
-                        let ofs = k.offset();
-                        match v.as_extent().unwrap() {
-                            Extent::Inline(ile) => {
-                                let buf = ile.buf.try_const().unwrap();
-                                boxfut!(Ok((ofs, buf)).into_future(), T, Error)
-                            },
-                            Extent::Blob(be) => {
-                                let bfut = dataset.get_blob(be.rid)
-                                .map(move |bbuf| (ofs, *bbuf));
-                                boxfut!(bfut, T, Error)
-                            }
+        let (tx, rx) = oneshot::channel();
+        // We only need a writeable FS reference if we're going to update atime.
+        // If not, then only get a read reference.  Read references are better
+        // because then can be held during txg syncs.
+        if self.atime {
+            self.handle.spawn(
+                self.db.fswrite(self.tree, move |ds| {
+                    ds.get(inode_key)
+                    .and_then(move |r| {
+                        let mut value = r.unwrap();
+                        {
+                            let inode = value.as_mut_inode().unwrap();
+                            let now = time::get_time();
+                            inode.atime = now;
                         }
-                    }).fold(initial, move |acc, (ofs, mut db)| {
-                        let (mut sglist, mut p, rec) = acc;
-                        if ofs < p {
-                            // Trim the beginning of the buffer, if this is the
-                            // first record.  Trim the end, too, if it's the
-                            // last.
-                            assert_eq!(rec, 0);
-                            let s = p - ofs;
-                            let e = cmp::min(db.len() as u64, p + size64 - ofs);
-                            if e > s {
-                                let tb = db.slice(s as usize, e as usize);
-                                p += tb.len() as u64;
-                                sglist.push(tb);
-                            }
-                        } else {
-                            // Fill in any hole
-                            while ofs > p {
-                                let l = (ofs - p) as usize;
-                                fill_hole(&mut sglist, &mut p, l);
-                            }
-                            // Trim the end of the buffer.
-                            if ofs + db.len() as u64 > offset + size64 {
-                                db.split_off((offset + size64 - ofs) as usize);
-                            }
-                            p += db.len() as u64;
-                            sglist.push(db);
-                        }
-                        future::ok::<(SGList, u64, usize), Error>
-                            ((sglist, p, rec + 1))
-                    }).map(move |(mut sglist, mut p, _rec)| {
-                        // Fill in any hole at the end.
-                        while p - offset < size64 {
-                            let l = (size64 - (p - offset)) as usize;
-                            fill_hole(&mut sglist, &mut p, l);
-                        }
-                        sglist
-                    });
-                    let atime_fut = dataset2.insert(inode_key, value);
-                    data_fut.join(atime_fut)
-                    .map(|(sglist, _)| {
+                        let fsize = value.as_inode().unwrap().size;
+                        let afut = ds.insert(inode_key, value);
+                        let dfut = Fs::do_read(ds, ino, fsize, offset, size);
+                        dfut.join(afut)
+                    }).map(|(sglist, _)| {
                         tx.send(Ok(sglist)).unwrap();
                     })
-                })
-            }).map_err(Error::unhandled)
-        ).unwrap();
+                }).map_err(Error::unhandled)
+            ).unwrap();
+        } else {
+            self.handle.spawn(
+                self.db.fsread(self.tree, move |ds| {
+                    ds.get(inode_key)
+                    .and_then(move |r| {
+                        let value = r.unwrap();
+                        let fsize = value.as_inode().unwrap().size;
+                        Fs::do_read(ds, ino, fsize, offset, size)
+                    }).map(|sglist| {
+                        tx.send(Ok(sglist)).unwrap();
+                    })
+                }).map_err(Error::unhandled)
+            ).unwrap();
+        }
         rx.wait().unwrap()
     }
 
@@ -1613,7 +1631,7 @@ impl Fs {
     pub fn set_props(&mut self, props: Vec<Property>) {
         for prop in props.iter() {
             match prop {
-                Property::Atime(atime) => self._atime = *atime,
+                Property::Atime(atime) => self.atime = *atime,
                 Property::RecordSize(exp) => self._record_size = 1 << *exp
             }
         }

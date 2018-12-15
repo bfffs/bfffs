@@ -15,6 +15,7 @@ test_suite! {
         common::fs::*,
         common::idml::*,
         common::pool::*,
+        common::property::*
     };
     use futures::{Future, future};
     use libc;
@@ -1198,8 +1199,20 @@ root:
         assert_ts_changed(&mocks.val.0, ino, true, false, false, false);
     }
 
-    // TODO: add a read_timestamps test when atime is disabled, once I have a
-    // way to set filesystem properties.
+    // When atime is disabled, reading a file should not update its atime.
+    test read_timestamps_no_atime(mocks) {
+        let (mut fs, _rt) = mocks.val;
+        let props = vec![Property::Atime(false)];
+        fs.set_props(props);
+
+        let ino = fs.create(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
+        let buf = vec![42u8; 4096];
+        fs.write(ino, 0, &buf[..], 0).unwrap();
+        clear_timestamps(&fs, ino);
+
+        fs.read(ino, 0, 4096).unwrap();
+        assert_ts_changed(&fs, ino, false, false, false, false);
+    }
 
     // A read that's split across two records
     test read_two_recs(mocks) {
