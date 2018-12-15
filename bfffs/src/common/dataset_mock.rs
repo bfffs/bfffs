@@ -6,6 +6,7 @@
 
 use crate::common::{
     *,
+    dataset::{RangeQuery, ReadDataset},
     dml::Compression,
     tree::{Key, Value},
 };
@@ -40,12 +41,6 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
             ("dump_trees", ())
     }
 
-    pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
-    {
-        self.e.was_called_returning::<K,
-            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("get", k)
-    }
-
     pub fn expect_get(&mut self) -> Method<K,
         Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
     {
@@ -53,29 +48,11 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
             ("get")
     }
 
-    pub fn get_blob(&self, rid: RID)
-        -> impl Future<Item=Box<DivBuf>, Error=Error> + Send
-    {
-        self.e.was_called_returning::<RID,
-            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
-            ("get_blob", rid)
-    }
-
     pub fn expect_get_blob(&mut self) -> Method<RID,
         Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
     {
         self.e.expect::<RID,
             Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
-    }
-
-    pub fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
-        where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
-    {
-        self.e.was_called_returning::<R,
-            Box<Stream<Item=(K, V), Error=Error> + Send>>
-            ("range", range)
     }
 
     pub fn expect_range<R, T>(&mut self)
@@ -123,6 +100,33 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
     }
 }
 
+impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDatasetMock<K, V> {
+    fn get(&self, k: K) -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
+    {
+        self.e.was_called_returning::<K,
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("get", k)
+    }
+
+    fn get_blob(&self, rid: RID)
+        -> Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>
+    {
+        self.e.was_called_returning::<RID,
+            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
+            ("get_blob", rid)
+    }
+
+    fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
+        where K: Borrow<T>,
+              R: RangeBounds<T> + 'static,
+              T: Ord + Clone + Send + 'static
+    {
+        let s = self.e.was_called_returning::<R,
+            Box<Stream<Item=(K, V), Error=Error> + Send>>
+            ("range", range);
+        RangeQuery{s, phantom: PhantomData}
+    }
+}
+
 pub struct ReadWriteDatasetMock<K: Key, V: Value> {
     e: Expectations,
     a: PhantomData<K>,
@@ -151,25 +155,11 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
             ("delete_blob")
     }
 
-    pub fn get(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
-    {
-        self.e.was_called_returning::<K,
-            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("get", k)
-    }
-
     pub fn expect_get(&mut self) -> Method<K,
         Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
     {
         self.e.expect::<K, Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
             ("get")
-    }
-
-    pub fn get_blob(&self, rid: RID)
-        -> impl Future<Item=Box<DivBuf>, Error=Error> + Send
-    {
-        self.e.was_called_returning::<RID,
-            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
-            ("get_blob", rid)
     }
 
     pub fn expect_get_blob(&mut self) -> Method<RID,
@@ -179,10 +169,12 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
             Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
     }
 
-    pub fn insert(&self, k: K, v: V) -> impl Future<Item=Option<V>, Error=Error>
+    pub fn insert(&self, k: K, v: V)
+        -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         self.e.was_called_returning::<(K, V),
-            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("insert", (k, v))
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
+                ("insert", (k, v))
     }
 
     pub fn expect_insert(&mut self) -> Method<(K, V),
@@ -214,16 +206,6 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
         self.e.expect::<(DivBufShared, Compression),
                         Box<dyn Future<Item=RID, Error=Error> + Send>>
             ("put_blob")
-    }
-
-    pub fn range<R, T>(&self, range: R) -> impl Stream<Item=(K, V), Error=Error>
-        where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
-    {
-        self.e.was_called_returning::<R,
-            Box<Stream<Item=(K, V), Error=Error> + Send>>
-            ("range", range)
     }
 
     pub fn expect_range<R, T>(&mut self)
@@ -281,6 +263,33 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
     pub fn then(&mut self) -> &mut Self {
         self.e.then();
         self
+    }
+}
+
+impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDatasetMock<K, V> {
+    fn get(&self, k: K) -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
+    {
+        self.e.was_called_returning::<K,
+            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("get", k)
+    }
+
+    fn get_blob(&self, rid: RID)
+        -> Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>
+    {
+        self.e.was_called_returning::<RID,
+            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
+            ("get_blob", rid)
+    }
+
+    fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
+        where K: Borrow<T>,
+              R: RangeBounds<T> + 'static,
+              T: Ord + Clone + Send + 'static
+    {
+        let s = self.e.was_called_returning::<R,
+            Box<Stream<Item=(K, V), Error=Error> + Send>>
+            ("range", range);
+        RangeQuery{s, phantom: PhantomData}
     }
 }
 
