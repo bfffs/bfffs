@@ -5,11 +5,17 @@ set -e
 
 cargo +nightly test --all-features --all
 
-# Check that benchmarks run, but don't care about results
-cargo +nightly bench
+# Check that benchmarks build, but don't run them.  Building them in release
+# mode is too slow.  TODO: build and run them in debug mode once this PR lands:
+# https://github.com/rust-lang/cargo/pull/6446#issuecomment-447582775
+cargo +nightly build --all-features --benches --all
 
 # It should also work on stable >= 1.30.0
 cargo +stable test --all
+
+# bfffs-fio should stay in consistent style.  The other crates can't, because
+# rustfmt screws them up.
+cargo +nightly fmt --package bfffs-fio -- --check
 
 # Measure test coverage, too
 which -s kcov && \
