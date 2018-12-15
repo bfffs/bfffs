@@ -440,7 +440,11 @@ pub enum FileType {
     /// Block device node
     Block(libc::dev_t),
     /// Regular file
-    Reg,
+    ///
+    /// The value is the record size in bytes, log base 2.  Once the file is
+    /// created, this cannot be changed without rewriting all the file's
+    /// records.
+    Reg(u8),
     /// Symlink, with its destination
     Link(OsString),
     /// Socket
@@ -455,7 +459,7 @@ impl FileType {
             FileType::Char(_) => libc::DT_CHR,
             FileType::Dir => libc::DT_DIR,
             FileType::Block(_) => libc::DT_BLK,
-            FileType::Reg => libc::DT_REG,
+            FileType::Reg(_) => libc::DT_REG,
             FileType::Link(_) => libc::DT_LNK,
             FileType::Socket => libc::DT_SOCK,
         }
@@ -468,7 +472,7 @@ impl FileType {
             FileType::Char(_) => libc::S_IFCHR,
             FileType::Dir => libc::S_IFDIR,
             FileType::Block(_) => libc::S_IFBLK,
-            FileType::Reg => libc::S_IFREG,
+            FileType::Reg(_) => libc::S_IFREG,
             FileType::Link(_) => libc::S_IFLNK,
             FileType::Socket => libc::S_IFSOCK,
         }

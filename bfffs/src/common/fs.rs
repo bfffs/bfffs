@@ -260,8 +260,8 @@ pub struct Fs {
     // remounting the filesystem.
     /// Update files' atimes when reading?
     atime: bool,
-    /// Record size for new files, in bytes
-    _record_size: usize
+    /// Record size for new files, in bytes, log base 2.
+    record_size: u8
 }
 
 bitfield! {
@@ -735,8 +735,8 @@ impl Fs {
         let (last_key, (atimep, _), (recsizep, _)) = rx.wait().unwrap();
         let next_object = Atomic::new(last_key.unwrap().object() + 1);
         let atime = atimep.as_bool();
-        let _record_size = 1 << recsizep.as_u8();
-        Fs{db: database, next_object, handle, tree, atime, _record_size}
+        let record_size = recsizep.as_u8();
+        Fs{db: database, next_object, handle, tree, atime, record_size}
     }
 
     fn next_object(&self) -> u64 {
@@ -747,7 +747,7 @@ impl Fs {
                   gid: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Reg)
+                                          FileType::Reg(self.record_size))
         .callback(Fs::create_ts_callback);
         self.do_create(create_args)
     }
@@ -1632,7 +1632,7 @@ impl Fs {
         for prop in props.iter() {
             match prop {
                 Property::Atime(atime) => self.atime = *atime,
-                Property::RecordSize(exp) => self._record_size = 1 << *exp
+                Property::RecordSize(exp) => self.record_size = *exp
             }
         }
 
@@ -1936,7 +1936,7 @@ fn create() {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().size == 0 &&
             args.1.as_inode().unwrap().nlink == 1 &&
-            args.1.as_inode().unwrap().file_type == FileType::Reg &&
+            args.1.as_inode().unwrap().file_type == FileType::Reg(12) &&
             args.1.as_inode().unwrap().perm == 0o644 &&
             args.1.as_inode().unwrap().uid == 123 &&
             args.1.as_inode().unwrap().gid == 456
@@ -2617,7 +2617,7 @@ fn unlink() {
                 birthtime: now,
                 uid: 0,
                 gid: 0,
-                file_type: FileType::Reg,
+                file_type: FileType::Reg(12),
                 perm: 0o644,
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
@@ -2728,7 +2728,7 @@ fn unlink_hardlink() {
                 birthtime: now,
                 uid: 0,
                 gid: 0,
-                file_type: FileType::Reg,
+                file_type: FileType::Reg(12),
                 perm: 0o644,
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
@@ -2819,7 +2819,7 @@ fn unlink_with_blob_extattr() {
                 birthtime: now,
                 uid: 0,
                 gid: 0,
-                file_type: FileType::Reg,
+                file_type: FileType::Reg(12),
                 perm: 0o644,
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
@@ -2954,7 +2954,7 @@ fn unlink_with_extattr_hash_collision() {
                 birthtime: now,
                 uid: 0,
                 gid: 0,
-                file_type: FileType::Reg,
+                file_type: FileType::Reg(12),
                 perm: 0o644,
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
