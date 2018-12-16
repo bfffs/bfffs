@@ -33,7 +33,9 @@ test_suite! {
     use time::Timespec;
     use tokio_io_pool::Runtime;
 
-    fixture!( mocks() -> (Fs, Runtime) {
+    fixture!( mocks(props: Vec<Property>) -> (Fs, Runtime) {
+        params { vec![Vec::new()].into_iter() }
+
         setup(&mut self) {
             let mut rt = Runtime::new();
             let handle = rt.handle().clone();
@@ -61,8 +63,9 @@ test_suite! {
                 })
             })).unwrap();
             let handle = rt.handle().clone();
+            let props = self.props.clone();
             let fs = rt.block_on(future::lazy(move || {
-                db.new_fs(Vec::new())
+                db.new_fs(props)
                 .map(move |tree_id| {
                     Fs::new(db.clone(), handle, tree_id)
                 })
@@ -1200,10 +1203,8 @@ root:
     }
 
     // When atime is disabled, reading a file should not update its atime.
-    test read_timestamps_no_atime(mocks) {
-        let (mut fs, _rt) = mocks.val;
-        let props = vec![Property::Atime(false)];
-        fs.set_props(props);
+    test read_timestamps_no_atime(mocks(vec![Property::Atime(false)])) {
+        let (fs, _rt) = mocks.val;
 
         let ino = fs.create(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
         let buf = vec![42u8; 4096];
@@ -1944,6 +1945,15 @@ root:
     test statvfs(mocks) {
         let statvfs = mocks.val.0.statvfs();
         assert_eq!(statvfs.f_blocks, 262_144);
+        assert_eq!(statvfs.f_bsize, 4096);
+        assert_eq!(statvfs.f_frsize, 4096);
+    }
+
+    test statvfs_8k(mocks(vec![Property::RecordSize(13)])) {
+        let statvfs = mocks.val.0.statvfs();
+        assert_eq!(statvfs.f_blocks, 262_144);
+        assert_eq!(statvfs.f_bsize, 8192);
+        assert_eq!(statvfs.f_frsize, 4096);
     }
 
     test symlink(mocks) {
