@@ -510,6 +510,17 @@ pub struct Inode {
     pub file_type:   FileType
 }
 
+impl Inode {
+    /// This file's record size in bytes
+    pub fn record_size(&self) -> usize {
+        if let FileType::Reg(exp) = self.file_type {
+            1 << exp
+        } else {
+            panic!("Only regular files have record sizes")
+        }
+    }
+}
+
 /// This module ought to be unreachable, but must exist to satisfy rustc
 // LCOV_EXCL_START
 #[allow(clippy::needless_pass_by_value)]

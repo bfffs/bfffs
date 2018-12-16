@@ -42,8 +42,6 @@ use tokio_io_pool;
 pub use self::fs_tree::ExtAttr;
 pub use self::fs_tree::ExtAttrNamespace;
 
-const RECORDSIZE: usize = 4 * 1024;    // Default record size 4KB
-
 /// Operations used for data that is stored in in-BTree hash tables
 mod htable {
     use super::*;
@@ -514,7 +512,8 @@ impl Fs {
     }
 
     /// Asynchronously read from a file.
-    fn do_read<DS>(dataset: DS, ino: u64, fsize: u64, offset: u64, size: usize)
+    fn do_read<DS>(dataset: DS, ino: u64, fsize: u64, rs: u64, offset: u64,
+                   size: usize)
         -> impl Future<Item=SGList, Error=Error>
         where DS: ReadDataset<FSKey, FSValue<RID>>
     {
@@ -528,7 +527,6 @@ impl Fs {
 
         let mut size64 = size as u64;
         size64 = size64.min(fsize.saturating_sub(offset));
-        let rs = RECORDSIZE as u64;
         let baseoffset = offset - (offset % rs);
 
         let end = offset + size64;
@@ -648,7 +646,8 @@ impl Fs {
 
             let truncate_fut = if new_size < old_size {
                 assert!(iv.file_type.dtype() == libc::DT_REG);
-               boxfut!(Fs::do_truncate(dataset.clone(), ino, new_size))
+                let rs = iv.record_size() as u64;
+                boxfut!(Fs::do_truncate(dataset.clone(), ino, new_size, rs))
             } else {
                 let fut = Ok(()).into_future();
                 boxfut!(fut)
@@ -662,7 +661,8 @@ impl Fs {
 
     /// Remove all of a file's data past `size`.  This routine does _not_ update
     /// the Inode
-    fn do_truncate(dataset: Arc<ReadWriteFilesystem>, ino: u64, size: u64)
+    fn do_truncate(dataset: Arc<ReadWriteFilesystem>, ino: u64, size: u64,
+                   rs: u64)
         -> impl Future<Item=(), Error=Error> + Send
     {
         // Delete data past the truncation point
@@ -680,8 +680,8 @@ impl Fs {
         .and_then(move |_| {
             dataset3.range_delete(FSKey::extent_range(ino, size..))
         });
-        let partial_fut = if size % RECORDSIZE as u64 > 0 {
-            let ofs = size - size % RECORDSIZE as u64;
+        let partial_fut = if size % rs > 0 {
+            let ofs = size - size % rs;
             let len = (size - ofs) as usize;
             let k = FSKey::new(ino, ObjKey::Extent(ofs));
             let fut = dataset.get(k)
@@ -1298,14 +1298,13 @@ impl Fs {
                     ds.get(inode_key)
                     .and_then(move |r| {
                         let mut value = r.unwrap();
-                        {
-                            let inode = value.as_mut_inode().unwrap();
-                            let now = time::get_time();
-                            inode.atime = now;
-                        }
-                        let fsize = value.as_inode().unwrap().size;
+                        let inode = value.as_mut_inode().unwrap();
+                        let now = time::get_time();
+                        inode.atime = now;
+                        let fsize = inode.size;
+                        let rs = inode.record_size() as u64;
                         let afut = ds.insert(inode_key, value);
-                        let dfut = Fs::do_read(ds, ino, fsize, offset, size);
+                        let dfut = Fs::do_read(ds, ino, fsize, rs, offset, size);
                         dfut.join(afut)
                     }).map(|(sglist, _)| {
                         tx.send(Ok(sglist)).unwrap();
@@ -1318,8 +1317,10 @@ impl Fs {
                     ds.get(inode_key)
                     .and_then(move |r| {
                         let value = r.unwrap();
-                        let fsize = value.as_inode().unwrap().size;
-                        Fs::do_read(ds, ino, fsize, offset, size)
+                        let inode = value.as_inode().unwrap();
+                        let fsize = inode.size;
+                        let rs = inode.record_size() as u64;
+                        Fs::do_read(ds, ino, fsize, rs, offset, size)
                     }).map(|sglist| {
                         tx.send(Ok(sglist)).unwrap();
                     })
@@ -1706,6 +1707,7 @@ impl Fs {
 
     pub fn statvfs(&self) -> libc::statvfs {
         let (tx, rx) = oneshot::channel::<libc::statvfs>();
+        let rs = 1 << self.record_size;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let blocks = dataset.size();
@@ -1717,7 +1719,7 @@ impl Fs {
                     f_favail: u64::max_value(),
                     f_ffree: u64::max_value(),
                     f_files: u64::max_value(),
-                    f_bsize: 4096,
+                    f_bsize: rs,
                     f_flag: 0,
                     f_frsize: 4096,
                     f_fsid: 0,
@@ -1803,15 +1805,7 @@ impl Fs {
         //         Then write it as an InlineExtent
         //  3) Set file length
         let (tx, rx) = oneshot::channel();
-        let rs = RECORDSIZE as u64;
         let uio = data.into();
-
-        let datalen = uio.len();
-        let offset0 = (offset % rs) as usize;
-        let sglist = unsafe {
-            uio.into_chunks(offset0, RECORDSIZE,
-                |chunk| Arc::new(DivBufShared::from(chunk)))
-        };
 
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
@@ -1820,12 +1814,24 @@ impl Fs {
                 dataset.get(inode_key)
                 .and_then(move |r| {
                     let mut value = r.unwrap();
-                    let filesize = value.as_inode().unwrap().size;
+                    let inode = value.as_inode().unwrap();
+                    let filesize = inode.size;
+                    let rs = inode.record_size() as u64;
+
+                    // Moving uio into the asynchronous domain is safe because
+                    // the async domain blocks on rx.wait().
+                    let datalen = uio.len();
+                    let offset0 = (offset % rs) as usize;
+                    let sglist = unsafe {
+                        uio.into_chunks(offset0, inode.record_size(),
+                            |chunk| Arc::new(DivBufShared::from(chunk)))
+                    };
+
                     let data_futs = sglist.into_iter()
                         .enumerate()
                         .map(|(i, dbs)| {
                         let ds3 = dataset.clone();
-                        Fs::write_record(ino, filesize, offset, i, dbs, ds3)
+                        Fs::write_record(ino, rs, filesize, offset, i, dbs, ds3)
                     }).collect::<Vec<_>>();
                     let new_size = cmp::max(filesize, offset + datalen as u64);
                     {
@@ -1837,7 +1843,8 @@ impl Fs {
                     }
                     let ino_fut = dataset.insert(inode_key, value);
                     future::join_all(data_futs).join(ino_fut)
-                }).map(move |_| tx.send(Ok(datalen as u32)).unwrap())
+                    .map(move |_| tx.send(Ok(datalen as u32)).unwrap())
+                })
             }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()
@@ -1845,15 +1852,14 @@ impl Fs {
 
     // Subroutine of write
     #[inline]
-    fn write_record(ino: u64, filesize: u64, offset: u64, i: usize,
+    fn write_record(ino: u64, rs: u64, filesize: u64, offset: u64, i: usize,
                     dbs: Arc<DivBufShared>, dataset: Arc<ReadWriteFilesystem>)
         -> Box<dyn Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
     {
-        let rs = RECORDSIZE as u64;
         let baseoffset = offset - (offset % rs);
         let offs = baseoffset + i as u64 * rs;
         let k = FSKey::new(ino, ObjKey::Extent(offs));
-        if dbs.len() < RECORDSIZE {
+        if (dbs.len() as u64) < rs {
             // We must read-modify-write
             let dataset4 = dataset.clone();
             let fut = dataset.get(k)
