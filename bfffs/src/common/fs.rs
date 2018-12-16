@@ -246,6 +246,60 @@ mod htable {
     }
 }
 
+/// BFFF's version of `struct uio`.  For userland implementations, this is just
+/// a wrapper around a slice.  For kernelland implementations, it will probably
+/// actually wrap `struct uio`.
+// The purpose of Uio is to move data copies out of Fs::write.  Kernel clients
+// will need to copyin(9) at some point, and this is where they'll do it.
+pub struct Uio {
+    data: &'static [u8]
+}
+
+impl Uio {
+    /// Divide this `uio` up into some kind of scatter/gather list.
+    ///
+    /// # Safety
+    ///
+    /// `Uio` does not track the lifetime of the buffer from which it was
+    /// created.  The caller must ensure that that buffer is still valid when
+    /// `into_chunks` is called.
+    //
+    /// Perhaps with async/await, bfffs::common::fs::Fs::write could be made
+    /// safe with non-'static references.
+    unsafe fn into_chunks<F, T>(self, offset0: usize, rs: usize, f: F) -> Vec<T>
+        where F: Fn(Vec<u8>) -> T
+    {
+        let nrecs = (div_roundup(offset0 + self.len(), rs)
+                     - (offset0 / rs)) as usize;
+        let reclen1 = cmp::min(self.len(), rs - offset0);
+        (0..nrecs).map(|rec| {
+            let range = if rec == 0 {
+                0..reclen1
+            } else if rec == nrecs - 1 {
+                (reclen1 + (rec - 1) * rs)..self.len()
+            } else {
+                (reclen1 + (rec - 1) * rs)..(reclen1 + rec * rs)
+            };
+            // Data copy
+            let v = Vec::from(&self.data[range]);
+            f(v)
+        }).collect::<Vec<T>>()
+    }
+
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl<'a> From<&'a [u8]> for Uio {
+    /// Create a new `Uio`.  The caller must ensure that the `Uio` drops before
+    /// the `sl` reference becomes invalid.
+    fn from(sl: &'a [u8]) -> Self {
+        let data = unsafe {std::mem::transmute::<&'a [u8], &'static [u8]>(sl) };
+        Uio { data }
+    }
+}
+
 /// Generic Filesystem layer.
 ///
 /// Bridges the synchronous with Tokio domains, and the system-independent with
@@ -1734,8 +1788,9 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn write(&self, ino: u64, offset: u64, data: &[u8], _flags: u32)
+    pub fn write<IU>(&self, ino: u64, offset: u64, data: IU, _flags: u32)
         -> Result<u32, i32>
+        where IU: Into<Uio>
     {
         // Outline:
         // 1) Split the I/O into discrete records
@@ -1749,23 +1804,14 @@ impl Fs {
         //  3) Set file length
         let (tx, rx) = oneshot::channel();
         let rs = RECORDSIZE as u64;
+        let uio = data.into();
 
-        let datalen = data.len();
-        let nrecs = (div_roundup(offset + datalen as u64, rs)
-                     - (offset / rs)) as usize;
-        let reclen1 = cmp::min(datalen, (rs - (offset % rs)) as usize);
-        let sglist = (0..nrecs).map(|rec| {
-            let range = if rec == 0 {
-                0..reclen1
-            } else if rec == nrecs - 1 {
-                (reclen1 + (rec - 1) * RECORDSIZE)..datalen
-            } else {
-                (reclen1 + (rec - 1) * RECORDSIZE)..(reclen1 + rec * RECORDSIZE)
-            };
-            // Data copy
-            let v = Vec::from(&data[range]);
-            Arc::new(DivBufShared::from(v))
-        }).collect::<Vec<_>>();
+        let datalen = uio.len();
+        let offset0 = (offset % rs) as usize;
+        let sglist = unsafe {
+            uio.into_chunks(offset0, RECORDSIZE,
+                |chunk| Arc::new(DivBufShared::from(chunk)))
+        };
 
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
