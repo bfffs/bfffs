@@ -1,6 +1,7 @@
 use bfffs::common::{
     database::TreeID,
-    device_manager::DevManager
+    device_manager::DevManager,
+    property::Property
 };
 use clap::crate_version;
 use futures::future;
@@ -137,12 +138,18 @@ fn create(args: &clap::ArgMatches) {
              * 1024 * 1024 / (BYTES_PER_LBA as u64);
             NonZeroU64::new(lbas).expect("zone_size may not be zero")
         });
-    let mut builder = Builder::new(name, zone_size, rt);
-    let mut values = args.values_of("vdev").unwrap();
+    let propstrings = if let Some(it) = args.values_of("property") {
+         it.collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    let mut builder = Builder::new(name, propstrings, zone_size, rt);
+    let mut vdev_tokens = args.values_of("vdev").unwrap();
     let mut cluster_type = None;
     let mut devs = vec![];
     loop {
-        let next = values.next();
+        let next = vdev_tokens.next();
         match next {
             None => {
                 if !devs.is_empty() {
@@ -187,16 +194,26 @@ fn create(args: &clap::ArgMatches) {
 struct Builder {
     clusters: Vec<ClusterProxy>,
     name: String,
+    properties: Vec<Property>,
     rt: Runtime,
     zone_size: Option<NonZeroU64>
 }
 
 impl Builder {
-    pub fn new(name: String, zone_size: Option<NonZeroU64>, rt: Runtime)
+    pub fn new(name: String, propstrings: Vec<&str>,
+               zone_size: Option<NonZeroU64>, rt: Runtime)
         -> Self
     {
         let clusters = Vec::new();
-        Builder{clusters, name, rt, zone_size}
+        let properties = propstrings.into_iter()
+            .map(|ps| {
+                Property::from_str(ps).unwrap_or_else(|_e| {
+                    eprintln!("Invalid property specification {}", ps);
+                    std::process::exit(2);
+                })
+            })
+            .collect::<Vec<_>>();
+        Builder{clusters, name, properties, rt, zone_size}
     }
 
     pub fn create_cluster(&mut self, vtype: &str, devs: &[&str]) {
@@ -251,7 +268,7 @@ impl Builder {
                 Database::create(idml, task_executor)
             })
         })).unwrap();
-        let props = Vec::new();
+        let props = self.properties.clone();
         self.rt.block_on(future::lazy(|| {
             db.new_fs(props)
             .and_then(|_tree_id| db.sync_transaction())
@@ -311,6 +328,12 @@ fn main() {
                      .help("Simulated Zone size in MB")
                      .long("zone_size")
                      .takes_value(true)
+                ).arg(clap::Arg::with_name("property")
+                     .help("Dataset properties, comma delimited")
+                     .short("o")
+                     .takes_value(true)
+                     .multiple(true)
+                     .require_delimiter(true)
                 ).arg(clap::Arg::with_name("name")
                      .help("Pool name")
                      .required(true)
