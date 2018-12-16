@@ -2415,7 +2415,6 @@ test_suite! {
                             u64::from(u8::max_value()))
                     as u8;
                 let buf = [fill; 2048];
-                //self.rng.fill_bytes(&mut buf);
                 info!("write {:x} at offset {}", self.files[idx].0, ofs);
                 let r = self.fs.write(ino, ofs, &buf[..], 0);
                 assert!(r.is_ok());
