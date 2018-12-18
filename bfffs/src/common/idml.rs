@@ -24,6 +24,7 @@ use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
 use std::{
     io,
+    mem,
     sync::{Arc, Mutex},
 };
 #[cfg(not(test))]
@@ -49,7 +50,9 @@ impl RidtEntry {
     }
 }
 
-impl Value for RidtEntry {}
+impl Value for RidtEntry {
+    const TYPICAL_SIZE: usize = mem::size_of::<RidtEntry>();
+}
 
 pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
 

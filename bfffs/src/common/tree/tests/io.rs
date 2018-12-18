@@ -2,10 +2,14 @@
 //! Tests regarding disk I/O for Trees
 // LCOV_EXCL_START
 
-use crate::common::tree::*;
-use crate::common::dml_mock::*;
-use crate::common::ddml_mock::*;
-use crate::common::ddml::DRP;
+use crate::common::{
+    ddml_mock::*,
+    ddml::DRP,
+    dml_mock::*,
+    fs_tree::{FSKey, FSValue},
+    idml_mock::*,
+    tree::*,
+};
 use futures::future;
 use simulacrum::*;
 use std::ffi::OsStr;
@@ -1301,6 +1305,31 @@ root:
           3: 3.0
           4: 4.0
           5: 5.0"#);
+}
+
+// This test mimics what Database does with its forest object
+#[test]
+fn serialize_forest() {
+    let mock = IDMLMock::default();
+    let idml = Arc::new(mock);
+    let tree: Tree<RID, IDMLMock, FSKey, FSValue<RID>> =
+        Tree::from_str(idml, r#"
+---
+height: 1
+min_fanout: 2
+max_fanout: 5
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Addr:
+      1
+"#);
+
+    assert_eq!(TreeOnDisk::TYPICAL_SIZE, tree.serialize().unwrap().len());
 }
 
 // Tree::serialize should serialize the Tree::Inner object

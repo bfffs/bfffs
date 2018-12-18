@@ -2226,6 +2226,12 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TreeOnDisk(Vec<u8>);
 
+impl TreeOnDisk {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 #[cfg(test)]
 impl Default for TreeOnDisk {
     fn default() -> Self {
@@ -2233,7 +2239,10 @@ impl Default for TreeOnDisk {
     }
 }
 
-impl Value for TreeOnDisk {}
+impl Value for TreeOnDisk {
+    /// Verified in common::tree::tests::io::serialize_forest
+    const TYPICAL_SIZE: usize = 68;
+}
 
 #[cfg(test)] mod tests;
 

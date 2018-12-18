@@ -696,6 +696,10 @@ impl<A: Addr> FSValue<A> {
 }
 
 impl<A: Addr> Value for FSValue<A> {
+    // FSValue can have variable size.  But the most common variant is likely to
+    // be FSValue::BlobExtent, which has size 16.
+    const TYPICAL_SIZE: usize = 16;
+
     fn flush<D>(self, dml: &D, txg: TxgT)
         -> Box<dyn Future<Item=Self, Error=Error> + Send + 'static>
         where D: DML + 'static, D::Addr: 'static
@@ -727,6 +731,8 @@ impl<A: Addr> Value for FSValue<A> {
 // LCOV_EXCL_START
 #[cfg(test)]
 mod t {
+
+use bincode;
 use super::*;
 
 // pet kcov
@@ -735,6 +741,24 @@ fn debug() {
     assert_eq!("Extent(0)", format!("{:?}", ObjKey::Extent(0)));
     assert_eq!("DirEntry(0)", format!("{:?}", ObjKey::DirEntry(0)));
     assert_eq!("ExtAttr(0)", format!("{:?}", ObjKey::ExtAttr(0)));
+}
+
+#[test]
+fn fskey_typical_size() {
+    let ok = ObjKey::Extent(0);
+    let fsk = FSKey::new(0, ok);
+    let v: Vec<u8> = bincode::serialize(&fsk).unwrap();
+    assert_eq!(v.len(), FSKey::TYPICAL_SIZE);
+}
+
+#[test]
+fn fsvalue_typical_size() {
+    let fsv: FSValue<RID> = FSValue::BlobExtent(BlobExtent{
+        lsize: 0xdeadbeef,
+        rid: RID(0x01020304050607)
+    });
+    let v: Vec<u8> = bincode::serialize(&fsv).unwrap();
+    assert_eq!(FSValue::<RID>::TYPICAL_SIZE, v.len());
 }
 
 /// For best locality of reference, keys of the same object should always

@@ -60,15 +60,29 @@ where T: Copy + Debug + DeserializeOwned + Eq + Ord + PartialEq + Send + Seriali
     'static {}
 
 pub trait Key: Copy + Debug + DeserializeOwned + Ord + PartialEq + MinValue +
-    Send + Serialize + 'static {}
+    Send + Serialize + 'static
+{
+    /// The typical size of an object of this type in bytes, when serialized
+    /// with bincode.
+    const TYPICAL_SIZE: usize;
+}
 
 impl<T> Key for T
 where T: Copy + Debug + DeserializeOwned + Ord + MinValue + PartialEq + Send +
-    Serialize + 'static {}
+    Serialize + 'static
+{
+    // So far, all Key types have a fixed size, and it's the same as the
+    // in-memory size.
+    const TYPICAL_SIZE: usize = mem::size_of::<T>();
+}
 
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     Serialize + 'static
 {
+    /// The typical size of an object of this type in bytes, when serialized
+    /// with bincode.
+    const TYPICAL_SIZE: usize;
+
     /// Prepare this `Value` to be written to disk
     // LCOV_EXCL_START   unreachable code
     fn flush<D>(self, _dml: &D, _txg: TxgT)
@@ -89,10 +103,16 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     }
 }
 
-impl Value for RID {}
+impl Value for RID {
+    const TYPICAL_SIZE: usize = mem::size_of::<RID>();
+}
 
-#[cfg(test)] impl Value for f32 {}
-#[cfg(test)] impl Value for u32 {}
+#[cfg(test)] impl Value for f32 {
+    const TYPICAL_SIZE: usize = mem::size_of::<f32>();
+}
+#[cfg(test)] impl Value for u32 {
+    const TYPICAL_SIZE: usize = mem::size_of::<u32>();
+}
 
 /// Uniquely identifies any Node in the Tree.
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
