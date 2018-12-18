@@ -278,6 +278,10 @@ impl PBA {
     }
 }
 
+impl TypicalSize for PBA {
+    const TYPICAL_SIZE: usize = 10;
+}
+
 /// Record ID
 ///
 /// Uniquely identifies each indirect record.  Record IDs are never reused.
@@ -291,6 +295,10 @@ impl Display for RID {
     }
 }
 
+impl TypicalSize for RID {
+    const TYPICAL_SIZE: usize = 8;
+}
+
 /// "Private" trait; only exists to ensure that div_roundup will fail to compile
 /// when used with signed numbers.  It would be nice to use a negative trait
 /// bound like "+ !Neg", but Rust doesn't support negative trait bounds.
@@ -301,6 +309,20 @@ impl RoundupAble for u16 {}
 impl RoundupAble for u32 {}
 impl RoundupAble for u64 {}
 impl RoundupAble for usize {}
+
+/// Objects that implement this trait have a typical size when serialized with
+/// bincode
+pub trait TypicalSize {
+    const TYPICAL_SIZE: usize;
+}
+
+impl TypicalSize for u32 {
+    const TYPICAL_SIZE: usize = 4;
+}
+
+impl TypicalSize for f32 {
+    const TYPICAL_SIZE: usize = 4;
+}
 
 /// Our scatter-gather list.  A slice of reference-counted `IoVec`s.
 pub type SGList = Vec<IoVec>;
@@ -365,6 +387,11 @@ fn zero_sglist(len: usize) -> SGList {
 }
 
 // LCOV_EXCL_START
+#[cfg(test)]
+mod t {
+use bincode;
+use super::*;
+
 #[test]
 fn test_error() {
     assert_eq!(Error::EPERM, Error::from(nix::Error::Sys(nix::errno::Errno::EPERM)));
@@ -379,7 +406,7 @@ fn test_div_roundup() {
 }
 
 #[cfg(test)]
-macro_rules! test_checksum_sglist_helper {
+macro_rules! checksum_sglist_helper {
     ( $klass:ident) => {
         let together = vec![0u8, 1, 2, 3, 4, 5];
         let apart = vec![vec![0u8, 1], vec![2u8, 3], vec![4u8, 5]];
@@ -399,16 +426,30 @@ macro_rules! test_checksum_sglist_helper {
 }
 
 #[test]
-fn test_checksum_sglist_default_hasher() {
+fn checksum_sglist_default_hasher() {
     use std::collections::hash_map::DefaultHasher;
 
-    test_checksum_sglist_helper!(DefaultHasher);
+    checksum_sglist_helper!(DefaultHasher);
 }
 
 #[test]
-fn test_checksum_sglist_metrohash64() {
+fn checksum_sglist_metrohash64() {
     use metrohash::MetroHash64;
 
-    test_checksum_sglist_helper!(MetroHash64);
+    checksum_sglist_helper!(MetroHash64);
+}
+
+#[test]
+fn pba_typical_size() {
+    assert_eq!(PBA::TYPICAL_SIZE,
+               bincode::serialized_size(&PBA::default()).unwrap() as usize);
+}
+
+#[test]
+fn rid_typical_size() {
+    assert_eq!(RID::TYPICAL_SIZE,
+               bincode::serialized_size(&RID::default()).unwrap() as usize);
+}
+
 }
 // LCOV_EXCL_STOP

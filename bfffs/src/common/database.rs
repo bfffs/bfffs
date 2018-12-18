@@ -15,7 +15,7 @@ use crate::{
         fs_tree::*,
         label::*,
         property::*,
-        tree::{Key, MinValue, TreeOnDisk}
+        tree::{MinValue, TreeOnDisk}
     }
 };
 use futures::{
@@ -63,7 +63,7 @@ pub enum TreeID {
     Fs(u32)
 }
 
-impl Key for TreeID {
+impl TypicalSize for TreeID {
     const TYPICAL_SIZE: usize = 8;
 }
 

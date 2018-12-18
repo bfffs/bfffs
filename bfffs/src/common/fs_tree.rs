@@ -215,7 +215,7 @@ impl FSKey {
     }
 }
 
-impl Key for FSKey {
+impl TypicalSize for FSKey {
     const TYPICAL_SIZE: usize = 16;
 }
 
@@ -699,11 +699,13 @@ impl<A: Addr> FSValue<A> {
     }
 }
 
-impl<A: Addr> Value for FSValue<A> {
+impl<A: Addr> TypicalSize for FSValue<A> {
     // FSValue can have variable size.  But the most common variant is likely to
     // be FSValue::BlobExtent, which has size 16.
     const TYPICAL_SIZE: usize = 16;
+}
 
+impl<A: Addr> Value for FSValue<A> {
     fn flush<D>(self, dml: &D, txg: TxgT)
         -> Box<dyn Future<Item=Self, Error=Error> + Send + 'static>
         where D: DML + 'static, D::Addr: 'static

@@ -49,9 +49,11 @@ impl RidtEntry {
     }
 }
 
-impl Value for RidtEntry {
+impl TypicalSize for RidtEntry {
     const TYPICAL_SIZE: usize = 38;
 }
+
+impl Value for RidtEntry {}
 
 pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
 

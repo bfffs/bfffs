@@ -60,32 +60,17 @@ where T: Copy + Debug + DeserializeOwned + Eq + Ord + PartialEq + Send + Seriali
     'static {}
 
 pub trait Key: Copy + Debug + DeserializeOwned + Ord + PartialEq + MinValue +
-    Send + Serialize + 'static
-{
-    /// The typical size of an object of this type in bytes, when serialized
-    /// with bincode.
-    const TYPICAL_SIZE: usize;
-}
+    Send + Serialize + TypicalSize + 'static {}
 
-impl Key for u32 {
-    const TYPICAL_SIZE: usize = 4;
-}
+impl<T> Key for T
+where T: Copy + Debug + DeserializeOwned + Ord + MinValue + PartialEq + Send +
+    Serialize + TypicalSize + 'static {}
 
-impl Key for PBA {
-    const TYPICAL_SIZE: usize = 10;
-}
 
-impl Key for RID {
-    const TYPICAL_SIZE: usize = 8;
-}
 
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
-    Serialize + 'static
+    Serialize + TypicalSize + 'static
 {
-    /// The typical size of an object of this type in bytes, when serialized
-    /// with bincode.
-    const TYPICAL_SIZE: usize;
-
     /// Prepare this `Value` to be written to disk
     // LCOV_EXCL_START   unreachable code
     fn flush<D>(self, _dml: &D, _txg: TxgT)
@@ -106,16 +91,9 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     }
 }
 
-impl Value for RID {
-    const TYPICAL_SIZE: usize = 8;
-}
-
-#[cfg(test)] impl Value for f32 {
-    const TYPICAL_SIZE: usize = 4;
-}
-#[cfg(test)] impl Value for u32 {
-    const TYPICAL_SIZE: usize = 4;
-}
+impl Value for RID {}
+#[cfg(test)] impl Value for f32 {}
+#[cfg(test)] impl Value for u32 {}
 
 /// Uniquely identifies any Node in the Tree.
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -1009,20 +987,6 @@ fn arc_node_eq() {
     assert!(node.eq(&node));
     let dbs = DivBufShared::from(Vec::new());
     assert!(!node.eq(&dbs));
-}
-
-#[test]
-fn pba_typical_size() {
-    assert_eq!(PBA::TYPICAL_SIZE,
-               bincode::serialized_size(&PBA::default()).unwrap() as usize);
-}
-
-#[test]
-fn rid_typical_size() {
-    assert_eq!(<RID as Key>::TYPICAL_SIZE,
-               bincode::serialized_size(&RID::default()).unwrap() as usize);
-    assert_eq!(<RID as Value>::TYPICAL_SIZE,
-               bincode::serialized_size(&RID::default()).unwrap() as usize);
 }
 
 #[test]
