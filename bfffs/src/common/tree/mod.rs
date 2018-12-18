@@ -2235,8 +2235,8 @@ impl Default for TreeOnDisk {
 }
 
 impl Value for TreeOnDisk {
-    /// Verified in common::tree::tests::io::serialize_forest
-    const TYPICAL_SIZE: usize = 68;
+    // Verified in common::tree::tests::io::serialize_forest
+    const TYPICAL_SIZE: usize = 76;
 }
 
 #[cfg(test)] mod tests;

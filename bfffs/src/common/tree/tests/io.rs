@@ -1330,7 +1330,7 @@ root:
 fn serialize_forest() {
     let mock = IDMLMock::default();
     let idml = Arc::new(mock);
-    let tree: Tree<RID, IDMLMock, FSKey, FSValue<RID>> =
+    let typical_tree: Tree<RID, IDMLMock, FSKey, FSValue<RID>> =
         Tree::from_str(idml, r#"
 ---
 height: 1
@@ -1348,7 +1348,9 @@ root:
       1
 "#);
 
-    assert_eq!(TreeOnDisk::TYPICAL_SIZE, tree.serialize().unwrap().len());
+    let typical_tod: TreeOnDisk = typical_tree.serialize().unwrap();
+    assert_eq!(TreeOnDisk::TYPICAL_SIZE,
+               bincode::serialized_size(&typical_tod).unwrap() as usize);
 }
 
 // Tree::serialize should serialize the Tree::Inner object

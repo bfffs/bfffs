@@ -24,7 +24,6 @@ use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
 use std::{
     io,
-    mem,
     sync::{Arc, Mutex},
 };
 #[cfg(not(test))]
@@ -51,7 +50,7 @@ impl RidtEntry {
 }
 
 impl Value for RidtEntry {
-    const TYPICAL_SIZE: usize = mem::size_of::<RidtEntry>();
+    const TYPICAL_SIZE: usize = 38;
 }
 
 pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
@@ -617,6 +616,13 @@ mod t {
             txg:        TxgT(0)
         };
         format!("{:?}", label);
+    }
+
+    #[test]
+    fn ridtentry_typical_size() {
+        let typical = RidtEntry::new(DRP::default());
+        assert_eq!(RidtEntry::TYPICAL_SIZE,
+                   bincode::serialized_size(&typical).unwrap() as usize);
     }
 
     #[test]

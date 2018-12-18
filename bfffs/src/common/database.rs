@@ -15,7 +15,7 @@ use crate::{
         fs_tree::*,
         label::*,
         property::*,
-        tree::{MinValue, TreeOnDisk}
+        tree::{Key, MinValue, TreeOnDisk}
     }
 };
 use futures::{
@@ -61,6 +61,10 @@ pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
 pub enum TreeID {
     /// A filesystem, snapshot, or clone
     Fs(u32)
+}
+
+impl Key for TreeID {
+    const TYPICAL_SIZE: usize = 8;
 }
 
 impl MinValue for TreeID {
@@ -822,4 +826,16 @@ mod database {
         })).unwrap();
     }
 }
+
+mod treeid {
+    use bincode;
+    use super::super::*;
+
+    #[test]
+    fn typical_size() {
+        assert_eq!(TreeID::TYPICAL_SIZE,
+                   bincode::serialized_size(&TreeID::Fs(0)).unwrap() as usize);
+    }
+}
+
 }

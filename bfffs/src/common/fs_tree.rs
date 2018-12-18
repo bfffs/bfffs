@@ -215,6 +215,10 @@ impl FSKey {
     }
 }
 
+impl Key for FSKey {
+    const TYPICAL_SIZE: usize = 16;
+}
+
 impl MinValue for FSKey {
     fn min_value() -> Self {
         FSKey(0)
@@ -732,7 +736,6 @@ impl<A: Addr> Value for FSValue<A> {
 #[cfg(test)]
 mod t {
 
-use bincode;
 use super::*;
 
 // pet kcov
