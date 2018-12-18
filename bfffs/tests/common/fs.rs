@@ -280,8 +280,9 @@ test_suite! {
         assert_eq!(fs_tree,
 r#"---
 height: 2
-min_fanout: 4
-max_fanout: 16
+fanout:
+  start: 4
+  end: 17
 _max_size: 4194304
 root:
   key: 0

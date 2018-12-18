@@ -121,8 +121,9 @@ fn basic() {
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -227,8 +228,9 @@ root:
     assert_eq!(clean_tree,
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -394,8 +396,9 @@ fn dirty_root() {
     let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0

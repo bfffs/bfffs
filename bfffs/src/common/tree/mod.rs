@@ -345,15 +345,13 @@ struct Inner<A: Addr, D: DML, K: Key, V: Value> {
     // should be very rare, so performance is not a concern.
     #[serde(with = "atomic_u64_serializer")]
     height: Atomic<u64>,
-    /// Minimum node fanout.  Smaller nodes will be merged, or will steal
-    /// children from their neighbors.
-    min_fanout: u64,
-    /// Maximum node fanout.  Larger nodes will be split.
+    /// Node fanout range.  Smaller nodes will be merged, or will steal
+    /// children from their neighbors.  Larger nodes will be split.
     // Rodeh states that the minimum value of max_fanout that can guarantee
     // invariants is 2 * min_fanout + 1.  However, range_delete can be slightly
     // simplified if max_fanout is at least 2 * min_fanout + 4.  That would mean
     // that fix_int can always either merge two nodes, or steal 2 nodes.
-    max_fanout: u64,
+    fanout: Range<u64>,
     /// Maximum node size in bytes.  Larger nodes will be split or their message
     /// buffers flushed
     _max_size: u64,
@@ -374,8 +372,7 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
     fn new(dml: Arc<D>, iod: InnerOnDisk<A, K, V>) -> Self {
         Inner {
             height: Atomic::new(iod.height),
-            min_fanout: iod.min_fanout,
-            max_fanout: iod.max_fanout,
+            fanout: iod.fanout,
             _max_size: iod._max_size,
             root: RwLock::new(iod.root),
             dml
@@ -394,8 +391,7 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 struct InnerOnDisk<A: Addr, K: Key, V: Value> {
     height: u64,
-    min_fanout: u64,
-    max_fanout: u64,
+    fanout: Range<u64>,
     _max_size: u64,
     root: IntElem<A, K, V>
 }
@@ -435,7 +431,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // old ones get freed while we're working
         type SenderFut<A, K, V> = Box<dyn Future<Item=(mpsc::Sender<A>,
             RwLockReadGuard<IntElem<A, K, V>>), Error=Error> + Send>;
-        let (tx, rx) = mpsc::channel(self.i.max_fanout as usize);
+        let (tx, rx) = mpsc::channel(self.i.fanout.end as usize - 1);
         let height = self.i.height.load(Ordering::Relaxed) as u8;
         let dml = self.i.dml.clone();
         let txgs2 = txgs.clone();
@@ -507,8 +503,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Keep the whole tree locked and use LIFO lock discipline
         let height = self.i.height.load(Ordering::Relaxed) as u8;
         let inner = self.i.clone();
-        let min_fanout = self.i.min_fanout as usize;
-        let max_fanout = self.i.max_fanout as usize;
+        let min_fanout = self.i.fanout.start as usize;
+        let max_fanout = self.i.fanout.end as usize - 1;
         self.read()
         .and_then(move |tree_guard| {
             tree_guard.rlock(&inner.dml)
@@ -741,7 +737,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         debug_assert!(nchildren >= 2,
             "nchildren < 2 for tree with parent key {:?}, idx={:?}",
             parent.as_int().children[child_idx].key, child_idx);
-        let max_fanout = inner.max_fanout;
+        let max_fanout = inner.fanout.end - 1;
         let (fut, sib_idx, right) = {
             if child_idx < nchildren - 1 {
                 let sib_idx = child_idx + 1;
@@ -815,7 +811,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         // First, split the node, if necessary
-        if (*child).should_split(inner.max_fanout) {
+        if (*child).should_split(inner.fanout.end - 1) {
             let (old_txgs, new_elem) = child.split(txg);
             parent.as_int_mut().children[child_idx].txgs = old_txgs;
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
@@ -848,7 +844,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         // First, split the root node, if necessary
-        if rnode.should_split(inner.max_fanout) {
+        if rnode.should_split(inner.fanout.end - 1) {
             let (old_txgs, new_elem) = rnode.split(txg);
             let new_root_data = NodeData::Int( IntData::new(vec![new_elem]));
             let old_root_data = mem::replace(rnode.deref_mut(), new_root_data);
@@ -1125,7 +1121,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let rangeclone = range.clone();
         let dml2 = self.i.dml.clone();
         let inner2 = self.i.clone();
-        let min_fanout = self.i.min_fanout as usize;
+        let min_fanout = self.i.fanout.start as usize;
         let height = self.i.height.load(Ordering::Relaxed) as u8;
         self.write()
             .and_then(move |guard| {
@@ -1557,7 +1553,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let inner3 = inner.clone();
             let inner7 = inner.clone();
             let range3 = range.clone();
-            let min_fanout = inner.min_fanout;
+            let min_fanout = inner.fanout.start;
             let left_idx = to_fix[0];
             let right_idx = to_fix.get(1).cloned();
             let underflow = move |guard: &TreeWriteGuard<A, K, V>, common: bool|
@@ -1663,7 +1659,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Since there are no on-disk children, the initial TXG range is empty
         let i: Arc<Inner<A, D, K, V>> = Arc::new(Inner {
             height: Atomic::new(1),
-            min_fanout, max_fanout,
+            fanout: min_fanout..(max_fanout + 1),
             _max_size: max_size,
             root: RwLock::new(IntElem::default()),
             dml
@@ -1693,7 +1689,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // First, fix the node, if necessary.  Merge/steal even if the node
         // currently satifisfies the min_fanout, because we may remove end up
         // removing a child
-        if child.underflow(inner.min_fanout + 1) {
+        if child.underflow(inner.fanout.start + 1) {
             let dml2 = inner.dml.clone();
             Box::new(
                 Tree::fix_int(&inner, parent, child_idx, child, txg)
@@ -1795,8 +1791,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             };
             let iod = InnerOnDisk{
                 height: self.i.height.load(Ordering::Relaxed),
-                min_fanout: self.i.min_fanout,
-                max_fanout: self.i.max_fanout,
+                fanout: self.i.fanout.clone(),
                 _max_size: self.i._max_size,
                 root
             };

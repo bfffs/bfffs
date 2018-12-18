@@ -17,8 +17,9 @@ fn insert() {
     assert_eq!(format!("{}", tree),
 r#"---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -41,8 +42,9 @@ fn insert_lower_than_parents_key() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -84,8 +86,9 @@ root:
     assert_eq!(format!("{}", tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -130,8 +133,9 @@ fn insert_dup() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -150,8 +154,9 @@ root:
     assert_eq!(format!("{}", tree),
 r#"---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -173,8 +178,9 @@ fn insert_split_int() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -295,8 +301,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -430,8 +437,9 @@ fn insert_split_leaf() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -473,8 +481,9 @@ root:
     assert_eq!(format!("{}", tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -528,8 +537,9 @@ fn insert_split_root_int() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -602,8 +612,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -696,8 +707,9 @@ fn insert_split_root_leaf() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -720,8 +732,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -775,8 +788,9 @@ fn get_deep() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -838,8 +852,9 @@ fn last_key() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -893,8 +908,9 @@ fn range_delete() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -1009,8 +1025,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -1065,8 +1082,9 @@ fn range_delete_danger() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -1179,8 +1197,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -1293,8 +1312,9 @@ fn range_delete_exc_exc() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -1361,8 +1381,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -1417,8 +1438,9 @@ fn range_delete_exc_inc() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -1485,8 +1507,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -1550,8 +1573,9 @@ fn range_delete_fix_three_times() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 4
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -1839,8 +1863,9 @@ root:
   assert_eq!(format!("{}", &tree),
 r#"---
 height: 4
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -1969,8 +1994,9 @@ fn range_delete_merge_and_underflow() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -2046,8 +2072,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -2104,8 +2131,9 @@ fn range_delete_merge_and_parent_underflow() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -2215,8 +2243,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -2301,8 +2330,9 @@ fn range_delete_merge_descending_and_ascending() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -2444,8 +2474,9 @@ fn range_delete_merge_left_child_twice() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 5
-max_fanout: 11
+fanout:
+  start: 5
+  end: 12
 _max_size: 4194304
 root:
   key: 0
@@ -2530,8 +2561,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 5
-max_fanout: 11
+fanout:
+  start: 5
+  end: 12
 _max_size: 4194304
 root:
   key: 0
@@ -2597,8 +2629,9 @@ fn range_delete_merge_to_lca_twice() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 4
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -2797,8 +2830,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 4
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -2951,8 +2985,9 @@ fn range_delete_merge_right_child_descending() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 4
-max_fanout: 9
+fanout:
+  start: 4
+  end: 10
 _max_size: 4194304
 root:
   key: 0
@@ -3020,8 +3055,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 4
-max_fanout: 9
+fanout:
+  start: 4
+  end: 10
 _max_size: 4194304
 root:
   key: 0
@@ -3070,8 +3106,9 @@ fn range_delete_merge_right_child_first() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 4
-max_fanout: 9
+fanout:
+  start: 4
+  end: 10
 _max_size: 4194304
 root:
   key: 0
@@ -3196,8 +3233,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 4
-max_fanout: 9
+fanout:
+  start: 4
+  end: 10
 _max_size: 4194304
 root:
   key: 0
@@ -3280,8 +3318,9 @@ fn range_delete_merge_root() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -3325,8 +3364,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -3355,8 +3395,9 @@ fn range_delete_merge_root_during_ascent() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -3499,8 +3540,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -3544,8 +3586,9 @@ fn range_delete_merge_root_twice() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -3629,8 +3672,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -3658,8 +3702,9 @@ fn range_delete_parent_and_child_underflow_after_descent() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 4
-min_fanout: 4
-max_fanout: 16
+fanout:
+  start: 4
+  end: 17
 _max_size: 4194304
 root:
   key: 0
@@ -3870,8 +3915,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 4
-min_fanout: 4
-max_fanout: 16
+fanout:
+  start: 4
+  end: 17
 _max_size: 4194304
 root:
   key: 0
@@ -3988,8 +4034,9 @@ fn range_delete_cant_fix_for_minfanout_plus_two() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -4085,8 +4132,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -4182,8 +4230,9 @@ fn range_delete_cant_steal_to_fix_lca() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -4287,8 +4336,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -4373,8 +4423,9 @@ fn range_delete_single_node() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -4428,8 +4479,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -4484,8 +4536,9 @@ fn range_delete_underflow_and_steal_left() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -4594,8 +4647,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -4694,8 +4748,9 @@ fn range_delete_to_end() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -4747,8 +4802,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -4791,8 +4847,9 @@ fn range_delete_to_end_of_int_node() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -4921,8 +4978,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -5039,8 +5097,9 @@ fn range_delete_whole_nodes() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -5106,8 +5165,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -5150,8 +5210,9 @@ fn range_delete_whole_node_denormalized() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -5233,8 +5294,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -5305,8 +5367,9 @@ fn range_delete_pass2_steal_creates_an_lca() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 5
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -5696,8 +5759,9 @@ let r = rt.block_on(
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 4
-min_fanout: 3
-max_fanout: 7
+fanout:
+  start: 3
+  end: 8
 _max_size: 4194304
 root:
   key: 0
@@ -5851,8 +5915,9 @@ fn range_delete_pass2_steal_left() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -5940,8 +6005,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6018,8 +6084,9 @@ fn range_delete_pass2_steal_right() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
 ---
 height: 4
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6203,8 +6270,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 4
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6325,8 +6393,9 @@ fn range_delete_range_from() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6399,8 +6468,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6437,8 +6507,9 @@ fn range_delete_range_full() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6515,8 +6586,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6537,8 +6609,9 @@ fn range_delete_range_to() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6611,8 +6684,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6665,8 +6739,9 @@ fn range_delete_to_end_deep() {
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6708,8 +6783,9 @@ fn range_delete_underflow_in_parent_and_child() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6787,8 +6863,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6808,8 +6885,9 @@ fn range_empty_range() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6867,8 +6945,9 @@ fn range_full() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6913,8 +6992,9 @@ fn range_exclusive_start() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -6968,8 +7048,9 @@ fn range_leaf() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7000,8 +7081,9 @@ fn range_leaf_inclusive_end() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
 ---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7032,8 +7114,9 @@ fn range_nonexistent_between_two_leaves() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7079,8 +7162,9 @@ fn range_two_ints() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7142,8 +7226,9 @@ fn range_ends_between_two_leaves() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7189,8 +7274,9 @@ fn range_ends_before_node_but_after_parent_pointer() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7236,8 +7322,9 @@ fn range_starts_between_two_leaves() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7293,8 +7380,9 @@ fn range_two_leaves() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7341,8 +7429,9 @@ fn remove_last_key() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7361,8 +7450,9 @@ root:
     assert_eq!(format!("{}", tree),
 r#"---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7382,8 +7472,9 @@ fn remove_from_leaf() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7404,8 +7495,9 @@ root:
     assert_eq!(format!("{}", tree),
 r#"---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7427,8 +7519,9 @@ fn remove_and_merge_down() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7457,8 +7550,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 1
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7480,8 +7574,9 @@ fn remove_and_merge_int_left() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7603,8 +7698,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7720,8 +7816,9 @@ fn remove_and_merge_int_right() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7833,8 +7930,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7940,8 +8038,9 @@ fn remove_and_merge_leaf_left() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -7989,8 +8088,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8031,8 +8131,9 @@ fn remove_and_merge_leaf_right() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8081,8 +8182,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8124,8 +8226,9 @@ fn remove_and_steal_int_left() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8257,8 +8360,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8392,8 +8496,9 @@ fn remove_and_steal_int_right() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8525,8 +8630,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8660,8 +8766,9 @@ fn remove_and_steal_leaf_left() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8712,8 +8819,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8765,8 +8873,9 @@ fn remove_and_steal_leaf_right() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
 ---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
@@ -8817,8 +8926,9 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
-min_fanout: 2
-max_fanout: 5
+fanout:
+  start: 2
+  end: 6
 _max_size: 4194304
 root:
   key: 0
