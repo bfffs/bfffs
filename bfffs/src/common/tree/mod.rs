@@ -2248,8 +2248,7 @@ pub struct TreeOnDisk<A: Addr>(InnerOnDisk<A>);
 
 impl<A: Addr> TypicalSize for TreeOnDisk<A> {
     // Verified in common::tree::tests::io::serialize_forest
-    // TODO: conditionalize on A
-    const TYPICAL_SIZE: usize = 48;
+    const TYPICAL_SIZE: usize = 40 + A::TYPICAL_SIZE;
 }
 
 impl<A: Addr> Value for TreeOnDisk<A> {}

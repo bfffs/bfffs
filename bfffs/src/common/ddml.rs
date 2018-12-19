@@ -225,6 +225,10 @@ impl DRP {
     // LCOV_EXCL_STOP
 }
 
+impl TypicalSize for DRP {
+    const TYPICAL_SIZE: usize = 30;
+}
+
 /// Direct Data Management Layer for a single `Pool`
 pub struct DDML {
     // Sadly, the Cache needs to be Mutex-protected because updating the LRU
@@ -512,8 +516,42 @@ impl DML for DDML {
 #[cfg(test)]
 #[cfg(feature = "mocks")]
 mod t {
+mod drp {
+    use super::super::*;
 
-    use super::*;
+    #[test]
+    fn as_uncompressed() {
+        let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 5000);
+        let drp0_nc = drp0.as_uncompressed();
+        assert_eq!(drp0_nc.compression, Compression::None);
+        assert_eq!(drp0_nc.lsize, drp0_nc.csize);
+        assert_eq!(drp0_nc.csize, drp0.csize);
+        assert_eq!(drp0_nc.pba, drp0.pba);
+        assert_eq!(drp0_nc.compression, Compression::None);
+
+        //drp1 is what DDML::put_direct will return after writing drp0_nc's
+        //contents as uncompressed
+        let mut drp1 = DRP::random(Compression::None, drp0.csize as usize);
+        drp1.checksum = drp0_nc.checksum;
+
+        let drp1_c = drp1.into_compressed(&drp0);
+        assert_eq!(drp1_c.compression, Compression::ZstdL9NoShuffle);
+        assert_eq!(drp1_c.lsize, drp0.lsize);
+        assert_eq!(drp1_c.csize, drp0.csize);
+        assert_eq!(drp1_c.pba, drp1.pba);
+        assert_eq!(drp1_c.checksum, drp0.checksum);
+    }
+
+    #[test]
+    fn typical_size() {
+        let drp = DRP::random(Compression::ZstdL9NoShuffle, 5000);
+        let size = bincode::serialized_size(&drp).unwrap() as usize;
+        assert_eq!(DRP::TYPICAL_SIZE, size);
+    }
+}
+
+mod ddml {
+    use super::super::*;
     use divbuf::DivBufShared;
     use futures::{IntoFuture, future};
     use mockers::matchers::ANY;
@@ -551,29 +589,6 @@ mod t {
             fn write_label(&self, mut labeller: LabelWriter)
                 -> Box<Future<Item=(), Error=Error> + Send>;
         }
-    }
-
-    #[test]
-    fn as_uncompressed(){
-        let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 5000);
-        let drp0_nc = drp0.as_uncompressed();
-        assert_eq!(drp0_nc.compression, Compression::None);
-        assert_eq!(drp0_nc.lsize, drp0_nc.csize);
-        assert_eq!(drp0_nc.csize, drp0.csize);
-        assert_eq!(drp0_nc.pba, drp0.pba);
-        assert_eq!(drp0_nc.compression, Compression::None);
-
-        //drp1 is what DDML::put_direct will return after writing drp0_nc's
-        //contents as uncompressed
-        let mut drp1 = DRP::random(Compression::None, drp0.csize as usize);
-        drp1.checksum = drp0_nc.checksum;
-
-        let drp1_c = drp1.into_compressed(&drp0);
-        assert_eq!(drp1_c.compression, Compression::ZstdL9NoShuffle);
-        assert_eq!(drp1_c.lsize, drp0.lsize);
-        assert_eq!(drp1_c.csize, drp0.csize);
-        assert_eq!(drp1_c.pba, drp1.pba);
-        assert_eq!(drp1_c.checksum, drp0.checksum);
     }
 
     #[test]
@@ -955,5 +970,6 @@ mod t {
         let mut rt = current_thread::Runtime::new().unwrap();
         assert!(rt.block_on(ddml.sync_all(TxgT::from(0))).is_ok());
     }
+}
 }
 // LCOV_EXCL_STOP

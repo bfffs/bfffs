@@ -1318,6 +1318,41 @@ root:
           5: 5.0"#);
 }
 
+// This test mimics what the IDML does with the alloc_t
+#[test]
+fn serialize_alloc_t() {
+    let mock = DDMLMock::default();
+    let idml = Arc::new(mock);
+    let typical_tree: Tree<DRP, DDMLMock, PBA, RID> =
+        Tree::from_str(idml, r#"
+---
+height: 1
+fanout:
+  start: 2
+  end: 6
+_max_size: 4194304
+root:
+  key:
+    cluster: 0
+    lba: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Addr:
+      pba:
+        cluster: 2
+        lba: 0x0102030405060708
+      compression: ZstdL9NoShuffle
+      lsize: 78
+      csize: 36
+      checksum: 0x0807060504030201
+"#);
+    let typical_tod = typical_tree.serialize().unwrap();
+    assert_eq!(TreeOnDisk::<DRP>::TYPICAL_SIZE,
+               bincode::serialized_size(&typical_tod).unwrap() as usize);
+}
+
 // This test mimics what Database does with its forest object
 #[test]
 fn serialize_forest() {
