@@ -5,7 +5,6 @@
 //types that don't implement Default
 #![allow(clippy::new_without_default_derive)]
 
-use bincode;
 use crate::common::*;
 use crate::common::{Error, TxgT};
 use crate::common::dml::*;
@@ -159,8 +158,8 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    pub fn open(_dml: Arc<D>, _on_disk: &TreeOnDisk) -> bincode::Result<Self> {
-        Ok(Self::new())
+    pub fn open(_dml: Arc<D>, _on_disk: TreeOnDisk<A, K, V>) -> Self {
+        Self::new()
     }
 
     pub fn range<R, T>(&self, range: R) -> RangeQueryMock<A, D, K, T, V>
@@ -217,14 +216,15 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
             Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("remove")
     }
 
-    pub fn serialize(&self) -> Result<TreeOnDisk, Error> {
-        self.e.was_called_returning::<(), Result<TreeOnDisk, Error>>
+    pub fn serialize(&self) -> Result<TreeOnDisk<A, K, V>, Error> {
+        self.e.was_called_returning::<(), Result<TreeOnDisk<A, K, V>, Error>>
         ("serialize", ())
     }
 
-    pub fn expect_serialize(&mut self) -> Method<(), Result<TreeOnDisk, Error>>
+    pub fn expect_serialize(&mut self)
+        -> Method<(), Result<TreeOnDisk<A, K, V>, Error>>
     {
-        self.e.expect::<(), Result<TreeOnDisk, Error>>("serialize")
+        self.e.expect::<(), Result<TreeOnDisk<A, K, V>, Error>>("serialize")
     }
 
     pub fn then(&mut self) -> &mut Self {

@@ -129,6 +129,7 @@ bitfield! {
     /// B-Tree keys for a Filesystem tree
     #[derive(Clone, Copy, Deserialize, Eq, PartialEq, PartialOrd, Ord,
              Serialize)]
+    #[cfg_attr(test, derive(Default))]
     pub struct FSKey(u128);
     impl Debug;
     u64; pub object, _: 127, 64;
@@ -618,6 +619,10 @@ pub enum FSValue<A: Addr> {
     DirEntries(Vec<Dirent>),
     /// A native dataset property.
     Property(Property),
+    /// For testing purposes only!  Must come last!
+    #[cfg(test)]
+    #[doc(hidden)]
+    Invalid,
 }
 
 impl<A: Addr> FSValue<A> {
@@ -696,6 +701,13 @@ impl<A: Addr> FSValue<A> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+impl Default for FSValue<RID> {
+    fn default() -> Self {
+        FSValue::Invalid
     }
 }
 

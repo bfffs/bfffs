@@ -38,6 +38,7 @@ use crate::common::ddml_mock::DDMLMock as DDML;
 pub use crate::common::ddml::ClosedZone;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(test, derive(Default))]
 struct RidtEntry {
     drp: DRP,
     refcount: u64
@@ -275,8 +276,8 @@ impl<'a> IDML {
                  mut label_reader: LabelReader) -> (Self, LabelReader)
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let alloct = Tree::open(ddml.clone(), &l.alloct).unwrap();
-        let ridt = Tree::open(ddml.clone(), &l.ridt).unwrap();
+        let alloct = Tree::open(ddml.clone(), l.alloct);
+        let ridt = Tree::open(ddml.clone(), l.ridt);
         let transaction = RwLock::new(l.txg);
         let next_rid = Atomic::new(l.next_rid);
         let trees = Arc::new(Trees{alloct, ridt});
@@ -570,9 +571,9 @@ impl DML for IDML {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
-    alloct:             TreeOnDisk,
+    alloct:             TreeOnDisk<DRP, PBA, RID>,
     next_rid:           u64,
-    ridt:               TreeOnDisk,
+    ridt:               TreeOnDisk<DRP, RID, RidtEntry>,
     /// Last transaction group synced before the label was written
     txg:                TxgT,
 }

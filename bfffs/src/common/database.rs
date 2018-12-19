@@ -55,12 +55,21 @@ use tokio::timer;
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
 
+type ForestV = TreeOnDisk<RID, FSKey, FSValue<RID>>;
+
 /// Keys into the Forest
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
          Serialize)]
 pub enum TreeID {
     /// A filesystem, snapshot, or clone
     Fs(u32)
+}
+
+#[cfg(test)]
+impl Default for TreeID {
+    fn default() -> Self {
+        TreeID::Fs(0)
+    }
 }
 
 impl TypicalSize for TreeID {
@@ -201,7 +210,7 @@ impl Syncer {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
-    forest: TreeOnDisk
+    forest: TreeOnDisk<RID, TreeID, ForestV>
 }
 
 struct Inner {
@@ -211,13 +220,14 @@ struct Inner {
     // replace it with a per-cpu counter.
     dirty: AtomicBool,
     fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
-    forest: ITree<TreeID, TreeOnDisk>,
+    forest: ITree<TreeID, ForestV>,
     idml: Arc<IDML>,
     propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>,
 }
 
 impl Inner {
-    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>) -> Self {
+    fn new(idml: Arc<IDML>, forest: ITree<TreeID, ForestV>) -> Self
+    {
         let dirty = AtomicBool::new(true);
         let fs_trees = Mutex::new(BTreeMap::new());
         let propcache = Mutex::new(BTreeMap::new());
@@ -236,7 +246,7 @@ impl Inner {
                 let fut = inner2.forest.get(tree_id)
                 .map(move |tod| {
                     let idml2 = inner2.idml.clone();
-                    let tree = ITree::open(idml2, &tod.unwrap()).unwrap();
+                    let tree = ITree::open(idml2, tod.unwrap());
                     let atree = Arc::new(tree);
                     guard.insert(tree_id, atree.clone());
                     atree
@@ -510,7 +520,7 @@ impl Database {
             .and_then(|ds| f(ds).into_future())
     }
 
-    fn new<E>(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk>, handle: E)
+    fn new<E>(idml: Arc<IDML>, forest: ITree<TreeID, ForestV>, handle: E)
         -> Self
         where E: Clone + Executor + 'static
     {
@@ -532,7 +542,7 @@ impl Database {
         where E: Clone + Executor + 'static
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let forest = Tree::open(idml.clone(), &l.forest).unwrap();
+        let forest = Tree::open(idml.clone(), l.forest);
         Database::new(idml, forest, handle)
     }
 

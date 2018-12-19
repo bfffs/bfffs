@@ -575,41 +575,34 @@ root:
 
 #[test]
 fn open() {
-    let v = vec![
-        1u8, 0, 0, 0, 0, 0, 0, 0,               // Height = 1
-        2, 0, 0, 0, 0, 0, 0, 0,                 // fanout = 2..6
-        6, 0, 0, 0, 0, 0, 0, 0,                 //
-        0, 0, 0x40, 0, 0, 0, 0, 0,              // max_size = 4MB
-        0, 0, 0, 0,                             // root.key = 0
-        0, 0, 0, 0,                             // root.txgs.start = 0
-        42, 0, 0, 0,                            // root.txgs.end = 42
-        0, 0, 0, 0,                             // root.ptr is a TreePtr::Addr
-        2, 0,                                   // pba.cluster = 2
-        8, 7, 6, 5, 4, 3, 2, 1,                 // pba.lba = 0x0102030405060708
-        1, 0, 0, 0,                             // compression = ZstdL9NoShuffle
-        78, 0, 0, 0,                            // lsize = 78
-        36, 0, 0, 0,                            // csize = 36
-        1, 2, 3, 4, 5, 6, 7, 8,                 // checksum = 0x0807060504030201
-    ];
-    let expected_drp = DRP::new(PBA::new(2, 0x0102_0304_0506_0708),
+    let max_size = 4_194_304;
+    let root_drp = DRP::new(PBA::new(2, 0x0102_0304_0506_0708),
         Compression::ZstdL9NoShuffle,
         78,     // lsize
         36,     // csize
         0x0807_0605_0403_0201
     );
-    let on_disk = TreeOnDisk(v);
+    let root = IntElem::new(0, TxgT(0)..TxgT(42), TreePtr::Addr(root_drp));
+    let tod = TreeOnDisk(
+        InnerOnDisk {
+            height: 1,
+            fanout: 2..6,
+            _max_size: max_size,
+            root,
+        }
+    );
     let mock = DDMLMock::default();
     let ddml = Arc::new(mock);
-    let tree = Tree::<DRP, DDMLMock, u32, u32>::open(ddml, &on_disk).unwrap();
+    let tree = Tree::<DRP, DDMLMock, u32, u32>::open(ddml, tod);
     assert_eq!(tree.i.height.load(Ordering::Relaxed), 1);
     assert_eq!(tree.i.fanout.start, 2);
     assert_eq!(tree.i.fanout.end, 6);
-    assert_eq!(tree.i._max_size, 4_194_304);
+    assert_eq!(tree.i._max_size, max_size);
     let root_elem_guard = tree.i.root.try_read().unwrap();
     assert_eq!(root_elem_guard.key, 0);
     assert_eq!(root_elem_guard.txgs, TxgT::from(0)..TxgT::from(42));
     let drp = root_elem_guard.ptr.as_addr();
-    assert_eq!(*drp, expected_drp);
+    assert_eq!(*drp, root_drp);
 }
 
 // A Tree with 3 IntNodes, each with 3-4 children.  The range_delete will totally
@@ -1348,30 +1341,25 @@ root:
       1
 "#);
 
-    let typical_tod: TreeOnDisk = typical_tree.serialize().unwrap();
-    assert_eq!(TreeOnDisk::TYPICAL_SIZE,
+    let typical_tod = typical_tree.serialize().unwrap();
+    assert_eq!(TreeOnDisk::<RID, FSKey, FSValue<RID>>::TYPICAL_SIZE,
                bincode::serialized_size(&typical_tod).unwrap() as usize);
 }
 
 // Tree::serialize should serialize the Tree::Inner object
 #[test]
 fn serialize_inner() {
-    let expected = vec![
-        1u8, 0, 0, 0, 0, 0, 0, 0,               // Height = 1
-        2, 0, 0, 0, 0, 0, 0, 0,                 // fanout = 2..6
-        6, 0, 0, 0, 0, 0, 0, 0,                 //
-        0, 0, 0x40, 0, 0, 0, 0, 0,              // max_size = 4MB
-        0, 0, 0, 0,                             // root.key = 0
-        0, 0, 0, 0,                             // root.txgs.start = 0
-        42, 0, 0, 0,                            // root.txgs.end = 42
-        0, 0, 0, 0,                             // root.ptr is a TreePtr::Addr
-        2, 0,                                   // pba.cluster = 2
-        8, 7, 6, 5, 4, 3, 2, 1,                 // pba.lba = 0x0102030405060708
-        1, 0, 0, 0,                             // compression = ZstdL9NoShuffle
-        78, 0, 0, 0,                            // lsize = 78
-        36, 0, 0, 0,                            // csize = 36
-        1, 2, 3, 4, 5, 6, 7, 8,                 // checksum = 0x0807060504030201
-    ];
+    let root_pba = PBA::new(2, 0x0102_0304_0506_0708);
+    let root_drp = DRP::new(root_pba, Compression::ZstdL9NoShuffle, 78, 36,
+                            0x0807_0605_0403_0201);
+    let expected = TreeOnDisk(
+        InnerOnDisk {
+            height: 1,
+            fanout: 2..6,
+            _max_size: 0x40_0000,
+            root: IntElem::new(0, TxgT(0)..TxgT(42), TreePtr::Addr(root_drp))
+        }
+    );
     let mock = DDMLMock::default();
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, r#"
@@ -1397,7 +1385,7 @@ root:
       checksum: 0x0807060504030201
 "#);
 
-    assert_eq!(&expected[..], &tree.serialize().unwrap().0[..])
+    assert_eq!(expected, tree.serialize().unwrap())
 }
 
 // If the tree isn't dirty, then there's nothing to do

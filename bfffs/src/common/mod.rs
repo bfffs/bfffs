@@ -225,6 +225,7 @@ impl Into<i32> for Error {
 // 32-bits is enough for 1 per second for 100 years
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd,
          Serialize)]
+#[cfg_attr(test, derive(Default))]
 pub struct TxgT(u32);
 
 impl Add<u32> for TxgT {

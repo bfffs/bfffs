@@ -66,8 +66,6 @@ impl<T> Key for T
 where T: Copy + Debug + DeserializeOwned + Ord + MinValue + PartialEq + Send +
     Serialize + TypicalSize + 'static {}
 
-
-
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     Serialize + TypicalSize + 'static
 {
