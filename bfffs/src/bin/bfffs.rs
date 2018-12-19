@@ -207,7 +207,7 @@ impl Builder {
         let clusters = Vec::new();
         let properties = propstrings.into_iter()
             .map(|ps| {
-                Property::from_str(ps).unwrap_or_else(|_e| {
+                Property::try_from_str(ps).unwrap_or_else(|_e| {
                     eprintln!("Invalid property specification {}", ps);
                     std::process::exit(2);
                 })

@@ -62,8 +62,8 @@ impl Property {
 
     // This should be TryFrom::try_from once that trait is stabilized
     // https://github.com/rust-lang/rust/issues/33417
-    pub fn from_str<S: AsRef<str>>(s: S) -> Result<Self, Error> {
-        let mut words = s.as_ref().splitn(2, "=");
+    pub fn try_from_str<S: AsRef<str>>(s: S) -> Result<Self, Error> {
+        let mut words = s.as_ref().splitn(2, '=');
         let propname = words.next().ok_or(Error::EINVAL)?;
         let propval = words.next();
         if propval.is_none() {
@@ -87,15 +87,15 @@ impl Property {
                         // numerically, but there are so few valid values that
                         // it's easier to use a LUT.
                         match rs {
-                            4096 => Ok(Property::RecordSize(12)),
-                            8192 => Ok(Property::RecordSize(13)),
-                            16384 => Ok(Property::RecordSize(14)),
-                            32768 => Ok(Property::RecordSize(15)),
-                            65536 => Ok(Property::RecordSize(16)),
-                            131072 => Ok(Property::RecordSize(17)),
-                            262144 => Ok(Property::RecordSize(18)),
-                            524388 => Ok(Property::RecordSize(19)),
-                            1048776 => Ok(Property::RecordSize(20)),
+                            4_096 => Ok(Property::RecordSize(12)),
+                            8_192 => Ok(Property::RecordSize(13)),
+                            16_384 => Ok(Property::RecordSize(14)),
+                            32_768 => Ok(Property::RecordSize(15)),
+                            65_536 => Ok(Property::RecordSize(16)),
+                            131_072 => Ok(Property::RecordSize(17)),
+                            262_144 => Ok(Property::RecordSize(18)),
+                            524_388 => Ok(Property::RecordSize(19)),
+                            1_048_776 => Ok(Property::RecordSize(20)),
                             _ => Err(Error::EINVAL)
                         }
                     } else {
@@ -144,20 +144,21 @@ mod t {
 use super::*;
 
 #[test]
-fn property_from_str() {
-    assert_eq!(Ok(Property::Atime(true)), Property::from_str("atime=true"));
-    assert_eq!(Ok(Property::Atime(true)), Property::from_str("atime=on"));
-    assert_eq!(Ok(Property::Atime(true)), Property::from_str("atime"));
-    assert_eq!(Ok(Property::Atime(false)), Property::from_str("atime=false"));
-    assert_eq!(Ok(Property::Atime(false)), Property::from_str("atime=off"));
-    assert_eq!(Err(Error::EINVAL), Property::from_str("atime=xyz"));
+fn property_try_from_str() {
+    assert_eq!(Ok(Property::Atime(true)), Property::try_from_str("atime=true"));
+    assert_eq!(Ok(Property::Atime(true)), Property::try_from_str("atime=on"));
+    assert_eq!(Ok(Property::Atime(true)), Property::try_from_str("atime"));
+    assert_eq!(Ok(Property::Atime(false)),
+               Property::try_from_str("atime=false"));
+    assert_eq!(Ok(Property::Atime(false)), Property::try_from_str("atime=off"));
+    assert_eq!(Err(Error::EINVAL), Property::try_from_str("atime=xyz"));
     assert_eq!(Ok(Property::RecordSize(12)),
-               Property::from_str("record_size=4096"));
+               Property::try_from_str("record_size=4096"));
     assert_eq!(Ok(Property::RecordSize(13)),
-               Property::from_str("record_size=8192"));
-    assert_eq!(Err(Error::EINVAL), Property::from_str("record_size=12"));
-    assert_eq!(Err(Error::EINVAL), Property::from_str("record_size=true"));
-    assert_eq!(Err(Error::EINVAL), Property::from_str("record_size"));
+               Property::try_from_str("record_size=8192"));
+    assert_eq!(Err(Error::EINVAL), Property::try_from_str("record_size=12"));
+    assert_eq!(Err(Error::EINVAL), Property::try_from_str("record_size=true"));
+    assert_eq!(Err(Error::EINVAL), Property::try_from_str("record_size"));
 }
 
 }

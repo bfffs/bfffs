@@ -771,8 +771,8 @@ fn fskey_typical_size() {
 #[test]
 fn fsvalue_typical_size() {
     let fsv: FSValue<RID> = FSValue::BlobExtent(BlobExtent{
-        lsize: 0xdeadbeef,
-        rid: RID(0x01020304050607)
+        lsize: 0xdead_beef,
+        rid: RID(0x0001_0203_0405_0607)
     });
     let v: Vec<u8> = bincode::serialize(&fsv).unwrap();
     assert_eq!(FSValue::<RID>::TYPICAL_SIZE, v.len());
