@@ -364,61 +364,63 @@ struct Inner<A: Addr, D: DML, K: Key, V: Value> {
 impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
     #[cfg(test)]
     pub fn from_str(dml: Arc<D>, s: &str) -> Self {
-        let iod: InnerOnDisk<A, K, V> = serde_yaml::from_str(s).unwrap();
-        Inner::new(dml, iod)
-    }
-
-    fn new(dml: Arc<D>, iod: InnerOnDisk<A, K, V>) -> Self {
+        let il: InnerLiteral<A, K, V> = serde_yaml::from_str(s).unwrap();
         Inner {
-            height: Atomic::new(iod.height),
-            fanout: iod.fanout,
-            _max_size: iod._max_size,
-            root: RwLock::new(iod.root),
+            height: Atomic::new(il.height),
+            fanout: il.fanout,
+            _max_size: il._max_size,
+            root: RwLock::new(il.root),
             dml
         }
     }
 
-    pub fn open(dml: Arc<D>, on_disk: TreeOnDisk<A, K, V>) -> Self {
-        let iod: InnerOnDisk<A, K, V> = on_disk.0;
-        Inner::new(dml, iod)
-    }
-}
-
-/// A version of `Inner` that is serializable
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
-#[serde(bound(deserialize = "K: DeserializeOwned"))]
-struct InnerOnDisk<A: Addr, K: Key, V: Value> {
-    height: u64,
-    fanout: Range<u64>,
-    _max_size: u64,
-    // In normal builds, root's ptr field will always be a TreePtr::Addr.  Only
-    // during unit tests may it be a TreePtr::Mem
-    root: IntElem<A, K, V>
-}
-
-impl<A: Addr, K: Key, V: Value> Clone for InnerOnDisk<A, K, V> {
-    fn clone(&self) -> Self {
-        // Except in unit tests, InnerOnDisk should only contain TreePtr::Addrs
-        let tree_ptr = TreePtr::Addr(*self.root.ptr.as_addr());
-        InnerOnDisk {
-            height: self.height,
-            fanout: self.fanout.clone(),
-            _max_size: self._max_size,
-            root: IntElem::new(self.root.key, self.root.txgs.clone(), tree_ptr)
+    pub fn open(dml: Arc<D>, on_disk: TreeOnDisk<A>) -> Self {
+        let iod: InnerOnDisk<A> = on_disk.0;
+        let root_elem = IntElem::new(K::min_value(), iod.txgs,
+                                     TreePtr::Addr(iod.root));
+        Inner {
+            height: Atomic::new(iod.height),
+            fanout: iod.fanout,
+            _max_size: iod._max_size,
+            root: RwLock::new(root_elem),
+            dml
         }
     }
 }
 
+/// A version of `Inner` that is serializable
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(bound(deserialize = "A: DeserializeOwned"))]
+struct InnerOnDisk<A: Addr> {
+    height: u64,
+    fanout: Range<u64>,
+    _max_size: u64,
+    root: A,
+    txgs: Range<TxgT>,
+}
+
 #[cfg(test)]
-impl<A: Addr + Default, K: Key, V: Value> Default for InnerOnDisk<A, K, V> {
+impl<A: Addr + Default> Default for InnerOnDisk<A> {
     fn default() -> Self {
         InnerOnDisk {
             height: u64::default(),
             fanout: u64::default()..u64::default(),
             _max_size: u64::default(),
-            root: IntElem::default()
+            root: A::default(),
+            txgs: TxgT(0)..TxgT(1),
         }
     }
+}
+
+/// A version of `Inner` that can be represented as a String.
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[serde(bound(deserialize = "K: DeserializeOwned"))]
+#[cfg(test)]
+struct InnerLiteral<A: Addr, K: Key, V: Value> {
+    height: u64,
+    fanout: Range<u64>,
+    _max_size: u64,
+    root: IntElem<A, K, V>
 }
 
 /// The return type of `Tree::check_r`
@@ -1095,7 +1097,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Open a `Tree` from its serialized representation
-    pub fn open(dml: Arc<D>, on_disk: TreeOnDisk<A, K, V>) -> Self {
+    pub fn open(dml: Arc<D>, on_disk: TreeOnDisk<A>) -> Self {
         let i = Inner::open(dml, on_disk);
         Tree{i: Arc::new(i)}
     }
@@ -1806,19 +1808,15 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Render the Tree into a `TreeOnDisk` object.  Requires that the Tree
     /// already be flushed.  Will fail if the Tree is dirty.
-    pub fn serialize(&self) -> Result<TreeOnDisk<A, K, V>, Error> {
+    pub fn serialize(&self) -> Result<TreeOnDisk<A>, Error> {
         self.i.root.try_read()
         .map(|root_guard| {
-            let root = IntElem::<A, K, V>::new(
-                root_guard.key,
-                root_guard.txgs.clone(),
-                TreePtr::Addr(*root_guard.ptr.as_addr())
-            );
             let iod = InnerOnDisk{
                 height: self.i.height.load(Ordering::Relaxed),
                 fanout: self.i.fanout.clone(),
                 _max_size: self.i._max_size,
-                root
+                root: *root_guard.ptr.as_addr(),
+                txgs: root_guard.txgs.clone(),
             };
             TreeOnDisk(iod)
         }).or(Err(Error::EDEADLK))
@@ -2244,17 +2242,17 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
 
 /// The serialized, on-disk representation of a `Tree`
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(bound(deserialize = "K: DeserializeOwned"))]
+#[serde(bound(deserialize = "A: DeserializeOwned"))]
 #[cfg_attr(test, derive(Default))]
-pub struct TreeOnDisk<A: Addr, K: Key, V: Value>(InnerOnDisk<A, K, V>);
+pub struct TreeOnDisk<A: Addr>(InnerOnDisk<A>);
 
-impl<A: Addr, K: Key, V: Value> TypicalSize for TreeOnDisk<A, K, V> {
+impl<A: Addr> TypicalSize for TreeOnDisk<A> {
     // Verified in common::tree::tests::io::serialize_forest
     // TODO: conditionalize on A
-    const TYPICAL_SIZE: usize = 68;
+    const TYPICAL_SIZE: usize = 48;
 }
 
-impl<A: Addr, K: Key, V: Value> Value for TreeOnDisk<A, K, V> {}
+impl<A: Addr> Value for TreeOnDisk<A> {}
 
 #[cfg(test)] mod tests;
 
@@ -2266,7 +2264,7 @@ mod t {
     // pet kcov
     #[test]
     fn debug() {
-        let tod = TreeOnDisk::<RID, u32, RID>::default();
+        let tod = TreeOnDisk::<RID>::default();
         format!("{:?}", tod);
     }
 }

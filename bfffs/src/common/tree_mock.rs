@@ -158,7 +158,7 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    pub fn open(_dml: Arc<D>, _on_disk: TreeOnDisk<A, K, V>) -> Self {
+    pub fn open(_dml: Arc<D>, _on_disk: TreeOnDisk<A>) -> Self {
         Self::new()
     }
 
@@ -216,15 +216,15 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
             Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("remove")
     }
 
-    pub fn serialize(&self) -> Result<TreeOnDisk<A, K, V>, Error> {
-        self.e.was_called_returning::<(), Result<TreeOnDisk<A, K, V>, Error>>
+    pub fn serialize(&self) -> Result<TreeOnDisk<A>, Error> {
+        self.e.was_called_returning::<(), Result<TreeOnDisk<A>, Error>>
         ("serialize", ())
     }
 
     pub fn expect_serialize(&mut self)
-        -> Method<(), Result<TreeOnDisk<A, K, V>, Error>>
+        -> Method<(), Result<TreeOnDisk<A>, Error>>
     {
-        self.e.expect::<(), Result<TreeOnDisk<A, K, V>, Error>>("serialize")
+        self.e.expect::<(), Result<TreeOnDisk<A>, Error>>("serialize")
     }
 
     pub fn then(&mut self) -> &mut Self {

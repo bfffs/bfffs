@@ -571,9 +571,9 @@ impl DML for IDML {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
-    alloct:             TreeOnDisk<DRP, PBA, RID>,
+    alloct:             TreeOnDisk<DRP>,
     next_rid:           u64,
-    ridt:               TreeOnDisk<DRP, RID, RidtEntry>,
+    ridt:               TreeOnDisk<DRP>,
     /// Last transaction group synced before the label was written
     txg:                TxgT,
 }

@@ -55,8 +55,6 @@ use tokio::timer;
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
 
-type ForestV = TreeOnDisk<RID, FSKey, FSValue<RID>>;
-
 /// Keys into the Forest
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
          Serialize)]
@@ -210,7 +208,7 @@ impl Syncer {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Label {
-    forest: TreeOnDisk<RID, TreeID, ForestV>
+    forest: TreeOnDisk<RID>
 }
 
 struct Inner {
@@ -220,13 +218,13 @@ struct Inner {
     // replace it with a per-cpu counter.
     dirty: AtomicBool,
     fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
-    forest: ITree<TreeID, ForestV>,
+    forest: ITree<TreeID, TreeOnDisk<RID>>,
     idml: Arc<IDML>,
     propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>,
 }
 
 impl Inner {
-    fn new(idml: Arc<IDML>, forest: ITree<TreeID, ForestV>) -> Self
+    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>) -> Self
     {
         let dirty = AtomicBool::new(true);
         let fs_trees = Mutex::new(BTreeMap::new());
@@ -520,8 +518,8 @@ impl Database {
             .and_then(|ds| f(ds).into_future())
     }
 
-    fn new<E>(idml: Arc<IDML>, forest: ITree<TreeID, ForestV>, handle: E)
-        -> Self
+    fn new<E>(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>,
+              handle: E) -> Self
         where E: Clone + Executor + 'static
     {
         let cleaner = Cleaner::new(handle.clone(), idml.clone(), None);

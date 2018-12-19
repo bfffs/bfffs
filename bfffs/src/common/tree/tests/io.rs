@@ -582,13 +582,13 @@ fn open() {
         36,     // csize
         0x0807_0605_0403_0201
     );
-    let root = IntElem::new(0, TxgT(0)..TxgT(42), TreePtr::Addr(root_drp));
     let tod = TreeOnDisk(
         InnerOnDisk {
             height: 1,
             fanout: 2..6,
             _max_size: max_size,
-            root,
+            root: root_drp,
+            txgs: TxgT(0)..TxgT(42),
         }
     );
     let mock = DDMLMock::default();
@@ -1342,7 +1342,7 @@ root:
 "#);
 
     let typical_tod = typical_tree.serialize().unwrap();
-    assert_eq!(TreeOnDisk::<RID, FSKey, FSValue<RID>>::TYPICAL_SIZE,
+    assert_eq!(TreeOnDisk::<RID>::TYPICAL_SIZE,
                bincode::serialized_size(&typical_tod).unwrap() as usize);
 }
 
@@ -1357,7 +1357,8 @@ fn serialize_inner() {
             height: 1,
             fanout: 2..6,
             _max_size: 0x40_0000,
-            root: IntElem::new(0, TxgT(0)..TxgT(42), TreePtr::Addr(root_drp))
+            root: root_drp,
+            txgs: TxgT(0)..TxgT(42),
         }
     );
     let mock = DDMLMock::default();
