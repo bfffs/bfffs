@@ -70,9 +70,8 @@ impl Stats {
     }
 }
 
-#[derive(Default)]
 struct FakeDDML {
-    next_lba: Atomic<u64>,
+    next_lba: Arc<Atomic<u64>>,
     stats: Stats
 }
 
@@ -83,6 +82,13 @@ impl FakeDDML {
         let pba = PBA::new(0, lba);
         let checksum = thread_rng().gen::<u64>();
         DRP::new(pba, Compression::None, lsize, lsize, checksum)
+    }
+
+    fn new(next_lba: Arc<Atomic<u64>>) -> Self {
+        FakeDDML {
+            next_lba,
+            stats: Stats::default()
+        }
     }
 
     /// Just like `put`, but separate for record-keeping purposes
@@ -146,8 +152,9 @@ impl DML for FakeDDML {
 }
 
 struct FakeIDML {
+    alloct: Arc<Tree<DRP, FakeDDML, PBA, RID>>,
     data_size: Atomic<u64>,
-    fake_ddml: Arc<FakeDDML>,
+    data_ddml: Arc<FakeDDML>,
     next_rid: Atomic<u64>,
     ridt: Arc<Tree<DRP, FakeDDML, RID, RidtEntry>>,
     stats: Stats
@@ -158,11 +165,15 @@ impl FakeIDML {
         self.data_size.load(Ordering::Relaxed)
     }
 
-    fn new(fake_ddml: Arc<FakeDDML>) -> Self {
-        let ridt = Arc::new(Tree::create(fake_ddml.clone()));
+    fn new(alloct_ddml: Arc<FakeDDML>, data_ddml: Arc<FakeDDML>,
+           ridt_ddml: Arc<FakeDDML>) -> Self
+    {
+        let alloct = Arc::new(Tree::create(alloct_ddml.clone()));
+        let ridt = Arc::new(Tree::create(ridt_ddml.clone()));
         FakeIDML {
+            alloct,
             data_size: Atomic::<u64>::default(),
-            fake_ddml: fake_ddml,
+            data_ddml: data_ddml,
             next_rid: Atomic::<u64>::default(),
             ridt,
             stats: Stats::default()
@@ -176,11 +187,14 @@ impl FakeIDML {
     {
         self.data_size.fetch_add(cacheable.len() as u64, Ordering::Relaxed);
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
+        let alloct2 = self.alloct.clone();
         let ridt2 = self.ridt.clone();
-        let fut = self.fake_ddml.put_data(cacheable, Compression::None, txg)
+        let fut = self.data_ddml.put_data(cacheable, Compression::None, txg)
         .and_then(move |drp| {
+            let pba = drp.pba();
             let ridt_entry = RidtEntry::new(drp);
             ridt2.insert(rid, ridt_entry, txg)
+            .join(alloct2.insert(pba, rid, txg))
             .map(move |_| rid)
         });
         boxfut!(fut)
@@ -224,11 +238,14 @@ impl DML for FakeIDML {
         let lsize = db.len() as u32;
         self.stats.put(lsize);
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
+        let alloct2 = self.alloct.clone();
         let ridt2 = self.ridt.clone();
-        let fut = self.fake_ddml.put_data(cacheable, Compression::None, txg)
+        let fut = self.data_ddml.put_data(cacheable, Compression::None, txg)
         .and_then(move |drp| {
+            let pba = drp.pba();
             let ridt_entry = RidtEntry::new(drp);
             ridt2.insert(rid, ridt_entry, txg)
+            .join(alloct2.insert(pba, rid, txg))
             .map(move |_| rid)
         });
         boxfut!(fut)
@@ -249,25 +266,29 @@ fn experiment<F>(mut f: F)
     const NELEMS: u64 = 100_000;
 
     let mut rt = Runtime::new();
-    let fake_ddml = Arc::new(FakeDDML::default());
-    let fake_idml = Arc::new(FakeIDML::new(fake_ddml.clone()));
-    let fake_idml2 = fake_idml.clone();
-    let fake_idml3 = fake_idml.clone();
-    let fake_idml4 = fake_idml.clone();
+    let next_lba = Arc::new(Atomic::default());
+    let alloct_ddml = Arc::new(FakeDDML::new(next_lba.clone()));
+    let ridt_ddml = Arc::new(FakeDDML::new(next_lba.clone()));
+    let data_ddml = Arc::new(FakeDDML::new(next_lba));
+    let idml = Arc::new(FakeIDML::new(alloct_ddml.clone(), data_ddml,
+                                      ridt_ddml.clone()));
+    let idml2 = idml.clone();
+    let idml3 = idml.clone();
+    let idml4 = idml.clone();
     let tree = Arc::new(
-        Tree::<RID, FakeIDML, FSKey, FSValue<RID>>::create(fake_idml2)
+        Tree::<RID, FakeIDML, FSKey, FSValue<RID>>::create(idml2)
     );
     let tree2 = tree.clone();
     let txg = TxgT::from(0);
     let data = vec![0u8; RECSIZE as usize];
 
-    let ridt_entries = rt.block_on(
+    let (alloct_entries, ridt_entries) = rt.block_on(
         stream::iter_ok(0..NELEMS)
         .for_each(move |i| {
             let dbs = DivBufShared::from(data.clone());
             let offset = f(i);
             let tree3 = tree.clone();
-            fake_idml3.put_data(dbs, Compression::None, txg)
+            idml3.put_data(dbs, Compression::None, txg)
             .and_then(move |rid| {
                 let key = FSKey::new(INODE, ObjKey::Extent(offset));
                 let be = BlobExtent { lsize: RECSIZE, rid};
@@ -277,34 +298,48 @@ fn experiment<F>(mut f: F)
         }).and_then(move |_| {
             tree2.flush(txg)
         }).and_then(move |_| {
-            fake_idml4.ridt.range(..)
-            .fold(0, |count, _| future::ok::<_, Error>(count + 1))
-            .and_then(move |ridt_entries| {
-                fake_idml4.ridt.flush(txg)
-                .map(move |_| ridt_entries)
+            let ridt_fut = idml4.ridt.range(..)
+            .fold(0, |count, _| future::ok::<_, Error>(count + 1));
+            let alloct_fut = idml4.alloct.range(..)
+            .fold(0, |count, _| future::ok::<_, Error>(count + 1));
+            ridt_fut.join(alloct_fut)
+            .and_then(move |entries| {
+                idml4.ridt.flush(txg)
+                .join(idml4.alloct.flush(txg))
+                .map(move |_| entries)
             })
         })
     ).unwrap();
 
-    let fs_metadata_size = fake_idml.stats.metadata_size();
-    println!("FS Metadata size:      {}", fs_metadata_size);
+    let fs_metadata_size = idml.stats.metadata_size();
+    println!("FS Metadata size:      {} bytes", fs_metadata_size);
     println!("FS Padding fraction:   {:#.3}%",
-             100.0 * fake_idml.stats.padding_fraction());
-    let fs_guard = fake_idml.stats.put_counts.lock().unwrap();
+             100.0 * idml.stats.padding_fraction());
+    let fs_guard = idml.stats.put_counts.lock().unwrap();
     println!("FS Tree put counts: {:?}", *fs_guard);
 
     println!("");
-    let ridt_metadata_size = fake_ddml.stats.metadata_size();
+    let alloct_metadata_size = alloct_ddml.stats.metadata_size();
+    println!("AllocT entries:          {:?}", alloct_entries);
+    println!("AllocT Metadata size:    {} bytes", alloct_metadata_size);
+    println!("AllocT Padding fraction: {:#.3}%",
+             100.0 * alloct_ddml.stats.padding_fraction());
+    let alloct_guard = alloct_ddml.stats.put_counts.lock().unwrap();
+    println!("AllocT put counts: {:?}", *alloct_guard);
+
+    println!("");
+    let ridt_metadata_size = ridt_ddml.stats.metadata_size();
     println!("RIDT entries:          {:?}", ridt_entries);
-    println!("RIDT Metadata size:    {}", ridt_metadata_size);
+    println!("RIDT Metadata size:    {} bytes", ridt_metadata_size);
     println!("RIDT Padding fraction: {:#.3}%",
-             100.0 * fake_ddml.stats.padding_fraction());
-    let ridt_guard = fake_ddml.stats.put_counts.lock().unwrap();
+             100.0 * ridt_ddml.stats.padding_fraction());
+    let ridt_guard = ridt_ddml.stats.put_counts.lock().unwrap();
     println!("RIDT put counts: {:?}", *ridt_guard);
 
     println!("");
-    let metadata_size = fs_metadata_size + ridt_metadata_size;
-    let data_size = fake_idml.data_size();
+    let metadata_size = fs_metadata_size + alloct_metadata_size +
+        ridt_metadata_size;
+    let data_size = idml.data_size();
     let mf = metadata_size as f64 / (data_size + metadata_size) as f64;
     println!("Overall Metadata fraction: {:#.3}%", 100.0 * mf);
 }
