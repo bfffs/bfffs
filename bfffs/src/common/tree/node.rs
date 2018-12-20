@@ -897,6 +897,7 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
                 },
                 NodeData::Int(int) => {
                     // IntData is layed out contiguously in memory
+                    // TODO: test this; I don't think it's right
                     mem::size_of_val(int)
                 }
             }

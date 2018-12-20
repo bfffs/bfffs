@@ -288,7 +288,7 @@ impl TypicalSize for PBA {
 /// Uniquely identifies each indirect record.  Record IDs are never reused.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq,
          PartialOrd, Ord, Serialize)]
-pub struct RID(u64);
+pub struct RID(pub u64);
 
 impl Display for RID {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
