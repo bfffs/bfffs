@@ -189,7 +189,7 @@ impl DRP {
     // LCOV_EXCL_START
     /// Explicitly construct a `DRP`, for testing.  Production code should never
     /// use this method, because `DRP`s should be opaque to the upper layers.
-    #[cfg(test)]
+    #[doc(hidden)]
     pub fn new(pba: PBA, compression: Compression, lsize: u32, csize: u32,
                checksum: u64) -> Self {
         DRP{pba, compression, lsize, csize, checksum}

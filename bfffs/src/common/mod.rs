@@ -274,7 +274,7 @@ pub struct PBA {
 }
 
 impl PBA {
-    fn new(cluster: ClusterT, lba: LbaT) -> Self {
+    pub fn new(cluster: ClusterT, lba: LbaT) -> Self {
         PBA {cluster, lba}
     }
 }

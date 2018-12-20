@@ -37,15 +37,17 @@ use crate::common::ddml_mock::DDMLMock as DDML;
 
 pub use crate::common::ddml::ClosedZone;
 
+/// Value type for the RIDT table.  Should not be used outside of this module
+/// except by the fanout calculator.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(test, derive(Default))]
-struct RidtEntry {
+pub struct RidtEntry {
     drp: DRP,
     refcount: u64
 }
 
 impl RidtEntry {
-    fn new(drp: DRP) -> Self {
+    pub fn new(drp: DRP) -> Self {
         RidtEntry{drp, refcount: 1}
     }
 }
