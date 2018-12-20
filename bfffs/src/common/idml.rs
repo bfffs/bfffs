@@ -586,6 +586,7 @@ mod t {
     use super::*;
     use divbuf::DivBufShared;
     use futures::future;
+    use pretty_assertions::assert_eq;
     use simulacrum::*;
     use simulacrum::validators::trivial::any;
     use std::{

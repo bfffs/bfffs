@@ -14,6 +14,7 @@ test_suite! {
     };
     use divbuf::DivBufShared;
     use futures::{future, Future};
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{Read, Seek, SeekFrom, Write},
@@ -196,6 +197,7 @@ test_suite! {
         sys::vdev_file::*
     };
     use futures::{future, Future};
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{self, Read},

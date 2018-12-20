@@ -9,6 +9,7 @@ test_suite! {
     use bfffs::common::cluster::*;
     use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{Read, Seek, SeekFrom, Write},

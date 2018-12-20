@@ -739,6 +739,7 @@ mod pool {
     use futures::{IntoFuture, future};
     use mockers::{Scenario, check, matchers};
     use mockers_derive::mock;
+    use pretty_assertions::assert_eq;
     use tokio::runtime::current_thread;
 
     mock!{
@@ -1117,6 +1118,7 @@ mod rpc {
 }
 
 mod stats {
+    use pretty_assertions::assert_eq;
     use super::super::*;
 
     #[test]

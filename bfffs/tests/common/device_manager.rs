@@ -14,6 +14,7 @@ test_suite! {
         common::pool::*,
     };
     use futures::{ Future, future, };
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         sync::{Arc, Mutex}

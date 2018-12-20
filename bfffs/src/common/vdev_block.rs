@@ -789,6 +789,7 @@ test_suite! {
     use mockers::matchers::ANY;
     use mockers_derive::mock;
     use permutohedron;
+    use pretty_assertions::assert_eq;
     use tokio::runtime::current_thread;
 
     mock!{

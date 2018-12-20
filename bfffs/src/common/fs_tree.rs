@@ -750,6 +750,7 @@ impl<A: Addr> Value for FSValue<A> {
 #[cfg(test)]
 mod t {
 
+use pretty_assertions::assert_eq;
 use super::*;
 
 // pet kcov

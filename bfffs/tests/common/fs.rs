@@ -19,6 +19,7 @@ test_suite! {
     };
     use futures::{Future, future};
     use libc;
+    use pretty_assertions::assert_eq;
     use rand::{Rng, thread_rng};
     use std::{
         collections::HashSet,
@@ -2226,6 +2227,7 @@ test_suite! {
     };
     use env_logger;
     use futures::{Future, future};
+    use pretty_assertions::assert_eq;
     use rand::{
         Rng,
         RngCore,

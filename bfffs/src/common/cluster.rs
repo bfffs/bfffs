@@ -968,6 +968,7 @@ mod cluster {
     use itertools::Itertools;
     use mockers::{Scenario, Sequence, check, matchers};
     use mockers_derive::mock;
+    use pretty_assertions::assert_eq;
     use std::iter;
     use tokio::runtime::current_thread;
 
@@ -1558,6 +1559,7 @@ mod cluster {
 }
 
 mod free_space_map {
+    use pretty_assertions::assert_eq;
     use super::super::*;
 
     // pet kcov

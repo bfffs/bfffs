@@ -690,6 +690,7 @@ impl Database {
 #[cfg(feature = "mocks")]
 mod t {
 mod prop_cache_key {
+    use pretty_assertions::assert_eq;
     use super::super::*;
 
     #[test]
@@ -837,6 +838,7 @@ mod database {
 
 mod treeid {
     use bincode;
+    use pretty_assertions::assert_eq;
     use super::super::*;
 
     #[test]

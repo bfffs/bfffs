@@ -2,6 +2,7 @@
 
 use bfffs::common::declust::*;
 use bfffs::common::prime_s::*;
+use pretty_assertions::assert_eq;
 
 // PrimeS should panic if you try to use a composite number of disks
 #[test]

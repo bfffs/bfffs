@@ -517,6 +517,7 @@ impl DML for DDML {
 #[cfg(feature = "mocks")]
 mod t {
 mod drp {
+    use pretty_assertions::assert_eq;
     use super::super::*;
 
     #[test]
@@ -557,6 +558,7 @@ mod ddml {
     use mockers::matchers::ANY;
     use mockers::{Scenario, Sequence, check};
     use mockers_derive::mock;
+    use pretty_assertions::assert_eq;
     use simulacrum::validators::trivial::any;
     use std::cell::RefCell;
     use std::rc::Rc;

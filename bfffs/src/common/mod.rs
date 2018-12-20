@@ -391,6 +391,7 @@ fn zero_sglist(len: usize) -> SGList {
 #[cfg(test)]
 mod t {
 use bincode;
+use pretty_assertions::assert_eq;
 use super::*;
 
 #[test]

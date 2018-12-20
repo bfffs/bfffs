@@ -8,6 +8,7 @@ test_suite! {
     use bfffs::common::{vdev::*, vdev_block::*};
     use divbuf::DivBufShared;
     use futures::future;
+    use pretty_assertions::assert_eq;
     use std::fs;
     use tempdir::TempDir;
     use tokio::runtime::current_thread;

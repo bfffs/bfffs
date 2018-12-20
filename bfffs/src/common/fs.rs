@@ -1925,6 +1925,7 @@ use super::*;
 use crate::common::tree::MinValue;
 #[cfg(test)] use crate::common::database_mock::ReadOnlyFilesystem;
 use futures::stream;
+use pretty_assertions::assert_eq;
 use simulacrum::*;
 
 fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {

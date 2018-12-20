@@ -11,6 +11,7 @@ test_suite! {
     use bfffs::common::label::*;
     use bfffs::common::pool::*;
     use futures::{Future, future};
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},

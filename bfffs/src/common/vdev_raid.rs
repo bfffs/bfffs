@@ -1360,6 +1360,7 @@ test_suite! {
 
     use super::MockVdevBlock;
     use mockers::{matchers, Scenario};
+    use pretty_assertions::assert_eq;
 
     fixture!( mocks(n: i16, k: i16, f:i16, chunksize: LbaT)
               -> (Scenario, VdevRaid) {

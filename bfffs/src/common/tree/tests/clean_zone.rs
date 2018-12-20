@@ -6,6 +6,7 @@ use crate::common::tree::*;
 use crate::common::ddml_mock::*;
 use crate::common::ddml::DRP;
 use futures::future;
+use pretty_assertions::assert_eq;
 use simulacrum::*;
 use tokio::runtime::current_thread;
 

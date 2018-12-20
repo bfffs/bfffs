@@ -4,6 +4,7 @@
 use crate::common::tree::*;
 use crate::common::dml_mock::*;
 use futures::future;
+use pretty_assertions::assert_eq;
 use tokio::runtime::current_thread;
 
 #[test]

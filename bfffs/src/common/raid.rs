@@ -247,8 +247,9 @@ impl Codec {
 // LCOV_EXCL_START
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use pretty_assertions::assert_eq;
     use std::ops::Deref;
+    use super::*;
 
     // If the encoding matrix ever changes, it will change the on-disk format.
     // Generate several different encoding matrices and compare them against

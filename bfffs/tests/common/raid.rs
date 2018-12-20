@@ -2,6 +2,7 @@ use bfffs::common::raid::*;
 use divbuf::*;
 use fixedbitset::FixedBitSet;
 use itertools::Itertools;
+use pretty_assertions::assert_eq;
 use rand;
 use rand::Rng;
 

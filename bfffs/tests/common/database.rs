@@ -15,6 +15,7 @@ test_suite! {
     use bfffs::common::idml::*;
     use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
@@ -149,6 +150,7 @@ test_suite! {
         idml::*,
     };
     use futures::{Future, future};
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         num::NonZeroU64,

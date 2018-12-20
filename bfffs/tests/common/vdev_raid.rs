@@ -9,6 +9,7 @@ test_suite! {
     use divbuf::DivBufShared;
     use futures::{Future, future};
     use rand::{Rng, thread_rng};
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         num::NonZeroU64
@@ -543,6 +544,7 @@ test_suite! {
     use bfffs::common::{label::*, vdev_block::*, vdev_raid::*, vdev::Vdev};
     use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},

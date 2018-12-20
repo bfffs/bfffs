@@ -141,6 +141,7 @@ pub enum PropertySource {
 #[cfg(test)]
 mod t {
 
+use pretty_assertions::assert_eq;
 use super::*;
 
 #[test]

@@ -12,6 +12,7 @@ test_suite! {
     };
     use divbuf::{DivBuf, DivBufShared};
     use futures::{Future, future};
+    use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::Read,

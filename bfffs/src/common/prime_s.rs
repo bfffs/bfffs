@@ -616,6 +616,7 @@ impl FusedIterator for PrimeSIterData {}
 // LCOV_EXCL_START
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
     use super::*;
 
     // pet kcov

@@ -962,6 +962,7 @@ mod t {
 
 use crate::common::ddml::DRP;
 use divbuf::*;
+use pretty_assertions::assert_eq;
 use super::*;
 
 // pet kcov
@@ -1022,6 +1023,7 @@ fn txgt_min_value() {
 mod serialization {
 
 use crate::common::ddml::DRP;
+use pretty_assertions::assert_eq;
 use std::ops::Deref;
 use super::*;
 
