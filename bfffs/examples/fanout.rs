@@ -5,6 +5,7 @@
 //! simulating both sequential and random insertion into a large file.  It
 //! computes the Tree's padding fraction (lower is better) and the overall
 //! metadata fraction of the file system.
+use atomic::{Atomic, Ordering};
 use bfffs::{
     boxfut,
     common::{
@@ -14,6 +15,7 @@ use bfffs::{
         tree::*
     }
 };
+use divbuf::DivBufShared;
 use futures::{Future, Stream, future, stream};
 use rand::{RngCore, SeedableRng};
 use rand_xorshift::XorShiftRng;
@@ -27,10 +29,16 @@ const RECSIZE: u32 = 131_072;
 
 #[derive(Default)]
 struct FakeDML {
-    put_counts: Mutex<BTreeMap<u32, u64>>
+    data_size: Atomic<u64>,
+    put_counts: Mutex<BTreeMap<u32, u64>>,
+    next_rid: Atomic<u64>
 }
 
 impl FakeDML {
+    fn data_size(&self) -> u64 {
+        self.data_size.load(Ordering::Relaxed)
+    }
+
     fn padding_fraction(&self) -> f64 {
         let guard = self.put_counts.lock().unwrap();
         let (padding, total) = guard.iter().map(|(lsize, count)| {
@@ -50,7 +58,17 @@ impl FakeDML {
         padding as f64 / total as f64
     }
 
-    fn total(&self) -> u64 {
+    /// Just like `put`, but separate for record-keeping purposes
+    fn put_data<T: Cacheable>(&self, cacheable: T, _compression: Compression,
+                             _txg: TxgT)
+        -> Box<dyn Future<Item=RID, Error=Error> + Send>
+    {
+        self.data_size.fetch_add(cacheable.len() as u64, Ordering::Relaxed);
+        let rid = self.next_rid.fetch_add(1, Ordering::Relaxed);
+        boxfut!(future::ok(RID(rid)))
+    }
+
+    fn metadata_size(&self) -> u64 {
         let guard = self.put_counts.lock().unwrap();
         guard.iter().fold(0, |total, (lsize, count)| {
             let lsize = *lsize as usize;
@@ -98,7 +116,8 @@ impl DML for FakeDML {
         let lsize = db.len() as u32;
         let count = *guard.get(&lsize).unwrap_or(&0) + 1;
         guard.insert(lsize, count);
-        boxfut!(future::ok(RID(0)))
+        let rid = self.next_rid.fetch_add(1, Ordering::Relaxed);
+        boxfut!(future::ok(RID(rid)))
     }
 
     /// Sync all records written so far to stable storage.
@@ -118,33 +137,39 @@ fn experiment<F>(mut f: F)
     let mut rt = Runtime::new();
     let fake_dml = Arc::new(FakeDML::default());
     let fake_dml2 = fake_dml.clone();
+    let fake_dml3 = fake_dml.clone();
     let tree = Arc::new(
-        Tree::<RID, FakeDML, FSKey, FSValue<RID>>::create(fake_dml)
+        Tree::<RID, FakeDML, FSKey, FSValue<RID>>::create(fake_dml2)
     );
     let tree2 = tree.clone();
     let txg = TxgT::from(0);
+    let data = vec![0u8; RECSIZE as usize];
 
     rt.block_on(
         stream::iter_ok(0..NELEMS)
         .for_each(move |i| {
+            let dbs = DivBufShared::from(data.clone());
             let offset = f(i);
-            let key = FSKey::new(INODE, ObjKey::Extent(offset));
-            let be = BlobExtent { lsize: RECSIZE, rid: RID(i)};
-            let value = FSValue::BlobExtent(be);
-            tree.insert(key, value, txg)
-            .map(drop)
+            let tree3 = tree.clone();
+            fake_dml3.put_data(dbs, Compression::None, txg)
+            .and_then(move |rid| {
+                let key = FSKey::new(INODE, ObjKey::Extent(offset));
+                let be = BlobExtent { lsize: RECSIZE, rid};
+                let value = FSValue::BlobExtent(be);
+                tree3.insert(key, value, txg)
+            }).map(drop)
         }).and_then(move |_| {
             tree2.flush(txg)
         })
     ).unwrap();
 
     println!("Padding fraction:  {:#.3}%",
-             100.0 * fake_dml2.padding_fraction());
-    let metadata_size = fake_dml2.total();
-    let data_size = NELEMS * u64::from(RECSIZE);
+             100.0 * fake_dml.padding_fraction());
+    let data_size = fake_dml.data_size();
+    let metadata_size = fake_dml.metadata_size();
     let mf = metadata_size as f64 / (data_size + metadata_size) as f64;
     println!("Metadata fraction: {:#.3}%", 100.0 * mf);
-    let guard = fake_dml2.put_counts.lock().unwrap();
+    let guard = fake_dml.put_counts.lock().unwrap();
     println!("put counts: {:?}", *guard);
 }
 
