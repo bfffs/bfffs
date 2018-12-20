@@ -260,19 +260,17 @@ test_suite! {
 
     // Dumps an FS tree, with enough data to create IntNodes
     test dump(mocks) {
-        let ino_w = mocks.val.0.mkdir(1, &OsString::from("w"), 0o755, 1, 2)
-        .unwrap();
-        let ino_x = mocks.val.0.mkdir(1, &OsString::from("x"), 0o755, 3, 4)
-        .unwrap();
-        let ino_y = mocks.val.0.mkdir(1, &OsString::from("y"), 0o755, 5, 6)
-        .unwrap();
-        let ino_z = mocks.val.0.mkdir(1, &OsString::from("z"), 0o755, 7, 8)
-        .unwrap();
+        const DIRS: u32 = 4;
+        let inos = (0..DIRS).map(|i| {
+            let uid = 2 * i + 1;
+            let gid = 2 * i + 2;
+            let filename = OsString::from(format!("{}", i));
+            mocks.val.0.mkdir(1, &filename, 0o755, uid, gid).unwrap()
+        }).collect::<Vec<_>>();
         clear_timestamps(&mocks.val.0, 1);
-        clear_timestamps(&mocks.val.0, ino_w);
-        clear_timestamps(&mocks.val.0, ino_x);
-        clear_timestamps(&mocks.val.0, ino_y);
-        clear_timestamps(&mocks.val.0, ino_z);
+        for ino in inos.iter() {
+            clear_timestamps(&mocks.val.0, *ino);
+        }
         mocks.val.0.sync();
 
         let mut buf = Vec::with_capacity(1024);
@@ -296,13 +294,27 @@ root:
 0:
   Leaf:
     items:
-      18474578933339636253:
+      18449816310735155830:
+        DirEntry:
+          ino: 4
+          dtype: 4
+          name:
+            Unix:
+              - 50
+      18461429139815850138:
+        DirEntry:
+          ino: 2
+          dtype: 4
+          name:
+            Unix:
+              - 48
+      18464119970443792538:
         DirEntry:
           ino: 5
           dtype: 4
           name:
             Unix:
-              - 122
+              - 51
       18478388752068107043:
         DirEntry:
           ino: 1
@@ -311,20 +323,13 @@ root:
             Unix:
               - 46
               - 46
-      18482701415731367003:
+      18486502828997688233:
         DirEntry:
           ino: 3
           dtype: 4
           name:
             Unix:
-              - 120
-      18486768971900222402:
-        DirEntry:
-          ino: 2
-          dtype: 4
-          name:
-            Unix:
-              - 119
+              - 49
       18490468108375165510:
         DirEntry:
           ino: 1
@@ -332,13 +337,6 @@ root:
           name:
             Unix:
               - 46
-      18501635435641183657:
-        DirEntry:
-          ino: 4
-          dtype: 4
-          name:
-            Unix:
-              - 121
       18518801667747479552:
         Inode:
           size: 0
