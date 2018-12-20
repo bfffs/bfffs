@@ -180,6 +180,6 @@ fn main() {
     println!("=== Random insertion ===");
     let mut rng = XorShiftRng::seed_from_u64(0);
     experiment(move |_| {
-        rng.next_u32() as u64 * BYTES_PER_LBA as u64
+        rng.next_u32() as u64 * RECSIZE as u64
     });
 }
