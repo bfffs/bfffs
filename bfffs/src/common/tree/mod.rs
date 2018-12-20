@@ -640,9 +640,27 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     pub fn create(dml: Arc<D>) -> Self {
+        // Calculate good fanout parameters.
+        // For leaves, the serialization format is 4 bytes for the enum variant,
+        // followed by 8 bytes for the BTreeMap size, followed by K, V pairs.
+        // For interior nodes, the serialization format is 4 bytes for the enum
+        // variant, followed by 8 bytes for the vector size, followed by a
+        // series of IntElems.
+        let target_int_size = 4096;
+        let target_leaf_size = 4096;
+        let leaf_elem_size = K::TYPICAL_SIZE + V::TYPICAL_SIZE;
+        let int_ptr_size = IntElem::<A, K, V>::TYPICAL_SIZE;
+        let _max_leaf_fanout = (target_leaf_size - 4 - 8) / leaf_elem_size;
+        let max_int_fanout = (target_int_size - 4 - 8) / int_ptr_size;
+        // TODO: use different fanouts for int vs leaf nodes
+        // TODO: take account of compression
+        // TODO: when calculating max fanout, consider that under a sequential
+        // workload most nodes will be half full
+        let max_fanout = max_int_fanout as u64;
+        let min_fanout = max_fanout / 4;
         Tree::new(dml,
-                  4,        // BetrFS's min fanout
-                  16,       // BetrFS's max fanout
+                  min_fanout,
+                  max_fanout,
                   1<<22,    // BetrFS's max size
         )
     }

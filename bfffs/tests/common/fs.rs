@@ -2,6 +2,8 @@
 use galvanic_test::*;
 use log::*;
 
+mod fs_dump_output;
+
 /// Constructs a real filesystem and tests the common FS routines, without
 /// mounting
 test_suite! {
@@ -260,268 +262,36 @@ test_suite! {
 
     // Dumps an FS tree, with enough data to create IntNodes
     test dump(mocks) {
-        const DIRS: u32 = 4;
-        let inos = (0..DIRS).map(|i| {
+        // First create enough directories to split the root LeafNode
+        let inos = (0..28).map(|i| {
             let uid = 2 * i + 1;
             let gid = 2 * i + 2;
             let filename = OsString::from(format!("{}", i));
             mocks.val.0.mkdir(1, &filename, 0o755, uid, gid).unwrap()
         }).collect::<Vec<_>>();
-        clear_timestamps(&mocks.val.0, 1);
+
+        // Clear the timestamps so the dump will be reproducible
         for ino in inos.iter() {
             clear_timestamps(&mocks.val.0, *ino);
         }
+
+        // Then delete some directories to reduce the size of the dump.  But
+        // don't delete so many that the LeafNodes merge
+        for i in 0..7 {
+            let filename = OsString::from(format!("{}", i));
+            mocks.val.0.rmdir(1, &filename).unwrap()
+        }
+
+        // Clear the root's timestamp
+        clear_timestamps(&mocks.val.0, 1);
         mocks.val.0.sync();
 
         let mut buf = Vec::with_capacity(1024);
         mocks.val.0.dump(&mut buf).unwrap();
         let fs_tree = String::from_utf8(buf).unwrap();
-        assert_eq!(fs_tree,
-r#"---
-height: 2
-fanout:
-  start: 4
-  end: 17
-_max_size: 4194304
-root:
-  key: 0
-  txgs:
-    start: 0
-    end: 1
-  ptr:
-    Addr: 2
----
-0:
-  Leaf:
-    items:
-      18449816310735155830:
-        DirEntry:
-          ino: 4
-          dtype: 4
-          name:
-            Unix:
-              - 50
-      18461429139815850138:
-        DirEntry:
-          ino: 2
-          dtype: 4
-          name:
-            Unix:
-              - 48
-      18464119970443792538:
-        DirEntry:
-          ino: 5
-          dtype: 4
-          name:
-            Unix:
-              - 51
-      18478388752068107043:
-        DirEntry:
-          ino: 1
-          dtype: 4
-          name:
-            Unix:
-              - 46
-              - 46
-      18486502828997688233:
-        DirEntry:
-          ino: 3
-          dtype: 4
-          name:
-            Unix:
-              - 49
-      18490468108375165510:
-        DirEntry:
-          ino: 1
-          dtype: 4
-          name:
-            Unix:
-              - 46
-      18518801667747479552:
-        Inode:
-          size: 0
-          nlink: 5
-          flags: 0
-          atime:
-            sec: 0
-            nsec: 0
-          mtime:
-            sec: 0
-            nsec: 0
-          ctime:
-            sec: 0
-            nsec: 0
-          birthtime:
-            sec: 0
-            nsec: 0
-          uid: 0
-          gid: 0
-          perm: 493
-          file_type: Dir
-      36925132825777658659:
-        DirEntry:
-          ino: 1
-          dtype: 4
-          name:
-            Unix:
-              - 46
-              - 46
-      36937212182084717126:
-        DirEntry:
-          ino: 2
-          dtype: 4
-          name:
-            Unix:
-              - 46
-1:
-  Leaf:
-    items:
-      36965545741457031168:
-        Inode:
-          size: 0
-          nlink: 2
-          flags: 0
-          atime:
-            sec: 0
-            nsec: 0
-          mtime:
-            sec: 0
-            nsec: 0
-          ctime:
-            sec: 0
-            nsec: 0
-          birthtime:
-            sec: 0
-            nsec: 0
-          uid: 1
-          gid: 2
-          perm: 493
-          file_type: Dir
-      55371876899487210275:
-        DirEntry:
-          ino: 1
-          dtype: 4
-          name:
-            Unix:
-              - 46
-              - 46
-      55383956255794268742:
-        DirEntry:
-          ino: 3
-          dtype: 4
-          name:
-            Unix:
-              - 46
-      55412289815166582784:
-        Inode:
-          size: 0
-          nlink: 2
-          flags: 0
-          atime:
-            sec: 0
-            nsec: 0
-          mtime:
-            sec: 0
-            nsec: 0
-          ctime:
-            sec: 0
-            nsec: 0
-          birthtime:
-            sec: 0
-            nsec: 0
-          uid: 3
-          gid: 4
-          perm: 493
-          file_type: Dir
-      73818620973196761891:
-        DirEntry:
-          ino: 1
-          dtype: 4
-          name:
-            Unix:
-              - 46
-              - 46
-      73830700329503820358:
-        DirEntry:
-          ino: 4
-          dtype: 4
-          name:
-            Unix:
-              - 46
-      73859033888876134400:
-        Inode:
-          size: 0
-          nlink: 2
-          flags: 0
-          atime:
-            sec: 0
-            nsec: 0
-          mtime:
-            sec: 0
-            nsec: 0
-          ctime:
-            sec: 0
-            nsec: 0
-          birthtime:
-            sec: 0
-            nsec: 0
-          uid: 5
-          gid: 6
-          perm: 493
-          file_type: Dir
-      92265365046906313507:
-        DirEntry:
-          ino: 1
-          dtype: 4
-          name:
-            Unix:
-              - 46
-              - 46
-      92277444403213371974:
-        DirEntry:
-          ino: 5
-          dtype: 4
-          name:
-            Unix:
-              - 46
-      92305777962585686016:
-        Inode:
-          size: 0
-          nlink: 2
-          flags: 0
-          atime:
-            sec: 0
-            nsec: 0
-          mtime:
-            sec: 0
-            nsec: 0
-          ctime:
-            sec: 0
-            nsec: 0
-          birthtime:
-            sec: 0
-            nsec: 0
-          uid: 7
-          gid: 8
-          perm: 493
-          file_type: Dir
----
-2:
-  Int:
-    children:
-      - key: 0
-        txgs:
-          start: 0
-          end: 1
-        ptr:
-          Addr: 0
-      - key: 36965545741457031168
-        txgs:
-          start: 0
-          end: 1
-        ptr:
-          Addr: 1
-"#);
+        // Use std::assert_eq! instead of pretty_assertions::assert_eq because
+        // the latter is too slow on a failure when the string is this large.
+        std::assert_eq!(fs_dump_output::EXPECTED, fs_tree);
     }
 
     /// getattr on the filesystem's root directory

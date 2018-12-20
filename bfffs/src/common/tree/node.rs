@@ -533,6 +533,14 @@ pub(super) struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
     pub ptr: TreePtr<A, K, V>
 }
 
+impl<A: Addr, K: Key, V: Value> TypicalSize for IntElem<A, K, V> {
+    const TYPICAL_SIZE: usize =
+        K::TYPICAL_SIZE     // key
+        + 4 * 2             // Range<TxgT>
+        + 4                 // TreePtr discriminant
+        + A::TYPICAL_SIZE;  // TreePtr contents
+}
+
 impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     /// Is the child node dirty?  That is, does it differ from the on-disk
     /// version?
@@ -1083,6 +1091,17 @@ fn deserialize_leaf() {
     assert_eq!(leaf_data.items[&0], 100);
     assert_eq!(leaf_data.items[&1], 200);
     assert_eq!(leaf_data.items[&99], 50_000);
+}
+
+#[test]
+fn intelem_typical_size() {
+    let pba = PBA::new(0, 1);
+    let drp = DRP::random(Compression::None, 12345);
+    let int_elem = IntElem::<DRP, PBA, RID>::new(pba,
+                                                 TxgT::from(1)..TxgT::from(9),
+                                                 TreePtr::Addr(drp));
+    let size = bincode::serialized_size(&int_elem).unwrap() as usize;
+    assert_eq!(IntElem::<DRP, PBA, RID>::TYPICAL_SIZE, size);
 }
 
 #[test]
