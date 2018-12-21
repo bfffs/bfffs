@@ -23,6 +23,7 @@ use rand::{Rng, RngCore, SeedableRng, thread_rng};
 use rand_xorshift::XorShiftRng;
 use std::{
     collections::BTreeMap,
+    io::Write,
     str::FromStr,
     sync::{Arc, Mutex}
 };
@@ -72,7 +73,9 @@ impl Stats {
 }
 
 struct FakeDDML {
+    name: &'static str,
     next_lba: Arc<Atomic<u64>>,
+    save: bool,
     stats: Stats
 }
 
@@ -85,9 +88,11 @@ impl FakeDDML {
         DRP::new(pba, Compression::None, lsize, lsize, checksum)
     }
 
-    fn new(next_lba: Arc<Atomic<u64>>) -> Self {
+    fn new(name: &'static str, next_lba: Arc<Atomic<u64>>, save: bool) -> Self {
         FakeDDML {
+            name,
             next_lba,
+            save,
             stats: Stats::default()
         }
     }
@@ -138,6 +143,12 @@ impl DML for FakeDDML {
         -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>
     {
         let db = cacheable.make_ref().serialize();
+        if self.save {
+            let fname = format!("/tmp/fanout/{}.{}.bin", self.name,
+                                self.next_lba.load(Ordering::Relaxed));
+            let mut f = std::fs::File::create(fname).unwrap();
+            f.write_all(&db[..]).unwrap();
+        }
         let lsize = db.len() as u32;
         self.stats.put(lsize);
         let drp = self.next_drp(lsize);
@@ -156,8 +167,10 @@ struct FakeIDML {
     alloct: Arc<Tree<DRP, FakeDDML, PBA, RID>>,
     data_size: Atomic<u64>,
     data_ddml: Arc<FakeDDML>,
+    name: &'static str,
     next_rid: Atomic<u64>,
     ridt: Arc<Tree<DRP, FakeDDML, RID, RidtEntry>>,
+    save: bool,
     stats: Stats
 }
 
@@ -166,8 +179,9 @@ impl FakeIDML {
         self.data_size.load(Ordering::Relaxed)
     }
 
-    fn new(alloct_ddml: Arc<FakeDDML>, data_ddml: Arc<FakeDDML>,
-           ridt_ddml: Arc<FakeDDML>) -> Self
+    fn new(name: &'static str, alloct_ddml: Arc<FakeDDML>,
+           data_ddml: Arc<FakeDDML>,
+           ridt_ddml: Arc<FakeDDML>, save: bool) -> Self
     {
         let alloct = Arc::new(Tree::create(alloct_ddml.clone(), true));
         let ridt = Arc::new(Tree::create(ridt_ddml.clone(), true));
@@ -175,8 +189,10 @@ impl FakeIDML {
             alloct,
             data_size: Atomic::<u64>::default(),
             data_ddml: data_ddml,
+            name,
             next_rid: Atomic::<u64>::default(),
             ridt,
+            save,
             stats: Stats::default()
         }
     }
@@ -236,6 +252,12 @@ impl DML for FakeIDML {
         -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>
     {
         let db = cacheable.make_ref().serialize();
+        if self.save {
+            let fname = format!("/tmp/fanout/{}.{}.bin", self.name,
+                                self.next_rid.load(Ordering::Relaxed));
+            let mut f = std::fs::File::create(fname).unwrap();
+            f.write_all(&db[..]).unwrap();
+        }
         let lsize = db.len() as u32;
         self.stats.put(lsize);
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
@@ -260,18 +282,19 @@ impl DML for FakeIDML {
     }
 }
 
-fn experiment<F>(nelems: u64, mut f: F)
+fn experiment<F>(nelems: u64, save: bool, mut f: F)
     where F: FnMut(u64) -> u64 + Send + 'static
 {
     const INODE: u64 = 2;
 
     let mut rt = Runtime::new();
     let next_lba = Arc::new(Atomic::default());
-    let alloct_ddml = Arc::new(FakeDDML::new(next_lba.clone()));
-    let ridt_ddml = Arc::new(FakeDDML::new(next_lba.clone()));
-    let data_ddml = Arc::new(FakeDDML::new(next_lba));
-    let idml = Arc::new(FakeIDML::new(alloct_ddml.clone(), data_ddml,
-                                      ridt_ddml.clone()));
+    let alloct_ddml = Arc::new(FakeDDML::new(&"alloct", next_lba.clone(),
+                                             save));
+    let ridt_ddml = Arc::new(FakeDDML::new(&"ridt", next_lba.clone(), save));
+    let data_ddml = Arc::new(FakeDDML::new(&"data", next_lba, false));
+    let idml = Arc::new(FakeIDML::new(&"fs", alloct_ddml.clone(), data_ddml,
+                                      ridt_ddml.clone(), save));
     let idml2 = idml.clone();
     let idml3 = idml.clone();
     let idml4 = idml.clone();
@@ -352,6 +375,9 @@ fn main() {
         ).arg(clap::Arg::with_name("random")
             .help("simulate random insertion")
             .short("r")
+        ).arg(clap::Arg::with_name("save")
+            .help("save metadata records as /tmp/fanout/$table.$i.bin")
+            .long("save")
         ).arg(clap::Arg::with_name("records")
             .help("Number of records to simulate")
         );
@@ -360,15 +386,16 @@ fn main() {
         .map(u64::from_str)
         .unwrap_or(Ok(100_000))
         .unwrap();
+    let save = matches.is_present("save");
     if matches.is_present("sequential") {
         println!("=== Sequential insertion ===");
-        experiment(nrecs, |i| u64::from(RECSIZE) * i);
+        experiment(nrecs, save, |i| u64::from(RECSIZE) * i);
         println!("");
     }
     if matches.is_present("random") {
         println!("=== Random insertion ===");
         let mut rng = XorShiftRng::seed_from_u64(0);
-        experiment(nrecs, move |_| {
+        experiment(nrecs, save, move |_| {
             rng.next_u32() as u64 * RECSIZE as u64
         });
     }
