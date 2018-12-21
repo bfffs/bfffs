@@ -1,7 +1,7 @@
 pub const EXPECTED: &str = r#"---
 height: 2
 fanout:
-  start: 31
+  start: 32
   end: 128
 _max_size: 4194304
 root:

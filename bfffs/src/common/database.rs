@@ -244,7 +244,7 @@ impl Inner {
                 let fut = inner2.forest.get(tree_id)
                 .map(move |tod| {
                     let idml2 = inner2.idml.clone();
-                    let tree = ITree::open(idml2, tod.unwrap());
+                    let tree = ITree::open(idml2, false, tod.unwrap());
                     let atree = Arc::new(tree);
                     guard.insert(tree_id, atree.clone());
                     atree
@@ -360,7 +360,7 @@ impl Database {
     pub fn create<E>(idml: Arc<IDML>, handle: E) -> Self
         where E: Clone + Executor + 'static
     {
-        let forest = ITree::create(idml.clone());
+        let forest = ITree::create(idml.clone(), false);
         Database::new(idml, forest, handle)
     }
 
@@ -449,7 +449,7 @@ impl Database {
                 !guard.contains_key(&TreeID::Fs(*i))
             }).nth(0).expect("Maximum number of filesystems reached");
             let tree_id: TreeID = TreeID::Fs(k);
-            let fs = Arc::new(ITree::create(idml2));
+            let fs = Arc::new(ITree::create(idml2, false));
             guard.insert(tree_id, fs);
             drop(guard);
 
@@ -540,7 +540,7 @@ impl Database {
         where E: Clone + Executor + 'static
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let forest = Tree::open(idml.clone(), l.forest);
+        let forest = Tree::open(idml.clone(), false, l.forest);
         Database::new(idml, forest, handle)
     }
 

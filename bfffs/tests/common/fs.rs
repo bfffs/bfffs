@@ -289,7 +289,6 @@ test_suite! {
         let mut buf = Vec::with_capacity(1024);
         mocks.val.0.dump(&mut buf).unwrap();
         let fs_tree = String::from_utf8(buf).unwrap();
-        println!("{}", fs_tree);
         // Use std::assert_eq! instead of pretty_assertions::assert_eq because
         // the latter is too slow on a failure when the string is this large.
         std::assert_eq!(fs_dump_output::EXPECTED, fs_tree);

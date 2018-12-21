@@ -223,9 +223,9 @@ impl<'a> IDML {
     }
 
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
-        let alloct = DTree::<PBA, RID>::create(ddml.clone());
+        let alloct = DTree::<PBA, RID>::create(ddml.clone(), true);
         let next_rid = Atomic::new(0);
-        let ridt = DTree::<RID, RidtEntry>::create(ddml.clone());
+        let ridt = DTree::<RID, RidtEntry>::create(ddml.clone(), true);
         let transaction = RwLock::new(TxgT::from(0));
         let trees = Arc::new(Trees{alloct, ridt});
         IDML{cache, ddml, next_rid, transaction, trees}
@@ -278,8 +278,8 @@ impl<'a> IDML {
                  mut label_reader: LabelReader) -> (Self, LabelReader)
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let alloct = Tree::open(ddml.clone(), l.alloct);
-        let ridt = Tree::open(ddml.clone(), l.ridt);
+        let alloct = Tree::open(ddml.clone(), true, l.alloct);
+        let ridt = Tree::open(ddml.clone(), true, l.ridt);
         let transaction = RwLock::new(l.txg);
         let next_rid = Atomic::new(l.next_rid);
         let trees = Arc::new(Trees{alloct, ridt});

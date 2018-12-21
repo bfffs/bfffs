@@ -119,7 +119,7 @@ fn basic() {
             Box::new(Ok(drp).into_future())
         });
     let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, false, r#"
 ---
 height: 3
 fanout:
@@ -394,7 +394,7 @@ fn dirty_root() {
             Box::new(Ok(drp).into_future())
         });
     let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, r#"
+    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, false, r#"
 ---
 height: 2
 fanout:

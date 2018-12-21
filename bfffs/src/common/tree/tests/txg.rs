@@ -12,7 +12,7 @@ use tokio::runtime::current_thread;
 fn check_bad_root_txgs() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 fanout:
@@ -58,7 +58,7 @@ root:
 fn check_bad_int_txgs() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 fanout:
@@ -140,7 +140,7 @@ root:
 fn check_bad_key() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 fanout:
@@ -186,7 +186,7 @@ root:
 fn check_ok() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 fanout:
@@ -271,7 +271,7 @@ root:
 fn check_empty() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::create(dml);
+    let tree = Tree::<u32, DMLMock, u32, f32>::create(dml, false);
 
     let mut rt = current_thread::Runtime::new().unwrap();
     assert!(rt.block_on(tree.check()).unwrap());
@@ -281,7 +281,7 @@ fn check_empty() {
 fn check_leaf_underflow() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 fanout:
@@ -327,7 +327,7 @@ root:
 fn check_root_int_underflow() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 fanout:
@@ -378,7 +378,7 @@ root:
 fn check_root_leaf_ok() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 fanout:
@@ -405,7 +405,7 @@ root:
 fn check_root_leaf_overflow() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 fanout:
@@ -438,7 +438,7 @@ root:
 fn check_unsorted() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 fanout:
@@ -506,7 +506,7 @@ fn flush() {
         }))
         .returning(move |_| Box::new(Ok(addr).into_future()));
     let dml = Arc::new(mock);
-    let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, r#"
+    let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 fanout:
@@ -571,7 +571,7 @@ fn merge() {
             Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 fanout:
@@ -731,7 +731,7 @@ fn split() {
             Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
         });
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, r#"
+    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 fanout:
@@ -856,7 +856,7 @@ root:
 fn steal() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, r#"
+    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 fanout:

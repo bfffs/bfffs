@@ -16,6 +16,7 @@ use std::{
     fmt::Debug,
     iter::FromIterator,
     mem,
+    num::NonZeroU32,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
     sync::{
         Arc,
@@ -294,14 +295,21 @@ impl<K: Key, V: Value> LeafData<K, V> {
 
     /// Split this LeafNode in two.  Returns the transaction range of the rump
     /// node, and a new IntElem containing the new node.
-    pub fn split<A: Addr>(&mut self, txg: TxgT)
-        -> (Range<TxgT>, IntElem<A, K, V>)
+    pub fn split<A: Addr>(&mut self, right_size: Option<NonZeroU32>,
+                          txg: TxgT) -> (Range<TxgT>, IntElem<A, K, V>)
     {
-        // Split the node in two.  Make the left node larger, on the assumption
-        // that we're more likely to insert into the right node than the left
-        // one.
-        let half = div_roundup(self.items.len(), 2);
-        let cutoff = *self.items.keys().nth(half).unwrap();
+        // Split the node in two.
+        let left_items = if let Some(l) = right_size {
+            // Make the left node as large as possible, since we'll almost
+            // certainly continue inserting into the right side.
+            self.items.len() - l.get() as usize
+        } else {
+            // Divide evenly, but make the left node slightly larger, on the
+            // assumption that we're more likely to insert into the right node
+            // than the left one.
+            div_roundup(self.items.len(), 2)
+        };
+        let cutoff = *self.items.keys().nth(left_items).unwrap();
         let new_items = self.items.split_off(&cutoff);
         let node = Node::new(NodeData::Leaf(LeafData{items: new_items}));
         // There are no children, so the TXG range is just the current TXG
@@ -628,13 +636,22 @@ impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
             .unwrap_or_else(|k| if k == 0 {k} else {k - 1})
     }
 
-    /// Split this LeafNode in two.  Returns the transaction range of the rump
+    /// Split this IntNode in two.  Returns the transaction range of the rump
     /// node, and a new IntElem containing the new node.
-    pub fn split(&mut self, txg: TxgT) -> (Range<TxgT>, IntElem<A, K, V>) {
-        // Split the node in two.  Make the left node larger, on the assumption
-        // that we're more likely to insert into the right node than the left
-        // one.
-        let cutoff = div_roundup(self.children.len(), 2);
+    pub fn split(&mut self, right_size: Option<NonZeroU32>, txg: TxgT)
+        -> (Range<TxgT>, IntElem<A, K, V>)
+    {
+        // Split the node in two.
+        let cutoff = if let Some(l) = right_size {
+            // Make the left node as large as possible, since we'll almost
+            // certainly continue inserting into the right side.
+            self.children.len() - l.get() as usize
+        } else {
+            // Divide evenly, but make the left node slightly larger, on the
+            // assumption that we're more likely to insert into the right node
+            // than the left one.
+            div_roundup(self.children.len(), 2)
+        };
         let new_children = self.children.split_off(cutoff);
         let old_txgs = self.start_txg()..txg + 1;
 
@@ -766,6 +783,9 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     /// Should this node be split because it's too big?
+    // TODO: consider the key that's about to be inserted.  If this is a leaf
+    // node and the key already exists, then don't proactively split.  That will
+    // be important for the RIDT when cleaning zones.
     pub fn should_split(&self, max_fanout: u64) -> bool {
         let len = self.len() as u64;
         debug_assert!(len <= max_fanout,
@@ -773,15 +793,17 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         len >= max_fanout
     }
 
-    /// Split this LeafNode in two.  Returns the transaction range of the rump
+    /// Split this Node in two.  Returns the transaction range of the rump
     /// node, and a new IntElem containing the new node.
-    pub fn split(&mut self, txg: TxgT) -> (Range<TxgT>, IntElem<A, K, V>) {
+    pub fn split(&mut self, right_size: Option<NonZeroU32>, txg: TxgT)
+        -> (Range<TxgT>, IntElem<A, K, V>)
+    {
         match self {
             NodeData::Leaf(leaf) => {
-                leaf.split(txg)
+                leaf.split(right_size, txg)
             },
             NodeData::Int(int) => {
-                int.split(txg)
+                int.split(right_size, txg)
             },
 
         }

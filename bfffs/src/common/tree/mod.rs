@@ -32,6 +32,7 @@ use std::{
     fmt::Debug,
     io,
     mem,
+    num::NonZeroU32,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds, RangeInclusive},
     rc::Rc,
     sync::{
@@ -358,23 +359,28 @@ struct Inner<A: Addr, D: DML, K: Key, V: Value> {
     #[serde(with = "tree_root_serializer")]
     root: RwLock<IntElem<A, K, V>>,
     #[serde(skip)]
-    dml: Arc<D>
+    dml: Arc<D>,
+    /// Should tree operations assume that access will be mostly sequential in
+    /// increasing order?
+    #[serde(skip)]
+    sequentially_optimized: bool
 }
 
 impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
     #[cfg(test)]
-    pub fn from_str(dml: Arc<D>, s: &str) -> Self {
+    pub fn from_str(dml: Arc<D>, seq: bool, s: &str) -> Self {
         let il: InnerLiteral<A, K, V> = serde_yaml::from_str(s).unwrap();
         Inner {
             height: Atomic::new(il.height),
             fanout: il.fanout,
             _max_size: il._max_size,
             root: RwLock::new(il.root),
-            dml
+            dml,
+            sequentially_optimized: seq
         }
     }
 
-    pub fn open(dml: Arc<D>, on_disk: TreeOnDisk<A>) -> Self {
+    pub fn open(dml: Arc<D>, seq: bool, on_disk: TreeOnDisk<A>) -> Self {
         let iod: InnerOnDisk<A> = on_disk.0;
         let root_elem = IntElem::new(K::min_value(), iod.txgs,
                                      TreePtr::Addr(iod.root));
@@ -383,7 +389,8 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
             fanout: iod.fanout,
             _max_size: iod._max_size,
             root: RwLock::new(root_elem),
-            dml
+            dml,
+            sequentially_optimized: seq
         }
     }
 }
@@ -639,7 +646,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         Box::new(fut)
     }
 
-    pub fn create(dml: Arc<D>) -> Self {
+    pub fn create(dml: Arc<D>, sequentially_optimized: bool) -> Self {
         // Calculate good fanout parameters.
         // For leaves, the serialization format is 4 bytes for the enum variant,
         // followed by 8 bytes for the BTreeMap size, followed by K, V pairs.
@@ -648,22 +655,35 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // series of IntElems.
         // There are vastly more leaf nodes than interior nodes, so if we must
         // optimize for one over the other, we should choose leaves.
-        let target_int_size = 4096;
-        let target_leaf_size = 4096;
         let leaf_elem_size = K::TYPICAL_SIZE + V::TYPICAL_SIZE;
-        let int_ptr_size = IntElem::<A, K, V>::TYPICAL_SIZE;
-        let max_leaf_fanout = (target_leaf_size - 4 - 8) / leaf_elem_size;
-        let _max_int_fanout = (target_int_size - 4 - 8) / int_ptr_size;
+        let _int_ptr_size = IntElem::<A, K, V>::TYPICAL_SIZE;
+        // A fanout spread of 4 is what BetrFS uses.
+        let spread = 4;
+        let mut target_leaf_size = if sequentially_optimized {
+            // Sequentially optimized trees will almost never randomly insert.
+            // Most nodes will be what remains after a split.  So we should
+            // increase the target node size so that the left side of a split
+            // just fits into a whole LBA.
+            BYTES_PER_LBA * spread / (spread - 1)
+        } else {
+            BYTES_PER_LBA
+        };
+        // Allow for the enum variant and vector size
+        target_leaf_size -= 4 + 8;
+        // Round down to the nearest whole number of elements
+        target_leaf_size -= target_leaf_size % leaf_elem_size;
+        let max_leaf_fanout = target_leaf_size / leaf_elem_size;
         // TODO: use different fanouts for int vs leaf nodes
         // TODO: take account of compression
         // TODO: when calculating max fanout, consider that under a sequential
         // workload most nodes will be half full
         let max_fanout = max_leaf_fanout as u64;
-        let min_fanout = max_fanout / 4;
+        let min_fanout = div_roundup(max_fanout, spread as u64);
         Tree::new(dml,
                   min_fanout,
                   max_fanout,
                   1<<22,    // BetrFS's max size
+                  sequentially_optimized
         )
     }
 
@@ -830,8 +850,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }   // LCOV_EXCL_LINE   kcov false negative
 
     #[cfg(test)]
-    pub fn from_str(dml: Arc<D>, s: &str) -> Self {
-        Tree{i: Arc::new(Inner::from_str(dml, s))}
+    pub fn from_str(dml: Arc<D>, seq: bool, s: &str) -> Self {
+        Tree{i: Arc::new(Inner::from_str(dml, seq, s))}
     }
 
     /// Insert value `v` into the tree at key `k`, returning the previous value
@@ -859,7 +879,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         // First, split the node, if necessary
         if (*child).should_split(inner.fanout.end - 1) {
-            let (old_txgs, new_elem) = child.split(txg);
+            let right_size = if inner.sequentially_optimized {
+                NonZeroU32::new(inner.fanout.start as u32)
+            } else {
+                None
+            };
+            let (old_txgs, new_elem) = child.split(right_size, txg);
             parent.as_int_mut().children[child_idx].txgs = old_txgs;
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
@@ -892,7 +917,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         // First, split the root node, if necessary
         if rnode.should_split(inner.fanout.end - 1) {
-            let (old_txgs, new_elem) = rnode.split(txg);
+            let right_size = if inner.sequentially_optimized {
+                NonZeroU32::new(inner.fanout.start as u32)
+            } else {
+                None
+            };
+            let (old_txgs, new_elem) = rnode.split(right_size, txg);
             let new_root_data = NodeData::Int( IntData::new(vec![new_elem]));
             let old_root_data = mem::replace(rnode.deref_mut(), new_root_data);
             let old_root_node = Node::new(old_root_data);
@@ -1117,8 +1147,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Open a `Tree` from its serialized representation
-    pub fn open(dml: Arc<D>, on_disk: TreeOnDisk<A>) -> Self {
-        let i = Inner::open(dml, on_disk);
+    pub fn open(dml: Arc<D>, seq: bool, on_disk: TreeOnDisk<A>) -> Self {
+        let i = Inner::open(dml, seq, on_disk);
         Tree{i: Arc::new(i)}
     }
 
@@ -1701,7 +1731,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }
     }
 
-    fn new(dml: Arc<D>, min_fanout: u64, max_fanout: u64, max_size: u64) -> Self
+    fn new(dml: Arc<D>, min_fanout: u64, max_fanout: u64, max_size: u64,
+           seq: bool) -> Self
     {
         // Since there are no on-disk children, the initial TXG range is empty
         let i: Arc<Inner<A, D, K, V>> = Arc::new(Inner {
@@ -1709,7 +1740,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
             fanout: min_fanout..(max_fanout + 1),
             _max_size: max_size,
             root: RwLock::new(IntElem::default()),
-            dml
+            dml,
+            sequentially_optimized: seq
         });
         Tree{ i }
     }
