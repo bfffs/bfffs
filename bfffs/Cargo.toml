@@ -16,7 +16,7 @@ mocks = ["mockers", "mockers_derive"]
 atomic = "0.3"
 bincode = { version = "1.0.1", features = ["i128"] }
 bitfield = "0.13.1"
-blosc = "0.1"
+blosc = { git = "https://github.com/asomers/blosc-rs/", rev = "04c9e02"}
 byteorder = "1.2.3"
 divbuf = "0.3.1"
 downcast = "0.8"
@@ -59,6 +59,8 @@ features=  [ "suggestions", "color", "wrap_help" ]
 chashmap = "2"
 env_logger = "0.5"
 galvanic-test = { git = "https://github.com/asomers/galvanic-test/", rev = "aca7983"}
+glob = "0.2"
+histogram = "0.6"
 itertools = "0.7.1"
 log = "0.4"
 num_cpus = "1"
