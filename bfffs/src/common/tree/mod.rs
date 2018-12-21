@@ -878,7 +878,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         // First, split the node, if necessary
-        if (*child).should_split(inner.fanout.end - 1) {
+        if (*child).should_split(&k, inner.fanout.end - 1) {
             let right_size = if inner.sequentially_optimized {
                 NonZeroU32::new(inner.fanout.start as u32)
             } else {
@@ -916,7 +916,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         // First, split the root node, if necessary
-        if rnode.should_split(inner.fanout.end - 1) {
+        if rnode.should_split(&k, inner.fanout.end - 1) {
             let right_size = if inner.sequentially_optimized {
                 NonZeroU32::new(inner.fanout.start as u32)
             } else {

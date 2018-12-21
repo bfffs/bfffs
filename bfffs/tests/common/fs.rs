@@ -263,7 +263,7 @@ test_suite! {
     // Dumps an FS tree, with enough data to create IntNodes
     test dump(mocks) {
         // First create enough directories to split the root LeafNode
-        let inos = (0..31).map(|i| {
+        let inos = (0..32).map(|i| {
             let uid = 2 * i + 1;
             let gid = 2 * i + 2;
             let filename = OsString::from(format!("{}", i));

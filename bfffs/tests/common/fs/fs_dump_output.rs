@@ -212,10 +212,18 @@ root:
           name:
             Unix:
               - 56
+      18516713617980980621:
+        DirEntry:
+          ino: 33
+          dtype: 4
+          name:
+            Unix:
+              - 51
+              - 49
       18518801667747479552:
         Inode:
           size: 0
-          nlink: 24
+          nlink: 25
           flags: 0
           atime:
             sec: 0
@@ -1062,6 +1070,42 @@ root:
             nsec: 0
           uid: 61
           gid: 62
+          perm: 493
+          file_type: Dir
+      608774199110773758755:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      608786278467080817222:
+        DirEntry:
+          ino: 33
+          dtype: 4
+          name:
+            Unix:
+              - 46
+      608814612026453131264:
+        Inode:
+          size: 0
+          nlink: 2
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 63
+          gid: 64
           perm: 493
           file_type: Dir
 ---

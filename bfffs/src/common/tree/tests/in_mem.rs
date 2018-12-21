@@ -171,6 +171,60 @@ root:
           0: 100.0"#);
 }
 
+/// When overwriting an existing value, don't split the leaf node, even if it's
+/// full
+#[test]
+fn insert_dup_no_split() {
+    let mock = DMLMock::new();
+    let dml = Arc::new(mock);
+    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+---
+height: 1
+fanout:
+  start: 2
+  end: 6
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 0.0
+          1: 1.0
+          2: 2.0
+          3: 3.0
+          4: 4.0
+"#);
+    let mut rt = current_thread::Runtime::new().unwrap();
+    let r = rt.block_on(tree.insert(0, 100.0, TxgT::from(42)));
+    assert_eq!(r, Ok(Some(0.0)));
+    assert_eq!(format!("{}", tree),
+r#"---
+height: 1
+fanout:
+  start: 2
+  end: 6
+_max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 42
+    end: 43
+  ptr:
+    Mem:
+      Leaf:
+        items:
+          0: 100.0
+          1: 1.0
+          2: 2.0
+          3: 3.0
+          4: 4.0"#);
+}
+
 /// Insert a key that splits a non-root interior node
 #[test]
 fn insert_split_int() {

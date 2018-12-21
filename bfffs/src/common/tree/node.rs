@@ -783,10 +783,16 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     /// Should this node be split because it's too big?
-    // TODO: consider the key that's about to be inserted.  If this is a leaf
-    // node and the key already exists, then don't proactively split.  That will
-    // be important for the RIDT when cleaning zones.
-    pub fn should_split(&self, max_fanout: u64) -> bool {
+    // Normally, proactively split any node that's reached its maximum size on
+    // the theory that it may gain a new child..
+    // But as an optimization, don't split it if it's a leaf and we're only
+    // overwriting.
+    pub fn should_split(&self, key: &K, max_fanout: u64) -> bool {
+        if let NodeData::Leaf(leaf) = self {
+            if leaf.items.contains_key(key) {
+                return false;
+            }
+        }
         let len = self.len() as u64;
         debug_assert!(len <= max_fanout,
                       "Overfull nodes shouldn't be possible");
