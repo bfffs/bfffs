@@ -1,8 +1,8 @@
 pub const EXPECTED: &str = r#"---
 height: 2
 fanout:
-  start: 28
-  end: 114
+  start: 31
+  end: 128
 _max_size: 4194304
 root:
   key: 0
@@ -38,6 +38,14 @@ root:
           name:
             Unix:
               - 49
+              - 48
+      18454148226854198617:
+        DirEntry:
+          ino: 32
+          dtype: 4
+          name:
+            Unix:
+              - 51
               - 48
       18455072946483448367:
         DirEntry:
@@ -95,13 +103,6 @@ root:
             Unix:
               - 49
               - 50
-      18473069649028722204:
-        DirEntry:
-          ino: 9
-          dtype: 4
-          name:
-            Unix:
-              - 55
       18475097164846032420:
         DirEntry:
           ino: 16
@@ -118,6 +119,14 @@ root:
             Unix:
               - 46
               - 46
+      18484030949365896364:
+        DirEntry:
+          ino: 31
+          dtype: 4
+          name:
+            Unix:
+              - 50
+              - 57
       18485561301184241194:
         DirEntry:
           ino: 29
@@ -126,6 +135,14 @@ root:
             Unix:
               - 50
               - 55
+      18487580710148472938:
+        DirEntry:
+          ino: 30
+          dtype: 4
+          name:
+            Unix:
+              - 50
+              - 56
       18490468108375165510:
         DirEntry:
           ino: 1
@@ -198,7 +215,7 @@ root:
       18518801667747479552:
         Inode:
           size: 0
-          nlink: 22
+          nlink: 24
           flags: 0
           atime:
             sec: 0
@@ -216,42 +233,6 @@ root:
           gid: 0
           perm: 493
           file_type: Dir
-      166052341341744519971:
-        DirEntry:
-          ino: 1
-          dtype: 4
-          name:
-            Unix:
-              - 46
-              - 46
-      166064420698051578438:
-        DirEntry:
-          ino: 9
-          dtype: 4
-          name:
-            Unix:
-              - 46
-      166092754257423892480:
-        Inode:
-          size: 0
-          nlink: 2
-          flags: 0
-          atime:
-            sec: 0
-            nsec: 0
-          mtime:
-            sec: 0
-            nsec: 0
-          ctime:
-            sec: 0
-            nsec: 0
-          birthtime:
-            sec: 0
-            nsec: 0
-          uid: 15
-          gid: 16
-          perm: 493
-          file_type: Dir
       184499085415454071587:
         DirEntry:
           ino: 1
@@ -267,9 +248,6 @@ root:
           name:
             Unix:
               - 46
-1:
-  Leaf:
-    items:
       184539498331133444096:
         Inode:
           size: 0
@@ -327,6 +305,9 @@ root:
           gid: 20
           perm: 493
           file_type: Dir
+1:
+  Leaf:
+    items:
       221392573562873174819:
         DirEntry:
           ino: 1
@@ -975,6 +956,114 @@ root:
           gid: 56
           perm: 493
           file_type: Dir
+      553433966889645103907:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      553446046245952162374:
+        DirEntry:
+          ino: 30
+          dtype: 4
+          name:
+            Unix:
+              - 46
+      553474379805324476416:
+        Inode:
+          size: 0
+          nlink: 2
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 57
+          gid: 58
+          perm: 493
+          file_type: Dir
+      571880710963354655523:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      571892790319661713990:
+        DirEntry:
+          ino: 31
+          dtype: 4
+          name:
+            Unix:
+              - 46
+      571921123879034028032:
+        Inode:
+          size: 0
+          nlink: 2
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 59
+          gid: 60
+          perm: 493
+          file_type: Dir
+      590327455037064207139:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      590339534393371265606:
+        DirEntry:
+          ino: 32
+          dtype: 4
+          name:
+            Unix:
+              - 46
+      590367867952743579648:
+        Inode:
+          size: 0
+          nlink: 2
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 61
+          gid: 62
+          perm: 493
+          file_type: Dir
 ---
 2:
   Int:
@@ -985,7 +1074,7 @@ root:
           end: 1
         ptr:
           Addr: 0
-      - key: 184539498331133444096
+      - key: 221392573562873174819
         txgs:
           start: 0
           end: 1

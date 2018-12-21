@@ -263,7 +263,7 @@ test_suite! {
     // Dumps an FS tree, with enough data to create IntNodes
     test dump(mocks) {
         // First create enough directories to split the root LeafNode
-        let inos = (0..28).map(|i| {
+        let inos = (0..31).map(|i| {
             let uid = 2 * i + 1;
             let gid = 2 * i + 2;
             let filename = OsString::from(format!("{}", i));
@@ -277,7 +277,7 @@ test_suite! {
 
         // Then delete some directories to reduce the size of the dump.  But
         // don't delete so many that the LeafNodes merge
-        for i in 0..7 {
+        for i in 0..8 {
             let filename = OsString::from(format!("{}", i));
             mocks.val.0.rmdir(1, &filename).unwrap()
         }
@@ -289,6 +289,7 @@ test_suite! {
         let mut buf = Vec::with_capacity(1024);
         mocks.val.0.dump(&mut buf).unwrap();
         let fs_tree = String::from_utf8(buf).unwrap();
+        println!("{}", fs_tree);
         // Use std::assert_eq! instead of pretty_assertions::assert_eq because
         // the latter is too slow on a failure when the string is this large.
         std::assert_eq!(fs_dump_output::EXPECTED, fs_tree);
