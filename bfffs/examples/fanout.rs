@@ -23,6 +23,7 @@ use rand::{Rng, RngCore, SeedableRng, thread_rng};
 use rand_xorshift::XorShiftRng;
 use std::{
     collections::BTreeMap,
+    str::FromStr,
     sync::{Arc, Mutex}
 };
 use tokio_io_pool::Runtime;
@@ -259,11 +260,10 @@ impl DML for FakeIDML {
     }
 }
 
-fn experiment<F>(mut f: F)
+fn experiment<F>(nelems: u64, mut f: F)
     where F: FnMut(u64) -> u64 + Send + 'static
 {
     const INODE: u64 = 2;
-    const NELEMS: u64 = 100_000;
 
     let mut rt = Runtime::new();
     let next_lba = Arc::new(Atomic::default());
@@ -283,7 +283,7 @@ fn experiment<F>(mut f: F)
     let data = vec![0u8; RECSIZE as usize];
 
     let (alloct_entries, ridt_entries) = rt.block_on(
-        stream::iter_ok(0..NELEMS)
+        stream::iter_ok(0..nelems)
         .for_each(move |i| {
             let dbs = DivBufShared::from(data.clone());
             let offset = f(i);
@@ -345,12 +345,31 @@ fn experiment<F>(mut f: F)
 }
 
 fn main() {
-    println!("=== Sequential insertion ===");
-    experiment(|i| u64::from(RECSIZE) * i);
-    println!("");
-    println!("=== Random insertion ===");
-    let mut rng = XorShiftRng::seed_from_u64(0);
-    experiment(move |_| {
-        rng.next_u32() as u64 * RECSIZE as u64
-    });
+    let app = clap::App::new("fanout")
+        .arg(clap::Arg::with_name("sequential")
+            .help("simulate sequential insertion")
+            .short("s")
+        ).arg(clap::Arg::with_name("random")
+            .help("simulate random insertion")
+            .short("r")
+        ).arg(clap::Arg::with_name("records")
+            .help("Number of records to simulate")
+        );
+    let matches = app.get_matches();
+    let nrecs = matches.value_of("records")
+        .map(u64::from_str)
+        .unwrap_or(Ok(100_000))
+        .unwrap();
+    if matches.is_present("sequential") {
+        println!("=== Sequential insertion ===");
+        experiment(nrecs, |i| u64::from(RECSIZE) * i);
+        println!("");
+    }
+    if matches.is_present("random") {
+        println!("=== Random insertion ===");
+        let mut rng = XorShiftRng::seed_from_u64(0);
+        experiment(nrecs, move |_| {
+            rng.next_u32() as u64 * RECSIZE as u64
+        });
+    }
 }
