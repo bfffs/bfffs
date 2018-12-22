@@ -58,7 +58,7 @@ features=  [ "suggestions", "color", "wrap_help" ]
 [dev-dependencies]
 chashmap = "2"
 env_logger = "0.5"
-galvanic-test = { git = "https://github.com/asomers/galvanic-test/", rev = "aca7983"}
+galvanic-test = "0.2"
 glob = "0.2"
 histogram = "0.6"
 itertools = "0.7.1"

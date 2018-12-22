@@ -1358,7 +1358,7 @@ test_suite! {
     // Test basic layout properties
     name basic;
 
-    use super::MockVdevBlock;
+    use super::*;
     use mockers::{matchers, Scenario};
     use pretty_assertions::assert_eq;
 

@@ -1,5 +1,5 @@
 // vim: tw=80
-use galvanic_test::*;
+use galvanic_test::test_suite;
 
 test_suite! {
     name ddml;
@@ -12,6 +12,7 @@ test_suite! {
     };
     use divbuf::{DivBuf, DivBufShared};
     use futures::{Future, future};
+    use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,

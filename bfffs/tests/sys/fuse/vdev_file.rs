@@ -1,5 +1,5 @@
 // vim: tw=80
-use galvanic_test::*;
+use galvanic_test::test_suite;
 
 test_suite! {
     name basic;
@@ -14,6 +14,7 @@ test_suite! {
     };
     use divbuf::DivBufShared;
     use futures::{future, Future};
+    use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,
@@ -197,6 +198,7 @@ test_suite! {
         sys::vdev_file::*
     };
     use futures::{future, Future};
+    use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,

@@ -1,5 +1,5 @@
 // vim: tw=80
-use galvanic_test::*;
+use galvanic_test::test_suite;
 
 test_suite! {
     // These tests use real VdevBlock and VdevLeaf objects
@@ -8,6 +8,7 @@ test_suite! {
     use bfffs::{common::*, common::vdev_raid::*, common::vdev::Vdev};
     use divbuf::DivBufShared;
     use futures::{Future, future};
+    use galvanic_test::*;
     use rand::{Rng, thread_rng};
     use pretty_assertions::assert_eq;
     use std::{
@@ -544,6 +545,7 @@ test_suite! {
     use bfffs::common::{label::*, vdev_block::*, vdev_raid::*, vdev::Vdev};
     use bfffs::sys::vdev_file::*;
     use futures::{Future, future};
+    use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,

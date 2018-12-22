@@ -1,6 +1,5 @@
 // vim: tw=80
-use galvanic_test::*;
-use log::*;
+use galvanic_test::test_suite;
 
 mod fs_dump_output;
 
@@ -20,6 +19,7 @@ test_suite! {
         common::property::*
     };
     use futures::{Future, future};
+    use galvanic_test::*;
     use libc;
     use pretty_assertions::assert_eq;
     use rand::{Rng, thread_rng};
@@ -32,6 +32,7 @@ test_suite! {
         slice,
         sync::{Arc, Mutex}
     };
+    use super::fs_dump_output;
     use tempdir::TempDir;
     use time::Timespec;
     use tokio_io_pool::Runtime;
@@ -1995,6 +1996,8 @@ test_suite! {
     };
     use env_logger;
     use futures::{Future, future};
+    use galvanic_test::*;
+    use log::*;
     use pretty_assertions::assert_eq;
     use rand::{
         Rng,

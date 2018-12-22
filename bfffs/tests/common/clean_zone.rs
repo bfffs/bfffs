@@ -1,5 +1,5 @@
 // vim: tw=80
-use galvanic_test::*;
+use galvanic_test::test_suite;
 
 /// Constructs a real filesystem, fills it, and cleans it.
 test_suite! {
@@ -14,6 +14,7 @@ test_suite! {
         common::pool::*,
     };
     use futures::{Future, future};
+    use galvanic_test::*;
     use std::{
         ffi::OsString,
         fs,

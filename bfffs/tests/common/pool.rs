@@ -1,5 +1,5 @@
 // vim: tw=80
-use galvanic_test::*;
+use galvanic_test::test_suite;
 
 test_suite! {
     name persistence;
@@ -11,6 +11,7 @@ test_suite! {
     use bfffs::common::label::*;
     use bfffs::common::pool::*;
     use futures::{Future, future};
+    use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,
