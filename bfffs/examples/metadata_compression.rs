@@ -5,8 +5,11 @@
 //! metadata nodes as produced by `examples/fanout --save`
 
 use histogram::Histogram;
-use std::collections::HashMap;
-use std::io::Read;
+use std::{
+    collections::HashMap,
+    io::Read,
+    time
+};
 
 const COMPRESSORS: [blosc::Compressor; 6] = [
     blosc::Compressor::BloscLZ,
@@ -24,15 +27,22 @@ const DATASETS: [(&str, usize); 3] = [
 ];
 
 fn main() {
-    println!("                shuffle    min   mean    max stddev");
+    println!("tree    algo    shuffle |      compression ratio      | compression times");
+    println!("                        |    min   mean    max stddev |     mean   stddev");
+    println!("------------------------+-----------------------------+------------------");
     for (ds, typesize) in DATASETS.iter() {
-        let mut histos = Vec::new();
+        // Compression ratios in parts per thousand
+        let mut ratios = Vec::new();
+        // Compression times in nanoseconds
+        let mut times = Vec::new();
         for _shuf in &[true, false] {
-            histos.push(HashMap::new());
+            ratios.push(HashMap::new());
+            times.push(HashMap::new());
         }
         for z in COMPRESSORS.iter() {
             for shuf in &[true, false] {
-                histos[*shuf as usize].insert(z, Histogram::new());
+                ratios[*shuf as usize].insert(z, Histogram::new());
+                times[*shuf as usize].insert(z, Histogram::new());
             }
         }
         let pat = format!("/tmp/fanout/{}.*.bin", ds);
@@ -47,16 +57,23 @@ fn main() {
                     } else {
                         blosc::ShuffleMode::None
                     };
+                    let start = time::Instant::now();
                     let zbuf = blosc::Context::new()
                         .compressor(*z)
                         .unwrap()
                         .shuffle(shufmode)
                         .typesize(Some(*typesize))
                         .compress(&buf[0..lsize]);
+
+                    let time = start.elapsed();
+                    debug_assert_eq!(time.as_secs(), 0);
+                    times[*shuf as usize].get_mut(&z).unwrap()
+                        .increment(time.subsec_nanos().into())
+                        .unwrap();
+
                     let csize = zbuf.size();
                     let ratio = csize as f64 / lsize as f64;
-                    // The histogram crate only works with u64 data
-                    histos[*shuf as usize].get_mut(&z).unwrap()
+                    ratios[*shuf as usize].get_mut(&z).unwrap()
                         .increment((1000.0 * ratio) as u64)
                         .unwrap();
                 }
@@ -64,14 +81,22 @@ fn main() {
         }
         for z in COMPRESSORS.iter() {
             for shuf in &[true, false] {
-                let hs = &histos[*shuf as usize][z];
                 let zname = format!("{:?}", z);
-                let min = hs.minimum().unwrap() as f64 / 10.0;
-                let mean = hs.mean().unwrap() as f64 / 10.0;
-                let max = hs.maximum().unwrap() as f64 / 10.0;
-                let stddev = hs.stddev().unwrap() as f64 / 10.0;
-                println!("{:8}{:8}{:8}{:5.1}% {:5.1}% {:5.1}% {:5.1}%", ds,
-                         zname, shuf, min, mean, max, stddev);
+
+                let ratio = &ratios[*shuf as usize][z];
+                let zmin = ratio.minimum().unwrap() as f64 / 10.0;
+                let zmean = ratio.mean().unwrap() as f64 / 10.0;
+                let zmax = ratio.maximum().unwrap() as f64 / 10.0;
+                let zstddev = ratio.stddev().unwrap() as f64 / 10.0;
+
+                let time = &times[*shuf as usize][z];
+                let tmean = time.mean().unwrap();
+                let tstddev = time.stddev().unwrap();
+
+                print!("{:8}{:8}{:8}| {:5.1}% {:5.1}% {:5.1}% {:5.1}%", ds,
+                         zname, shuf, zmin, zmean, zmax, zstddev);
+                println!(" | {:6.1}ns {:6.1}ns",
+                         tmean, tstddev);
             }
         }
     }
