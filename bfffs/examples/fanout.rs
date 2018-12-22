@@ -188,7 +188,7 @@ impl FakeIDML {
         FakeIDML {
             alloct,
             data_size: Atomic::<u64>::default(),
-            data_ddml: data_ddml,
+            data_ddml,
             name,
             next_rid: Atomic::<u64>::default(),
             ridt,
@@ -341,7 +341,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     let fs_guard = idml.stats.put_counts.lock().unwrap();
     println!("FS Tree put counts: {:?}", *fs_guard);
 
-    println!("");
+    println!();
     let alloct_metadata_size = alloct_ddml.stats.metadata_size();
     println!("AllocT entries:          {:?}", alloct_entries);
     println!("AllocT Metadata size:    {} bytes", alloct_metadata_size);
@@ -350,7 +350,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     let alloct_guard = alloct_ddml.stats.put_counts.lock().unwrap();
     println!("AllocT put counts: {:?}", *alloct_guard);
 
-    println!("");
+    println!();
     let ridt_metadata_size = ridt_ddml.stats.metadata_size();
     println!("RIDT entries:          {:?}", ridt_entries);
     println!("RIDT Metadata size:    {} bytes", ridt_metadata_size);
@@ -359,7 +359,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     let ridt_guard = ridt_ddml.stats.put_counts.lock().unwrap();
     println!("RIDT put counts: {:?}", *ridt_guard);
 
-    println!("");
+    println!();
     let metadata_size = fs_metadata_size + alloct_metadata_size +
         ridt_metadata_size;
     let data_size = idml.data_size();
@@ -390,13 +390,13 @@ fn main() {
     if matches.is_present("sequential") {
         println!("=== Sequential insertion ===");
         experiment(nrecs, save, |i| u64::from(RECSIZE) * i);
-        println!("");
+        println!();
     }
     if matches.is_present("random") {
         println!("=== Random insertion ===");
         let mut rng = XorShiftRng::seed_from_u64(0);
         experiment(nrecs, save, move |_| {
-            rng.next_u32() as u64 * RECSIZE as u64
+            u64::from(rng.next_u32()) * u64::from(RECSIZE)
         });
     }
 }

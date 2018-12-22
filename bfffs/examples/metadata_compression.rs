@@ -17,7 +17,7 @@ const COMPRESSORS: [blosc::Compressor; 6] = [
     blosc::Compressor::Zstd
 ];
 
-const DATASETS: [&'static str; 3] = [
+const DATASETS: [&str; 3] = [
     &"alloct",
     &"ridt",
     &"fs"
