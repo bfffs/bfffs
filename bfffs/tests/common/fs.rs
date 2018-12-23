@@ -264,7 +264,7 @@ test_suite! {
     // Dumps an FS tree, with enough data to create IntNodes
     test dump(mocks) {
         // First create enough directories to split the root LeafNode
-        let inos = (0..32).map(|i| {
+        let inos = (0..63).map(|i| {
             let uid = 2 * i + 1;
             let gid = 2 * i + 2;
             let filename = OsString::from(format!("{}", i));
@@ -278,7 +278,7 @@ test_suite! {
 
         // Then delete some directories to reduce the size of the dump.  But
         // don't delete so many that the LeafNodes merge
-        for i in 0..8 {
+        for i in 0..15 {
             let filename = OsString::from(format!("{}", i));
             mocks.val.0.rmdir(1, &filename).unwrap()
         }

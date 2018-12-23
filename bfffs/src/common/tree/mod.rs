@@ -665,29 +665,28 @@ impl<A, D, K, V> Tree<A, D, K, V>
             // A fanout spread of 4 is what BetrFS uses.
             // [^CowBtrees] uses a fanout spread of 3 for its benchmarks
             let spread = 4u16;
-            let mut target_size = if sequentially_optimized {
+            let overhead = 12;  // enum variant size and vector size
+            // split_size is the amount of data in the left side after a split
+            let split_size = BYTES_PER_LBA - overhead;
+            let max_fanout = if sequentially_optimized {
                 // Sequentially optimized trees will almost never randomly
                 // insert.  Most nodes will be what remains after a split.  So
                 // we should increase the target node size so that the left side
                 // of a split just fits into a whole LBA.
-                BYTES_PER_LBA * usize::from(spread) / usize::from(spread - 1)
+                split_size * usize::from(spread) / usize::from(spread - 1)
+                    / elem_size
             } else {
-                // Randomly optimized nodes should split evenly.
-                // TODO: increase this field so the left side will just fit into
-                // an LBA.
-                BYTES_PER_LBA
+                // Randomly optimized nodes should split evenly.  But sequential
+                // access is still more common.  Size the max fanout so that
+                // left side of a split just fits into a whole LBA.  Use an even
+                // number of elements, because the split method will put the
+                // larger half on the left side.
+                2 * (split_size / elem_size)
             };
-            // Allow for the enum variant and vector size
-            target_size -= 4 + 8;
-            // Round down to the nearest whole number of elements
-            target_size -= target_size % elem_size;
-            let max_fanout = target_size / elem_size;
             debug_assert!(max_fanout <= usize::from(u16::max_value()));
             let min_fanout = div_roundup(max_fanout as u16, spread);
             (min_fanout, max_fanout as u16)
             // TODO: take account of compression
-            // TODO: when calculating max fanout, consider that under a
-            // sequential workload most nodes will be half full
         };
 
         let (minlf, maxlf) = mk_fanout(Inner::<A, D, K, V>::LEAF_ELEM_SIZE);
