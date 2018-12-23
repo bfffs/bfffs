@@ -15,18 +15,30 @@ pub enum Compression {
 }
 
 impl Compression {
-    pub fn compress(self, input: &IoVec) -> Option<DivBufShared> {
-        match self {
-            Compression::None  => {
-                None
-            },
-            Compression::ZstdL9NoShuffle => {
-                let ctx = blosc::Context::new()
-                    .clevel(blosc::Clevel::L9)
-                    .compressor(blosc::Compressor::Zstd).unwrap();
-                let buffer = ctx.compress(&input[..]);
-                let v: Vec<u8> = buffer.into();
-                Some(DivBufShared::from(v))
+    pub fn compress(self, input: IoVec) -> (IoVec, Compression) {
+        let lsize = input.len();
+        if self == Compression::None || lsize <= BYTES_PER_LBA {
+            (input, Compression::None)
+        } else {
+            let ctx = match self {
+                Compression::None  => {
+                    unreachable!()
+                },
+                Compression::ZstdL9NoShuffle => {
+                    blosc::Context::new()
+                        .clevel(blosc::Clevel::L9)
+                        .compressor(blosc::Compressor::Zstd).unwrap()
+                }
+            };
+            let buffer = ctx.compress(&input[..]);
+            let v: Vec<u8> = buffer.into();
+            let dbs = DivBufShared::from(v);
+            let compressed_lbas = div_roundup(dbs.len(), BYTES_PER_LBA);
+            let uncompressed_lbas = div_roundup(lsize, BYTES_PER_LBA);
+            if compressed_lbas < uncompressed_lbas {
+                (dbs.try_const().unwrap(), self)
+            } else {
+                (input, Compression::None)
             }
         }
     }
@@ -84,4 +96,74 @@ pub trait DML: Send + Sync {
     /// Sync all records written so far to stable storage.
     fn sync_all(&self, txg: TxgT)
         -> Box<dyn Future<Item=(), Error=Error> + Send>;
+}
+
+#[cfg(test)]
+mod t {
+    use rand::{RngCore, SeedableRng};
+    use rand_xorshift::XorShiftRng;
+    use super::*;
+
+    /// Compressible data should not be compressed, if doing so would save < 1
+    /// LBA of space.
+    #[test]
+    fn compress_barely_compressible() {
+        let lsize = 2 * BYTES_PER_LBA;
+        let mut rng = XorShiftRng::seed_from_u64(12345);
+        let mut v = vec![0u8; lsize];
+        rng.fill_bytes(&mut v[0..lsize - 1024]);
+        let dbs = DivBufShared::from(v);
+        let db = dbs.try_const().unwrap();
+        let (zdb, compression) = Compression::ZstdL9NoShuffle.compress(db);
+        assert_eq!(zdb.len(), lsize);
+        assert_eq!(compression, Compression::None);
+    }
+
+    /// Compressible data should be compressed
+    #[test]
+    fn compress_compressible() {
+        let lsize = 2 * BYTES_PER_LBA;
+        let dbs = DivBufShared::from(vec![42u8; lsize]);
+        let db = dbs.try_const().unwrap();
+        let (zdb, compression) = Compression::ZstdL9NoShuffle.compress(db);
+        assert!(zdb.len() < lsize);
+        assert_eq!(compression, Compression::ZstdL9NoShuffle);
+    }
+
+    /// Compression should not be attempted when it is disabled.
+    #[test]
+    fn compress_compression_disabled() {
+        let lsize = 2 * BYTES_PER_LBA;
+        let dbs = DivBufShared::from(vec![42u8; lsize]);
+        let db = dbs.try_const().unwrap();
+        let (zdb, compression) = Compression::None.compress(db);
+        assert_eq!(zdb.len(), lsize);
+        assert_eq!(compression, Compression::None);
+    }
+
+    /// Compressible data won't be compressed if it's already <= 1 LBA.
+    #[test]
+    fn compress_compressible_but_short() {
+        let lsize = BYTES_PER_LBA;
+        let dbs = DivBufShared::from(vec![42u8; lsize]);
+        let db = dbs.try_const().unwrap();
+        let (zdb, compression) = Compression::ZstdL9NoShuffle.compress(db);
+        assert_eq!(zdb.len(), lsize);
+        assert_eq!(compression, Compression::None);
+    }
+
+    /// Incompressible data should not be compressed, even when compression is
+    /// enabled.
+    #[test]
+    fn compress_incompressible() {
+        let lsize = 2 * BYTES_PER_LBA;
+        let mut rng = XorShiftRng::seed_from_u64(12345);
+        let mut v = vec![0u8; lsize];
+        rng.fill_bytes(&mut v[..]);
+        let dbs = DivBufShared::from(v);
+        let db = dbs.try_const().unwrap();
+        let (zdb, compression) = Compression::ZstdL9NoShuffle.compress(db);
+        assert_eq!(zdb.len(), lsize);
+        assert_eq!(compression, Compression::None);
+    }
 }

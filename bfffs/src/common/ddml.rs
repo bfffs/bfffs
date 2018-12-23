@@ -389,18 +389,10 @@ impl DDML {
         let serialized = cacheref.borrow().serialize();
         assert!(serialized.len() < u32::max_value() as usize,
             "Record exceeds maximum allowable length");
-        let lsize = serialized.len() as u32;
+        let lsize = serialized.len();
 
         // Compress
-        let compressed_dbs = compression.compress(&serialized);
-        let compressed_db = match &compressed_dbs {
-            Some(dbs) => {
-                dbs.try_const().unwrap()
-            },
-            None => {
-                serialized
-            }
-        };
+        let (compressed_db, compression) = compression.compress(serialized);
         let csize = compressed_db.len() as u32;
 
         // Checksum
@@ -411,7 +403,7 @@ impl DDML {
         // Write
         self.pool.write(compressed_db, txg)
         .map(move |pba| {
-            DRP { pba, compression, lsize, csize, checksum }
+            DRP { pba, compression, lsize: lsize as u32, csize, checksum }
         })
     }
 
@@ -559,6 +551,8 @@ mod ddml {
     use mockers::{Scenario, Sequence, check};
     use mockers_derive::mock;
     use pretty_assertions::assert_eq;
+    use rand::{RngCore, SeedableRng};
+    use rand_xorshift::XorShiftRng;
     use simulacrum::validators::trivial::any;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -903,9 +897,70 @@ mod ddml {
         let drp = rt.block_on(
             ddml.put(dbs, Compression::None, TxgT::from(42))
         ).unwrap();
-        assert_eq!(drp.pba, pba);
+        assert_eq!(drp.compression(), Compression::None);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
+        assert_eq!(drp.pba, pba);
+    }
+
+    /// With compression enabled, compressible data should be compressed
+    #[test]
+    fn put_compressible() {
+        let s = Scenario::new();
+        let mut cache = Cache::default();
+        let pba = PBA::default();
+        cache.expect_insert()
+            .called_once()
+            .with(params!(Key::PBA(pba), any()))
+            .returning(drop);
+        let pool = s.create_mock::<MockPool>();
+        s.expect(pool.write_call(ANY, TxgT::from(42))
+            .and_return(Box::new(future::ok::<PBA, Error>(pba)))
+        );
+
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
+        let dbs = DivBufShared::from(vec![42u8; 8192]);
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let drp = rt.block_on(
+            ddml.put(dbs, Compression::ZstdL9NoShuffle, TxgT::from(42))
+        ).unwrap();
+        assert_eq!(drp.compression(), Compression::ZstdL9NoShuffle);
+        assert!(drp.csize < 8192);
+        assert_eq!(drp.lsize, 8192);
+        assert_eq!(drp.pba, pba);
+    }
+
+    /// Incompressible data should not be compressed, even when compression is
+    /// enabled.
+    #[test]
+    fn put_incompressible() {
+        let s = Scenario::new();
+        let mut cache = Cache::default();
+        let pba = PBA::default();
+        cache.expect_insert()
+            .called_once()
+            .with(params!(Key::PBA(pba), any()))
+            .returning(drop);
+        let pool = s.create_mock::<MockPool>();
+        s.expect(pool.write_call(ANY, TxgT::from(42))
+            .and_return(Box::new(future::ok::<PBA, Error>(pba)))
+        );
+
+        let pool_wrapper = MockPoolWrapper(Box::new(pool));
+        let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
+        let mut rng = XorShiftRng::seed_from_u64(12345);
+        let mut v = vec![0u8; 8192];
+        rng.fill_bytes(&mut v[..]);
+        let dbs = DivBufShared::from(v);
+        let mut rt = current_thread::Runtime::new().unwrap();
+        let drp = rt.block_on(
+            ddml.put(dbs, Compression::ZstdL9NoShuffle, TxgT::from(42))
+        ).unwrap();
+        assert_eq!(drp.compression(), Compression::None);
+        assert_eq!(drp.csize, 8192);
+        assert_eq!(drp.lsize, 8192);
+        assert_eq!(drp.pba, pba);
     }
 
     #[test]
