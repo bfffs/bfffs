@@ -80,12 +80,12 @@ struct FakeDDML {
 }
 
 impl FakeDDML {
-    fn next_drp(&self, lsize: u32) -> DRP {
+    fn next_drp(&self, z: Compression, lsize: u32, csize: u32) -> DRP {
         let lbas = div_roundup(lsize as usize, BYTES_PER_LBA) as u64;
         let lba = self.next_lba.fetch_add(lbas, Ordering::Relaxed);
         let pba = PBA::new(0, lba);
         let checksum = thread_rng().gen::<u64>();
-        DRP::new(pba, Compression::None, lsize, lsize, checksum)
+        DRP::new(pba, z, lsize, csize, checksum)
     }
 
     fn new(name: &'static str, next_lba: Arc<Atomic<u64>>, save: bool) -> Self {
@@ -98,13 +98,15 @@ impl FakeDDML {
     }
 
     /// Just like `put`, but separate for record-keeping purposes
-    fn put_data<T: Cacheable>(&self, cacheable: T, _compression: Compression,
+    fn put_data(&self, cacheref: Box<CacheRef>, compression: Compression,
                              _txg: TxgT)
         -> Box<dyn Future<Item=DRP, Error=Error> + Send>
     {
-        let db = cacheable.make_ref().serialize();
+        let db = cacheref.serialize();
         let lsize = db.len() as u32;
-        let drp = self.next_drp(lsize);
+        let (zdb, compression) = compression.compress(db);
+        let csize = zdb.len() as u32;
+        let drp = self.next_drp(compression, lsize, csize);
         boxfut!(future::ok(drp))
     }
 }
@@ -138,7 +140,7 @@ impl DML for FakeDDML {
     }
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
-    fn put<T: Cacheable>(&self, cacheable: T, _compression: Compression,
+    fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              _txg: TxgT)
         -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>
     {
@@ -150,8 +152,10 @@ impl DML for FakeDDML {
             f.write_all(&db[..]).unwrap();
         }
         let lsize = db.len() as u32;
-        self.stats.put(lsize);
-        let drp = self.next_drp(lsize);
+        let (zdb, compression) = compression.compress(db);
+        let csize = zdb.len() as u32;
+        self.stats.put(csize);
+        let drp = self.next_drp(compression, lsize, csize);
         boxfut!(future::ok(drp))
     }
 
@@ -198,7 +202,7 @@ impl FakeIDML {
     }
 
     /// Just like `put`, but separate for record-keeping purposes
-    fn put_data<T: Cacheable>(&self, cacheable: T, _compression: Compression,
+    fn put_data<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
         -> Box<dyn Future<Item=RID, Error=Error> + Send>
     {
@@ -206,7 +210,8 @@ impl FakeIDML {
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
         let alloct2 = self.alloct.clone();
         let ridt2 = self.ridt.clone();
-        let fut = self.data_ddml.put_data(cacheable, Compression::None, txg)
+        let cacheref = cacheable.make_ref();
+        let fut = self.data_ddml.put_data(cacheref, compression, txg)
         .and_then(move |drp| {
             let pba = drp.pba();
             let ridt_entry = RidtEntry::new(drp);
@@ -247,7 +252,7 @@ impl DML for FakeIDML {
     }
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
-    fn put<T: Cacheable>(&self, cacheable: T, _compression: Compression,
+    fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
         -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>
     {
@@ -258,12 +263,13 @@ impl DML for FakeIDML {
             let mut f = std::fs::File::create(fname).unwrap();
             f.write_all(&db[..]).unwrap();
         }
-        let lsize = db.len() as u32;
-        self.stats.put(lsize);
+        let (zdb, _compression) = compression.compress(db);
+        let csize = zdb.len() as u32;
+        self.stats.put(csize);
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
         let alloct2 = self.alloct.clone();
         let ridt2 = self.ridt.clone();
-        let fut = self.data_ddml.put_data(cacheable, Compression::None, txg)
+        let fut = self.data_ddml.put_data(Box::new(zdb), Compression::None, txg)
         .and_then(move |drp| {
             let pba = drp.pba();
             let ridt_entry = RidtEntry::new(drp);

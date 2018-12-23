@@ -32,7 +32,7 @@ use std::{
     fmt::Debug,
     io,
     mem,
-    num::NonZeroU32,
+    num::{NonZeroU8, NonZeroU32},
     ops::{Bound, Deref, DerefMut, Range, RangeBounds, RangeInclusive},
     rc::Rc,
     sync::{
@@ -360,6 +360,12 @@ struct Inner<A: Addr, D: DML, K: Key, V: Value> {
     root: RwLock<IntElem<A, K, V>>,
     #[serde(skip)]
     dml: Arc<D>,
+    /// Compression function used for interior nodes
+    #[serde(skip)]
+    int_compressor: Compression,
+    /// Compression function used for leaves
+    #[serde(skip)]
+    leaf_compressor: Compression,
     /// Should tree operations assume that access will be mostly sequential in
     /// increasing order?
     #[serde(skip)]
@@ -367,15 +373,39 @@ struct Inner<A: Addr, D: DML, K: Key, V: Value> {
 }
 
 impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
+    const INT_ELEM_SIZE: usize = IntElem::<A, K, V>::TYPICAL_SIZE;
+    const LEAF_ELEM_SIZE: usize = K::TYPICAL_SIZE + V::TYPICAL_SIZE;
+
     #[cfg(test)]
     pub fn from_str(dml: Arc<D>, seq: bool, s: &str) -> Self {
         let il: InnerLiteral<A, K, V> = serde_yaml::from_str(s).unwrap();
+        Inner::new(dml, il.height, il.fanout, il._max_size, il.root, seq)
+    }
+
+    pub fn new(dml: Arc<D>, height: u64, fanout: Range<u64>, max_size: u64,
+               root_elem: IntElem<A, K, V>, seq: bool) -> Self {
+        debug_assert!(Self::INT_ELEM_SIZE < u8::max_value as usize);
+        debug_assert!(Self::INT_ELEM_SIZE > 0);
+        let int_ts = unsafe{
+            // Safe because we checked that INT_ELEM_SIZE > 0
+            NonZeroU8::new_unchecked(Self::INT_ELEM_SIZE as u8)
+        };
+        let int_compressor = Compression::LZ4(Some(int_ts));
+        debug_assert!(Self::LEAF_ELEM_SIZE < u8::max_value as usize);
+        debug_assert!(Self::LEAF_ELEM_SIZE > 0);
+        let leaf_ts = unsafe{
+            // Safe because we checked that LEAF_ELEM_SIZE > 0
+            NonZeroU8::new_unchecked(Self::LEAF_ELEM_SIZE as u8)
+        };
+        let leaf_compressor = Compression::LZ4(Some(leaf_ts));
         Inner {
-            height: Atomic::new(il.height),
-            fanout: il.fanout,
-            _max_size: il._max_size,
-            root: RwLock::new(il.root),
+            height: Atomic::new(height),
+            fanout,
+            _max_size: max_size,
+            root: RwLock::new(root_elem),
             dml,
+            int_compressor,
+            leaf_compressor,
             sequentially_optimized: seq
         }
     }
@@ -384,14 +414,7 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
         let iod: InnerOnDisk<A> = on_disk.0;
         let root_elem = IntElem::new(K::min_value(), iod.txgs,
                                      TreePtr::Addr(iod.root));
-        Inner {
-            height: Atomic::new(iod.height),
-            fanout: iod.fanout,
-            _max_size: iod._max_size,
-            root: RwLock::new(root_elem),
-            dml,
-            sequentially_optimized: seq
-        }
+        Inner::new(dml, iod.height, iod.fanout, iod._max_size, root_elem, seq)
     }
 }
 
@@ -655,7 +678,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // series of IntElems.
         // There are vastly more leaf nodes than interior nodes, so if we must
         // optimize for one over the other, we should choose leaves.
-        let leaf_elem_size = K::TYPICAL_SIZE + V::TYPICAL_SIZE;
         let _int_ptr_size = IntElem::<A, K, V>::TYPICAL_SIZE;
         // A fanout spread of 4 is what BetrFS uses.
         let spread = 4;
@@ -671,6 +693,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Allow for the enum variant and vector size
         target_leaf_size -= 4 + 8;
         // Round down to the nearest whole number of elements
+        let leaf_elem_size = Inner::<A, D, K, V>::LEAF_ELEM_SIZE;
         target_leaf_size -= target_leaf_size % leaf_elem_size;
         let max_leaf_fanout = target_leaf_size / leaf_elem_size;
         // TODO: use different fanouts for int vs leaf nodes
@@ -1735,14 +1758,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
            seq: bool) -> Self
     {
         // Since there are no on-disk children, the initial TXG range is empty
-        let i: Arc<Inner<A, D, K, V>> = Arc::new(Inner {
-            height: Atomic::new(1),
-            fanout: min_fanout..(max_fanout + 1),
-            _max_size: max_size,
-            root: RwLock::new(IntElem::default()),
-            dml,
-            sequentially_optimized: seq
-        });
+        let fanout = min_fanout..(max_fanout + 1);
+        let root_elem = IntElem::default();
+        let inner = Inner::new(dml, 1, fanout, max_size, root_elem, seq);
+        let i = Arc::new(inner);
         Tree{ i }
     }
 
@@ -1833,6 +1852,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     pub fn flush(&self, txg: TxgT) -> impl Future<Item=(), Error=Error>
     {
         let dml2 = self.i.dml.clone();
+        let int_compressor = self.i.int_compressor;
+        let leaf_compressor = self.i.leaf_compressor;
         self.write()
             .and_then(move |root_guard| {
             if root_guard.ptr.is_dirty() {
@@ -1845,7 +1866,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 {
                     drop(child_guard);
                     let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
-                    Tree::flush_r(dml2, *ptr.into_node(), txg)
+                    Tree::flush_r(dml2, int_compressor, leaf_compressor,
+                                  *ptr.into_node(), txg)
                         .map(move |(addr, txgs)| {
                             root_guard.ptr = TreePtr::Addr(addr);
                             root_guard.txgs = txgs;
@@ -1876,22 +1898,24 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     // Clippy has a false positive on `node`
     #[allow(clippy::needless_pass_by_value)]
-    fn write_leaf(dml: Arc<D>, node: Node<A, K, V>, txg: TxgT)
+    fn write_leaf(dml: Arc<D>, compressor: Compression, node: Node<A, K, V>,
+                  txg: TxgT)
         -> impl Future<Item=A, Error=Error>
     {
         node.0.try_unwrap().unwrap().into_leaf().flush(&*dml, txg)
         .and_then(move |leaf_data| {
             let node = Node::new(NodeData::Leaf(leaf_data));
             let arc: Arc<Node<A, K, V>> = Arc::new(node);
-            dml.put(arc, Compression::None, txg)
+            dml.put(arc, compressor, txg)
         })
     }
 
-    fn flush_r(dml: Arc<D>, mut node: Node<A, K, V>, txg: TxgT)
+    fn flush_r(dml: Arc<D>, int_compressor: Compression,
+               leaf_compressor: Compression, mut node: Node<A, K, V>, txg: TxgT)
         -> Box<dyn Future<Item=(D::Addr, Range<TxgT>), Error=Error> + Send>
     {
         if node.0.get_mut().expect("node.0.get_mut").is_leaf() {
-            let fut = Tree::write_leaf(dml, node, txg)
+            let fut = Tree::write_leaf(dml, leaf_compressor, node, txg)
                 .map(move |addr| {
                     (addr, txg..txg + 1)
                 });
@@ -1918,7 +1942,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 let fut = elem.ptr.as_mem().xlock().and_then(move |guard|
                 {
                     drop(guard);
-                    Tree::flush_r(dml3, *elem.ptr.into_node(), txg)
+                    Tree::flush_r(dml3, int_compressor, leaf_compressor,
+                                  *elem.ptr.into_node(), txg)
                 }).map(move |(addr, txgs)| {
                     IntElem::new(key, txgs, TreePtr::Addr(addr))
                 });
@@ -1938,7 +1963,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 ndata.as_int_mut().children = elems;
                 drop(ndata);
                 let arc: Arc<Node<A, K, V>> = Arc::new(node);
-                dml2.put(arc, Compression::None, txg)
+                dml2.put(arc, int_compressor, txg)
                     .map(move |addr| (addr, start_txg..txg + 1))
             })
         )

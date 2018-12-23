@@ -11,6 +11,9 @@ pub use crate::common::cache::{Cacheable, CacheRef};
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Compression {
     None,
+    /// LZ4 is very fast with decent compression.  From experiment, it's the
+    /// best algorithm for metadata
+    LZ4(Option<NonZeroU8>),
     /// ZStandard usually gives a very good compression ratio with moderate
     /// speed.  `typesize` is the size of each individual element.  Use
     /// `typesize=None` for an unstructured buffer.
@@ -19,18 +22,23 @@ pub enum Compression {
 
 impl Compression {
     pub fn compress(self, input: IoVec) -> (IoVec, Compression) {
+        let usize_from_typesize = |ts: NonZeroU8| usize::from(ts.get());
         let lsize = input.len();
         if self == Compression::None || lsize <= BYTES_PER_LBA {
             (input, Compression::None)
         } else {
+            let ctx0 = blosc::Context::new()
+                .shuffle(blosc::ShuffleMode::Byte);
             let ctx = match self {
                 Compression::None  => {
                     unreachable!()
                 },
+                Compression::LZ4(typesize) => {
+                    ctx0.typesize(typesize.map(usize_from_typesize))
+                        .compressor(blosc::Compressor::LZ4).unwrap()
+                },
                 Compression::Zstd(typesize) => {
-                    blosc::Context::new()
-                        .shuffle(blosc::ShuffleMode::Byte)
-                        .typesize(typesize.map(|ts| usize::from(ts.get())))
+                    ctx0.typesize(typesize.map(usize_from_typesize))
                         .compressor(blosc::Compressor::Zstd).unwrap()
                 }
             };
