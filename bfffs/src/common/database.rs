@@ -360,7 +360,7 @@ impl Database {
     pub fn create<E>(idml: Arc<IDML>, handle: E) -> Self
         where E: Clone + Executor + 'static
     {
-        let forest = ITree::create(idml.clone(), false);
+        let forest = ITree::create(idml.clone(), true);
         Database::new(idml, forest, handle)
     }
 
@@ -540,7 +540,7 @@ impl Database {
         where E: Clone + Executor + 'static
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let forest = Tree::open(idml.clone(), false, l.forest);
+        let forest = Tree::open(idml.clone(), true, l.forest);
         Database::new(idml, forest, handle)
     }
 
