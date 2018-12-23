@@ -43,20 +43,18 @@ impl Compression {
         }
     }
 
-    pub fn decompress(self, input: &IoVec) -> Option<DivBufShared> {
-        match self {
-            Compression::None  => {
-                None
-            },
-            Compression::ZstdL9NoShuffle => {
-                let v = unsafe {
-                    // Sadly, decompressing with Blosc is unsafe until
-                    // https://github.com/Blosc/c-blosc/issues/229 gets fixed
-                    blosc::decompress_bytes(input)
-                }.unwrap();
-                Some(DivBufShared::from(v))
-            }
-        }
+    pub fn decompress(input: &IoVec) -> DivBufShared {
+        let v = unsafe {
+            // Sadly, decompressing with Blosc is unsafe until
+            // https://github.com/Blosc/c-blosc/issues/229 gets fixed
+            blosc::decompress_bytes(input)
+        }.unwrap();
+        DivBufShared::from(v)
+    }
+
+    /// Does this compression algorithm compress the data at all?
+    pub fn is_compressed(self) -> bool {
+        self != Compression::None
     }
 }
 

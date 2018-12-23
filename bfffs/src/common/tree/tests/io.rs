@@ -1345,7 +1345,7 @@ root:
       pba:
         cluster: 2
         lba: 0x0102030405060708
-      compression: ZstdL9NoShuffle
+      compressed: true
       lsize: 78
       csize: 36
       checksum: 0x0807060504030201
@@ -1417,7 +1417,7 @@ root:
       pba:
         cluster: 2
         lba: 0x0102030405060708
-      compression: ZstdL9NoShuffle
+      compressed: true
       lsize: 78
       csize: 36
       checksum: 0x0807060504030201

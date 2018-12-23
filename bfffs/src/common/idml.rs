@@ -53,7 +53,7 @@ impl RidtEntry {
 }
 
 impl TypicalSize for RidtEntry {
-    const TYPICAL_SIZE: usize = 38;
+    const TYPICAL_SIZE: usize = 35;
 }
 
 impl Value for RidtEntry {}
@@ -304,22 +304,9 @@ impl<'a> IDML {
             .and_then(move |v| {
                 let mut entry = v.expect(
                     "Inconsistency in alloct.  Entry not found in RIDT");
-                let compression = entry.drp.compression();
-                let guard = cache2.lock().unwrap();
-                let fut = if let Some(t) = guard.get_ref(&Key::Rid(rid)) {
-                    // Cache hit: Write the new record and delete the old Must
-                    // finish writing the new record before deleting the old so
-                    // we don't reuse the zone too soon.
-                    // NB: if BFFFS ever implements deferred zone erase, then we
-                    // can write and delete in parallel.
-                    let db = t.serialize();
-                    let fut = ddml2.put_direct(&db, compression, txg)
-                    .and_then(move |drp| {
-                        ddml3.delete_direct(&entry.drp, txg)
-                        .map(move |_| drp)
-                    });
-                    Box::new(fut) as MyFut
-                } else {
+                let compressed = entry.drp.is_compressed();
+
+                let cache_miss = || {
                     // Cache miss: get the old record, write the new one, then
                     // erase the old.  Same ordering requirements apply as for
                     // the cache hit case.
@@ -335,12 +322,37 @@ impl<'a> IDML {
                     let fut = ddml2.get_direct::<DivBufShared>(&drp_uc)
                     .and_then(move |dbs| {
                         let db = dbs.try_const().unwrap();
-                        ddml3.put_direct(&db, Compression::None, txg)
-                    }).and_then(move |drp| {
-                        ddml4.delete_direct(&entry.drp, txg)
-                        .map(move |_| drp.into_compressed(&entry.drp))
+                        ddml4.put_direct(&db, Compression::None, txg)
+                        .and_then(move |drp| {
+                            ddml4.delete_direct(&entry.drp, txg)
+                            .map(move |_| drp.into_compressed(&entry.drp))
+                        })
                     });
                     Box::new(fut) as MyFut
+                };
+
+                // Bypass the cache for compressed records, since we don't know
+                // what compression algorithm to write back with.
+                let fut = if !compressed {
+                    let guard = cache2.lock().unwrap();
+                    if let Some(t) = guard.get_ref(&Key::Rid(rid)) {
+                        // Cache hit: Write the new record and delete the old
+                        // Must finish writing the new record before deleting
+                        // the old so we don't reuse the zone too soon.
+                        // NB: if BFFFS ever implements deferred zone erase,
+                        // then we can write and delete in parallel.
+                        let db = t.serialize();
+                        let fut = ddml2.put_direct(&db, Compression::None, txg)
+                        .and_then(move |drp| {
+                            ddml3.delete_direct(&entry.drp, txg)
+                            .map(move |_| drp)
+                        });
+                        Box::new(fut) as MyFut
+                    } else {
+                        cache_miss()
+                    }
+                } else {
+                    cache_miss()
                 };
                 fut.and_then(move |drp: DRP| {
                     entry.drp = drp;
@@ -861,13 +873,14 @@ mod t {
         assert_eq!(r.unwrap(), vec![rid1, rid2]);
     }
 
+    /// When moving a record not resident in cache, get it from disk
     #[test]
     fn move_indirect_record_cold() {
         let v = vec![42u8; 4096];
         let dbs = DivBufShared::from(v.clone());
         let rid = RID(1);
-        let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
-        let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
+        let drp0 = DRP::random(Compression::None, 4096);
+        let drp1 = DRP::random(Compression::None, 4096);
         let drp1_c = drp1;
         let mut cache = Cache::default();
         let mut ddml = DDML::default();
@@ -882,8 +895,7 @@ mod t {
             .called_once()
             .with(passes(move |key: &*const DRP| {
                 unsafe {
-                    (**key).pba() == drp0.pba() &&
-                    (**key).compression() == Compression::None
+                    (**key).pba() == drp0.pba() && !(**key).is_compressed()
                 }
             })).returning(move |_| {
                 let r = DivBufShared::from(&dbs.try_const().unwrap()[..]);
@@ -916,10 +928,67 @@ mod t {
         let entry = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp1_c);
-        let alloc_rec = rt.block_on(idml.trees.alloct.get(drp1_c.pba())).unwrap();
+        let alloc_rec = rt.block_on(
+            idml.trees.alloct.get(drp1_c.pba())
+        ).unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
 
+    /// When moving compressed records, the cache should be bypassed
+    #[test]
+    fn move_indirect_record_compressed() {
+        let v = vec![42u8; 4096];
+        let dbs = DivBufShared::from(v.clone());
+        let rid = RID(1);
+        let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
+        let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
+        let drp1_c = drp1;
+        let cache = Cache::default();
+        let mut ddml = DDML::default();
+        ddml.expect_get_direct()
+            .called_once()
+            .with(passes(move |key: &*const DRP| {
+                unsafe {
+                    (**key).pba() == drp0.pba() && !(**key).is_compressed()
+                }
+            })).returning(move |_| {
+                let r = DivBufShared::from(&dbs.try_const().unwrap()[..]);
+                Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
+            });
+        ddml.expect_put_direct::<DivBuf>()
+            .called_once()
+            .with(passes(move |(_, c, _): &(*const DivBuf, Compression, TxgT)| {
+                *c == Compression::None
+            })).returning(move |(_, _, _)|
+                Box::new(Ok(drp1).into_future())
+            );
+        ddml.then().expect_delete_direct()
+            .called_once()
+            .with(passes(move |(key, _txg): &(*const DRP, TxgT)| {
+                unsafe {**key == drp0}
+            })).returning(move |_| {
+                Box::new(future::ok::<(), Error>(()))
+            });
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let mut rt = current_thread::Runtime::new().unwrap();
+        inject_record(&mut rt, &idml, rid, &drp0, 1);
+
+        rt.block_on(IDML::move_record(&idml.cache, &idml.trees,
+                                      &idml.ddml, rid, TxgT::from(0))
+        ).unwrap();
+
+        // Now verify the RIDT and alloct entries
+        let entry = rt.block_on(idml.trees.ridt.get(rid)).unwrap().unwrap();
+        assert_eq!(entry.refcount, 1);
+        assert_eq!(entry.drp, drp1_c);
+        let alloc_rec = rt.block_on(
+            idml.trees.alloct.get(drp1_c.pba())
+        ).unwrap();
+        assert_eq!(alloc_rec.unwrap(), rid);
+    }
+
+    /// When moving records, check the cache first.
     #[test]
     fn move_indirect_record_hot() {
         let v = vec![42u8; 4096];

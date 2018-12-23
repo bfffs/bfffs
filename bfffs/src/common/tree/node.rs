@@ -1073,7 +1073,7 @@ fn deserialize_int() {
            0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
-           0, 0, 0, 0,              // enum variant 0 for Compression::None
+           0,                       // Not compressed
            0x40, 0x9c, 0, 0,        // lsize=40000
            0x40, 0x9c, 0, 0,         // csize=40000
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
@@ -1082,7 +1082,7 @@ fn deserialize_int() {
            0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
-           1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
+           1,                       // Compressed
            0x80, 0x3e, 0, 0,        // lsize=16000
            0x40, 0x1f, 0, 0,        // csize=8000
            0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum
@@ -1141,7 +1141,7 @@ fn serialize_int() {
            0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
-           0, 0, 0, 0,              // enum variant 0 for Compression::None
+           0,                       // Not compressed
            0x40, 0x9c, 0, 0,        // lsize=40000
            0x40, 0x9c, 0, 0,         // csize=40000
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
@@ -1150,7 +1150,7 @@ fn serialize_int() {
            0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
-           1, 0, 0, 0,              // enum variant 0 for ZstdL9NoShuffle
+           1,                       // Compressed
            0x80, 0x3e, 0, 0,        // lsize=16000
            0x40, 0x1f, 0, 0,        // csize=8000
            0xbe, 0xba, 0x7e, 0x1a, 0, 0, 0, 0,  // checksum

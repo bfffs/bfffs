@@ -22,7 +22,7 @@ const COMPRESSORS: [blosc::Compressor; 6] = [
 
 const DATASETS: [(&str, usize); 3] = [
     (&"alloct", 18),
-    (&"ridt", 46),
+    (&"ridt", 43),
     (&"fs", 32)
 ];
 

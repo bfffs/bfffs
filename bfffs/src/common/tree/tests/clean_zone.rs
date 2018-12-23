@@ -144,7 +144,7 @@ root:
                 pba:
                   cluster: 0
                   lba: 2
-                compression: None
+                compressed: false
                 lsize: 0
                 csize: 0
                 checksum: 0
@@ -157,7 +157,7 @@ root:
                 pba:
                   cluster: 0
                   lba: 4
-                compression: None
+                compressed: false
                 lsize: 0
                 csize: 0
                 checksum: 0
@@ -170,7 +170,7 @@ root:
                 pba:
                   cluster: 0
                   lba: 101
-                compression: None
+                compressed: false
                 lsize: 0
                 csize: 0
                 checksum: 0
@@ -201,7 +201,7 @@ root:
                           pba:
                             cluster: 0
                             lba: 102
-                          compression: None
+                          compressed: false
                           lsize: 0
                           csize: 0
                           checksum: 0
@@ -214,7 +214,7 @@ root:
                           pba:
                             cluster: 0
                             lba: 200
-                          compression: None
+                          compressed: false
                           lsize: 0
                           csize: 0
                           checksum: 0
@@ -251,7 +251,7 @@ root:
                 pba:
                   cluster: 0
                   lba: 2
-                compression: None
+                compressed: false
                 lsize: 0
                 csize: 0
                 checksum: 0
@@ -272,7 +272,7 @@ root:
                           pba:
                             cluster: 0
                             lba: 3
-                          compression: None
+                          compressed: false
                           lsize: 0
                           csize: 0
                           checksum: 0
@@ -285,7 +285,7 @@ root:
                           pba:
                             cluster: 1
                             lba: 0
-                          compression: None
+                          compressed: false
                           lsize: 0
                           csize: 0
                           checksum: 0
@@ -298,7 +298,7 @@ root:
                 pba:
                   cluster: 1
                   lba: 2
-                compression: None
+                compressed: false
                 lsize: 0
                 csize: 0
                 checksum: 0
@@ -329,7 +329,7 @@ root:
                           pba:
                             cluster: 1
                             lba: 1
-                          compression: None
+                          compressed: false
                           lsize: 0
                           csize: 0
                           checksum: 0
@@ -342,7 +342,7 @@ root:
                           pba:
                             cluster: 0
                             lba: 200
-                          compression: None
+                          compressed: false
                           lsize: 0
                           csize: 0
                           checksum: 0"#);
@@ -411,7 +411,7 @@ root:
       pba:
         cluster: 0
         lba: 100
-      compression: None
+      compressed: false
       lsize: 0
       csize: 0
       checksum: 0

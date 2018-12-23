@@ -143,8 +143,8 @@ pub struct DRP {
     /// Physical Block Address.  The record's location on disk.
     // Must come first so PartialOrd can be derived
     pba: PBA,
-    /// Compression algorithm in use
-    compression: Compression,
+    /// Is the record compressed?
+    compressed: bool,
     /// Logical size.  Uncompressed size of the record
     lsize: u32,
     /// Compressed size.
@@ -159,7 +159,7 @@ impl DRP {
     pub fn as_uncompressed(&self) -> DRP {
         DRP {
             pba: self.pba,
-            compression: Compression::None,
+            compressed: false,
             lsize: self.csize,
             csize: self.csize,
             checksum: self.checksum
@@ -171,19 +171,18 @@ impl DRP {
         div_roundup(self.csize as usize, BYTES_PER_LBA) as LbaT
     }
 
-    /// Return the [`Compression`](../dml/enum.Compression.html) function that
-    /// was used to write this record.
-    pub fn compression(&self) -> Compression {
-        self.compression
-    }
-
     /// Transform this DRP into one that has the same compression function as
     /// `old_compressed`.  This is basically the opposite of
     /// [`as_uncompressed`](#method.as_uncompressed)
     pub fn into_compressed(mut self, old_compressed: &DRP) -> DRP {
-        self.compression = old_compressed.compression;
+        self.compressed = old_compressed.compressed;
         self.lsize = old_compressed.lsize;
         self
+    }
+
+    /// Was this record written in compressed form?
+    pub fn is_compressed(&self) -> bool {
+        self.compressed
     }
 
     // LCOV_EXCL_START
@@ -192,7 +191,8 @@ impl DRP {
     #[doc(hidden)]
     pub fn new(pba: PBA, compression: Compression, lsize: u32, csize: u32,
                checksum: u64) -> Self {
-        DRP{pba, compression, lsize, csize, checksum}
+        let compressed = compression.is_compressed();
+        DRP{pba, compressed, lsize, csize, checksum}
     }
 
     /// Get the Physical Block Address of the record's start
@@ -216,7 +216,7 @@ impl DRP {
                 cluster: rng.gen(),
                 lba: rng.gen()
             },
-            compression,
+            compressed: compression.is_compressed(),
             lsize: lsize as u32,
             csize,
             checksum: rng.gen()
@@ -226,7 +226,7 @@ impl DRP {
 }
 
 impl TypicalSize for DRP {
-    const TYPICAL_SIZE: usize = 30;
+    const TYPICAL_SIZE: usize = 27;
 }
 
 /// Direct Data Management Layer for a single `Pool`
@@ -337,10 +337,11 @@ impl DDML {
                 if checksum == drp.checksum {
                     // Decompress
                     let db = dbs.try_const().unwrap();
-                    Ok(match drp.compression.decompress(&db) {
-                        Some(decompressed) => decompressed,
-                        None => dbs
-                    })
+                    if drp.is_compressed() {
+                        Ok(Compression::decompress(&db))
+                    } else {
+                        Ok(dbs)
+                    }
                 } else {
                     Err(Error::ECKSUM)
                 }
@@ -393,6 +394,7 @@ impl DDML {
 
         // Compress
         let (compressed_db, compression) = compression.compress(serialized);
+        let compressed = compression.is_compressed();
         let csize = compressed_db.len() as u32;
 
         // Checksum
@@ -403,7 +405,7 @@ impl DDML {
         // Write
         self.pool.write(compressed_db, txg)
         .map(move |pba| {
-            DRP { pba, compression, lsize: lsize as u32, csize, checksum }
+            DRP { pba, compressed, lsize: lsize as u32, csize, checksum }
         })
     }
 
@@ -516,11 +518,10 @@ mod drp {
     fn as_uncompressed() {
         let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 5000);
         let drp0_nc = drp0.as_uncompressed();
-        assert_eq!(drp0_nc.compression, Compression::None);
+        assert!(!drp0_nc.is_compressed());
         assert_eq!(drp0_nc.lsize, drp0_nc.csize);
         assert_eq!(drp0_nc.csize, drp0.csize);
         assert_eq!(drp0_nc.pba, drp0.pba);
-        assert_eq!(drp0_nc.compression, Compression::None);
 
         //drp1 is what DDML::put_direct will return after writing drp0_nc's
         //contents as uncompressed
@@ -528,7 +529,7 @@ mod drp {
         drp1.checksum = drp0_nc.checksum;
 
         let drp1_c = drp1.into_compressed(&drp0);
-        assert_eq!(drp1_c.compression, Compression::ZstdL9NoShuffle);
+        assert!(drp1_c.is_compressed());
         assert_eq!(drp1_c.lsize, drp0.lsize);
         assert_eq!(drp1_c.csize, drp0.csize);
         assert_eq!(drp1_c.pba, drp1.pba);
@@ -590,7 +591,7 @@ mod ddml {
     #[test]
     fn delete_hot() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 4096, checksum: 0};
         let s = Scenario::new();
         let mut cache = Cache::default();
@@ -617,7 +618,7 @@ mod ddml {
     #[test]
     fn evict() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 4096, checksum: 0};
         let s = Scenario::new();
         let mut cache = Cache::default();
@@ -636,7 +637,7 @@ mod ddml {
     #[test]
     fn get_direct() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let s = Scenario::new();
         let cache = Cache::default();
@@ -655,7 +656,7 @@ mod ddml {
     #[test]
     fn get_hot() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 4096, checksum: 0};
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let s = Scenario::new();
@@ -677,7 +678,7 @@ mod ddml {
     #[test]
     fn get_cold() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let owned_by_cache = Rc::new(RefCell::new(Vec::<Box<dyn Cacheable>>::new()));
         let owned_by_cache2 = owned_by_cache.clone();
@@ -712,7 +713,7 @@ mod ddml {
     #[test]
     fn get_ecksum() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xdead_beef_dead_beef};
         let s = Scenario::new();
         let mut cache = Cache::default();
@@ -782,7 +783,7 @@ mod ddml {
     #[test]
     fn pop_hot() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 4096, checksum: 0};
         let s = Scenario::new();
         let mut cache = Cache::default();
@@ -805,7 +806,7 @@ mod ddml {
     #[test]
     fn pop_cold() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
@@ -832,7 +833,7 @@ mod ddml {
     #[test]
     fn pop_ecksum() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xdead_beef_dead_beef};
         let s = Scenario::new();
         let mut cache = Cache::default();
@@ -857,7 +858,7 @@ mod ddml {
     #[test]
     fn pop_direct() {
         let pba = PBA::default();
-        let drp = DRP{pba, compression: Compression::None, lsize: 4096,
+        let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let s = Scenario::new();
         let mut seq = Sequence::new();
@@ -897,7 +898,7 @@ mod ddml {
         let drp = rt.block_on(
             ddml.put(dbs, Compression::None, TxgT::from(42))
         ).unwrap();
-        assert_eq!(drp.compression(), Compression::None);
+        assert!(!drp.is_compressed());
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
         assert_eq!(drp.pba, pba);
@@ -925,7 +926,7 @@ mod ddml {
         let drp = rt.block_on(
             ddml.put(dbs, Compression::ZstdL9NoShuffle, TxgT::from(42))
         ).unwrap();
-        assert_eq!(drp.compression(), Compression::ZstdL9NoShuffle);
+        assert!(drp.is_compressed());
         assert!(drp.csize < 8192);
         assert_eq!(drp.lsize, 8192);
         assert_eq!(drp.pba, pba);
@@ -957,7 +958,7 @@ mod ddml {
         let drp = rt.block_on(
             ddml.put(dbs, Compression::ZstdL9NoShuffle, TxgT::from(42))
         ).unwrap();
-        assert_eq!(drp.compression(), Compression::None);
+        assert!(!drp.is_compressed());
         assert_eq!(drp.csize, 8192);
         assert_eq!(drp.lsize, 8192);
         assert_eq!(drp.pba, pba);
