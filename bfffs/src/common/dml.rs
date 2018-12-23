@@ -3,15 +3,18 @@
 use blosc;
 use crate::common::*;
 use futures::Future;
+use std::num::NonZeroU8;
 
 pub use crate::common::cache::{Cacheable, CacheRef};
 
 /// Compression mode in use
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Compression {
-    None = 0,
-    /// Maximum Compression ratio for unstructured buffers
-    ZstdL9NoShuffle = 1,
+    None,
+    /// ZStandard usually gives a very good compression ratio with moderate
+    /// speed.  `typesize` is the size of each individual element.  Use
+    /// `typesize=None` for an unstructured buffer.
+    Zstd(Option<NonZeroU8>),
 }
 
 impl Compression {
@@ -24,9 +27,10 @@ impl Compression {
                 Compression::None  => {
                     unreachable!()
                 },
-                Compression::ZstdL9NoShuffle => {
+                Compression::Zstd(typesize) => {
                     blosc::Context::new()
-                        .clevel(blosc::Clevel::L9)
+                        .shuffle(blosc::ShuffleMode::Byte)
+                        .typesize(typesize.map(|ts| usize::from(ts.get())))
                         .compressor(blosc::Compressor::Zstd).unwrap()
                 }
             };
@@ -112,7 +116,7 @@ mod t {
         rng.fill_bytes(&mut v[0..lsize - 1024]);
         let dbs = DivBufShared::from(v);
         let db = dbs.try_const().unwrap();
-        let (zdb, compression) = Compression::ZstdL9NoShuffle.compress(db);
+        let (zdb, compression) = Compression::Zstd(None).compress(db);
         assert_eq!(zdb.len(), lsize);
         assert_eq!(compression, Compression::None);
     }
@@ -123,9 +127,9 @@ mod t {
         let lsize = 2 * BYTES_PER_LBA;
         let dbs = DivBufShared::from(vec![42u8; lsize]);
         let db = dbs.try_const().unwrap();
-        let (zdb, compression) = Compression::ZstdL9NoShuffle.compress(db);
+        let (zdb, compression) = Compression::Zstd(None).compress(db);
         assert!(zdb.len() < lsize);
-        assert_eq!(compression, Compression::ZstdL9NoShuffle);
+        assert_eq!(compression, Compression::Zstd(None));
     }
 
     /// Compression should not be attempted when it is disabled.
@@ -145,7 +149,7 @@ mod t {
         let lsize = BYTES_PER_LBA;
         let dbs = DivBufShared::from(vec![42u8; lsize]);
         let db = dbs.try_const().unwrap();
-        let (zdb, compression) = Compression::ZstdL9NoShuffle.compress(db);
+        let (zdb, compression) = Compression::Zstd(None).compress(db);
         assert_eq!(zdb.len(), lsize);
         assert_eq!(compression, Compression::None);
     }
@@ -160,7 +164,7 @@ mod t {
         rng.fill_bytes(&mut v[..]);
         let dbs = DivBufShared::from(v);
         let db = dbs.try_const().unwrap();
-        let (zdb, compression) = Compression::ZstdL9NoShuffle.compress(db);
+        let (zdb, compression) = Compression::Zstd(None).compress(db);
         assert_eq!(zdb.len(), lsize);
         assert_eq!(compression, Compression::None);
     }

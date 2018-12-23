@@ -90,7 +90,7 @@ test_suite! {
         file.read_to_end(&mut vdev_raid_contents).unwrap();
         let dbs = DivBufShared::from(vdev_raid_contents.clone());
         rt.block_on(future::lazy(|| {
-            ddml.put(dbs, Compression::ZstdL9NoShuffle, txg)
+            ddml.put(dbs, Compression::Zstd(None), txg)
             .and_then(|drp| {
                 let drp2 = &drp;
                 ddml2.get::<DivBufShared, DivBuf>(drp2)

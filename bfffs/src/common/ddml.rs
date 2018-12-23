@@ -516,7 +516,7 @@ mod drp {
 
     #[test]
     fn as_uncompressed() {
-        let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 5000);
+        let drp0 = DRP::random(Compression::Zstd(None), 5000);
         let drp0_nc = drp0.as_uncompressed();
         assert!(!drp0_nc.is_compressed());
         assert_eq!(drp0_nc.lsize, drp0_nc.csize);
@@ -538,7 +538,7 @@ mod drp {
 
     #[test]
     fn typical_size() {
-        let drp = DRP::random(Compression::ZstdL9NoShuffle, 5000);
+        let drp = DRP::random(Compression::Zstd(None), 5000);
         let size = bincode::serialized_size(&drp).unwrap() as usize;
         assert_eq!(DRP::TYPICAL_SIZE, size);
     }
@@ -924,7 +924,7 @@ mod ddml {
         let dbs = DivBufShared::from(vec![42u8; 8192]);
         let mut rt = current_thread::Runtime::new().unwrap();
         let drp = rt.block_on(
-            ddml.put(dbs, Compression::ZstdL9NoShuffle, TxgT::from(42))
+            ddml.put(dbs, Compression::Zstd(None), TxgT::from(42))
         ).unwrap();
         assert!(drp.is_compressed());
         assert!(drp.csize < 8192);
@@ -956,7 +956,7 @@ mod ddml {
         let dbs = DivBufShared::from(v);
         let mut rt = current_thread::Runtime::new().unwrap();
         let drp = rt.block_on(
-            ddml.put(dbs, Compression::ZstdL9NoShuffle, TxgT::from(42))
+            ddml.put(dbs, Compression::Zstd(None), TxgT::from(42))
         ).unwrap();
         assert!(!drp.is_compressed());
         assert_eq!(drp.csize, 8192);

@@ -1089,7 +1089,7 @@ fn deserialize_int() {
     ]);
     let drp0 = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                         0xdead_beef);
-    let drp1 = DRP::new(PBA::new(0, 256), Compression::ZstdL9NoShuffle,
+    let drp1 = DRP::new(PBA::new(0, 256), Compression::Zstd(None),
                         16000, 8000, 0x1a7e_babe);
     let node: Arc<Node<DRP, u32, u32>> = Cacheable::deserialize(serialized);
     let guard = node.0.try_read().unwrap();
@@ -1157,7 +1157,7 @@ fn serialize_int() {
     ];
     let drp0 = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                         0xdead_beef);
-    let drp1 = DRP::new(PBA::new(0, 256), Compression::ZstdL9NoShuffle,
+    let drp1 = DRP::new(PBA::new(0, 256), Compression::Zstd(None),
                         16000, 8000, 0x1a7e_babe);
     let children = vec![
         IntElem::new(0u32, TxgT::from(1)..TxgT::from(9), TreePtr::Addr(drp0)),

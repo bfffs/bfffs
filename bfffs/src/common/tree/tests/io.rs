@@ -578,7 +578,7 @@ root:
 fn open() {
     let max_size = 4_194_304;
     let root_drp = DRP::new(PBA::new(2, 0x0102_0304_0506_0708),
-        Compression::ZstdL9NoShuffle,
+        Compression::Zstd(None),
         78,     // lsize
         36,     // csize
         0x0807_0605_0403_0201
@@ -1387,7 +1387,7 @@ root:
 #[test]
 fn serialize_inner() {
     let root_pba = PBA::new(2, 0x0102_0304_0506_0708);
-    let root_drp = DRP::new(root_pba, Compression::ZstdL9NoShuffle, 78, 36,
+    let root_drp = DRP::new(root_pba, Compression::Zstd(None), 78, 36,
                             0x0807_0605_0403_0201);
     let expected = TreeOnDisk(
         InnerOnDisk {

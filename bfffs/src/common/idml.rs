@@ -940,8 +940,8 @@ mod t {
         let v = vec![42u8; 4096];
         let dbs = DivBufShared::from(v.clone());
         let rid = RID(1);
-        let drp0 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
-        let drp1 = DRP::random(Compression::ZstdL9NoShuffle, 4096);
+        let drp0 = DRP::random(Compression::Zstd(None), 4096);
+        let drp1 = DRP::random(Compression::Zstd(None), 4096);
         let drp1_c = drp1;
         let cache = Cache::default();
         let mut ddml = DDML::default();
