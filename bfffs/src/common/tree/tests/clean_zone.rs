@@ -123,8 +123,10 @@ fn basic() {
 ---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -230,8 +232,10 @@ root:
 r#"---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -398,8 +402,10 @@ fn dirty_root() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0

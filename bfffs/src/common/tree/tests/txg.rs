@@ -16,8 +16,10 @@ fn check_bad_root_txgs() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -62,8 +64,10 @@ fn check_bad_int_txgs() {
 ---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -144,8 +148,10 @@ fn check_bad_key() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -190,8 +196,10 @@ fn check_ok() {
 ---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -285,8 +293,10 @@ fn check_leaf_underflow() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -331,8 +341,10 @@ fn check_root_int_underflow() {
 ---
 height: 2
 limits:
-  min_fanout: 3
-  max_fanout: 7
+  min_int_fanout: 3
+  max_int_fanout: 7
+  min_leaf_fanout: 3
+  max_leaf_fanout: 7
   _max_size: 4194304
 root:
   key: 0
@@ -382,8 +394,10 @@ fn check_root_leaf_ok() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -409,8 +423,10 @@ fn check_root_leaf_overflow() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -442,8 +458,10 @@ fn check_unsorted() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -510,8 +528,10 @@ fn flush() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -575,8 +595,10 @@ fn merge() {
 ---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -646,8 +668,10 @@ root:
 r#"---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -735,8 +759,10 @@ fn split() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -785,8 +811,10 @@ root:
 r#"---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -860,8 +888,10 @@ fn steal() {
 ---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -948,8 +978,10 @@ root:
 r#"---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0

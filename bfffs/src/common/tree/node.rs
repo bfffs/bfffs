@@ -316,37 +316,42 @@ impl<K: Key, V: Value> Default for LeafData<K, V> {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(test, derive(Default))]
 pub(super) struct Limits {
-    /// Minimum Node fanout.  Smaller nodes will be merged, or will steal
-    /// children from their neighbors.
-    // Can't combine min_fanout with max_fanout in a Range, because Range isn't
-    // Copy.
-    min_fanout: u16,
-    /// Maximum node fanout.  Larger nodes will be split.
+    /// Minimum interior node fanout.  Smaller nodes will be merged, or will
+    /// steal children from their neighbors.
+    // Can't combine min_leaf_fanout with max_leaf_fanout in a Range, because
+    // Range isn't Copy.
+    min_int_fanout: u16,
+    /// Maximum interior node fanout.  Larger nodes will be split.
     // Rodeh states that the minimum value of max_fanout that can guarantee
     // invariants is 2 * min_fanout + 1.  However, range_delete can be slightly
     // simplified if max_fanout is at least 2 * min_fanout + 4.  That would mean
     // that fix_int can always either merge two nodes, or steal 2 nodes.
-    max_fanout: u16,
+    max_int_fanout: u16,
+    min_leaf_fanout: u16,
+    max_leaf_fanout: u16,
     /// Maximum node size in bytes.  Larger nodes will be split or their message
     /// buffers flushed
     _max_size: u64,
 }
 
 impl Limits {
-    /// Return the minimum allowable fanout
-    pub(super) fn min_fanout(&self) -> u16 {
-        self.min_fanout
-    }
-
-    /// Return the maximum allowable fanout (inclusive limit)
+    /// The maximum fanout that will be used for either leaf or int nodes
     pub(super) fn max_fanout(&self) -> u16 {
-        self.max_fanout
+        max(self.max_leaf_fanout, self.max_int_fanout)
     }
 
     /// Construct a new fanout from inclusive limits
-    pub(super) fn new(min_fanout: u16, max_fanout: u16) -> Self {
+    pub(super) fn new(min_int_fanout: u16, max_int_fanout: u16,
+                      min_leaf_fanout: u16, max_leaf_fanout: u16) -> Self
+    {
         let _max_size = 1<<22;    // BetrFS's max size
-        Limits{min_fanout, max_fanout, _max_size}
+        Limits {
+            min_leaf_fanout,
+            max_leaf_fanout,
+            min_int_fanout,
+            max_int_fanout,
+            _max_size
+        }
     }
 }
 
@@ -734,10 +739,10 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     {
         let id = NodeId{height, key};
         let l = self.len();
-        let len_ok = if (!is_root) && l < limits.min_fanout() as usize {
+        let len_ok = if (!is_root) && l < self.min_fanout(limits) as usize {
             eprintln!("Node underflow.  Node {:?} has {} items", id, l);
             false
-        } else if l > limits.max_fanout() as usize {
+        } else if l > self.max_fanout(limits) as usize {
             eprintln!("Node overflow.  Node {:?} has {} items", id, l);
             false
         } else {
@@ -755,12 +760,12 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
 
     /// Is this node in danger of underflowing if one child gets merged?
     pub fn in_danger(&self, limits: &Limits) -> bool {
-        self.len() <= limits.min_fanout() as usize
+        self.len() <= self.min_fanout(limits) as usize
     }
 
     /// Is this node in danger of underflowing if two childen get merged?
     pub fn in_extra_danger(&self, limits: &Limits) -> bool {
-        self.len() <= limits.min_fanout() as usize + 1
+        self.len() <= self.min_fanout(limits) as usize + 1
     }
 
     pub fn into_leaf(self) -> LeafData<K, V> {
@@ -781,7 +786,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
 
     /// Can this child be merged with `rhs` without violating constraints?
     pub fn can_merge(&self, rhs: &NodeData<A, K, V>, limits: &Limits) -> bool {
-        self.len() + rhs.len() <= usize::from(limits.max_fanout())
+        self.len() + rhs.len() <= usize::from(self.max_fanout(limits))
     }
 
     /// Return this `NodeData`s lower bound key, suitable for use in its
@@ -801,10 +806,28 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         }
     }
 
+    /// Return the minimum allowable fanout
+    pub(super) fn min_fanout(&self, limits: &Limits) -> u16 {
+        if self.is_leaf() {
+            limits.min_leaf_fanout
+        } else {
+            limits.min_int_fanout
+        }
+    }
+
+    /// Return the maximum allowable fanout (inclusive limit)
+    pub(super) fn max_fanout(&self, limits: &Limits) -> u16 {
+        if self.is_leaf() {
+            limits.max_leaf_fanout
+        } else {
+            limits.max_int_fanout
+        }
+    }
+
     /// Is this node currently underflowing?
     pub fn underflow(&self, limits: &Limits) -> bool {
         let len = self.len();
-        len < usize::from(limits.min_fanout())
+        len < usize::from(self.min_fanout(limits))
     }
 
     /// Should this node be split because it's too big?
@@ -818,9 +841,9 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
                 return false;
             }
         }
-        debug_assert!(self.len() <= usize::from(limits.max_fanout()),
+        debug_assert!(self.len() <= usize::from(self.max_fanout(limits)),
                       "Overfull nodes shouldn't be possible");
-        self.len() >= usize::from(limits.max_fanout())
+        self.len() >= usize::from(self.max_fanout(limits))
     }
 
     /// Split this Node in two.  Returns the transaction range of the rump
@@ -831,7 +854,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         let left_items = if seq {
             // Make the left node as large as possible, since we'll almost
             // certainly continue inserting into the right side.
-            self.len() - usize::from(limits.min_fanout())
+            self.len() - usize::from(self.min_fanout(limits))
         } else {
             // Divide evenly, but make the left node slightly larger, on the
             // assumption that we're more likely to insert into the right node

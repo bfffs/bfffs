@@ -54,8 +54,10 @@ fn addresses() {
 ---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -122,8 +124,10 @@ fn addresses_leaf() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -222,8 +226,10 @@ fn dump() {
 ---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -277,8 +283,10 @@ let expected =
 r#"---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -415,8 +423,10 @@ fn insert_below_root() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -448,8 +458,10 @@ root:
 r#"---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -500,8 +512,10 @@ fn insert_root() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -519,8 +533,10 @@ root:
 r#"---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -556,8 +572,10 @@ fn is_dirty() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -582,10 +600,11 @@ fn open() {
         36,     // csize
         0x0807_0605_0403_0201
     );
+    let limits = Limits::new(2, 5, 2, 5);
     let tod = TreeOnDisk(
         InnerOnDisk {
             height: 1,
-            limits: Limits::new(2, 5),
+            limits: limits,
             root: root_drp,
             txgs: TxgT(0)..TxgT(42),
         }
@@ -594,8 +613,7 @@ fn open() {
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, u32>::open(ddml, false, tod);
     assert_eq!(tree.i.height.load(Ordering::Relaxed), 1);
-    assert_eq!(tree.i.limits.min_fanout(), 2);
-    assert_eq!(tree.i.limits.max_fanout(), 5);
+    assert_eq!(tree.i.limits, limits);
     let root_elem_guard = tree.i.root.try_read().unwrap();
     assert_eq!(root_elem_guard.key, 0);
     assert_eq!(root_elem_guard.txgs, TxgT::from(0)..TxgT::from(42));
@@ -705,8 +723,10 @@ fn range_delete() {
 ---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -744,8 +764,10 @@ root:
 r#"---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -864,8 +886,10 @@ fn range_delete_left_in_cut_full() {
 ---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -977,8 +1001,10 @@ root:
 r#"---
 height: 3
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1135,8 +1161,10 @@ fn range_leaf() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1183,8 +1211,10 @@ fn read_int() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1233,8 +1263,10 @@ fn read_leaf() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1274,8 +1306,10 @@ fn remove_and_merge_down() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1300,8 +1334,10 @@ root:
 r#"---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1327,8 +1363,10 @@ fn serialize_alloc_t() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key:
@@ -1362,8 +1400,10 @@ fn serialize_forest() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1389,7 +1429,7 @@ fn serialize_inner() {
     let expected = TreeOnDisk(
         InnerOnDisk {
             height: 1,
-            limits: Limits::new(2, 5),
+            limits: Limits::new(2, 5, 2, 5),
             root: root_drp,
             txgs: TxgT(0)..TxgT(42),
         }
@@ -1400,8 +1440,10 @@ fn serialize_inner() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1430,8 +1472,10 @@ fn write_clean() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1479,8 +1523,10 @@ fn write_deep() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1539,8 +1585,10 @@ fn write_int() {
 ---
 height: 2
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0
@@ -1592,8 +1640,10 @@ fn write_leaf() {
 ---
 height: 1
 limits:
-  min_fanout: 2
-  max_fanout: 5
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
   _max_size: 4194304
 root:
   key: 0

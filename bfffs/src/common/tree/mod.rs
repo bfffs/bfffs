@@ -660,35 +660,40 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // For interior nodes, the serialization format is 4 bytes for the enum
         // variant, followed by 8 bytes for the vector size, followed by a
         // series of IntElems.
-        // There are vastly more leaf nodes than interior nodes, so if we must
-        // optimize for one over the other, we should choose leaves.
-        let _int_ptr_size = IntElem::<A, K, V>::TYPICAL_SIZE;
-        // A fanout spread of 4 is what BetrFS uses.
-        // [^CowBtrees] uses a fanout spread of 3 for its benchmarks
-        let spread = 4u16;
-        let mut target_leaf_size = if sequentially_optimized {
-            // Sequentially optimized trees will almost never randomly insert.
-            // Most nodes will be what remains after a split.  So we should
-            // increase the target node size so that the left side of a split
-            // just fits into a whole LBA.
-            BYTES_PER_LBA * usize::from(spread) / usize::from(spread - 1)
-        } else {
-            BYTES_PER_LBA
+
+        let mk_fanout = |elem_size: usize| {
+            // A fanout spread of 4 is what BetrFS uses.
+            // [^CowBtrees] uses a fanout spread of 3 for its benchmarks
+            let spread = 4u16;
+            let mut target_size = if sequentially_optimized {
+                // Sequentially optimized trees will almost never randomly
+                // insert.  Most nodes will be what remains after a split.  So
+                // we should increase the target node size so that the left side
+                // of a split just fits into a whole LBA.
+                BYTES_PER_LBA * usize::from(spread) / usize::from(spread - 1)
+            } else {
+                // Randomly optimized nodes should split evenly.
+                // TODO: increase this field so the left side will just fit into
+                // an LBA.
+                BYTES_PER_LBA
+            };
+            // Allow for the enum variant and vector size
+            target_size -= 4 + 8;
+            // Round down to the nearest whole number of elements
+            target_size -= target_size % elem_size;
+            let max_fanout = target_size / elem_size;
+            debug_assert!(max_fanout <= usize::from(u16::max_value()));
+            let min_fanout = div_roundup(max_fanout as u16, spread);
+            (min_fanout, max_fanout as u16)
+            // TODO: take account of compression
+            // TODO: when calculating max fanout, consider that under a
+            // sequential workload most nodes will be half full
         };
-        // Allow for the enum variant and vector size
-        target_leaf_size -= 4 + 8;
-        // Round down to the nearest whole number of elements
-        let leaf_elem_size = Inner::<A, D, K, V>::LEAF_ELEM_SIZE;
-        target_leaf_size -= target_leaf_size % leaf_elem_size;
-        let max_leaf_fanout = target_leaf_size / leaf_elem_size;
-        debug_assert!(max_leaf_fanout <= usize::from(u16::max_value()));
-        // TODO: use different fanouts for int vs leaf nodes
-        // TODO: take account of compression
-        // TODO: when calculating max fanout, consider that under a sequential
-        // workload most nodes will be half full
-        let max_fanout = max_leaf_fanout as u16;
-        let min_fanout = div_roundup(max_fanout, spread);
-        let limits = Limits::new(min_fanout, max_fanout);
+
+        let (minlf, maxlf) = mk_fanout(Inner::<A, D, K, V>::LEAF_ELEM_SIZE);
+        let (minif, maxif) = mk_fanout(IntElem::<A, K, V>::TYPICAL_SIZE);
+
+        let limits = Limits::new(minif, maxif, minlf, maxlf);
         Tree::new(dml,
                   limits,
                   sequentially_optimized
@@ -2299,7 +2304,7 @@ pub struct TreeOnDisk<A: Addr>(InnerOnDisk<A>);
 
 impl<A: Addr> TypicalSize for TreeOnDisk<A> {
     // Verified in common::tree::tests::io::serialize_forest
-    const TYPICAL_SIZE: usize = 28 + A::TYPICAL_SIZE;
+    const TYPICAL_SIZE: usize = 32 + A::TYPICAL_SIZE;
 }
 
 impl<A: Addr> Value for TreeOnDisk<A> {}
