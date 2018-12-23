@@ -320,13 +320,13 @@ pub(super) struct Limits {
     /// children from their neighbors.
     // Can't combine min_fanout with max_fanout in a Range, because Range isn't
     // Copy.
-    min_fanout: u64,
+    min_fanout: u16,
     /// Maximum node fanout.  Larger nodes will be split.
     // Rodeh states that the minimum value of max_fanout that can guarantee
     // invariants is 2 * min_fanout + 1.  However, range_delete can be slightly
     // simplified if max_fanout is at least 2 * min_fanout + 4.  That would mean
     // that fix_int can always either merge two nodes, or steal 2 nodes.
-    max_fanout: u64,
+    max_fanout: u16,
     /// Maximum node size in bytes.  Larger nodes will be split or their message
     /// buffers flushed
     _max_size: u64,
@@ -334,17 +334,17 @@ pub(super) struct Limits {
 
 impl Limits {
     /// Return the minimum allowable fanout
-    pub(super) fn min_fanout(&self) -> u64 {
+    pub(super) fn min_fanout(&self) -> u16 {
         self.min_fanout
     }
 
     /// Return the maximum allowable fanout (inclusive limit)
-    pub(super) fn max_fanout(&self) -> u64 {
+    pub(super) fn max_fanout(&self) -> u16 {
         self.max_fanout
     }
 
     /// Construct a new fanout from inclusive limits
-    pub(super) fn new(min_fanout: u64, max_fanout: u64) -> Self {
+    pub(super) fn new(min_fanout: u16, max_fanout: u16) -> Self {
         let _max_size = 1<<22;    // BetrFS's max size
         Limits{min_fanout, max_fanout, _max_size}
     }
@@ -781,7 +781,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
 
     /// Can this child be merged with `rhs` without violating constraints?
     pub fn can_merge(&self, rhs: &NodeData<A, K, V>, limits: &Limits) -> bool {
-        (self.len() + rhs.len()) as u64 <= limits.max_fanout()
+        self.len() + rhs.len() <= usize::from(limits.max_fanout())
     }
 
     /// Return this `NodeData`s lower bound key, suitable for use in its
@@ -803,8 +803,8 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
 
     /// Is this node currently underflowing?
     pub fn underflow(&self, limits: &Limits) -> bool {
-        let len = self.len() as u64;
-        len < limits.min_fanout()
+        let len = self.len();
+        len < usize::from(limits.min_fanout())
     }
 
     /// Should this node be split because it's too big?
@@ -818,10 +818,9 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
                 return false;
             }
         }
-        let len = self.len() as u64;
-        debug_assert!(len <= limits.max_fanout(),
+        debug_assert!(self.len() <= usize::from(limits.max_fanout()),
                       "Overfull nodes shouldn't be possible");
-        len >= limits.max_fanout()
+        self.len() >= usize::from(limits.max_fanout())
     }
 
     /// Split this Node in two.  Returns the transaction range of the rump
@@ -832,7 +831,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         let left_items = if seq {
             // Make the left node as large as possible, since we'll almost
             // certainly continue inserting into the right side.
-            self.len() - limits.min_fanout() as usize
+            self.len() - usize::from(limits.min_fanout())
         } else {
             // Divide evenly, but make the left node slightly larger, on the
             // assumption that we're more likely to insert into the right node
