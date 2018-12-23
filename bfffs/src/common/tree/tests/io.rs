@@ -53,10 +53,10 @@ fn addresses() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -121,10 +121,10 @@ fn addresses_leaf() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -221,10 +221,10 @@ fn dump() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -276,10 +276,10 @@ root:
 let expected =
 r#"---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -414,10 +414,10 @@ fn insert_below_root() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -447,10 +447,10 @@ root:
     assert_eq!(format!("{}", tree),
 r#"---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -499,10 +499,10 @@ fn insert_root() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -518,10 +518,10 @@ root:
     assert_eq!(format!("{}", tree),
 r#"---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -555,10 +555,10 @@ fn is_dirty() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -576,7 +576,6 @@ root:
 
 #[test]
 fn open() {
-    let max_size = 4_194_304;
     let root_drp = DRP::new(PBA::new(2, 0x0102_0304_0506_0708),
         Compression::Zstd(None),
         78,     // lsize
@@ -586,8 +585,7 @@ fn open() {
     let tod = TreeOnDisk(
         InnerOnDisk {
             height: 1,
-            fanout: 2..6,
-            _max_size: max_size,
+            limits: Limits::new(2, 5),
             root: root_drp,
             txgs: TxgT(0)..TxgT(42),
         }
@@ -596,9 +594,8 @@ fn open() {
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDMLMock, u32, u32>::open(ddml, false, tod);
     assert_eq!(tree.i.height.load(Ordering::Relaxed), 1);
-    assert_eq!(tree.i.fanout.start, 2);
-    assert_eq!(tree.i.fanout.end, 6);
-    assert_eq!(tree.i._max_size, max_size);
+    assert_eq!(tree.i.limits.min_fanout(), 2);
+    assert_eq!(tree.i.limits.max_fanout(), 5);
     let root_elem_guard = tree.i.root.try_read().unwrap();
     assert_eq!(root_elem_guard.key, 0);
     assert_eq!(root_elem_guard.txgs, TxgT::from(0)..TxgT::from(42));
@@ -707,10 +704,10 @@ fn range_delete() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -746,10 +743,10 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -866,10 +863,10 @@ fn range_delete_left_in_cut_full() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -979,10 +976,10 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1137,10 +1134,10 @@ fn range_leaf() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1185,10 +1182,10 @@ fn read_int() {
         Tree::from_str(dml.clone(), false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1235,10 +1232,10 @@ fn read_leaf() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1276,10 +1273,10 @@ fn remove_and_merge_down() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1302,10 +1299,10 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1329,10 +1326,10 @@ fn serialize_alloc_t() {
         Tree::from_str(idml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key:
     cluster: 0
@@ -1364,10 +1361,10 @@ fn serialize_forest() {
         Tree::from_str(idml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1392,8 +1389,7 @@ fn serialize_inner() {
     let expected = TreeOnDisk(
         InnerOnDisk {
             height: 1,
-            fanout: 2..6,
-            _max_size: 0x40_0000,
+            limits: Limits::new(2, 5),
             root: root_drp,
             txgs: TxgT(0)..TxgT(42),
         }
@@ -1403,10 +1399,10 @@ fn serialize_inner() {
     let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1433,10 +1429,10 @@ fn write_clean() {
     let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1482,10 +1478,10 @@ fn write_deep() {
     let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1542,10 +1538,10 @@ fn write_int() {
     let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -1595,10 +1591,10 @@ fn write_leaf() {
     let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:

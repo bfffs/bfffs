@@ -16,7 +16,6 @@ use std::{
     fmt::Debug,
     iter::FromIterator,
     mem,
-    num::NonZeroU32,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
     sync::{
         Arc,
@@ -295,20 +294,9 @@ impl<K: Key, V: Value> LeafData<K, V> {
 
     /// Split this LeafNode in two.  Returns the transaction range of the rump
     /// node, and a new IntElem containing the new node.
-    pub fn split<A: Addr>(&mut self, right_size: Option<NonZeroU32>,
-                          txg: TxgT) -> (Range<TxgT>, IntElem<A, K, V>)
+    pub fn split<A: Addr>(&mut self, left_items: usize, txg: TxgT)
+        -> (Range<TxgT>, IntElem<A, K, V>)
     {
-        // Split the node in two.
-        let left_items = if let Some(l) = right_size {
-            // Make the left node as large as possible, since we'll almost
-            // certainly continue inserting into the right side.
-            self.items.len() - l.get() as usize
-        } else {
-            // Divide evenly, but make the left node slightly larger, on the
-            // assumption that we're more likely to insert into the right node
-            // than the left one.
-            div_roundup(self.items.len(), 2)
-        };
         let cutoff = *self.items.keys().nth(left_items).unwrap();
         let new_items = self.items.split_off(&cutoff);
         let node = Node::new(NodeData::Leaf(LeafData{items: new_items}));
@@ -321,6 +309,44 @@ impl<K: Key, V: Value> LeafData<K, V> {
 impl<K: Key, V: Value> Default for LeafData<K, V> {
     fn default() -> Self {
         LeafData{items: BTreeMap::new()}
+    }
+}
+
+/// Node size limits
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(test, derive(Default))]
+pub(super) struct Limits {
+    /// Minimum Node fanout.  Smaller nodes will be merged, or will steal
+    /// children from their neighbors.
+    // Can't combine min_fanout with max_fanout in a Range, because Range isn't
+    // Copy.
+    min_fanout: u64,
+    /// Maximum node fanout.  Larger nodes will be split.
+    // Rodeh states that the minimum value of max_fanout that can guarantee
+    // invariants is 2 * min_fanout + 1.  However, range_delete can be slightly
+    // simplified if max_fanout is at least 2 * min_fanout + 4.  That would mean
+    // that fix_int can always either merge two nodes, or steal 2 nodes.
+    max_fanout: u64,
+    /// Maximum node size in bytes.  Larger nodes will be split or their message
+    /// buffers flushed
+    _max_size: u64,
+}
+
+impl Limits {
+    /// Return the minimum allowable fanout
+    pub(super) fn min_fanout(&self) -> u64 {
+        self.min_fanout
+    }
+
+    /// Return the maximum allowable fanout (inclusive limit)
+    pub(super) fn max_fanout(&self) -> u64 {
+        self.max_fanout
+    }
+
+    /// Construct a new fanout from inclusive limits
+    pub(super) fn new(min_fanout: u64, max_fanout: u64) -> Self {
+        let _max_size = 1<<22;    // BetrFS's max size
+        Limits{min_fanout, max_fanout, _max_size}
     }
 }
 
@@ -638,21 +664,10 @@ impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
 
     /// Split this IntNode in two.  Returns the transaction range of the rump
     /// node, and a new IntElem containing the new node.
-    pub fn split(&mut self, right_size: Option<NonZeroU32>, txg: TxgT)
+    pub fn split(&mut self, left_items: usize, txg: TxgT)
         -> (Range<TxgT>, IntElem<A, K, V>)
     {
-        // Split the node in two.
-        let cutoff = if let Some(l) = right_size {
-            // Make the left node as large as possible, since we'll almost
-            // certainly continue inserting into the right side.
-            self.children.len() - l.get() as usize
-        } else {
-            // Divide evenly, but make the left node slightly larger, on the
-            // assumption that we're more likely to insert into the right node
-            // than the left one.
-            div_roundup(self.children.len(), 2)
-        };
-        let new_children = self.children.split_off(cutoff);
+        let new_children = self.children.split_off(left_items);
         let old_txgs = self.start_txg()..txg + 1;
 
         let key = new_children[0].key;
@@ -714,15 +729,15 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     /// Check invariants for a single NodeData
-    pub fn check(&self, key: K, height: u8, is_root: bool, min_fanout: usize,
-                 max_fanout: usize) -> bool
+    pub fn check(&self, key: K, height: u8, is_root: bool, limits: &Limits)
+                 -> bool
     {
         let id = NodeId{height, key};
         let l = self.len();
-        let len_ok = if (!is_root) && l < min_fanout {
+        let len_ok = if (!is_root) && l < limits.min_fanout() as usize {
             eprintln!("Node underflow.  Node {:?} has {} items", id, l);
             false
-        } else if l > max_fanout {
+        } else if l > limits.max_fanout() as usize {
             eprintln!("Node overflow.  Node {:?} has {} items", id, l);
             false
         } else {
@@ -736,6 +751,16 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
             true
         };
         len_ok && key_ok
+    }
+
+    /// Is this node in danger of underflowing if one child gets merged?
+    pub fn in_danger(&self, limits: &Limits) -> bool {
+        self.len() <= limits.min_fanout() as usize
+    }
+
+    /// Is this node in danger of underflowing if two childen get merged?
+    pub fn in_extra_danger(&self, limits: &Limits) -> bool {
+        self.len() <= limits.min_fanout() as usize + 1
     }
 
     pub fn into_leaf(self) -> LeafData<K, V> {
@@ -755,8 +780,8 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     /// Can this child be merged with `rhs` without violating constraints?
-    pub fn can_merge(&self, rhs: &NodeData<A, K, V>, max_fanout: u64) -> bool {
-        (self.len() + rhs.len()) as u64 <= max_fanout
+    pub fn can_merge(&self, rhs: &NodeData<A, K, V>, limits: &Limits) -> bool {
+        (self.len() + rhs.len()) as u64 <= limits.max_fanout()
     }
 
     /// Return this `NodeData`s lower bound key, suitable for use in its
@@ -777,9 +802,9 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     /// Is this node currently underflowing?
-    pub fn underflow(&self, min_fanout: u64) -> bool {
+    pub fn underflow(&self, limits: &Limits) -> bool {
         let len = self.len() as u64;
-        len < min_fanout
+        len < limits.min_fanout()
     }
 
     /// Should this node be split because it's too big?
@@ -787,29 +812,39 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     // the theory that it may gain a new child..
     // But as an optimization, don't split it if it's a leaf and we're only
     // overwriting.
-    pub fn should_split(&self, key: &K, max_fanout: u64) -> bool {
+    pub fn should_split(&self, key: &K, limits: &Limits) -> bool {
         if let NodeData::Leaf(leaf) = self {
             if leaf.items.contains_key(key) {
                 return false;
             }
         }
         let len = self.len() as u64;
-        debug_assert!(len <= max_fanout,
+        debug_assert!(len <= limits.max_fanout(),
                       "Overfull nodes shouldn't be possible");
-        len >= max_fanout
+        len >= limits.max_fanout()
     }
 
     /// Split this Node in two.  Returns the transaction range of the rump
     /// node, and a new IntElem containing the new node.
-    pub fn split(&mut self, right_size: Option<NonZeroU32>, txg: TxgT)
+    pub fn split(&mut self, limits: &Limits, seq: bool, txg: TxgT)
         -> (Range<TxgT>, IntElem<A, K, V>)
     {
+        let left_items = if seq {
+            // Make the left node as large as possible, since we'll almost
+            // certainly continue inserting into the right side.
+            self.len() - limits.min_fanout() as usize
+        } else {
+            // Divide evenly, but make the left node slightly larger, on the
+            // assumption that we're more likely to insert into the right node
+            // than the left one.
+            div_roundup(self.len(), 2)
+        };
         match self {
             NodeData::Leaf(leaf) => {
-                leaf.split(right_size, txg)
+                leaf.split(left_items, txg)
             },
             NodeData::Int(int) => {
-                int.split(right_size, txg)
+                int.split(left_items, txg)
             },
 
         }

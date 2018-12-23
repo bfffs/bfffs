@@ -32,7 +32,7 @@ use std::{
     fmt::Debug,
     io,
     mem,
-    num::{NonZeroU8, NonZeroU32},
+    num::NonZeroU8,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds, RangeInclusive},
     rc::Rc,
     sync::{
@@ -345,16 +345,7 @@ struct Inner<A: Addr, D: DML, K: Key, V: Value> {
     // should be very rare, so performance is not a concern.
     #[serde(with = "atomic_u64_serializer")]
     height: Atomic<u64>,
-    /// Node fanout range.  Smaller nodes will be merged, or will steal
-    /// children from their neighbors.  Larger nodes will be split.
-    // Rodeh states that the minimum value of max_fanout that can guarantee
-    // invariants is 2 * min_fanout + 1.  However, range_delete can be slightly
-    // simplified if max_fanout is at least 2 * min_fanout + 4.  That would mean
-    // that fix_int can always either merge two nodes, or steal 2 nodes.
-    fanout: Range<u64>,
-    /// Maximum node size in bytes.  Larger nodes will be split or their message
-    /// buffers flushed
-    _max_size: u64,
+    limits: Limits,
     /// Root node
     #[serde(with = "tree_root_serializer")]
     root: RwLock<IntElem<A, K, V>>,
@@ -379,11 +370,12 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
     #[cfg(test)]
     pub fn from_str(dml: Arc<D>, seq: bool, s: &str) -> Self {
         let il: InnerLiteral<A, K, V> = serde_yaml::from_str(s).unwrap();
-        Inner::new(dml, il.height, il.fanout, il._max_size, il.root, seq)
+        Inner::new(dml, il.height, il.limits, il.root, seq)
     }
 
-    pub fn new(dml: Arc<D>, height: u64, fanout: Range<u64>, max_size: u64,
-               root_elem: IntElem<A, K, V>, seq: bool) -> Self {
+    pub fn new(dml: Arc<D>, height: u64, limits: Limits,
+               root_elem: IntElem<A, K, V>, seq: bool) -> Self
+    {
         debug_assert!(Self::INT_ELEM_SIZE < u8::max_value as usize);
         debug_assert!(Self::INT_ELEM_SIZE > 0);
         let int_ts = unsafe{
@@ -400,8 +392,7 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
         let leaf_compressor = Compression::LZ4(Some(leaf_ts));
         Inner {
             height: Atomic::new(height),
-            fanout,
-            _max_size: max_size,
+            limits,
             root: RwLock::new(root_elem),
             dml,
             int_compressor,
@@ -414,7 +405,7 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
         let iod: InnerOnDisk<A> = on_disk.0;
         let root_elem = IntElem::new(K::min_value(), iod.txgs,
                                      TreePtr::Addr(iod.root));
-        Inner::new(dml, iod.height, iod.fanout, iod._max_size, root_elem, seq)
+        Inner::new(dml, iod.height, iod.limits, root_elem, seq)
     }
 }
 
@@ -423,8 +414,7 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
 #[serde(bound(deserialize = "A: DeserializeOwned"))]
 struct InnerOnDisk<A: Addr> {
     height: u64,
-    fanout: Range<u64>,
-    _max_size: u64,
+    limits: Limits,
     root: A,
     txgs: Range<TxgT>,
 }
@@ -434,8 +424,7 @@ impl<A: Addr + Default> Default for InnerOnDisk<A> {
     fn default() -> Self {
         InnerOnDisk {
             height: u64::default(),
-            fanout: u64::default()..u64::default(),
-            _max_size: u64::default(),
+            limits: Limits::default(),
             root: A::default(),
             txgs: TxgT(0)..TxgT(1),
         }
@@ -448,8 +437,7 @@ impl<A: Addr + Default> Default for InnerOnDisk<A> {
 #[cfg(test)]
 struct InnerLiteral<A: Addr, K: Key, V: Value> {
     height: u64,
-    fanout: Range<u64>,
-    _max_size: u64,
+    limits: Limits,
     root: IntElem<A, K, V>
 }
 
@@ -488,7 +476,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // old ones get freed while we're working
         type SenderFut<A, K, V> = Box<dyn Future<Item=(mpsc::Sender<A>,
             RwLockReadGuard<IntElem<A, K, V>>), Error=Error> + Send>;
-        let (tx, rx) = mpsc::channel(self.i.fanout.end as usize - 1);
+        let (tx, rx) = mpsc::channel(self.i.limits.max_fanout() as usize);
         let height = self.i.height.load(Ordering::Relaxed) as u8;
         let dml = self.i.dml.clone();
         let txgs2 = txgs.clone();
@@ -560,19 +548,17 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Keep the whole tree locked and use LIFO lock discipline
         let height = self.i.height.load(Ordering::Relaxed) as u8;
         let inner = self.i.clone();
-        let min_fanout = self.i.fanout.start as usize;
-        let max_fanout = self.i.fanout.end as usize - 1;
         self.read()
         .and_then(move |tree_guard| {
             tree_guard.rlock(&inner.dml)
             .and_then(move |guard| {
                 let root_ok = guard.check(tree_guard.key, height - 1, true,
-                                          min_fanout, max_fanout);
+                                          &inner.limits);
                 if height == 1 {
                     boxfut!(Ok(root_ok).into_future())
                 } else {
                     let fut = Tree::check_r(&inner.dml, height - 1, &guard,
-                                            min_fanout, max_fanout)
+                                            inner.limits)
                     .map(move |r| {
                         if r.2.start < tree_guard.txgs.start ||
                            r.2.end > tree_guard.txgs.end {
@@ -600,7 +586,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// contained by this node or any child, and the TXG range of this Node's
     /// children.
     fn check_r(dml: &Arc<D>, height: u8, node: &TreeReadGuard<A, K, V>,
-               min_fanout: usize, max_fanout: usize)
+               limits: Limits)
         -> CheckR<K>
     {
         debug_assert!(height > 0);
@@ -614,8 +600,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let key = c.key;
             c.rlock(&dml)
             .and_then(move |guard| {
-                let data_ok = guard.check(key, height - 1, false,
-                                          min_fanout, max_fanout);
+                let data_ok = guard.check(key, height - 1, false, &limits);
                 if guard.is_leaf() {
                     let first_key = *guard.key();
                     // We can unwrap() the last_key because last_key should only
@@ -626,8 +611,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     Box::new(Ok((data_ok, keys, range)).into_future())
                         as CheckR<K>
                 } else {
-                    let fut = Tree::check_r(&dml2, height - 1, &guard,
-                                            min_fanout, max_fanout)
+                    let fut = Tree::check_r(&dml2, height - 1, &guard, limits)
                     .map(move |(passed, keys, txgs)| {
                         // For IntNodes, use the key as recorded by the parent,
                         // which is <= the lowest child's key
@@ -680,6 +664,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // optimize for one over the other, we should choose leaves.
         let _int_ptr_size = IntElem::<A, K, V>::TYPICAL_SIZE;
         // A fanout spread of 4 is what BetrFS uses.
+        // [^CowBtrees] uses a fanout spread of 3 for its benchmarks
         let spread = 4;
         let mut target_leaf_size = if sequentially_optimized {
             // Sequentially optimized trees will almost never randomly insert.
@@ -702,10 +687,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // workload most nodes will be half full
         let max_fanout = max_leaf_fanout as u64;
         let min_fanout = div_roundup(max_fanout, spread as u64);
+        let limits = Limits::new(min_fanout, max_fanout);
         Tree::new(dml,
-                  min_fanout,
-                  max_fanout,
-                  1<<22,    // BetrFS's max size
+                  limits,
                   sequentially_optimized
         )
     }
@@ -827,7 +811,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         debug_assert!(nchildren >= 2,
             "nchildren < 2 for tree with parent key {:?}, idx={:?}",
             parent.as_int().children[child_idx].key, child_idx);
-        let max_fanout = inner.fanout.end - 1;
         let (fut, sib_idx, right) = {
             if child_idx < nchildren - 1 {
                 let sib_idx = child_idx + 1;
@@ -837,11 +820,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 (parent.xlock(&inner.dml, sib_idx, txg), sib_idx, false)
             }
         };
+        let limits = inner.limits;
         fut.map(move |(mut parent, mut sibling)| {
             let (before, after) = {
                 let children = &mut parent.as_int_mut().children;
                 if right {
-                    if child.can_merge(&sibling, max_fanout) {
+                    if child.can_merge(&sibling, &limits) {
                         child.merge(sibling);
                         children[child_idx].txgs.start = child.start_txg(txg);
                         children.remove(sib_idx);
@@ -854,7 +838,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         (0, 0)
                     }
                 } else {
-                    if sibling.can_merge(&child, max_fanout) {
+                    if sibling.can_merge(&child, &limits) {
                         sibling.merge(child);
                         children[sib_idx].txgs.start = sibling.start_txg(txg);
                         children.remove(child_idx);
@@ -901,13 +885,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         // First, split the node, if necessary
-        if (*child).should_split(&k, inner.fanout.end - 1) {
-            let right_size = if inner.sequentially_optimized {
-                NonZeroU32::new(inner.fanout.start as u32)
-            } else {
-                None
-            };
-            let (old_txgs, new_elem) = child.split(right_size, txg);
+        if (*child).should_split(&k, &inner.limits) {
+            let seq = inner.sequentially_optimized;
+            let (old_txgs, new_elem) = child.split(&inner.limits, seq, txg);
             parent.as_int_mut().children[child_idx].txgs = old_txgs;
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
@@ -939,13 +919,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         // First, split the root node, if necessary
-        if rnode.should_split(&k, inner.fanout.end - 1) {
-            let right_size = if inner.sequentially_optimized {
-                NonZeroU32::new(inner.fanout.start as u32)
-            } else {
-                None
-            };
-            let (old_txgs, new_elem) = rnode.split(right_size, txg);
+        if rnode.should_split(&k, &inner.limits) {
+            let seq = inner.sequentially_optimized;
+            let (old_txgs, new_elem) = rnode.split(&inner.limits, seq, txg);
             let new_root_data = NodeData::Int( IntData::new(vec![new_elem]));
             let old_root_data = mem::replace(rnode.deref_mut(), new_root_data);
             let old_root_node = Node::new(old_root_data);
@@ -1221,7 +1197,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let rangeclone = range.clone();
         let dml2 = self.i.dml.clone();
         let inner2 = self.i.clone();
-        let min_fanout = self.i.fanout.start as usize;
+        let limits = self.i.limits;
         let height = self.i.height.load(Ordering::Relaxed) as u8;
         self.write()
             .and_then(move |guard| {
@@ -1231,8 +1207,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         // just xlock()ed it.
                         let id = tree_guard.ptr.as_mem()
                             as *const Node<A, K, V> as usize;
-                        Tree::range_delete_pass1(min_fanout, dml2, height - 1,
-                                                 root_guard, range, None, txg)
+                        Tree::range_delete_pass1(limits, dml2,
+                                                 height - 1, root_guard, range,
+                                                 None, txg)
                             .map(move |(mut m, danger, _)| {
                                 if danger {
                                     m.insert(id);
@@ -1333,7 +1310,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// `
     /// A HashSet indicating which nodes in the cut are in-danger, indexed by
     /// the Node's memory address.
-    fn range_delete_pass1<R, T>(min_fanout: usize, dml: Arc<D>,
+    fn range_delete_pass1<R, T>(limits: Limits, dml: Arc<D>,
                                 height: u8, mut guard: TreeWriteGuard<A, K, V>,
                                 range: R, ubound: Option<K>, txg: TxgT)
         -> impl Future<Item=(HashSet<usize>, bool, usize),
@@ -1349,7 +1326,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             debug_assert!(guard.is_leaf());
             guard.as_leaf_mut().range_delete(range);
             let map = HashSet::<usize>::with_capacity(HASHSET_CAPACITY);
-            let danger = guard.len() < min_fanout;
+            let danger = guard.underflow(&limits);
             return boxfut!(Ok((map, danger, guard.len())).into_future());
         } else {
             debug_assert!(!guard.is_leaf());
@@ -1390,7 +1367,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 };
                 return Box::new(guard.xlock(&dml, i, txg)
                     .and_then(move |(mut parent_guard, child_guard)| {
-                        Tree::range_delete_pass1(min_fanout, dml, height - 1,
+                        Tree::range_delete_pass1(limits, dml, height - 1,
                             child_guard, range, next_ubound, txg)
                         .map(move |(mut m, mut child_danger, child_len)| {
                             if child_len == 0 {
@@ -1411,7 +1388,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                 }
                             }
                             let l = parent_guard.len();
-                            let danger = l <= min_fanout || child_danger;
+                            let danger = parent_guard.in_danger(&limits)
+                                || child_danger;
                             (m, danger, l)
                         })
                     })
@@ -1434,7 +1412,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             Box::new(
                 guard.xlock_nc(&dml2, i, height, txg)
                 .and_then(move |(elem, child_guard)| {
-                    Tree::range_delete_pass1(min_fanout, dml2, height - 1,
+                    Tree::range_delete_pass1(limits, dml2, height - 1,
                                              child_guard, range, new_ubound,
                                              txg)
                     .map(move |(m, danger, child_len)|
@@ -1453,7 +1431,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             Box::new(
                 guard.xlock_nc(&dml3, j, height, txg)
                 .and_then(move |(elem, child_guard)| {
-                    Tree::range_delete_pass1(min_fanout, dml3, height - 1,
+                    Tree::range_delete_pass1(limits, dml3, height - 1,
                                              child_guard, range2, new_ubound,
                                              txg)
                     .map(move |(m, danger, child_len)|
@@ -1520,8 +1498,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         }
                     }
                 }
-                let l = guard.len();
-                let danger = l < min_fanout ||
+                let danger = guard.underflow(&limits) ||
                     ldanger == Some(true) ||
                     rdanger == Some(true);
                 (lmap, danger, guard.len())
@@ -1652,14 +1629,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
             }
             let inner3 = inner.clone();
             let inner7 = inner.clone();
+            let limits2 = inner.limits;
             let range3 = range.clone();
-            let min_fanout = inner.fanout.start;
             let left_idx = to_fix[0];
             let right_idx = to_fix.get(1).cloned();
             let underflow = move |guard: &TreeWriteGuard<A, K, V>, common: bool|
             {
                 if guard.is_leaf() {
-                    guard.underflow(min_fanout)
+                    guard.underflow(&limits2)
                 } else {
                     // We need to fix IntNodes that might underflow if their
                     // children get merged.
@@ -1667,11 +1644,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         // If this node is a common ancestor of all affected
                         // nodes, then it may have up to 2 children that get
                         // merged
-                        guard.underflow(min_fanout + 2)
+                        guard.in_extra_danger(&limits2)
                     } else {
                         // If it's not a common ancestor, then at most one child
                         // will get merged
-                        guard.underflow(min_fanout + 1)
+                        guard.in_danger(&limits2)
                     }
                 }
             };
@@ -1754,13 +1731,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }
     }
 
-    fn new(dml: Arc<D>, min_fanout: u64, max_fanout: u64, max_size: u64,
-           seq: bool) -> Self
-    {
+    fn new(dml: Arc<D>, limits: Limits, seq: bool) -> Self {
         // Since there are no on-disk children, the initial TXG range is empty
-        let fanout = min_fanout..(max_fanout + 1);
         let root_elem = IntElem::default();
-        let inner = Inner::new(dml, 1, fanout, max_size, root_elem, seq);
+        let inner = Inner::new(dml, 1, limits, root_elem, seq);
         let i = Arc::new(inner);
         Tree{ i }
     }
@@ -1785,9 +1759,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
     {
         // First, fix the node, if necessary.  Merge/steal even if the node
-        // currently satifisfies the min_fanout, because we may remove end up
+        // currently satifisfies the min fanout, because we may remove end up
         // removing a child
-        if child.underflow(inner.fanout.start + 1) {
+        if child.in_danger(&inner.limits) {
             let dml2 = inner.dml.clone();
             Box::new(
                 Tree::fix_int(&inner, parent, child_idx, child, txg)
@@ -1887,8 +1861,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         .map(|root_guard| {
             let iod = InnerOnDisk{
                 height: self.i.height.load(Ordering::Relaxed),
-                fanout: self.i.fanout.clone(),
-                _max_size: self.i._max_size,
+                limits: self.i.limits,
                 root: *root_guard.ptr.as_addr(),
                 txgs: root_guard.txgs.clone(),
             };

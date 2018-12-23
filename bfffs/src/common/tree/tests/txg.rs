@@ -15,10 +15,10 @@ fn check_bad_root_txgs() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -61,10 +61,10 @@ fn check_bad_int_txgs() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -143,10 +143,10 @@ fn check_bad_key() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -189,10 +189,10 @@ fn check_ok() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -284,10 +284,10 @@ fn check_leaf_underflow() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -330,10 +330,10 @@ fn check_root_int_underflow() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 3
-  end: 8
-_max_size: 4194304
+limits:
+  min_fanout: 3
+  max_fanout: 7
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -381,10 +381,10 @@ fn check_root_leaf_ok() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -408,10 +408,10 @@ fn check_root_leaf_overflow() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -441,10 +441,10 @@ fn check_unsorted() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -509,10 +509,10 @@ fn flush() {
     let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -574,10 +574,10 @@ fn merge() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -645,10 +645,10 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -734,10 +734,10 @@ fn split() {
     let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -784,10 +784,10 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -859,10 +859,10 @@ fn steal() {
     let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:
@@ -947,10 +947,10 @@ root:
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
-fanout:
-  start: 2
-  end: 6
-_max_size: 4194304
+limits:
+  min_fanout: 2
+  max_fanout: 5
+  _max_size: 4194304
 root:
   key: 0
   txgs:

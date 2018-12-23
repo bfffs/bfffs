@@ -1,9 +1,9 @@
 pub const EXPECTED: &str = r#"---
 height: 2
-fanout:
-  start: 32
-  end: 128
-_max_size: 4194304
+limits:
+  min_fanout: 32
+  max_fanout: 127
+  _max_size: 4194304
 root:
   key: 0
   txgs:
