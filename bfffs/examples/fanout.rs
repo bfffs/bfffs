@@ -191,9 +191,9 @@ impl FakeIDML {
            data_ddml: Arc<FakeDDML>,
            ridt_ddml: Arc<FakeDDML>, save: bool) -> Self
     {
-        let alloct = Arc::new(Tree::create(alloct_ddml.clone(), true, 18.5,
+        let alloct = Arc::new(Tree::create(alloct_ddml.clone(), true, 16.5,
             2.809));
-        let ridt = Arc::new(Tree::create(ridt_ddml.clone(), true, 4.27, 3.73));
+        let ridt = Arc::new(Tree::create(ridt_ddml.clone(), true, 4.22, 3.73));
         FakeIDML {
             alloct,
             data_size: Atomic::<u64>::default(),
@@ -313,7 +313,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     let idml3 = idml.clone();
     let idml4 = idml.clone();
     let tree = Arc::new(
-        Tree::<RID, FakeIDML, FSKey, FSValue<RID>>::create(idml2, false, 5.95,
+        Tree::<RID, FakeIDML, FSKey, FSValue<RID>>::create(idml2, false, 9.00,
                                                            1.61)
     );
     let tree2 = tree.clone();

@@ -223,9 +223,9 @@ impl<'a> IDML {
     }
 
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
-        let alloct = DTree::<PBA, RID>::create(ddml.clone(), true, 18.5, 2.809);
+        let alloct = DTree::<PBA, RID>::create(ddml.clone(), true, 16.5, 2.809);
         let next_rid = Atomic::new(0);
-        let ridt = DTree::<RID, RidtEntry>::create(ddml.clone(), true, 4.27,
+        let ridt = DTree::<RID, RidtEntry>::create(ddml.clone(), true, 4.22,
             3.73);
         let transaction = RwLock::new(TxgT::from(0));
         let trees = Arc::new(Trees{alloct, ridt});

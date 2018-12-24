@@ -454,7 +454,7 @@ impl Database {
             // whether the write pattern is sequential or random.  5.98x is the
             // lower value for random access.  We'll use that rather than the
             // upper value, to keep cache usage lower.
-            let fs = Arc::new(ITree::create(idml2, false, 5.95, 1.61));
+            let fs = Arc::new(ITree::create(idml2, false, 9.00, 1.61));
             guard.insert(tree_id, fs);
             drop(guard);
 

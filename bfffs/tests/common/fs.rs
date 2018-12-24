@@ -272,8 +272,8 @@ height: 1
 limits:
   min_int_fanout: 91
   max_int_fanout: 364
-  min_leaf_fanout: 381
-  max_leaf_fanout: 1522
+  min_leaf_fanout: 576
+  max_leaf_fanout: 2302
   _max_size: 4194304
 root:
   key: 0
