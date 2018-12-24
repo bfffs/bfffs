@@ -279,7 +279,7 @@ root:
 fn check_empty() {
     let mock = DMLMock::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::create(dml, false, 1.0);
+    let tree = Tree::<u32, DMLMock, u32, f32>::create(dml, false, 1.0, 1.0);
 
     let mut rt = current_thread::Runtime::new().unwrap();
     assert!(rt.block_on(tree.check()).unwrap());

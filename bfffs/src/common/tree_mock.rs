@@ -81,7 +81,9 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    pub fn create(_dml: Arc<D>, _seq: bool, _zratio: f32) -> Self {
+    pub fn create(_dml: Arc<D>, _seq: bool, _lzratio: f32, _izratio: f32)
+        -> Self
+    {
         Self::new()
     }
 

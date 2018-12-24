@@ -270,10 +270,10 @@ test_suite! {
         let expected = r#"---
 height: 1
 limits:
-  min_int_fanout: 293
-  max_int_fanout: 1170
-  min_leaf_fanout: 329
-  max_leaf_fanout: 1316
+  min_int_fanout: 91
+  max_int_fanout: 364
+  min_leaf_fanout: 381
+  max_leaf_fanout: 1522
   _max_size: 4194304
 root:
   key: 0

@@ -655,10 +655,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Create a new tree.  `sequentially_optimized` controls whether some
     /// internal operations will assume a mostly-sequential or mostly-random
-    /// write pattern.  `compression_ratio` is the expected compression ratio.
+    /// write pattern.  `leaf_compression_ratio` and `int_compression_ratio` are
+    /// the expected compression ratios for leaf nodes and int nodes,
+    /// respectively.
     /// It should be > 1.
     pub fn create(dml: Arc<D>, sequentially_optimized: bool,
-                  compression_ratio: f32) -> Self
+                  leaf_compression_ratio: f32, int_compression_ratio: f32)
+        -> Self
     {
         // Calculate good fanout parameters.
         // For leaves, the serialization format is 4 bytes for the enum variant,
@@ -667,7 +670,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // variant, followed by 8 bytes for the vector size, followed by a
         // series of IntElems.
 
-        let mk_fanout = |elem_size: usize| {
+        let mk_fanout = |elem_size: usize, compression_ratio: f32| {
             // A fanout spread of 4 is what BetrFS uses.
             // [^CowBtrees] uses a fanout spread of 3 for its benchmarks
             let spread = 4u16;
@@ -696,8 +699,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
             // TODO: take account of compression
         };
 
-        let (minlf, maxlf) = mk_fanout(Inner::<A, D, K, V>::LEAF_ELEM_SIZE);
-        let (minif, maxif) = mk_fanout(IntElem::<A, K, V>::TYPICAL_SIZE);
+        let (minlf, maxlf) = mk_fanout(Inner::<A, D, K, V>::LEAF_ELEM_SIZE,
+                                       leaf_compression_ratio);
+        let (minif, maxif) = mk_fanout(IntElem::<A, K, V>::TYPICAL_SIZE,
+                                       int_compression_ratio);
 
         let limits = Limits::new(minif, maxif, minlf, maxlf);
         Tree::new(dml,
