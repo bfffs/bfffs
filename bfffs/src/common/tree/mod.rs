@@ -653,7 +653,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
         Box::new(fut)
     }
 
-    pub fn create(dml: Arc<D>, sequentially_optimized: bool) -> Self {
+    /// Create a new tree.  `sequentially_optimized` controls whether some
+    /// internal operations will assume a mostly-sequential or mostly-random
+    /// write pattern.  `compression_ratio` is the expected compression ratio.
+    /// It should be > 1.
+    pub fn create(dml: Arc<D>, sequentially_optimized: bool,
+                  compression_ratio: f32) -> Self
+    {
         // Calculate good fanout parameters.
         // For leaves, the serialization format is 4 bytes for the enum variant,
         // followed by 8 bytes for the BTreeMap size, followed by K, V pairs.
@@ -666,8 +672,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
             // [^CowBtrees] uses a fanout spread of 3 for its benchmarks
             let spread = 4u16;
             let overhead = 12;  // enum variant size and vector size
+            let raw_bytes = (compression_ratio * BYTES_PER_LBA as f32) as usize;
             // split_size is the amount of data in the left side after a split
-            let split_size = BYTES_PER_LBA - overhead;
+            let split_size = raw_bytes - overhead;
             let max_fanout = if sequentially_optimized {
                 // Sequentially optimized trees will almost never randomly
                 // insert.  Most nodes will be what remains after a split.  So

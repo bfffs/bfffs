@@ -360,7 +360,8 @@ impl Database {
     pub fn create<E>(idml: Arc<IDML>, handle: E) -> Self
         where E: Clone + Executor + 'static
     {
-        let forest = ITree::create(idml.clone(), true);
+        // Compression ratio is a total guess; it hasn't been measured yet.
+        let forest = ITree::create(idml.clone(), true, 4.0);
         Database::new(idml, forest, handle)
     }
 
@@ -449,7 +450,11 @@ impl Database {
                 !guard.contains_key(&TreeID::Fs(*i))
             }).nth(0).expect("Maximum number of filesystems reached");
             let tree_id: TreeID = TreeID::Fs(k);
-            let fs = Arc::new(ITree::create(idml2, false));
+            // The FS tree's compressibility varies greatly, especially based on
+            // whether the write pattern is sequential or random.  5.15x is the
+            // lower value for random access.  We'll use that rather than the
+            // upper value, to keep cache usage lower.
+            let fs = Arc::new(ITree::create(idml2, false, 5.15));
             guard.insert(tree_id, fs);
             drop(guard);
 

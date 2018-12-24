@@ -7550,7 +7550,7 @@ root:
 #[test]
 fn range_empty_tree() {
     let dml = Arc::new(DMLMock::new());
-    let tree = Tree::<u32, DMLMock, u32, f32>::create(dml, false);
+    let tree = Tree::<u32, DMLMock, u32, f32>::create(dml, false, 1.0);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
         tree.range(..).collect()
