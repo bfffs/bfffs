@@ -38,22 +38,22 @@ const SHUFFLES: [(&str, blosc::ShuffleMode); 3] = [
 ];
 
 fn main() {
-    println!("tree      algo    shuffle |      compression ratio      | compression times");
-    println!("                          |    min   mean    max stddev |     mean   stddev");
-    println!("--------------------------+-----------------------------+------------------");
+    println!("tree      algo    shuffle |      compression ratio      | compression speeds");
+    println!("                          |    min   mean    max stddev |       mean    stddev");
+    println!("--------------------------+-----------------------------+---------------------");
     for (ds, typesize) in DATASETS.iter() {
         // Compression ratios in parts per thousand
         let mut ratios = Vec::new();
-        // Compression times in nanoseconds
-        let mut times = Vec::new();
+        // Compression speeds in MiBps
+        let mut speeds = Vec::new();
         for _ in SHUFFLES.iter().enumerate() {
             ratios.push(HashMap::new());
-            times.push(HashMap::new());
+            speeds.push(HashMap::new());
         }
         for z in COMPRESSORS.iter() {
             for (i, _) in SHUFFLES.iter().enumerate() {
                 ratios[i].insert(z, Histogram::new());
-                times[i].insert(z, Histogram::new());
+                speeds[i].insert(z, Histogram::new());
             }
         }
         let pat = format!("/tmp/fanout/{}.*.bin", ds);
@@ -74,8 +74,13 @@ fn main() {
 
                     let time = start.elapsed();
                     debug_assert_eq!(time.as_secs(), 0);
-                    times[i].get_mut(&z).unwrap()
-                        .increment(time.subsec_nanos().into())
+                    let speed = lsize as u64
+                        * 1_000_000_000
+                        / time.subsec_nanos() as u64
+                        / 1024 / 1024;
+                    speeds[i].get_mut(&z).unwrap()
+                        .increment(speed.into())
+                        //.increment(time.subsec_nanos().into())
                         .unwrap();
 
                     let csize = zbuf.size();
@@ -96,13 +101,13 @@ fn main() {
                 let zmax = ratio.maximum().unwrap() as f64 / 10.0;
                 let zstddev = ratio.stddev().unwrap() as f64 / 10.0;
 
-                let time = &times[i][z];
-                let tmean = time.mean().unwrap();
-                let tstddev = time.stddev().unwrap();
+                let speed = &speeds[i][z];
+                let tmean = speed.mean().unwrap();
+                let tstddev = speed.stddev().unwrap();
 
                 print!("{:10}{:8}{:8}| {:5.1}% {:5.1}% {:5.1}% {:5.1}%", ds,
                          zname, shufname, zmin, zmean, zmax, zstddev);
-                println!(" | {:6.1}ns {:6.1}ns",
+                println!(" | {:5.1}MiBps {:4.1}MiBps",
                          tmean, tstddev);
             }
         }
