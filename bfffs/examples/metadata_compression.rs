@@ -20,10 +20,15 @@ const COMPRESSORS: [blosc::Compressor; 6] = [
     blosc::Compressor::Zstd
 ];
 
-const DATASETS: [(&str, usize); 3] = [
-    (&"alloct", 18),
-    (&"ridt", 43),
-    (&"fs", 32)
+// For each pair of trees, the first entry is for leaf nodes and the second for
+// interior nodes.  The fanouts are generally different.
+const DATASETS: [(&str, usize); 6] = [
+    (&"alloct.18", 18),
+    (&"alloct.49", 49),
+    (&"ridt.43", 43),
+    (&"ridt.47", 47),
+    (&"fs.32", 32),
+    (&"fs.36", 32),
 ];
 
 const SHUFFLES: [(&str, blosc::ShuffleMode); 3] = [
@@ -33,9 +38,9 @@ const SHUFFLES: [(&str, blosc::ShuffleMode); 3] = [
 ];
 
 fn main() {
-    println!("tree    algo    shuffle |      compression ratio      | compression times");
-    println!("                        |    min   mean    max stddev |     mean   stddev");
-    println!("------------------------+-----------------------------+------------------");
+    println!("tree      algo    shuffle |      compression ratio      | compression times");
+    println!("                          |    min   mean    max stddev |     mean   stddev");
+    println!("--------------------------+-----------------------------+------------------");
     for (ds, typesize) in DATASETS.iter() {
         // Compression ratios in parts per thousand
         let mut ratios = Vec::new();
@@ -53,7 +58,8 @@ fn main() {
         }
         let pat = format!("/tmp/fanout/{}.*.bin", ds);
         for path in glob::glob(&pat).unwrap() {
-            let mut f = std::fs::File::open(path.unwrap()).unwrap();
+            let pb = path.unwrap();
+            let mut f = std::fs::File::open(pb).unwrap();
             let mut buf = Vec::new();
             let lsize = f.read_to_end(&mut buf).unwrap();
             for z in COMPRESSORS.iter() {
@@ -94,7 +100,7 @@ fn main() {
                 let tmean = time.mean().unwrap();
                 let tstddev = time.stddev().unwrap();
 
-                print!("{:8}{:8}{:8}| {:5.1}% {:5.1}% {:5.1}% {:5.1}%", ds,
+                print!("{:10}{:8}{:8}| {:5.1}% {:5.1}% {:5.1}% {:5.1}%", ds,
                          zname, shufname, zmin, zmean, zmax, zstddev);
                 println!(" | {:6.1}ns {:6.1}ns",
                          tmean, tstddev);

@@ -68,6 +68,14 @@ impl Compression {
     pub fn is_compressed(self) -> bool {
         self != Compression::None
     }
+
+    /// Get the shuffle setting
+    pub fn shuffle(self) -> Option<NonZeroU8> {
+        match self {
+            Compression::None => None,
+            Compression::LZ4(s) | Compression::Zstd(s) => s
+        }
+    }
 }
 
 impl Default for Compression {

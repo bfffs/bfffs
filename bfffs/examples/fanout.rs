@@ -24,6 +24,7 @@ use rand_xorshift::XorShiftRng;
 use std::{
     collections::BTreeMap,
     io::Write,
+    num::NonZeroU8,
     str::FromStr,
     sync::{Arc, Mutex}
 };
@@ -146,7 +147,10 @@ impl DML for FakeDDML {
     {
         let db = cacheable.make_ref().serialize();
         if self.save {
-            let fname = format!("/tmp/fanout/{}.{}.bin", self.name,
+            // We don't know which nodes are Int and which are Leaf; all we know
+            // are their shuffle settings.  So write those in their filenames.
+            let shuf = compression.shuffle().map(NonZeroU8::get).unwrap_or(0);
+            let fname = format!("/tmp/fanout/{}.{}.{}.bin", self.name, shuf,
                                 self.next_lba.load(Ordering::Relaxed));
             let mut f = std::fs::File::create(fname).unwrap();
             f.write_all(&db[..]).unwrap();
@@ -258,7 +262,10 @@ impl DML for FakeIDML {
     {
         let db = cacheable.make_ref().serialize();
         if self.save {
-            let fname = format!("/tmp/fanout/{}.{}.bin", self.name,
+            // We don't know which nodes are Int and which are Leaf; all we know
+            // are their shuffle settings.  So write those in their filenames.
+            let shuf = compression.shuffle().map(NonZeroU8::get).unwrap_or(0);
+            let fname = format!("/tmp/fanout/{}.{}.{}.bin", self.name, shuf,
                                 self.next_rid.load(Ordering::Relaxed));
             let mut f = std::fs::File::create(fname).unwrap();
             f.write_all(&db[..]).unwrap();
