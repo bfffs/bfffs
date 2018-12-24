@@ -1,8 +1,6 @@
 // vim: tw=80
 use galvanic_test::test_suite;
 
-mod fs_dump_output;
-
 /// Constructs a real filesystem and tests the common FS routines, without
 /// mounting
 test_suite! {
@@ -32,7 +30,6 @@ test_suite! {
         slice,
         sync::{Arc, Mutex}
     };
-    use super::fs_dump_output;
     use tempdir::TempDir;
     use time::Timespec;
     use tokio_io_pool::Runtime;
@@ -261,38 +258,72 @@ test_suite! {
         assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
     }
 
-    // Dumps an FS tree, with enough data to create IntNodes
+    // Dumps a nearly FS tree.  All of the real work is done in Tree::dump, so
+    // the bulk of testing is in the tree tests.
     test dump(mocks) {
-        // First create enough directories to split the root LeafNode
-        let inos = (0..63).map(|i| {
-            let uid = 2 * i + 1;
-            let gid = 2 * i + 2;
-            let filename = OsString::from(format!("{}", i));
-            mocks.val.0.mkdir(1, &filename, 0o755, uid, gid).unwrap()
-        }).collect::<Vec<_>>();
-
-        // Clear the timestamps so the dump will be reproducible
-        for ino in inos.iter() {
-            clear_timestamps(&mocks.val.0, *ino);
-        }
-
-        // Then delete some directories to reduce the size of the dump.  But
-        // don't delete so many that the LeafNodes merge
-        for i in 0..15 {
-            let filename = OsString::from(format!("{}", i));
-            mocks.val.0.rmdir(1, &filename).unwrap()
-        }
-
-        // Clear the root's timestamp
         clear_timestamps(&mocks.val.0, 1);
         mocks.val.0.sync();
 
         let mut buf = Vec::with_capacity(1024);
         mocks.val.0.dump(&mut buf).unwrap();
         let fs_tree = String::from_utf8(buf).unwrap();
-        // Use std::assert_eq! instead of pretty_assertions::assert_eq because
-        // the latter is too slow on a failure when the string is this large.
-        std::assert_eq!(fs_dump_output::EXPECTED, fs_tree);
+        let expected = r#"---
+height: 1
+limits:
+  min_int_fanout: 57
+  max_int_fanout: 226
+  min_leaf_fanout: 64
+  max_leaf_fanout: 254
+  _max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 1
+  ptr:
+    Addr: 0
+---
+0:
+  Leaf:
+    items:
+      18478388752068107043:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+              - 46
+      18490468108375165510:
+        DirEntry:
+          ino: 1
+          dtype: 4
+          name:
+            Unix:
+              - 46
+      18518801667747479552:
+        Inode:
+          size: 0
+          nlink: 1
+          flags: 0
+          atime:
+            sec: 0
+            nsec: 0
+          mtime:
+            sec: 0
+            nsec: 0
+          ctime:
+            sec: 0
+            nsec: 0
+          birthtime:
+            sec: 0
+            nsec: 0
+          uid: 0
+          gid: 0
+          perm: 493
+          file_type: Dir
+"#;
+        assert_eq!(expected, fs_tree);
     }
 
     /// getattr on the filesystem's root directory
