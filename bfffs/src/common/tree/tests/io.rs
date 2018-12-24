@@ -271,7 +271,6 @@ root:
                               15: 15.0
                               16: 16.0
                               17: 17.0
-          # This  Node is not returned due to its TXG range
           - key: 20
             txgs:
               start: 0
