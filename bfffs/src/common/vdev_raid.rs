@@ -26,7 +26,6 @@ use std::collections::BTreeMap;
     num::NonZeroU64,
     path::Path
 };
-use uuid::Uuid;
 
 #[cfg(test)]
 /// Only exists so mockers can replace VdevBlock

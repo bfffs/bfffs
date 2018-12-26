@@ -2,7 +2,6 @@
 
 use crate::common::*;
 use futures;
-use uuid::Uuid;
 
 /// Future representing an operation on a vdev.
 pub type VdevFut = futures::Future<Item = (), Error = Error>;

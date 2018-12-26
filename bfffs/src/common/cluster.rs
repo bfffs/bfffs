@@ -27,7 +27,6 @@ use std::{
     num::NonZeroU64,
     path::Path
 };
-use uuid::Uuid;
 
 pub type ClusterFut = Future<Item = (), Error = Error>;
 

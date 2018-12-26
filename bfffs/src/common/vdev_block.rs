@@ -18,7 +18,6 @@ use std::{
 };
 use tokio_current_thread;
 use tokio::timer;
-use uuid::Uuid;
 
 use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
 #[cfg(not(test))]

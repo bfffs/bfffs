@@ -19,7 +19,6 @@ use std::{
     path::Path
 };
 use tokio_file::{AioFut, File, LioFut};
-use uuid::Uuid;
 
 /// FFI definitions that don't belong in libc.  The ioctls can't go in libc
 /// because they use Nix's macros.  The structs probably shouldn't go in libc,

@@ -7,12 +7,21 @@ use lazy_static::lazy_static;
 use libc;
 use nix;
 use num_traits::{FromPrimitive, ToPrimitive};
+use serde::{
+    Deserialize,
+    Serialize,
+    Serializer,
+    de::Deserializer,
+    ser::SerializeTuple
+};
 use serde_derive::*;
 use std::{
     fmt::{self, Display, Formatter},
     hash::Hasher,
-    ops::{Add, AddAssign, Div, Sub}
+    ops::{Add, AddAssign, Div, Sub},
+    str::FromStr
 };
+use uuid;
 
 pub mod cache;
 #[cfg(test)] mod cache_mock;
@@ -298,6 +307,63 @@ impl Display for RID {
 
 impl TypicalSize for RID {
     const TYPICAL_SIZE: usize = 8;
+}
+
+/// BFFFS UUID type
+///
+/// This is just like the `Uuid` from the `uuid` crate, except that it
+/// serializes as a fixed-size array instead of a slice
+///
+/// See Also [#329](https://github.com/uuid-rs/uuid/issues/329)
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord)]
+pub struct Uuid(uuid::Uuid);
+
+impl Uuid {
+    pub fn new_v4() -> Self {
+        Uuid(uuid::Uuid::new_v4())
+    }
+
+    pub fn parse_str(input: &str) -> Result<Uuid, uuid::parser::ParseError> {
+        uuid::Uuid::parse_str(input)
+            .map(|u| Uuid(u))
+    }
+}
+
+impl<'de> Deserialize<'de> for Uuid {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: Deserializer<'de>
+    {
+        <[u8; 16]>::deserialize(deserializer)
+        .map(|v| Uuid(uuid::Uuid::from_bytes(v)))
+    }
+}
+
+impl Display for Uuid {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for Uuid {
+    type Err = uuid::parser::ParseError;
+
+    fn from_str(uuid_str: &str) -> Result<Self, Self::Err> {
+        uuid::Uuid::from_str(uuid_str).map(|u| Uuid(u))
+    }
+}
+
+impl Serialize for Uuid {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        let bytes = self.0.as_bytes();
+        debug_assert_eq!(bytes.len(), 16);
+        let mut tup = serializer.serialize_tuple(16)?;
+        for b in bytes.iter() {
+            tup.serialize_element(&b)?;
+        }
+        tup.end()
+    }
 }
 
 /// "Private" trait; only exists to ensure that div_roundup will fail to compile

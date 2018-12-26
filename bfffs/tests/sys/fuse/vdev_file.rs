@@ -210,24 +210,19 @@ test_suite! {
     use std;
     use tempdir::TempDir;
     use tokio::runtime::current_thread;
-    use uuid::Uuid;
 
-    const GOLDEN: [u8; 80] = [
+    const GOLDEN: [u8; 72] = [
         // First 16 bytes are file magic
         0x42, 0x46, 0x46, 0x46, 0x53, 0x20, 0x56, 0x64, // BFFFS Vd
         0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ev......
         // Next 8 bytes are a checksum
-        0x5e, 0x6f, 0x20, 0x07, 0xdf, 0x49, 0x6b, 0x14,
+        0x2e, 0x43, 0xc2, 0x5d, 0x1f, 0x55, 0x20, 0x3b,
         // Next 8 bytes are the contents length, in BE
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28,
         // The rest is a serialized VdevFile::Label object.
-        // First comes the VdevFile's UUID.  It's only 16 bytes, but it's
-        // prefixed by an 8-byte length due to bug
-        // https://github.com/uuid-rs/uuid/issues/329
-        // TODO: eliminate the 8-byte length field.
-        0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x5f, 0x8f, 0xc6, 0x9f, 0xc1, 0xd3, 0x41, 0xda,
-        0xaa, 0x13, 0xcf, 0xbf, 0x70, 0x06, 0xb9, 0x21,
+        // First comes the VdevFile's UUID.
+        0x3f, 0xa1, 0xf6, 0xb9, 0x54, 0xb1, 0x4a, 0x10,
+        0xbc, 0x6b, 0x5b, 0x2a, 0x15, 0xe8, 0xa0, 0x3d,
         // Then the number of LBAS per zone
         0xbe, 0xba, 0x7e, 0x1a, 0xef, 0xbe, 0xad, 0xde,
         // Then the number of LBAs as a 64-bit number
@@ -272,7 +267,7 @@ test_suite! {
     /// Open the golden master label
     test open(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "5f8fc69f-c1d3-41da-aa13-cfbf7006b921").unwrap();
+            "3fa1f6b9-54b1-4a10-bc6b-5b2a15e8a03d").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -318,7 +313,7 @@ test_suite! {
     /// Open a device that only has one valid label, the first one
     test open_first_label_only(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "5f8fc69f-c1d3-41da-aa13-cfbf7006b921").unwrap();
+            "3fa1f6b9-54b1-4a10-bc6b-5b2a15e8a03d").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -349,7 +344,7 @@ test_suite! {
     /// Open a device that only has one valid label, the second one
     test open_second_label_only(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "5f8fc69f-c1d3-41da-aa13-cfbf7006b921").unwrap();
+            "3fa1f6b9-54b1-4a10-bc6b-5b2a15e8a03d").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -392,7 +387,7 @@ test_suite! {
         // Compare against the golden master, skipping the checksum and UUID
         // fields
         assert_eq!(&v[0..16], &GOLDEN[0..16]);
-        assert_eq!(&v[24..40], &GOLDEN[24..40]);
-        assert_eq!(&v[56..GOLDEN.len()], &GOLDEN[56..GOLDEN.len()]);
+        assert_eq!(&v[24..32], &GOLDEN[24..32]);
+        assert_eq!(&v[48..GOLDEN.len()], &GOLDEN[48..GOLDEN.len()]);
     }
 }

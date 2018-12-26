@@ -25,7 +25,6 @@ use std::collections::BTreeMap;
 };
 use tokio::executor;
 #[cfg(not(test))] use tokio::executor::{DefaultExecutor, Executor};
-use uuid::Uuid;
 
 pub type PoolFut = Future<Item = (), Error = Error>;
 
