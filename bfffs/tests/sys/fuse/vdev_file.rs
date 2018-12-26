@@ -212,28 +212,28 @@ test_suite! {
     use tokio::runtime::current_thread;
     use uuid::Uuid;
 
-    const GOLDEN: [u8; 103] = [
+    const GOLDEN: [u8; 80] = [
         // First 16 bytes are file magic
         0x42, 0x46, 0x46, 0x46, 0x53, 0x20, 0x56, 0x64, // BFFFS Vd
         0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ev......
         // Next 8 bytes are a checksum
-        0x7a, 0xbd, 0xf7, 0x77, 0x88, 0xb9, 0x29, 0x30,
+        0x5e, 0x6f, 0x20, 0x07, 0xdf, 0x49, 0x6b, 0x14,
         // Next 8 bytes are the contents length, in BE
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
-        // The rest is a serialized VdevFile::Label object
-        0xa4, 0x64, 0x75, 0x75, 0x69, 0x64, 0x50,       // .duuidP.
-        // These 16 bytes are a UUID
-                                                  0x97,
-        0x35, 0xec, 0xfa, 0x74, 0xeb, 0x44, 0x7a, 0xac,
-        0xbe, 0x3a, 0xd7, 0x11, 0x14, 0x6e, 0xbb,
-        // This is the rest of the LabelData
-                                                  0x6d, // .:...n.m
-        0x6c, 0x62, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72, // lbas_per
-        0x5f, 0x7a, 0x6f, 0x6e, 0x65, 0x1b, 0xde, 0xad, // _zone...
-        0xbe, 0xef, 0x1a, 0x7e, 0xba, 0xbe, 0x64, 0x6c, // ...~..dl
-        0x62, 0x61, 0x73, 0x19, 0x40, 0x00, 0x6e, 0x73, // bas.@.ns
-        0x70, 0x61, 0x63, 0x65, 0x6d, 0x61, 0x70, 0x5f, // pacemap_
-        0x73, 0x70, 0x61, 0x63, 0x65, 0x01, 0x00
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30,
+        // The rest is a serialized VdevFile::Label object.
+        // First comes the VdevFile's UUID.  It's only 16 bytes, but it's
+        // prefixed by an 8-byte length due to bug
+        // https://github.com/uuid-rs/uuid/issues/329
+        // TODO: eliminate the 8-byte length field.
+        0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x5f, 0x8f, 0xc6, 0x9f, 0xc1, 0xd3, 0x41, 0xda,
+        0xaa, 0x13, 0xcf, 0xbf, 0x70, 0x06, 0xb9, 0x21,
+        // Then the number of LBAS per zone
+        0xbe, 0xba, 0x7e, 0x1a, 0xef, 0xbe, 0xad, 0xde,
+        // Then the number of LBAs as a 64-bit number
+        0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // Finally the number of LBAs reserved for the spacemap
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
 
     fixture!( fixture() -> (PathBuf, TempDir) {
@@ -272,7 +272,7 @@ test_suite! {
     /// Open the golden master label
     test open(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "9735ecfa-74eb-447a-acbe-3ad711146ebb").unwrap();
+            "5f8fc69f-c1d3-41da-aa13-cfbf7006b921").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -282,14 +282,14 @@ test_suite! {
             let offset1 = 4 * BYTES_PER_LBA as u64;
             write_all_at(&f, &GOLDEN, offset1).unwrap();
         }
-        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             VdevFile::open(fixture.val.0)
                 .and_then(|(vdev, _label_reader)| {
                     assert_eq!(vdev.size(), 16_384);
                     assert_eq!(vdev.uuid(), golden_uuid);
                     Ok(())
                 })
-        })));
+        })).unwrap();
         let _ = fixture.val.1;
     }
 
@@ -318,7 +318,7 @@ test_suite! {
     /// Open a device that only has one valid label, the first one
     test open_first_label_only(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "9735ecfa-74eb-447a-acbe-3ad711146ebb").unwrap();
+            "5f8fc69f-c1d3-41da-aa13-cfbf7006b921").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -349,7 +349,7 @@ test_suite! {
     /// Open a device that only has one valid label, the second one
     test open_second_label_only(fixture) {
         let golden_uuid = Uuid::parse_str(
-            "9735ecfa-74eb-447a-acbe-3ad711146ebb").unwrap();
+            "5f8fc69f-c1d3-41da-aa13-cfbf7006b921").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -392,7 +392,7 @@ test_suite! {
         // Compare against the golden master, skipping the checksum and UUID
         // fields
         assert_eq!(&v[0..16], &GOLDEN[0..16]);
-        assert_eq!(&v[24..39], &GOLDEN[24..39]);
-        assert_eq!(&v[55..GOLDEN.len()], &GOLDEN[55..GOLDEN.len()]);
+        assert_eq!(&v[24..40], &GOLDEN[24..40]);
+        assert_eq!(&v[56..GOLDEN.len()], &GOLDEN[56..GOLDEN.len()]);
     }
 }

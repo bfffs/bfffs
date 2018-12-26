@@ -1,11 +1,11 @@
 // vim: tw=80
 
+use bincode;
 use byteorder::{BigEndian, ByteOrder};
 use crate::common::*;
 use divbuf::DivBufShared;
 use metrohash::MetroHash64;
-use serde::{Deserialize, Serialize};
-use serde_cbor;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
 
 /*
@@ -14,7 +14,11 @@ use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
  * Magic:       16 bytes
  * Checksum:    8 bytes     MetroHash64.  Covers all of Length and Contents.
  * Length:      8 bytes     Length of Contents in bytes
- * Contents:    variable    3 CBOR-encoded structs
+ * VdevFile:    variable    bincode-encoded VdevFile::Label
+ * VdevRaid:    variable    bincode-encoded VdevRaid::Label
+ * Pool:        variable    bincode-encoded Pool::Label
+ * IDML:        variable    bincode-encoded IDML::Label
+ * Database:    variable    bincode-encoded Database::Label
  * Pad:         variable    0-padding fills the remainder, up to 4 LBAs
  *
  * On-disk Reserved Region Format:
@@ -46,17 +50,15 @@ pub fn spacemap_space(nzones: u64) -> LbaT {
 
 /// Used to read successive structs out of the label
 pub struct LabelReader {
-    deserializer: serde_cbor::Deserializer<
-        serde_cbor::de::IoRead<io::Cursor<IoVec>>>,
-    /// Owns the data referenced by `deserializer`
-    _dbs: DivBufShared,
+    cursor: io::Cursor<DivBuf>
 }
 
 impl<'de> LabelReader {
     /// Attempt to read a `T` out of the label
-    pub fn deserialize<T>(&mut self) -> serde_cbor::error::Result<T>
-        where T: Deserialize<'de> {
-        T::deserialize(&mut self.deserializer)
+    pub fn deserialize<T>(&mut self) -> bincode::Result<T>
+        where T: DeserializeOwned
+    {
+        bincode::deserialize_from(&mut self.cursor)
     }
 
     /// Construct a `LabelReader` using the raw buffer read from disk
@@ -90,8 +92,7 @@ impl<'de> LabelReader {
         // Seek past header
         cursor.seek(SeekFrom::Start(contents_start as u64))
             .expect("IoVec too short");
-        let deserializer = serde_cbor::Deserializer::from_reader(cursor);
-        Ok(LabelReader { _dbs: buffer, deserializer })
+        Ok(LabelReader { cursor })
     }
 
     /// Get the offset of the `label`th label.
@@ -130,10 +131,8 @@ impl LabelWriter {
     /// Multiple calls to `serialize` take effect in LIFO order.  That is, the
     /// last `serialize` call's data will be encoded into the lowest position in
     /// the label.
-    pub fn serialize<T: Serialize>(&mut self, t: &T)
-        -> serde_cbor::error::Result<()> {
-
-        serde_cbor::ser::to_vec(t).map(|v| {
+    pub fn serialize<T: Serialize>(&mut self, t: &T) -> bincode::Result<()> {
+        bincode::serialize(t).map(|v| {
             let dbs = DivBufShared::from(v);
             self.buffers.push(dbs.try_const().unwrap());
         })
