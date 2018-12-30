@@ -5,7 +5,12 @@ test_suite! {
     // These tests use real VdevBlock and VdevLeaf objects
     name vdev_raid;
 
-    use bfffs::{common::*, common::vdev_raid::*, common::vdev::Vdev};
+    use bfffs::{
+        common::*,
+        common::vdev_raid::*,
+        common::vdev::Vdev,
+        common::vdev_raid_api::VdevRaidApi
+    };
     use divbuf::DivBufShared;
     use futures::{Future, future};
     use galvanic_test::*;
@@ -542,8 +547,14 @@ test_suite! {
 test_suite! {
     name persistence;
 
-    use bfffs::common::{label::*, vdev_block::*, vdev_raid::*, vdev::Vdev};
-    use bfffs::common::vdev_file::*;
+    use bfffs::{
+        common::label::*,
+        common::vdev_block::*,
+        common::vdev::Vdev,
+        common::vdev_file::*,
+        common::vdev_raid::*,
+        common::vdev_raid_api::VdevRaidApi
+    };
     use futures::{Future, future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;

@@ -59,8 +59,6 @@ pub trait VdevLeafApi : Vdev {
     fn spacemap_space(&self) -> LbaT;
 
     /// Asynchronously write a contiguous portion of the vdev.
-    ///
-    /// Return the number of bytes actually written.
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
 
     /// Asynchronously write this Vdev's label.

@@ -6,10 +6,10 @@ use crate::{
     common::{
         *,
         label::*,
-        vdev::Vdev
+        vdev::*,
+        vdev_raid_api::VdevRaidApi
     }
 };
-#[cfg(test)] use crate::common::vdev::VdevFut;
 #[cfg(not(test))] use crate::common::vdev_raid::*;
 use fixedbitset::FixedBitSet;
 use futures::{ Future, IntoFuture, future};
@@ -29,28 +29,6 @@ use std::{
 };
 
 pub type ClusterFut = Future<Item = (), Error = Error>;
-
-#[cfg(test)]
-/// Only exists so mockers can replace VdevRaid
-pub trait VdevRaidTrait : Vdev {
-    fn erase_zone(&self, zone: ZoneT) -> Box<VdevFut>;
-    fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut>;
-    fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>);
-    fn open_zone(&self, zone: ZoneT) -> Box<VdevFut>;
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
-    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
-    fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> Box<VdevFut>;
-    fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> Box<VdevFut>;
-    fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-    #[allow(clippy::ptr_arg)]
-    fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
-        -> Box<VdevFut>;
-}
-#[cfg(test)]
-pub type VdevRaidLike = Box<dyn VdevRaidTrait>;
-#[cfg(not(test))]
-#[doc(hidden)]
-pub type VdevRaidLike = VdevRaid;
 
 /// Minimal in-memory representation of a zone.
 ///
@@ -187,8 +165,8 @@ impl<'a> FreeSpaceMap {
         self.dirty.clear();
     }
 
-    fn deserialize(vdev: VdevRaidLike, buf: DivBuf, zones: ZoneT)
-        -> bincode::Result<impl Future<Item=(Self, VdevRaidLike), Error=Error>>
+    fn deserialize<V: VdevRaidApi>(vdev: V, buf: DivBuf, zones: ZoneT)
+        -> bincode::Result<impl Future<Item=(Self, V), Error=Error>>
     {
         let mut fsm = FreeSpaceMap::new(zones);
         let mut oz_futs = Vec::new();
@@ -426,8 +404,8 @@ impl<'a> FreeSpaceMap {
     }
 
     /// Open a FreeSpaceMap from an already-formatted `VdevRaid`.
-    fn open(vdev: VdevRaidLike)
-        -> impl Future<Item=(Self, VdevRaidLike), Error=Error>
+    fn open<V: VdevRaidApi>(vdev: V)
+        -> impl Future<Item=(Self, V), Error=Error>
     {
         let total_zones = vdev.zones();
         // NB: it would be slightly faster to created it with the correct
@@ -690,7 +668,7 @@ pub struct Cluster {
     /// Underlying vdev (which may or may not use RAID)
     // The Rc is necessary in order for some methods to return futures with
     // 'static lifetimes
-    vdev: Rc<VdevRaidLike>
+    vdev: Rc<dyn VdevRaidApi>
 }
 
 /// Finish any zones that are too full for new allocations.
@@ -837,18 +815,19 @@ impl<'a> Cluster {
     }
 
     /// Construct a new `Cluster` from an already constructed
-    /// [`VdevRaid`](struct.VdevRaid.html)
-    fn new(args: (FreeSpaceMap, VdevRaidLike)) -> Self {
+    /// [`VdevRaidApi`](trait.VdevRaidApi.html)
+    fn new<V: VdevRaidApi>(args: (FreeSpaceMap, V)) -> Self {
         let (fsm, vdev) = args;
         Cluster{fsm: RefCell::new(fsm), vdev: Rc::new(vdev)}
     }
 
     /// Open a `Cluster` from an already opened
-    /// [`VdevRaid`](struct.VdevRaid.html)
+    /// [`VdevRaidApi`](trait.VdevRaidApi.html)
     ///
     /// Returns a new `Cluster` and a `LabelReader` that may be used to
     /// construct other vdevs stacked on top.
-    pub fn open(vdev_raid: VdevRaidLike) -> impl Future<Item=Self, Error=Error>
+    pub fn open<V>(vdev_raid: V) -> impl Future<Item=Self, Error=Error>
+        where V: VdevRaidApi
     {
         FreeSpaceMap::open(vdev_raid)
             .map(Cluster::new)
@@ -984,19 +963,19 @@ mod cluster {
             fn zones(&self) -> ZoneT;
         },
         self,
-        trait VdevRaidTrait{
-            fn erase_zone(&self, zone: ZoneT) -> Box<VdevFut>;
-            fn finish_zone(&self, zone: ZoneT) -> Box<VdevFut>;
-            fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>);
-            fn open_zone(&self, zone: ZoneT) -> Box<VdevFut>;
-            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
-            fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
-            fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> Box<VdevFut>;
+        trait VdevRaidApi{
+            fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
+            fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
+            fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
+            fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
+            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+            fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+            fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
             fn write_at(&self, buf: IoVec, zone: ZoneT,
-                        lba: LbaT) -> Box<VdevFut>;
-            fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
+                        lba: LbaT) -> BoxVdevFut;
+            fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
             fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
-                -> Box<VdevFut>;
+                -> BoxVdevFut;
         }
     }
 
@@ -1022,7 +1001,7 @@ mod cluster {
             .and_return(Box::new( future::ok::<(), Error>(()))));
 
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1064,7 +1043,7 @@ mod cluster {
             .and_return(Box::new( future::ok::<(), Error>(()))));
 
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
@@ -1111,7 +1090,7 @@ mod cluster {
             .and_return(Box::new( future::ok::<(), Error>(()))));
 
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
@@ -1148,7 +1127,7 @@ mod cluster {
         s.expect(vr.lba2zone_call(1099).and_return_clone(Some(1)).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
         cluster.free(900, 200);
     }
 
@@ -1161,7 +1140,7 @@ mod cluster {
         s.expect(vr.lba2zone_call(1000).and_return_clone(None).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
         cluster.free(1000, 10);
     }
 
@@ -1213,8 +1192,7 @@ mod cluster {
         s.expect(vr.zone_limits_call(2).and_return_clone((204, 296)).times(..));
         s.expect(vr.zone_limits_call(3).and_return_clone((304, 396)).times(..));
         s.expect(vr.zone_limits_call(4).and_return_clone((404, 496)).times(..));
-        let mock_vr: Box<dyn VdevRaidTrait> = Box::new(vr);
-        let (fsm, _mock_vr) = FreeSpaceMap::open(mock_vr).wait().unwrap();
+        let (fsm, _mock_vr) = FreeSpaceMap::open(vr).wait().unwrap();
         assert_eq!(fsm.zones.len(), 4);
         assert_eq!(fsm.zones[0].freed_blocks, 0);
         assert_eq!(fsm.zones[0].total_blocks, 92);
@@ -1274,8 +1252,7 @@ mod cluster {
                  }).times(..)
         );
 
-        let mock_vr: Box<dyn VdevRaidTrait> = Box::new(vr);
-        let (fsm, _mock_vr) = FreeSpaceMap::open(mock_vr).wait().unwrap();
+        let (fsm, _mock_vr) = FreeSpaceMap::open(vr).wait().unwrap();
         assert_eq!(fsm.zones.len(), 256);
         assert_eq!(fsm.zones[0].freed_blocks, 0);
         assert_eq!(fsm.zones[0].total_blocks, 92);
@@ -1307,8 +1284,7 @@ mod cluster {
                  })
         );
 
-        let mock_vr: Box<dyn VdevRaidTrait> = Box::new(vr);
-        let r = FreeSpaceMap::open(mock_vr).wait();
+        let r = FreeSpaceMap::open(vr).wait();
         assert_eq!(Error::ECKSUM, r.err().unwrap());
     }
 
@@ -1328,7 +1304,7 @@ mod cluster {
         fsm.finish_zone(3, TxgT::from(3));
         fsm.open_zone(4, 4, 5, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(4, TxgT::from(0));
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
         assert_eq!(cluster.find_closed_zone(0).unwrap(),
             ClosedZone{zid: 0, start: 0, freed_blocks: 1, total_blocks: 1,
                        txgs: TxgT::from(0)..TxgT::from(1)});
@@ -1358,7 +1334,7 @@ mod cluster {
             0   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1393,7 +1369,7 @@ mod cluster {
                  .and_return(Box::new(future::ok::<(), Error>(()))));
         s.expect(seq);
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
         cluster.fsm.borrow_mut().clear_dirty_zones();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -1417,7 +1393,7 @@ mod cluster {
         s.expect(vr.zones_call().and_return_clone(32768).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 1)).times(..));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -1435,7 +1411,7 @@ mod cluster {
         s.expect(vr.zones_call().and_return_clone(0).times(..));
         s.expect(vr.zone_limits_call(0).and_return_clone((0, 0)).times(..));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let result = cluster.write(dbs.try_const().unwrap(), TxgT::from(0));
@@ -1457,7 +1433,7 @@ mod cluster {
             0   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1491,7 +1467,7 @@ mod cluster {
             1   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1537,7 +1513,7 @@ mod cluster {
             3   /* Lba */)
             .and_return(Box::new( future::ok::<(), Error>(()))));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Box::new(vr)));
+        let cluster = Cluster::new((fsm, vr));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs.try_const().unwrap();

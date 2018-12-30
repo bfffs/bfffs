@@ -55,6 +55,7 @@ pub mod vdev_block;
 pub mod vdev_file;
 pub mod vdev_leaf;
 pub mod vdev_raid;
+pub mod vdev_raid_api;
 
 pub use self::sgcursor::SGCursor;
 

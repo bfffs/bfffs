@@ -6,6 +6,9 @@ use futures;
 /// Future representing an operation on a vdev.
 pub type VdevFut = futures::Future<Item = (), Error = Error>;
 
+/// Boxed `VdevFut`
+pub type BoxVdevFut = Box<dyn futures::Future<Item = (), Error = Error>>;
+
 /// Vdev: Virtual Device
 ///
 /// This is directly analogous to ZFS Vdevs.  A vdev is a virtual block device

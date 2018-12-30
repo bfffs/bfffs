@@ -7,6 +7,7 @@ use crate::{
         declust::*,
         label::*,
         vdev::*,
+        vdev_raid_api::*,
         raid::*
     }
 };
@@ -400,95 +401,6 @@ impl VdevRaid {
         (raid, label_reader)
     }
 
-    /// Asynchronously erase a zone on a RAID device
-    ///
-    /// # Parameters
-    /// - `zone`:    The target zone ID
-    pub fn erase_zone(&self, zone: ZoneT)
-        -> impl Future<Item=(), Error=Error>
-    {
-        assert!(!self.stripe_buffers.borrow().contains_key(&zone),
-            "Tried to erase an open zone");
-        let (start, end) = self.blockdevs[0].zone_limits(zone);
-        let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
-            blockdev.erase_zone(start, end - 1)
-        }).collect();
-        future::join_all(futs).map(drop)
-    }
-
-    /// Asynchronously finish a zone on a RAID device
-    ///
-    /// # Parameters
-    /// - `zone`:    The target zone ID
-    // Zero-fill the current StripeBuffer and write it out.  Then drop the
-    // StripeBuffer.
-    pub fn finish_zone(&self, zone: ZoneT) -> impl Future<Item=(), Error=Error>
-    {
-        let mut sbs = self.stripe_buffers.borrow_mut();
-        let nfuts = self.blockdevs.len() + 1;
-        let mut futs: Vec<_> = Vec::with_capacity(nfuts);
-        let sbfut = {
-            let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
-            if ! sb.is_empty() {
-                sb.pad();
-                let lba = sb.lba();
-                let sgl = sb.pop();
-                Box::new(self.writev_at_one(&sgl, lba))
-            } else {    // LCOV_EXCL_LINE kcov false negative
-                boxfut!(future::ok::<(), Error>(()), _, _, 'static)
-            }
-        };
-        let (start, end) = self.blockdevs[0].zone_limits(zone);
-        futs.extend(
-            self.blockdevs.iter()
-            .map(|blockdev| blockdev.finish_zone(start, end - 1))
-        );
-
-        assert!(sbs.remove(&zone).is_some());
-
-        sbfut.join(future::join_all(futs)).map(drop)
-    }
-
-    /// Asynchronously flush the `StripeBuffer` for the given zone.
-    ///
-    /// # Returns
-    ///
-    /// The number of LBAs that were zero-filled, and `Future` that will
-    /// complete when the zone's contents are fully written
-    pub fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>) {
-        // Flushing a partially written zone to disk requires zero-filling the
-        // StripeBuffer so the parity be correct
-        let mut sb_ref = self.stripe_buffers.borrow_mut();
-        let sb_opt = sb_ref.get_mut(&zone);
-        match sb_opt {
-            None => {
-                // This zone isn't open, or the buffer is empty.  Nothing to do!
-                (0, Box::new(future::ok::<(), Error>(())))
-            },
-            Some(sb) => {
-                if sb.is_empty() {
-                    //Nothing to do!
-                    (0, Box::new(future::ok::<(), Error>(())))
-                } else {
-                    let pad_lbas = sb.pad();
-                    let lba = sb.lba();
-                    let sgl = sb.pop();
-                    (pad_lbas, Box::new(self.writev_at_one(&sgl, lba)))
-                }
-            }
-        }
-    }
-
-    /// Asynchronously open a zone on a RAID device
-    ///
-    /// # Parameters
-    /// - `zone`:              The target zone ID
-    pub fn open_zone(&self, zone: ZoneT)
-        -> impl Future<Item=(), Error=Error>
-    {
-        self.open_zone_priv(zone, 0)
-    }
-
     /// Asynchronously open a zone on a RAID device
     ///
     /// # Parameters
@@ -496,8 +408,7 @@ impl VdevRaid {
     /// - `already_allocated`: The amount of data that was previously allocated
     ///                        in this zone, if the zone is being reopened.
     // Create a new StripeBuffer, and zero fill leading wasted space
-    fn open_zone_priv(&self, zone: ZoneT, already_allocated: LbaT)
-        -> impl Future<Item=(), Error=Error>
+    fn open_zone_priv(&self, zone: ZoneT, already_allocated: LbaT) -> BoxVdevFut
     {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
@@ -536,78 +447,7 @@ impl VdevRaid {
                 blockdev.open_zone(first_disk_lba).join(zero_fut)
             }).collect();
 
-        future::join_all(futs).map(drop)
-    }
-
-    /// Asynchronously read a contiguous portion of the vdev.
-    ///
-    /// Returns `()` on success, or an error on failure
-    pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
-        let f = self.codec.protection();
-        let m = (self.codec.stripesize() - f) as LbaT;
-        assert_eq!(buf.len() % BYTES_PER_LBA, 0, "reads must be LBA-aligned");
-
-        // end_lba is inclusive.  The highest LBA from which data will be read
-        let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
-        let sb_ref = self.stripe_buffers.borrow();
-
-        // Look for a StripeBuffer that contains part of the requested range.
-        // There should only be a few zones open at any one time, so it's ok to
-        // search through them all.
-        let stripe_buffer = sb_ref.iter()
-            .map(|(_, sb)| sb)
-            .filter(|&stripe_buffer| {
-                !stripe_buffer.is_empty() &&
-                lba < stripe_buffer.next_lba() &&
-                end_lba >= stripe_buffer.lba()
-            }).nth(0);
-
-        let buf2 = if stripe_buffer.is_some() &&
-            !stripe_buffer.unwrap().is_empty() &&
-            end_lba >= stripe_buffer.unwrap().lba() {
-
-            // We need to service part of the read from the StripeBuffer
-            let mut cursor = SGCursor::from(stripe_buffer.unwrap().peek());
-            let direct_len = if stripe_buffer.unwrap().lba() > lba {
-                (stripe_buffer.unwrap().lba() - lba) as usize * BYTES_PER_LBA
-            } else {
-                // Seek to the LBA of interest
-                let mut skipped = 0;
-                let to_skip = (lba - stripe_buffer.unwrap().lba()) as usize *
-                    BYTES_PER_LBA;
-                while skipped < to_skip {
-                    let iovec = cursor.next(to_skip - skipped);
-                    skipped += iovec.unwrap().len();
-                }
-                0
-            };
-            let mut sb_buf = buf.split_off(direct_len);
-            // Copy from StripeBuffer into sb_buf
-            while !sb_buf.is_empty() {
-                let iovec = cursor.next(sb_buf.len()).expect(
-                    "Read beyond the stripe buffer into unallocated space");
-                sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
-            }
-            if direct_len == 0 {
-                // Read was fully serviced by StripeBuffer.  No need to go to
-                // disks.
-                return Box::new(future::ok(()));
-            } else {
-                // Service the first part of the read from the disks
-                end_lba = stripe_buffer.unwrap().lba() - 1;
-            }
-            buf
-        } else {
-            // Don't involve the StripeBuffer
-            buf
-        };
-        let start_stripe = lba / (self.chunksize * m as LbaT);
-        let end_stripe = end_lba / (self.chunksize * m);
-        if start_stripe == end_stripe {
-            self.read_at_one(buf2, lba)
-        } else {
-            self.read_at_multi(buf2, lba)
-        }
+        Box::new(future::join_all(futs).map(drop))
     }
 
     /// Read more than one whole stripe
@@ -712,91 +552,6 @@ impl VdevRaid {
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
         Box::new(fut.map(drop ))
-    }
-
-    /// Read the entire serialized spacemap.  `idx` selects which spacemap to
-    /// read, and should match whichever label is being read concurrently.
-    pub fn read_spacemap(&self, buf: IoVecMut, idx: u32)
-        -> impl Future<Item=(), Error=Error>
-    {
-        self.blockdevs[0].read_spacemap(buf, idx)
-    }
-
-    /// Asynchronously reopen a zone on a RAID device
-    ///
-    /// The zone must've previously been opened and not closed before the device
-    /// was removed or the storage pool exported.
-    ///
-    /// # Parameters
-    /// - `zone`:              The target zone ID
-    /// - `already_allocated`: The amount of data that was previously allocated
-    ///                        in this zone.
-    pub fn reopen_zone(&self, zone: ZoneT, allocated: LbaT)
-        -> impl Future<Item=(), Error=Error>
-    {
-        self.open_zone_priv(zone, allocated)
-    }
-
-    /// Asynchronously write a contiguous portion of the vdev.
-    ///
-    /// Returns `()` on success, or an error on failure
-    pub fn write_at(&self, buf: IoVec, zone: ZoneT,
-                    mut lba: LbaT) -> impl Future<Item=(), Error=Error>
-    {
-        let col_len = self.chunksize as usize * BYTES_PER_LBA;
-        let f = self.codec.protection() as usize;
-        let m = self.codec.stripesize() as usize - f as usize;
-        let stripe_len = col_len * m;
-        debug_assert_eq!(zone, self.lba2zone(lba).unwrap(),
-            "Write to wrong zone");
-        debug_assert_eq!(zone, self.lba2zone(lba +
-                ((buf.len() - 1) / BYTES_PER_LBA) as LbaT).unwrap(),
-            "Write spanned a zone boundary");
-        let mut sb_ref = self.stripe_buffers.borrow_mut();
-        let stripe_buffer = sb_ref.get_mut(&zone)
-                                  .expect("Can't write to a closed zone");
-        assert_eq!(stripe_buffer.next_lba(), lba);
-
-        let mut futs = Vec::<Box<dyn Future<Item=(), Error=Error>>>::new();
-        let mut buf3 = if !stripe_buffer.is_empty() ||
-            buf.len() < stripe_len {
-
-            let buflen = buf.len();
-            let buf2 = stripe_buffer.fill(buf);
-            if stripe_buffer.is_full() {
-                let stripe_lba = stripe_buffer.lba();
-                let sglist = stripe_buffer.pop();
-                lba += ((buflen - buf2.len()) / BYTES_PER_LBA) as LbaT;
-                futs.push(Box::new(self.writev_at_one(&sglist, stripe_lba)));
-            }
-            buf2
-        } else {  // LCOV_EXCL_LINE kcov false negative
-            buf
-        };
-        if !buf3.is_empty() {
-            debug_assert!(stripe_buffer.is_empty());
-            let nstripes = buf3.len() / stripe_len;
-            let writable_buf = buf3.split_to(nstripes * stripe_len);
-            stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
-            if ! buf3.is_empty() {
-                let buf4 = stripe_buffer.fill(buf3);
-                if stripe_buffer.is_full() {
-                    // We can only get here if buf was within < 1 LBA of
-                    // completing a stripe
-                    let slba = stripe_buffer.lba();
-                    let sglist = stripe_buffer.pop();
-                    futs.push(Box::new(self.writev_at_one(&sglist, slba)));
-                }
-                debug_assert!(!stripe_buffer.is_full());
-                debug_assert!(buf4.is_empty());
-            }
-            futs.push(if nstripes == 1 {
-                Box::new(self.write_at_one(writable_buf, lba))
-            } else {
-                Box::new(self.write_at_multi(writable_buf, lba))
-            });
-        }
-        future::join_all(futs).map(drop)
     }
 
     /// Write two or more whole stripes
@@ -915,38 +670,6 @@ impl VdevRaid {
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
         Box::new(data_fut.join(parity_fut).map(drop))
-    }
-
-    /// Asynchronously write this Vdev's label to all component devices
-    pub fn write_label(&self, mut labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error>
-    {
-        let children_uuids = self.blockdevs.iter().map(|bd| bd.uuid())
-            .collect::<Vec<_>>();
-        let label = Label {
-            uuid: self.uuid,
-            chunksize: self.chunksize,
-            disks_per_stripe: self.locator.stripesize(),
-            redundancy: self.locator.protection(),
-            layout_algorithm: self.layout_algorithm,
-            children: children_uuids
-        };
-        labeller.serialize(&label).unwrap();
-        let futs = self.blockdevs.iter().map(|bd| {
-            bd.write_label(labeller.clone())
-        }).collect::<Vec<_>>();
-        future::join_all(futs).map(drop)
-    }
-
-    // Allow &Vec arguments so we can clone them.
-    #[allow(clippy::ptr_arg)]
-    pub fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
-        -> impl Future<Item=(), Error=Error>
-    {
-        let futs = self.blockdevs.iter().map(|bd| {
-            bd.write_spacemap(sglist.clone(), idx, block)
-        }).collect::<Vec<_>>();
-        future::join_all(futs).map(drop)
     }
 
     /// Write exactly one stripe, with SGLists.
@@ -1139,6 +862,236 @@ impl Vdev for VdevRaid {
     }
 }
 
+impl VdevRaidApi for VdevRaid {
+    fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
+        assert!(!self.stripe_buffers.borrow().contains_key(&zone),
+            "Tried to erase an open zone");
+        let (start, end) = self.blockdevs[0].zone_limits(zone);
+        let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
+            blockdev.erase_zone(start, end - 1)
+        }).collect();
+        Box::new(future::join_all(futs).map(drop))
+    }
+
+    // Zero-fill the current StripeBuffer and write it out.  Then drop the
+    // StripeBuffer.
+    fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {
+        let mut sbs = self.stripe_buffers.borrow_mut();
+        let nfuts = self.blockdevs.len() + 1;
+        let mut futs: Vec<_> = Vec::with_capacity(nfuts);
+        let sbfut = {
+            let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
+            if ! sb.is_empty() {
+                sb.pad();
+                let lba = sb.lba();
+                let sgl = sb.pop();
+                Box::new(self.writev_at_one(&sgl, lba))
+            } else {    // LCOV_EXCL_LINE kcov false negative
+                boxfut!(future::ok::<(), Error>(()), _, _, 'static)
+            }
+        };
+        let (start, end) = self.blockdevs[0].zone_limits(zone);
+        futs.extend(
+            self.blockdevs.iter()
+            .map(|blockdev| blockdev.finish_zone(start, end - 1))
+        );
+
+        assert!(sbs.remove(&zone).is_some());
+
+        Box::new(sbfut.join(future::join_all(futs)).map(drop))
+    }
+
+    fn flush_zone(&self, zone: ZoneT) -> (LbaT, Box<VdevFut>) {
+        // Flushing a partially written zone to disk requires zero-filling the
+        // StripeBuffer so the parity be correct
+        let mut sb_ref = self.stripe_buffers.borrow_mut();
+        let sb_opt = sb_ref.get_mut(&zone);
+        match sb_opt {
+            None => {
+                // This zone isn't open, or the buffer is empty.  Nothing to do!
+                (0, Box::new(future::ok::<(), Error>(())))
+            },
+            Some(sb) => {
+                if sb.is_empty() {
+                    //Nothing to do!
+                    (0, Box::new(future::ok::<(), Error>(())))
+                } else {
+                    let pad_lbas = sb.pad();
+                    let lba = sb.lba();
+                    let sgl = sb.pop();
+                    (pad_lbas, Box::new(self.writev_at_one(&sgl, lba)))
+                }
+            }
+        }
+    }
+
+    fn open_zone(&self, zone: ZoneT) -> BoxVdevFut {
+        self.open_zone_priv(zone, 0)
+    }
+
+    fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
+        let f = self.codec.protection();
+        let m = (self.codec.stripesize() - f) as LbaT;
+        assert_eq!(buf.len() % BYTES_PER_LBA, 0, "reads must be LBA-aligned");
+
+        // end_lba is inclusive.  The highest LBA from which data will be read
+        let mut end_lba = lba + ((buf.len() - 1) / BYTES_PER_LBA) as LbaT;
+        let sb_ref = self.stripe_buffers.borrow();
+
+        // Look for a StripeBuffer that contains part of the requested range.
+        // There should only be a few zones open at any one time, so it's ok to
+        // search through them all.
+        let stripe_buffer = sb_ref.iter()
+            .map(|(_, sb)| sb)
+            .filter(|&stripe_buffer| {
+                !stripe_buffer.is_empty() &&
+                lba < stripe_buffer.next_lba() &&
+                end_lba >= stripe_buffer.lba()
+            }).nth(0);
+
+        let buf2 = if stripe_buffer.is_some() &&
+            !stripe_buffer.unwrap().is_empty() &&
+            end_lba >= stripe_buffer.unwrap().lba() {
+
+            // We need to service part of the read from the StripeBuffer
+            let mut cursor = SGCursor::from(stripe_buffer.unwrap().peek());
+            let direct_len = if stripe_buffer.unwrap().lba() > lba {
+                (stripe_buffer.unwrap().lba() - lba) as usize * BYTES_PER_LBA
+            } else {
+                // Seek to the LBA of interest
+                let mut skipped = 0;
+                let to_skip = (lba - stripe_buffer.unwrap().lba()) as usize *
+                    BYTES_PER_LBA;
+                while skipped < to_skip {
+                    let iovec = cursor.next(to_skip - skipped);
+                    skipped += iovec.unwrap().len();
+                }
+                0
+            };
+            let mut sb_buf = buf.split_off(direct_len);
+            // Copy from StripeBuffer into sb_buf
+            while !sb_buf.is_empty() {
+                let iovec = cursor.next(sb_buf.len()).expect(
+                    "Read beyond the stripe buffer into unallocated space");
+                sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
+            }
+            if direct_len == 0 {
+                // Read was fully serviced by StripeBuffer.  No need to go to
+                // disks.
+                return Box::new(future::ok(()));
+            } else {
+                // Service the first part of the read from the disks
+                end_lba = stripe_buffer.unwrap().lba() - 1;
+            }
+            buf
+        } else {
+            // Don't involve the StripeBuffer
+            buf
+        };
+        let start_stripe = lba / (self.chunksize * m as LbaT);
+        let end_stripe = end_lba / (self.chunksize * m);
+        if start_stripe == end_stripe {
+            self.read_at_one(buf2, lba)
+        } else {
+            self.read_at_multi(buf2, lba)
+        }
+    }
+
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut {
+        Box::new(self.blockdevs[0].read_spacemap(buf, idx))
+    }
+
+    fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut {
+        self.open_zone_priv(zone, allocated)
+    }
+
+    fn write_at(&self, buf: IoVec, zone: ZoneT, mut lba: LbaT) -> BoxVdevFut {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
+        let f = self.codec.protection() as usize;
+        let m = self.codec.stripesize() as usize - f as usize;
+        let stripe_len = col_len * m;
+        debug_assert_eq!(zone, self.lba2zone(lba).unwrap(),
+            "Write to wrong zone");
+        debug_assert_eq!(zone, self.lba2zone(lba +
+                ((buf.len() - 1) / BYTES_PER_LBA) as LbaT).unwrap(),
+            "Write spanned a zone boundary");
+        let mut sb_ref = self.stripe_buffers.borrow_mut();
+        let stripe_buffer = sb_ref.get_mut(&zone)
+                                  .expect("Can't write to a closed zone");
+        assert_eq!(stripe_buffer.next_lba(), lba);
+
+        let mut futs = Vec::<Box<dyn Future<Item=(), Error=Error>>>::new();
+        let mut buf3 = if !stripe_buffer.is_empty() ||
+            buf.len() < stripe_len {
+
+            let buflen = buf.len();
+            let buf2 = stripe_buffer.fill(buf);
+            if stripe_buffer.is_full() {
+                let stripe_lba = stripe_buffer.lba();
+                let sglist = stripe_buffer.pop();
+                lba += ((buflen - buf2.len()) / BYTES_PER_LBA) as LbaT;
+                futs.push(Box::new(self.writev_at_one(&sglist, stripe_lba)));
+            }
+            buf2
+        } else {  // LCOV_EXCL_LINE kcov false negative
+            buf
+        };
+        if !buf3.is_empty() {
+            debug_assert!(stripe_buffer.is_empty());
+            let nstripes = buf3.len() / stripe_len;
+            let writable_buf = buf3.split_to(nstripes * stripe_len);
+            stripe_buffer.reset(lba + (nstripes * m) as LbaT * self.chunksize);
+            if ! buf3.is_empty() {
+                let buf4 = stripe_buffer.fill(buf3);
+                if stripe_buffer.is_full() {
+                    // We can only get here if buf was within < 1 LBA of
+                    // completing a stripe
+                    let slba = stripe_buffer.lba();
+                    let sglist = stripe_buffer.pop();
+                    futs.push(Box::new(self.writev_at_one(&sglist, slba)));
+                }
+                debug_assert!(!stripe_buffer.is_full());
+                debug_assert!(buf4.is_empty());
+            }
+            futs.push(if nstripes == 1 {
+                Box::new(self.write_at_one(writable_buf, lba))
+            } else {
+                Box::new(self.write_at_multi(writable_buf, lba))
+            });
+        }
+        Box::new(future::join_all(futs).map(drop))
+    }
+
+    fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut {
+        let children_uuids = self.blockdevs.iter().map(|bd| bd.uuid())
+            .collect::<Vec<_>>();
+        let label = Label {
+            uuid: self.uuid,
+            chunksize: self.chunksize,
+            disks_per_stripe: self.locator.stripesize(),
+            redundancy: self.locator.protection(),
+            layout_algorithm: self.layout_algorithm,
+            children: children_uuids
+        };
+        labeller.serialize(&label).unwrap();
+        let futs = self.blockdevs.iter().map(|bd| {
+            bd.write_label(labeller.clone())
+        }).collect::<Vec<_>>();
+        Box::new(future::join_all(futs).map(drop))
+    }
+
+    // Allow &Vec arguments so we can clone them.
+    #[allow(clippy::ptr_arg)]
+    fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
+        -> BoxVdevFut
+    {
+        let futs = self.blockdevs.iter().map(|bd| {
+            bd.write_spacemap(sglist.clone(), idx, block)
+        }).collect::<Vec<_>>();
+        Box::new(future::join_all(futs).map(drop))
+    }
+
+}
 
 // LCOV_EXCL_START
 #[test]
