@@ -12,7 +12,7 @@ use crate::{
     }
 };
 #[cfg(not(test))] use crate::common::vdev_block::*;
-use crate::common::{null_raid::*, prime_s::*};
+use crate::common::{null_locator::*, prime_s::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
@@ -64,7 +64,7 @@ pub type VdevBlockLike = VdevBlock;
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum LayoutAlgorithm {
     /// The trivial, nonredundant placement algorithm
-    NullRaid,
+    NullLocator,
     /// A good declustered algorithm for any prime number of disks
     PrimeS,
 }
@@ -281,7 +281,7 @@ impl VdevRaid {
         -> (LayoutAlgorithm, LbaT)
     {
         if num_disks == 1 {
-            (LayoutAlgorithm::NullRaid, 1)
+            (LayoutAlgorithm::NullLocator, 1)
         } else {
             let chunksize = chunksize.map(NonZeroU64::get)
                 .unwrap_or(VdevRaid::DEFAULT_CHUNKSIZE);
@@ -334,8 +334,8 @@ impl VdevRaid {
         let num_disks = blockdevs.len() as i16;
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
         let locator: Box<dyn Locator> = match layout_algorithm {
-            LayoutAlgorithm::NullRaid => Box::new(
-                NullRaid::new(num_disks, disks_per_stripe, redundancy)),
+            LayoutAlgorithm::NullLocator => Box::new(
+                NullLocator::new(num_disks, disks_per_stripe, redundancy)),
             LayoutAlgorithm::PrimeS => Box::new(
                 PrimeS::new(num_disks, disks_per_stripe, redundancy))
         };
@@ -1300,7 +1300,7 @@ fn debug() {
         chunksize: 1,
         disks_per_stripe: 1,
         redundancy: 0,
-        layout_algorithm: LayoutAlgorithm::NullRaid,
+        layout_algorithm: LayoutAlgorithm::NullLocator,
         children: vec![Uuid::new_v4()]
     };
     format!("{:?}", label);
@@ -1896,7 +1896,7 @@ fn open_zone_reopen() {
 
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
-                                  LayoutAlgorithm::NullRaid,
+                                  LayoutAlgorithm::NullLocator,
                                   blockdevs.into_boxed_slice());
     vdev_raid.reopen_zone(1, 100);
     let dbs = DivBufShared::from(vec![0u8; 4096]);

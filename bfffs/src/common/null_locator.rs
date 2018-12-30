@@ -7,11 +7,11 @@
 use crate::common::declust::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NullRaid {
+pub struct NullLocator {
 }
 
-impl NullRaid {
-    /// Create a new NullRaid Locator
+impl NullLocator {
+    /// Create a new NullLocator Locator
     ///
     /// # Parameters
     ///
@@ -23,11 +23,11 @@ impl NullRaid {
         assert!(num_disks == 1);
         assert!(disks_per_stripe == 1);
         assert!(redundancy == 0);
-        NullRaid{}
+        NullLocator{}
     }
 }
 
-impl Locator for NullRaid {
+impl Locator for NullLocator {
     fn clustsize(&self) -> i16 {
         1
     }
@@ -92,7 +92,7 @@ mod t {
     // pet kcov
     #[test]
     fn debug() {
-        let nr = NullRaid::new(1, 1, 0);
+        let nr = NullLocator::new(1, 1, 0);
         format!("{:?}", nr);
     }
 }
