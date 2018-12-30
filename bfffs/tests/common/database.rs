@@ -13,7 +13,7 @@ test_suite! {
     use bfffs::common::pool::*;
     use bfffs::common::ddml::*;
     use bfffs::common::idml::*;
-    use bfffs::sys::vdev_file::*;
+    use bfffs::common::vdev_file::*;
     use futures::{Future, future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;

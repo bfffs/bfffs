@@ -52,6 +52,7 @@ pub mod tree;
 #[cfg(test)] mod tree_mock;
 pub mod vdev;
 pub mod vdev_block;
+pub mod vdev_file;
 pub mod vdev_leaf;
 pub mod vdev_raid;
 

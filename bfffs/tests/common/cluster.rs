@@ -7,7 +7,7 @@ test_suite! {
     use bfffs::common::vdev_block::*;
     use bfffs::common::vdev_raid::*;
     use bfffs::common::cluster::*;
-    use bfffs::sys::vdev_file::*;
+    use bfffs::common::vdev_file::*;
     use futures::{Future, future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;

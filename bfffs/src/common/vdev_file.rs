@@ -5,7 +5,6 @@ use divbuf::{DivBufShared, DivBuf};
 use futures::{Async, IntoFuture, Future, Poll, future};
 use nix::libc::{c_int, off_t};
 use num_traits::FromPrimitive;
-use serde_derive::*;
 use std::{
     borrow::{Borrow, BorrowMut},
     fs::OpenOptions,

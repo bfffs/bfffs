@@ -543,7 +543,7 @@ test_suite! {
     name persistence;
 
     use bfffs::common::{label::*, vdev_block::*, vdev_raid::*, vdev::Vdev};
-    use bfffs::sys::vdev_file::*;
+    use bfffs::common::vdev_file::*;
     use futures::{Future, future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;

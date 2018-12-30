@@ -21,7 +21,7 @@ use tokio::timer;
 
 use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
 #[cfg(not(test))]
-use crate::sys::vdev_file::*;
+use crate::common::vdev_file::*;
 
 #[cfg(test)]
 pub type VdevLeaf = Box<dyn VdevLeafApi>;

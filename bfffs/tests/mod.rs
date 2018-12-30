@@ -10,4 +10,3 @@ macro_rules! t {
 }
 
 mod common;
-mod sys;

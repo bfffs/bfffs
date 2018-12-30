@@ -9,7 +9,6 @@
 #![allow(clippy::type_complexity)]
 
 pub mod common;
-pub mod sys;
 
 #[macro_export]
 macro_rules! boxfut {

@@ -4,13 +4,11 @@ use galvanic_test::test_suite;
 test_suite! {
     name basic;
 
-    use bfffs::{
-        common::{
-            Error,
-            vdev::*,
-            vdev_leaf::*
-        },
-        sys::vdev_file::*
+    use bfffs::common::{
+        Error,
+        vdev::*,
+        vdev_leaf::*,
+        vdev_file::*
     };
     use divbuf::DivBufShared;
     use futures::{future, Future};
@@ -188,14 +186,12 @@ test_suite! {
 test_suite! {
     name persistence;
 
-    use bfffs::{
-        common::{
-            *,
-            label::*,
-            vdev::*,
-            vdev_leaf::*
-        },
-        sys::vdev_file::*
+    use bfffs::common::{
+        *,
+        label::*,
+        vdev::*,
+        vdev_leaf::*,
+        vdev_file::*
     };
     use futures::{future, Future};
     use galvanic_test::*;

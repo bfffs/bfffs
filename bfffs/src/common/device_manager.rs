@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use crate::common::{Uuid, pool, vdev::Vdev, vdev_raid};
+use crate::common::{Uuid, pool, vdev::Vdev, vdev_file, vdev_raid};
 #[cfg(not(test))]
 use crate::common::{Error, cache, cluster, database, ddml, idml, label,
     vdev_block};
@@ -17,7 +17,6 @@ use std::{
     sync::Mutex
 };
 #[cfg(not(test))] use std::sync::{Arc, MutexGuard};
-use crate::sys::vdev_file;
 use tokio::runtime::current_thread;
 #[cfg(not(test))] use tokio::executor::{self, DefaultExecutor, Executor};
 
