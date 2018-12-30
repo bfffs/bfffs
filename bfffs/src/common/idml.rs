@@ -15,7 +15,7 @@ use crate::{
         *,
         dml::*,
         ddml::DRP,
-        cache::{Cacheable, CacheRef, Key},
+        cache::{Cache, Cacheable, CacheRef, Key},
         label::*,
         tree::*
     }
@@ -26,10 +26,6 @@ use std::{
     io,
     sync::{Arc, Mutex},
 };
-#[cfg(not(test))]
-use crate::common::cache::Cache;
-#[cfg(test)]
-use crate::common::cache_mock::CacheMock as Cache;
 #[cfg(not(test))]
 use crate::common::ddml::DDML;
 #[cfg(test)]

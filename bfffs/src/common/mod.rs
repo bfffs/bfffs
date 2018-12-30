@@ -24,7 +24,6 @@ use std::{
 use uuid;
 
 pub mod cache;
-#[cfg(test)] mod cache_mock;
 pub mod cleaner;
 pub mod cluster;
 pub mod database;

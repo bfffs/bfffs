@@ -9,7 +9,7 @@ use crate::{
     boxfut,
     common::{
         *,
-        cache::{Cacheable, CacheRef, Key},
+        cache::{Cache, Cacheable, CacheRef, Key},
         label::*,
     }
 };
@@ -28,12 +28,7 @@ use std::{
 pub use crate::common::dml::{Compression, DML};
 pub use crate::common::pool::ClosedZone;
 
-#[cfg(not(test))]
-use crate::common::cache::Cache;
 // LCOV_EXCL_START
-#[cfg(test)]
-use crate::common::cache_mock::CacheMock as Cache;
-
 #[cfg(test)]
 /// Only exists so mockers can replace Pool
 pub trait PoolTrait {
