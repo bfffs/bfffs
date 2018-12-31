@@ -1,24 +1,20 @@
 // vim: tw=80
 
-//! The Database layer owns all of the Datasets
-//!
-//! Clients use the Database to obtain references to the Datasets.  The Database
-//! also owns the Forest and manages Transactions.
-
 use crate::{
     *,
     common::{
         *,
         cleaner::*,
-        dataset::*,
+        dataset::{ITree, ReadWriteDataset},
         dml::DML,
         fs_tree::*,
         idml::*,
         label::*,
         property::*,
-        tree::{MinValue, TreeOnDisk}
+        tree::TreeOnDisk
     }
 };
+#[cfg(not(test))] use crate::common::dataset::ReadOnlyDataset;
 use futures::{
     Future,
     IntoFuture,
@@ -29,10 +25,9 @@ use futures::{
     sync::{mpsc, oneshot}
 };
 use futures_locks::Mutex;
-use libc;
+#[cfg(not(test))] use libc;
 use std::collections::BTreeMap;
 use std::{
-    ffi::{OsString, OsStr},
     io,
     ops::Range,
     sync::{
@@ -41,7 +36,9 @@ use std::{
     },
     time::{Duration, Instant}
 };
-use time;
+#[cfg(not(test))] use std::ffi::{OsString, OsStr};
+use super::*;
+#[cfg(not(test))] use time;
 use tokio::{
     executor::Executor,
     runtime::current_thread
@@ -51,33 +48,9 @@ use tokio::timer;
 #[cfg(not(test))] use crate::common::tree::Tree;
 #[cfg(test)] use crate::common::tree_mock::TreeMock as Tree;
 
+#[cfg(not(test))]
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
-
-/// Keys into the Forest
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
-         Serialize)]
-pub enum TreeID {
-    /// A filesystem, snapshot, or clone
-    Fs(u32)
-}
-
-#[cfg(test)]
-impl Default for TreeID {
-    fn default() -> Self {
-        TreeID::Fs(0)
-    }
-}
-
-impl TypicalSize for TreeID {
-    const TYPICAL_SIZE: usize = 8;
-}
-
-impl MinValue for TreeID {
-    fn min_value() -> Self {
-        TreeID::Fs(u32::min_value())
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 struct PropCacheKey {
@@ -253,6 +226,7 @@ impl Inner {
         }).unwrap()
     }
 
+    #[cfg(not(test))]
     fn rw_filesystem(inner: &Arc<Inner>, tree_id: TreeID, txg: TxgT)
         -> impl Future<Item=ReadWriteFilesystem, Error=Error>
     {
@@ -261,8 +235,7 @@ impl Inner {
             .map(move |fs| ReadWriteFilesystem::new(idml2, fs, txg))
     }
 
-    // IDMLMock::txg has a slightly different signature than IDML::txg
-    #[cfg_attr(test, allow(clippy::drop_ref))]
+    #[cfg(not(test))]
     fn fswrite<F, B, R>(inner: Arc<Self>, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
         where F: FnOnce(ReadWriteFilesystem) -> B,
@@ -303,6 +276,9 @@ pub struct Database {
     syncer: Syncer
 }
 
+// Some of these methods have no unit tests.  Their test coverage is provided
+// instead by integration tests.
+#[cfg_attr(test, allow(unused))]
 impl Database {
     /// Foreground consistency check.  Prints any irregularities to stderr
     ///
@@ -438,6 +414,7 @@ impl Database {
     /// Create a new, blank filesystem
     ///
     /// Must be called from the tokio domain.
+    #[cfg(not(test))]
     pub fn new_fs(&self, props: Vec<Property>)
         -> impl Future<Item=TreeID, Error=Error>
     {
@@ -512,6 +489,7 @@ impl Database {
     }
 
     /// Perform a read-only operation on a Filesystem
+    #[cfg(not(test))]
     pub fn fsread<F, B, R>(&self, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
         where F: FnOnce(ReadOnlyFilesystem) -> B + 'static,
@@ -548,6 +526,7 @@ impl Database {
         Database::new(idml, forest, handle)
     }
 
+    #[cfg(not(test))]
     fn ro_filesystem(&self, tree_id: TreeID)
         -> impl Future<Item=ReadOnlyFilesystem, Error=Error>
     {
@@ -561,6 +540,7 @@ impl Database {
 
     // TODO: Make prop an Option.  A None value will signify that the property
     // should be inherited.
+    #[cfg(not(test))]
     pub fn set_prop(&self, tree_id: TreeID, prop: Property)
         -> impl Future<Item=(), Error=Error>
     {
@@ -677,8 +657,7 @@ impl Database {
     /// All operations conducted by the supplied closure will be completed
     /// within the same Pool transaction group.  Thus, after a power failure and
     /// recovery, either all will have completed, or none will have.
-    // IDMLMock::txg has a slightly different signature than IDML::txg
-    #[cfg_attr(test, allow(clippy::drop_ref))]
+    #[cfg(not(test))]
     pub fn fswrite<F, B, R>(&self, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
         where F: FnOnce(ReadWriteFilesystem) -> B,
