@@ -2,7 +2,7 @@
 // LCOV_EXCL_START
 use crate::common::{
     *,
-    dataset_mock::*,
+    dataset::*,
     database::TreeID,
     fs_tree::*,
     property::*
@@ -15,8 +15,8 @@ use futures::{
 use simulacrum::*;
 use std::io;
 
-pub type ReadOnlyFilesystem = ReadOnlyDatasetMock<FSKey, FSValue<RID>>;
-pub type ReadWriteFilesystem = ReadWriteDatasetMock<FSKey, FSValue<RID>>;
+pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
+pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
 
 #[derive(Default)]
 pub struct DatabaseMock {
@@ -55,20 +55,20 @@ impl DatabaseMock {
 
     pub fn fsread<F, B, R>(&self, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
-        where F: FnOnce(ReadOnlyDatasetMock<FSKey, FSValue<RID>>)
+        where F: FnOnce(ReadOnlyDataset<FSKey, FSValue<RID>>)
                 -> B + 'static,
               B: IntoFuture<Item = R, Error = Error> + 'static,
               R: 'static
     {
         let ds = self.e.was_called_returning::<TreeID,
-            ReadOnlyDatasetMock<FSKey, FSValue<RID>>>("fsread", tree_id);
+            ReadOnlyDataset<FSKey, FSValue<RID>>>("fsread", tree_id);
         f(ds).into_future()
     }
 
     pub fn expect_fsread(&mut self) -> Method<TreeID,
-        ReadOnlyDatasetMock<FSKey, FSValue<RID>>>
+        ReadOnlyDataset<FSKey, FSValue<RID>>>
     {
-        self.e.expect::<TreeID, ReadOnlyDatasetMock<FSKey, FSValue<RID>>>
+        self.e.expect::<TreeID, ReadOnlyDataset<FSKey, FSValue<RID>>>
             ("fsread")
     }
 
@@ -119,18 +119,18 @@ impl DatabaseMock {
 
     pub fn fswrite<F, B, R>(&self, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
-        where F: FnOnce(ReadWriteDatasetMock<FSKey, FSValue<RID>>) -> B,
+        where F: FnOnce(ReadWriteDataset<FSKey, FSValue<RID>>) -> B,
               B: Future<Item = R, Error = Error>,
     {
         let ds = self.e.was_called_returning::<TreeID,
-            ReadWriteDatasetMock<FSKey, FSValue<RID>>>("fswrite", tree_id);
+            ReadWriteDataset<FSKey, FSValue<RID>>>("fswrite", tree_id);
         f(ds).into_future()
     }
 
     pub fn expect_fswrite(&mut self)
-        -> Method<TreeID, ReadWriteDatasetMock<FSKey, FSValue<RID>>>
+        -> Method<TreeID, ReadWriteDataset<FSKey, FSValue<RID>>>
     {
-        self.e.expect::<TreeID, ReadWriteDatasetMock<FSKey, FSValue<RID>>>
+        self.e.expect::<TreeID, ReadWriteDataset<FSKey, FSValue<RID>>>
             ("fswrite")
     }
 

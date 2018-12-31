@@ -28,7 +28,6 @@ pub mod cleaner;
 pub mod cluster;
 pub mod database;
 pub mod dataset;
-#[cfg(test)] mod dataset_mock;
 pub mod ddml;
 #[cfg(test)] mod dml_mock;
 pub mod declust;

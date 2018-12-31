@@ -1,11 +1,5 @@
 // vim: tw=80
 
-//! Dataset layer
-//!
-//! An individual dataset is a file system, or a snapshot, or a block device, or
-//! a specialized key-value store.  Datasets may be created, destroyed, cloned,
-//! and snapshotted.  The also support the same CRUD operations as Trees.
-
 use crate::{
     boxfut,
     common::{
@@ -22,46 +16,7 @@ use std::{
     ops::RangeBounds,
     sync::Arc
 };
-
-#[cfg(not(test))] use crate::common::tree::{self, Tree};
-#[cfg(test)] use crate::common::tree_mock::TreeMock as Tree;
-#[cfg(test)] use futures::{Poll, Stream};
-#[cfg(test)] use std::marker::PhantomData;
-
-pub type ITree<K, V> = Tree<RID, IDML, K, V>;
-
-/// Return type of `Dataset::range`
-#[cfg(not(test))]
-pub type RangeQuery<K, T, V> = tree::RangeQuery<RID, IDML, K, T, V>;
-#[cfg(test)]
-pub struct RangeQuery<K, T, V> {
-    pub s: Box<dyn Stream<Item=(K, V), Error=Error> + Send>,
-    pub phantom: PhantomData<T>
-}
-
-#[cfg(test)]
-impl<K: Key, T, V: Value>  Stream for RangeQuery<K, T, V> {
-    type Item=(K, V);
-    type Error=Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.s.poll()
-    }
-}
-
-/// A Dataset that can be read from
-pub trait ReadDataset<K: Key, V: Value> {
-    fn get(&self, k: K) -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
-
-    /// Read directly from the IDML, bypassing the Tree
-    fn get_blob(&self, rid: RID)
-        -> Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>;
-
-    fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
-        where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static;
-}
+use super::*;
 
 /// Inner Dataset structure, not directly exposed to user
 struct Dataset<K: Key, V: Value>  {

@@ -6,12 +6,12 @@
 
 use crate::common::{
     *,
-    dataset::{RangeQuery, ReadDataset},
     dml::Compression,
     tree::{Key, Value},
 };
 use futures::{
     Future,
+    Poll,
     Stream,
 };
 use simulacrum::*;
@@ -20,6 +20,23 @@ use std::{
     marker::PhantomData,
     ops::RangeBounds
 };
+use super::*;
+
+/// Result type of `ReadOnlyDatasetMock::range`.  Distinct from
+/// `tree_mock::RangeQueryMock`.
+pub struct RangeQuery<K, T, V> {
+    pub s: Box<dyn Stream<Item=(K, V), Error=Error> + Send>,
+    pub phantom: PhantomData<T>
+}
+
+impl<K: Key, T, V: Value>  Stream for RangeQuery<K, T, V> {
+    type Item=(K, V);
+    type Error=Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        self.s.poll()
+    }
+}
 
 pub struct ReadOnlyDatasetMock<K: Key, V: Value> {
     e: Expectations,
