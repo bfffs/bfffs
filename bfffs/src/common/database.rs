@@ -13,6 +13,7 @@ use crate::{
         dataset::*,
         dml::DML,
         fs_tree::*,
+        idml::*,
         label::*,
         property::*,
         tree::{MinValue, TreeOnDisk}
@@ -47,8 +48,6 @@ use tokio::{
 };
 use tokio::timer;
 
-#[cfg(not(test))] use crate::common::idml::IDML;
-#[cfg(test)] use crate::common::idml_mock::IDMLMock as IDML;
 #[cfg(not(test))] use crate::common::tree::Tree;
 #[cfg(test)] use crate::common::tree_mock::TreeMock as Tree;
 

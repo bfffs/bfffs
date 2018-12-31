@@ -1,10 +1,4 @@
 // vim: tw=80
-///! Indirect Data Management Layer
-///
-/// Interface for working with indirect records.  An indirect record is a record
-/// that is referenced by an immutable Record ID, rather than a disk address.
-/// Unlike a direct record, it may be duplicated, by through snapshots, clones,
-/// or deduplication.
 
 // use the atomic crate since libstd's AtomicU64 type is still unstable
 // https://github.com/rust-lang/rust/issues/32976
@@ -26,31 +20,7 @@ use std::{
     io,
     sync::{Arc, Mutex},
 };
-
-pub use crate::common::ddml::ClosedZone;
-
-/// Value type for the RIDT table.  Should not be used outside of this module
-/// except by the fanout calculator.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(test, derive(Default))]
-pub struct RidtEntry {
-    drp: DRP,
-    refcount: u64
-}
-
-impl RidtEntry {
-    pub fn new(drp: DRP) -> Self {
-        RidtEntry{drp, refcount: 1}
-    }
-}
-
-impl TypicalSize for RidtEntry {
-    const TYPICAL_SIZE: usize = 35;
-}
-
-impl Value for RidtEntry {}
-
-pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
+use super::*;
 
 /// Container for the IDML's private trees
 struct Trees {
@@ -83,6 +53,9 @@ pub struct IDML {
     trees: Arc<Trees>
 }
 
+// Some of these methods have no unit tests.  Their test coverage is provided
+// instead by integration tests.
+#[cfg_attr(test, allow(unused))]
 impl<'a> IDML {
     /// How many blocks have been allocated, including blocks that have been
     /// freed but not erased?

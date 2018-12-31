@@ -11,6 +11,7 @@ use crate::{
     common::{
         *,
         dml::{Compression, DML},
+        idml::IDML,
         tree::{Key, Value}
     }
 };
@@ -24,8 +25,6 @@ use std::{
 
 #[cfg(not(test))] use crate::common::tree::{self, Tree};
 #[cfg(test)] use crate::common::tree_mock::TreeMock as Tree;
-#[cfg(not(test))] use crate::common::idml::IDML;
-#[cfg(test)] use crate::common::idml_mock::IDMLMock as IDML;
 #[cfg(test)] use futures::{Poll, Stream};
 #[cfg(test)] use std::marker::PhantomData;
 

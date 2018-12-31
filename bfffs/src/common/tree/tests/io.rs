@@ -5,8 +5,8 @@
 use crate::common::{
     ddml::*,
     dml_mock::*,
+    idml::IDML,
     fs_tree::{FSKey, FSValue},
-    idml_mock::*,
     tree::*,
 };
 use futures::future;
@@ -1391,9 +1391,9 @@ root:
 // This test mimics what Database does with its forest object
 #[test]
 fn serialize_forest() {
-    let mock = IDMLMock::default();
+    let mock = IDML::default();
     let idml = Arc::new(mock);
-    let typical_tree: Tree<RID, IDMLMock, FSKey, FSValue<RID>> =
+    let typical_tree: Tree<RID, IDML, FSKey, FSValue<RID>> =
         Tree::from_str(idml, false, r#"
 ---
 height: 1
