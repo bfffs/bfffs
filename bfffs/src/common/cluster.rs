@@ -6,11 +6,10 @@ use crate::{
     common::{
         *,
         label::*,
-        vdev::*,
         vdev_raid_api::VdevRaidApi
     }
 };
-#[cfg(not(test))] use crate::common::vdev_raid::*;
+#[cfg(not(test))] use crate::common::{vdev::*, vdev_raid::*};
 use fixedbitset::FixedBitSet;
 use futures::{ Future, IntoFuture, future};
 use metrohash::MetroHash64;
@@ -942,6 +941,7 @@ mod open_zone {
 #[cfg(feature = "mocks")]
 mod cluster {
     use super::super::*;
+    use crate::common::vdev::*;
     use divbuf::DivBufShared;
     use itertools::Itertools;
     use mockers::{Scenario, Sequence, check, matchers};

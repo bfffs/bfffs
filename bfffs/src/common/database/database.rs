@@ -29,13 +29,13 @@ use futures_locks::Mutex;
 use std::collections::BTreeMap;
 use std::{
     io,
-    ops::Range,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
     time::{Duration, Instant}
 };
+#[cfg(any(not(test), feature = "mocks"))] use std::ops::Range;
 #[cfg(not(test))] use std::ffi::{OsString, OsStr};
 use super::*;
 #[cfg(not(test))] use time;
@@ -64,6 +64,7 @@ impl PropCacheKey {
     }
 
     /// Construct a range that encompasses the named property for every dataset
+    #[cfg(any(not(test), feature = "mocks"))]
     fn range(name: PropertyName) -> Range<Self> {
         let start = PropCacheKey::new(name, TreeID::Fs(0));
         let end = PropCacheKey::new(name.next(), TreeID::Fs(0));
