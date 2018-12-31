@@ -382,16 +382,8 @@ pub struct SetAttr {
 
 /// Private trait bound for functions that can be used as callbacks for
 /// Fs::create
-trait CreateCallback: Fn(&Arc<ReadWriteFilesystem>, u64, u64)
-        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>
-            + Send
-            + Sync
-            + 'static {}
-impl<F> CreateCallback for F where F: Fn(&Arc<ReadWriteFilesystem>, u64, u64)
-        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>
-            + Send
-            + Sync
-            + 'static {}
+type CreateCallback = fn(&Arc<ReadWriteFilesystem>, u64, u64)
+        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>;
 
 /// Arguments for Fs::do_create
 struct CreateArgs
@@ -404,13 +396,13 @@ struct CreateArgs
     uid: u32,
     gid: u32,
     nlink: u64,
-    cb: &'static CreateCallback
+    cb: CreateCallback
 }
 
 impl CreateArgs {
-    const DEFAULT_CB: &'static CreateCallback = &Fs::create_ts_callback;
+    const DEFAULT_CB: CreateCallback = Fs::create_ts_callback;
 
-    pub fn callback<F: CreateCallback>(mut self, f: &'static F) -> Self
+    pub fn callback(mut self, f: CreateCallback) -> Self
     {
         self.cb = f;
         self
@@ -1188,7 +1180,7 @@ impl Fs {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Dir)
         .nlink(nlink)
-        .callback(&f);
+        .callback(f);
 
         self.do_create(create_args)
     }
