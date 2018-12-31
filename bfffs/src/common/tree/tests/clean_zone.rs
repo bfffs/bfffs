@@ -3,8 +3,7 @@
 
 use atomic::{Atomic, Ordering};
 use crate::common::tree::*;
-use crate::common::ddml_mock::*;
-use crate::common::ddml::DRP;
+use crate::common::ddml::*;
 use futures::future;
 use pretty_assertions::assert_eq;
 use simulacrum::*;
@@ -18,7 +17,7 @@ fn basic() {
     // On-disk internal node with children both in and outside of target zone
     let drpl2 = DRP::new(PBA{cluster: 0, lba: 3}, Compression::None, 0, 0, 0);
     let drpl3 = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
-    // We must make two copies of in1, one for DDMLMock::get and one for ::pop
+    // We must make two copies of in1, one for DDML::get and one for ::pop
     let children1 = vec![
         IntElem::new(4u32, TxgT::from(31)..TxgT::from(32), TreePtr::Addr(drpl2)),
         IntElem::new(6u32, TxgT::from(20)..TxgT::from(21),
@@ -43,7 +42,7 @@ fn basic() {
     // On-disk internal node in the target zone, but with children outside
     let drpl4 = DRP::new(PBA{cluster: 0, lba: 5}, Compression::None, 0, 0, 0);
     let drpl5 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
-    // We must make two copies of in2, one for DDMLMock::get and one for ::pop
+    // We must make two copies of in2, one for DDML::get and one for ::pop
     let children2 = vec![
         IntElem::new(8u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(drpl4)),
         IntElem::new(10u32, TxgT::from(10)..TxgT::from(11),
@@ -67,7 +66,7 @@ fn basic() {
     ld8.insert(17, 17.0);
     let mut ln8 = Some(Arc::new(Node::new(NodeData::Leaf(ld8))));
 
-    let mut mock = DDMLMock::default();
+    let mut mock = DDML::default();
     mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
         .called_any()
         .with(passes(move |arg: & *const DRP| {
@@ -81,7 +80,7 @@ fn basic() {
                 } else if *arg == drpi2 {
                     in2.clone()
                 } else {
-                    panic!("unexpected DDMLMock::get {:?}", *arg);
+                    panic!("unexpected DDML::get {:?}", *arg);
                 }
             });
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
@@ -103,7 +102,7 @@ fn basic() {
                 } else if *args.0 == drpl8 {
                     ln8.take().unwrap()
                 } else {
-                    panic!("unexpected DDMLMock::pop {:?}", *args.0);
+                    panic!("unexpected DDML::pop {:?}", *args.0);
                 }
             });
             Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
@@ -119,7 +118,7 @@ fn basic() {
             Box::new(Ok(drp).into_future())
         });
     let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, false, r#"
+    let tree: Tree<DRP, DDML, u32, f32> = Tree::from_str(ddml, false, r#"
 ---
 height: 3
 limits:
@@ -358,7 +357,7 @@ fn dirty_root() {
     // On-disk internal root node in the target zone, but with children outside
     let drpl0 = DRP::new(PBA{cluster: 0, lba: 5}, Compression::None, 0, 0, 0);
     let drpl1 = DRP::new(PBA{cluster: 0, lba: 6}, Compression::None, 0, 0, 0);
-    // We must make two copies of inr, one for DDMLMock::get and one for ::pop
+    // We must make two copies of inr, one for DDML::get and one for ::pop
     let children = vec![
         IntElem::new(8u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(drpl0)),
         IntElem::new(10u32, TxgT::from(0)..TxgT::from(9), TreePtr::Addr(drpl1)),
@@ -374,7 +373,7 @@ fn dirty_root() {
     )));
     let drpir = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
 
-    let mut mock = DDMLMock::default();
+    let mut mock = DDML::default();
     mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
         .called_any()
         .with(passes(move |arg: & *const DRP| unsafe { **arg == drpir } ))
@@ -398,7 +397,7 @@ fn dirty_root() {
             Box::new(Ok(drp).into_future())
         });
     let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, f32> = Tree::from_str(ddml, false, r#"
+    let tree: Tree<DRP, DDML, u32, f32> = Tree::from_str(ddml, false, r#"
 ---
 height: 2
 limits:

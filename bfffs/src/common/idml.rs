@@ -14,7 +14,7 @@ use crate::{
     common::{
         *,
         dml::*,
-        ddml::DRP,
+        ddml::*,
         cache::{Cache, Cacheable, CacheRef, Key},
         label::*,
         tree::*
@@ -26,10 +26,6 @@ use std::{
     io,
     sync::{Arc, Mutex},
 };
-#[cfg(not(test))]
-use crate::common::ddml::DDML;
-#[cfg(test)]
-use crate::common::ddml_mock::DDMLMock as DDML;
 
 pub use crate::common::ddml::ClosedZone;
 

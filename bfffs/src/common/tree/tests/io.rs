@@ -3,8 +3,7 @@
 // LCOV_EXCL_START
 
 use crate::common::{
-    ddml_mock::*,
-    ddml::DRP,
+    ddml::*,
     dml_mock::*,
     fs_tree::{FSKey, FSValue},
     idml_mock::*,
@@ -608,9 +607,9 @@ fn open() {
             txgs: TxgT(0)..TxgT(42),
         }
     );
-    let mock = DDMLMock::default();
+    let mock = DDML::default();
     let ddml = Arc::new(mock);
-    let tree = Tree::<DRP, DDMLMock, u32, u32>::open(ddml, false, tod);
+    let tree = Tree::<DRP, DDML, u32, u32>::open(ddml, false, tod);
     assert_eq!(tree.i.height.load(Ordering::Relaxed), 1);
     assert_eq!(tree.i.limits, limits);
     let root_elem_guard = tree.i.root.try_read().unwrap();
@@ -1355,9 +1354,9 @@ root:
 // This test mimics what the IDML does with the alloc_t
 #[test]
 fn serialize_alloc_t() {
-    let mock = DDMLMock::default();
+    let mock = DDML::default();
     let idml = Arc::new(mock);
-    let typical_tree: Tree<DRP, DDMLMock, PBA, RID> =
+    let typical_tree: Tree<DRP, DDML, PBA, RID> =
         Tree::from_str(idml, false, r#"
 ---
 height: 1
@@ -1433,9 +1432,9 @@ fn serialize_inner() {
             txgs: TxgT(0)..TxgT(42),
         }
     );
-    let mock = DDMLMock::default();
+    let mock = DDML::default();
     let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDMLMock, u32, u32> = Tree::from_str(ddml, false, r#"
+    let tree: Tree<DRP, DDML, u32, u32> = Tree::from_str(ddml, false, r#"
 ---
 height: 1
 limits:
