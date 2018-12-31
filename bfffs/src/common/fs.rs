@@ -380,6 +380,19 @@ pub struct SetAttr {
     pub flags:      Option<u64>,
 }
 
+/// Private trait bound for functions that can be used as callbacks for
+/// Fs::create
+trait CreateCallback: Fn(&Arc<ReadWriteFilesystem>, u64, u64)
+        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>
+            + Send
+            + Sync
+            + 'static {}
+impl<F> CreateCallback for F where F: Fn(&Arc<ReadWriteFilesystem>, u64, u64)
+        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>
+            + Send
+            + Sync
+            + 'static {}
+
 /// Arguments for Fs::do_create
 struct CreateArgs
 {
@@ -391,25 +404,16 @@ struct CreateArgs
     uid: u32,
     gid: u32,
     nlink: u64,
-    // NB: this could be a Box<FnOnce> after bug 28796 is fixed
-    // https://github.com/rust-lang/rust/issues/28796
-    cb: Box<Fn(&Arc<ReadWriteFilesystem>, u64, u64)
-        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static> + Send >
+    cb: &'static CreateCallback
 }
 
 impl CreateArgs {
-    pub fn callback<F>(mut self, f: F) -> Self
-        where F: Fn(&Arc<ReadWriteFilesystem>, u64, u64)
-        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static> + Send + 'static
-    {
-        self.cb = Box::new(f);
-        self
-    }
+    const DEFAULT_CB: &'static CreateCallback = &Fs::create_ts_callback;
 
-    fn default_cb(_: &Arc<ReadWriteFilesystem>, _: u64, _: u64)
-        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>
+    pub fn callback<F: CreateCallback>(mut self, f: &'static F) -> Self
     {
-        Box::new(Ok(()).into_future())
+        self.cb = f;
+        self
     }
 
     // Enable once chflags(2) support comes in
@@ -421,7 +425,7 @@ impl CreateArgs {
     pub fn new(parent: u64, name: &OsStr, perm: u16, uid: u32,
                gid: u32, file_type: FileType) -> Self
     {
-        let cb = Box::new(CreateArgs::default_cb);
+        let cb = Self::DEFAULT_CB;
         CreateArgs{parent, flags: 0, name: name.to_owned(), perm,
                    file_type, uid, gid, nlink: 1, cb}
     }
@@ -797,11 +801,11 @@ impl Fs {
                   gid: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Reg(self.record_size))
-        .callback(Fs::create_ts_callback);
+                                          FileType::Reg(self.record_size));
         self.do_create(create_args)
     }
 
+    /// Update the parent's ctime and mtime to the current time.
     fn create_ts_callback(dataset: &Arc<ReadWriteFilesystem>, parent: u64,
                           _ino: u64)
         -> Box<dyn Future<Item=(), Error=Error> + Send>
@@ -1134,7 +1138,9 @@ impl Fs {
     {
         let nlink = 2;  // One for the parent dir, and one for "."
 
-        let f = move |dataset: &Arc<ReadWriteFilesystem>, _parent, ino| {
+        fn f(dataset: &Arc<ReadWriteFilesystem>, parent: u64, ino: u64)
+            -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>
+        {
             let dot_dirent = Dirent {
                 ino,
                 dtype: libc::DT_DIR,
@@ -1177,12 +1183,12 @@ impl Fs {
             let fut = dot_fut.join3(dotdot_fut, nlink_fut)
             .map(drop);
             boxfut!(fut)
-        };
+        }
 
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Dir)
         .nlink(nlink)
-        .callback(f);
+        .callback(&f);
 
         self.do_create(create_args)
     }
@@ -1192,8 +1198,7 @@ impl Fs {
                    gid: u32, rdev: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Block(rdev))
-        .callback(Fs::create_ts_callback);
+                                          FileType::Block(rdev));
         self.do_create(create_args)
     }
 
@@ -1202,8 +1207,7 @@ impl Fs {
                   gid: u32, rdev: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Char(rdev))
-        .callback(Fs::create_ts_callback);
+                                          FileType::Char(rdev));
         self.do_create(create_args)
     }
 
@@ -1211,8 +1215,7 @@ impl Fs {
                   gid: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Fifo)
-        .callback(Fs::create_ts_callback);
+                                          FileType::Fifo);
         self.do_create(create_args)
     }
 
@@ -1220,8 +1223,7 @@ impl Fs {
                   gid: u32) -> Result<u64, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Socket)
-        .callback(Fs::create_ts_callback);
+                                          FileType::Socket);
         self.do_create(create_args)
     }
 
@@ -1736,8 +1738,7 @@ impl Fs {
     {
         let file_type = FileType::Link(link.to_os_string());
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          file_type)
-        .callback(Fs::create_ts_callback);
+                                          file_type);
         self.do_create(create_args)
     }
 
