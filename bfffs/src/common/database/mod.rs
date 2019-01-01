@@ -44,3 +44,19 @@ impl MinValue for TreeID {
         TreeID::Fs(u32::min_value())
     }
 }
+
+// LCOV_EXCL_START
+#[cfg(test)]
+mod t {
+mod treeid {
+    use bincode;
+    use pretty_assertions::assert_eq;
+    use super::super::*;
+
+    #[test]
+    fn typical_size() {
+        assert_eq!(TreeID::TYPICAL_SIZE,
+                   bincode::serialized_size(&TreeID::Fs(0)).unwrap() as usize);
+    }
+}
+}

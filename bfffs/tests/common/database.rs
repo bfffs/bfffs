@@ -1,34 +1,58 @@
 // vim: tw=80
+use bfffs::common::cache::*;
+use bfffs::common::cluster;
+use bfffs::common::database::*;
+use bfffs::common::ddml::*;
+use bfffs::common::idml::*;
+use bfffs::common::pool::*;
+use bfffs::common::vdev_block::*;
+use bfffs::common::vdev_file::*;
+use bfffs::common::vdev_raid::*;
+use futures::{Future, future};
 use galvanic_test::test_suite;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex}
+};
+use tokio::{
+    executor::current_thread::TaskExecutor,
+    runtime::current_thread::Runtime,
+};
+
+fn open_db(rt: &mut Runtime, path: PathBuf) -> Database {
+    rt.block_on(future::lazy(|| {
+        VdevFile::open(path)
+        .and_then(|(leaf, reader)| {
+                let block = VdevBlock::new(leaf);
+                let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
+                cluster::Cluster::open(vr)
+                .map(move |cluster| (cluster, lr))
+        }).and_then(move |(cluster, reader)|{
+            let proxy = ClusterProxy::new(cluster);
+            Pool::open(None, vec![(proxy, reader)])
+        }).map(|(pool, reader)| {
+            let cache = Cache::with_capacity(1_000_000);
+            let arc_cache = Arc::new(Mutex::new(cache));
+            let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
+            let (idml, reader) = IDML::open(ddml, arc_cache, reader);
+            let te = TaskExecutor::current();
+            Database::open(Arc::new(idml), te, reader)
+        })
+    })).unwrap()
+}
 
 test_suite! {
     name persistence;
 
-    use bfffs::common::*;
-    use bfffs::common::cache::*;
-    use bfffs::common::database::*;
-    use bfffs::common::vdev_block::*;
-    use bfffs::common::vdev_raid::*;
-    use bfffs::common::cluster;
-    use bfffs::common::pool::*;
-    use bfffs::common::ddml::*;
-    use bfffs::common::idml::*;
-    use bfffs::common::vdev_file::*;
-    use futures::{Future, future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
         num::NonZeroU64,
-        path::PathBuf,
-        sync::{Arc, Mutex}
     };
+    use super::*;
     use tempdir::TempDir;
-    use tokio::{
-        executor::current_thread::TaskExecutor,
-        runtime::current_thread::Runtime
-    };
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -94,31 +118,14 @@ test_suite! {
         }
     });
 
+    // Test open-after-write
     test open(objects()) {
         let (mut rt, old_db, _tempdir, path) = objects.val;
         rt.block_on(
             old_db.sync_transaction()
         ).unwrap();
         drop(old_db);
-        let _db = rt.block_on(future::lazy(|| {
-            VdevFile::open(path)
-            .and_then(|(leaf, reader)| {
-                    let block = VdevBlock::new(leaf);
-                    let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
-                    cluster::Cluster::open(vr)
-                    .map(move |cluster| (cluster, lr))
-            }).and_then(move |(cluster, reader)|{
-                let proxy = ClusterProxy::new(cluster);
-                Pool::open(None, vec![(proxy, reader)])
-            }).map(|(pool, reader)| {
-                let cache = cache::Cache::with_capacity(1_000_000);
-                let arc_cache = Arc::new(Mutex::new(cache));
-                let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
-                let (idml, reader) = idml::IDML::open(ddml, arc_cache, reader);
-                let te = TaskExecutor::current();
-                Database::open(Arc::new(idml), te, reader)
-            })
-        })).unwrap();
+        let _db = open_db(&mut rt, path);
     }
 
     test sync_transaction(objects()) {
@@ -150,25 +157,20 @@ test_suite! {
 
     use bfffs::common::{
         cache::*,
-        database::*,
         pool::*,
         property::*,
         ddml::*,
         idml::*,
     };
-    use futures::{Future, future};
+    use futures::IntoFuture;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,
         num::NonZeroU64,
-        sync::{Arc, Mutex}
     };
+    use super::*;
     use tempdir::TempDir;
-    use tokio::{
-        executor::current_thread::TaskExecutor,
-        runtime::current_thread::Runtime
-    };
 
     const POOLNAME: &str = &"TestPool";
 
@@ -216,6 +218,21 @@ test_suite! {
         })).unwrap();
         assert_eq!(val, Property::default_value(PropertyName::Atime));
         assert_eq!(source, PropertySource::Default);
+    }
+
+    test open_filesystem(objects()) {
+        let (mut rt, db, tempdir, tree_id) = objects.val;
+        // Sync the database, then drop and reopen it.  That's the only way to
+        // clear Inner::fs_trees
+        rt.block_on(
+            db.sync_transaction()
+        ).unwrap();
+        drop(db);
+        let filename = tempdir.path().join("vdev");
+        let db = open_db(&mut rt, filename);
+        rt.block_on(future::lazy(move || {
+            db.fsread(tree_id, |_| Ok(()).into_future())
+        })).unwrap();
     }
 
     test new_fs_with_props(objects()) {

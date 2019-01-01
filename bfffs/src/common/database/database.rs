@@ -134,7 +134,6 @@ impl Syncer {
                                 Database::sync_transaction_priv(&i2)
                                 .map_err(Error::unhandled)
                                 .map(move |_| rx_fut)
-                                //)
                             ) as LoopFutFut
                         }, future::Either::B(((Some(sm), remainder), _)) => {
                             match sm {
@@ -820,16 +819,15 @@ mod database {
     }
 }
 
-mod treeid {
-    use bincode;
-    use pretty_assertions::assert_eq;
+mod syncer_msg {
     use super::super::*;
 
+    //pet kcov
     #[test]
-    fn typical_size() {
-        assert_eq!(TreeID::TYPICAL_SIZE,
-                   bincode::serialized_size(&TreeID::Fs(0)).unwrap() as usize);
+    fn debug() {
+        let (tx, _rx) = oneshot::channel();
+        let sm = SyncerMsg::Shutdown(tx);
+        format!("{:?}", sm);
     }
 }
-
 }
