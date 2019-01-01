@@ -7,13 +7,13 @@ use crate::common::{
     dml_mock::*,
     idml::IDML,
     fs_tree::{FSKey, FSValue},
-    tree::*,
 };
 use futures::future;
 use simulacrum::*;
 use pretty_assertions::assert_eq;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
+use super::*;
 use tokio::prelude::task::current;
 use tokio::runtime::current_thread;
 

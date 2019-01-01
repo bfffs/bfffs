@@ -11,7 +11,7 @@ use crate::{
         idml::*,
         label::*,
         property::*,
-        tree::TreeOnDisk
+        tree::{Tree, TreeOnDisk}
     }
 };
 #[cfg(not(test))] use crate::common::dataset::ReadOnlyDataset;
@@ -44,9 +44,6 @@ use tokio::{
     runtime::current_thread
 };
 use tokio::timer;
-
-#[cfg(not(test))] use crate::common::tree::Tree;
-#[cfg(test)] use crate::common::tree_mock::TreeMock as Tree;
 
 #[cfg(not(test))]
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;

@@ -1,10 +1,10 @@
 //! Tests regarding in-memory manipulation of Trees
 // LCOV_EXCL_START
 
-use crate::common::tree::*;
 use crate::common::dml_mock::*;
 use futures::future;
 use pretty_assertions::assert_eq;
+use super::*;
 use tokio::runtime::current_thread;
 
 #[test]

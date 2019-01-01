@@ -2,11 +2,11 @@
 // LCOV_EXCL_START
 
 use atomic::{Atomic, Ordering};
-use crate::common::tree::*;
 use crate::common::ddml::*;
 use futures::future;
 use pretty_assertions::assert_eq;
 use simulacrum::*;
+use super::*;
 use tokio::runtime::current_thread;
 
 #[test]

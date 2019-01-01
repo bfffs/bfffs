@@ -9,7 +9,10 @@
 use crate::common::{
     *,
     ddml::*,
-    tree::{Tree, Value}
+    // Import tree::tree::Tree rather than tree::Tree so we can use the real
+    // object and not the mock one, even in test mode.
+    tree::tree::Tree,
+    tree::Value
 };
 use cfg_if::cfg_if;
 

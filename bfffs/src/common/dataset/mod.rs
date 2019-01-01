@@ -10,7 +10,7 @@ use cfg_if::cfg_if;
 use crate::common::{
     *,
     idml::IDML,
-    tree::{Key, Value}
+    tree::{Key, Tree, Value}
 };
 use divbuf::DivBuf;
 use futures::Future;
@@ -22,13 +22,12 @@ use std::{
 cfg_if! {
     if #[cfg(test)]{
         mod dataset_mock;
-        use crate::common::tree_mock::TreeMock as Tree;
         pub use self::dataset_mock::ReadOnlyDatasetMock as ReadOnlyDataset;
         pub use self::dataset_mock::ReadWriteDatasetMock as ReadWriteDataset;
         pub use self::dataset_mock::RangeQuery;
     } else {
         mod dataset;
-        use crate::common::tree::{self, Tree};
+        use crate::common::tree;
         pub use self::dataset::{ReadOnlyDataset, ReadWriteDataset};
         /// Return type of `Dataset::range`
         pub type RangeQuery<K, T, V> = tree::RangeQuery<RID, IDML, K, T, V>;

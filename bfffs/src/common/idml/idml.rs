@@ -11,7 +11,7 @@ use crate::{
         ddml::*,
         cache::{Cache, Cacheable, CacheRef, Key},
         label::*,
-        tree::*
+        tree::TreeOnDisk
     }
 };
 use futures::{Future, IntoFuture, Stream, future};
@@ -244,8 +244,8 @@ impl<'a> IDML {
                  mut label_reader: LabelReader) -> (Self, LabelReader)
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let alloct = Tree::open(ddml.clone(), true, l.alloct);
-        let ridt = Tree::open(ddml.clone(), true, l.ridt);
+        let alloct = DTree::open(ddml.clone(), true, l.alloct);
+        let ridt = DTree::open(ddml.clone(), true, l.ridt);
         let transaction = RwLock::new(l.txg);
         let next_rid = Atomic::new(l.next_rid);
         let trees = Arc::new(Trees{alloct, ridt});

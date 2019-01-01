@@ -43,7 +43,6 @@ pub mod property;
 pub mod raid;
 mod sgcursor;
 pub mod tree;
-#[cfg(test)] mod tree_mock;
 pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_file;
