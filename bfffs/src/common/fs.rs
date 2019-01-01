@@ -328,7 +328,7 @@ impl Mode {
 }
 
 /// File attributes, as returned by `getattr`
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GetAttr {
     pub ino:        u64,
     /// File size in bytes
@@ -2135,6 +2135,28 @@ fn debug_getattr() {
 
 // Pet kcov
 #[test]
+fn eq_getattr() {
+    let attr = GetAttr {
+        ino: 1,
+        size: 4096,
+        blocks: 1,
+        atime: time::Timespec::new(1, 2),
+        mtime: time::Timespec::new(3, 4),
+        ctime: time::Timespec::new(5, 6),
+        birthtime: time::Timespec::new(7, 8),
+        mode: Mode(libc::S_IFREG | 0o644),
+        nlink: 1,
+        uid: 1000,
+        gid: 1000,
+        rdev: 0,
+        flags: 0,
+    };
+    let attr2 = attr;
+    assert_eq!(attr2, attr);
+}
+
+// Pet kcov
+#[test]
 fn debug_setattr() {
     let attr = SetAttr {
         size: None,
@@ -2609,6 +2631,24 @@ fn setextattr_3way_collision() {
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.setextattr(ino, namespace, &name2, value2.as_bytes());
     assert_eq!(Ok(()), r);
+}
+
+#[test]
+fn set_props() {
+    let (rt, mut db, tree_id) = setup();
+    db.expect_set_prop()
+        .called_once()
+        .with(passes(move |args: &(TreeID, Property)| {
+            args.0 == tree_id && args.1 == Property::Atime(false)
+        })).returning(|_| boxfut!(Ok(()).into_future()));
+    db.then().expect_set_prop()
+        .called_once()
+        .with(passes(move |args: &(TreeID, Property)| {
+            args.0 == tree_id && args.1 == Property::RecordSize(13)
+        })).returning(|_| boxfut!(Ok(()).into_future()));
+    let mut fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    fs.set_props(vec![Property::Atime(false), Property::RecordSize(13)]);
+    rt.shutdown_on_idle();
 }
 
 #[test]

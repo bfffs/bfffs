@@ -1652,14 +1652,40 @@ root:
 
     // Like setattr_truncate, but everything happens within a single record
     test setattr_truncate_partial_records(mocks) {
-        // First write one records
+        // First write one record
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
         let r = mocks.val.0.write(ino, 0, &buf[..], 0);
         assert_eq!(Ok(4096), r);
 
-        // Then truncate one of them.
+        // Then truncate it.
+        let mut attr = SetAttr::default();
+        attr.size = Some(1000);
+        mocks.val.0.setattr(ino, attr).unwrap();
+
+        // Now extend the file past the truncated record
+        attr.size = Some(4000);
+        mocks.val.0.setattr(ino, attr).unwrap();
+
+        // Finally, read from the truncated area.  It should be a hole
+        let sglist = mocks.val.0.read(ino, 2000, 1000).unwrap();
+        let db = &sglist[0];
+        let expected = [0u8; 1000];
+        assert_eq!(&db[..], &expected[..]);
+    }
+
+    // Like setattr_truncate_partial_record, but the record is a Blob
+    test setattr_truncate_partial_blob_record(mocks) {
+        // First write one record
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let buf = vec![42u8; 4096];
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(4096), r);
+        mocks.val.0.sync(); // Create a blob record
+
+        // Then truncate it.
         let mut attr = SetAttr::default();
         attr.size = Some(1000);
         mocks.val.0.setattr(ino, attr).unwrap();
@@ -1986,6 +2012,33 @@ root:
         let sglist = mocks.val.0.read(ino, 4096, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[4096..8192]);
+    }
+
+    // A write to an empty file that's split across three records
+    test write_three_recs(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let mut buf = vec![0u8; 12288];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        assert_eq!(Ok(12288), r);
+
+        // Check the file size
+        let inode = mocks.val.0.getattr(ino).unwrap();
+        assert_eq!(inode.size, 12288);
+
+        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf[0..4096]);
+        let sglist = mocks.val.0.read(ino, 4096, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf[4096..8192]);
+        let sglist = mocks.val.0.read(ino, 8192, 4096).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf[8192..12288]);
     }
 
     // Write one hold record and a partial one to an initially empty file.
