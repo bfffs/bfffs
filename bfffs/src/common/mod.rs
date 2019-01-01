@@ -19,7 +19,6 @@ use std::{
     fmt::{self, Display, Formatter},
     hash::Hasher,
     ops::{Add, AddAssign, Div, Sub},
-    str::FromStr
 };
 use uuid;
 
@@ -231,7 +230,6 @@ impl Into<i32> for Error {
 // 32-bits is enough for 1 per second for 100 years
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd,
          Serialize)]
-#[cfg_attr(test, derive(Default))]
 pub struct TxgT(u32);
 
 impl Add<u32> for TxgT {
@@ -335,19 +333,13 @@ impl<'de> Deserialize<'de> for Uuid {
     }
 }
 
+// LCOV_EXCL_START      only used by debugging code
 impl Display for Uuid {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         self.0.fmt(f)
     }
 }
-
-impl FromStr for Uuid {
-    type Err = uuid::parser::ParseError;
-
-    fn from_str(uuid_str: &str) -> Result<Self, Self::Err> {
-        uuid::Uuid::from_str(uuid_str).map(|u| Uuid(u))
-    }
-}
+// LCOV_EXCL_STOP
 
 impl Serialize for Uuid {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -514,6 +506,18 @@ fn pba_typical_size() {
 fn rid_typical_size() {
     assert_eq!(RID::TYPICAL_SIZE,
                bincode::serialized_size(&RID::default()).unwrap() as usize);
+}
+
+#[test]
+fn test_zero_sglist() {
+    let sg0 = zero_sglist(100);
+    assert_eq!(&sg0[0][..], &[0u8; 100][..]);
+    assert_eq!(sg0.len(), 1);
+
+    let sg1 = zero_sglist(ZERO_REGION_LEN + 100);
+    assert_eq!(&sg1[0][..], &[0u8; ZERO_REGION_LEN][..]);
+    assert_eq!(&sg1[1][..], &[0u8; 100][..]);
+    assert_eq!(sg1.len(), 2);
 }
 
 }
