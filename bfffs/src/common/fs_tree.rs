@@ -129,7 +129,6 @@ bitfield! {
     /// B-Tree keys for a Filesystem tree
     #[derive(Clone, Copy, Deserialize, Eq, PartialEq, PartialOrd, Ord,
              Serialize)]
-    #[cfg_attr(test, derive(Default))]
     pub struct FSKey(u128);
     impl Debug;
     u64; pub object, _: 127, 64;
@@ -175,7 +174,7 @@ impl FSKey {
             Bound::Unbounded => {
                 FSKey::compose(ino, discriminant, 0)
             },
-            _ => unimplemented!()
+            _ => unimplemented!()   // LCOV_EXCL_LINE
         };
         let end = match offsets.end_bound() {
             Bound::Excluded(e) => {
@@ -184,7 +183,7 @@ impl FSKey {
             Bound::Unbounded => {
                 FSKey::compose(ino, discriminant + 1, 0)
             },
-            _ => unimplemented!()
+            _ => unimplemented!()   // LCOV_EXCL_LINE
         };
         start..end
     }
@@ -293,7 +292,7 @@ impl HTItem for Dirent {
             Some(x) => HTValue::Other(x),
             None => HTValue::None
         }
-    }
+    }   // LCOV_EXCL_LINE kcov false negative
 
     fn into_bucket(selves: Vec<Self>) -> FSValue<RID> {
         FSValue::DirEntries(selves)
@@ -307,7 +306,7 @@ impl HTItem for Dirent {
         // We generally don't know the desired ino when calling this method, so
         // just check the name
         self.name == name.as_ref()
-    }
+    }   // LCOV_EXCL_LINE kcov false negative
 }
 
 /// In-memory representation of a small extended attribute
@@ -417,7 +416,7 @@ impl HTItem for ExtAttr<RID> {
             Some(x) => HTValue::Other(x),
             None => HTValue::None
         }
-    }
+    }   // LCOV_EXCL_LINE kcov false negative
 
     fn into_bucket(selves: Vec<Self>) -> FSValue<RID> {
         FSValue::ExtAttrs(selves)
@@ -468,7 +467,7 @@ impl FileType {
             FileType::Link(_) => libc::DT_LNK,
             FileType::Socket => libc::DT_SOCK,
         }
-    }
+    }   // LCOV_EXCL_LINE kcov false negative
 
     /// The file type part of the mode, as returned by stat(2)
     pub fn mode(&self) -> u16 {
@@ -481,7 +480,7 @@ impl FileType {
             FileType::Link(_) => libc::S_IFLNK,
             FileType::Socket => libc::S_IFSOCK,
         }
-    }
+    }   // LCOV_EXCL_LINE kcov false negative
 }
 
 /// In-memory representation of an Inode
@@ -756,9 +755,11 @@ use super::*;
 // pet kcov
 #[test]
 fn debug() {
-    assert_eq!("Extent(0)", format!("{:?}", ObjKey::Extent(0)));
     assert_eq!("DirEntry(0)", format!("{:?}", ObjKey::DirEntry(0)));
+    assert_eq!("Extent(0)", format!("{:?}", ObjKey::Extent(0)));
     assert_eq!("ExtAttr(0)", format!("{:?}", ObjKey::ExtAttr(0)));
+    assert_eq!("Property(Atime)",
+        format!("{:?}", ObjKey::Property(PropertyName::Atime)));
 }
 
 #[test]

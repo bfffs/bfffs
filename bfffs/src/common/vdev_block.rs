@@ -765,6 +765,10 @@ fn debug_cmd() {
         let readv_at = Cmd::ReadvAt(vec![dbs.try_mut().unwrap()]);
         format!("{:?}", readv_at);
     }
+    {
+        let read_spacemap = Cmd::ReadSpacemap(dbs.try_mut().unwrap(), 0);
+        format!("{:?}", read_spacemap);
+    }
     let write_at = Cmd::WriteAt(dbs.try_const().unwrap());
     let writev_at = Cmd::WritevAt(vec![dbs.try_const().unwrap()]);
     let erase_zone = Cmd::EraseZone(0);
@@ -776,6 +780,28 @@ fn debug_cmd() {
                                             0, 0);
     format!("{:?} {:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at,
             erase_zone, finish_zone, sync_all, write_label, write_spacemap);
+}
+
+// pet kcov
+#[test]
+fn cmd_partial_cmp() {
+    let c0 = Cmd::SyncAll;
+    let c1 = Cmd::OpenZone;
+    assert_eq!(c0.partial_cmp(&c1), Some(Ordering::Greater));
+}
+
+// pet kcov
+#[test]
+fn blockop_partial_eq() {
+    let (tx0, _rx) = oneshot::channel();
+    let (tx1, _rx) = oneshot::channel();
+    let (tx2, _rx) = oneshot::channel();
+    let bo0 = BlockOp::erase_zone(0, 100, tx0);
+    let bo1 = BlockOp::erase_zone(100, 200, tx1);
+    let bo2 = BlockOp::finish_zone(100, 200, tx2);
+    assert!(bo1 == bo1);
+    assert!(bo0 != bo1);
+    assert!(bo2 != bo1);
 }
 
 test_suite! {

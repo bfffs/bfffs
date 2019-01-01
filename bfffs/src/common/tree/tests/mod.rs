@@ -9,7 +9,11 @@ use crate::common::tree::*;
 fn ranges_overlap_test() {
     // x is empty
     assert!(!ranges_overlap(&(5..5), &(0..10)));
-    assert!(!ranges_overlap(&(5..5), &(0..10)));
+    assert!(!ranges_overlap(&(5..=4), &(0..10)));
+    assert!(!ranges_overlap(&(Bound::Excluded(5), Bound::Excluded(5)),
+                            &(0..10)));
+    assert!(!ranges_overlap(&(Bound::Excluded(5), Bound::Included(5)),
+                            &(0..10)));
     // y is empty
     assert!(!ranges_overlap(&(0..10), &(5..5)));
     // x precedes y
