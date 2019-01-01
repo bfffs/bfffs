@@ -35,13 +35,6 @@ pub enum TreeID {
     Fs(u32)
 }
 
-#[cfg(test)]
-impl Default for TreeID {
-    fn default() -> Self {
-        TreeID::Fs(0)
-    }
-}
-
 impl TypicalSize for TreeID {
     const TYPICAL_SIZE: usize = 8;
 }
