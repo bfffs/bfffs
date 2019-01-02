@@ -1907,7 +1907,7 @@ impl Fs {
 
 // LCOV_EXCL_START
 #[cfg(test)]
-#[cfg(feature = "mocks")]
+#[cfg(feature = "nightly")]
 mod t {
 
 use super::*;

@@ -938,7 +938,7 @@ mod open_zone {
     }
 }
 
-#[cfg(feature = "mocks")]
+#[cfg(feature = "nightly")]
 mod cluster {
     use super::super::*;
     use crate::common::vdev::*;

@@ -17,5 +17,5 @@ cargo +nightly fmt --package bfffs-fio -- --check
 # https://github.com/kennytm/cargo-kcov/issues/39
 if which -s kcov ; then
 	cd bfffs;
-	env CARGO_TARGET_DIR=/localhome/somers/src/rust/bfffs/target_cov cargo +nightly kcov --all -v --features mocks -- --include-path="src"
+	env CARGO_TARGET_DIR=/localhome/somers/src/rust/bfffs/target_cov cargo +nightly kcov --all -v --features nightly -- --include-path="src"
 fi

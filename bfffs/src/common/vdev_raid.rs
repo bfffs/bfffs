@@ -1253,7 +1253,7 @@ fn stripe_buffer_two_iovecs_overflow() {
     assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
 }
 
-#[cfg(feature = "mocks")]
+#[cfg(feature = "nightly")]
 #[cfg(test)]
 mod t {
 

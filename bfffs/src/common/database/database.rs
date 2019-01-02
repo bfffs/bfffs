@@ -35,7 +35,7 @@ use std::{
     },
     time::{Duration, Instant}
 };
-#[cfg(any(not(test), feature = "mocks"))] use std::ops::Range;
+#[cfg(any(not(test), feature = "nightly"))] use std::ops::Range;
 #[cfg(not(test))] use std::ffi::{OsString, OsStr};
 use super::*;
 #[cfg(not(test))] use time;
@@ -61,7 +61,7 @@ impl PropCacheKey {
     }
 
     /// Construct a range that encompasses the named property for every dataset
-    #[cfg(any(not(test), feature = "mocks"))]
+    #[cfg(any(not(test), feature = "nightly"))]
     fn range(name: PropertyName) -> Range<Self> {
         let start = PropCacheKey::new(name, TreeID::Fs(0));
         let end = PropCacheKey::new(name.next(), TreeID::Fs(0));
@@ -667,7 +667,7 @@ impl Database {
 
 // LCOV_EXCL_START
 #[cfg(test)]
-#[cfg(feature = "mocks")]
+#[cfg(feature = "nightly")]
 mod t {
 mod prop_cache_key {
     use pretty_assertions::assert_eq;

@@ -571,7 +571,7 @@ impl VdevBlock {
     /// Instantiate a new VdevBlock from an existing VdevLeaf
     ///
     /// * `leaf`    An already-open underlying VdevLeaf 
-    #[cfg(any(not(test), feature = "mocks"))]
+    #[cfg(any(not(test), feature = "nightly"))]
     pub fn new(leaf: VdevLeaf) -> Self {
         let size = leaf.size();
         let spacemap_space = leaf.spacemap_space();
@@ -746,7 +746,7 @@ impl Vdev for VdevBlock {
 
 // LCOV_EXCL_START
 
-#[cfg(feature = "mocks")]
+#[cfg(feature = "nightly")]
 #[cfg(test)]
 mod t {
 

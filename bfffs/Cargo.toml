@@ -10,7 +10,7 @@ doctest = false
 
 [features]
 # Make mockers optional so we can still compile on stable
-mocks = ["mockers", "mockers_derive"]
+nightly = ["mockers", "mockers_derive"]
 
 [dependencies]
 atomic = "0.3"

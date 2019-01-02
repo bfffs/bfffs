@@ -731,7 +731,7 @@ mod label {
     }
 }
 
-#[cfg(feature = "mocks")]
+#[cfg(feature = "nightly")]
 mod pool {
     use super::super::*;
     use divbuf::DivBufShared;

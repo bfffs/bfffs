@@ -16,7 +16,7 @@ use std::{
     sync::{Arc, Mutex}
 };
 use super::*;
-#[cfg(all(test, feature = "mocks"))] use simulacrum::*;
+#[cfg(all(test, feature = "nightly"))] use simulacrum::*;
 #[cfg(test)] use uuid::Uuid;
 
 // LCOV_EXCL_START
@@ -402,7 +402,7 @@ impl DML for DDML {
 
 // LCOV_EXCL_START
 #[cfg(test)]
-#[cfg(feature = "mocks")]
+#[cfg(feature = "nightly")]
 mod t {
 mod drp {
     use pretty_assertions::assert_eq;
