@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "nightly", feature(plugin))]
+#![cfg_attr(all(feature = "nightly", test), feature(test))]
 
 // Disable the range_plus_one lint until this bug is fixed.  It generates many
 // false positive in the Tree code.
@@ -7,6 +8,9 @@
 
 // I don't find this lint very helpful
 #![allow(clippy::type_complexity)]
+
+#[cfg(all(feature = "nightly", test))]
+extern crate test;
 
 pub mod common;
 
