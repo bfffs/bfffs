@@ -76,11 +76,10 @@ fn main() {
                     debug_assert_eq!(time.as_secs(), 0);
                     let speed = lsize as u64
                         * 1_000_000_000
-                        / time.subsec_nanos() as u64
+                        / u64::from(time.subsec_nanos())
                         / 1024 / 1024;
                     speeds[i].get_mut(&z).unwrap()
-                        .increment(speed.into())
-                        //.increment(time.subsec_nanos().into())
+                        .increment(speed)
                         .unwrap();
 
                     let csize = zbuf.size();

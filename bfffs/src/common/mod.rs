@@ -310,8 +310,7 @@ impl Uuid {
     }
 
     pub fn parse_str(input: &str) -> Result<Uuid, uuid::parser::ParseError> {
-        uuid::Uuid::parse_str(input)
-            .map(|u| Uuid(u))
+        uuid::Uuid::parse_str(input).map(Uuid)
     }
 }
 

@@ -792,6 +792,7 @@ fn cmd_partial_cmp() {
 
 // pet kcov
 #[test]
+#[allow(clippy::eq_op)]
 fn blockop_partial_eq() {
     let (tx0, _rx) = oneshot::channel();
     let (tx1, _rx) = oneshot::channel();

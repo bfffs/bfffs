@@ -602,7 +602,7 @@ fn open() {
     let tod = TreeOnDisk(
         InnerOnDisk {
             height: 1,
-            limits: limits,
+            limits,
             root: root_drp,
             txgs: TxgT(0)..TxgT(42),
         }

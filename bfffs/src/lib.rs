@@ -9,6 +9,10 @@
 // I don't find this lint very helpful
 #![allow(clippy::type_complexity)]
 
+// I use a common pattern to substitute mock objects for real ones in test
+// builds.  Silence clippy's complaints.
+#![allow(clippy::module_inception)]
+
 #[cfg(all(feature = "nightly", test))]
 extern crate test;
 
