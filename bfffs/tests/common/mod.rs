@@ -6,8 +6,6 @@ mod ddml;
 mod fs;
 mod idml;
 mod pool;
-mod prime_s;
-mod raid;
 mod vdev_block;
 mod vdev_file;
 mod vdev_raid;
