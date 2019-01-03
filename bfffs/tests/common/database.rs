@@ -7,7 +7,7 @@ use bfffs::common::idml::*;
 use bfffs::common::pool::*;
 use bfffs::common::vdev_block::*;
 use bfffs::common::vdev_file::*;
-use bfffs::common::vdev_raid::*;
+use bfffs::common::raid::*;
 use futures::{Future, future};
 use galvanic_test::test_suite;
 use std::{

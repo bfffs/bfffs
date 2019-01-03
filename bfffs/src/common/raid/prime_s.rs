@@ -11,13 +11,14 @@
 //! Computer Architecture News. Vol. 26. No. 3. IEEE Computer Society, 1998.
 
 use fixedbitset::FixedBitSet;
-use crate::common::{*, declust::*};
+use crate::common::*;
 use modulo::Mod;
 use std::{
     fmt::Debug,
     iter::FusedIterator,
     ops::{Mul, Neg},
 };
+use super::declust::*;
 
 /// Return the multiplicative inverse of a, mod n.  n must be prime.
 ///
@@ -635,7 +636,7 @@ mod benches {
     #[bench]
     fn invmod(bench: &mut Bencher) {
         bench.iter(move || {
-            prime_s::invmod(500i16, 523i16)
+            super::invmod(500i16, 523i16)
         });
     }
 

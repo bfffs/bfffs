@@ -29,28 +29,20 @@ pub mod database;
 pub mod dataset;
 pub mod ddml;
 #[cfg(test)] mod dml_mock;
-pub mod declust;
 pub mod device_manager;
 pub mod dml;
 pub mod fs;
 pub mod fs_tree;
 pub mod idml;
 pub mod label;
-pub mod null_locator;
 pub mod pool;
-pub mod prime_s;
 pub mod property;
 pub mod raid;
-mod sgcursor;
 pub mod tree;
 pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_file;
 pub mod vdev_leaf;
-pub mod vdev_raid;
-pub mod vdev_raid_api;
-
-pub use self::sgcursor::SGCursor;
 
 /// LBAs always use 4K LBAs, even if the underlying device supports smaller.
 pub const BYTES_PER_LBA: usize = 4096;

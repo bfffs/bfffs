@@ -4,15 +4,11 @@ use crate::{
     boxfut,
     common::{
         *,
-        declust::*,
         label::*,
         vdev::*,
-        vdev_raid_api::*,
-        raid::*
     }
 };
 #[cfg(not(test))] use crate::common::vdev_block::*;
-use crate::common::{null_locator::*, prime_s::*};
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
@@ -26,6 +22,14 @@ use std::collections::BTreeMap;
 #[cfg(not(test))] use std::{
     num::NonZeroU64,
     path::Path
+};
+use super::{
+    codec::*,
+    declust::*,
+    null_locator::*,
+    prime_s::*,
+    sgcursor::*,
+    vdev_raid_api::*,
 };
 
 #[cfg(test)]

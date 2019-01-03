@@ -6,10 +6,10 @@ use crate::{
     common::{
         *,
         label::*,
-        vdev_raid_api::VdevRaidApi
+        raid::VdevRaidApi
     }
 };
-#[cfg(not(test))] use crate::common::{vdev::*, vdev_raid::*};
+#[cfg(not(test))] use crate::common::{vdev::*, raid::*};
 use fixedbitset::FixedBitSet;
 use futures::{ Future, IntoFuture, future};
 use metrohash::MetroHash64;

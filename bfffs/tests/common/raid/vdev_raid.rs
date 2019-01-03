@@ -7,9 +7,8 @@ test_suite! {
 
     use bfffs::{
         common::*,
-        common::vdev_raid::*,
+        common::raid::*,
         common::vdev::Vdev,
-        common::vdev_raid_api::VdevRaidApi
     };
     use divbuf::DivBufShared;
     use futures::{Future, future};
@@ -552,8 +551,7 @@ test_suite! {
         common::vdev_block::*,
         common::vdev::Vdev,
         common::vdev_file::*,
-        common::vdev_raid::*,
-        common::vdev_raid_api::VdevRaidApi
+        common::raid::*,
     };
     use futures::{Future, future};
     use galvanic_test::*;

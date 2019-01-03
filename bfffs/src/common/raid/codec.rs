@@ -1,9 +1,13 @@
 // vim: tw=80
 
+// This module contains methods that haven't yet been integrated into vdev_raid
+#![allow(unused)]
+
 use crate::common::*;
 use isa_l;
 use fixedbitset::FixedBitSet;
 use std::borrow::BorrowMut;
+use super::sgcursor::*;
 
 /// An encoder/decoder for Reed-Solomon Erasure coding in GF(2^8), oriented
 /// towards RAID applications

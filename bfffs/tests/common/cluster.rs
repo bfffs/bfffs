@@ -5,7 +5,7 @@ test_suite! {
     name persistence;
 
     use bfffs::common::vdev_block::*;
-    use bfffs::common::vdev_raid::*;
+    use bfffs::common::raid::*;
     use bfffs::common::cluster::*;
     use bfffs::common::vdev_file::*;
     use futures::{Future, future};

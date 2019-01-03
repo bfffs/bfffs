@@ -4,7 +4,7 @@
 //!
 //! This is a trivial layout that uses a single device.
 
-use crate::common::declust::*;
+use super::declust::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NullLocator {

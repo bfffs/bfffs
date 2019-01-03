@@ -81,9 +81,9 @@ test_suite! {
         let txg = TxgT::from(0);
         let (mut rt, ddml) = objects.val;
         let ddml2 = &ddml;
-        let mut file = fs::File::open(&Path::new("src/common/vdev_raid.rs"))
+        let mut file = fs::File::open(&Path::new("src/common/raid/vdev_raid.rs"))
             .unwrap_or_else(|_|
-            fs::File::open(&Path::new("bfffs/src/common/vdev_raid.rs"))
+            fs::File::open(&Path::new("bfffs/src/common/raid/vdev_raid.rs"))
             .unwrap()
         );
         let mut vdev_raid_contents = Vec::new();

@@ -7,7 +7,7 @@ test_suite! {
     use bfffs::common::*;
     use bfffs::common::cache::*;
     use bfffs::common::vdev_block::*;
-    use bfffs::common::vdev_raid::*;
+    use bfffs::common::raid::*;
     use bfffs::common::cluster;
     use bfffs::common::pool::*;
     use bfffs::common::ddml::*;

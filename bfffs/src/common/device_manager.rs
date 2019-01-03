@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use crate::common::{Uuid, pool, vdev::Vdev, vdev_file, vdev_raid};
+use crate::common::{Uuid, pool, raid, vdev::Vdev, vdev_file};
 #[cfg(not(test))]
 use crate::common::{Error, cache, cluster, database, ddml, idml, label,
     vdev_block};
@@ -23,7 +23,7 @@ use tokio::runtime::current_thread;
 #[derive(Default)]
 struct Inner {
     leaves: BTreeMap<Uuid, PathBuf>,
-    raids: BTreeMap<Uuid, vdev_raid::Label>,
+    raids: BTreeMap<Uuid, raid::Label>,
     pools: BTreeMap<Uuid, pool::Label>,
 }
 
@@ -142,7 +142,7 @@ impl DevManager {
         DevManager::open_vdev_blocks(leaf_paths)
         .and_then(move |vdev_blocks| {
             let (vdev_raid, reader) =
-                vdev_raid::VdevRaid::open(Some(uuid), vdev_blocks);
+                raid::VdevRaid::open(Some(uuid), vdev_blocks);
             cluster::Cluster::open(vdev_raid)
             .map(move |cluster| (cluster, reader))
         })
@@ -150,7 +150,7 @@ impl DevManager {
 
     #[cfg(not(test))]
     fn open_labels(&self, uuid: Uuid, mut inner: MutexGuard<Inner>)
-        -> (pool::Label, Vec<vdev_raid::Label>, BTreeMap<Uuid, Vec<PathBuf>>)
+        -> (pool::Label, Vec<raid::Label>, BTreeMap<Uuid, Vec<PathBuf>>)
     {
         let pool = inner.pools.remove(&uuid).unwrap();
         let raids = pool.children.iter()
@@ -192,7 +192,7 @@ impl DevManager {
                 .map(move |(vdev_file, mut reader)| {
                     let mut inner = self.inner.lock().unwrap();
                     inner.leaves.insert(vdev_file.uuid(), pathbuf);
-                    let rl: vdev_raid::Label = reader.deserialize().unwrap();
+                    let rl: raid::Label = reader.deserialize().unwrap();
                     inner.raids.insert(rl.uuid, rl);
                     let pl: pool::Label = reader.deserialize().unwrap();
                     inner.pools.insert(pl.uuid, pl);
