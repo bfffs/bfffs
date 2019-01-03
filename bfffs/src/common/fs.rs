@@ -1288,8 +1288,9 @@ impl Fs {
                 self.db.fswrite(self.tree, move |ds| {
                     ds.get(inode_key)
                     .and_then(move |r| {
-                        let mut value = r.unwrap();
-                        let inode = value.as_mut_inode().unwrap();
+                        let mut value = r.expect("Inode not found");
+                        let inode = value.as_mut_inode()
+                            .expect("Wrong Value type");
                         let now = time::get_time();
                         inode.atime = now;
                         let fsize = inode.size;
@@ -1307,8 +1308,9 @@ impl Fs {
                 self.db.fsread(self.tree, move |ds| {
                     ds.get(inode_key)
                     .and_then(move |r| {
-                        let value = r.unwrap();
-                        let inode = value.as_inode().unwrap();
+                        let value = r.expect("Inode not found");
+                        let inode = value.as_inode()
+                            .expect("Wrong Value type");
                         let fsize = inode.size;
                         let rs = inode.record_size() as u64;
                         Fs::do_read(ds, ino, fsize, rs, offset, size)
