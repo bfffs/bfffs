@@ -56,11 +56,6 @@ impl ChunkId {
     pub fn is_data(&self) -> bool {
         if let ChunkId::Data(_) = *self { true } else { false }
     }
-
-    /// Is this a Parity chunk?
-    pub fn is_parity(&self) -> bool {
-        if let ChunkId::Parity(_, _) = *self { true } else { false }
-    }
 }
 
 /// Describes the location of a Chunk within the declustering layout
