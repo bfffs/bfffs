@@ -370,39 +370,21 @@ impl VdevRaid {
     ///
     /// # Parameters
     ///
-    /// * `uuid`:       Uuid of the desired `VdevRaid`, if present.  If `None`,
-    ///                 then it will not be verified.
-    /// * `combined`:   An array of pairs of `VdevBlock`s and their
-    ///                 associated `LabelReader`.  The labels of each will be
-    ///                 verified.
-    pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlockLike, LabelReader)>)
-        -> (Self, LabelReader)
+    /// * `label`:      The `VdevRaid`'s label, taken from any child.
+    /// * `blocks`:     A map of all the children `VdevBlock`s, indexed by UUID.
+    pub fn open(label: Label, mut blocks: BTreeMap<Uuid, VdevBlockLike>) -> Self
     {
-        let mut label_pair = None;
-        let mut all_blockdevs = combined.into_iter()
-            .map(|(vdev_block, mut label_reader)| {
-            let label: Label = label_reader.deserialize().unwrap();
-            if let Some(u) = uuid {
-                assert_eq!(u, label.uuid, "Opening disk from wrong cluster");
-            }
-            if label_pair.is_none() {
-                label_pair = Some((label, label_reader));
-            }
-            (vdev_block.uuid(), vdev_block)
-        }).collect::<BTreeMap<Uuid, VdevBlockLike>>();
-        let (label, label_reader) = label_pair.unwrap();
-        assert_eq!(all_blockdevs.len(), label.children.len(),
+        assert_eq!(blocks.len(), label.children.len(),
             "Missing block devices");
         let children = label.children.iter().map(|uuid| {
-            all_blockdevs.remove(&uuid).unwrap()
+            blocks.remove(&uuid).unwrap()
         }).collect::<Vec<_>>();
-        let raid = VdevRaid::new(label.chunksize,
-                                 label.disks_per_stripe,
-                                 label.redundancy,
-                                 label.uuid,
-                                 label.layout_algorithm,
-                                 children.into_boxed_slice());
-        (raid, label_reader)
+        VdevRaid::new(label.chunksize,
+                      label.disks_per_stripe,
+                      label.redundancy,
+                      label.uuid,
+                      label.layout_algorithm,
+                      children.into_boxed_slice())
     }
 
     /// Asynchronously open a zone on a RAID device
@@ -1069,7 +1051,7 @@ impl VdevRaidApi for VdevRaid {
     fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut {
         let children_uuids = self.blockdevs.iter().map(|bd| bd.uuid())
             .collect::<Vec<_>>();
-        let label = Label {
+        let raid_label = Label {
             uuid: self.uuid,
             chunksize: self.chunksize,
             disks_per_stripe: self.locator.stripesize(),
@@ -1077,6 +1059,7 @@ impl VdevRaidApi for VdevRaid {
             layout_algorithm: self.layout_algorithm,
             children: children_uuids
         };
+        let label = super::Label::VdevRaid(raid_label);
         labeller.serialize(&label).unwrap();
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_label(labeller.clone())

@@ -7,7 +7,7 @@ use bfffs::common::idml::*;
 use bfffs::common::pool::*;
 use bfffs::common::vdev_block::*;
 use bfffs::common::vdev_file::*;
-use bfffs::common::raid::*;
+use bfffs::common::raid;
 use futures::{Future, future};
 use galvanic_test::test_suite;
 use std::{
@@ -24,7 +24,7 @@ fn open_db(rt: &mut Runtime, path: PathBuf) -> Database {
         VdevFile::open(path)
         .and_then(|(leaf, reader)| {
                 let block = VdevBlock::new(leaf);
-                let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
+                let (vr, lr) = raid::open(None, vec![(block, reader)]);
                 cluster::Cluster::open(vr)
                 .map(move |cluster| (cluster, lr))
         }).and_then(move |(cluster, reader)|{
@@ -136,7 +136,7 @@ test_suite! {
         let mut f = fs::File::open(path).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, raid, cluster, pool, and idml labels
-        f.seek(SeekFrom::Start(314)).unwrap();
+        f.seek(SeekFrom::Start(318)).unwrap();
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {

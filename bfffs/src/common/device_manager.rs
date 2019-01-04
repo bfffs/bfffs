@@ -79,12 +79,12 @@ impl DevManager {
     {
         let (_pool, raids, mut leaves) = self.open_labels(uuid, inner);
         let proxies = raids.into_iter().map(move |raid| {
-            let leaf_paths: Vec<PathBuf> = leaves.remove(&raid.uuid).unwrap();
+            let leaf_paths: Vec<PathBuf> = leaves.remove(&raid.uuid()).unwrap();
             let (tx, rx) = oneshot::channel();
             // The top-level Executor spawn puts each Cluster onto a different
             // thread, when using tokio-io-pool
             DefaultExecutor::current().spawn(Box::new(future::lazy(move || {
-                let fut = DevManager::open_cluster(leaf_paths, raid.uuid)
+                let fut = DevManager::open_cluster(leaf_paths, raid.uuid())
                 .map(move |(cluster, reader)| {
                     let proxy = pool::ClusterProxy::new(cluster);
                     tx.send((proxy, reader))
@@ -119,8 +119,8 @@ impl DevManager {
         let inner = self.inner.lock().unwrap();
         let (_pool, raids, mut leaves) = self.open_labels(uuid, inner);
         let cfuts = raids.into_iter().map(move |raid| {
-            let leaf_paths = leaves.remove(&raid.uuid).unwrap();
-            DevManager::open_cluster(leaf_paths, raid.uuid)
+            let leaf_paths = leaves.remove(&raid.uuid()).unwrap();
+            DevManager::open_cluster(leaf_paths, raid.uuid())
             .map(|(cluster, _reader)| cluster)
         });
         future::join_all(cfuts)
@@ -141,9 +141,8 @@ impl DevManager {
     {
         DevManager::open_vdev_blocks(leaf_paths)
         .and_then(move |vdev_blocks| {
-            let (vdev_raid, reader) =
-                raid::VdevRaid::open(Some(uuid), vdev_blocks);
-            cluster::Cluster::open(vdev_raid)
+            let (vdev_raid_api, reader) = raid::open(Some(uuid), vdev_blocks);
+            cluster::Cluster::open(vdev_raid_api)
             .map(move |cluster| (cluster, reader))
         })
     }
@@ -157,10 +156,10 @@ impl DevManager {
             .map(|child_uuid| inner.raids.remove(child_uuid).unwrap())
             .collect::<Vec<_>>();
         let leaves = raids.iter().map(|raid| {
-            let leaves = raid.children.iter().map(|uuid| {
+            let leaves = raid.iter_children().map(|uuid| {
                 inner.leaves.remove(&uuid).unwrap()
             }).collect::<Vec<_>>();
-            (raid.uuid, leaves)
+            (raid.uuid(), leaves)
         }).collect::<BTreeMap<_, _>>();
         // Drop the self.inner mutex
         (pool, raids, leaves)
@@ -193,7 +192,7 @@ impl DevManager {
                     let mut inner = self.inner.lock().unwrap();
                     inner.leaves.insert(vdev_file.uuid(), pathbuf);
                     let rl: raid::Label = reader.deserialize().unwrap();
-                    inner.raids.insert(rl.uuid, rl);
+                    inner.raids.insert(rl.uuid(), rl);
                     let pl: pool::Label = reader.deserialize().unwrap();
                     inner.pools.insert(pl.uuid, pl);
                 })

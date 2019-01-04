@@ -551,7 +551,7 @@ test_suite! {
         common::vdev_block::*,
         common::vdev::Vdev,
         common::vdev_file::*,
-        common::raid::*,
+        common::raid::{self, VdevRaid, VdevRaidApi},
     };
     use futures::{Future, future};
     use galvanic_test::*;
@@ -564,35 +564,40 @@ test_suite! {
     use tempdir::TempDir;
     use tokio::runtime::current_thread;
 
-    const GOLDEN_VDEV_RAID_LABEL: [u8; 120] = [
-        // Past the VdevFile::Label, we have a VdevRaid::Label
-        // First comes the VdevFile's UUID.
-        0x93, 0x11, 0x4c, 0xef, 0xdb, 0x19, 0x45, 0x6f,
-        0x96, 0xef, 0xb8, 0x82, 0xc2, 0x04, 0xe6, 0x92,
+    const GOLDEN_VDEV_RAID_LABEL: [u8; 124] = [
+        // Past the VdevFile::Label, we have a raid::Label
+        // First comes the VdevRaid discriminant
+        0x00, 0x00, 0x00, 0x00,
+        // Then the VdevRaid label, beginning with a UUID
+                                0x2f, 0x27, 0x51, 0xe5,
+        0xe8, 0x58, 0x45, 0x1b, 0x92, 0xb5, 0x24, 0x0f,
+        0x23, 0x7b, 0xc9, 0xbe,
         // Then the chunksize in 64 bits
-        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                0x02, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
         // disks_per_stripe in 16 bits
-        0x03, 0x00,
+                                0x03, 0x00,
         // redundancy level in 16 bits
-                    0x01, 0x00,
+                                            0x01, 0x00,
         // LayoutAlgorithm discriminant in 32 bits
-                                0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
         // Vector of children's UUIDs.  A 64-bit count of children, then each
         // UUID is 64-bits long
-        0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0xb7, 0x43, 0x24, 0xaa, 0xa5, 0x8c, 0x4c, 0xef,
-        0xa8, 0xa8, 0x2c, 0xdd, 0x60, 0x1f, 0x92, 0x79,
-        0x9e, 0x34, 0x76, 0x01, 0xef, 0x0e, 0x4e, 0xd0,
-        0x97, 0x1e, 0xa1, 0xd3, 0x7d, 0xb5, 0x04, 0x33,
-        0x8a, 0xdb, 0x69, 0x16, 0x49, 0x89, 0x4d, 0x0c,
-        0xb3, 0xcf, 0xbc, 0x3d, 0x82, 0xbf, 0x54, 0x4a,
-        0xd0, 0x02, 0x55, 0xc5, 0x7c, 0x25, 0x4f, 0x8e,
-        0x9b, 0x03, 0xef, 0x9d, 0xd3, 0x02, 0xfd, 0xe6,
-        0x16, 0xc0, 0xfc, 0x41, 0xeb, 0xd6, 0x4e, 0x71,
-        0x97, 0x3c, 0x0c, 0x82, 0x30, 0x26, 0x23, 0x06
+                                0x05, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x2c, 0x9a, 0x3b, 0xfd,
+        0x9c, 0xaf, 0x4c, 0xf8, 0xba, 0x40, 0xc6, 0x64,
+        0x2f, 0x88, 0x5a, 0x01, 0x62, 0xbf, 0xbd, 0x54,
+        0x9f, 0xa3, 0x41, 0x65, 0x8e, 0x75, 0xfa, 0x7e,
+        0xcb, 0x52, 0x45, 0x2e, 0xd3, 0x14, 0x96, 0x91,
+        0x17, 0x18, 0x4a, 0xc5, 0xbd, 0x06, 0x24, 0xd1,
+        0xd2, 0xa9, 0x6d, 0x67, 0x24, 0x31, 0xb8, 0x32,
+        0x01, 0x63, 0x45, 0xd5, 0xa7, 0x9c, 0xec, 0x10,
+        0x6b, 0xfe, 0x9b, 0x7c, 0xb8, 0x79, 0x31, 0x82,
+        0x2f, 0xc9, 0x4c, 0x40, 0x84, 0xd3, 0xff, 0xd5,
+        0xb8, 0x3b, 0x18, 0x8e,
     ];
 
-    fixture!( raid() -> (VdevRaid, TempDir, Vec<String>) {
+    fixture!( mocks() -> (VdevRaid, TempDir, Vec<String>) {
         setup(&mut self) {
             let num_disks = 5;
             let len = 1 << 26;  // 64 MB
@@ -612,8 +617,8 @@ test_suite! {
     // Testing VdevRaid::open with golden labels is too hard, because we
     // need to store separate golden labels for each VdevLeaf.  Instead, we'll
     // just check that we can open-after-write
-    test open(raid()) {
-        let (old_raid, _tempdir, paths) = raid.val;
+    test open(mocks()) {
+        let (old_raid, _tempdir, paths) = mocks.val;
         let uuid = old_raid.uuid();
         current_thread::Runtime::new().unwrap().block_on(future::lazy(move || {
             let label_writer = LabelWriter::new(0);
@@ -624,18 +629,18 @@ test_suite! {
                     })
                 }))
             }).map(move |combined| {
-                let (vdev_raid, _) = VdevRaid::open(Some(uuid), combined);
+                let (vdev_raid, _) = raid::open(Some(uuid), combined);
                 assert_eq!(uuid, vdev_raid.uuid());
             })
         })).unwrap();
     }
 
-    test write_label(raid()) {
+    test write_label(mocks()) {
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             let label_writer = LabelWriter::new(0);
-            raid.val.0.write_label(label_writer)
+            mocks.val.0.write_label(label_writer)
         })).unwrap();
-        for path in raid.val.2 {
+        for path in mocks.val.2 {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
             f.seek(SeekFrom::Start(72)).unwrap();   // Skip the VdevLeaf label
@@ -646,13 +651,14 @@ test_suite! {
                 use std::io::Write;
                 let mut df = File::create("/tmp/label.bin").unwrap();
                 df.write_all(&v[..]).unwrap();
-                println!("UUID is {}", raid.val.0.uuid());
+                println!("UUID is {}", mocks.val.0.uuid());
             } */
             // Compare against the golden master, skipping the checksum and UUID
             // fields
-            assert_eq!(&v[16..40], &GOLDEN_VDEV_RAID_LABEL[16..40]);
+            assert_eq!(&v[0..4], &GOLDEN_VDEV_RAID_LABEL[0..4]);
+            assert_eq!(&v[20..44], &GOLDEN_VDEV_RAID_LABEL[20..44]);
             // Rest of the buffer should be zero-filled
-            assert!(v[120..].iter().all(|&x| x == 0));
+            assert!(v[124..].iter().all(|&x| x == 0));
         }
     }
 }

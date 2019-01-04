@@ -6,7 +6,7 @@ test_suite! {
 
     use bfffs::common::vdev_file::*;
     use bfffs::common::vdev_block::*;
-    use bfffs::common::raid::*;
+    use bfffs::common::raid;
     use bfffs::common::cluster;
     use bfffs::common::label::*;
     use bfffs::common::pool::*;
@@ -82,14 +82,14 @@ test_suite! {
             let c0_fut = VdevFile::open(paths[0].clone())
                 .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
-                    let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
+                    let (vr, lr) = raid::open(None, vec![(block, reader)]);
                     cluster::Cluster::open(vr)
                     .map(move |cluster| (cluster, lr))
             });
             let c1_fut = VdevFile::open(paths[1].clone())
                 .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
-                    let (vr, lr) = VdevRaid::open(None, vec![(block, reader)]);
+                    let (vr, lr) = raid::open(None, vec![(block, reader)]);
                     cluster::Cluster::open(vr)
                     .map(move |cluster| (cluster, lr))
             });
@@ -114,7 +114,7 @@ test_suite! {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
             // Skip leaf, raid, and cluster labels
-            f.seek(SeekFrom::Start(128)).unwrap();
+            f.seek(SeekFrom::Start(132)).unwrap();
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {
