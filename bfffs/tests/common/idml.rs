@@ -120,7 +120,7 @@ test_suite! {
             let mut rt = Runtime::new().unwrap();
             let pool = rt.block_on(future::lazy(|| {
                 let cs = NonZeroU64::new(1);
-                let cluster = Pool::create_cluster(cs, 1, 1, None, 0, &paths);
+                let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
                 let clusters = vec![cluster];
                 future::join_all(clusters)
                     .map_err(|_| unreachable!())
@@ -240,7 +240,7 @@ test_suite! {
             let pool = rt.block_on(future::lazy(|| {
                 let cs = NonZeroU64::new(1);
                 let lpz = NonZeroU64::new(LBA_PER_ZONE);
-                let cluster = Pool::create_cluster(cs, 1, 1, lpz, 0, &paths);
+                let cluster = Pool::create_cluster(cs, 1, lpz, 0, &paths);
                 let clusters = vec![cluster];
                 future::join_all(clusters)
                     .map_err(|_| unreachable!())

@@ -705,10 +705,9 @@ impl<'a> Cluster {
     ///                         the largest amount of data that will be
     ///                         read/written to a single device before the
     ///                         `Locator` switches to the next device.
-    /// * `num_disks`:          Total number of disks in the array
     /// * `disks_per_stripe`:   Number of data plus parity chunks in each
     ///                         self-contained RAID stripe.  Must be less than
-    ///                         or equal to `num_disks`.
+    ///                         or equal to the number of disks in `paths`.
     /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
     ///                         simulated zones on devices that don't have
     ///                         native zones.
@@ -718,15 +717,14 @@ impl<'a> Cluster {
     /// * `paths`:              Slice of pathnames of files and/or devices
     #[cfg(not(test))]
     pub fn create<P: AsRef<Path>>(chunksize: Option<NonZeroU64>,
-                                  num_disks: i16,
                                   disks_per_stripe: i16,
                                   lbas_per_zone: Option<NonZeroU64>,
                                   redundancy: i16,
                                   paths: &[P]) -> Self
     {
         let vdev = Rc::new(
-            VdevRaid::create(chunksize, num_disks, disks_per_stripe,
-                             lbas_per_zone, redundancy, paths)
+            VdevRaid::create(chunksize, disks_per_stripe, lbas_per_zone,
+                             redundancy, paths)
         );
         let total_zones = vdev.zones();
         let fsm = FreeSpaceMap::new(total_zones);

@@ -35,7 +35,7 @@ test_suite! {
             let pool = rt.block_on(future::lazy(|| {
                 let cs = NonZeroU64::new(1);
                 let clusters = vec![
-                    Pool::create_cluster(cs, 1, 1, None, 0, &[filename][..])
+                    Pool::create_cluster(cs, 1, None, 0, &[filename][..])
                 ];
                 future::join_all(clusters)
                     .map_err(|_| unreachable!())

@@ -55,7 +55,7 @@ test_suite! {
             let pool = rt.block_on(future::lazy(|| {
                 let clusters = paths.iter().map(|p| {
                     let cs = NonZeroU64::new(1);
-                    Pool::create_cluster(cs, 1, 1, None, 0, &[p][..])
+                    Pool::create_cluster(cs, 1, None, 0, &[p][..])
                 }).collect::<Vec<_>>();
                 future::join_all(clusters)
                     .map_err(|_| unreachable!())

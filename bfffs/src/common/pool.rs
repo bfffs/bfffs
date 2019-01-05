@@ -442,10 +442,9 @@ impl<'a> Pool {
     ///                         the largest amount of data that will be
     ///                         read/written to a single device before the
     ///                         `Locator` switches to the next device.
-    /// * `num_disks`:          Total number of disks in the array
     /// * `disks_per_stripe`:   Number of data plus parity chunks in each
     ///                         self-contained RAID stripe.  Must be less than
-    ///                         or equal to `num_disks`.
+    ///                         or equal to the size of `paths`.
     /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
     ///                         simulated zones on devices that don't have
     ///                         native zones.
@@ -455,7 +454,6 @@ impl<'a> Pool {
     /// * `paths`:              Slice of pathnames of files and/or devices
     #[cfg(not(test))]
     pub fn create_cluster<P: AsRef<Path> + Sync>(chunksize: Option<NonZeroU64>,
-                               num_disks: i16,
                                disks_per_stripe: i16,
                                lbas_per_zone: Option<NonZeroU64>,
                                redundancy: i16,
@@ -468,8 +466,8 @@ impl<'a> Pool {
             .map(|p| p.as_ref().to_owned())
             .collect::<Vec<PathBuf>>();
         DefaultExecutor::current().spawn(Box::new(future::lazy(move || {
-            let c = cluster::Cluster::create(chunksize, num_disks,
-                disks_per_stripe, lbas_per_zone, redundancy, &owned_paths);
+            let c = cluster::Cluster::create(chunksize, disks_per_stripe,
+                    lbas_per_zone, redundancy, &owned_paths);
             tx.send(ClusterProxy::new(c)).unwrap();
             Ok(())
         }))).unwrap();

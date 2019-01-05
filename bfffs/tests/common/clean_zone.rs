@@ -39,7 +39,7 @@ test_suite! {
             drop(file);
             let zone_size = NonZeroU64::new(*self.zone_size);
             let db = rt.block_on(future::lazy(move || {
-                Pool::create_cluster(None, 1, 1, zone_size, 0, &[filename])
+                Pool::create_cluster(None, 1, zone_size, 0, &[filename])
                 .map_err(|_| unreachable!())
                 .and_then(|cluster| {
                     Pool::create(String::from("test_fs"), vec![cluster])

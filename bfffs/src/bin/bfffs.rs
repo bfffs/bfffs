@@ -226,30 +226,28 @@ impl Builder {
 
     pub fn create_mirror(&mut self, devs: &[&str]) {
         // TODO: allow creating declustered mirrors
-        let n = devs.len() as i16;
         let k = devs.len() as i16;
         let f = devs.len() as i16 - 1;
-        self.do_create_cluster(n, k, f, &devs[2..])
+        self.do_create_cluster(k, f, &devs[2..])
     }
 
     pub fn create_raid(&mut self, devs: &[&str]) {
-        let n = devs.len() as i16 - 2;
         let k = i16::from_str_radix(devs[0], 10)
             .expect("Disks per stripe must be an integer");
         let f = i16::from_str_radix(devs[1], 10)
             .expect("Disks per stripe must be an integer");
-        self.do_create_cluster(n, k, f, &devs[2..])
+        self.do_create_cluster(k, f, &devs[2..])
     }
 
     pub fn create_single(&mut self, dev: &str) {
-        self.do_create_cluster(1, 1, 0, &[&dev])
+        self.do_create_cluster(1, 0, &[&dev])
     }
 
-    fn do_create_cluster(&mut self, n: i16, k: i16, f: i16, devs: &[&str])
+    fn do_create_cluster(&mut self, k: i16, f: i16, devs: &[&str])
     {
         let zone_size = self.zone_size;
         let c = self.rt.block_on(future::lazy(move || {
-            Pool::create_cluster(None, n, k, zone_size, f, devs)
+            Pool::create_cluster(None, k, zone_size, f, devs)
         })).unwrap();
         self.clusters.push(c);
     }

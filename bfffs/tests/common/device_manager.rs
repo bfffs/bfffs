@@ -39,7 +39,7 @@ test_suite! {
             }).collect::<Vec<_>>();
             let pathsclone = paths.clone();
             let db = rt.block_on(future::lazy(move || {
-                Pool::create_cluster(None, 3, 3, None, 1, &paths)
+                Pool::create_cluster(None, 3, None, 1, &paths)
                 .map_err(|_| unreachable!())
                 .and_then(|cluster| {
                     Pool::create(String::from("test_device_manager"), vec![cluster])
