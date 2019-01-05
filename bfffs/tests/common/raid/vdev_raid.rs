@@ -567,7 +567,7 @@ test_suite! {
     const GOLDEN_VDEV_RAID_LABEL: [u8; 124] = [
         // Past the VdevFile::Label, we have a raid::Label
         // First comes the VdevRaid discriminant
-        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x00, 0x00,
         // Then the VdevRaid label, beginning with a UUID
                                 0x2f, 0x27, 0x51, 0xe5,
         0xe8, 0x58, 0x45, 0x1b, 0x92, 0xb5, 0x24, 0x0f,

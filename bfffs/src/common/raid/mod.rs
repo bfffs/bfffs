@@ -14,6 +14,7 @@ use crate::common::{
 #[cfg(test)] use crate::common::label::LabelWriter;
 use std::{
     collections::BTreeMap,
+    iter::once,
     rc::Rc
 };
 
@@ -22,9 +23,11 @@ mod declust;
 mod null_locator;
 mod prime_s;
 mod sgcursor;
+mod vdev_onedisk;
 mod vdev_raid;
 mod vdev_raid_api;
 
+pub use self::vdev_onedisk::VdevOneDisk;
 pub use self::vdev_raid::VdevRaid;
 pub use self::vdev_raid_api::VdevRaidApi;
 
@@ -60,20 +63,22 @@ type VdevBlockLike = VdevBlock;
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Label {
     // TODO: VdevMirror
-    // TODO: VdevOneDisk
-    VdevRaid(self::vdev_raid::Label)
+    OneDisk(self::vdev_onedisk::Label),
+    Raid(self::vdev_raid::Label)
 }
 
-impl Label {
-    pub fn iter_children(&self) -> impl Iterator<Item=&Uuid> {
+impl<'a> Label {
+    pub fn iter_children(&'a self) -> Box<dyn Iterator<Item=&Uuid> + 'a> {
         match self {
-            Label::VdevRaid(l) => l.children.iter()
+            Label::Raid(l) => Box::new(l.children.iter()),
+            Label::OneDisk(l) => Box::new(once(&l.child))
         }
     }
 
     pub fn uuid(&self) -> Uuid {
         match self {
-            Label::VdevRaid(l) => l.uuid
+            Label::Raid(l) => l.uuid,
+            Label::OneDisk(l) => l.uuid
         }
     }
 }
@@ -103,8 +108,13 @@ pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlockLike, LabelReader)>)
         (vdev_block.uuid(), vdev_block)
     }).collect::<BTreeMap<Uuid, VdevBlockLike>>();
     let (label, label_reader) = label_pair.unwrap();
-    let vr = match label {
-        Label::VdevRaid(vrl) => VdevRaid::open(vrl, all_blockdevs)
+    let vdev = match label {
+        Label::Raid(l) => {
+            Rc::new(VdevRaid::open(l, all_blockdevs)) as Rc<dyn VdevRaidApi>
+        },
+        Label::OneDisk(l) => {
+            Rc::new(VdevOneDisk::open(l, all_blockdevs)) as Rc<dyn VdevRaidApi>
+        },
     };
-    (Rc::new(vr), label_reader)
+    (vdev, label_reader)
 }

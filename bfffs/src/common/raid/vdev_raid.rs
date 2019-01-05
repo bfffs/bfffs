@@ -1031,7 +1031,7 @@ impl VdevRaidApi for VdevRaid {
             layout_algorithm: self.layout_algorithm,
             children: children_uuids
         };
-        let label = super::Label::VdevRaid(raid_label);
+        let label = super::Label::Raid(raid_label);
         labeller.serialize(&label).unwrap();
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_label(labeller.clone())
