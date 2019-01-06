@@ -27,7 +27,6 @@ use super::{
     VdevBlockLike,
     codec::*,
     declust::*,
-    null_locator::*,
     prime_s::*,
     sgcursor::*,
     vdev_raid_api::*,
@@ -39,8 +38,6 @@ use super::{
 /// encode or decode parity.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum LayoutAlgorithm {
-    /// The trivial, nonredundant placement algorithm
-    NullLocator,
     /// A good declustered algorithm for any prime number of disks
     PrimeS,
 }
@@ -256,13 +253,10 @@ impl VdevRaid {
                      chunksize: Option<NonZeroU64>)
         -> (LayoutAlgorithm, LbaT)
     {
-        if num_disks == 1 {
-            (LayoutAlgorithm::NullLocator, 1)
-        } else {
-            let chunksize = chunksize.map(NonZeroU64::get)
-                .unwrap_or(VdevRaid::DEFAULT_CHUNKSIZE);
-            (LayoutAlgorithm::PrimeS, chunksize)
-        }
+        debug_assert!(num_disks > 1);
+        let chunksize = chunksize.map(NonZeroU64::get)
+            .unwrap_or(VdevRaid::DEFAULT_CHUNKSIZE);
+        (LayoutAlgorithm::PrimeS, chunksize)
     }
 
     /// Create a new VdevRaid from unused files or devices
@@ -312,8 +306,6 @@ impl VdevRaid {
         let num_disks = blockdevs.len() as i16;
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
         let locator: Box<dyn Locator> = match layout_algorithm {
-            LayoutAlgorithm::NullLocator => Box::new(
-                NullLocator::new(num_disks, disks_per_stripe, redundancy)),
             LayoutAlgorithm::PrimeS => Box::new(
                 PrimeS::new(num_disks, disks_per_stripe, redundancy))
         };
@@ -1261,10 +1253,10 @@ fn debug() {
     let label = Label {
         uuid: Uuid::new_v4(),
         chunksize: 1,
-        disks_per_stripe: 1,
-        redundancy: 0,
-        layout_algorithm: LayoutAlgorithm::NullLocator,
-        children: vec![Uuid::new_v4()]
+        disks_per_stripe: 2,
+        redundancy: 1,
+        layout_algorithm: LayoutAlgorithm::PrimeS,
+        children: vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()]
     };
     format!("{:?}", label);
 }
@@ -1834,32 +1826,37 @@ fn flush_zone_empty_stripe_buffer() {
 // zone.
 #[test]
 fn open_zone_reopen() {
-    let k = 1;
-    let f = 0;
+    let k = 2;
+    let f = 1;
     const CHUNKSIZE: LbaT = 1;
     let zl0 = (1, 4096);
     let zl1 = (4096, 8192);
 
     let s = Scenario::new();
-    let bd = s.create_mock::<MockVdevBlock>();
-    s.expect(bd.size_call().and_return_clone(262_144).times(..));
-    s.expect(bd.lba2zone_call(1).and_return_clone(Some(0)).times(..));
-    s.expect(bd.lba2zone_call(4196).and_return_clone(Some(1)).times(..));
-    s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-    s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
-    s.expect(bd.open_zone_call(4096)
-             .and_return(Box::new(future::ok::<(), Error>(())))
-    );
-    s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-             .times(..));
-    s.expect(bd.write_at_call(ANY, 4196)
-        .and_return( Box::new( future::ok::<(), Error>(())))
-    );
-    let blockdevs: Vec<Box<dyn VdevBlockTrait + 'static>> = vec![Box::new(bd)];
+    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+    let bd = || {
+        let bd = Box::new(s.create_mock::<MockVdevBlock>());
+        s.expect(bd.size_call().and_return_clone(262_144).times(..));
+        s.expect(bd.lba2zone_call(1).and_return_clone(Some(0)).times(..));
+        s.expect(bd.lba2zone_call(4196).and_return_clone(Some(1)).times(..));
+        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
+        s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
+        s.expect(bd.open_zone_call(4096)
+                 .and_return(Box::new(future::ok::<(), Error>(())))
+        );
+        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
+                 .times(..));
+        s.expect(bd.write_at_call(ANY, 4196)
+            .and_return( Box::new( future::ok::<(), Error>(())))
+        );
+        bd
+    };
+    blockdevs.push(bd());    //disk 0
+    blockdevs.push(bd());    //disk 1
 
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                   Uuid::new_v4(),
-                                  LayoutAlgorithm::NullLocator,
+                                  LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
     vdev_raid.reopen_zone(1, 100);
     let dbs = DivBufShared::from(vec![0u8; 4096]);

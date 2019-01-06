@@ -67,7 +67,7 @@ test_suite! {
               (VdevRaid, TempDir, Vec<String>) {
 
         params {
-            vec![(1, 1, 0, 1),      // NullRaid configuration
+            vec![(2, 2, 1, 1),      // Stupid mirror
                  (3, 3, 1, 2),      // Smallest possible PRIMES configuration
                  (5, 4, 1, 2),      // Smallest PRIMES declustered configuration
                  (5, 5, 2, 2),      // Smallest double-parity configuration
@@ -381,7 +381,7 @@ test_suite! {
 
     // Write less than an LBA at the start of a stripe
     #[allow(clippy::identity_op)]
-    test write_tiny_at_start_of_stripe(raid((1, 1, 0, 1))) {
+    test write_tiny_at_start_of_stripe(raid((2, 2, 1, 1))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 1);
         let wbuf = dbsw.try_const().unwrap();
@@ -402,7 +402,7 @@ test_suite! {
     }
 
     // Write a whole stripe plus a fraction of an LBA more
-    test write_stripe_and_a_bit_more(raid((1, 1, 0, 1))) {
+    test write_stripe_and_a_bit_more(raid((2, 2, 1, 1))) {
         let (dbsw, dbsr) = make_bufs(*raid.params.chunksize, *raid.params.k,
                                      *raid.params.f, 2);
         let wbuf = dbsw.try_const().unwrap();
@@ -621,7 +621,7 @@ test_suite! {
         // redundancy level in 16 bits
                                             0x01, 0x00,
         // LayoutAlgorithm discriminant in 32 bits
-        0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
         // Vector of children's UUIDs.  A 64-bit count of children, then each
         // UUID is 64-bits long
                                 0x05, 0x00, 0x00, 0x00,
