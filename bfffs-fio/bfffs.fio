@@ -4,7 +4,7 @@ ioengine=external:target/debug/libbfffs_fio.so
 #ioengine=external:/iocage/jails/rustup2/root/localhome/somers/src/rust/bfffs/target/release/libbfffs_fio.so
 
 # Basic jobs settings
-bs=64k
+bs=128k
 size=512m
 iodepth=1
 # Must use end_fsync to flush write caches at the end of the write stage
