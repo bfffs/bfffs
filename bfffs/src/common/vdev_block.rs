@@ -475,6 +475,8 @@ impl VdevBlock {
     /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
     ///                     simulated zones on devices that don't have native
     ///                     zones.
+    // Can't be built in test mode due to
+    // https://github.com/kriomant/mockers/issues/38
     #[cfg(not(test))]
     pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>

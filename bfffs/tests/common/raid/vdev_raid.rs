@@ -1,5 +1,46 @@
 // vim: tw=80
+use bfffs::common::raid::VdevRaid;
 use galvanic_test::test_suite;
+use std::fs;
+use tempdir::TempDir;
+
+#[test]
+#[should_panic]
+fn create_redundancy_too_big() {
+    // VdevRaid::create should panic if the stripesize is greater than the
+    // number of disks
+    let len = 1 << 30;  // 1 GB
+    let num_disks = 5;
+    let stripesize = 3;
+    let redundancy = 3;
+    let tempdir = t!(TempDir::new("create_redundancy_too_big"));
+    let paths = (0..num_disks).map(|i| {
+        let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+        let file = t!(fs::File::create(&fname));
+        t!(file.set_len(len));
+        fname
+    }).collect::<Vec<_>>();
+    VdevRaid::create(None, stripesize, None, redundancy, &paths);
+}
+
+#[test]
+#[should_panic]
+fn create_stripesize_too_big() {
+    // VdevRaid::create should panic if the stripesize is greater than the
+    // number of disks
+    let len = 1 << 30;  // 1 GB
+    let num_disks = 3;
+    let stripesize = 4;
+    let redundancy = 1;
+    let tempdir = t!(TempDir::new("create_stripesize_too_big"));
+    let paths = (0..num_disks).map(|i| {
+        let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+        let file = t!(fs::File::create(&fname));
+        t!(file.set_len(len));
+        fname
+    }).collect::<Vec<_>>();
+    VdevRaid::create(None, stripesize, None, redundancy, &paths);
+}
 
 test_suite! {
     // These tests use real VdevBlock and VdevLeaf objects
