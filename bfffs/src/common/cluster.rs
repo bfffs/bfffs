@@ -9,7 +9,6 @@ use crate::{
         raid::VdevRaidApi
     }
 };
-#[cfg(not(test))] use crate::common::{vdev::*, raid::*};
 use fixedbitset::FixedBitSet;
 use futures::{ Future, IntoFuture, future};
 use metrohash::MetroHash64;
@@ -722,10 +721,8 @@ impl<'a> Cluster {
                                   redundancy: i16,
                                   paths: &[P]) -> Self
     {
-        let vdev = Rc::new(
-            VdevRaid::create(chunksize, disks_per_stripe, lbas_per_zone,
-                             redundancy, paths)
-        );
+        let vdev = raid::create(chunksize, disks_per_stripe, lbas_per_zone,
+                                redundancy, paths);
         let total_zones = vdev.zones();
         let fsm = FreeSpaceMap::new(total_zones);
         Cluster::new((fsm, vdev))

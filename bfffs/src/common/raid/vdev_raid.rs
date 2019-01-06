@@ -282,6 +282,9 @@ impl VdevRaid {
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
     #[cfg(not(test))]
+    // Hide from docs.  The public API should just be raid::create, but this
+    // function technically needs to be public for testing purposes.
+    #[doc(hidden)]
     pub fn create<P: AsRef<Path>>(chunksize: Option<NonZeroU64>,
                                   disks_per_stripe: i16,
                                   lbas_per_zone: Option<NonZeroU64>,
@@ -343,7 +346,8 @@ impl VdevRaid {
     ///
     /// * `label`:      The `VdevRaid`'s label, taken from any child.
     /// * `blocks`:     A map of all the children `VdevBlock`s, indexed by UUID.
-    pub fn open(label: Label, mut blocks: BTreeMap<Uuid, VdevBlockLike>) -> Self
+    pub(super) fn open(label: Label, mut blocks: BTreeMap<Uuid, VdevBlockLike>)
+        -> Self
     {
         assert_eq!(blocks.len(), label.children.len(),
             "Missing block devices");

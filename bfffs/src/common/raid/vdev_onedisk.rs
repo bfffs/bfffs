@@ -47,6 +47,9 @@ impl VdevOneDisk {
     ///                         native zones.
     /// * `path`:               Pathnames of file or device
     #[cfg(not(test))]
+    // Hide from docs.  The public API should just be raid::create, but this
+    // function technically needs to be public for testing purposes.
+    #[doc(hidden)]
     pub fn create<P>(lbas_per_zone: Option<NonZeroU64>, path: P) -> Self
         where P: AsRef<Path>
     {
@@ -61,7 +64,8 @@ impl VdevOneDisk {
     ///
     /// * `label`:      The `VdevOneDisk`'s label
     /// * `blockdevs`:  A map containing a single `VdevBlock`, indexed by UUID
-    pub fn open(label: Label, blockdevs: BTreeMap<Uuid, VdevBlockLike>) -> Self
+    pub(super) fn open(label: Label, blockdevs: BTreeMap<Uuid, VdevBlockLike>)
+        -> Self
     {
         assert_eq!(blockdevs.len(), 1);
         let blockdev = blockdevs.into_iter().next().unwrap().1;
@@ -134,7 +138,18 @@ impl VdevRaidApi for VdevOneDisk {
     }
 
     fn write_at(&self, buf: IoVec, _zone: ZoneT, lba: LbaT) -> BoxVdevFut {
-        boxfut!(self.blockdev.write_at(buf, lba), _, _, 'static)
+        // Pad up to a whole number of LBAs.  Upper layers don't do this because
+        // VdevRaidApi doesn't have a writev_at method.  But VdevBlock does, so
+        // the raid layer is the most efficient place to pad.
+        let partial = buf.len() % BYTES_PER_LBA;
+        if partial == 0 {
+            boxfut!(self.blockdev.write_at(buf, lba), _, _, 'static)
+        } else {
+            let remainder = BYTES_PER_LBA - partial;
+            let zbuf = ZERO_REGION.try_const().unwrap().slice_to(remainder);
+            let sglist = vec![buf, zbuf];
+            boxfut!(self.blockdev.writev_at(sglist, lba), _, _, 'static)
+        }
     }
 
     fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut {

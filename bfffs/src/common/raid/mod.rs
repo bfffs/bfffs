@@ -17,6 +17,10 @@ use std::{
     iter::once,
     rc::Rc
 };
+#[cfg(not(test))] use std::{
+    num::NonZeroU64,
+    path::Path,
+};
 
 mod codec;
 mod declust;
@@ -80,6 +84,40 @@ impl<'a> Label {
             Label::Raid(l) => l.uuid,
             Label::OneDisk(l) => l.uuid
         }
+    }
+}
+
+/// Create a raid-like `Vdev` from its components.
+///
+///
+/// * `chunksize`:          RAID chunksize in LBAs, if specified.  This is the
+///                         largest amount of data that will be read/written to
+///                         a single device before the `Locator` switches to the
+///                         next device.
+/// * `disks_per_stripe`:   Number of data plus parity chunks in each
+///                         self-contained RAID stripe.  Must be less than or
+///                         equal to the number of disks in `paths`.
+/// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
+///                         simulated zones on devices that don't have
+///                         native zones.
+/// * `redundancy`:         Degree of RAID redundancy.  Up to this many
+///                         disks may fail before the array becomes
+///                         inoperable.
+/// * `paths`:              Slice of pathnames of files and/or devices
+#[cfg(not(test))]
+pub fn create<P: AsRef<Path>>(chunksize: Option<NonZeroU64>,
+                              disks_per_stripe: i16,
+                              lbas_per_zone: Option<NonZeroU64>,
+                              redundancy: i16,
+                              paths: &[P]) -> Rc<dyn VdevRaidApi>
+{
+    if paths.len() == 1 {
+        assert_eq!(disks_per_stripe, 1);
+        assert_eq!(redundancy, 0);
+        Rc::new(VdevOneDisk::create(lbas_per_zone, &paths[0]))
+    } else {
+        Rc::new(VdevRaid::create(chunksize, disks_per_stripe, lbas_per_zone,
+                                 redundancy, paths))
     }
 }
 
