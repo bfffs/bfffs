@@ -693,6 +693,7 @@ impl Fs {
                     Some(FSValue::BlobExtent(be)) => {
                         let fut = dataset.get_blob(be.rid)
                         .and_then(move |db: Box<DivBuf>| {
+                            // Data copy
                             // TODO: eliminate this data copy by adding
                             // a pop_blob method
                             let dbs = DivBufShared::from(&db[0..len]);
@@ -1658,7 +1659,7 @@ impl Fs {
         let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(ino, objkey);
         // Data copy
-        let buf = Arc::new(DivBufShared::from(Vec::from(&data[..])));
+        let buf = Arc::new(DivBufShared::from(&data[..]));
         let extent = InlineExtent::new(buf);
         let owned_name = name.to_owned();
         let extattr = ExtAttr::Inline(InlineExtAttr {

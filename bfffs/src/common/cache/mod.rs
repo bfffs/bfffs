@@ -100,6 +100,7 @@ impl CacheRef for DivBuf {
     }
 
     fn to_owned(self) -> Box<dyn Cacheable> {
+        // Data copy
         Box::new(DivBufShared::from(self[..].to_vec()))
     }
 }
