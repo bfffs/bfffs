@@ -368,7 +368,7 @@ impl VdevFile {
     {
         let lba = LabelReader::lba(label);
         let offset = lba * BYTES_PER_LBA as u64;
-        let dbs = DivBufShared::from(vec![0u8; LABEL_SIZE]);
+        let dbs = DivBufShared::uninitialized(LABEL_SIZE);
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
         f.read_at(container, offset).unwrap()

@@ -215,7 +215,7 @@ impl DDML {
         // 3) Verify checksum
         // 4) Decompress
         let len = drp.asize() as usize * BYTES_PER_LBA;
-        let dbs = DivBufShared::from(vec![0u8; len]);
+        let dbs = DivBufShared::uninitialized(len);
         Box::new(
             // Read
             self.pool.read(dbs.try_mut().unwrap(), drp.pba).and_then(move |_| {
@@ -538,7 +538,12 @@ mod ddml {
         let pool = s.create_mock::<MockPool>();
         s.expect(pool.read_call(check!(|dbm: &DivBufMut| {
             dbm.len() == 4096
-        }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
+        }), pba).and_call(|mut dbm, _pba| {
+            for x in dbm.iter_mut() {
+                *x = 0;
+            }
+            Box::new(future::ok::<(), Error>(()))
+        }));
 
         let pool_wrapper = MockPoolWrapper(Box::new(pool));
         let ddml = DDML::new(pool_wrapper, Arc::new(Mutex::new(cache)));
@@ -588,7 +593,12 @@ mod ddml {
             })).returning(|_| None);
         s.expect(pool.read_call(check!(|dbm: &DivBufMut| {
             dbm.len() == 4096
-        }), pba).and_return(Box::new(future::ok::<(), Error>(()))));
+        }), pba).and_call(|mut dbm, _pba| {
+            for x in dbm.iter_mut() {
+                *x = 0;
+            }
+            Box::new(future::ok::<(), Error>(()))
+        }));
         cache.expect_insert()
             .called_once()
             .with(passes(move |args: &(Key, _)| {
@@ -712,7 +722,12 @@ mod ddml {
                 unsafe {**key == Key::PBA(pba)}
             })).returning(|_| None);
         seq.expect(pool.read_call(ANY, pba)
-                   .and_return(Box::new(future::ok::<(), Error>(()))));
+            .and_call(|mut dbm, _pba| {
+                for x in dbm.iter_mut() {
+                    *x = 0;
+                }
+                Box::new(future::ok::<(), Error>(()))
+            }));
         seq.expect(pool.free_call(pba, 1)
             .and_return(Box::new(Ok(()).into_future())));
         s.expect(seq);
@@ -759,7 +774,12 @@ mod ddml {
         let cache = Cache::default();
         let pool = s.create_mock::<MockPool>();
         seq.expect(pool.read_call(ANY, pba)
-                   .and_return(Box::new(future::ok::<(), Error>(()))));
+            .and_call(|mut dbm, _pba| {
+                for x in dbm.iter_mut() {
+                    *x = 0;
+                }
+                Box::new(future::ok::<(), Error>(()))
+            }));
         seq.expect(pool.free_call(pba, 1)
             .and_return(Box::new(Ok(()).into_future())));
         s.expect(seq);

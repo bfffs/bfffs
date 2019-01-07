@@ -19,7 +19,7 @@ bitfield = "0.13.1"
 blosc = { git = "https://github.com/asomers/blosc-rs/", rev = "04c9e02"}
 byteorder = "1.2.3"
 cfg-if = "0.1"
-divbuf = "0.3.1"
+divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
 downcast = "0.8"
 enum-primitive-derive = "^0.1"
 fixedbitset = "0.1.8"
