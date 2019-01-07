@@ -84,9 +84,6 @@ impl Chunkloc {
 /// no healthy disk will be saturated, so user I/O suffers less than in a
 /// traditional RAID array.
 pub trait Locator : Send + Sync {
-    /// Return the total number of disks in the layout
-    fn clustsize(&self) -> i16;
-
     /// Return the number of data chunks in a single repetition of the layout
     fn datachunks(&self) -> u64;
 

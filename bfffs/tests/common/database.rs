@@ -266,4 +266,34 @@ test_suite! {
 
     // TODO: add tests for inherited properties, once it's possible to make
     // multiple datasets.
+
+    test shutdown() {
+        let mut rt = tokio_io_pool::Runtime::new();
+        let handle = rt.handle().clone();
+        let len = 1 << 30;  // 1GB
+        let tempdir = t!(TempDir::new("database::shutdown"));
+        let filename = tempdir.path().join("vdev");
+        let file = t!(fs::File::create(&filename));
+        t!(file.set_len(len));
+        drop(file);
+        let mut db = rt.block_on(future::lazy(move || {
+            Pool::create_cluster(None, 1, None, 0, &[filename])
+            .map_err(|_| unreachable!())
+            .and_then(|cluster| {
+                Pool::create(String::from("database::shutdown"), vec![cluster])
+                .map(|pool| {
+                    let cache = Arc::new(
+                        Mutex::new(
+                            Cache::with_capacity(1_000_000)
+                        )
+                    );
+                    let ddml = Arc::new(DDML::new(pool, cache.clone()));
+                    let idml = IDML::create(ddml, cache);
+                    Database::create(Arc::new(idml), handle)
+                })
+            })
+        })).unwrap();
+        rt.block_on(db.shutdown()).unwrap();
+        rt.shutdown_on_idle();
+    }
 }

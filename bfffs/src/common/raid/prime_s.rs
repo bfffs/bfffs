@@ -268,10 +268,6 @@ impl PrimeS {
 }
 
 impl Locator for PrimeS {
-    fn clustsize(&self) -> i16 {
-        i16::from(self.n)
-    }
-
     fn datachunks(&self) -> u64 {
         self.datachunks as u64
     }

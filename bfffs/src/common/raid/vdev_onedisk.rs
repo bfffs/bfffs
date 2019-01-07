@@ -172,3 +172,19 @@ impl VdevRaidApi for VdevOneDisk {
         boxfut!(fut, _, _, 'static)
     }
 }
+
+#[cfg(test)]
+mod t {
+
+use super::*;
+// pet kcov
+#[test]
+fn debug() {
+    let label = Label {
+        uuid: Uuid::new_v4(),
+        child: Uuid::new_v4()
+    };
+    format!("{:?}", label);
+}
+
+}

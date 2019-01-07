@@ -389,7 +389,7 @@ impl<'a> IDML {
 fn unwrap_or_enoent(r: Option<RidtEntry>)
     -> impl Future<Item=RidtEntry, Error=Error>
 {
-    match r {
+    match r {   // LCOV_EXCL_LINE   kcov false negative
         None => Err(Error::ENOENT).into_future(),
         Some(entry) => Ok(entry).into_future()
     }

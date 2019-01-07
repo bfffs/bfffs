@@ -144,6 +144,7 @@ impl<'a> ClusterServer {
                 boxfut!(fut, _, _, 'static)
             },
             Rpc::Shutdown() => {
+                // Returning an error will cause the service loop to shut down
                 Box::new(future::err::<(), ()>(()))
             },
             Rpc::Size(tx) => {
@@ -1100,6 +1101,7 @@ mod rpc {
         let lw = LabelWriter::new(0);
         format!("{:?}", Rpc::Allocated(oneshot::channel().0));
         format!("{:?}", Rpc::FindClosedZone(0, oneshot::channel().0));
+        format!("{:?}", Rpc::Flush(0, oneshot::channel().0));
         format!("{:?}", Rpc::Free(0, 0, oneshot::channel().0));
         format!("{:?}", Rpc::OptimumQueueDepth(oneshot::channel().0));
         format!("{:?}", Rpc::Read(dbs.try_mut().unwrap(), 0,
