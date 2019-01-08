@@ -97,7 +97,7 @@ impl DDMLMock {
     // Simulacrum can't mock a single generic method with different type
     // parameters more than once in the same test.  The workaround is to
     // dynamically construct the method name.
-    // https://github.com/pcsm/simulacrum/issues/55"]
+    // https://github.com/pcsm/simulacrum/issues/55
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
         Box<dyn Future<Item=DRP, Error=Error> + Send>>
     {
