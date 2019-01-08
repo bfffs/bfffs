@@ -122,10 +122,10 @@ impl IDMLMock {
     }
 
     pub fn expect_put<T: Cacheable>(&mut self) -> Method<(T, Compression, TxgT),
-        Box<dyn Future<Item=RID, Error=Error>>>
+        Box<dyn Future<Item=RID, Error=Error> + Send>>
     {
         self.e.expect::<(T, Compression, TxgT),
-                        Box<dyn Future<Item=RID, Error=Error>>>
+                        Box<dyn Future<Item=RID, Error=Error> + Send>>
             ("put")
     }
 
