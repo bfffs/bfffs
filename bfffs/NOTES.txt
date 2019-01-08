@@ -21,7 +21,15 @@ Dtrace, like this:
 
 * Disable LTO, which reduces inlining.
 * Build in release mode
+* delete any stale output file; dtrace appends by default:
+  "rm -f /tmp/out.stacks"
 * Invoke the daemon like this: sudo dtrace -c "/path/to/bfffsd <args>" -o /tmp/out.stacks -n 'profile-997 /execname == "bfffsd"/ { @[ustack(100)] = count(); }'
 * Generate some load
 * sudo umount /tmp/mnt
 * Process the output with stackcollapse.pl out.stacks | flamegraph.pl | sed -e 's/\$LT\$/\&lt;/g' -e 's/\$GT\$/\&gt;/g' -e 's/\$RF\$/\&amp;/g' -e 's/\$u20\$/ /g' -e 's/\$u27\$/'"'"'/g' -e 's/\$u5b\$/[/g' -e 's/\$u5d\$/]/g' -e 's/\$u7b\$/{/g' -e 's/\$u7d\$/}/g' -e 's/\$LP\$/(/g' -e 's/\$RP\$/)/g' -e 's/\$C\$/,/g' -e 's/\.\./::/g' > flame.svg
+
+When using fio, dtrace can't decode bfffs's stack frames?  Perhaps because
+they're loaded dynamically?  The solution is to start fio in one terminal, then
+attach dtrace after it's already running.  Using fish syntax:
+* sudo fio bfffs-fio/bfffs.fio --rw=write
+* set PID (pgrep fio); sudo dtrace -p $PID -o /tmp/out.stacks -n "profile-997 /pid == $PID/ { @[ustack(100)] = count(); }"
