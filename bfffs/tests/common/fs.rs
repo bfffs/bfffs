@@ -1928,6 +1928,31 @@ root:
         assert_eq!(&db[..], &buf0[..]);
     }
 
+    // A partial record write appended to a partial record at file's end
+    test write_append_to_partial_record(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let mut buf0 = vec![0u8; 1024];
+        let mut rng = thread_rng();
+        for x in &mut buf0 {
+            *x = rng.gen();
+        }
+        let mut buf1 = vec![0u8; 1024];
+        let mut rng = thread_rng();
+        for x in &mut buf1 {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
+        assert_eq!(Ok(1024), r);
+        let r = mocks.val.0.write(ino, 1024, &buf1[..], 0);
+        assert_eq!(Ok(1024), r);
+
+        let sglist = mocks.val.0.read(ino, 0, 2048).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[0..1024], &buf0[..]);
+        assert_eq!(&db[1024..2048], &buf1[..]);
+    }
+
     // write can RMW BlobExtents
     test write_partial_blob_record(mocks) {
         let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
@@ -1952,6 +1977,28 @@ root:
         assert_eq!(&db[0..512], &buf0[0..512]);
         assert_eq!(&db[512..2560], &buf1[..]);
         assert_eq!(&db[2560..], &buf0[2560..]);
+    }
+
+    // Partially fill a hole that's at neither the beginning nor the end of the
+    // file
+    test write_partial_hole(mocks) {
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let mut attr = SetAttr::default();
+        attr.size = Some(4096 * 4);
+        mocks.val.0.setattr(ino, attr).unwrap();
+
+        let mut buf0 = vec![0u8; 2048];
+        let mut rng = thread_rng();
+        for x in &mut buf0 {
+            *x = rng.gen();
+        }
+        let r = mocks.val.0.write(ino, 9216, &buf0[..], 0);
+        assert_eq!(Ok(2048), r);
+
+        let sglist = mocks.val.0.read(ino, 9216, 2048).unwrap();
+        let db = &sglist[0];
+        assert_eq!(&db[..], &buf0[..]);
     }
 
     // A partial single record write that needs RMW on both ends
