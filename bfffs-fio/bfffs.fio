@@ -7,6 +7,8 @@ ioengine=external:target/debug/libbfffs_fio.so
 bs=128k
 size=512m
 iodepth=1
+# Using threads instead of processes makes debugging easier
+thread
 # Must use end_fsync to flush write caches at the end of the write stage
 end_fsync=1
 # Don't precreate files and zero-fill them.
