@@ -103,6 +103,12 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.tree.remove(k, txg)
     }
 
+    fn remove_blob(&self, rid: RID, txg: TxgT)
+        -> impl Future<Item=Box<DivBufShared>, Error=Error> + Send
+    {
+        self.idml.pop::<DivBufShared, DivBuf>(&rid, txg)
+    }
+
     fn size(&self) -> LbaT {
         self.idml.size()
     }
@@ -199,6 +205,12 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
         -> impl Future<Item=Option<V>, Error=Error> + Send
     {
         self.dataset.remove(k, self.txg)
+    }
+
+    pub fn remove_blob(&self, rid: RID)
+        -> impl Future<Item=Box<DivBufShared>, Error=Error> + Send
+    {
+        self.dataset.remove_blob(rid, self.txg)
     }
 }
 

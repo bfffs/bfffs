@@ -269,6 +269,22 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
             ("remove")
     }
 
+    pub fn remove_blob(&self, rid: RID)
+        -> impl Future<Item=Box<DivBufShared>, Error=Error> + Send
+    {
+        self.e.was_called_returning::<RID,
+            Box<dyn Future<Item=Box<DivBufShared>, Error=Error> + Send>>
+                ("remove_blob", rid)
+    }
+
+    pub fn expect_remove_blob(&mut self) -> Method<RID,
+        Box<dyn Future<Item=Box<DivBufShared>, Error=Error> + Send>>
+    {
+        self.e.expect::<RID, Box<dyn Future<Item=Box<DivBufShared>,
+                                            Error=Error> + Send>>
+            ("remove_blob")
+    }
+
     pub fn size(&self) -> LbaT {
         self.e.was_called_returning::<(), LbaT> ("size", ())
     }

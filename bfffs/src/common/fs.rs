@@ -691,13 +691,13 @@ impl Fs {
                         boxfut!(dataset.insert(k, v).map(drop))
                     },
                     Some(FSValue::BlobExtent(be)) => {
-                        let fut = dataset.get_blob(be.rid)
-                        .and_then(move |db: Box<DivBuf>| {
-                            // Data copy
-                            // TODO: eliminate this data copy by adding
-                            // a pop_blob method
-                            let dbs = DivBufShared::from(&db[0..len]);
-                            let adbs = Arc::new(dbs);
+                        let fut = dataset.remove_blob(be.rid)
+                        .and_then(move |dbs: Box<DivBufShared>| {
+                            dbs.try_mut()
+                                .expect("DivBufShared wasn't uniquely owned")
+                                .try_truncate(len)
+                                .unwrap();
+                            let adbs = Arc::from(dbs);
                             let extent = InlineExtent::new(adbs);
                             let v = FSValue::InlineExtent(extent);
                             dataset.insert(k, v)
