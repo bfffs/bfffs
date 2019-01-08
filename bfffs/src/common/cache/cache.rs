@@ -42,6 +42,16 @@ pub struct Cache {
 }
 
 impl Cache {
+    /// Drop all data from the cache, for testing or benchmarking purposes
+    // NB: this should be called "drop", but that conflicts with
+    // "std::Drop::drop"
+    pub fn drop_cache(&mut self) {
+        self.store = HashMap::with_hasher(MetroBuildHasher::default());
+        self.lru = None;
+        self.mru = None;
+        self.size = 0;
+    }
+
     fn expire(&mut self) {
         let key = self.lru;
         assert!(key.is_some(), "Can't find an entry to expire");
@@ -174,6 +184,27 @@ fn debug() {
     let dbs = DivBufShared::from(Vec::new());
     let entry = LruEntry{buf: Box::new(dbs), lru: None, mru: None};
     assert_eq!("LruEntry { lru: None, mru: None }", format!("{:?}", entry));
+}
+
+#[test]
+fn test_drop_cache() {
+    let mut cache = Cache::with_capacity(100);
+    let key1 = Key::Rid(RID(1));
+    let key2 = Key::Rid(RID(2));
+    let key3 = Key::Rid(RID(3));
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
+    cache.insert(key1, dbs);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
+    cache.insert(key2, dbs);
+    let dbs = Box::new(DivBufShared::from(vec![0u8; 11]));
+    cache.insert(key3, dbs);
+
+    cache.drop_cache();
+
+    assert_eq!(cache.size(), 0);
+    assert!(cache.get::<DivBuf>(&key1).is_none());
+    assert!(cache.get::<DivBuf>(&key2).is_none());
+    assert!(cache.get::<DivBuf>(&key3).is_none());
 }
 
 #[test]

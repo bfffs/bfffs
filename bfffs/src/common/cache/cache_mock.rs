@@ -8,6 +8,14 @@ pub struct CacheMock {
     e: Expectations,
 }
 impl CacheMock {
+    pub fn drop_cache(&mut self) {
+        self.e.was_called_returning::<(), ()>("drop_cache", ())
+    }
+
+    pub fn expect_drop_cache(&mut self) -> Method<(), ()> {
+        self.e.expect::<(), ()>("drop_cache")
+    }
+
     pub fn get<T: CacheRef>(&mut self, key: &Key) -> Option<Box<T>> {
         self.e.was_called_returning::<*const Key, Option<Box<T>>>
             ("get", key as *const Key)
