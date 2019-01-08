@@ -1927,7 +1927,7 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .pool_size(1)
         .build()
         .unwrap();
-    let mut ds = ReadOnlyFilesystem::new();
+    let mut ds = ReadOnlyFilesystem::default();
     ds.expect_last_key()
         .called_once()
         .returning(|_| Box::new(Ok(Some(FSKey::min_value())).into_future()));
@@ -1953,7 +1953,7 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
 #[test]
 fn create() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     // For the unit tests, we skip creating the "/" directory
     let ino = 1;
     let filename = OsString::from("x");
@@ -2020,7 +2020,7 @@ fn create() {
 #[test]
 fn create_hash_collision() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     // For the unit tests, we skip creating the "/" directory
     let ino = 1;
     let other_ino = 100;
@@ -2184,7 +2184,7 @@ fn debug_setattr() {
 #[test]
 fn deleteextattr_3way_collision() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let ino = 1;
     // Three attributes share a bucket.  The test will delete name2
     let name0 = OsString::from("foo");
@@ -2247,7 +2247,7 @@ fn deleteextattr_3way_collision() {
 #[test]
 fn deleteextattr_3way_collision_enoattr() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let ino = 1;
     // name0 and name1 are stored.  The test tries to delete name2
     let name0 = OsString::from("foo");
@@ -2301,7 +2301,7 @@ fn deleteextattr_3way_collision_enoattr() {
 #[test]
 fn rename_eio() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let srcname = OsString::from("x");
     let dstname = OsString::from("y");
     let dst_dirent = Dirent {
@@ -2338,7 +2338,7 @@ fn rename_eio() {
 #[test]
 fn rmdir_with_blob_extattr() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let parent_ino = 1;
     let ino = 2;
     let xattr_blob_rid = RID(88888);
@@ -2519,7 +2519,7 @@ fn rmdir_with_blob_extattr() {
 #[test]
 fn setextattr() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let ino = 1;
     let name = OsString::from("foo");
     let name2 = name.clone();
@@ -2554,7 +2554,7 @@ fn setextattr() {
 #[test]
 fn setextattr_3way_collision() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let ino = 1;
     // name0 and name1 are already set
     let name0 = OsString::from("foo");
@@ -2671,7 +2671,7 @@ fn sync() {
 #[test]
 fn unlink() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let parent_ino = 1;
     let ino = 2;
     let blob_rid = RID(99999);
@@ -2783,7 +2783,7 @@ fn unlink() {
 #[test]
 fn unlink_hardlink() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let parent_ino = 1;
     let ino = 2;
     let filename = OsString::from("x");
@@ -2872,7 +2872,7 @@ fn unlink_hardlink() {
 #[test]
 fn unlink_with_blob_extattr() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let parent_ino = 1;
     let ino = 2;
     let blob_rid = RID(99999);
@@ -3008,7 +3008,7 @@ fn unlink_with_blob_extattr() {
 #[test]
 fn unlink_with_extattr_hash_collision() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::new();
+    let mut ds = ReadWriteFilesystem::default();
     let parent_ino = 1;
     let ino = 2;
     let xattr_blob_rid = RID(88888);

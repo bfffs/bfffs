@@ -514,6 +514,7 @@ impl DML for IDML {
         -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>
         where T: Cacheable
     {
+        // TODO: spawn a separate task, for better parallelism.
         // Outline:
         // 1) Write to the DDML
         // 2) Cache

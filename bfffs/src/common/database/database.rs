@@ -702,7 +702,7 @@ mod database {
         idml.expect_shutdown()
             .called_once()
             .returning(drop);
-        let forest = Tree::new();
+        let forest = Tree::default();
 
         let mut rt = current_thread::Runtime::new().unwrap();
 
@@ -720,7 +720,7 @@ mod database {
         idml.expect_shutdown()
             .called_times(2)
             .returning(drop);
-        let forest = Tree::new();
+        let forest = Tree::default();
 
         let mut rt = current_thread::Runtime::new().unwrap();
 
@@ -735,7 +735,7 @@ mod database {
     #[test]
     fn sync_transaction() {
         let mut idml = IDML::default();
-        let mut forest = Tree::new();
+        let mut forest = Tree::default();
 
         let mut rt = current_thread::Runtime::new().unwrap();
 
@@ -803,7 +803,7 @@ mod database {
     #[test]
     fn sync_transaction_empty() {
         let idml = IDML::default();
-        let forest = Tree::new();
+        let forest = Tree::default();
 
         let mut rt = current_thread::Runtime::new().unwrap();
 

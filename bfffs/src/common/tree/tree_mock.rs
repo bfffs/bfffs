@@ -1,10 +1,6 @@
 // vim: tw=80
 // LCOV_EXCL_START
 
-//derive(Default) doesn't work here because TreeMock can be instantiated with
-//types that don't implement Default
-#![allow(clippy::new_without_default_derive)]
-
 use crate::common::*;
 use crate::common::{Error, TxgT};
 use crate::common::dml::*;
@@ -84,7 +80,7 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     pub fn create(_dml: Arc<D>, _seq: bool, _lzratio: f32, _izratio: f32)
         -> Self
     {
-        Self::new()
+        Self::default()
     }
 
     // No need to allow this method to be mocked; it's just for debugging
@@ -149,19 +145,19 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
             Box<dyn Future<Item=Option<K>, Error=Error> + Send>>("last_key")
     }
 
-    pub fn new() -> Self {
-        Self {
-            e: Expectations::new(),
-            a: PhantomData,
-            d: PhantomData,
-            k: PhantomData,
-            v: PhantomData,
-        }
-    }
+    //pub fn new() -> Self {
+        //Self {
+            //e: Expectations::new(),
+            //a: PhantomData,
+            //d: PhantomData,
+            //k: PhantomData,
+            //v: PhantomData,
+        //}
+    //}
 
     #[allow(clippy::needless_pass_by_value)]
     pub fn open(_dml: Arc<D>, _seq: bool, _on_disk: TreeOnDisk<A>) -> Self {
-        Self::new()
+        Self::default()
     }
 
     pub fn range<R, T>(&self, range: R) -> RangeQueryMock<A, D, K, T, V>
@@ -232,6 +228,20 @@ impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> TreeMock<A, D, K, V> {
     pub fn then(&mut self) -> &mut Self {
         self.e.then();
         self
+    }
+}
+
+impl<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> Default for 
+    TreeMock<A, D, K, V>
+{
+    fn default() -> Self {
+        Self {
+            e: Expectations::new(),
+            a: PhantomData,
+            d: PhantomData,
+            k: PhantomData,
+            v: PhantomData,
+        }
     }
 }
 

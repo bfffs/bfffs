@@ -1,9 +1,6 @@
 // vim: tw=80
 // LCOV_EXCL_START
 
-//derive(Default) doesn't work here because FSValue can't implement Default
-#![allow(clippy::new_without_default_derive)]
-
 use crate::common::{
     *,
     dml::Compression,
@@ -95,14 +92,6 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
             ("last_key")
     }
 
-    pub fn new() -> Self {
-        Self {
-            e: Expectations::new(),
-            a: PhantomData,
-            b: PhantomData,
-        }
-    }
-
     pub fn size(&self) -> LbaT {
         self.e.was_called_returning::<(), LbaT> ("size", ())
     }
@@ -114,6 +103,16 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
     pub fn then(&mut self) -> &mut Self {
         self.e.then();
         self
+    }
+}
+
+impl<K: Key, V: Value> Default for ReadOnlyDatasetMock<K, V> {
+    fn default() -> Self {
+        Self {
+            e: Expectations::new(),
+            a: PhantomData,
+            b: PhantomData,
+        }
     }
 }
 
@@ -199,14 +198,6 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
     {
         self.e.expect::<(K, V), Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
             ("insert")
-    }
-
-    pub fn new() -> Self {
-        Self {
-            e: Expectations::new(),
-            a: PhantomData,
-            b: PhantomData,
-        }
     }
 
     pub fn put_blob(&self, dbs: DivBufShared, compression: Compression)
@@ -296,6 +287,16 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
     pub fn then(&mut self) -> &mut Self {
         self.e.then();
         self
+    }
+}
+
+impl<K: Key, V: Value> Default for ReadWriteDatasetMock<K, V> {
+    fn default() -> Self {
+        Self {
+            e: Expectations::new(),
+            a: PhantomData,
+            b: PhantomData,
+        }
     }
 }
 
