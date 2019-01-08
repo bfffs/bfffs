@@ -2017,7 +2017,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             Box::new(
                 guard.ptr.as_mem().0.write()
                      .map(move |child_guard| {
-                          (guard, TreeWriteGuard::Mem(child_guard))
+                          (guard, TreeWriteGuard(child_guard))
                      }).map_err(|_| Error::EPIPE)
             )
         } else {
@@ -2029,7 +2029,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
                     guard.ptr = TreePtr::Mem(child_node);
-                    let child_guard = TreeWriteGuard::Mem(
+                    let child_guard = TreeWriteGuard(
                         guard.ptr.as_mem().0.try_write().unwrap()
                     );
                     (guard, child_guard)

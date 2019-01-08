@@ -383,10 +383,9 @@ impl<A: Addr, K: Key, V: Value> Deref for TreeReadGuard<A, K, V> {
 }
 
 /// Guard that holds the Node lock object for writing
-pub(super) enum TreeWriteGuard<A: Addr, K: Key, V: Value> {
-    Mem(RwLockWriteGuard<NodeData<A, K, V>>),
-    Addr(RwLockWriteGuard<NodeData<A, K, V>>, Box<Arc<Node<A, K, V>>>)
-}
+pub(super) struct TreeWriteGuard<A: Addr, K: Key, V: Value>(
+    pub(super) RwLockWriteGuard<NodeData<A, K, V>>
+);
 
 impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// Lock the indicated child exclusively.  If it is not already resident
@@ -424,7 +423,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                             let elem = &mut self.as_int_mut()
                                                 .children[child_idx];
                             elem.ptr = TreePtr::Mem(child_node);
-                            let guard = TreeWriteGuard::Mem(
+                            let guard = TreeWriteGuard(
                                 elem.ptr.as_mem()
                                     .0.try_write().unwrap()
                             );
@@ -473,7 +472,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                .map(move |arc| {
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
-                    let guard = TreeWriteGuard::Mem(
+                    let guard = TreeWriteGuard(
                         child_node.0.try_write().unwrap()
                     );
                     let ptr = TreePtr::Mem(child_node);
@@ -520,7 +519,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                 .map(move |arc| {
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
-                    TreeWriteGuard::Mem(
+                    TreeWriteGuard(
                         child_node.0.try_write().unwrap()
                     )
                 });
@@ -540,9 +539,7 @@ impl<A: Addr, K: Key, V: Value> Deref for TreeWriteGuard<A, K, V> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            TreeWriteGuard::Mem(guard) => &**guard,
-            TreeWriteGuard::Addr(_, _) => unreachable!( // LCOV_EXCL_LINE
-                "Can only write to in-memory Nodes")
+            TreeWriteGuard(guard) => &**guard,
         }
     }
 }
@@ -550,9 +547,7 @@ impl<A: Addr, K: Key, V: Value> Deref for TreeWriteGuard<A, K, V> {
 impl<A: Addr, K: Key, V: Value> DerefMut for TreeWriteGuard<A, K, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            TreeWriteGuard::Mem(guard) => &mut **guard,
-            TreeWriteGuard::Addr(_, _) => unreachable!( // LCOV_EXCL_LINE
-                "Can only write to in-memory Nodes")
+            TreeWriteGuard(guard) => &mut **guard,
         }
     }
 }
@@ -1041,7 +1036,7 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     {
         Box::new(
             self.0.write()
-                .map(TreeWriteGuard::Mem)
+                .map(TreeWriteGuard)
                 .map_err(|_| Error::EPIPE)
         )
     }
