@@ -34,7 +34,7 @@ test_suite! {
     use time::Timespec;
     use tokio_io_pool::Runtime;
 
-    fixture!( mocks(props: Vec<Property>) -> (Fs, Runtime) {
+    fixture!( mocks(props: Vec<Property>) -> (Fs, Runtime, Arc<Mutex<Cache>>) {
         params { vec![Vec::new()].into_iter() }
 
         setup(&mut self) {
@@ -46,19 +46,16 @@ test_suite! {
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
             drop(file);
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
+            let cache2 = cache.clone();
             let db = rt.block_on(future::lazy(move || {
                 Pool::create_cluster(None, 1, None, 0, &[filename])
                 .map_err(|_| unreachable!())
                 .and_then(|cluster| {
                     Pool::create(String::from("test_fs"), vec![cluster])
                     .map(|pool| {
-                        let cache = Arc::new(
-                            Mutex::new(
-                                Cache::with_capacity(1_000_000)
-                            )
-                        );
-                        let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                        let idml = IDML::create(ddml, cache);
+                        let ddml = Arc::new(DDML::new(pool, cache2.clone()));
+                        let idml = IDML::create(ddml, cache2);
                         Arc::new(Database::create(Arc::new(idml), handle))
                     })
                 })
@@ -71,7 +68,7 @@ test_suite! {
                     Fs::new(db.clone(), handle, tree_id)
                 })
             })).unwrap();
-            (fs, rt)
+            (fs, rt, cache)
         }
     });
 
@@ -460,6 +457,28 @@ root:
                    Err(libc::ENOATTR));
         assert_eq!(mocks.val.0.getextattr(ino, namespace, &name),
                    Err(libc::ENOATTR));
+    }
+
+    /// Read an InlineExtAttr from disk
+    test getextattr_inline(mocks) {
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = vec![0, 1, 2, 3, 4];
+        let namespace = ExtAttrNamespace::User;
+        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
+
+        // Sync the filesystem to store the InlineExtent on disk
+        mocks.val.0.sync();
+
+        // Drop cache
+        mocks.val.2.lock().unwrap().drop_cache();
+
+        // Read the extattr from disk
+        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name).unwrap(),
+                   5);
+        let v = mocks.val.0.getextattr(ino, namespace, &name).unwrap();
+        assert_eq!(&v[..], &value[..]);
     }
 
     /// getextattr(2) should not modify any timestamps
@@ -1006,7 +1025,7 @@ root:
 
     // When atime is disabled, reading a file should not update its atime.
     test read_timestamps_no_atime(mocks(vec![Property::Atime(false)])) {
-        let (fs, _rt) = mocks.val;
+        let (fs, _rt, _cache) = mocks.val;
 
         let ino = fs.create(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
         let buf = vec![42u8; 4096];

@@ -27,6 +27,10 @@ use std::{
 };
 use time::Timespec;
 
+/// Buffers of this size or larger will be written to disk as blobs.  Smaller
+/// buffers will be stored directly in the tree.
+const BLOB_THRESHOLD: usize = BYTES_PER_LBA / 4;
+
 // time::Timespec doesn't derive Serde support.  Do it here.
 #[allow(unused)]
 #[derive(Serialize, Deserialize)]
@@ -319,24 +323,34 @@ pub struct InlineExtAttr {
 
 impl InlineExtAttr {
     fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
-        -> impl Future<Item=ExtAttr<A>, Error=Error> + Send
+        -> Box<dyn Future<Item=ExtAttr<A>, Error=Error> + Send>
         where D: DML, D::Addr: 'static
     {
-        let lsize = self.extent.buf.len() as u32;
-        let namespace = self.namespace;
-        let name = self.name;
-        let dbs = Arc::try_unwrap(self.extent.buf).unwrap();
-        dml.put(dbs, Compression::None, txg)
-        .map(move |rid: D::Addr| {
-            // Safe because D::Addr should always equal A.  If you ever
-            // call this function with any other type for A, then you're
-            // doing something wrong.
-            debug_assert_eq!(mem::size_of::<D::Addr>(), mem::size_of::<A>());
-            let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
-            let extent = BlobExtent{lsize, rid: rid_a};
-            let bea = BlobExtAttr { namespace, name, extent };
-            ExtAttr::Blob(bea)
-        })
+        let lsize = self.len();
+        if lsize > BLOB_THRESHOLD {
+            let namespace = self.namespace;
+            let name = self.name;
+            let dbs = Arc::try_unwrap(self.extent.buf).unwrap();
+            let fut = dml.put(dbs, Compression::None, txg)
+            .map(move |rid: D::Addr| {
+                debug_assert_eq!(mem::size_of::<D::Addr>(),
+                                 mem::size_of::<A>());
+                // Safe because D::Addr should always equal A.  If you ever
+                // call this function with any other type for A, then you're
+                // doing something wrong.
+                let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
+                let extent = BlobExtent{lsize: lsize as u32, rid: rid_a};
+                let bea = BlobExtAttr { namespace, name, extent };
+                ExtAttr::Blob(bea)
+            });
+            boxfut!(fut)
+        } else {
+            boxfut!(Ok(ExtAttr::Inline(self)).into_future())
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.extent.len()
     }
 }
 
@@ -350,9 +364,9 @@ pub struct BlobExtAttr<A: Addr> {
 }
 
 impl<A: Addr> BlobExtAttr<A> {
-    fn flush(self) -> impl Future<Item=ExtAttr<A>, Error=Error> + Send
+    fn flush(self) -> Box<dyn Future<Item=ExtAttr<A>, Error=Error> + Send>
     {
-        Ok(ExtAttr::Blob(self)).into_future()
+        boxfut!(Ok(ExtAttr::Blob(self)).into_future())
     }
 }
 
@@ -377,8 +391,8 @@ impl<'a, A: Addr> ExtAttr<A> {
         where D: DML + 'static, D::Addr: 'static
     {
         match self {
-            ExtAttr::Inline(iea) => Box::new(iea.flush(dml, txg)),
-            ExtAttr::Blob(bea) => Box::new(bea.flush()),
+            ExtAttr::Inline(iea) => iea.flush(dml, txg),
+            ExtAttr::Blob(bea) => bea.flush(),
         }
     }
 
@@ -526,27 +540,25 @@ impl Inode {
 }
 
 /// This module ought to be unreachable, but must exist to satisfy rustc
-// LCOV_EXCL_START
-#[allow(clippy::needless_pass_by_value)]
 mod dbs_serializer {
     use super::*;
     use serde::{de::Deserializer, Serializer};
 
-    pub(super) fn deserialize<'de, DE>(_deserializer: DE)
+    pub(super) fn deserialize<'de, DE>(deserializer: DE)
         -> Result<Arc<DivBufShared>, DE::Error>
         where DE: Deserializer<'de>
     {
-        panic!("InlineExtents should be converted to BlobExtents before serializing")
+        Vec::<u8>::deserialize(deserializer)
+            .map(|v| Arc::new(DivBufShared::from(v)))
     }
 
-    pub(super) fn serialize<S>(_dbs: &Arc<DivBufShared>, _serializer: S)
+    pub(super) fn serialize<S>(dbs: &Arc<DivBufShared>, serializer: S)
         -> Result<S::Ok, S::Error>
         where S: Serializer
     {
-        panic!("InlineExtents should be converted to BlobExtents before serializing")
+        (&dbs.try_const().unwrap()[..]).serialize(serializer)
     }
 }
-// LCOV_EXCL_END
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct InlineExtent {
@@ -557,21 +569,31 @@ pub struct InlineExtent {
 
 impl InlineExtent {
     fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
-        -> impl Future<Item=FSValue<A>, Error=Error> + Send + 'static
+        -> Box<dyn Future<Item=FSValue<A>, Error=Error> + Send + 'static>
         where D: DML, D::Addr: 'static
     {
-        let lsize = self.buf.len() as u32;
-        let dbs = Arc::try_unwrap(self.buf).unwrap();
-        dml.put(dbs, Compression::None, txg)
-        .map(move |rid: D::Addr| {
-            debug_assert_eq!(mem::size_of::<D::Addr>(), mem::size_of::<A>());
-            // Safe because D::Addr should always equal A.  If you ever
-            // call this function with any other type for A, then you're
-            // doing something wrong.
-            let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
-            let be = BlobExtent{lsize, rid: rid_a};
-            FSValue::BlobExtent(be)
-        })
+        let lsize = self.len();
+        if lsize > BLOB_THRESHOLD {
+            let dbs = Arc::try_unwrap(self.buf).unwrap();
+            let fut = dml.put(dbs, Compression::None, txg)
+            .map(move |rid: D::Addr| {
+                debug_assert_eq!(mem::size_of::<D::Addr>(),
+                                 mem::size_of::<A>());
+                // Safe because D::Addr should always equal A.  If you ever
+                // call this function with any other type for A, then you're
+                // doing something wrong.
+                let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
+                let be = BlobExtent{lsize: lsize as u32, rid: rid_a};
+                FSValue::BlobExtent(be)
+            });
+            boxfut!(fut)
+        } else {
+            boxfut!(Ok(FSValue::InlineExtent(self)).into_future())
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.buf.len()
     }
 
     pub fn new(buf: Arc<DivBufShared>) -> Self {
@@ -722,7 +744,7 @@ impl<A: Addr> Value for FSValue<A> {
         where D: DML + 'static, D::Addr: 'static
     {
         match self {
-            FSValue::InlineExtent(ie) => Box::new(ie.flush(dml, txg)),
+            FSValue::InlineExtent(ie) => ie.flush(dml, txg),
             FSValue::ExtAttr(extattr) => {
                 let fut = extattr.flush(dml, txg)
                 .map(FSValue::ExtAttr);
@@ -749,8 +771,11 @@ impl<A: Addr> Value for FSValue<A> {
 #[cfg(test)]
 mod t {
 
+use crate::common::idml::IDML;
 use pretty_assertions::assert_eq;
+use simulacrum::*;
 use super::*;
+use tokio::runtime::current_thread;
 
 // pet kcov
 #[test]
@@ -778,6 +803,104 @@ fn fsvalue_typical_size() {
     });
     let v: Vec<u8> = bincode::serialize(&fsv).unwrap();
     assert_eq!(FSValue::<RID>::TYPICAL_SIZE, v.len());
+}
+
+/// Long InlineExtAttrs should be converted to BlobExtAttrs during flush
+#[test]
+fn fsvalue_flush_inline_extattr_long() {
+    let rid = RID(999);
+    let mut idml = IDML::default();
+    idml.expect_put()
+        .called_once()
+        .with(passes(move |args: &(DivBufShared, _, _)| {
+            args.0.len() == BYTES_PER_LBA
+        }))
+        .returning(move |_| boxfut!(Ok(rid).into_future()));
+    let txg = TxgT(0);
+    let mut rt = current_thread::Runtime::new().unwrap();
+
+    let namespace = ExtAttrNamespace::User;
+    let name = OsString::from("bar");
+    let dbs = Arc::new(DivBufShared::from(vec![42u8; BYTES_PER_LBA]));
+    let extent = InlineExtent::new(dbs);
+    let iea = InlineExtAttr{namespace, name, extent};
+    let unflushed: FSValue<RID> = FSValue::ExtAttr(ExtAttr::Inline(iea));
+
+    let flushed = rt.block_on(future::lazy(|| {
+        unflushed.flush(&idml, txg)
+    })).unwrap();
+
+    if let ExtAttr::Inline(_) = flushed.as_extattr().unwrap() {
+        panic!("Long extattr should've become a BlobExtattr");
+    }
+}
+
+/// Short InlineExtAttrs should be left in the B+Tree, not turned into blobs
+#[test]
+fn fsvalue_flush_inline_extattr_short() {
+    let idml = IDML::default();
+    let txg = TxgT(0);
+    let mut rt = current_thread::Runtime::new().unwrap();
+
+    let namespace = ExtAttrNamespace::User;
+    let name = OsString::from("bar");
+    let dbs = Arc::new(DivBufShared::from(vec![0, 1, 2, 3, 4, 5]));
+    let extent = InlineExtent::new(dbs);
+    let iea = InlineExtAttr{namespace, name, extent};
+    let unflushed: FSValue<RID> = FSValue::ExtAttr(ExtAttr::Inline(iea));
+
+    let flushed = rt.block_on(future::lazy(|| {
+        unflushed.flush(&idml, txg)
+    })).unwrap();
+
+    if let ExtAttr::Blob(_) = flushed.as_extattr().unwrap() {
+        panic!("Short extattr should remain inline");
+    }
+}
+
+/// Long InlineExtents should be converted to BlobExtents during flush
+#[test]
+fn fsvalue_flush_inline_extent_long() {
+    let rid = RID(999);
+    let mut idml = IDML::default();
+    idml.expect_put()
+        .called_once()
+        .with(passes(move |args: &(DivBufShared, _, _)| {
+            args.0.len() == BYTES_PER_LBA
+        }))
+        .returning(move |_| boxfut!(Ok(rid).into_future()));
+    let txg = TxgT(0);
+    let mut rt = current_thread::Runtime::new().unwrap();
+
+    let data = Arc::new(DivBufShared::from(vec![42u8; BYTES_PER_LBA]));
+    let ile = InlineExtent::new(data);
+    let unflushed: FSValue<RID> = FSValue::InlineExtent(ile);
+    let flushed = rt.block_on(future::lazy(|| {
+        unflushed.flush(&idml, txg)
+    })).unwrap();
+
+    if let Extent::Inline(_) = flushed.as_extent().unwrap() {
+        panic!("Long extent should've become a BlobExtent");
+    }
+}
+
+/// Short InlineExtents should be left in the B+Tree, not turned into blobs
+#[test]
+fn fsvalue_flush_inline_extent_short() {
+    let idml = IDML::default();
+    let txg = TxgT(0);
+    let mut rt = current_thread::Runtime::new().unwrap();
+
+    let data = Arc::new(DivBufShared::from(vec![0, 1, 2, 3, 4, 5]));
+    let ile = InlineExtent::new(data);
+    let unflushed: FSValue<RID> = FSValue::InlineExtent(ile);
+    let flushed = rt.block_on(future::lazy(|| {
+        unflushed.flush(&idml, txg)
+    })).unwrap();
+
+    if let Extent::Blob(_) = flushed.as_extent().unwrap() {
+        panic!("Short extent should remain inline");
+    }
 }
 
 /// For best locality of reference, keys of the same object should always
