@@ -402,7 +402,6 @@ impl DML for DDML {
 
 // LCOV_EXCL_START
 #[cfg(test)]
-#[cfg(feature = "nightly")]
 mod t {
 mod drp {
     use pretty_assertions::assert_eq;
@@ -438,6 +437,7 @@ mod drp {
     }
 }
 
+#[cfg(feature = "nightly")]
 mod ddml {
     use super::super::*;
     use divbuf::DivBufShared;

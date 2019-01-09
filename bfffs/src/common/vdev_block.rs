@@ -748,7 +748,6 @@ impl Vdev for VdevBlock {
 
 // LCOV_EXCL_START
 
-#[cfg(feature = "nightly")]
 #[cfg(test)]
 mod t {
 
@@ -807,6 +806,7 @@ fn blockop_partial_eq() {
     assert!(bo2 != bo1);
 }
 
+#[cfg(feature = "nightly")]
 test_suite! {
     name t;
 

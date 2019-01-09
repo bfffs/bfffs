@@ -561,7 +561,6 @@ struct Label {
 
 // LCOV_EXCL_START
 #[cfg(test)]
-#[cfg(feature = "nightly")]
 mod t {
 
     use super::*;
