@@ -190,6 +190,30 @@ impl<'a> ClusterServer {
     }
 }
 
+/// Return type of `ClusterProxy::write`
+struct ClusterProxyWrite {
+    rx: oneshot::Receiver<Result<LbaT, Error>>
+}
+
+impl Future for ClusterProxyWrite
+{
+    type Item = LbaT;
+    type Error= Error;
+
+    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+        match self.rx.poll() {
+            Ok(futures::Async::Ready(r)) => {
+                match r {
+                    Ok(lba) => Ok(futures::Async::Ready(lba)),
+                    Err(e) => Err(e)
+                }
+            },
+            Ok(futures::Async::NotReady) => Ok(futures::Async::NotReady),
+            Err(_) => Err(Error::EPIPE)
+        }
+    }
+}
+
 /// `Send`able, `Clone`able handle to a `ClusterServer`
 #[derive(Debug)]
 pub struct ClusterProxy {
@@ -296,14 +320,12 @@ impl<'a> ClusterProxy {
         self.uuid
     }
 
-    fn write(&self, buf: IoVec, txg: TxgT)
-        -> impl Future<Item = LbaT, Error = Error>
+    fn write(&self, buf: IoVec, txg: TxgT) -> ClusterProxyWrite
     {
         let (tx, rx) = oneshot::channel::<Result<LbaT, Error>>();
         let rpc = Rpc::Write(buf, txg, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::EPIPE)
-            .and_then(|result| result.into_future())
+        ClusterProxyWrite{rx}
     }
 
     fn write_label(&self, labeller: LabelWriter)
@@ -407,6 +429,49 @@ impl Stats {
         self.size.iter().sum()
     }
 }
+
+/// Return type of `Pool::write`
+struct Write {
+    cpfut: ClusterProxyWrite,
+    stats: Arc<Stats>,
+    cidx: usize,
+    space: LbaT,
+    cluster: ClusterT
+}
+
+impl Write {
+    fn new(cpfut: ClusterProxyWrite, stats: Arc<Stats>,
+           cidx: usize, space: LbaT, cluster: ClusterT) -> Self
+    {
+        Write{cpfut, stats, cidx, space, cluster}
+    }
+}
+
+impl Future for Write
+{
+    type Item = PBA;
+    type Error= Error;
+
+    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+        match self.cpfut.poll() {
+            Ok(futures::Async::NotReady) => Ok(futures::Async::NotReady),
+            Ok(futures::Async::Ready(lba)) => {
+                self.stats.queue_depth[self.cidx]
+                    .fetch_sub(1, Ordering::Relaxed);
+                self.stats.allocated_space[self.cidx]
+                    .fetch_add(self.space, Ordering::Relaxed);
+                let pba = PBA::new(self.cluster, lba);
+                Ok(futures::Async::Ready(pba))
+            },
+            Err(e) => {
+                self.stats.queue_depth[self.cidx]
+                    .fetch_sub(1, Ordering::Relaxed);
+                Err(Error::from(e))
+            }
+        }
+    }
+}
+
 
 /// An BFFFS storage pool
 pub struct Pool {
@@ -681,16 +746,8 @@ impl<'a> Pool {
         self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
         let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
         let stats2 = self.stats.clone();
-        let stats3 = self.stats.clone();
-        self.clusters[cidx].write(buf, txg)
-            .then(move |r| {
-                stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
-                r
-            }).map(move |lba| {
-                stats3.allocated_space[cidx]
-                    .fetch_add(space, Ordering::Relaxed);
-                PBA::new(cluster, lba)
-            })
+        let cpfut = self.clusters[cidx].write(buf, txg);
+        Write::new(cpfut, stats2, cidx, space, cluster)
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
