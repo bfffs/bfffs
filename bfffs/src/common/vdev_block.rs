@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use futures::{Async, Future, Poll, sync::oneshot};
+use futures::{Async, Future, Poll, unsync::oneshot};
 use std::{
     cell::RefCell,
     cmp::{Ord, Ordering, PartialOrd},
