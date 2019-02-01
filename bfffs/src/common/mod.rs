@@ -177,6 +177,7 @@ pub enum Error {
 
     //// BFFFS custom error types below
     EUNKNOWN        = 256,
+    // TODO: Change ECKSUM to EINTEGRITY in FreeBSD 12.1
     ECKSUM          = 257,
 }
 
