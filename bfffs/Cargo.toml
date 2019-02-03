@@ -20,7 +20,7 @@ blosc = { git = "https://github.com/asomers/blosc-rs/", rev = "04c9e02"}
 byteorder = "1.2.3"
 cfg-if = "0.1"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
-downcast = "0.8"
+downcast = "0.9.2"
 enum-primitive-derive = "^0.1"
 fixedbitset = "0.1.8"
 futures = "0.1.14"

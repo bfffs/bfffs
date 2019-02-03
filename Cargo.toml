@@ -10,3 +10,4 @@ members = ["bfffs", "bfffs-fio", "bfffs-fuse", "isa-l"]
 
 [patch.crates-io]
 simulacrum_mock = { git = "https://github.com/pcsm/simulacrum/", rev = "13416e9" }
+downcast = { git = "https://github.com/asomers/downcast-rs/", rev = "c65a1aa"}
