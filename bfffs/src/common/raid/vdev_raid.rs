@@ -1756,7 +1756,7 @@ fn erase_zone() {
             .with(eq(1))
             .return_const(zl1);
         bd.expect_erase_zone()
-            .withf(|(start, end)| *start == 1 && *end == 59_999)
+            .with(eq((1, 59_999)))
             .times(1)
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()

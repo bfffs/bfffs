@@ -7,9 +7,11 @@
 
 use crate::common::{
     *,
-    label::LabelReader,
+    label::*,
     vdev::*,
 };
+#[cfg(test)] use futures::Future;
+#[cfg(test)] use mockall::*;
 use std::{
     collections::BTreeMap,
     iter::once,
@@ -128,4 +130,32 @@ pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
         },
     };
     (vdev, label_reader)
+}
+
+#[cfg(test)]
+mock!{
+    pub VdevRaid {}
+    trait Vdev {
+        fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
+        fn optimum_queue_depth(&self) -> u32;
+        fn size(&self) -> LbaT;
+        fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
+        fn uuid(&self) -> Uuid;
+        fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
+        fn zones(&self) -> ZoneT;
+    }
+    trait VdevRaidApi{
+        fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
+        fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
+        fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
+        fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
+        fn write_at(&self, buf: IoVec, zone: ZoneT,
+                    lba: LbaT) -> BoxVdevFut;
+        fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+        fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
+            -> BoxVdevFut;
+    }
 }

@@ -9,9 +9,11 @@ use crate::{
         raid::VdevRaidApi
     }
 };
+#[cfg(test)] use crate::common::raid::MockVdevRaid;
 use fixedbitset::FixedBitSet;
 use futures::{ Future, IntoFuture, future};
 use metrohash::MetroHash64;
+#[cfg(test)] use mockall::{Sequence, predicate::*};
 use std::{
     cell::RefCell,
     cmp,
@@ -938,67 +940,53 @@ mod open_zone {
     }
 }
 
-#[cfg(feature = "nightly")]
 mod cluster {
     use super::super::*;
     use crate::common::vdev::*;
     use divbuf::DivBufShared;
     use itertools::Itertools;
-    use mockers::{Scenario, Sequence, check, matchers};
-    use mockers_derive::mock;
     use pretty_assertions::assert_eq;
     use std::iter;
     use tokio::runtime::current_thread;
 
-    mock!{
-        MockVdevRaid,
-        vdev,
-        trait Vdev {
-            fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
-            fn optimum_queue_depth(&self) -> u32;
-            fn size(&self) -> LbaT;
-            fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
-            fn uuid(&self) -> Uuid;
-            fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
-            fn zones(&self) -> ZoneT;
-        },
-        self,
-        trait VdevRaidApi{
-            fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
-            fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
-            fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
-            fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
-            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
-            fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
-            fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
-            fn write_at(&self, buf: IoVec, zone: ZoneT,
-                        lba: LbaT) -> BoxVdevFut;
-            fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
-            fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
-                -> BoxVdevFut;
-        }
-    }
-
     #[test]
     fn free_and_erase_full_zone() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.lba2zone_call(1).and_return_clone(Some(0)).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((1, 2)).times(..));
-        s.expect(vr.zone_limits_call(1).and_return_clone((2, 200)).times(..));
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.open_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(matchers::ANY, 0, matchers::ANY)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.finish_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.open_zone_call(1)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(matchers::ANY, 1, matchers::ANY)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.erase_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_lba2zone()
+            .with(eq(1))
+            .return_const(Some(0));
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 2));
+        vr.expect_zone_limits()
+            .with(eq(1))
+            .return_const((2, 200));
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_open_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(_buf, zone, _lba)| *zone == 0)
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_finish_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_open_zone()
+            .times(1)
+            .with(eq(1))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(_buf, zone, _lba)| *zone == 1)
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_erase_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
 
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
@@ -1023,24 +1011,42 @@ mod cluster {
 
     #[test]
     fn free_and_erase_nonfull_zone() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.lba2zone_call(1).and_return_clone(Some(0)).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((1, 3)).times(..));
-        s.expect(vr.zone_limits_call(1).and_return_clone((3, 200)).times(..));
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.open_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(matchers::ANY, 0, matchers::ANY)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.finish_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.open_zone_call(1)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(matchers::ANY, 1, matchers::ANY)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.erase_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_lba2zone()
+            .with(eq(1))
+            .return_const(Some(0));
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 3));
+        vr.expect_zone_limits()
+            .with(eq(1))
+            .return_const((3, 200));
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_open_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(_buf, zone, _lba)| *zone == 0)
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_finish_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_open_zone()
+            .times(1)
+            .with(eq(1))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(_buf, zone, _lba)| *zone == 1)
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_erase_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
 
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
@@ -1066,28 +1072,43 @@ mod cluster {
 
     #[test]
     fn free_and_dont_erase_zone() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.lba2zone_call(1).and_return_clone(Some(0)).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((1, 3)).times(..));
-        s.expect(vr.zone_limits_call(1).and_return_clone((3, 200)).times(..));
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.open_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_lba2zone()
+            .with(eq(1))
+            .return_const(Some(0));
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 3));
+        vr.expect_zone_limits()
+            .with(eq(1))
+            .return_const((3, 200));
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_open_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(_buf, zone, lba)| *zone == 0 && *lba == 1)
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(_buf, zone, lba)| *zone == 0 && *lba == 2)
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
 
-        // .times can't be used with and_call
-        // https://github.com/kriomant/mockers/issues/32
-        s.expect(vr.write_at_call(matchers::ANY, 0, 1)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(matchers::ANY, 0, 2)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-
-        s.expect(vr.finish_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.open_zone_call(1)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(matchers::ANY, 1, matchers::ANY)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
+        vr.expect_finish_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_open_zone()
+            .times(1)
+            .with(eq(1))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(_buf, zone, _lba)| *zone == 1)
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
 
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
@@ -1120,12 +1141,18 @@ mod cluster {
     #[test]
     #[should_panic(expected = "Can't free across")]
     fn free_crosszone_padding() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.lba2zone_call(900).and_return_clone(Some(0)).times(..));
-        s.expect(vr.lba2zone_call(1099).and_return_clone(Some(1)).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_lba2zone()
+            .with(eq(900))
+            .return_const(Some(0));
+        vr.expect_lba2zone()
+            .with(eq(1099))
+            .return_const(Some(1));
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 1000));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
         cluster.free(900, 200);
@@ -1134,11 +1161,15 @@ mod cluster {
     #[test]
     #[should_panic(expected = "Can't free from inter-zone padding")]
     fn free_interzone_padding() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.lba2zone_call(1000).and_return_clone(None).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((1, 1000)).times(..));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_lba2zone()
+            .with(eq(1000))
+            .return_const(None);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 1000));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
         cluster.free(1000, 10);
@@ -1172,26 +1203,38 @@ mod cluster {
             0, 0, 0, 0,                     // zone4: freed blocks
             0, 0, 0, 0, 0, 0, 0, 0,         // zone4 txgs: 0..0
         ];
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(5).times(..));
-        s.expect(vr.read_spacemap_call(matchers::ANY, 0)
-                 .and_call(|mut dbm: DivBufMut, _idx: u32| {
-                     assert_eq!(dbm.len(), BYTES_PER_LBA);
-                     dbm[0..96].copy_from_slice(&SPACEMAP[..]);
-                     dbm[96..4096].iter_mut().set_from(iter::repeat(0));
-                     Box::new(future::ok::<(), Error>(()))
-                 })
-        );
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(5);
+        vr.expect_read_spacemap()
+            .withf(|(_dbm, idx): &(DivBufMut, u32)| *idx == 0)
+            .times(1)
+            .returning(|(mut dbm, _idx): (DivBufMut, u32)| {
+                 assert_eq!(dbm.len(), BYTES_PER_LBA);
+                 dbm[0..96].copy_from_slice(&SPACEMAP[..]);
+                 dbm[96..4096].iter_mut().set_from(iter::repeat(0));
+                 Box::new(future::ok::<(), Error>(()))
+            });
 
-        s.expect(vr.reopen_zone_call(3, 77).and_return(
-                Box::new(Ok(()).into_future())
-        ));
-        s.expect(vr.zone_limits_call(0).and_return_clone((4, 96)).times(..));
-        s.expect(vr.zone_limits_call(1).and_return_clone((104, 196)).times(..));
-        s.expect(vr.zone_limits_call(2).and_return_clone((204, 296)).times(..));
-        s.expect(vr.zone_limits_call(3).and_return_clone((304, 396)).times(..));
-        s.expect(vr.zone_limits_call(4).and_return_clone((404, 496)).times(..));
+        vr.expect_reopen_zone()
+            .times(1)
+            .with(eq((3, 77)))
+            .return_once(|_| Box::new(Ok(()).into_future()));
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((4, 96));
+        vr.expect_zone_limits()
+            .with(eq(1))
+            .return_const((104, 196));
+        vr.expect_zone_limits()
+            .with(eq(2))
+            .return_const((204, 296));
+        vr.expect_zone_limits()
+            .with(eq(3))
+            .return_const((304, 396));
+        vr.expect_zone_limits()
+            .with(eq(4))
+            .return_const((404, 496));
         let (fsm, _mock_vr) = FreeSpaceMap::open(Rc::new(vr)).wait().unwrap();
         assert_eq!(fsm.zones.len(), 4);
         assert_eq!(fsm.zones[0].freed_blocks, 0);
@@ -1231,26 +1274,26 @@ mod cluster {
             3, 0, 0, 0, 4, 0, 0, 0,         // zone255 txgs: 3..4
             // Rest is all 0, indicating empty zones
         ];
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(300).times(..));
-        s.expect(vr.read_spacemap_call(matchers::ANY, 0)
-                 .and_call(|mut dbm: DivBufMut, _idx: u32| {
-                     assert_eq!(dbm.len(), 8192);
-                     dbm[0..32].copy_from_slice(&SPACEMAP_B0[..]);
-                     dbm[32..4096].iter_mut().set_from(iter::repeat(0));
-                     dbm[4096..4128].copy_from_slice(&SPACEMAP_B1[..]);
-                     dbm[4192..8192].iter_mut().set_from(iter::repeat(0));
-                     Box::new(future::ok::<(), Error>(()))
-                 })
-        );
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(300);
+        vr.expect_read_spacemap()
+            .withf(|(_buf, idx)| *idx == 0)
+            .times(1)
+            .returning(|(mut dbm, _idx): (DivBufMut, u32)| {
+                assert_eq!(dbm.len(), 8192);
+                dbm[0..32].copy_from_slice(&SPACEMAP_B0[..]);
+                dbm[32..4096].iter_mut().set_from(iter::repeat(0));
+                dbm[4096..4128].copy_from_slice(&SPACEMAP_B1[..]);
+                dbm[4192..8192].iter_mut().set_from(iter::repeat(0));
+                Box::new(future::ok::<(), Error>(()))
+            });
 
-        s.expect(vr.zone_limits_call(matchers::ANY)
-                 .and_call_clone(|zid: ZoneT| {
-                     let i = LbaT::from(zid);
-                     (100 * i + 4, 100 * i + 96)
-                 }).times(..)
-        );
+        vr.expect_zone_limits()
+             .returning(|zid: ZoneT| {
+                 let i = LbaT::from(zid);
+                 (100 * i + 4, 100 * i + 96)
+             });
 
         let (fsm, _mock_vr) = FreeSpaceMap::open(Rc::new(vr)).wait().unwrap();
         assert_eq!(fsm.zones.len(), 256);
@@ -1273,16 +1316,17 @@ mod cluster {
             0, 0, 0, 0, 0, 0, 0, 0,         // Checksum
             0, 0, 0, 0, 0, 0, 0, 0,         // 0 entries
         ];
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(0).times(..));
-        s.expect(vr.read_spacemap_call(matchers::ANY, 0)
-                 .and_call(|mut dbm: DivBufMut, _idx: u32| {
-                     dbm.try_truncate(0).unwrap();
-                     dbm.extend(SPACEMAP.iter());
-                     Box::new(future::ok::<(), Error>(()))
-                 })
-        );
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(0);
+        vr.expect_read_spacemap()
+            .withf(|(_buf, idx)| *idx == 0)
+            .times(1)
+            .returning(|(mut dbm, _idx): (DivBufMut, u32)| {
+                dbm.try_truncate(0).unwrap();
+                dbm.extend(SPACEMAP.iter());
+                Box::new(future::ok::<(), Error>(()))
+            });
 
         let r = FreeSpaceMap::open(Rc::new(vr)).wait();
         assert_eq!(Error::ECKSUM, r.err().unwrap());
@@ -1290,12 +1334,19 @@ mod cluster {
 
     #[test]
     fn find_closed_zone() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zone_limits_call(0).and_return_clone((0, 1)).times(..));
-        s.expect(vr.zone_limits_call(1).and_return_clone((1, 2)).times(..));
-        s.expect(vr.zone_limits_call(3).and_return_clone((3, 4)).times(..));
-        s.expect(vr.zone_limits_call(4).and_return_clone((4, 5)).times(..));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((0, 1));
+        vr.expect_zone_limits()
+            .with(eq(1))
+            .return_const((1, 2));
+        vr.expect_zone_limits()
+            .with(eq(3))
+            .return_const((3, 4));
+        vr.expect_zone_limits()
+            .with(eq(4))
+            .return_const((4, 5));
         let mut fsm = FreeSpaceMap::new(10);
         fsm.open_zone(0, 0, 1, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(0, TxgT::from(0));
@@ -1321,18 +1372,23 @@ mod cluster {
     // if opening a zone is slow.
     #[test]
     fn open_zone_slow() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
-        s.expect(vr.open_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
-                buf.len() == BYTES_PER_LBA
-            }),
-            0,  // Zone
-            0   /* Lba */)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((0, 1000));
+        vr.expect_open_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(buf, zone, lba)|
+                buf.len() == BYTES_PER_LBA &&
+                *zone == 0 &&
+                *lba == 0
+            ).times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
@@ -1346,28 +1402,46 @@ mod cluster {
     // VdevRaid
     #[test]
     fn txg_sync() {
-        let s = Scenario::new();
         let mut seq = Sequence::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(100).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
-        seq.expect(vr.open_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        seq.expect(vr.write_at_call(check!(move |buf: &IoVec| {
-                buf.len() == BYTES_PER_LBA
-            }),
-            0,  // Zone
-            0   /* Lba */)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        seq.expect(vr.flush_zone_call(0)
-                 .and_return((5, Box::new(future::ok::<(), Error>(())))));
-        seq.expect(vr.write_spacemap_call(matchers::check(|sglist: &&SGList| {
-                sglist.iter().map(DivBuf::len).sum::<usize>() == 4096
-            }), 0, 0)
-            .and_return(Box::new(future::ok::<(), Error>(()))));
-        seq.expect(vr.sync_all_call()
-                 .and_return(Box::new(future::ok::<(), Error>(()))));
-        s.expect(seq);
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(100);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((0, 1000));
+        vr.expect_open_zone()
+            .times(1)
+            .in_sequence(&mut seq)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .times(1)
+            .in_sequence(&mut seq)
+            .withf(|(buf, zone, lba)|
+                buf.len() == BYTES_PER_LBA &&
+                *zone == 0 &&
+                *lba == 0
+            ).return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_flush_zone()
+            .times(1)
+            .in_sequence(&mut seq)
+            .with(eq(0))
+            .return_once(|_| (5, Box::new(future::ok::<(), Error>(()))));
+        // Safe because the test is single-threaded
+        unsafe {
+            vr.expect_write_spacemap()
+                .times(1)
+                .in_sequence(&mut seq)
+                .withf_unsafe(|(sglist, idx, block)|
+                    (**sglist).iter().map(DivBuf::len).sum::<usize>() == 4096 &&
+                    *idx == 0 &&
+                    *block == 0
+                ).return_once(|_| Box::new(future::ok::<(), Error>(())));
+        }
+        vr.expect_sync_all()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
         cluster.fsm.borrow_mut().clear_dirty_zones();
@@ -1388,10 +1462,12 @@ mod cluster {
 
     #[test]
     fn write_zones_too_small() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((0, 1)).times(..));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((0, 1));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
@@ -1405,11 +1481,13 @@ mod cluster {
 
     #[test]
     fn write_no_available_zones() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
+        let mut vr = MockVdevRaid::default();
         // What a useless disk ...
-        s.expect(vr.zones_call().and_return_clone(0).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((0, 0)).times(..));
+        vr.expect_zones()
+            .return_const(0);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((0, 0));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
@@ -1420,18 +1498,23 @@ mod cluster {
 
     #[test]
     fn write_with_no_open_zones() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
-        s.expect(vr.open_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
-                buf.len() == BYTES_PER_LBA
-            }),
-            0,  // Zone
-            0   /* Lba */)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((0, 1000));
+        vr.expect_open_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(buf, zone, lba)|
+                buf.len() == BYTES_PER_LBA &&
+                *zone == 0 &&
+                *lba == 0
+            ).times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
@@ -1448,24 +1531,30 @@ mod cluster {
 
     #[test]
     fn write_with_open_zones() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((0, 1000)).times(..));
-        s.expect(vr.open_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
-                buf.len() == BYTES_PER_LBA
-            }),
-            0,  // Zone
-            0   /* Lba */)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
-                buf.len() == BYTES_PER_LBA
-            }),
-            0,  // Zone
-            1   /* Lba */)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((0, 1000));
+        vr.expect_open_zone()
+            .times(1)
+            .with(eq(0))
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(buf, zone, lba)|
+                buf.len() == BYTES_PER_LBA &&
+                *zone == 0 &&
+                *lba == 0
+            ).times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(buf, zone, lba)|
+                buf.len() == BYTES_PER_LBA &&
+                *zone == 0 &&
+                *lba == 1
+            ).times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
@@ -1489,29 +1578,41 @@ mod cluster {
     // and a new zone opened.
     #[test]
     fn write_zone_full() {
-        let s = Scenario::new();
-        let vr = s.create_mock::<MockVdevRaid>();
-        s.expect(vr.zones_call().and_return_clone(32768).times(..));
-        s.expect(vr.zone_limits_call(0).and_return_clone((0, 3)).times(..));
-        s.expect(vr.zone_limits_call(1).and_return_clone((3, 6)).times(..));
-        s.expect(vr.open_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
-                buf.len() == 2 * BYTES_PER_LBA
-            }),
-            0,  // Zone
-            0   /* Lba */)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.finish_zone_call(0)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.open_zone_call(1)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
-        s.expect(vr.write_at_call(check!(move |buf: &IoVec| {
-                buf.len() == 2 * BYTES_PER_LBA
-            }),
-            1,  // Zone
-            3   /* Lba */)
-            .and_return(Box::new( future::ok::<(), Error>(()))));
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(32768);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((0, 3));
+        vr.expect_zone_limits()
+            .with(eq(1))
+            .return_const((3, 6));
+        vr.expect_open_zone()
+            .with(eq(0))
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(buf, zone, lba)|
+                buf.len() == 2 * BYTES_PER_LBA &&
+                *zone == 0 &&
+                *lba == 0
+            ).times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_finish_zone()
+            .with(eq(0))
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_open_zone()
+            .with(eq(1))
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+        vr.expect_write_at()
+            .withf(|(buf, zone, lba)|
+                buf.len() == 2 * BYTES_PER_LBA &&
+                *zone == 1 &&
+                *lba == 3
+            ).times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
@@ -1530,7 +1631,6 @@ mod cluster {
             })
         })).expect("write failed");
     }
-
 }
 
 mod free_space_map {
