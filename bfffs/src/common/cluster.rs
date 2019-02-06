@@ -688,7 +688,7 @@ macro_rules! close_zones{
     }
 }
 
-impl<'a> Cluster {
+impl Cluster {
     /// How many blocks have been allocated, including blocks that have been
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {
