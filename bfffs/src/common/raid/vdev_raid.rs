@@ -8,29 +8,32 @@ use crate::{
         vdev::*,
     }
 };
-#[cfg(not(test))] use crate::common::vdev_block::*;
 use divbuf::DivBufShared;
 use futures::{Future, future};
 use itertools::multizip;
 use std::{
     cell::RefCell,
+    collections::BTreeMap,
     cmp,
     mem,
     ptr
 };
-use std::collections::BTreeMap;
 #[cfg(not(test))] use std::{
     num::NonZeroU64,
     path::Path
 };
 use super::{
-    VdevBlockLike,
     codec::*,
     declust::*,
     prime_s::*,
     sgcursor::*,
     vdev_raid_api::*,
 };
+
+#[cfg(test)]
+use crate::common::vdev_block::MockVdevBlock as VdevBlock;
+#[cfg(not(test))]
+use crate::common::vdev_block::VdevBlock;
 
 /// RAID placement algorithm.
 ///
@@ -183,7 +186,7 @@ pub struct VdevRaid {
     locator: Box<dyn Locator>,
 
     /// Underlying block devices.  Order is important!
-    blockdevs: Box<[VdevBlockLike]>,
+    blockdevs: Box<[VdevBlock]>,
 
     /// RAID placement algorithm.
     layout_algorithm: LayoutAlgorithm,
@@ -301,7 +304,7 @@ impl VdevRaid {
            redundancy: i16,
            uuid: Uuid,
            layout_algorithm: LayoutAlgorithm,
-           blockdevs: Box<[VdevBlockLike]>) -> Self
+           blockdevs: Box<[VdevBlock]>) -> Self
     {
         let num_disks = blockdevs.len() as i16;
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
@@ -338,7 +341,7 @@ impl VdevRaid {
     ///
     /// * `label`:      The `VdevRaid`'s label, taken from any child.
     /// * `blocks`:     A map of all the children `VdevBlock`s, indexed by UUID.
-    pub(super) fn open(label: Label, mut blocks: BTreeMap<Uuid, VdevBlockLike>)
+    pub(super) fn open(label: Label, mut blocks: BTreeMap<Uuid, VdevBlock>)
         -> Self
     {
         assert_eq!(blocks.len(), label.children.len(),
@@ -1207,45 +1210,13 @@ fn stripe_buffer_two_iovecs_overflow() {
     assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
 }
 
-#[cfg(feature = "nightly")]
 #[cfg(test)]
 mod t {
 
 use super::*;
-use super::super::VdevBlockTrait;
 use futures::future;
 use galvanic_test::*;
-use mockers::matchers::ANY;
-use mockers::{Scenario, check};
-use mockers_derive::mock;
-
-mock!{
-    MockVdevBlock,
-    vdev,
-    trait Vdev {
-        fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
-        fn optimum_queue_depth(&self) -> u32;
-        fn size(&self) -> LbaT;
-        fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
-        fn uuid(&self) -> Uuid;
-        fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
-        fn zones(&self) -> ZoneT;
-    },
-    self,
-    trait VdevBlockTrait{
-        fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut> ;
-        fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut> ;
-        fn open_zone(&self, lba: LbaT) -> Box<VdevFut> ;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
-        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
-        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
-        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-        fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-        fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-            -> Box<VdevFut>;
-        fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
-    }
-}
+use mockall::predicate::*;
 
 // pet kcov
 #[test]
@@ -1266,146 +1237,138 @@ test_suite! {
     name basic;
 
     use super::*;
-    use mockers::{matchers, Scenario};
     use pretty_assertions::assert_eq;
 
-    fixture!( mocks(n: i16, k: i16, f:i16, chunksize: LbaT)
-              -> (Scenario, VdevRaid) {
+    fixture!( mocks(n: i16, k: i16, f:i16, chunksize: LbaT) -> VdevRaid {
 
         setup(&mut self) {
-            let s = Scenario::new();
-            let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+            let mut blockdevs = Vec::<VdevBlock>::new();
             for _ in 0..*self.n {
-                let mock = Box::new(s.create_mock::<MockVdevBlock>());
-                s.expect(mock.size_call()
-                                    .and_return_clone(262_144)
-                                    .times(..));  // 256k LBAs
-                s.expect(mock.lba2zone_call(0)
-                                    .and_return_clone(None)
-                                    .times(..));
-                s.expect(mock.lba2zone_call(matchers::in_range(1..65536))
-                                    .and_return_clone(Some(0))
-                                    .times(..));
-                s.expect(mock.lba2zone_call(matchers::in_range(65536..131_072))
-                                    .and_return_clone(Some(1))
-                                    .times(..));
-                s.expect(mock.optimum_queue_depth_call()
-                                    .and_return_clone(10)
-                                    .times(..));
-                s.expect(mock.zone_limits_call(0)
-                                    .and_return_clone((1, 65536))
-                                    .times(..));
-                s.expect(mock.zone_limits_call(1)
-                                    // 64k LBAs/zone
-                                    .and_return_clone((65536, 131_072))
-                                    .times(..));
+                let mut mock = VdevBlock::default();
+                mock.expect_size()
+                    .return_const(262_144);
+                mock.expect_lba2zone()
+                    .with(eq(0))
+                    .return_const(None);
+                mock.expect_lba2zone()
+                    .withf(|lba| *lba >= 1 && *lba < 65536)
+                    .return_const(Some(0));
+                mock.expect_lba2zone()
+                    .withf(|lba| *lba >= 65536 && *lba < 131_072)
+                    .return_const(Some(1));
+                mock.expect_optimum_queue_depth()
+                    .return_const(10);
+                mock.expect_zone_limits()
+                    .with(eq(0))
+                    .return_const((1, 65536));
+                mock.expect_zone_limits()
+                    .with(eq(1))
+                    // 64k LBAs/zone
+                    .return_const((65536, 131_072));
 
                 blockdevs.push(mock);
             }
 
-            let vdev_raid = VdevRaid::new(*self.chunksize, *self.k,
-                                          *self.f, Uuid::new_v4(),
-                                          LayoutAlgorithm::PrimeS,
-                                          blockdevs.into_boxed_slice());
-            (s, vdev_raid)
+            VdevRaid::new(*self.chunksize, *self.k, *self.f, Uuid::new_v4(),
+                          LayoutAlgorithm::PrimeS, blockdevs.into_boxed_slice())
         }
     });
 
     test small(mocks((5, 4, 1, 16))) {
-        assert_eq!(mocks.val.1.lba2zone(0), None);
-        assert_eq!(mocks.val.1.lba2zone(95), None);
-        assert_eq!(mocks.val.1.lba2zone(96), Some(0));
+        assert_eq!(mocks.val.lba2zone(0), None);
+        assert_eq!(mocks.val.lba2zone(95), None);
+        assert_eq!(mocks.val.lba2zone(96), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(245_759), Some(0));
+        assert_eq!(mocks.val.lba2zone(245_759), Some(0));
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(245_760), Some(1));
+        assert_eq!(mocks.val.lba2zone(245_760), Some(1));
 
-        assert_eq!(mocks.val.1.optimum_queue_depth(), 12);
+        assert_eq!(mocks.val.optimum_queue_depth(), 12);
 
-        assert_eq!(mocks.val.1.size(), 983_040);
+        assert_eq!(mocks.val.size(), 983_040);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (96, 245_760));
-        assert_eq!(mocks.val.1.zone_limits(1), (245_760, 491_520));
+        assert_eq!(mocks.val.zone_limits(0), (96, 245_760));
+        assert_eq!(mocks.val.zone_limits(1), (245_760, 491_520));
     }
 
     test medium(mocks((7, 4, 1, 16))) {
-        assert_eq!(mocks.val.1.lba2zone(0), None);
-        assert_eq!(mocks.val.1.lba2zone(95), None);
-        assert_eq!(mocks.val.1.lba2zone(96), Some(0));
+        assert_eq!(mocks.val.lba2zone(0), None);
+        assert_eq!(mocks.val.lba2zone(95), None);
+        assert_eq!(mocks.val.lba2zone(96), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(344_063), Some(0));
+        assert_eq!(mocks.val.lba2zone(344_063), Some(0));
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(344_064), Some(1));
+        assert_eq!(mocks.val.lba2zone(344_064), Some(1));
 
-        assert_eq!(mocks.val.1.optimum_queue_depth(), 17);
+        assert_eq!(mocks.val.optimum_queue_depth(), 17);
 
-        assert_eq!(mocks.val.1.size(), 1_376_256);
+        assert_eq!(mocks.val.size(), 1_376_256);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (96, 344_064));
-        assert_eq!(mocks.val.1.zone_limits(1), (344_064, 688_128));
+        assert_eq!(mocks.val.zone_limits(0), (96, 344_064));
+        assert_eq!(mocks.val.zone_limits(1), (344_064, 688_128));
     }
 
     // A layout whose depth does not evenly divide the zone size.  The zone size
     // is not even a multiple of this layout's iterations.  So, it has a gap of
     // unused LBAs between zones
     test has_gap(mocks((7, 5, 1, 16))) {
-        assert_eq!(mocks.val.1.lba2zone(0), None);
-        assert_eq!(mocks.val.1.lba2zone(127), None);
-        assert_eq!(mocks.val.1.lba2zone(128), Some(0));
+        assert_eq!(mocks.val.lba2zone(0), None);
+        assert_eq!(mocks.val.lba2zone(127), None);
+        assert_eq!(mocks.val.lba2zone(128), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(366_975), Some(0));
+        assert_eq!(mocks.val.lba2zone(366_975), Some(0));
         // An LBA in between zones 0 and 1
-        assert_eq!(mocks.val.1.lba2zone(366_976), None);
+        assert_eq!(mocks.val.lba2zone(366_976), None);
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(367_040), Some(1));
+        assert_eq!(mocks.val.lba2zone(367_040), Some(1));
 
-        assert_eq!(mocks.val.1.optimum_queue_depth(), 14);
+        assert_eq!(mocks.val.optimum_queue_depth(), 14);
 
-        assert_eq!(mocks.val.1.size(), 1_468_006);
+        assert_eq!(mocks.val.size(), 1_468_006);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (128, 366_976));
-        assert_eq!(mocks.val.1.zone_limits(1), (367_040, 733_952));
+        assert_eq!(mocks.val.zone_limits(0), (128, 366_976));
+        assert_eq!(mocks.val.zone_limits(1), (367_040, 733_952));
     }
 
     // A layout whose depth does not evenly divide the zone size and has
     // multiple whole stripes per row.  So, it has a gap of multiple stripes
     // between zones.
     test has_multistripe_gap(mocks((11, 3, 1, 16))) {
-        assert_eq!(mocks.val.1.lba2zone(0), None);
-        assert_eq!(mocks.val.1.lba2zone(159), None);
-        assert_eq!(mocks.val.1.lba2zone(160), Some(0));
+        assert_eq!(mocks.val.lba2zone(0), None);
+        assert_eq!(mocks.val.lba2zone(159), None);
+        assert_eq!(mocks.val.lba2zone(160), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(480_511), Some(0));
+        assert_eq!(mocks.val.lba2zone(480_511), Some(0));
         // LBAs in between zones 0 and 1
-        assert_eq!(mocks.val.1.lba2zone(480_512), None);
-        assert_eq!(mocks.val.1.lba2zone(480_639), None);
+        assert_eq!(mocks.val.lba2zone(480_512), None);
+        assert_eq!(mocks.val.lba2zone(480_639), None);
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(480_640), Some(1));
+        assert_eq!(mocks.val.lba2zone(480_640), Some(1));
 
-        assert_eq!(mocks.val.1.size(), 1_922_389);
+        assert_eq!(mocks.val.size(), 1_922_389);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (160, 480_512));
-        assert_eq!(mocks.val.1.zone_limits(1), (480_640, 961_152));
+        assert_eq!(mocks.val.zone_limits(0), (160, 480_512));
+        assert_eq!(mocks.val.zone_limits(1), (480_640, 961_152));
     }
 
     // A layout whose chunksize does not evenly divide the zone size.  One or
     // more entire rows must be skipped
     test misaligned_chunksize(mocks((5, 4, 1, 5))) {
-        assert_eq!(mocks.val.1.lba2zone(0), None);
-        assert_eq!(mocks.val.1.lba2zone(29), None);
-        assert_eq!(mocks.val.1.lba2zone(30), Some(0));
+        assert_eq!(mocks.val.lba2zone(0), None);
+        assert_eq!(mocks.val.lba2zone(29), None);
+        assert_eq!(mocks.val.lba2zone(30), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.1.lba2zone(245_744), Some(0));
+        assert_eq!(mocks.val.lba2zone(245_744), Some(0));
         // LBAs in the zone 0-1 gap
-        assert_eq!(mocks.val.1.lba2zone(245_745), None);
-        assert_eq!(mocks.val.1.lba2zone(245_774), None);
+        assert_eq!(mocks.val.lba2zone(245_745), None);
+        assert_eq!(mocks.val.lba2zone(245_774), None);
         // First LBA in zone 1
-        assert_eq!(mocks.val.1.lba2zone(245_775), Some(1));
+        assert_eq!(mocks.val.lba2zone(245_775), Some(1));
 
-        assert_eq!(mocks.val.1.size(), 983_025);
+        assert_eq!(mocks.val.size(), 983_025);
 
-        assert_eq!(mocks.val.1.zone_limits(0), (30, 245_745));
-        assert_eq!(mocks.val.1.zone_limits(1), (245_775, 491_505));
+        assert_eq!(mocks.val.zone_limits(0), (30, 245_745));
+        assert_eq!(mocks.val.zone_limits(1), (245_775, 491_505));
     }
 }
 
@@ -1418,49 +1381,69 @@ fn read_at_one_stripe() {
         let f = 1;
         const CHUNKSIZE : LbaT = 2;
 
-        let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
-        let m0 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m0.size_call().and_return_clone(262_144).times(..));
-        s.expect(m0.open_zone_call(65536).and_return(
-                Box::new(future::ok::<(), Error>(()))));
-        s.expect(m0.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
-        s.expect(m0.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m0.zone_limits_call(1).and_return_clone((65536, 131_072))
-                 .times(..));
+        let mut blockdevs = Vec::<VdevBlock>::new();
 
+        let mut m0 = VdevBlock::default();
+        m0.expect_size()
+            .return_const(262_144);
+        m0.expect_open_zone()
+            .times(1)
+            .with(eq(65536))
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        m0.expect_optimum_queue_depth()
+            .return_const(10);
+        m0.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 65536));
+        m0.expect_zone_limits()
+            .with(eq(1))
+            .return_const((65536, 131_072));
         blockdevs.push(m0);
-        let m1 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m1.size_call().and_return_clone(262_144).times(..));
-        s.expect(m1.open_zone_call(65536).and_return(
-                Box::new(future::ok::<(), Error>(()))));
-        s.expect(m1.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
-        s.expect(m1.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m1.zone_limits_call(1).and_return_clone((65536, 131_072))
-                 .times(..));
-        s.expect(m1.read_at_call(check!(|buf: &IoVecMut| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-        }), 65536)
-            .and_return( Box::new( future::ok::<(), Error>(())))
-        );
 
+        let mut m1 = VdevBlock::default();
+        m1.expect_size()
+            .return_const(262_144);
+        m1.expect_open_zone()
+            .times(1)
+            .with(eq(65536))
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        m1.expect_optimum_queue_depth()
+            .return_const(10);
+        m1.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 65536));
+        m1.expect_zone_limits()
+            .with(eq(1))
+            .return_const((65536, 131_072));
+        m1.expect_read_at()
+            .times(1)
+            .withf(|(buf, lba): &(IoVecMut, LbaT)| {
+                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+                    && *lba == 65536
+            }).return_once(|_|  Box::new( future::ok::<(), Error>(())));
         blockdevs.push(m1);
-        let m2 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m2.size_call().and_return_clone(262_144).times(..));
-        s.expect(m2.open_zone_call(65536).and_return(
-                Box::new(future::ok::<(), Error>(()))));
-        s.expect(m2.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
-        s.expect(m2.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m2.zone_limits_call(1).and_return_clone((65536, 131_072))
-                 .times(..));
-        s.expect(m2.read_at_call(check!(|buf: &IoVecMut| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-        }), 65536)
-            .and_return( Box::new( future::ok::<(), Error>(())))
-        );
+
+        let mut m2 = VdevBlock::default();
+        m2.expect_size()
+            .return_const(262_144);
+        m2.expect_open_zone()
+            .times(1)
+            .with(eq(65536))
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        m2.expect_optimum_queue_depth()
+            .return_const(10);
+        m2.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 65536));
+        m2.expect_zone_limits()
+            .with(eq(1))
+            .return_const((65536, 131_072));
+        m2.expect_read_at()
+            .times(1)
+            .withf(|(buf, lba): &(IoVecMut, LbaT)| {
+                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+                    && *lba == 65536
+            }).return_once(|_|  Box::new( future::ok::<(), Error>(())));
         blockdevs.push(m2);
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
@@ -1480,18 +1463,18 @@ fn sync_all() {
     const CHUNKSIZE: LbaT = 2;
     let zl0 = (1, 60_000);
 
-    let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<VdevBlock>::default();
 
     let bd = || {
-        let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262_144).times(..));
-        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-        s.expect(bd.sync_all_call()
-                 .and_return(Box::new(future::ok::<(), Error>(())))
-        );
-        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
+        let mut bd = VdevBlock::default();
+        bd.expect_size().return_const(262_144);
+        bd.expect_zone_limits()
+            .with(eq(0))
+            .return_const(zl0);
+        bd.expect_sync_all()
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        bd.expect_optimum_queue_depth()
+            .return_const(10);
         bd
     };
 
@@ -1520,22 +1503,30 @@ fn sync_all_unflushed() {
     let zl0 = (1, 60_000);
     let zl1 = (60_000, 120_000);
 
-    let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<VdevBlock>::new();
 
     let bd = || {
-        let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
-        s.expect(bd.size_call().and_return_clone(262_144).times(..));
-        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-        s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
-        s.expect(bd.open_zone_call(60_000).and_return(
-                Box::new(future::ok::<(), Error>(()))));
-        s.expect(bd.sync_all_call()
-                 .and_return(Box::new(future::ok::<(), Error>(())))
-        );
-        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
+        let mut bd = VdevBlock::default();
+        bd.expect_lba2zone()
+            .with(eq(60_000))
+            .return_const(Some(1));
+        bd.expect_size()
+            .return_const(262_144);
+        bd.expect_zone_limits()
+            .with(eq(0))
+            .return_const(zl0);
+        bd.expect_zone_limits()
+            .with(eq(1))
+            .return_const(zl1);
+        bd.expect_open_zone()
+            .with(eq(60_000))
+            .times(1)
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        bd.expect_sync_all()
+            .times(1)
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        bd.expect_optimum_queue_depth()
+            .return_const(10);
         bd
     };
 
@@ -1569,57 +1560,83 @@ fn write_at_one_stripe() {
         let f = 1;
         const CHUNKSIZE : LbaT = 2;
 
-        let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
-        let m0 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m0.size_call().and_return_clone(262_144).times(..));
-        s.expect(m0.lba2zone_call(65536).and_return_clone(Some(1)).times(..));
-        s.expect(m0.open_zone_call(65536).and_return(
-                Box::new(future::ok::<(), Error>(()))));
-        s.expect(m0.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
-        s.expect(m0.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m0.zone_limits_call(1).and_return_clone((65536, 131_072))
-                 .times(..));
-        s.expect(m0.write_at_call(check!(|buf: &IoVec| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-        }), 65536)
-            .and_return( Box::new( future::ok::<(), Error>(())))
-        );
+        let mut blockdevs = Vec::<VdevBlock>::new();
+        let mut m0 = VdevBlock::default();
+        m0.expect_size()
+            .return_const(262_144);
+        m0.expect_lba2zone()
+            .with(eq(65536))
+            .return_const(Some(1));
+        m0.expect_open_zone()
+            .with(eq(65536))
+            .times(1)
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        m0.expect_optimum_queue_depth()
+            .return_const(10);
+        m0.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 65536));
+        m0.expect_zone_limits()
+            .with(eq(1))
+            .return_const((65536, 131_072));
+        m0.expect_write_at()
+            .times(1)
+            .withf(|(buf, lba)|
+                   buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+                   && *lba == 65536
+            ).return_once(|_| Box::new( future::ok::<(), Error>(())));
 
         blockdevs.push(m0);
-        let m1 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m1.size_call().and_return_clone(262_144).times(..));
-        s.expect(m1.lba2zone_call(65536).and_return_clone(Some(1)).times(..));
-        s.expect(m1.open_zone_call(65536).and_return(
-                Box::new(future::ok::<(), Error>(()))));
-        s.expect(m1.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
-        s.expect(m1.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m1.zone_limits_call(1).and_return_clone((65536, 131_072))
-                 .times(..));
-        s.expect(m1.write_at_call(check!(|buf: &IoVec| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-        }), 65536)
-            .and_return( Box::new( future::ok::<(), Error>(())))
-        );
+        let mut m1 = VdevBlock::default();
+        m1.expect_size()
+            .return_const(262_144);
+        m1.expect_lba2zone()
+            .with(eq(65536))
+            .return_const(Some(1));
+        m1.expect_open_zone()
+            .with(eq(65536))
+            .times(1)
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        m1.expect_optimum_queue_depth()
+            .return_const(10);
+        m1.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 65536));
+        m1.expect_zone_limits()
+            .with(eq(1))
+            .return_const((65536, 131_072));
+        m1.expect_write_at()
+            .times(1)
+            .withf(|(buf, lba)|
+                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+                && *lba == 65536
+            ).return_once(|_| Box::new( future::ok::<(), Error>(())));
 
         blockdevs.push(m1);
-        let m2 = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(m2.size_call().and_return_clone(262_144).times(..));
-        s.expect(m2.lba2zone_call(65536).and_return_clone(Some(1)).times(..));
-        s.expect(m2.open_zone_call(65536).and_return(
-                Box::new(future::ok::<(), Error>(()))));
-        s.expect(m2.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
-        s.expect(m2.zone_limits_call(0).and_return_clone((1, 65536)).times(..));
-        s.expect(m2.zone_limits_call(1).and_return_clone((65536, 131_072))
-                 .times(..));
-        s.expect(m2.write_at_call(check!(|buf: &IoVec| {
-            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-        }), 65536)
-            .and_return( Box::new( future::ok::<(), Error>(())))
-        );
+        let mut m2 = VdevBlock::default();
+        m2.expect_size()
+            .return_const(262_144);
+        m2.expect_lba2zone()
+            .with(eq(65536))
+            .return_const(Some(1));
+        m2.expect_open_zone()
+            .with(eq(65536))
+            .times(1)
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        m2.expect_optimum_queue_depth()
+            .return_const(10);
+        m2.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 65536));
+        m2.expect_zone_limits()
+            .with(eq(1))
+            .return_const((65536, 131_072));
+        m2.expect_write_at()
+            .times(1)
+            .withf(|(buf, lba)|
+                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+                && *lba == 65536
+            ).return_once(|_| Box::new( future::ok::<(), Error>(())));
         blockdevs.push(m2);
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
@@ -1641,51 +1658,61 @@ fn write_at_and_flush_zone() {
     let zl0 = (1, 60_000);
     let zl1 = (60_000, 120_000);
 
-    let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<VdevBlock>::new();
 
     let bd = || {
-        let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262_144).times(..));
-        s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
-        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-        s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
-        s.expect(bd.open_zone_call(60_000)
-                 .and_return(Box::new(future::ok::<(), Error>(())))
-        );
-        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
+        let mut bd = VdevBlock::default();
+        bd.expect_size()
+            .return_const(262_144);
+        bd.expect_lba2zone()
+            .with(eq(60_000))
+            .return_const(Some(1));
+        bd.expect_zone_limits()
+            .with(eq(0))
+            .return_const(zl0);
+        bd.expect_zone_limits()
+            .with(eq(1))
+            .return_const(zl1);
+        bd.expect_open_zone()
+            .with(eq(60_000))
+            .times(1)
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        bd.expect_optimum_queue_depth()
+            .return_const(10);
         bd
     };
 
-    let bd0 = bd();
-    s.expect(bd0.writev_at_call(check!(|buf: &SGList| {
-        // The first segment is user data
-        buf[0][..] == vec![1u8; BYTES_PER_LBA][..] &&
-        // Later segments are zero-fill from flush_zone
-        buf[1][..] == vec![0u8; BYTES_PER_LBA][..]
-    }), 60_000)
-        .and_return( Box::new( future::ok::<(), Error>(())))
-    );
+    let mut bd0 = bd();
+    bd0.expect_writev_at()
+        .times(1)
+        .withf(|(buf, lba)|
+            // The first segment is user data
+            buf[0][..] == vec![1u8; BYTES_PER_LBA][..] &&
+            // Later segments are zero-fill from flush_zone
+            buf[1][..] == vec![0u8; BYTES_PER_LBA][..] &&
+            *lba == 60_000
+        ).return_once(|_| Box::new( future::ok::<(), Error>(())));
 
-    let bd1 = bd();
+    let mut bd1 = bd();
     // This write is from the zero-fill
-    s.expect(bd1.writev_at_call(check!(|buf: &SGList| {
-        buf.len() == 1 &&
-        buf[0][..] == vec![0u8; 2 * BYTES_PER_LBA][..]
-    }), 60_000)
-        .and_return( Box::new( future::ok::<(), Error>(())))
-    );
+    bd1.expect_writev_at()
+        .times(1)
+        .withf(|(buf, lba)|
+            buf.len() == 1 &&
+            buf[0][..] == vec![0u8; 2 * BYTES_PER_LBA][..] &&
+            *lba == 60_000
+    ).return_once(|_| Box::new( future::ok::<(), Error>(())));
 
     // This write is generated parity
-    let bd2 = bd();
-    s.expect(bd2.write_at_call(check!(|buf: &IoVec| {
-        // single disk parity is a simple XOR
-        buf[0..4096] == vec![1u8; BYTES_PER_LBA][..] &&
-        buf[4096..8192] == vec![0u8; BYTES_PER_LBA][..]
-    }), 60_000)
-        .and_return( Box::new( future::ok::<(), Error>(())))
-    );
+    let mut bd2 = bd();
+    bd2.expect_write_at()
+        .times(1)
+        .withf(|(buf, lba)|
+            // single disk parity is a simple XOR
+            buf[0..4096] == vec![1u8; BYTES_PER_LBA][..] &&
+            buf[4096..8192] == vec![0u8; BYTES_PER_LBA][..] &&
+            *lba == 60_000
+    ).return_once(|_| Box::new( future::ok::<(), Error>(())));
 
     blockdevs.push(bd0);
     blockdevs.push(bd1);
@@ -1713,20 +1740,27 @@ fn erase_zone() {
     let zl0 = (1, 60_000);
     let zl1 = (60_000, 120_000);
 
-    let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<VdevBlock>::new();
 
     let bd = || {
-        let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262_144).times(..));
-        s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
-        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-        s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
-        s.expect(bd.erase_zone_call(1, 59_999)
-                 .and_return(Box::new(future::ok::<(), Error>(())))
-        );
-        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
+        let mut bd = VdevBlock::default();
+        bd.expect_size()
+            .return_const(262_144);
+        bd.expect_lba2zone()
+            .with(eq(60_000))
+            .return_const(Some(1));
+        bd.expect_zone_limits()
+            .with(eq(0))
+            .return_const(zl0);
+        bd.expect_zone_limits()
+            .with(eq(1))
+            .return_const(zl1);
+        bd.expect_erase_zone()
+            .withf(|(start, end)| *start == 1 && *end == 59_999)
+            .times(1)
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        bd.expect_optimum_queue_depth()
+            .return_const(10);
         bd
     };
 
@@ -1752,16 +1786,20 @@ fn flush_zone_closed() {
     const CHUNKSIZE: LbaT = 2;
     let zl0 = (1, 60_000);
 
-    let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<VdevBlock>::new();
 
     let bd = || {
-        let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262_144).times(..));
-        s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
-        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
+        let mut bd = VdevBlock::default();
+        bd.expect_size()
+            .return_const(262_144);
+        bd.expect_lba2zone()
+            .with(eq(60_000))
+            .return_const(Some(1));
+        bd.expect_zone_limits()
+            .with(eq(0))
+            .return_const(zl0);
+        bd.expect_optimum_queue_depth()
+            .return_const(10);
         bd
     };
 
@@ -1788,20 +1826,27 @@ fn flush_zone_empty_stripe_buffer() {
     let zl0 = (1, 60_000);
     let zl1 = (60_000, 120_000);
 
-    let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<VdevBlock>::new();
 
     let bd = || {
-        let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262_144).times(..));
-        s.expect(bd.lba2zone_call(60_000).and_return_clone(Some(1)).times(..));
-        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-        s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
-        s.expect(bd.open_zone_call(60_000)
-                 .and_return(Box::new(future::ok::<(), Error>(())))
-        );
-        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
+        let mut bd = VdevBlock::default();
+        bd.expect_size()
+            .return_const(262_144);
+        bd.expect_lba2zone()
+            .with(eq(60_000))
+            .return_const(Some(1));
+        bd.expect_zone_limits()
+            .with(eq(0))
+            .return_const(zl0);
+        bd.expect_zone_limits()
+            .with(eq(1))
+            .return_const(zl1);
+        bd.expect_open_zone()
+            .times(1)
+            .with(eq(60_000))
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        bd.expect_optimum_queue_depth()
+            .return_const(10);
         bd
     };
 
@@ -1832,23 +1877,33 @@ fn open_zone_reopen() {
     let zl0 = (1, 4096);
     let zl1 = (4096, 8192);
 
-    let s = Scenario::new();
-    let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+    let mut blockdevs = Vec::<VdevBlock>::new();
     let bd = || {
-        let bd = Box::new(s.create_mock::<MockVdevBlock>());
-        s.expect(bd.size_call().and_return_clone(262_144).times(..));
-        s.expect(bd.lba2zone_call(1).and_return_clone(Some(0)).times(..));
-        s.expect(bd.lba2zone_call(4196).and_return_clone(Some(1)).times(..));
-        s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-        s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
-        s.expect(bd.open_zone_call(4096)
-                 .and_return(Box::new(future::ok::<(), Error>(())))
-        );
-        s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-                 .times(..));
-        s.expect(bd.write_at_call(ANY, 4196)
-            .and_return( Box::new( future::ok::<(), Error>(())))
-        );
+        let mut bd = VdevBlock::default();
+        bd.expect_size()
+            .return_const(262_144);
+        bd.expect_lba2zone()
+            .with(eq(1))
+            .return_const(Some(0));
+        bd.expect_lba2zone()
+            .with(eq(4196))
+            .return_const(Some(1));
+        bd.expect_zone_limits()
+            .with(eq(0))
+            .return_const(zl0);
+        bd.expect_zone_limits()
+            .with(eq(1))
+            .return_const(zl1);
+        bd.expect_open_zone()
+            .times(1)
+            .with(eq(4096))
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        bd.expect_optimum_queue_depth()
+            .return_const(10);
+        bd.expect_write_at()
+            .withf(|(_buf, lba)| *lba == 4196)
+            .times(1)
+            .return_once(|_| Box::new( future::ok::<(), Error>(())));
         bd
     };
     blockdevs.push(bd());    //disk 0
@@ -1875,26 +1930,33 @@ fn open_zone_zero_fill_wasted_chunks() {
         let zl0 = (1, 32);
         let zl1 = (32, 64);
 
-        let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+        let mut blockdevs = Vec::<VdevBlock>::new();
 
         let bd = || {
-            let bd = Box::new(s.create_mock::<MockVdevBlock>());
-            s.expect(bd.size_call().and_return_clone(262_144).times(..));
-            s.expect(bd.lba2zone_call(1).and_return_clone(Some(0)).times(..));
-            s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-            s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
-            s.expect(bd.open_zone_call(32)
-                     .and_return(Box::new(future::ok::<(), Error>(())))
-            );
-            s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-                     .times(..));
-            s.expect(bd.writev_at_call(check!(|sglist: &SGList| {
-                let len = sglist.iter().map(|b| b.len()).sum::<usize>();
-                len == 3 * BYTES_PER_LBA
-            }), 32)
-                .and_return( Box::new( future::ok::<(), Error>(())))
-            );
+            let mut bd = VdevBlock::default();
+            bd.expect_size()
+                .return_const(262_144);
+            bd.expect_lba2zone()
+                .with(eq(1))
+                .return_const(Some(0));
+            bd.expect_zone_limits()
+                .with(eq(0))
+                .return_const(zl0);
+            bd.expect_zone_limits()
+                .with(eq(1))
+                .return_const(zl1);
+            bd.expect_open_zone()
+                .times(1)
+                .with(eq(32))
+                .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            bd.expect_optimum_queue_depth()
+                .return_const(10);
+            bd.expect_writev_at()
+                .times(1)
+                .withf(|(sglist, lba)| {
+                    let len = sglist.iter().map(|b| b.len()).sum::<usize>();
+                    len == 3 * BYTES_PER_LBA && *lba == 32
+                }).return_once(|_| Box::new( future::ok::<(), Error>(())));
             bd
         };
 
@@ -1922,28 +1984,35 @@ fn open_zone_zero_fill_wasted_stripes() {
         let zl0 = (1, 32);
         let zl1 = (32, 64);
 
-        let s = Scenario::new();
-        let mut blockdevs = Vec::<Box<dyn VdevBlockTrait>>::new();
+        let mut blockdevs = Vec::<VdevBlock>::new();
 
         let bd = |gap_chunks: LbaT| {
-            let bd = Box::new(s.create_mock::<MockVdevBlock>());
-            s.expect(bd.size_call().and_return_clone(262_144).times(..));
-            s.expect(bd.lba2zone_call(1).and_return_clone(Some(0)).times(..));
-            s.expect(bd.zone_limits_call(0).and_return_clone(zl0).times(..));
-            s.expect(bd.zone_limits_call(1).and_return_clone(zl1).times(..));
-            s.expect(bd.open_zone_call(32)
-                     .and_return(Box::new(future::ok::<(), Error>(())))
-            );
-            s.expect(bd.optimum_queue_depth_call().and_return_clone(10)
-                     .times(..));
+            let mut bd = VdevBlock::default();
+            bd.expect_size()
+                .return_const(262_144);
+            bd.expect_lba2zone()
+                .with(eq(1))
+                .return_const(Some(0));
+            bd.expect_zone_limits()
+                .with(eq(0))
+                .return_const(zl0);
+            bd.expect_zone_limits()
+                .with(eq(1))
+                .return_const(zl1);
+            bd.expect_open_zone()
+                .times(1)
+                .with(eq(32))
+                .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            bd.expect_optimum_queue_depth()
+                .return_const(10);
             if gap_chunks > 0 {
-                s.expect(bd.writev_at_call(check!(move |sglist: &SGList| {
-                    let gap_lbas = gap_chunks * CHUNKSIZE; 
-                    let len = sglist.iter().map(|b| b.len()).sum::<usize>();
-                    len == gap_lbas as usize * BYTES_PER_LBA
-                }), 32)
-                    .and_return( Box::new( future::ok::<(), Error>(())))
-                );
+                bd.expect_writev_at()
+                    .times(1)
+                    .withf(move |(sglist, lba)| {
+                        let gap_lbas = gap_chunks * CHUNKSIZE; 
+                        let len = sglist.iter().map(|b| b.len()).sum::<usize>();
+                        len == gap_lbas as usize * BYTES_PER_LBA && *lba == 32
+                    }).return_once(|_| Box::new( future::ok::<(), Error>(())));
             }
             bd
         };

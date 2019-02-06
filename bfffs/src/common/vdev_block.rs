@@ -6,16 +6,15 @@ use std::{
     cmp::{Ord, Ordering, PartialOrd},
     collections::BinaryHeap,
     collections::VecDeque,
+    io,
     mem,
+    num::NonZeroU64,
+    path::Path,
     rc::{Rc, Weak},
     ops,
     time,
 };
-#[cfg(not(test))] use std::{
-    io,
-    num::NonZeroU64,
-    path::Path
-};
+#[cfg(test)] use mockall::*;
 use tokio_current_thread;
 use tokio::timer;
 
@@ -473,8 +472,14 @@ impl VdevBlock {
     /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
     ///                     simulated zones on devices that don't have native
     ///                     zones.
-    // Can't be built in test mode due to
-    // https://github.com/kriomant/mockers/issues/38
+    #[cfg(test)]
+    pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
+        -> io::Result<Self>
+        where P: AsRef<Path> + 'static
+    {
+        let leaf = VdevLeaf::create(path, lbas_per_zone)?;
+        Ok(VdevBlock::new(leaf))
+    }
     #[cfg(not(test))]
     pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>
@@ -600,6 +605,13 @@ impl VdevBlock {
     /// used to construct other vdevs stacked on top of this one.
     ///
     /// * `path`    Pathname for the backing file.  It may be a device node.
+    #[cfg(test)]
+    pub fn open<P: AsRef<Path> + 'static>(path: P)
+        -> impl Future<Item=(Self, LabelReader), Error=Error> {
+        VdevLeaf::open(path).map(|(leaf, label_reader)| {
+            (VdevBlock::new(leaf), label_reader)
+        })
+    }
     #[cfg(not(test))]
     pub fn open<P: AsRef<Path>>(path: P)
         -> impl Future<Item=(Self, LabelReader), Error=Error> {
@@ -744,6 +756,37 @@ impl Vdev for VdevBlock {
 }
 
 // LCOV_EXCL_START
+#[cfg(test)]
+mock! {
+    pub VdevBlock {
+        fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
+            -> io::Result<Self>
+            where P: AsRef<Path> + 'static;
+        fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut>;
+        fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut>;
+        fn new(leaf: VdevLeaf) -> Self;
+        fn open<P: AsRef<Path> + 'static>(path: P)
+            -> Box<Future<Item=(Self, LabelReader), Error=Error>>;
+        fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
+        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
+        fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut>;
+        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
+        fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
+        fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+            -> Box<VdevFut>;
+        fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut>;
+    }
+    trait Vdev {
+        fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
+        fn optimum_queue_depth(&self) -> u32;
+        fn size(&self) -> LbaT;
+        fn sync_all(&self) -> Box<VdevFut>;
+        fn uuid(&self) -> Uuid;
+        fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
+        fn zones(&self) -> ZoneT;
+    }
+}
 
 #[cfg(test)]
 mod t {

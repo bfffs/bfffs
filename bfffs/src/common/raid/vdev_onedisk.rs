@@ -8,7 +8,6 @@ use crate::{
         vdev::*,
     }
 };
-#[cfg(not(test))] use crate::common::vdev_block::*;
 use futures::{Future, IntoFuture};
 use std::collections::BTreeMap;
 #[cfg(not(test))] use std::{
@@ -16,9 +15,13 @@ use std::collections::BTreeMap;
     path::Path
 };
 use super::{
-    VdevBlockLike,
     vdev_raid_api::*,
 };
+
+#[cfg(test)]
+use crate::common::vdev_block::MockVdevBlock as VdevBlock;
+#[cfg(not(test))]
+use crate::common::vdev_block::VdevBlock;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Label {
@@ -34,7 +37,7 @@ pub struct Label {
 /// redundancy.
 pub struct VdevOneDisk {
     /// Underlying block device.
-    blockdev: VdevBlockLike,
+    blockdev: VdevBlock,
 
     uuid: Uuid,
 }
@@ -64,7 +67,7 @@ impl VdevOneDisk {
     ///
     /// * `label`:      The `VdevOneDisk`'s label
     /// * `blockdevs`:  A map containing a single `VdevBlock`, indexed by UUID
-    pub(super) fn open(label: Label, blockdevs: BTreeMap<Uuid, VdevBlockLike>)
+    pub(super) fn open(label: Label, blockdevs: BTreeMap<Uuid, VdevBlock>)
         -> Self
     {
         assert_eq!(blockdevs.len(), 1);
