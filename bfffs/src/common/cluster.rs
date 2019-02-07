@@ -59,7 +59,7 @@ impl Default for Zone {
 }
 
 /// Public representation of a closed zone
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClosedZone {
     /// First LBA of the zone
     pub start: LbaT,
