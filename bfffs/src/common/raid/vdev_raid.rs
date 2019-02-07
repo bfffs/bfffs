@@ -282,17 +282,16 @@ impl VdevRaid {
     // Hide from docs.  The public API should just be raid::create, but this
     // function technically needs to be public for testing purposes.
     #[doc(hidden)]
-    pub fn create<P: AsRef<Path>>(chunksize: Option<NonZeroU64>,
-                                  disks_per_stripe: i16,
-                                  lbas_per_zone: Option<NonZeroU64>,
-                                  redundancy: i16,
-                                  paths: &[P]) -> Self
+    pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
+        lbas_per_zone: Option<NonZeroU64>, redundancy: i16, paths: Vec<P>)
+        -> Self
+        where P: AsRef<Path> + 'static
     {
         let num_disks = paths.len() as i16;
         let (layout, chunksize) = VdevRaid::choose_layout(num_disks,
             disks_per_stripe, redundancy, chunksize);
         let uuid = Uuid::new_v4();
-        let blockdevs = paths.iter().map(|path| {
+        let blockdevs = paths.into_iter().map(|path| {
             VdevBlock::create(path, lbas_per_zone).unwrap()
         }).collect::<Vec<_>>();
         VdevRaid::new(chunksize, disks_per_stripe, redundancy, uuid,

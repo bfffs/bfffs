@@ -42,7 +42,7 @@ test_suite! {
             let path = format!("{}/vdev", tempdir.path().display());
             let file = t!(fs::File::create(&path));
             t!(file.set_len(len));
-            let vdev = VdevOneDisk::create(None, &path);
+            let vdev = VdevOneDisk::create(None, path.clone());
             (vdev, tempdir, path)
         }
     });

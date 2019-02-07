@@ -472,17 +472,9 @@ impl VdevBlock {
     /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
     ///                     simulated zones on devices that don't have native
     ///                     zones.
-    #[cfg(test)]
     pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>
         where P: AsRef<Path> + 'static
-    {
-        let leaf = VdevLeaf::create(path, lbas_per_zone)?;
-        Ok(VdevBlock::new(leaf))
-    }
-    #[cfg(not(test))]
-    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<NonZeroU64>)
-        -> io::Result<Self>
     {
         let leaf = VdevLeaf::create(path, lbas_per_zone)?;
         Ok(VdevBlock::new(leaf))

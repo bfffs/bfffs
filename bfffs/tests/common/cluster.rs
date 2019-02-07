@@ -61,7 +61,8 @@ test_suite! {
             t!(file.set_len(len));
             let rt = Runtime::new().unwrap();
             let lpz = NonZeroU64::new(65536);
-            let cluster = Cluster::create(None, 1, lpz, 0, &[fname.clone()]);
+            let paths = vec![fname.clone()];
+            let cluster = Cluster::create(None, 1, lpz, 0, paths);
             (rt, cluster, tempdir, fname)
         }
     });

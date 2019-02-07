@@ -54,7 +54,7 @@ impl VdevOneDisk {
     // function technically needs to be public for testing purposes.
     #[doc(hidden)]
     pub fn create<P>(lbas_per_zone: Option<NonZeroU64>, path: P) -> Self
-        where P: AsRef<Path>
+        where P: AsRef<Path> + 'static
     {
         let uuid = Uuid::new_v4();
         let blockdev = VdevBlock::create(path, lbas_per_zone).unwrap();

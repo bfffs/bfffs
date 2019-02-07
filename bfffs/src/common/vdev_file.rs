@@ -294,8 +294,9 @@ impl VdevFile {
     /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
     ///                     simulated zones on devices that don't have native
     ///                     zones.
-    pub fn create<P: AsRef<Path>>(path: P, lbas_per_zone: Option<NonZeroU64>)
+    pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>
+        where P: AsRef<Path> + 'static
     {
         let f = OpenOptions::new()
             .create(true)

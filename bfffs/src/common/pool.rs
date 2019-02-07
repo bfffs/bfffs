@@ -533,7 +533,7 @@ impl<'a> Pool {
             .collect::<Vec<PathBuf>>();
         DefaultExecutor::current().spawn(Box::new(future::lazy(move || {
             let c = cluster::Cluster::create(chunksize, disks_per_stripe,
-                    lbas_per_zone, redundancy, &owned_paths);
+                    lbas_per_zone, redundancy, owned_paths);
             tx.send(ClusterProxy::new(c)).unwrap();
             Ok(())
         }))).unwrap();

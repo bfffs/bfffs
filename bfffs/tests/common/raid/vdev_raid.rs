@@ -20,7 +20,7 @@ fn create_redundancy_too_big() {
         t!(file.set_len(len));
         fname
     }).collect::<Vec<_>>();
-    VdevRaid::create(None, stripesize, None, redundancy, &paths);
+    VdevRaid::create(None, stripesize, None, redundancy, paths);
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn create_stripesize_too_big() {
         t!(file.set_len(len));
         fname
     }).collect::<Vec<_>>();
-    VdevRaid::create(None, stripesize, None, redundancy, &paths);
+    VdevRaid::create(None, stripesize, None, redundancy, paths);
 }
 
 test_suite! {
@@ -88,7 +88,7 @@ test_suite! {
             }).collect::<Vec<_>>();
             let cs = NonZeroU64::new(*self.chunksize);
             let vdev_raid = VdevRaid::create(cs, *self.k, None, *self.f,
-                                             &paths);
+                                             paths.clone());
             current_thread::Runtime::new().unwrap().block_on(
                 vdev_raid.open_zone(0)
             ).expect("open_zone");
@@ -650,7 +650,7 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let cs = NonZeroU64::new(2);
-            let vdev_raid = VdevRaid::create(cs, 3, None, 1, &paths);
+            let vdev_raid = VdevRaid::create(cs, 3, None, 1, paths.clone());
             (vdev_raid, tempdir, paths)
         }
     });

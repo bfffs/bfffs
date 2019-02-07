@@ -80,16 +80,15 @@ impl<'a> Label {
 ///                         inoperable.
 /// * `paths`:              Slice of pathnames of files and/or devices
 #[cfg(not(test))]
-pub fn create<P: AsRef<Path>>(chunksize: Option<NonZeroU64>,
-                              disks_per_stripe: i16,
-                              lbas_per_zone: Option<NonZeroU64>,
-                              redundancy: i16,
-                              paths: &[P]) -> Rc<dyn VdevRaidApi>
+pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
+    lbas_per_zone: Option<NonZeroU64>, redundancy: i16,
+    mut paths: Vec<P>) -> Rc<dyn VdevRaidApi>
+    where P: AsRef<Path> + 'static
 {
     if paths.len() == 1 {
         assert_eq!(disks_per_stripe, 1);
         assert_eq!(redundancy, 0);
-        Rc::new(VdevOneDisk::create(lbas_per_zone, &paths[0]))
+        Rc::new(VdevOneDisk::create(lbas_per_zone, paths.pop().unwrap()))
     } else {
         Rc::new(VdevRaid::create(chunksize, disks_per_stripe, lbas_per_zone,
                                  redundancy, paths))
