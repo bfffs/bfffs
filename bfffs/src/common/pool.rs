@@ -769,7 +769,11 @@ mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
     use futures::{IntoFuture, future};
-    use mockall::predicate::*;
+    use mockall::{
+        Predicate,
+        params,
+        predicate::*
+    };
     use pretty_assertions::assert_eq;
     use tokio::runtime::current_thread;
 
@@ -867,7 +871,7 @@ mod pool {
         let c0 = cluster();
         let mut c1 = cluster();
         c1.expect_free()
-            .withf(|(zid, lba)| *zid == 12345 && *lba == 16)
+            .with(params!(eq(12345), eq(16)))
             .once()
             .return_once(|_| Box::new(Ok(()).into_future()));
 
@@ -921,7 +925,7 @@ mod pool {
         cluster.expect_size().return_const(32_768_000);
         cluster.expect_uuid().return_const(Uuid::new_v4());
         cluster.expect_read()
-            .withf(|(_buf, lba)| *lba == 10)
+            .with(params!(always(), eq(10)))
             .once()
             .returning(|(mut iovec, _lba): (IoVecMut, LbaT)| {
                 iovec.copy_from_slice(&vec![99; 4096][..]);

@@ -13,7 +13,7 @@ use crate::{
 use fixedbitset::FixedBitSet;
 use futures::{ Future, IntoFuture, future};
 use metrohash::MetroHash64;
-#[cfg(test)] use mockall::{Sequence, automock, predicate::*};
+#[cfg(test)] use mockall::automock;
 use std::{
     cell::RefCell,
     cmp,
@@ -943,6 +943,7 @@ mod cluster {
     use crate::common::vdev::*;
     use divbuf::DivBufShared;
     use itertools::Itertools;
+    use mockall::{Sequence, Predicate, params, predicate::*};
     use pretty_assertions::assert_eq;
     use std::iter;
     use tokio::runtime::current_thread;
@@ -966,7 +967,7 @@ mod cluster {
             .with(eq(0))
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_write_at()
-            .withf(|(_buf, zone, _lba)| *zone == 0)
+            .with(params!(always(), eq(0), always()))
             .once()
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_finish_zone()
@@ -978,7 +979,7 @@ mod cluster {
             .with(eq(1))
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_write_at()
-            .withf(|(_buf, zone, _lba)| *zone == 1)
+            .with(params!(always(), eq(1), always()))
             .once()
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_erase_zone()
@@ -1026,7 +1027,7 @@ mod cluster {
             .with(eq(0))
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_write_at()
-            .withf(|(_buf, zone, _lba)| *zone == 0)
+            .with(params!(always(), eq(0), always()))
             .once()
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_finish_zone()
@@ -1038,7 +1039,7 @@ mod cluster {
             .with(eq(1))
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_write_at()
-            .withf(|(_buf, zone, _lba)| *zone == 1)
+            .with(params!(always(), eq(1), always()))
             .once()
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_erase_zone()
@@ -1087,11 +1088,11 @@ mod cluster {
             .with(eq(0))
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_write_at()
-            .withf(|(_buf, zone, lba)| *zone == 0 && *lba == 1)
+            .with(params!(always(), eq(0), eq(1)))
             .once()
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_write_at()
-            .withf(|(_buf, zone, lba)| *zone == 0 && *lba == 2)
+            .with(params!(always(), eq(0), eq(2)))
             .once()
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
 
@@ -1104,7 +1105,7 @@ mod cluster {
             .with(eq(1))
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         vr.expect_write_at()
-            .withf(|(_buf, zone, _lba)| *zone == 1)
+            .with(params!(always(), eq(1), always()))
             .once()
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
 
@@ -1205,7 +1206,7 @@ mod cluster {
         vr.expect_zones()
             .return_const(5);
         vr.expect_read_spacemap()
-            .withf(|(_dbm, idx): &(DivBufMut, u32)| *idx == 0)
+            .with(params!(always(), eq(0)))
             .once()
             .returning(|(mut dbm, _idx): (DivBufMut, u32)| {
                  assert_eq!(dbm.len(), BYTES_PER_LBA);
@@ -1276,7 +1277,7 @@ mod cluster {
         vr.expect_zones()
             .return_const(300);
         vr.expect_read_spacemap()
-            .withf(|(_buf, idx)| *idx == 0)
+            .with(params!(always(), eq(0)))
             .once()
             .returning(|(mut dbm, _idx): (DivBufMut, u32)| {
                 assert_eq!(dbm.len(), 8192);
@@ -1318,7 +1319,7 @@ mod cluster {
         vr.expect_zones()
             .return_const(0);
         vr.expect_read_spacemap()
-            .withf(|(_buf, idx)| *idx == 0)
+            .with(params!(always(), eq(0)))
             .once()
             .returning(|(mut dbm, _idx): (DivBufMut, u32)| {
                 dbm.try_truncate(0).unwrap();

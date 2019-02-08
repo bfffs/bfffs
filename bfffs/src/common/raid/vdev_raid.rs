@@ -1215,7 +1215,11 @@ mod t {
 use super::*;
 use futures::future;
 use galvanic_test::*;
-use mockall::predicate::*;
+use mockall::{
+    Predicate,
+    params,
+    predicate::*
+};
 
 // pet kcov
 #[test]
@@ -1236,6 +1240,7 @@ test_suite! {
     name basic;
 
     use super::*;
+    use predicates::boolean::PredicateBooleanExt;
     use pretty_assertions::assert_eq;
 
     fixture!( mocks(n: i16, k: i16, f:i16, chunksize: LbaT) -> VdevRaid {
@@ -1250,10 +1255,10 @@ test_suite! {
                     .with(eq(0))
                     .return_const(None);
                 mock.expect_lba2zone()
-                    .withf(|lba| *lba >= 1 && *lba < 65536)
+                    .with(ge(1).and(lt(65536)))
                     .return_const(Some(0));
                 mock.expect_lba2zone()
-                    .withf(|lba| *lba >= 65536 && *lba < 131_072)
+                    .with(ge(65536).and(lt(131072)))
                     .return_const(Some(1));
                 mock.expect_optimum_queue_depth()
                     .return_const(10);
@@ -1900,7 +1905,7 @@ fn open_zone_reopen() {
         bd.expect_optimum_queue_depth()
             .return_const(10);
         bd.expect_write_at()
-            .withf(|(_buf, lba)| *lba == 4196)
+            .with(params!(always(), eq(4196)))
             .once()
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         bd

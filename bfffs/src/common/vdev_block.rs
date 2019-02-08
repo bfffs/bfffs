@@ -896,7 +896,7 @@ test_suite! {
         // The first operation succeeds asynchronously.  When it does, that will
         // cause the second to be reissued.
         leaf.expect_read_at()
-            .withf(|(_buf, lba)| *lba == 1)
+            .with(params!(always(), eq(1)))
             .once()
             .in_sequence(&mut seq0)
             .returning( move |_| {
@@ -914,7 +914,7 @@ test_suite! {
             });
 
         leaf.expect_read_at()
-            .withf(|(_buf, lba)| *lba == 2)
+            .with(params!(always(), eq(2)))
             .once()
             .in_sequence(&mut seq0)
             .returning( move |_| {
@@ -950,7 +950,7 @@ test_suite! {
         let mut seq0 = Sequence::new();
 
         leaf.expect_read_at()
-            .withf(|(_buf, lba)| *lba == 1)
+            .with(params!(always(), eq(1)))
             .once()
             .in_sequence(&mut seq0)
             .returning(move |_| {
@@ -1014,7 +1014,7 @@ test_suite! {
     test basic_read_at(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_read_at()
-            .withf(|(_buf, lba)| *lba == 2)
+            .with(params!(always(), eq(2)))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
@@ -1029,7 +1029,7 @@ test_suite! {
     test basic_readv_at(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_readv_at()
-            .withf(|(_buf, lba)| *lba == 2)
+            .with(params!(always(), eq(2)))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
@@ -1302,12 +1302,12 @@ test_suite! {
         let fut0 = Box::new(receiver.map_err(move |_| e));
         let fut1 = Box::new(future::ok::<(), Error>(()));
         leaf.expect_read_at()
-            .withf(|(_buf, lba)| *lba == 1)
+            .with(params!(always(), eq(1)))
             .once()
             .in_sequence(&mut seq)
             .return_once_st(move |_| fut0);
         leaf.expect_read_at()
-            .withf(|(_buf, lba)| *lba == 2)
+            .with(params!(always(), eq(2)))
             .once()
             .in_sequence(&mut seq)
             .return_once_st(move |_| {
@@ -1343,7 +1343,7 @@ test_suite! {
         .unzip();
         for (i, f) in futs.into_iter().enumerate().rev() {
             leaf.expect_write_at()
-                .withf(move |(_buf, lba)| *lba == i as LbaT + 1)
+                .with(params!(always(), eq(i as LbaT + 1)))
                 .once()
                 .in_sequence(&mut seq)
                 .return_once_st(|_| Box::new(f));
@@ -1352,13 +1352,13 @@ test_suite! {
         // that they get issued in actual LBA order
         let final_fut = future::ok::<(), Error>(());
         leaf.expect_write_at()
-            .withf(move |(_buf, lba)| *lba == LbaT::from(num_ops) - 1)
+            .with(params!(always(), eq(LbaT::from(num_ops) - 1)))
             .once()
             .in_sequence(&mut seq)
             .return_once_st(|_| Box::new(final_fut));
         let penultimate_fut = future::ok::<(), Error>(());
         leaf.expect_write_at()
-            .withf(move |(_buf, lba)| *lba == LbaT::from(num_ops))
+            .with(params!(always(), eq(LbaT::from(num_ops))))
             .once()
             .in_sequence(&mut seq)
             .return_once_st(|_| Box::new(penultimate_fut));
@@ -1398,7 +1398,7 @@ test_suite! {
     test basic_write_at(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_write_at()
-            .withf(|(_buf, lba)| *lba == 1)
+            .with(params!(always(), eq(1)))
             .once()
             .returning(|_| Box::new(future::ok::<(), Error>(())));
 
@@ -1414,7 +1414,7 @@ test_suite! {
     test basic_writev_at(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_writev_at()
-            .withf(|(_iovec, lba)| *lba == 1)
+            .with(params!(always(), eq(1)))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
