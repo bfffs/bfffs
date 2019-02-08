@@ -12,16 +12,17 @@ use futures::{
     future,
     sync::{mpsc, oneshot}
 };
+#[cfg(test)] use mockall::automock;
 use std::{
     ops::Range,
     rc::Rc,
     sync::Arc
 };
-use std::collections::BTreeMap;
 #[cfg(not(test))] use std::{
     num::NonZeroU64,
-    path::{Path, PathBuf}
+    path::{Path, PathBuf},
 };
+use std::collections::BTreeMap;
 use tokio::executor;
 #[cfg(not(test))] use tokio::executor::{DefaultExecutor, Executor};
 
@@ -60,7 +61,7 @@ struct ClusterServer {
     cluster: Cluster
 }
 
-impl<'a> ClusterServer {
+impl ClusterServer {
     fn new(cluster: Cluster) -> Self {
         ClusterServer{cluster}
     }
@@ -200,7 +201,7 @@ pub struct ClusterProxy {
     uuid: Uuid
 }
 
-impl<'a> ClusterProxy {
+impl ClusterProxy {
     fn allocated(&self) -> impl Future<Item = LbaT, Error = Error> {
         let (tx, rx) = oneshot::channel::<LbaT>();
         let rpc = Rpc::Allocated(tx);
@@ -463,7 +464,8 @@ pub struct Pool {
     uuid: Uuid,
 }
 
-impl<'a> Pool {
+#[cfg_attr(test, automock)]
+impl Pool {
     /// How many blocks have been allocated, including blocks that have been
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {

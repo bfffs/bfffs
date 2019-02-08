@@ -20,10 +20,12 @@ use std::{
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
     fmt::{self, Display, Formatter},
     hash::Hash,
-    num::NonZeroU64,
     ops::Range,
-    path::Path,
     rc::Rc,
+};
+#[cfg(not(test))] use std::{
+    num::NonZeroU64,
+    path::Path,
 };
 
 pub type ClusterFut = Future<Item = (), Error = Error>;

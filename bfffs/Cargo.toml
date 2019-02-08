@@ -9,8 +9,7 @@ edition = "2018"
 doctest = false
 
 [features]
-# Make mockers optional so we can still compile on stable
-nightly = ["mockers", "mockers_derive"]
+nightly = []
 
 [dependencies]
 atomic = "0.3"
@@ -31,10 +30,6 @@ isa-l = { path = "../isa-l" }
 lazy_static = "1.0"
 libc = "0.2.44"
 metrohash = "1.0"
-# mockers should be a dev dependency, but can't because of issue 1596
-# https://github.com/rust-lang/cargo/issues/1596
-mockers = { version = "=0.12.2", optional = true }
-mockers_derive = { version = "=0.12.2", optional = true }
 # modulo is available in nightly libstd only.  Once it stabilizes, we can
 # remove this crate.
 # https://github.com/rust-lang/rust/issues/49048
@@ -64,7 +59,7 @@ glob = "0.2"
 histogram = "0.6"
 itertools = "0.7.1"
 log = "0.4"
-mockall = { git = "https://github.com/asomers/mockall/", rev = "322b002"}
+mockall = { git = "https://github.com/asomers/mockall/", rev = "7d51564"}
 num_cpus = "1"
 permutohedron = "0.2"
 predicates = "1.0"
