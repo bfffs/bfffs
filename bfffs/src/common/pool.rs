@@ -214,7 +214,7 @@ impl<'a> ClusterProxy {
         self.server.unbounded_send(rpc).unwrap();
     }
 
-    fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error> {
+    fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error> + Send {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::Flush(idx, tx);
         self.server.unbounded_send(rpc).unwrap();
@@ -528,7 +528,7 @@ impl<'a> Pool {
         Pool::new(name, Uuid::new_v4(), clusters)
     }
 
-    pub fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error> {
+    pub fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error> + Send {
         future::join_all(
             self.clusters.iter()
             .map(|cp| cp.flush(idx))
@@ -545,7 +545,7 @@ impl<'a> Pool {
     // nothing is using it.  That requires using the AllocationTable, which is
     // above the layer of the Pool.
     pub fn free(&self, pba: PBA, length: LbaT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         let idx = pba.cluster as usize;
         self.stats.allocated_space[idx].fetch_sub(length, Ordering::Relaxed);
@@ -672,7 +672,7 @@ impl<'a> Pool {
 
     /// Asynchronously read from the pool
     pub fn read(&self, buf: IoVecMut, pba: PBA)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         let cidx = pba.cluster as usize;
         self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
@@ -698,7 +698,7 @@ impl<'a> Pool {
 
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&self) -> impl Future<Item=(), Error=Error> {
+    pub fn sync_all(&self) -> impl Future<Item=(), Error=Error> + Send {
         future::join_all(
             self.clusters.iter()
             .map(ClusterProxy::sync_all)
@@ -717,7 +717,7 @@ impl<'a> Pool {
     ///
     /// The `PBA` where the data was written
     pub fn write(&self, buf: IoVec, txg: TxgT)
-        -> impl Future<Item = PBA, Error=Error>
+        -> impl Future<Item = PBA, Error=Error> + Send
     {
         let cluster = self.stats.choose_cluster();
         let cidx = cluster as usize;

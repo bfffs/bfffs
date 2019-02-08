@@ -270,7 +270,7 @@ impl DDML {
     /// Does most of the work of DDML::put
     fn put_common<T>(&self, cacheref: &T, compression: Compression,
                      txg: TxgT)
-        -> impl Future<Item=DRP, Error=Error>
+        -> impl Future<Item=DRP, Error=Error> + Send
         where T: borrow::Borrow<CacheRef>
     {
         // Outline:
