@@ -19,12 +19,10 @@ use std::{
 use tokio_current_thread;
 use tokio::timer;
 
-use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
-#[cfg(not(test))]
-use crate::common::vdev_file::*;
+use crate::common::{*, label::*, vdev::*, vdev_leaf::*, vdev_file::*};
 
 #[cfg(test)]
-pub type VdevLeaf = Box<dyn VdevLeafApi>;
+pub type VdevLeaf = MockVdevFile;
 #[cfg(not(test))]
 pub type VdevLeaf = VdevFile;
 
@@ -820,34 +818,6 @@ test_suite! {
     use tokio::runtime::current_thread;
 
     mock!{
-        VdevLeaf {}
-        trait Vdev {
-            fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
-            fn optimum_queue_depth(&self) -> u32;
-            fn size(&self) -> LbaT;
-            fn sync_all(&self) -> Box<futures::Future<Item = (),
-                                      Error = Error>>;
-            fn uuid(&self) -> Uuid;
-            fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
-            fn zones(&self) -> ZoneT;
-        }
-        trait VdevLeafApi  {
-            fn erase_zone(&self, lba: LbaT) -> Box<VdevFut>;
-            fn finish_zone(&self, lba: LbaT) -> Box<VdevFut>;
-            fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
-            fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
-            fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
-            fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
-            fn spacemap_space(&self) -> LbaT;
-            fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-            fn write_label(&self, label_writer: LabelWriter) -> Box<VdevFut>;
-            fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
-                -> Box<VdevFut>;
-            fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
-        }
-    }
-
-    mock!{
         VdevFut {}
         trait Future {
             type Item = ();
@@ -856,9 +826,9 @@ test_suite! {
         }
     }
 
-    fixture!( mocks() -> Box<MockVdevLeaf> {
+    fixture!( mocks() -> MockVdevFile {
             setup(&mut self) {
-            let mut leaf = Box::new(MockVdevLeaf::new());
+            let mut leaf = MockVdevFile::new();
             leaf.expect_size()
                 .times(1)
                 .return_const(262_144);
