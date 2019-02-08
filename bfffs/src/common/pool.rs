@@ -5,7 +5,6 @@ use crate::{
     boxfut,
     common::{*, label::*}
 };
-#[cfg(not(test))] use crate::common::cluster;
 use futures::{
     Future,
     IntoFuture,
@@ -26,33 +25,12 @@ use std::collections::BTreeMap;
 use tokio::executor;
 #[cfg(not(test))] use tokio::executor::{DefaultExecutor, Executor};
 
-pub type PoolFut = Future<Item = (), Error = Error>;
-
 #[cfg(test)]
-/// Only exists so mockers can replace Cluster
-/// XXX note that the signatures for some methods have different lifetime
-/// specifiers than in the non-test versions.  This is because mockers doesn't
-/// work with parameterized traits.
-pub trait ClusterTrait {
-    fn allocated(&self) -> LbaT;
-    fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT);
-    fn find_closed_zone(&self, zid: ZoneT) -> Option<cluster::ClosedZone>;
-    fn flush(&self, idx: u32) -> Box<PoolFut>;
-    fn free(&self, lba: LbaT, length: LbaT) -> Box<PoolFut>;
-    fn optimum_queue_depth(&self) -> u32;
-    fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut>;
-    fn size(&self) -> LbaT;
-    fn sync_all(&self) -> Box<PoolFut>;
-    fn uuid(&self) -> Uuid;
-    fn write(&self, buf: IoVec, txg: TxgT)
-        -> Result<(LbaT, Box<PoolFut>), Error>;
-    fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
-}
-#[cfg(test)]
-pub type ClusterLike = Box<dyn ClusterTrait>;
+use crate::common::cluster::MockCluster as Cluster;
 #[cfg(not(test))]
-#[doc(hidden)]
-pub type ClusterLike = cluster::Cluster;
+use crate::common::cluster::Cluster;
+
+pub type PoolFut = Future<Item = (), Error = Error>;
 
 /// Communication type used between `ClusterProxy` and `ClusterServer`
 #[derive(Debug)]
@@ -79,11 +57,11 @@ enum Rpc {
 /// thread, it owns a `Cluster` and serves RPC requests from its own and other
 /// threads.
 struct ClusterServer {
-    cluster: ClusterLike
+    cluster: Cluster
 }
 
 impl<'a> ClusterServer {
-    fn new(cluster: ClusterLike) -> Self {
+    fn new(cluster: Cluster) -> Self {
         ClusterServer{cluster}
     }
 
@@ -270,7 +248,7 @@ impl<'a> ClusterProxy {
 
     /// Create a new ClusterServer/ClusterProxy pair, start the server, and
     /// return the proxy
-    pub fn new(cluster: ClusterLike) -> Self {
+    pub fn new(cluster: Cluster) -> Self {
         let (tx, rx) = mpsc::unbounded();
         let uuid = cluster.uuid();
         let cs = Rc::new(ClusterServer::new(cluster));
@@ -532,7 +510,7 @@ impl<'a> Pool {
             .map(|p| p.as_ref().to_owned())
             .collect::<Vec<PathBuf>>();
         DefaultExecutor::current().spawn(Box::new(future::lazy(move || {
-            let c = cluster::Cluster::create(chunksize, disks_per_stripe,
+            let c = Cluster::create(chunksize, disks_per_stripe,
                     lbas_per_zone, redundancy, owned_paths);
             tx.send(ClusterProxy::new(c)).unwrap();
             Ok(())
@@ -787,47 +765,22 @@ mod label {
     }
 }
 
-#[cfg(feature = "nightly")]
 mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
     use futures::{IntoFuture, future};
-    use mockers::{Scenario, check, matchers};
-    use mockers_derive::mock;
+    use mockall::predicate::*;
     use pretty_assertions::assert_eq;
     use tokio::runtime::current_thread;
-
-    mock!{
-        MockCluster,
-        self,
-        trait ClusterTrait {
-            fn allocated(&self) -> LbaT;
-            fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT);
-            fn find_closed_zone(&self, zid: ZoneT)
-                -> Option<cluster::ClosedZone>;
-            fn flush(&self, idx: u32) -> Box<Future<Item=(), Error=Error>>;
-            fn free(&self, lba: LbaT, length: LbaT)
-                -> Box<Future<Item=(), Error=Error>>;
-            fn optimum_queue_depth(&self) -> u32;
-            fn read(&self, buf: IoVecMut, lba: LbaT) -> Box<PoolFut>;
-            fn size(&self) -> LbaT;
-            fn sync_all(&self) -> Box<Future<Item = (), Error = Error>>;
-            fn uuid(&self) -> Uuid;
-            fn write(&self, buf: IoVec, txg: TxgT)
-                -> Result<(LbaT, Box<PoolFut>), Error>;
-            fn write_label(&self, labeller: LabelWriter) -> Box<PoolFut>;
-        }
-    }
 
     // pet kcov
     #[test]
     fn debug() {
-        let s = Scenario::new();
-        let c = s.create_mock::<MockCluster>();
-        s.expect(c.uuid_call().and_return(Uuid::new_v4()));
+        let mut c = Cluster::default();
+        c.expect_uuid().return_const(Uuid::new_v4());
         let mut rt = current_thread::Runtime::new().unwrap();
         rt.block_on(future::lazy(|| {
-            let cluster_proxy = ClusterProxy::new(Box::new(c));
+            let cluster_proxy = ClusterProxy::new(c);
             format!("{:?}", cluster_proxy);
             future::ok::<(), ()>(())
         })).unwrap();
@@ -835,37 +788,40 @@ mod pool {
 
     #[test]
     fn find_closed_zone() {
-        let s = Scenario::new();
         let cluster = || {
-            let c = s.create_mock::<MockCluster>();
-            s.expect(c.allocated_call().and_return(0));
-            s.expect(c.optimum_queue_depth_call().and_return(10));
-            s.expect(c.find_closed_zone_call(0)
-                .and_return(Some(cluster::ClosedZone {
+            let mut c = Cluster::default();
+            c.expect_allocated().return_const(0);
+            c.expect_optimum_queue_depth().return_const(10);
+            c.expect_find_closed_zone()
+                .with(eq(0))
+                .return_const(Some(cluster::ClosedZone {
                     zid: 1,
                     start: 10,
                     freed_blocks: 5,
                     total_blocks: 10,
                     txgs: TxgT::from(0)..TxgT::from(1)
-                })));
-            s.expect(c.find_closed_zone_call(2)
-                .and_return(Some(cluster::ClosedZone {
+                }));
+            c.expect_find_closed_zone()
+                .with(eq(2))
+                .return_const(Some(cluster::ClosedZone {
                     zid: 3,
                     start: 30,
                     freed_blocks: 6,
                     total_blocks: 10,
                     txgs: TxgT::from(2)..TxgT::from(3)
-                })));
-            s.expect(c.find_closed_zone_call(4).and_return(None));
-            s.expect(c.size_call().and_return(32_768_000));
-            s.expect(c.uuid_call().and_return(Uuid::new_v4()));
+                }));
+            c.expect_find_closed_zone()
+                .with(eq(4))
+                .return_const(None);
+            c.expect_size().return_const(32_768_000);
+            c.expect_uuid().return_const(Uuid::new_v4());
             c
         };
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
             let clusters = vec![
-                ClusterProxy::new(Box::new(cluster())),
-                ClusterProxy::new(Box::new(cluster()))
+                ClusterProxy::new(cluster()),
+                ClusterProxy::new(cluster())
             ];
             Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
         })).unwrap();
@@ -900,25 +856,26 @@ mod pool {
 
     #[test]
     fn free() {
-        let s = Scenario::new();
         let cluster = || {
-            let c = s.create_mock::<MockCluster>();
-            s.expect(c.allocated_call().and_return(0));
-            s.expect(c.optimum_queue_depth_call().and_return(10));
-            s.expect(c.size_call().and_return(32_768_000));
-            s.expect(c.uuid_call().and_return(Uuid::new_v4()));
+            let mut c = Cluster::default();
+            c.expect_allocated().return_const(0);
+            c.expect_optimum_queue_depth().return_const(10);
+            c.expect_size().return_const(32_768_000);
+            c.expect_uuid().return_const(Uuid::new_v4());
             c
         };
         let c0 = cluster();
-        let c1 = cluster();
-        s.expect(c1.free_call(12345, 16)
-            .and_return(Box::new(Ok(()).into_future())));
+        let mut c1 = cluster();
+        c1.expect_free()
+            .withf(|(zid, lba)| *zid == 12345 && *lba == 16)
+            .once()
+            .return_once(|_| Box::new(Ok(()).into_future()));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
             let clusters = vec![
-                ClusterProxy::new(Box::new(c0)),
-                ClusterProxy::new(Box::new(c1))
+                ClusterProxy::new(c0),
+                ClusterProxy::new(c1)
             ];
             Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
         })).unwrap();
@@ -931,21 +888,20 @@ mod pool {
     #[allow(clippy::float_cmp)]
     #[test]
     fn new() {
-        let s = Scenario::new();
         let cluster = || {
-            let c = s.create_mock::<MockCluster>();
-            s.expect(c.optimum_queue_depth_call().and_return(10));
-            s.expect(c.allocated_call().and_return(500));
-            s.expect(c.size_call().and_return(1000));
-            s.expect(c.uuid_call().and_return(Uuid::new_v4()));
+            let mut c = Cluster::default();
+            c.expect_optimum_queue_depth().return_const(10);
+            c.expect_allocated().return_const(500);
+            c.expect_size().return_const(1000);
+            c.expect_uuid().return_const(Uuid::new_v4());
             c
         };
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
             let clusters = vec![
-                ClusterProxy::new(Box::new(cluster())),
-                ClusterProxy::new(Box::new(cluster()))
+                ClusterProxy::new(cluster()),
+                ClusterProxy::new(cluster())
             ];
             Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
         })).unwrap();
@@ -959,23 +915,23 @@ mod pool {
 
     #[test]
     fn read() {
-        let s = Scenario::new();
-        let cluster = s.create_mock::<MockCluster>();
-        s.expect(cluster.allocated_call().and_return(0));
-        s.expect(cluster.optimum_queue_depth_call().and_return(10));
-        s.expect(cluster.size_call().and_return(32_768_000));
-        s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
-        s.expect(cluster.read_call(matchers::ANY, 10)
-            .and_call(|mut iovec: IoVecMut, _lba: LbaT| {
+        let mut cluster = Cluster::default();
+        cluster.expect_allocated().return_const(0);
+        cluster.expect_optimum_queue_depth().return_const(10);
+        cluster.expect_size().return_const(32_768_000);
+        cluster.expect_uuid().return_const(Uuid::new_v4());
+        cluster.expect_read()
+            .withf(|(_buf, lba)| *lba == 10)
+            .once()
+            .returning(|(mut iovec, _lba): (IoVecMut, LbaT)| {
                 iovec.copy_from_slice(&vec![99; 4096][..]);
                 Box::new( future::ok::<(), Error>(()))
-            })
-        );
+            });
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(move || {
             let clusters = vec![
-                ClusterProxy::new(Box::new(cluster)),
+                ClusterProxy::new(cluster),
             ];
             Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
         })).unwrap();
@@ -992,20 +948,19 @@ mod pool {
     #[test]
     fn read_error() {
         let e = Error::EIO;
-        let s = Scenario::new();
-        let cluster = s.create_mock::<MockCluster>();
-        s.expect(cluster.allocated_call().and_return(0));
-        s.expect(cluster.optimum_queue_depth_call().and_return(10));
-        s.expect(cluster.size_call().and_return(32_768_000));
-        s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
-        s.expect(cluster.read_call(matchers::ANY, matchers::ANY)
-            .and_return(Box::new(Err(e).into_future()))
-        );
+        let mut cluster = Cluster::default();
+        cluster.expect_allocated().return_const(0);
+        cluster.expect_optimum_queue_depth().return_const(10);
+        cluster.expect_size().return_const(32_768_000);
+        cluster.expect_uuid().return_const(Uuid::new_v4());
+        cluster.expect_read()
+            .once()
+            .return_once(move |_| Box::new(Err(e).into_future()));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(move || {
             let clusters = vec![
-                ClusterProxy::new(Box::new(cluster)),
+                ClusterProxy::new(cluster),
             ];
             Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
         })).unwrap();
@@ -1019,24 +974,23 @@ mod pool {
 
     #[test]
     fn sync_all() {
-        let s = Scenario::new();
         let cluster = || {
-            let c = s.create_mock::<MockCluster>();
-            s.expect(c.allocated_call().and_return(0));
-            s.expect(c.optimum_queue_depth_call().and_return(10));
-            s.expect(c.size_call().and_return(32_768_000));
-            s.expect(c.uuid_call().and_return(Uuid::new_v4()));
-            s.expect(c.sync_all_call()
-                .and_return(Box::new(future::ok::<(), Error>(())))
-            );
+            let mut c = Cluster::default();
+            c.expect_allocated().return_const(0);
+            c.expect_optimum_queue_depth().return_const(10);
+            c.expect_size().return_const(32_768_000);
+            c.expect_uuid().return_const(Uuid::new_v4());
+            c.expect_sync_all()
+                .once()
+                .return_once(|_| Box::new(future::ok::<(), Error>(())));
             c
         };
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
             let clusters = vec![
-                ClusterProxy::new(Box::new(cluster())),
-                ClusterProxy::new(Box::new(cluster()))
+                ClusterProxy::new(cluster()),
+                ClusterProxy::new(cluster())
             ];
             Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
         })).unwrap();
@@ -1046,22 +1000,21 @@ mod pool {
 
     #[test]
     fn write() {
-        let s = Scenario::new();
-        let cluster = s.create_mock::<MockCluster>();
-            s.expect(cluster.allocated_call().and_return(0));
-            s.expect(cluster.optimum_queue_depth_call().and_return(10));
-            s.expect(cluster.size_call().and_return(32_768_000));
-            s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
-            s.expect(cluster.write_call(check!(move |buf: &IoVec| {
-                    buf.len() == BYTES_PER_LBA
-                }), TxgT::from(42))
-                .and_return(Ok((0, Box::new(future::ok::<(), Error>(())))))
-        );
+        let mut cluster = Cluster::default();
+            cluster.expect_allocated().return_const(0);
+            cluster.expect_optimum_queue_depth().return_const(10);
+            cluster.expect_size().return_const(32_768_000);
+            cluster.expect_uuid().return_const(Uuid::new_v4());
+            cluster.expect_write()
+                .withf(|(buf, txg)| {
+                    buf.len() == BYTES_PER_LBA && *txg == TxgT::from(42)
+                }).once()
+                .return_once(|_| Ok((0, Box::new(future::ok::<(), Error>(())))));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
             Pool::new("foo".to_string(), Uuid::new_v4(),
-                      vec![ClusterProxy::new(Box::new(cluster))])
+                      vec![ClusterProxy::new(cluster)])
         })).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -1072,21 +1025,20 @@ mod pool {
 
     #[test]
     fn write_async_error() {
-        let s = Scenario::new();
         let e = Error::EIO;
-        let cluster = s.create_mock::<MockCluster>();
-            s.expect(cluster.allocated_call().and_return(0));
-            s.expect(cluster.optimum_queue_depth_call().and_return(10));
-            s.expect(cluster.size_call().and_return(32_768_000));
-            s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
-            s.expect(cluster.write_call(matchers::ANY, matchers::ANY)
-                .and_return(Ok((0, Box::new(Err(e).into_future()))))
-        );
+        let mut cluster = Cluster::default();
+            cluster.expect_allocated().return_const(0);
+            cluster.expect_optimum_queue_depth().return_const(10);
+            cluster.expect_size().return_const(32_768_000);
+            cluster.expect_uuid().return_const(Uuid::new_v4());
+            cluster.expect_write()
+                .once()
+                .return_once(move |_| Ok((0, Box::new(Err(e).into_future()))));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
             Pool::new("foo".to_string(), Uuid::new_v4(),
-                      vec![ClusterProxy::new(Box::new(cluster))])
+                      vec![ClusterProxy::new(cluster)])
         })).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -1097,20 +1049,20 @@ mod pool {
 
     #[test]
     fn write_sync_error() {
-        let s = Scenario::new();
         let e = Error::ENOSPC;
-        let cluster = s.create_mock::<MockCluster>();
-            s.expect(cluster.allocated_call().and_return(0));
-            s.expect(cluster.optimum_queue_depth_call().and_return(10));
-            s.expect(cluster.size_call().and_return(32_768_000));
-            s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
-            s.expect(cluster.write_call(matchers::ANY, matchers::ANY)
-                .and_return(Err(e)));
+        let mut cluster = Cluster::default();
+            cluster.expect_allocated().return_const(0);
+            cluster.expect_optimum_queue_depth().return_const(10);
+            cluster.expect_size().return_const(32_768_000);
+            cluster.expect_uuid().return_const(Uuid::new_v4());
+            cluster.expect_write()
+                .once()
+                .return_once(move |_| Err(e));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
             Pool::new("foo".to_string(), Uuid::new_v4(),
-                      vec![ClusterProxy::new(Box::new(cluster))])
+                      vec![ClusterProxy::new(cluster)])
         })).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -1122,21 +1074,22 @@ mod pool {
     // Make sure allocated space accounting is symmetric
     #[test]
     fn write_and_free() {
-        let s = Scenario::new();
-        let cluster = s.create_mock::<MockCluster>();
-        s.expect(cluster.allocated_call().and_return(0));
-        s.expect(cluster.optimum_queue_depth_call().and_return(10));
-        s.expect(cluster.size_call().and_return(32_768_000));
-        s.expect(cluster.uuid_call().and_return(Uuid::new_v4()));
-        s.expect(cluster.write_call(matchers::ANY, matchers::ANY)
-            .and_return(Ok((0, Box::new(future::ok::<(), Error>(()))))));
-        s.expect(cluster.free_call(matchers::ANY, matchers::ANY)
-            .and_return(Box::new(Ok(()).into_future())));
+        let mut cluster = Cluster::default();
+        cluster.expect_allocated().return_const(0);
+        cluster.expect_optimum_queue_depth().return_const(10);
+        cluster.expect_size().return_const(32_768_000);
+        cluster.expect_uuid().return_const(Uuid::new_v4());
+        cluster.expect_write()
+            .once()
+            .return_once(|_| Ok((0, Box::new(future::ok::<(), Error>(())))));
+        cluster.expect_free()
+            .once()
+            .return_once(|_| Box::new(Ok(()).into_future()));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
             Pool::new("foo".to_string(), Uuid::new_v4(),
-                      vec![ClusterProxy::new(Box::new(cluster))])
+                      vec![ClusterProxy::new(cluster)])
         })).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 1024]);

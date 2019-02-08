@@ -13,19 +13,17 @@ use crate::{
 use fixedbitset::FixedBitSet;
 use futures::{ Future, IntoFuture, future};
 use metrohash::MetroHash64;
-#[cfg(test)] use mockall::{Sequence, predicate::*};
+#[cfg(test)] use mockall::{Sequence, automock, predicate::*};
 use std::{
     cell::RefCell,
     cmp,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
     fmt::{self, Display, Formatter},
     hash::Hash,
-    rc::Rc,
-    ops::Range
-};
-#[cfg(not(test))] use std::{
     num::NonZeroU64,
-    path::Path
+    ops::Range,
+    path::Path,
+    rc::Rc,
 };
 
 pub type ClusterFut = Future<Item = (), Error = Error>;
@@ -688,6 +686,7 @@ macro_rules! close_zones{
     }
 }
 
+#[cfg_attr(test, automock)]
 impl Cluster {
     /// How many blocks have been allocated, including blocks that have been
     /// freed but not erased?
