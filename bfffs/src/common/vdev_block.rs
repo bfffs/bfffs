@@ -873,7 +873,7 @@ test_suite! {
             setup(&mut self) {
             let mut leaf = MockVdevFile::new();
             leaf.expect_size()
-                .times(1)
+                .once()
                 .return_const(262_144);
             leaf.expect_lba2zone()
                 .with(ge(1).and(lt(1<<16)))
@@ -905,17 +905,17 @@ test_suite! {
         // cause the second to be reissued.
         leaf.expect_read_at()
             .withf(|(_buf, lba)| *lba == 1)
-            .times(1)
+            .once()
             .in_sequence(&mut seq0)
             .returning( move |_| {
                 let mut seq1 = Sequence::new();
                 let mut fut = MockVdevFut::new();
                 fut.expect_poll()
-                    .times(1)
+                    .once()
                     .in_sequence(&mut seq1)
                     .return_const(Ok(Async::NotReady));
                 fut.expect_poll()
-                    .times(1)
+                    .once()
                     .in_sequence(&mut seq1)
                     .return_const(Ok(Async::Ready(())));
                 Box::new(fut)
@@ -923,17 +923,17 @@ test_suite! {
 
         leaf.expect_read_at()
             .withf(|(_buf, lba)| *lba == 2)
-            .times(1)
+            .once()
             .in_sequence(&mut seq0)
             .returning( move |_| {
                 let mut seq1 = Sequence::new();
                 let mut fut = MockVdevFut::new();
                 fut.expect_poll()
-                    .times(1)
+                    .once()
                     .in_sequence(&mut seq1)
                     .return_const(Err(Error::EAGAIN));
                 fut.expect_poll()
-                    .times(1)
+                    .once()
                     .in_sequence(&mut seq1)
                     .return_const(Ok(Async::Ready(())));
                 Box::new(fut)
@@ -959,17 +959,17 @@ test_suite! {
 
         leaf.expect_read_at()
             .withf(|(_buf, lba)| *lba == 1)
-            .times(1)
+            .once()
             .in_sequence(&mut seq0)
             .returning(move |_| {
                 let mut seq1 = Sequence::new();
                 let mut fut = MockVdevFut::new();
                 fut.expect_poll()
-                    .times(1)
+                    .once()
                     .in_sequence(&mut seq1)
                     .return_once(|_| Err(Error::EAGAIN));
                 fut.expect_poll()
-                    .times(1)
+                    .once()
                     .in_sequence(&mut seq1)
                     .return_once(|_| Ok(Async::Ready(())));
                 Box::new(fut)
@@ -1311,12 +1311,12 @@ test_suite! {
         let fut1 = Box::new(future::ok::<(), Error>(()));
         leaf.expect_read_at()
             .withf(|(_buf, lba)| *lba == 1)
-            .times(1)
+            .once()
             .in_sequence(&mut seq)
             .return_once_st(move |_| fut0);
         leaf.expect_read_at()
             .withf(|(_buf, lba)| *lba == 2)
-            .times(1)
+            .once()
             .in_sequence(&mut seq)
             .return_once_st(move |_| {
                 sender.send(()).unwrap();
@@ -1352,7 +1352,7 @@ test_suite! {
         for (i, f) in futs.into_iter().enumerate().rev() {
             leaf.expect_write_at()
                 .withf(move |(_buf, lba)| *lba == i as LbaT + 1)
-                .times(1)
+                .once()
                 .in_sequence(&mut seq)
                 .return_once_st(|_| Box::new(f));
         }
@@ -1361,13 +1361,13 @@ test_suite! {
         let final_fut = future::ok::<(), Error>(());
         leaf.expect_write_at()
             .withf(move |(_buf, lba)| *lba == LbaT::from(num_ops) - 1)
-            .times(1)
+            .once()
             .in_sequence(&mut seq)
             .return_once_st(|_| Box::new(final_fut));
         let penultimate_fut = future::ok::<(), Error>(());
         leaf.expect_write_at()
             .withf(move |(_buf, lba)| *lba == LbaT::from(num_ops))
-            .times(1)
+            .once()
             .in_sequence(&mut seq)
             .return_once_st(|_| Box::new(penultimate_fut));
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -1407,7 +1407,7 @@ test_suite! {
         let mut leaf = mocks.val;
         leaf.expect_write_at()
             .withf(|(_buf, lba)| *lba == 1)
-            .times(1)
+            .once()
             .returning(|_| Box::new(future::ok::<(), Error>(())));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);

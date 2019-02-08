@@ -1387,7 +1387,7 @@ fn read_at_one_stripe() {
         m0.expect_size()
             .return_const(262_144);
         m0.expect_open_zone()
-            .times(1)
+            .once()
             .with(eq(65536))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m0.expect_optimum_queue_depth()
@@ -1404,7 +1404,7 @@ fn read_at_one_stripe() {
         m1.expect_size()
             .return_const(262_144);
         m1.expect_open_zone()
-            .times(1)
+            .once()
             .with(eq(65536))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m1.expect_optimum_queue_depth()
@@ -1416,7 +1416,7 @@ fn read_at_one_stripe() {
             .with(eq(1))
             .return_const((65536, 131_072));
         m1.expect_read_at()
-            .times(1)
+            .once()
             .withf(|(buf, lba): &(IoVecMut, LbaT)| {
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                     && *lba == 65536
@@ -1427,7 +1427,7 @@ fn read_at_one_stripe() {
         m2.expect_size()
             .return_const(262_144);
         m2.expect_open_zone()
-            .times(1)
+            .once()
             .with(eq(65536))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m2.expect_optimum_queue_depth()
@@ -1439,7 +1439,7 @@ fn read_at_one_stripe() {
             .with(eq(1))
             .return_const((65536, 131_072));
         m2.expect_read_at()
-            .times(1)
+            .once()
             .withf(|(buf, lba): &(IoVecMut, LbaT)| {
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                     && *lba == 65536
@@ -1520,10 +1520,10 @@ fn sync_all_unflushed() {
             .return_const(zl1);
         bd.expect_open_zone()
             .with(eq(60_000))
-            .times(1)
+            .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_sync_all()
-            .times(1)
+            .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10);
@@ -1569,7 +1569,7 @@ fn write_at_one_stripe() {
             .return_const(Some(1));
         m0.expect_open_zone()
             .with(eq(65536))
-            .times(1)
+            .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m0.expect_optimum_queue_depth()
             .return_const(10);
@@ -1580,7 +1580,7 @@ fn write_at_one_stripe() {
             .with(eq(1))
             .return_const((65536, 131_072));
         m0.expect_write_at()
-            .times(1)
+            .once()
             .withf(|(buf, lba)|
                    buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                    && *lba == 65536
@@ -1595,7 +1595,7 @@ fn write_at_one_stripe() {
             .return_const(Some(1));
         m1.expect_open_zone()
             .with(eq(65536))
-            .times(1)
+            .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m1.expect_optimum_queue_depth()
             .return_const(10);
@@ -1606,7 +1606,7 @@ fn write_at_one_stripe() {
             .with(eq(1))
             .return_const((65536, 131_072));
         m1.expect_write_at()
-            .times(1)
+            .once()
             .withf(|(buf, lba)|
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                 && *lba == 65536
@@ -1621,7 +1621,7 @@ fn write_at_one_stripe() {
             .return_const(Some(1));
         m2.expect_open_zone()
             .with(eq(65536))
-            .times(1)
+            .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m2.expect_optimum_queue_depth()
             .return_const(10);
@@ -1632,7 +1632,7 @@ fn write_at_one_stripe() {
             .with(eq(1))
             .return_const((65536, 131_072));
         m2.expect_write_at()
-            .times(1)
+            .once()
             .withf(|(buf, lba)|
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                 && *lba == 65536
@@ -1675,7 +1675,7 @@ fn write_at_and_flush_zone() {
             .return_const(zl1);
         bd.expect_open_zone()
             .with(eq(60_000))
-            .times(1)
+            .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10);
@@ -1684,7 +1684,7 @@ fn write_at_and_flush_zone() {
 
     let mut bd0 = bd();
     bd0.expect_writev_at()
-        .times(1)
+        .once()
         .withf(|(buf, lba)|
             // The first segment is user data
             buf[0][..] == vec![1u8; BYTES_PER_LBA][..] &&
@@ -1696,7 +1696,7 @@ fn write_at_and_flush_zone() {
     let mut bd1 = bd();
     // This write is from the zero-fill
     bd1.expect_writev_at()
-        .times(1)
+        .once()
         .withf(|(buf, lba)|
             buf.len() == 1 &&
             buf[0][..] == vec![0u8; 2 * BYTES_PER_LBA][..] &&
@@ -1706,7 +1706,7 @@ fn write_at_and_flush_zone() {
     // This write is generated parity
     let mut bd2 = bd();
     bd2.expect_write_at()
-        .times(1)
+        .once()
         .withf(|(buf, lba)|
             // single disk parity is a simple XOR
             buf[0..4096] == vec![1u8; BYTES_PER_LBA][..] &&
@@ -1757,7 +1757,7 @@ fn erase_zone() {
             .return_const(zl1);
         bd.expect_erase_zone()
             .with(eq((1, 59_999)))
-            .times(1)
+            .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10);
@@ -1842,7 +1842,7 @@ fn flush_zone_empty_stripe_buffer() {
             .with(eq(1))
             .return_const(zl1);
         bd.expect_open_zone()
-            .times(1)
+            .once()
             .with(eq(60_000))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
@@ -1895,14 +1895,14 @@ fn open_zone_reopen() {
             .with(eq(1))
             .return_const(zl1);
         bd.expect_open_zone()
-            .times(1)
+            .once()
             .with(eq(4096))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10);
         bd.expect_write_at()
             .withf(|(_buf, lba)| *lba == 4196)
-            .times(1)
+            .once()
             .return_once(|_| Box::new( future::ok::<(), Error>(())));
         bd
     };
@@ -1946,13 +1946,13 @@ fn open_zone_zero_fill_wasted_chunks() {
                 .with(eq(1))
                 .return_const(zl1);
             bd.expect_open_zone()
-                .times(1)
+                .once()
                 .with(eq(32))
                 .return_once(|_| Box::new(future::ok::<(), Error>(())));
             bd.expect_optimum_queue_depth()
                 .return_const(10);
             bd.expect_writev_at()
-                .times(1)
+                .once()
                 .withf(|(sglist, lba)| {
                     let len = sglist.iter().map(|b| b.len()).sum::<usize>();
                     len == 3 * BYTES_PER_LBA && *lba == 32
@@ -2000,14 +2000,14 @@ fn open_zone_zero_fill_wasted_stripes() {
                 .with(eq(1))
                 .return_const(zl1);
             bd.expect_open_zone()
-                .times(1)
+                .once()
                 .with(eq(32))
                 .return_once(|_| Box::new(future::ok::<(), Error>(())));
             bd.expect_optimum_queue_depth()
                 .return_const(10);
             if gap_chunks > 0 {
                 bd.expect_writev_at()
-                    .times(1)
+                    .once()
                     .withf(move |(sglist, lba)| {
                         let gap_lbas = gap_chunks * CHUNKSIZE; 
                         let len = sglist.iter().map(|b| b.len()).sum::<usize>();
