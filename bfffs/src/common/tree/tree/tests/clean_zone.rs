@@ -3,9 +3,9 @@
 
 use atomic::{Atomic, Ordering};
 use crate::common::ddml::*;
-use futures::future;
+use futures::{future::IntoFuture, future};
+use mockall::{Predicate, params, predicate::*};
 use pretty_assertions::assert_eq;
-use simulacrum::*;
 use super::*;
 use tokio::runtime::current_thread;
 
@@ -29,15 +29,13 @@ fn basic() {
                      TreePtr::Addr(drpl3)),
     ];
     let in1 = Arc::new(Node::new(NodeData::Int(IntData::new(children1))));
-    let mut in1_c = Some(Arc::new(Node::new(
-                NodeData::Int(IntData::new(children1_c))
-    )));
+    let in1_c = Arc::new(Node::new( NodeData::Int(IntData::new(children1_c))));
     let drpi1 = DRP::new(PBA{cluster: 0, lba: 4}, Compression::None, 0, 0, 0);
 
     let mut ld3 = LeafData::default();
     ld3.insert(6, 6.0);
     ld3.insert(7, 7.0);
-    let mut ln3 = Some(Arc::new(Node::new(NodeData::Leaf(ld3))));
+    let ln3 = Arc::new(Node::new(NodeData::Leaf(ld3)));
 
     // On-disk internal node in the target zone, but with children outside
     let drpl4 = DRP::new(PBA{cluster: 0, lba: 5}, Compression::None, 0, 0, 0);
@@ -54,9 +52,7 @@ fn basic() {
                      TreePtr::Addr(drpl5)),
     ];
     let in2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
-    let mut in2_c = Some(Arc::new(Node::new(
-                NodeData::Int(IntData::new(children2_c))
-    )));
+    let in2_c = Arc::new(Node::new( NodeData::Int(IntData::new(children2_c))));
     let drpi2 = DRP::new(PBA{cluster: 0, lba: 101}, Compression::None, 0, 0, 0);
 
     // On-disk leaf node in the target zone
@@ -64,57 +60,42 @@ fn basic() {
     let mut ld8 = LeafData::default();
     ld8.insert(16, 16.0);
     ld8.insert(17, 17.0);
-    let mut ln8 = Some(Arc::new(Node::new(NodeData::Leaf(ld8))));
+    let ln8 = Arc::new(Node::new(NodeData::Leaf(ld8)));
 
     let mut mock = DDML::default();
-    mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
-        .called_any()
-        .with(passes(move |arg: & *const DRP| {
-            unsafe {
-            **arg == drpi1 || **arg == drpi2
-        }} ))
-        .returning(move |arg: *const DRP| {
-            let res = Box::new( unsafe {
-                if *arg == drpi1 {
-                    in1.clone()
-                } else if *arg == drpi2 {
-                    in2.clone()
-                } else {
-                    panic!("unexpected DDML::get {:?}", *arg);
-                }
-            });
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
-        });
-    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
-        .called_times(4)
-        .with(passes(move |args: &(*const DRP, TxgT)| unsafe {
-            (*args.0 == drpl3 || *args.0 == drpi2 || *args.0 == drpl8 ||
-            *args.0 == drpi1) && args.1 == TxgT::from(42)
-        } ))
-        .returning(move |args: (*const DRP, TxgT)| {
-            let res = Box::new( unsafe {
-                if *args.0 == drpl3 {
-                    ln3.take().unwrap()
-                } else if *args.0 == drpi1 {
-                    in1_c.take().unwrap()
-                } else if *args.0 == drpi2 {
-                    in2_c.take().unwrap()
-                } else if *args.0 == drpl8 {
-                    ln8.take().unwrap()
-                } else {
-                    panic!("unexpected DDML::pop {:?}", *args.0);
-                }
-            });
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
-        });
+    type T = Arc<Node<DRP, u32, f32>>;
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_get::<T, T>()
+            .withf_unsafe(move |arg: & *const DRP| **arg == drpi1)
+            .returning(move |_| Box::new(future::ok(Box::new(in1.clone()))));
+        mock.expect_get::<T, T>()
+            .withf_unsafe(move |arg: & *const DRP| **arg == drpi2)
+            .returning(move |_| Box::new(future::ok(Box::new(in2.clone()))));
+        mock.expect_pop::<T, T>()
+            .once()
+            .withf_unsafe(move |args: &(*const DRP, TxgT)| *args.0 == drpl3)
+            .return_once(move |_| Box::new(future::ok(Box::new(ln3))));
+        mock.expect_pop::<T, T>()
+            .once()
+            .withf_unsafe(move |args: &(*const DRP, TxgT)| *args.0 == drpi1)
+            .return_once(move |_| Box::new(future::ok(Box::new(in1_c))));
+        mock.expect_pop::<T, T>()
+            .once()
+            .withf_unsafe(move |args: &(*const DRP, TxgT)| *args.0 == drpi2)
+            .return_once(move |_| Box::new(future::ok(Box::new(in2_c))));
+        mock.expect_pop::<T, T>()
+            .once()
+            .withf_unsafe(move |args: &(*const DRP, TxgT)| *args.0 == drpl8)
+            .return_once(move |_| Box::new(future::ok(Box::new(ln8))));
+    }
     let next_lba = Atomic::<u64>::new(0);
     mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
-        .called_times(3)
-        .with(passes(|args: &(_, _, TxgT)| args.2 == TxgT::from(42)))
+        .times(3)
+        .with(params!(always(), always(), eq(TxgT::from(42))))
         .returning(move |(_cacheable, compression, _txg)| {
             let lba = next_lba.fetch_add(1, Ordering::Relaxed);
             let drp = DRP::new(PBA{cluster: 1, lba}, compression, 0, 0, 0);
-            //let drp = DRP::random(Compression::None, 1024);
             Box::new(Ok(drp).into_future())
         });
     let ddml = Arc::new(mock);
@@ -368,30 +349,31 @@ fn dirty_root() {
     ];
     let inr = Arc::new(Node::<DRP, u32, f32>::new(
             NodeData::Int(IntData::new(children))));
-    let mut inr_c = Some(Arc::new(Node::<DRP, u32, f32>::new(
-                NodeData::Int(IntData::new(children_c))
+    let inr_c = Arc::new(Node::<DRP, u32, f32>::new(
+            NodeData::Int(IntData::new(children_c)
     )));
     let drpir = DRP::new(PBA{cluster: 0, lba: 100}, Compression::None, 0, 0, 0);
 
     let mut mock = DDML::default();
-    mock.expect_get::<Arc<Node<DRP, u32, f32>>>()
-        .called_any()
-        .with(passes(move |arg: & *const DRP| unsafe { **arg == drpir } ))
-        .returning(move |_arg: *const DRP| {
-            let res = Box::new(inr.clone());
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
-        });
-    mock.expect_pop::<Arc<Node<DRP, u32, f32>>, Arc<Node<DRP, u32, f32>>>()
-        .called_times(1)
-        .with(passes(move |args: &(*const DRP, TxgT)|
-                     unsafe { *args.0 == drpir } && args.1 == TxgT::from(42))
-        ).returning(move |_args: (*const DRP, TxgT)| {
-            let res = Box::new(inr_c.take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<DRP, u32, f32>>>, Error>(res))
-        });
-    mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
-        .called_times(1)
-        .with(passes(|args: &(_, _, TxgT)| args.2 == TxgT::from(42)))
+    type T = Arc<Node<DRP, u32, f32>>;
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_get::<T, T>()
+            .withf_unsafe(move |arg: & *const DRP| **arg == drpir )
+            .returning(move |_arg: *const DRP| {
+                Box::new(future::ok(Box::new(inr.clone())))
+            });
+        mock.expect_pop::<T, T>()
+            .once()
+            .withf_unsafe(move |args: &(*const DRP, TxgT)|
+                 *args.0 == drpir && args.1 == TxgT::from(42)
+            ).return_once(move |_args: (*const DRP, TxgT)| {
+                Box::new(future::ok(Box::new(inr_c)))
+            });
+    }
+    mock.expect_put::<T>()
+        .once()
+        .with(params!(always(), always(), eq(TxgT::from(42))))
         .returning(move |(_cacheable, _compression, _txg)| {
             let drp = DRP::random(Compression::None, 1024);
             Box::new(Ok(drp).into_future())

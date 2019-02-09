@@ -605,7 +605,7 @@ impl Pool {
     #[allow(clippy::collapsible_if)]
     pub fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
         -> impl Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
-                       Error=Error>
+                       Error=Error> + Send
     {
         let nclusters = self.clusters.len() as ClusterT;
         self.clusters[clust as usize].find_closed_zone(zid)

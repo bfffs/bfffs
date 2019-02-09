@@ -9,6 +9,7 @@ use crate::{
 };
 use futures::{Future, Stream, future, stream};
 use metrohash::MetroHash64;
+#[cfg(test)] use mockall::mock;
 use std::{
     borrow,
     hash::Hasher,
@@ -62,7 +63,7 @@ impl DDML {
 
     /// Get directly from disk, bypassing cache
     pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
-        -> impl Future<Item=Box<T>, Error=Error>
+        -> impl Future<Item=Box<T>, Error=Error> + Send
     {
         self.read(*drp).map(move |dbs| {
             Box::new(T::deserialize(dbs))
@@ -71,7 +72,7 @@ impl DDML {
 
     /// List all closed zones in the `DDML` in no particular order
     pub fn list_closed_zones(&self)
-        -> impl Stream<Item=ClosedZone, Error=Error>
+        -> impl Stream<Item=ClosedZone, Error=Error> + Send
     {
         struct State {
             pool: Arc<Pool>,
@@ -154,7 +155,7 @@ impl DDML {
 
     /// Read a record and return ownership of it, bypassing Cache
     pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
-        -> impl Future<Item=Box<T>, Error=Error>
+        -> impl Future<Item=Box<T>, Error=Error> + Send
     {
         let lbas = drp.asize();
         let pba = drp.pba;
@@ -205,7 +206,7 @@ impl DDML {
     /// Write a buffer bypassing cache.  Return the same buffer
     pub fn put_direct<T>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
-        -> impl Future<Item=DRP, Error=Error>
+        -> impl Future<Item=DRP, Error=Error> + Send
         where T: borrow::Borrow<CacheRef>
     {
         self.put_common(cacheref, compression, txg)
@@ -300,6 +301,50 @@ impl DML for DDML {
 }
 
 // LCOV_EXCL_START
+#[cfg(test)]
+mock! {
+    pub DDML {
+        fn allocated(&self) -> LbaT;
+        fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT);
+        fn delete_direct(&self, drp: &DRP, txg: TxgT)
+            -> Box<Future<Item=(), Error=Error> + Send>;
+        fn flush(&self, idx: u32)
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
+        fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
+        fn get_direct<T: Cacheable>(&self, drp: &DRP)
+            -> Box<Future<Item=Box<T>, Error=Error> + Send>;
+        fn list_closed_zones(&self)
+            -> Box<dyn Stream<Item=ClosedZone, Error=Error> + Send>;
+        fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
+        fn pop_direct<T: Cacheable>(&self, drp: &DRP)
+            -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>;
+        fn put_direct<T: 'static>(&self, cacheref: &T, compression: Compression,
+                         txg: TxgT)
+            -> Box<dyn Future<Item=DRP, Error=Error> + Send>
+            where T: borrow::Borrow<CacheRef>;
+        fn shutdown(&self);
+        fn size(&self) -> LbaT;
+        fn write_label(&self, labeller: LabelWriter)
+            -> Box<dyn Future<Item=(), Error=Error>>;
+    }
+    trait DML {
+        type Addr = DRP;
+
+        fn delete(&self, addr: &DRP, txg: TxgT)
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
+        fn evict(&self, addr: &DRP);
+        fn get<T: Cacheable, R: CacheRef>(&self, addr: &DRP)
+            -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>;
+        fn pop<T: Cacheable, R: CacheRef>(&self, rid: &DRP, txg: TxgT)
+            -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>;
+        fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
+                                 txg: TxgT)
+            -> Box<dyn Future<Item=DRP, Error=Error> + Send>;
+        fn sync_all(&self, txg: TxgT)
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
+    }
+}
+
 #[cfg(test)]
 mod t {
 mod drp {

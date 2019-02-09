@@ -16,8 +16,7 @@ mod ddml;
 
 cfg_if! {
     if #[cfg(test)]{
-        mod ddml_mock;
-        pub use self::ddml_mock::DDMLMock as DDML;
+        pub use self::ddml::MockDDML as DDML;
     } else {
         pub use self::ddml::DDML;
     }

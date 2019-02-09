@@ -567,9 +567,7 @@ mod t {
     use divbuf::DivBufShared;
     use futures::future;
     use pretty_assertions::assert_eq;
-    use mockall::{self, Predicate, Sequence, predicate::*};
-    use simulacrum::*;
-    use simulacrum::validators::trivial::any;
+    use mockall::{Predicate, Sequence, params, predicate::*};
     use std::sync::Mutex;
     use tokio::runtime::current_thread;
 
@@ -688,11 +686,14 @@ mod t {
                 });
         }
         let mut ddml = DDML::default();
-        ddml.expect_delete_direct()
-            .called_once()
-            .with(passes(move |args: &(*const DRP, TxgT)|
-                         unsafe {*args.0 == drp} && args.1 == TxgT::from(42))
-            ).returning(|_| Box::new(future::ok::<(), Error>(())));
+        // Safe because the test is single-threaded
+        unsafe {
+            ddml.expect_delete_direct()
+                .once()
+                .withf_unsafe(move |args: &(*const DRP, TxgT)|
+                             *args.0 == drp && args.1 == TxgT::from(42))
+                .returning(|_| Box::new(future::ok::<(), Error>(())));
+        }
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -791,19 +792,22 @@ mod t {
         cache.expect_insert()
             .once()
             .in_sequence(&mut seq)
-            .with(mockall::params!(eq(Key::Rid(RID(42))), always()))
+            .with(params!(eq(Key::Rid(RID(42))), always()))
             .returning(move |(_, dbs)| {;
                 owned_by_cache2.lock().unwrap().push(dbs);
             });
         let mut ddml = DDML::default();
-        ddml.expect_get_direct::<DivBufShared>()
-            .called_once()
-            .with(passes(move |key: &*const DRP| {
-                unsafe {**key == drp}
-            })).returning(move |_| {
-                let dbs = Box::new(DivBufShared::from(vec![0u8; 4096]));
-                Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
-            });
+        // Safe because the test is single-threaded
+        unsafe {
+            ddml.expect_get_direct::<DivBufShared>()
+                .once()
+                .withf_unsafe(move |key: &*const DRP| {
+                    **key == drp
+                }).returning(move |_| {
+                    let dbs = Box::new(DivBufShared::from(vec![0u8; 4096]));
+                    Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
+                });
+        }
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -859,6 +863,7 @@ mod t {
         let drp0 = DRP::random(Compression::None, 4096);
         let drp1 = DRP::random(Compression::None, 4096);
         let drp1_c = drp1;
+        let mut seq = Sequence::new();
         let mut cache = Cache::default();
         let mut ddml = DDML::default();
         // Safe because the test is single-threaded
@@ -869,30 +874,37 @@ mod t {
                     **key == Key::Rid(rid)
                 }).returning(|_| None);
         }
-        ddml.expect_get_direct()
-            .called_once()
-            .with(passes(move |key: &*const DRP| {
-                unsafe {
+        // Safe because the test is single-threaded
+        unsafe {
+            ddml.expect_get_direct()
+                .once()
+                .in_sequence(&mut seq)
+                .withf_unsafe(move |key: &*const DRP| {
                     (**key).pba() == drp0.pba() && !(**key).is_compressed()
-                }
-            })).returning(move |_| {
-                let r = DivBufShared::from(&dbs.try_const().unwrap()[..]);
-                Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
-            });
-        ddml.expect_put_direct::<DivBuf>()
-            .called_once()
-            .with(passes(move |(_, c, _): &(*const DivBuf, Compression, TxgT)| {
-                *c == Compression::None
-            })).returning(move |(_, _, _)|
-                Box::new(Ok(drp1).into_future())
-            );
-        ddml.then().expect_delete_direct()
-            .called_once()
-            .with(passes(move |(key, _txg): &(*const DRP, TxgT)| {
-                unsafe {**key == drp0}
-            })).returning(move |_| {
-                Box::new(future::ok::<(), Error>(()))
-            });
+                }).returning(move |_| {
+                    let r = DivBufShared::from(&dbs.try_const().unwrap()[..]);
+                    Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
+                });
+            ddml.expect_put_direct::<DivBuf>()
+                .once()
+                .in_sequence(&mut seq)
+                //.with(params!(always(), eq(Compression::None), always()))
+                .withf_unsafe(|(_, c, _)| *c == Compression::None)
+                .returning(move |(_, _, _)|
+                    Box::new(Ok(drp1).into_future())
+                );
+        }
+        // Safe because the test is single-threaded
+        unsafe {
+            ddml.expect_delete_direct()
+                .once()
+                .in_sequence(&mut seq)
+                .withf_unsafe(move |(key, _txg): &(*const DRP, TxgT)| {
+                    **key == drp0
+                }).returning(move |_| {
+                    Box::new(future::ok::<(), Error>(()))
+                });
+        }
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -921,32 +933,35 @@ mod t {
         let drp0 = DRP::random(Compression::Zstd(None), 4096);
         let drp1 = DRP::random(Compression::Zstd(None), 4096);
         let drp1_c = drp1;
+        let mut seq = Sequence::new();
         let cache = Cache::default();
         let mut ddml = DDML::default();
-        ddml.expect_get_direct()
-            .called_once()
-            .with(passes(move |key: &*const DRP| {
-                unsafe {
+        // Safe because the test is single-threaded
+        unsafe {
+            ddml.expect_get_direct()
+                .once()
+                .in_sequence(&mut seq)
+                .withf_unsafe(move |key: &*const DRP| {
                     (**key).pba() == drp0.pba() && !(**key).is_compressed()
-                }
-            })).returning(move |_| {
-                let r = DivBufShared::from(&dbs.try_const().unwrap()[..]);
-                Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
-            });
-        ddml.expect_put_direct::<DivBuf>()
-            .called_once()
-            .with(passes(move |(_, c, _): &(*const DivBuf, Compression, TxgT)| {
-                *c == Compression::None
-            })).returning(move |(_, _, _)|
-                Box::new(Ok(drp1).into_future())
-            );
-        ddml.then().expect_delete_direct()
-            .called_once()
-            .with(passes(move |(key, _txg): &(*const DRP, TxgT)| {
-                unsafe {**key == drp0}
-            })).returning(move |_| {
-                Box::new(future::ok::<(), Error>(()))
-            });
+                }).returning(move |_| {
+                    let r = DivBufShared::from(&dbs.try_const().unwrap()[..]);
+                    Box::new(future::ok(Box::new(r)))
+                });
+            ddml.expect_put_direct::<DivBuf>()
+                .once()
+                .in_sequence(&mut seq)
+                .withf_unsafe(|(_, c, _)| *c == Compression::None)
+                .returning(move |(_, _, _)| Box::new(Ok(drp1).into_future()));
+        }
+        // Safe because the test is single-threaded
+        unsafe {
+            ddml.expect_delete_direct()
+                .once()
+                .in_sequence(&mut seq)
+                .withf_unsafe(move |(key, _txg): &(*const DRP, TxgT)| {
+                    **key == drp0
+                }).returning(move |_| Box::new(future::ok::<(), Error>(())));
+        }
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -974,12 +989,14 @@ mod t {
         let rid = RID(1);
         let drp0 = DRP::random(Compression::None, 4096);
         let drp1 = DRP::random(Compression::None, 4096);
+        let mut seq = Sequence::new();
         let mut cache = Cache::default();
         let mut ddml = DDML::default();
         // Safe because the test is single-threaded
         unsafe {
             cache.expect_get_ref()
                 .once()
+                .in_sequence(&mut seq)
                 .withf_unsafe(move |key: &*const Key| {
                     **key == Key::Rid(rid)
                 }).returning(move |_| {
@@ -987,17 +1004,20 @@ mod t {
                 });
         }
         ddml.expect_put_direct::<DivBuf>()
-            .called_once()
+            .once()
+            .in_sequence(&mut seq)
             .returning(move |(_, _, _)|
                        Box::new(Ok(drp1).into_future())
             );
-        ddml.then().expect_delete_direct()
-            .called_once()
-            .with(passes(move |(key, _txg): &(*const DRP, TxgT)| {
-                unsafe {**key == drp0}
-            })).returning(move |_| {
-                Box::new(future::ok::<(), Error>(()))
-            });
+        // Safe because the test is single-threaded
+        unsafe {
+            ddml.expect_delete_direct()
+                .once()
+                .in_sequence(&mut seq)
+                .withf_unsafe(move |(key, _txg): &(*const DRP, TxgT)| {
+                    **key == drp0
+                }).returning(move |_| Box::new(future::ok::<(), Error>(())));
+        }
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -1020,6 +1040,7 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let mut cache = Cache::default();
+        let mut ddml = DDML::default();
         // Safe because the test is single-threaded
         unsafe {
             cache.expect_remove()
@@ -1029,15 +1050,12 @@ mod t {
                 }).returning(|_| {
                     Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
                 });
+            ddml.expect_delete()
+                .once()
+                .withf_unsafe(move |args: &(*const DRP, TxgT)|
+                             *args.0 == drp && args.1 == TxgT::from(42)
+                ).returning(|_| Box::new(future::ok::<(), Error>(())));
         }
-        let mut ddml = DDML::default();
-        ddml.expect_delete()
-            .called_once()
-            .with(passes(move |args: &(*const DRP, TxgT)|
-                         unsafe {*args.0 == drp} && args.1 == TxgT::from(42))
-            ).returning(|_| {
-                Box::new(future::ok::<(), Error>(()))
-            });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -1088,6 +1106,7 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let mut cache = Cache::default();
+        let mut ddml = DDML::default();
         // Safe because the test is single-threaded
         unsafe {
             cache.expect_remove()
@@ -1095,15 +1114,16 @@ mod t {
                 .withf_unsafe(move |key: &*const Key| {
                     **key == Key::Rid(RID(42))
                 }).returning(|_| None);
+            ddml.expect_pop_direct::<DivBufShared>()
+                .once()
+                .withf_unsafe(move |key: &*const DRP| **key == drp)
+                .returning(|_| {
+                    let dbs = DivBufShared::from(vec![42u8; 4096]);
+                    Box::new(future::ok::<Box<DivBufShared>, Error>(
+                            Box::new(dbs))
+                    )
+                });
         }
-        let mut ddml = DDML::default();
-        ddml.expect_pop_direct::<DivBufShared>()
-            .called_once()
-            .with(passes(move |key: &*const DRP| unsafe {**key == drp}))
-            .returning(|_| {
-                let dbs = DivBufShared::from(vec![42u8; 4096]);
-                Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(dbs)))
-            });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -1122,6 +1142,7 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let mut cache = Cache::default();
+        let mut ddml = DDML::default();
         // Safe because the test is single-threaded
         unsafe {
             cache.expect_get::<DivBuf>()
@@ -1129,16 +1150,15 @@ mod t {
                 .withf_unsafe(move |key: &*const Key| {
                     **key == Key::Rid(RID(42))
                 }).returning(|_| None);
+            ddml.expect_get_direct()
+                .once()
+                .withf_unsafe(move |key: &*const DRP| {
+                    **key == drp
+                }).returning(move |_| {
+                    let dbs = Box::new(DivBufShared::from(vec![42u8; 4096]));
+                    Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
+                });
         }
-        let mut ddml = DDML::default();
-        ddml.expect_get_direct()
-            .called_once()
-            .with(passes(move |key: &*const DRP| {
-                unsafe {**key == drp}
-            })).returning(move |_| {
-                let dbs = Box::new(DivBufShared::from(vec![42u8; 4096]));
-                Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
-            });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -1163,10 +1183,10 @@ mod t {
         let rid = RID(0);
         cache.expect_insert()
             .once()
-            .with(mockall::params!(eq(Key::Rid(rid)), always()))
+            .with(params!(eq(Key::Rid(rid)), always()))
             .returning(drop);
         ddml.expect_put_direct::<Box<dyn CacheRef>>()
-            .called_once()
+            .once()
             .returning(move |(_, _, _)|
                        Box::new(Ok(drp).into_future())
             );
@@ -1197,22 +1217,20 @@ mod t {
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdead_beef);
         ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
-            .called_any()
-            .with(params!(any(), any(), TxgT::from(42)))
+            .with(params!(always(), always(), eq(TxgT::from(42))))
             .returning(move |(_, _, _)| {
                 let drp = DRP::random(Compression::None, 4096);
                  Box::new(Ok(drp).into_future())
             });
         ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
-            .called_any()
-            .with(params!(any(), any(), TxgT::from(42)))
+            .with(params!(always(), always(), eq(TxgT::from(42))))
             .returning(move |(_, _, _)| {
                 let drp = DRP::random(Compression::None, 4096);
                  Box::new(Ok(drp).into_future())
             });
         ddml.expect_sync_all()
-            .called_once()
-            .with(TxgT::from(42))
+            .once()
+            .with(eq(TxgT::from(42)))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
