@@ -1,5 +1,6 @@
 // vim: tw=80
 use metrohash::{MetroBuildHasher, MetroHash64};
+#[cfg(test)] use mockall::automock;
 use std::{
     collections::HashMap,
     fmt::{self, Debug},
@@ -41,6 +42,7 @@ pub struct Cache {
     store: HashMap<Key, LruEntry, BuildHasherDefault<MetroHash64>>,
 }
 
+#[cfg_attr(test, automock)]
 impl Cache {
     /// Drop all data from the cache, for testing or benchmarking purposes
     // NB: this should be called "drop", but that conflicts with

@@ -11,8 +11,7 @@ mod cache;
 
 cfg_if! {
     if #[cfg(test)]{
-        mod cache_mock;
-        pub use self::cache_mock::CacheMock as Cache;
+        pub use self::cache::MockCache as Cache;
     } else {
         pub use self::cache::Cache;
     }
