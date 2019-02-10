@@ -682,6 +682,7 @@ mod prop_cache_key {
 mod database {
     use super::super::*;
     use futures::future;
+    use mockall::{Sequence, predicate::*};
     use tokio::{
         executor::current_thread::TaskExecutor,
         runtime::current_thread
@@ -698,7 +699,7 @@ mod database {
     fn shutdown() {
         let mut idml = IDML::default();
         idml.expect_shutdown()
-            .called_once()
+            .once()
             .returning(drop);
         let forest = Tree::default();
 
@@ -716,7 +717,7 @@ mod database {
     fn shutdown_twice() {
         let mut idml = IDML::default();
         idml.expect_shutdown()
-            .called_times(2)
+            .times(2)
             .returning(drop);
         let forest = Tree::default();
 
@@ -732,57 +733,66 @@ mod database {
 
     #[test]
     fn sync_transaction() {
+        let mut seq = Sequence::new();
         let mut idml = IDML::default();
         let mut forest = Tree::default();
 
         let mut rt = current_thread::Runtime::new().unwrap();
 
-        idml.expect_advance_transaction()
-            .called_once()
+        idml.expect_advance_transaction_inner()
+            .once()
             .returning(|_| TxgT::from(0));
 
-        // forest.flush should be called before IDML::sync_all, but
-        // Simulacrum isn't able to verify the order of calls to different
-        // objects
+        // TODO: once forest transitions from Simulacrum to Mockall, enable the
+        // in_sequence lines.
         forest.expect_flush()
             .called_once()
+            //.in_sequence(&mut seq)
             .with(TxgT::from(0))
             .returning(|_| {
                 Box::new(future::ok::<(), Error>(()))
             });
         forest.expect_serialize()
             .called_once()
+            //.in_sequence(&mut seq)
             .returning(|_| {
                 Ok(TreeOnDisk::default())
             });
 
         idml.expect_flush()
-            .called_once()
-            .with((0, TxgT::from(0)))
+            .once()
+            .in_sequence(&mut seq)
+            .with(eq((0, TxgT::from(0))))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
-        idml.then().expect_sync_all()
-            .called_once()
-            .with(TxgT::from(0))
+        idml.expect_sync_all()
+            .once()
+            .in_sequence(&mut seq)
+            .with(eq(TxgT::from(0)))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
-        idml.then().expect_write_label()
-            .called_once()
+        idml.expect_write_label()
+            .once()
+            .in_sequence(&mut seq)
             .returning(|_| Box::new(future::ok::<(), Error>(())));
 
         idml.expect_flush()
-            .called_once()
-            .with((1, TxgT::from(0)))
+            .once()
+            .in_sequence(&mut seq)
+            .with(eq((1, TxgT::from(0))))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
-        idml.then().expect_sync_all()
-            .called_once()
-            .with(TxgT::from(0))
+        idml.expect_sync_all()
+            .once()
+            .in_sequence(&mut seq)
+            .with(eq(TxgT::from(0)))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
-        idml.then().expect_write_label()
-            .called_once()
+        idml.expect_write_label()
+            .once()
+            .in_sequence(&mut seq)
             .returning(|_| Box::new(future::ok::<(), Error>(())));
 
-        idml.then().expect_sync_all()
-            .called_once()
-            .with(TxgT::from(0))
+        idml.expect_sync_all()
+            .once()
+            .in_sequence(&mut seq)
+            .with(eq(TxgT::from(0)))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
 
         rt.block_on(future::lazy(|| {

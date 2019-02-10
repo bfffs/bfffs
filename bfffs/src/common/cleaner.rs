@@ -149,7 +149,7 @@ impl Cleaner {
 mod t {
 
 use futures::future;
-use simulacrum::*;
+use mockall::Sequence;
 use super::*;
 use tokio::runtime::current_thread;
 use tokio_current_thread::TaskExecutor;
@@ -159,7 +159,7 @@ use tokio_current_thread::TaskExecutor;
 fn background() {
     let mut idml = IDML::default();
     idml.expect_list_closed_zones()
-        .called_once()
+        .once()
         .returning(|_| {
             let czs = vec![
                 ClosedZone{freed_blocks: 0, total_blocks: 100, zid: 0,
@@ -167,8 +167,8 @@ fn background() {
             ];
             Box::new(stream::iter_ok(czs.into_iter()))
         });
-    idml.expect_txg().called_never();
-    idml.expect_clean_zone().called_never();
+    idml.expect_txg().never();
+    idml.expect_clean_zone().never();
 
     let mut rt = current_thread::Runtime::new().unwrap();
     rt.spawn(future::lazy(|| {
@@ -185,7 +185,7 @@ fn background() {
 fn no_sufficiently_dirty_zones() {
     let mut idml = IDML::default();
     idml.expect_list_closed_zones()
-        .called_once()
+        .once()
         .returning(|_| {
             let czs = vec![
                 ClosedZone{freed_blocks: 1, total_blocks: 100, zid: 0,
@@ -193,8 +193,8 @@ fn no_sufficiently_dirty_zones() {
             ];
             Box::new(stream::iter_ok(czs.into_iter()))
         });
-    idml.expect_txg().called_never();
-    idml.expect_clean_zone().called_never();
+    idml.expect_txg().never();
+    idml.expect_clean_zone().never();
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
     current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
         cleaner.clean_now()
@@ -207,7 +207,7 @@ fn one_sufficiently_dirty_zone() {
 
     let mut idml = IDML::default();
     idml.expect_list_closed_zones()
-        .called_once()
+        .once()
         .returning(|_| {
             let czs = vec![
                 ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
@@ -216,15 +216,14 @@ fn one_sufficiently_dirty_zone() {
             Box::new(stream::iter_ok(czs.into_iter()))
         });
     idml.expect_txg()
-        .called_once()
+        .once()
         .returning(|_| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
     idml.expect_clean_zone()
-        .called_once()
-        .with(passes(move |args: &(ClosedZone, TxgT)| {
+        .once()
+        .withf(move |args: &(ClosedZone, TxgT)| {
             args.0.pba == PBA::new(0, 0) &&
             args.1 == TXG
-        }))
-        .returning(|_| Box::new(future::ok::<(), Error>(())));
+        }).returning(|_| Box::new(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
     current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
         cleaner.clean_now()
@@ -235,9 +234,10 @@ fn one_sufficiently_dirty_zone() {
 fn two_sufficiently_dirty_zones() {
     const TXG: TxgT = TxgT(42);
 
+    let mut seq = Sequence::new();
     let mut idml = IDML::default();
     idml.expect_list_closed_zones()
-        .called_once()
+        .once()
         .returning(|_| {
             let czs = vec![
                 ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
@@ -250,25 +250,25 @@ fn two_sufficiently_dirty_zones() {
             Box::new(stream::iter_ok(czs.into_iter()))
         });
     idml.expect_txg()
-        .called_once()
+        .once()
+        .in_sequence(&mut seq)
         .returning(|_| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
     idml.expect_clean_zone()
-        .called_once()
-        .with(passes(move |args: &(ClosedZone, TxgT)| {
+        .once()
+        .withf(move |args: &(ClosedZone, TxgT)| {
             args.0.pba == PBA::new(2, 0) &&
             args.1 == TXG
-        }))
-        .returning(|_| Box::new(future::ok::<(), Error>(())));
-    idml.then().expect_txg()
-        .called_once()
+        }).returning(|_| Box::new(future::ok::<(), Error>(())));
+    idml.expect_txg()
+        .once()
+        .in_sequence(&mut seq)
         .returning(|_| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
     idml.expect_clean_zone()
-        .called_once()
-        .with(passes(move |args: &(ClosedZone, TxgT)| {
+        .once()
+        .withf(move |args: &(ClosedZone, TxgT)| {
             args.0.pba == PBA::new(0, 0) &&
             args.1 == TXG
-        }))
-        .returning(|_| Box::new(future::ok::<(), Error>(())));
+        }).returning(|_| Box::new(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
     current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
         cleaner.clean_now()

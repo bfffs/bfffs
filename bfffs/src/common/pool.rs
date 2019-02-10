@@ -732,7 +732,7 @@ impl Pool {
 
     /// Asynchronously write this `Pool`'s label to all component devices
     pub fn write_label(&self, mut labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         let cluster_uuids = self.clusters.iter().map(ClusterProxy::uuid)
             .collect::<Vec<_>>();

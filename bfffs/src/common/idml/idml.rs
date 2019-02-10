@@ -350,9 +350,10 @@ impl<'a> IDML {
 
     /// Finish the current transaction group and start a new one.
     pub fn advance_transaction<B, F>(&self, f: F)
-        -> impl Future<Item=(), Error=Error> + 'a
-        where F: FnOnce(TxgT) -> B + 'a,
-              B: IntoFuture<Item = (), Error = Error> + 'a
+        -> impl Future<Item=(), Error=Error> + Send + 'a
+        where F: FnOnce(TxgT) -> B + Send + 'a,
+              B: IntoFuture<Item = (), Error = Error> + Send + 'a,
+              <B as IntoFuture>::Future: Send
     {
         self.transaction.write()
             .map_err(|_| Error::EPIPE)
@@ -365,7 +366,7 @@ impl<'a> IDML {
 
     /// Asynchronously write this `IDML`'s label to its `Pool`
     pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         // The txg lock must be held when calling write_label.  Otherwise,
         // next_rid may be out-of-date by the time we serialize the label.
@@ -560,6 +561,66 @@ struct Label {
 }
 
 // LCOV_EXCL_START
+#[cfg(test)]
+mock!{
+    pub IDML {
+        fn allocated(&self) -> LbaT;
+        fn check(&self) -> Box<Future<Item=bool, Error=Error>>;
+        fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
+            -> Box<Future<Item=(), Error=Error> + Send>;
+        fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self;
+        fn dump_trees(&self, f: &mut (io::Write + 'static))
+            -> Result<(), Error>;
+        fn flush(&self, idx: u32, txg: TxgT)
+            -> Box<Future<Item=(), Error=Error> + Send>;
+        fn list_closed_zones(&self)
+            -> Box<Stream<Item=ClosedZone, Error=Error> + Send>;
+        fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
+                     mut label_reader: LabelReader) -> (Self, LabelReader);
+        fn shutdown(&self);
+        fn size(&self) -> LbaT;
+        // Return a static reference instead of a RwLockReadFut because it makes
+        // the expectations easier to write
+        fn txg(&self)
+            -> Box<dyn Future<Item=&'static TxgT, Error=Error> + Send>;
+        // advance_transaction is impossible to perfectly mock with Mockall,
+        // because f is typically a closure, and closures cannot be named.  If f
+        // were Boxed, then it would work.  But I don't want to impose that
+        // limitation on the production code.  Instead, we'll use special logic
+        // in advance_transaction and only mock the txg used.
+        fn advance_transaction_inner(&self) -> TxgT;
+        fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
+            -> Box<Future<Item=(), Error=Error> + Send>;
+    }
+    trait DML {
+        type Addr = RID;
+        fn delete(&self, addr: &RID, txg: TxgT)
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
+        fn evict(&self, addr: &RID);
+        fn get<T: Cacheable, R: CacheRef>(&self, addr: &RID)
+            -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>;
+        fn pop<T: Cacheable, R: CacheRef>(&self, rid: &RID, txg: TxgT)
+            -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>;
+        fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
+                                 txg: TxgT)
+            -> Box<dyn Future<Item=RID, Error=Error> + Send>;
+        fn sync_all(&self, txg: TxgT)
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
+    }
+}
+#[cfg(test)]
+impl MockIDML {
+    pub fn advance_transaction<B, F>(&self, f: F)
+        -> impl Future<Item=(), Error=Error> + Send
+        where F: FnOnce(TxgT) -> B + Send + 'static,
+              B: IntoFuture<Item = (), Error = Error> + 'static,
+              <B as futures::future::IntoFuture>::Future: Send
+    {
+        let txg = self.advance_transaction_inner();
+        f(txg).into_future()
+    }
+}
+
 #[cfg(test)]
 mod t {
 

@@ -15,13 +15,13 @@ use crate::common::{
     tree::Value
 };
 use cfg_if::cfg_if;
+#[cfg(test)] use mockall::mock;
 
 mod idml;
 
 cfg_if! {
     if #[cfg(test)]{
-        mod idml_mock;
-        pub use self::idml_mock::IDMLMock as IDML;
+        pub use self::idml::MockIDML as IDML;
     } else {
         pub use self::idml::IDML;
     }

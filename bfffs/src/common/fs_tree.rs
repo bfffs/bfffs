@@ -773,7 +773,6 @@ mod t {
 
 use crate::common::idml::IDML;
 use pretty_assertions::assert_eq;
-use simulacrum::*;
 use super::*;
 use tokio::runtime::current_thread;
 
@@ -811,11 +810,10 @@ fn fsvalue_flush_inline_extattr_long() {
     let rid = RID(999);
     let mut idml = IDML::default();
     idml.expect_put()
-        .called_once()
-        .with(passes(move |args: &(DivBufShared, _, _)| {
+        .once()
+        .withf(move |args: &(DivBufShared, _, _)| {
             args.0.len() == BYTES_PER_LBA
-        }))
-        .returning(move |_| boxfut!(Ok(rid).into_future()));
+        }).returning(move |_| boxfut!(Ok(rid).into_future()));
     let txg = TxgT(0);
     let mut rt = current_thread::Runtime::new().unwrap();
 
@@ -864,11 +862,10 @@ fn fsvalue_flush_inline_extent_long() {
     let rid = RID(999);
     let mut idml = IDML::default();
     idml.expect_put()
-        .called_once()
-        .with(passes(move |args: &(DivBufShared, _, _)| {
+        .once()
+        .withf(move |args: &(DivBufShared, _, _)| {
             args.0.len() == BYTES_PER_LBA
-        }))
-        .returning(move |_| boxfut!(Ok(rid).into_future()));
+        }).returning(move |_| boxfut!(Ok(rid).into_future()));
     let txg = TxgT(0);
     let mut rt = current_thread::Runtime::new().unwrap();
 

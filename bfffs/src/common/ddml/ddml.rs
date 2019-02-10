@@ -223,7 +223,7 @@ impl DDML {
     }
 
     pub fn write_label(&self, labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         self.pool.write_label(labeller)
     }
@@ -325,7 +325,7 @@ mock! {
         fn shutdown(&self);
         fn size(&self) -> LbaT;
         fn write_label(&self, labeller: LabelWriter)
-            -> Box<dyn Future<Item=(), Error=Error>>;
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
     }
     trait DML {
         type Addr = DRP;
