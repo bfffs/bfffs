@@ -1,7 +1,7 @@
 //! Tests regarding in-memory manipulation of Trees
 // LCOV_EXCL_START
 
-use crate::common::dml_mock::*;
+use crate::common::dml::MockDML;
 use futures::future;
 use pretty_assertions::assert_eq;
 use super::*;
@@ -9,10 +9,10 @@ use tokio::runtime::current_thread;
 
 #[test]
 fn insert() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::new(dml, limits, false);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.insert(0, 0.0, TxgT::from(42)));
     assert_eq!(r, Ok(None));
@@ -41,9 +41,9 @@ root:
 // int node's own key, the int node's own key must be lowered to match.
 #[test]
 fn insert_lower_than_parents_key() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -136,9 +136,9 @@ root:
 
 #[test]
 fn insert_dup() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -186,9 +186,9 @@ root:
 /// full
 #[test]
 fn insert_dup_no_split() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -243,9 +243,9 @@ root:
 /// Insert a key that splits a non-root interior node
 #[test]
 fn insert_split_int() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -506,9 +506,9 @@ root:
 /// Insert a key that splits a sequentially-optimized non-root interior node
 #[test]
 fn insert_split_int_sequential() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, true, r#"
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, true, r#"
 ---
 height: 3
 limits:
@@ -793,9 +793,9 @@ root:
 /// Insert a key that splits a non-root leaf node
 #[test]
 fn insert_split_leaf() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -897,9 +897,9 @@ root:
 /// Insert a key that splits a sequentially-optimized non-root leaf node
 #[test]
 fn insert_split_leaf_sequential() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, true, r#"
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, true, r#"
 ---
 height: 2
 limits:
@@ -1009,9 +1009,9 @@ root:
 /// Insert a key that splits the root IntNode
 #[test]
 fn insert_split_root_int() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1183,9 +1183,9 @@ root:
 /// Insert a key that splits the root leaf node
 #[test]
 fn insert_split_root_leaf() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -1256,10 +1256,10 @@ root:
 
 #[test]
 fn get() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::new(dml, limits, false);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(future::lazy(|| {
         tree.insert(0, 0.0, TxgT::from(42))
@@ -1270,8 +1270,8 @@ fn get() {
 
 #[test]
 fn get_deep() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1317,10 +1317,10 @@ root:
 
 #[test]
 fn get_nonexistent() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::new(dml, limits, false);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.get(0));
     assert_eq!(r, Ok(None))
@@ -1328,9 +1328,9 @@ fn get_nonexistent() {
 
 #[test]
 fn last_key_empty() {
-    let dml = Arc::new(DMLMock::new());
+    let dml = Arc::new(MockDML::new());
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::new(dml, limits, false);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.last_key());
     assert_eq!(r, Ok(None))
@@ -1338,8 +1338,8 @@ fn last_key_empty() {
 
 #[test]
 fn last_key() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1395,9 +1395,9 @@ root:
 //    nodes.
 #[test]
 fn range_delete() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -1573,9 +1573,9 @@ root:
 // in the cut
 #[test]
 fn range_delete_danger() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -1807,9 +1807,9 @@ root:
 // Delete a range that's exclusive on the left and right
 #[test]
 fn range_delete_exc_exc() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1937,9 +1937,9 @@ root:
 // Delete a range that's exclusive on the left and inclusive on the right
 #[test]
 fn range_delete_exc_inc() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -2070,15 +2070,12 @@ root:
 // a third merge to get 5 children.
 #[test]
 fn range_delete_fix_three_times() {
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     mock.expect_delete()
-        .called_any()
-        .returning(move |_| {
-            Box::new(future::ok::<(), Error>(()))
-        });
+        .returning(move |_| Box::new(future::ok::<(), Error>(())));
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 4
 limits:
@@ -2501,9 +2498,9 @@ root:
 /// Regression test for bug c2bd706
 #[test]
 fn range_delete_merge_and_underflow() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -2642,9 +2639,9 @@ root:
 /// underflow in the parent.
 #[test]
 fn range_delete_merge_and_parent_underflow() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -2845,9 +2842,9 @@ root:
 // while descending and again while ascending.
 #[test]
 fn range_delete_merge_descending_and_ascending() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -2991,9 +2988,9 @@ root:
 // during ascent.
 #[test]
 fn range_delete_merge_left_child_twice() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -3150,9 +3147,9 @@ root:
 /// left one again.
 #[test]
 fn range_delete_merge_to_lca_twice() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 4
 limits:
@@ -3510,9 +3507,9 @@ root:
 /// ascent, causing a "subtract with overflow" error.
 #[test]
 fn range_delete_merge_right_child_descending() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -3635,9 +3632,9 @@ root:
 /// error when trying to merge the right child again.
 #[test]
 fn range_delete_merge_right_child_first() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -3851,9 +3848,9 @@ root:
 /// Delete a range that causes the root node to be merged down
 #[test]
 fn range_delete_merge_root() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -3932,9 +3929,9 @@ root:
 /// case, that means by merging the root node down.
 #[test]
 fn range_delete_merge_root_during_ascent() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -4127,9 +4124,9 @@ root:
 /// Delete a range that causes the root node to be merged two steps down
 #[test]
 fn range_delete_merge_root_twice() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -4247,9 +4244,9 @@ root:
 // Bug #3a1c768
 #[test]
 fn range_delete_parent_and_child_underflow_after_descent() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 4
 limits:
@@ -4583,9 +4580,9 @@ root:
 // Regression test for bug b959707
 #[test]
 fn range_delete_cant_fix_for_minfanout_plus_two() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -4783,9 +4780,9 @@ root:
 
 #[test]
 fn range_delete_cant_steal_to_fix_lca() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -4980,9 +4977,9 @@ root:
 // Delete a range that's contained within a single LeafNode
 #[test]
 fn range_delete_single_node() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -5097,9 +5094,9 @@ root:
 /// Regression test for 4a99d7f
 #[test]
 fn range_delete_underflow_and_steal_left() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -5313,9 +5310,9 @@ root:
 // Delete a range that includes a whole Node at the end of the Tree
 #[test]
 fn range_delete_to_end() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -5416,9 +5413,9 @@ root:
 // int node to its right
 #[test]
 fn range_delete_to_end_of_int_node() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -5670,9 +5667,9 @@ root:
 // Delete a range that includes only whole nodes
 #[test]
 fn range_delete_whole_nodes() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -5787,9 +5784,9 @@ root:
 // Delete a range of just a single whole node whose parent key isn't normalized
 #[test]
 fn range_delete_whole_node_denormalized() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -5942,15 +5939,12 @@ root:
 // range_delete_pass2 needs to steal 2 nodes in order to guarantee invariants.
 #[test]
 fn range_delete_pass2_steal_creates_an_lca() {
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     mock.expect_delete()
-        .called_any()
-        .returning(move |_| {
-            Box::new(future::ok::<(), Error>(()))
-        });
+        .returning(move |_| Box::new(future::ok::<(), Error>(())));
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 5
 limits:
@@ -6500,9 +6494,9 @@ root:
 // Range delete pass2 steals a leaf node to the left
 #[test]
 fn range_delete_pass2_steal_left() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -6673,9 +6667,9 @@ root:
 // range_delete_pass2 tries to steal a node to the right
 #[test]
 fn range_delete_pass2_steal_right() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 4
 limits:
@@ -6967,10 +6961,10 @@ root:
 // range_delete of a small range at the end of the tree
 #[test]
 fn range_delete_at_end() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::new(dml, limits, false);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
     let mut rt = current_thread::Runtime::new().unwrap();
     rt.block_on( {
         let insert_futs = (0..23).map(|k| {
@@ -6987,9 +6981,9 @@ fn range_delete_at_end() {
 // range_delete with a RangeFrom (x..) argument
 #[test]
 fn range_delete_range_from() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -7105,9 +7099,9 @@ root:
 // range_delete with a RangeFull (..) argument
 #[test]
 fn range_delete_range_full() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -7211,9 +7205,9 @@ root:
 // range_delete with a RangeTo (..x) argument
 #[test]
 fn range_delete_range_to() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -7330,10 +7324,10 @@ root:
 // tree
 #[test]
 fn range_delete_to_end_deep() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::new(dml, limits, false);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
     let mut rt = current_thread::Runtime::new().unwrap();
     rt.block_on( {
         let insert_futs = (0..23).map(|k| {
@@ -7392,9 +7386,9 @@ root:
 
 #[test]
 fn range_delete_underflow_in_parent_and_child() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -7499,8 +7493,8 @@ root:
 
 #[test]
 fn range_empty_range() {
-    let dml = Arc::new(DMLMock::new());
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7549,8 +7543,8 @@ root:
 // Empty tree
 #[test]
 fn range_empty_tree() {
-    let dml = Arc::new(DMLMock::new());
-    let tree = Tree::<u32, DMLMock, u32, f32>::create(dml, false, 1.0, 1.0);
+    let dml = Arc::new(MockDML::new());
+    let tree = Tree::<u32, MockDML, u32, f32>::create(dml, false, 1.0, 1.0);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(
         tree.range(..).collect()
@@ -7561,8 +7555,8 @@ fn range_empty_tree() {
 // Unbounded range lookup
 #[test]
 fn range_full() {
-    let dml = Arc::new(DMLMock::new());
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7610,8 +7604,8 @@ root:
 
 #[test]
 fn range_exclusive_start() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7668,8 +7662,8 @@ root:
 
 #[test]
 fn range_leaf() {
-    let dml = Arc::new(DMLMock::new());
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -7703,8 +7697,8 @@ root:
 
 #[test]
 fn range_leaf_inclusive_end() {
-    let dml = Arc::new(DMLMock::new());
-    let tree = Tree::<u32, DMLMock, u32, f32>::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -7738,8 +7732,8 @@ root:
 
 #[test]
 fn range_nonexistent_between_two_leaves() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7788,8 +7782,8 @@ root:
 
 #[test]
 fn range_two_ints() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -7854,8 +7848,8 @@ root:
 
 #[test]
 fn range_ends_between_two_leaves() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7904,8 +7898,8 @@ root:
 
 #[test]
 fn range_ends_before_node_but_after_parent_pointer() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7954,8 +7948,8 @@ root:
 
 #[test]
 fn range_starts_between_two_leaves() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -8014,8 +8008,8 @@ root:
 
 #[test]
 fn range_two_leaves() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -8064,9 +8058,9 @@ root:
 
 #[test]
 fn remove_last_key() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -8111,9 +8105,9 @@ root:
 
 #[test]
 fn remove_from_leaf() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -8162,9 +8156,9 @@ root:
 
 #[test]
 fn remove_and_merge_down() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -8221,9 +8215,9 @@ root:
 
 #[test]
 fn remove_and_merge_int_left() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -8467,9 +8461,9 @@ root:
 
 #[test]
 fn remove_and_merge_int_right() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -8693,9 +8687,9 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_left() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -8790,9 +8784,9 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_right() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -8889,9 +8883,9 @@ root:
 
 #[test]
 fn remove_and_steal_int_left() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -9163,9 +9157,9 @@ root:
 
 #[test]
 fn remove_and_steal_int_right() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -9437,9 +9431,9 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_left() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -9548,9 +9542,9 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_right() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -9659,10 +9653,10 @@ root:
 
 #[test]
 fn remove_nonexistent() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::new(dml, limits, false);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
     let mut rt = current_thread::Runtime::new().unwrap();
     let r = rt.block_on(tree.remove(3, TxgT::from(42)));
     assert_eq!(r, Ok(None));

@@ -4,7 +4,7 @@
 use atomic::{Atomic, Ordering};
 use crate::{
     boxfut,
-    common::{*, dml::*}
+    common::*
 };
 use futures::{
     Async,
@@ -2232,8 +2232,6 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                 return Box::new(future::ok(()));
             }
             // TODO: bypass the cache for this part
-            // Need a solution for this issue first:
-            // https://github.com/pcsm/simulacrum/issues/55
             let dml2 = dml.clone();
             let fut = dml.pop::<Arc<Node<ddml::DRP, K, V>>,
                                 Arc<Node<ddml::DRP, K, V>>>(

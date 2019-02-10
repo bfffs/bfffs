@@ -28,7 +28,6 @@ pub mod cluster;
 pub mod database;
 pub mod dataset;
 pub mod ddml;
-#[cfg(test)] mod dml_mock;
 pub mod device_manager;
 pub mod dml;
 pub mod fs;

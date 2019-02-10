@@ -3,6 +3,7 @@
 use blosc;
 use crate::common::*;
 use futures::Future;
+#[cfg(test)] use mockall::automock;
 use std::num::NonZeroU8;
 
 pub use crate::common::cache::{Cacheable, CacheRef};
@@ -88,6 +89,7 @@ impl Default for Compression {
 ///
 /// A DML handles reading and writing records with cacheing.  It also handles
 /// compression and checksumming.
+#[cfg_attr(test, automock(type Addr=u32;))]
 pub trait DML: Send + Sync {
     type Addr;
 
@@ -109,7 +111,7 @@ pub trait DML: Send + Sync {
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>;
+        -> Box<dyn Future<Item=<Self as DML>::Addr, Error=Error> + Send>;
 
     /// Sync all records written so far to stable storage.
     fn sync_all(&self, txg: TxgT)

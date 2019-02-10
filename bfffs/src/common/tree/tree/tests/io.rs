@@ -4,12 +4,12 @@
 
 use crate::common::{
     ddml::*,
-    dml_mock::*,
+    dml::MockDML,
     idml::IDML,
     fs_tree::{FSKey, FSValue},
 };
 use futures::future;
-use simulacrum::*;
+use mockall::{Sequence, mock};
 use pretty_assertions::assert_eq;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -17,23 +17,54 @@ use super::*;
 use tokio::prelude::task::current;
 use tokio::runtime::current_thread;
 
+mock! {
+    Future {}
+    trait Future {
+        type Item = Box<NodeT>;
+        type Error = Error;
+        fn poll(&mut self) -> Poll<Box<NodeT>, Error>;
+    }
+}
+
+type NodeT = Arc<Node<u32, u32, f32>>;
+/// Helper method for setting MockDML::get expectations
+fn expect_get(mock: &mut MockDML, addr: u32, node: NodeT)
+{
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_get::<NodeT, NodeT>()
+            .once()
+            .withf_unsafe(move |arg| **arg == addr)
+            .return_once(move |_| Box::new(future::ok(Box::new(node))));
+    }
+}
+
+/// Helper method for setting MockDML::delete expectations
+fn expect_delete(mock: &mut MockDML, addr: u32) {
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_delete()
+            .once()
+            .withf_unsafe(move |(arg, _)| **arg == addr)
+            .returning(move |_| Box::new(future::ok(())));
+    }
+}
+
+/// Helper method for setting MockDML::pop expectations
+fn expect_pop(mock: &mut MockDML, addr: u32, node: NodeT)
+{
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_pop::<NodeT, NodeT>()
+            .once()
+            .withf_unsafe(move |(arg, _)| **arg == addr)
+            .return_once(move |_| Box::new(future::ok(Box::new(node))));
+    }
+}
+
 #[test]
 fn addresses() {
-    type NodeT = Arc<Node<u32, u32, f32>>;
-    fn expect_get(mock: &mut DMLMock, addr: u32,
-                  mut node: Option<NodeT>)
-    {
-        mock.then().expect_get::<NodeT>()
-            .called_once()
-            .with(passes(move |arg: &*const u32| {
-                unsafe {**arg == addr}
-            })).returning(move |_| {
-                let res = Box::new(node.take().unwrap());
-                Box::new(future::ok::<Box<NodeT>, Error>(res))
-            });
-    }
-
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     let addrl0 = 0;
     let addrl1 = 1;
     let addrl2 = 2;
@@ -44,12 +75,10 @@ fn addresses() {
         IntElem::new(1u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl1)),
     ];
     let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
-    let opt_intnode0 = Some(intnode0);
-    
-    expect_get(&mut mock, addri0, opt_intnode0);
+    expect_get(&mut mock, addri0, intnode0);
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -116,10 +145,10 @@ root:
 /// Tree::addresses on a Tree with a single leaf node
 #[test]
 fn addresses_leaf() {
-    let mock = DMLMock::new();
+    let mock = MockDML::new();
     let addrl = 0;
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -144,21 +173,7 @@ root:
 
 #[test]
 fn dump() {
-    type NodeT = Arc<Node<u32, u32, f32>>;
-    fn expect_get(mock: &mut DMLMock, addr: u32,
-                  mut node: Option<NodeT>)
-    {
-        mock.then().expect_get::<NodeT>()
-            .called_once()
-            .with(passes(move |arg: &*const u32| {
-                unsafe {**arg == addr}
-            })).returning(move |_| {
-                let res = Box::new(node.take().unwrap());
-                Box::new(future::ok::<Box<NodeT>, Error>(res))
-            });
-    }
-
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     let addrl0 = 0;
     let addrl1 = 1;
     let addrl2 = 2;
@@ -172,56 +187,48 @@ fn dump() {
         IntElem::new(2u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl1)),
     ];
     let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
-    let opt_intnode0 = Some(intnode0);
-    let opt_intnode0c = opt_intnode0.clone();
 
     let mut ld0 = LeafData::default();
     ld0.insert(0, 0.0);
     ld0.insert(1, 1.0);
     let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
-    let opt_leafnode0 = Some(leafnode0);
 
     let mut ld1 = LeafData::default();
     ld1.insert(2, 2.0);
     ld1.insert(3, 3.0);
     let leafnode1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
-    let opt_leafnode1 = Some(leafnode1);
 
     let mut ld2 = LeafData::default();
     ld2.insert(10, 10.0);
     ld2.insert(11, 11.0);
     let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
-    let opt_leafnode2 = Some(leafnode2);
 
     let children2 = vec![
         IntElem::new(20u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl4)),
         IntElem::new(25u32, TxgT::from(8)..TxgT::from(9), TreePtr::Addr(addrl5)),
     ];
     let intnode2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
-    let opt_intnode2 = Some(intnode2);
 
     let mut ld4 = LeafData::default();
     ld4.insert(20, 20.0);
     ld4.insert(21, 21.0);
     let leafnode4 = Arc::new(Node::new(NodeData::Leaf(ld4)));
-    let opt_leafnode4 = Some(leafnode4);
 
     let mut ld5 = LeafData::default();
     ld5.insert(25, 25.0);
     ld5.insert(26, 26.0);
     let leafnode5 = Arc::new(Node::new(NodeData::Leaf(ld5)));
-    let opt_leafnode5 = Some(leafnode5);
 
-    expect_get(&mut mock, addri0, opt_intnode0c);    // lba 3
-    expect_get(&mut mock, addri2, opt_intnode2);     // lba 4
-    expect_get(&mut mock, addrl0, opt_leafnode0);    // lba 0
-    expect_get(&mut mock, addrl1, opt_leafnode1);    // lba 1
-    expect_get(&mut mock, addrl2, opt_leafnode2);    // lba 2
-    expect_get(&mut mock, addrl4, opt_leafnode4);    // lba 5
-    expect_get(&mut mock, addrl5, opt_leafnode5);    // lba 6
+    expect_get(&mut mock, addri0, intnode0);     // lba 3
+    expect_get(&mut mock, addri2, intnode2);     // lba 4
+    expect_get(&mut mock, addrl0, leafnode0);    // lba 0
+    expect_get(&mut mock, addrl1, leafnode1);    // lba 1
+    expect_get(&mut mock, addrl2, leafnode2);    // lba 2
+    expect_get(&mut mock, addrl4, leafnode4);    // lba 5
+    expect_get(&mut mock, addrl5, leafnode5);    // lba 6
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -401,23 +408,21 @@ root:
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_below_root() {
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     let node = Arc::new(Node::new(NodeData::Leaf(LeafData::default())));
-    let node_holder = RefCell::new(Some(node));
     let addrl = 0;
-    mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
-        .called_once()
-        .with(passes(move |args: &(*const u32, TxgT)|
-                     unsafe {*args.0 == addrl} && args.1 == TxgT::from(42))
-        ).returning(move |_| {
-            // XXX simulacrum can't return a uniquely owned object in an
-            // expectation, so we must hack it with RefCell<Option<T>>
-            // https://github.com/pcsm/simulacrum/issues/52
-            let res = Box::new(node_holder.borrow_mut().take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
-        });
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
+            .once()
+            .withf_unsafe(move |args: &(*const u32, TxgT)|
+                *args.0 == addrl && args.1 == TxgT::from(42)
+            ).return_once(move |_| {
+                Box::new(future::ok(Box::new(node)))
+            });
+    }
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -490,23 +495,21 @@ root:
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_root() {
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     let node = Arc::new(Node::new(NodeData::Leaf(LeafData::default())));
-    let node_holder = RefCell::new(Some(node));
     let addrl = 0;
-    mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
-        .called_once()
-        .with(passes(move |args: &(*const u32, TxgT)|
-                     unsafe {*args.0 == addrl} && args.1 == TxgT::from(42))
-        ).returning(move |_| {
-            // XXX simulacrum can't return a uniquely owned object in an
-            // expectation, so we must hack it with RefCell<Option<T>>
-            // https://github.com/pcsm/simulacrum/issues/52
-            let res = Box::new(node_holder.borrow_mut().take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
-        });
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
+            .once()
+            .withf_unsafe(move |args: &(*const u32, TxgT)|
+                *args.0 == addrl && args.1 == TxgT::from(42)
+            ).return_once(move |_| {
+                Box::new(future::ok(Box::new(node)))
+            });
+    }
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -550,23 +553,21 @@ root:
 
 #[test]
 fn is_dirty() {
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     let node = Arc::new(Node::new(NodeData::Leaf(LeafData::default())));
-    let node_holder = RefCell::new(Some(node));
     let addrl = 0;
-    mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
-        .called_once()
-        .with(passes(move |args: &(*const u32, TxgT)|
-                     unsafe {*args.0 == addrl} && args.1 == TxgT::from(42))
-        ).returning(move |_| {
-            // XXX simulacrum can't return a uniquely owned object in an
-            // expectation, so we must hack it with RefCell<Option<T>>
-            // https://github.com/pcsm/simulacrum/issues/52
-            let res = Box::new(node_holder.borrow_mut().take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
-        });
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
+            .once()
+            .withf_unsafe(move |args: &(*const u32, TxgT)|
+                *args.0 == addrl && args.1 == TxgT::from(42)
+            ).return_once(move |_| {
+                Box::new(future::ok(Box::new(node)))
+            });
+    }
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -619,8 +620,8 @@ fn open() {
     assert_eq!(*drp, root_drp);
 }
 
-// A Tree with 3 IntNodes, each with 3-4 children.  The range_delete will totally
-// delete the middle IntNode and partially delete the other two.
+// A Tree with 3 IntNodes, each with 3-4 children.  The range_delete will
+// totally delete the middle IntNode and partially delete the other two.
 #[test]
 fn range_delete() {
     let addrl0 = 10;
@@ -634,7 +635,6 @@ fn range_delete() {
         IntElem::new(6u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl3)),
     ];
     let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
-    let opt_intnode0 = Some(intnode0);
     let addri0 = 0;
 
     let addrl4 = 20;
@@ -646,7 +646,6 @@ fn range_delete() {
         IntElem::new(16u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl6)),
     ];
     let intnode1 = Arc::new(Node::new(NodeData::Int(IntData::new(children1))));
-    let opt_intnode1 = Some(intnode1);
     let addri1 = 1;
 
     let addrl7 = 30;
@@ -660,7 +659,6 @@ fn range_delete() {
         IntElem::new(30u32, TxgT::from(0)..TxgT::from(1), TreePtr::Addr(addrl10)),
     ];
     let intnode2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
-    let opt_intnode2 = Some(intnode2);
     let addri2 = 2;
 
     let mut ld2 = LeafData::default();
@@ -668,56 +666,28 @@ fn range_delete() {
     ld2.insert(4, 4.0);
     ld2.insert(5, 5.0);
     let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
-    let opt_leafnode2 = Some(leafnode2);
 
     let mut ld7 = LeafData::default();
     ld7.insert(20, 20.0);
     ld7.insert(21, 21.0);
     ld7.insert(22, 22.0);
     let leafnode7 = Arc::new(Node::new(NodeData::Leaf(ld7)));
-    let opt_leafnode7 = Some(leafnode7);
 
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
 
-    fn expect_delete(mock: &mut DMLMock, addr: u32) {
-        mock.then().expect_delete()
-            .called_once()
-            .with(passes(move |(arg, _): &(*const u32, TxgT)| {
-                unsafe {**arg == addr}
-            })).returning(move |_| {
-                Box::new(future::ok::<(), Error>(()))
-            });
-    }
-
-    fn expect_pop(mock: &mut DMLMock, addr: u32,
-                  mut node: Option<Arc<Node<u32, u32, f32>>>)
-    {
-        mock.then().expect_pop::<Arc<Node<u32, u32, f32>>,
-                                 Arc<Node<u32, u32, f32>>>()
-            .called_once()
-            .with(passes(move |(arg, _): &(*const u32, TxgT)| {
-                unsafe {**arg == addr}
-            })).returning(move |_| {
-                let res = Box::new(node.take().unwrap());
-                Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
-            });
-    }
-
-    // Simulacrum requires us to define the expectations in their exact call
-    // order, even though we don't really care about it.
     // These nodes are popped or deleted in pass1
-    expect_pop(&mut mock, addri0, opt_intnode0);
-    expect_pop(&mut mock, addri2, opt_intnode2);
-    expect_pop(&mut mock, addri1, opt_intnode1);
-    expect_pop(&mut mock, addrl2, opt_leafnode2);
     expect_delete(&mut mock, addrl3);
     expect_delete(&mut mock, addrl4);
     expect_delete(&mut mock, addrl5);
     expect_delete(&mut mock, addrl6);
-    expect_pop(&mut mock, addrl7, opt_leafnode7);
+    expect_pop(&mut mock, addri0, intnode0);
+    expect_pop(&mut mock, addri1, intnode1);
+    expect_pop(&mut mock, addri2, intnode2);
+    expect_pop(&mut mock, addrl2, leafnode2);
+    expect_pop(&mut mock, addrl7, leafnode7);
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -839,32 +809,7 @@ root:
 /// should remove the entire node.
 #[test]
 fn range_delete_left_in_cut_full() {
-    fn expect_delete(mock: &mut DMLMock, addr: u32)
-    {
-        mock.then().expect_delete()
-            .called_once()
-            .with(passes(move |(arg, _): &(*const u32, TxgT)| {
-                unsafe {**arg == addr}
-            })).returning(move |_| {
-                Box::new(future::ok::<(), Error>(()))
-            });
-    }
-
-    fn expect_pop(mock: &mut DMLMock, addr: u32,
-                  mut node: Option<Arc<Node<u32, u32, f32>>>)
-    {
-        mock.then().expect_pop::<Arc<Node<u32, u32, f32>>,
-                                 Arc<Node<u32, u32, f32>>>()
-            .called_once()
-            .with(passes(move |(arg, _): &(*const u32, TxgT)| {
-                unsafe {**arg == addr}
-            })).returning(move |_| {
-                let res = Box::new(node.take().unwrap());
-                Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
-            });
-    }
-
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
 
     let addrl0 = 81;
     let mut ld0 = LeafData::default();
@@ -872,15 +817,14 @@ fn range_delete_left_in_cut_full() {
     ld0.insert(20, 16.0);
     ld0.insert(21, 17.0);
     let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
-    let opt_leafnode0 = Some(leafnode0);
 
     let addrl1 = 94;
 
-    expect_pop(&mut mock, addrl0, opt_leafnode0);
+    expect_pop(&mut mock, addrl0, leafnode0);
     expect_delete(&mut mock, addrl1);
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -1087,44 +1031,7 @@ root:
 
 #[test]
 fn range_leaf() {
-    struct FutureMock {
-        e: Expectations
-    }
-    impl FutureMock {
-        pub fn new() -> Self {
-            Self {
-                e: Expectations::new()
-            }
-        }
-
-        pub fn expect_poll(&mut self)
-            -> Method<(), Poll<Box<Arc<Node<u32, u32, f32>>>, Error>>
-        {
-            self.e.expect::<(), Poll<Box<Arc<Node<u32, u32, f32>>>, Error>>("poll")
-        }
-
-        pub fn then(&mut self) -> &mut Self {
-            self.e.then();
-            self
-        }
-    }
-
-    impl Future for FutureMock {
-        type Item = Box<Arc<Node<u32, u32, f32>>>;
-        type Error = Error;
-
-        fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-            self.e.was_called_returning::<(),
-                Poll<Box<Arc<Node<u32, u32, f32>>>, Error>>("poll", ())
-        }
-    }
-
-    // XXX totally unsafe!  But Simulacrum doesn't support mocking Send traits.
-    // So we have to cheat.  This works as long as FutureMock is only used in
-    // single-threaded unit tests.
-    unsafe impl Send for FutureMock {}
-
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     let mut ld1 = LeafData::default();
     ld1.insert(0, 0.0);
     ld1.insert(1, 1.0);
@@ -1132,30 +1039,27 @@ fn range_leaf() {
     ld1.insert(3, 3.0);
     ld1.insert(4, 4.0);
     let node1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
-    mock.expect_get::<Arc<Node<u32, u32, f32>>>()
-        .called_once()
+    mock.expect_get::<NodeT, NodeT>()
+        .once()
         .returning(move |_| {
-            let mut fut = FutureMock::new();
+            let mut seq = Sequence::new();
+            let mut fut = MockFuture::new();
             let node2 = node1.clone();
             fut.expect_poll()
-                .called_once()
+                .once()
+                .in_sequence(&mut seq)
                 .returning(|_| {
                     current().notify();
                     Ok(Async::NotReady)
                 });
-            FutureMock::then(&mut fut).expect_poll()
-                .called_once()
-                .returning(move |_| {
-                    // XXX simulacrum can't return a uniquely owned object in an
-                    // expectation, so we must clone db here.
-                    // https://github.com/pcsm/simulacrum/issues/52
-                    let res = Box::new(node2.clone());
-                    Ok(Async::Ready(res))
-                });
+            fut.expect_poll()
+                .once()
+                .in_sequence(&mut seq)
+                .return_once(move |_| Ok(Async::Ready(Box::new(node2))));
             Box::new(fut)
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -1192,19 +1096,16 @@ fn read_int() {
     ];
     let node = Arc::new(Node::new(NodeData::Int(IntData::new(children))));
     let addrl = 102;
-    let mut mock = DMLMock::new();
-    mock.expect_get::<Arc<Node<u32, u32, u32>>>()
-        .called_once()
-        .with(passes(move |arg: & *const u32| unsafe {**arg == addrl} ))
-        .returning(move |_| {
-            // XXX simulacrum can't return a uniquely owned object in an
-            // expectation, so we must clone db here.
-            // https://github.com/pcsm/simulacrum/issues/52
-            let res = Box::new(node.clone());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
-        });
+    let mut mock = MockDML::new();
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_get::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
+            .once()
+            .withf_unsafe(move |arg: & *const u32| **arg == addrl)
+            .return_once(move |_| Box::new(future::ok(Box::new(node))));
+    }
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> =
+    let tree: Tree<u32, MockDML, u32, u32> =
         Tree::from_str(dml.clone(), false, r#"
 ---
 height: 2
@@ -1241,23 +1142,17 @@ root:
 
 #[test]
 fn read_leaf() {
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     let mut ld = LeafData::default();
     ld.insert(0, 100);
     ld.insert(1, 200);
     ld.insert(99, 50_000);
     let node = Arc::new(Node::new(NodeData::Leaf(ld)));
-    mock.expect_get::<Arc<Node<u32, u32, u32>>>()
-        .called_once()
-        .returning(move |_| {
-            // XXX simulacrum can't return a uniquely owned object in an
-            // expectation, so we must clone db here.
-            // https://github.com/pcsm/simulacrum/issues/52
-            let res = Box::new(node.clone());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32, u32>>>, Error>(res))
-        });
+    mock.expect_get::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
+        .once()
+        .return_once(move |_| Box::new(future::ok(Box::new(node))));
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -1282,25 +1177,24 @@ root:
 
 #[test]
 fn remove_and_merge_down() {
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
 
     let mut ld = LeafData::default();
     ld.insert(3, 3.0);
     ld.insert(4, 4.0);
     ld.insert(5, 5.0);
     let leafnode = Arc::new(Node::new(NodeData::Leaf(ld)));
-    let mut opt_leafnode = Some(leafnode);
-    let addrl = 0;
-    mock.expect_pop::<Arc<Node<u32, u32, f32>>, Arc<Node<u32, u32, f32>>>()
-        .called_once()
-        .with(passes(move |args: &(*const u32, TxgT)| unsafe {*args.0 == addrl}))
-        .returning(move |_| {
-            let res = Box::new(opt_leafnode.take().unwrap());
-            Box::new(future::ok::<Box<Arc<Node<u32, u32, f32>>>, Error>(res))
-        });
+    let addrl: u32 = 0;
+    // Safe because the test is single-threaded
+    unsafe {
+        mock.expect_pop::<NodeT, NodeT>()
+            .once()
+            .withf_unsafe(move |args: &(*const u32, TxgT)| *args.0 == addrl)
+            .return_once(move |_| Box::new(future::ok(Box::new(leafnode))));
+    }
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, DMLMock, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1465,8 +1359,8 @@ root:
 // If the tree isn't dirty, then there's nothing to do
 #[test]
 fn write_clean() {
-    let dml = Arc::new(DMLMock::new());
-    let tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let dml = Arc::new(MockDML::new());
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -1492,21 +1386,27 @@ root:
 /// Sync a Tree with both dirty Int nodes and dirty Leaf nodes
 #[test]
 fn write_deep() {
-    let mut mock = DMLMock::new();
+    let mut seq = Sequence::new();
+    let mut mock = MockDML::new();
     let addr = 42;
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
-        .called_once()
-        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, _)| {
+        .once()
+        .in_sequence(&mut seq)
+        .withf(move |args: &(Arc<Node<u32, u32, u32>>, _, _)| {
             let node_data = (args.0).0.try_read().unwrap();
-            let leaf_data = node_data.as_leaf();
-            leaf_data.get(&0) == Some(100) &&
-            leaf_data.get(&1) == Some(200) &&
-            args.2 == TxgT::from(42)
-        }))
-        .returning(move |_| Box::new(Ok(addr).into_future()));
-    mock.then().expect_put::<Arc<Node<u32, u32, u32>>>()
-        .called_once()
-        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, _)| {
+            match node_data.deref() {
+                NodeData::Leaf(leaf_data) => {
+                    leaf_data.get(&0) == Some(100) &&
+                    leaf_data.get(&1) == Some(200) &&
+                    args.2 == TxgT::from(42)
+                },
+                _ => false
+            }
+        }).return_once(move |_| Box::new(Ok(addr).into_future()));
+    mock.expect_put::<Arc<Node<u32, u32, u32>>>()
+        .once()
+        .in_sequence(&mut seq)
+        .withf(move |args: &(Arc<Node<u32, u32, u32>>, _, _)| {
             let node_data = (args.0).0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
@@ -1514,10 +1414,9 @@ fn write_deep() {
             int_data.children[1].key == 256 &&
             int_data.children[1].ptr.is_addr() &&
             args.2 == TxgT::from(42)
-        }))
-        .returning(move |_| Box::new(Ok(addr).into_future()));
+        }).return_once(move |_| Box::new(Ok(addr).into_future()));
     let dml = Arc::new(mock);
-    let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1564,11 +1463,11 @@ root:
 
 #[test]
 fn write_int() {
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     let addr = 9999;
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
-        .called_once()
-        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, _)|{
+        .once()
+        .withf(move |args: &(Arc<Node<u32, u32, u32>>, _, _)|{
             let node_data = (args.0).0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
@@ -1576,10 +1475,9 @@ fn write_int() {
             int_data.children[1].key == 256 &&
             !int_data.children[1].ptr.is_mem() &&
             args.2 == TxgT::from(42)
-        }))
-        .returning(move |_| Box::new(Ok(addr).into_future()));
+        }).returning(move |_| Box::new(Ok(addr).into_future()));
     let dml = Arc::new(mock);
-    let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1622,19 +1520,19 @@ root:
 
 #[test]
 fn write_leaf() {
-    let mut mock = DMLMock::new();
+    let mut mock = MockDML::new();
     let addr = 9999;
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
-        .called_once()
-        .with(passes(move |args: &(Arc<Node<u32, u32, u32>>, _, _)|{
+        .once()
+        .withf(move |args: &(Arc<Node<u32, u32, u32>>, _, _)|{
             let node_data = (args.0).0.try_read().unwrap();
             let leaf_data = node_data.as_leaf();
             leaf_data.get(&0) == Some(100) &&
             leaf_data.get(&1) == Some(200) &&
             args.2 == TxgT::from(42)
-        })).returning(move |_| Box::new(Ok(addr).into_future()));
+        }).returning(move |_| Box::new(Ok(addr).into_future()));
     let dml = Arc::new(mock);
-    let mut tree: Tree<u32, DMLMock, u32, u32> = Tree::from_str(dml, false, r#"
+    let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 1
 limits:
