@@ -5,7 +5,7 @@ use crate::common::*;
 use crate::common::{Error, TxgT};
 use crate::common::dml::*;
 use crate::common::tree::*;
-use futures::{Future, Poll, Stream};
+use futures::Future;
 use mockall::mock;
 use std::{
     borrow::Borrow,
@@ -13,23 +13,6 @@ use std::{
     ops::{Range, RangeBounds},
     sync::Arc
 };
-
-mock! {
-    pub RangeQuery<A, D, K, T, V>
-        where A: Addr,
-              D: DML<Addr=A>,
-              K: Key + Borrow<T>,
-              T: Ord + Clone + Send,
-              V: Value
-    {}
-    trait Stream
-    {
-        type Item = (K, V);
-        type Error = Error;
-
-        fn poll(&mut self) -> Poll<Option<(K, V)>, Error>;
-    }
-}
 
 mock! {
     pub Tree<A, D, K, V>
@@ -54,7 +37,7 @@ mock! {
         fn open<A2: Addr, D2: DML<Addr=A2> + 'static>(dml: Arc<D2>, seq: bool,
                                                       on_disk: TreeOnDisk<A2>)
             -> MockTree<A2, D2, K, V>;
-        fn range<R, T>(&self, range: R) -> MockRangeQuery<A, D, K, T, V>
+        fn range<R, T>(&self, range: R) -> RangeQuery<A, D, K, T, V>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Ord + Clone + Send + 'static;

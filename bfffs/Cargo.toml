@@ -59,7 +59,7 @@ glob = "0.2"
 histogram = "0.6"
 itertools = "0.7.1"
 log = "0.4"
-mockall = { git = "https://github.com/asomers/mockall/", rev = "35f89d1"}
+mockall = { git = "https://github.com/asomers/mockall/", rev = "ca4bfef"}
 num_cpus = "1"
 permutohedron = "0.2"
 predicates = "1.0"

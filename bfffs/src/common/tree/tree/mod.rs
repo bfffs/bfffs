@@ -16,6 +16,7 @@ use futures::{
     sync::mpsc
 };
 use futures_locks::*;
+#[cfg(test)] use mockall::automock;
 use serde::Serializer;
 use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
@@ -147,6 +148,7 @@ impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
     }
 }
 
+#[cfg_attr(test, automock)]
 impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A> + 'static,
