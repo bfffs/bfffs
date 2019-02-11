@@ -6,11 +6,7 @@ use crate::common::{
     dml::Compression,
     tree::{Key, Value},
 };
-use futures::{
-    Future,
-    Poll,
-    Stream,
-};
+use futures::Future;
 use simulacrum::*;
 use std::{
     borrow::Borrow,
@@ -18,22 +14,6 @@ use std::{
     ops::RangeBounds
 };
 use super::*;
-
-/// Result type of `ReadOnlyDatasetMock::range`.  Distinct from
-/// `tree_mock::RangeQueryMock`.
-pub struct RangeQuery<K, T, V> {
-    pub s: Box<dyn Stream<Item=(K, V), Error=Error> + Send>,
-    pub phantom: PhantomData<T>
-}
-
-impl<K: Key, T, V: Value>  Stream for RangeQuery<K, T, V> {
-    type Item=(K, V);
-    type Error=Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        self.s.poll()
-    }
-}
 
 pub struct ReadOnlyDatasetMock<K: Key, V: Value> {
     e: Expectations,
@@ -69,14 +49,12 @@ impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
             Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
     }
 
-    pub fn expect_range<R, T>(&mut self)
-        -> Method<R, Box<Stream<Item=(K, V), Error=Error> + Send>>
+    pub fn expect_range<R, T>(&mut self) -> Method<R, RangeQuery<K, T, V>>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
               T: Ord + Clone + Send + 'static
     {
-        self.e.expect::<R, Box<Stream<Item=(K, V), Error=Error> + Send>>
-            ("range")
+        self.e.expect::<R, RangeQuery<K, T, V>>("range")
     }
 
     pub fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error>
@@ -136,10 +114,9 @@ impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDatasetMock<K, V> {
               R: RangeBounds<T> + 'static,
               T: Ord + Clone + Send + 'static
     {
-        let s = self.e.was_called_returning::<R,
-            Box<Stream<Item=(K, V), Error=Error> + Send>>
-            ("range", range);
-        RangeQuery{s, phantom: PhantomData}
+        self.e.was_called_returning::<R,
+            RangeQuery<K, T, V>>
+            ("range", range)
     }
 }
 
@@ -216,14 +193,12 @@ impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
             ("put_blob")
     }
 
-    pub fn expect_range<R, T>(&mut self)
-        -> Method<R, Box<Stream<Item=(K, V), Error=Error> + Send>>
+    pub fn expect_range<R, T>(&mut self) -> Method<R, RangeQuery<K, T, V>>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
               T: Ord + Clone + Send + 'static
     {
-        self.e.expect::<R, Box<Stream<Item=(K, V), Error=Error> + Send>>
-            ("range")
+        self.e.expect::<R, RangeQuery<K, T, V>>("range")
     }
 
     pub fn range_delete<R, T>(&self, range: R)
@@ -320,10 +295,7 @@ impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDatasetMock<K, V> {
               R: RangeBounds<T> + 'static,
               T: Ord + Clone + Send + 'static
     {
-        let s = self.e.was_called_returning::<R,
-            Box<Stream<Item=(K, V), Error=Error> + Send>>
-            ("range", range);
-        RangeQuery{s, phantom: PhantomData}
+        self.e.was_called_returning::<R, RangeQuery<K, T, V>> ("range", range)
     }
 }
 

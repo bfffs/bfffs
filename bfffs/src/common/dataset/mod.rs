@@ -24,16 +24,15 @@ cfg_if! {
         mod dataset_mock;
         pub use self::dataset_mock::ReadOnlyDatasetMock as ReadOnlyDataset;
         pub use self::dataset_mock::ReadWriteDatasetMock as ReadWriteDataset;
-        pub use self::dataset_mock::RangeQuery;
     } else {
         mod dataset;
         use crate::common::tree;
         pub use self::dataset::{ReadOnlyDataset, ReadWriteDataset};
-        /// Return type of `Dataset::range`
-        pub type RangeQuery<K, T, V> = tree::RangeQuery<RID, IDML, K, T, V>;
     }
 }
 
+/// Return type of `Dataset::range`
+pub type RangeQuery<K, T, V> = tree::RangeQuery<RID, IDML, K, T, V>;
 pub type ITree<K, V> = Tree<RID, IDML, K, V>;
 
 /// A Dataset that can be read from

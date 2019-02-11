@@ -1916,10 +1916,15 @@ impl Fs {
 mod t {
 
 use super::*;
-use crate::common::tree::MinValue;
-use futures::stream;
+use crate::common::{
+    dataset::RangeQuery,
+    tree::{Key, MinValue, Value}
+};
+use futures::Async;
+use mockall::Sequence;
 use pretty_assertions::assert_eq;
 use simulacrum::*;
+use std::borrow::Borrow;
 
 fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
     let mut rt = tokio_io_pool::Builder::default()
@@ -1947,6 +1952,28 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         });
     let tree_id = rt.block_on(db.new_fs(Vec::new())).unwrap();
     (rt, db, tree_id)
+}
+
+/// Helper that creates a mock RangeQuery from the vec of items that it should
+/// return
+fn mock_range_query<K, T, V>(items: Vec<(K, V)>) -> RangeQuery<K, T, V>
+    where K: Key + Borrow<T>,
+          T: Ord + Clone + Send,
+          V: Value
+{
+    let mut rq = RangeQuery::new();
+    let mut seq = Sequence::new();
+    for item in items.into_iter() {
+        rq.expect_poll()
+            .once()
+            .in_sequence(&mut seq)
+            .return_once(|_| Ok(Async::Ready(Some(item))));
+    }
+    rq.expect_poll()
+        .once()
+        .in_sequence(&mut seq)
+        .return_once(|_| Ok(Async::Ready(None)));
+    rq
 }
 
 #[test]
@@ -2414,7 +2441,7 @@ fn rmdir_with_blob_extattr() {
             let ie = InlineExtAttr{namespace, name: name1, extent: extent1};
             let v4 = FSValue::ExtAttr(ExtAttr::Inline(ie));
             let items = vec![(k0, v0), (k1, v1), (k2, v2), (k3, v3), (k4, v4)];
-            Box::new(stream::iter_ok(items))
+            mock_range_query(items)
         });
     ds.then().expect_remove()
         .called_once()
@@ -2453,7 +2480,7 @@ fn rmdir_with_blob_extattr() {
             let ie = InlineExtAttr{namespace, name: name1, extent: extent1};
             let v1 = FSValue::ExtAttr(ExtAttr::Inline(ie));
             let extents = vec![(k0, v0), (k1, v1)];
-            Box::new(stream::iter_ok(extents))
+            mock_range_query(extents)
         });
     ds.expect_delete_blob()
         .called_once()
@@ -2742,13 +2769,13 @@ fn unlink() {
             let dbs0 = Arc::new(DivBufShared::from(vec![0u8; 1]));
             let v1 = FSValue::InlineExtent(InlineExtent::new(dbs0));
             let extents = vec![(k0, v0), (k1, v1)];
-            Box::new(stream::iter_ok(extents))
+            mock_range_query(extents)
         });
     ds.then().expect_range()
         .called_once()
         .with(FSKey::extattr_range(ino))
         .returning(move |_| {
-            Box::new(stream::iter_ok(Vec::new()))
+            mock_range_query(Vec::new())
         });
     ds.then().expect_delete_blob()
         .called_once()
@@ -2944,7 +2971,7 @@ fn unlink_with_blob_extattr() {
             let dbs0 = Arc::new(DivBufShared::from(vec![0u8; 1]));
             let v1 = FSValue::InlineExtent(InlineExtent::new(dbs0));
             let extents = vec![(k0, v0), (k1, v1)];
-            Box::new(stream::iter_ok(extents))
+            mock_range_query(extents)
         });
     // NB: there is no requirement that extents be deleted before extattrs, but
     // Simulacrum forces us to choose, since you can't set two Simulacrum mocks
@@ -2968,7 +2995,7 @@ fn unlink_with_blob_extattr() {
             let ie = InlineExtAttr{namespace, name: name1, extent: extent1};
             let v1 = FSValue::ExtAttr(ExtAttr::Inline(ie));
             let extents = vec![(k0, v0), (k1, v1)];
-            Box::new(stream::iter_ok(extents))
+            mock_range_query(extents)
         });
     ds.expect_delete_blob()
         .called_once()
@@ -3072,7 +3099,7 @@ fn unlink_with_extattr_hash_collision() {
         .returning(move |_| {
             // The file is empty
             let extents = vec![];
-            Box::new(stream::iter_ok(extents))
+            mock_range_query(extents)
         });
     ds.then().expect_range()
         .called_once()
@@ -3094,7 +3121,7 @@ fn unlink_with_extattr_hash_collision() {
             let extattr1 = ExtAttr::Inline(ie);
             let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
             let extents = vec![(k0, v)];
-            Box::new(stream::iter_ok(extents))
+            mock_range_query(extents)
         });
     ds.then().expect_delete_blob()
         .called_once()
