@@ -518,7 +518,8 @@ impl Database {
         where E: Clone + Executor + 'static
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let forest = Tree::open(idml.clone(), true, l.forest);
+        let forest = Tree::<RID, IDML, TreeID, TreeOnDisk<RID>>::open(
+            idml.clone(), true, l.forest);
         Database::new(idml, forest, handle)
     }
 
@@ -743,22 +744,13 @@ mod database {
             .once()
             .returning(|_| TxgT::from(0));
 
-        // TODO: once forest transitions from Simulacrum to Mockall, enable the
-        // in_sequence lines.
         forest.expect_flush()
-            .called_once()
-            //.in_sequence(&mut seq)
-            .with(TxgT::from(0))
+            .once()
+            .in_sequence(&mut seq)
+            .with(eq(TxgT::from(0)))
             .returning(|_| {
                 Box::new(future::ok::<(), Error>(()))
             });
-        forest.expect_serialize()
-            .called_once()
-            //.in_sequence(&mut seq)
-            .returning(|_| {
-                Ok(TreeOnDisk::default())
-            });
-
         idml.expect_flush()
             .once()
             .in_sequence(&mut seq)
@@ -769,6 +761,12 @@ mod database {
             .in_sequence(&mut seq)
             .with(eq(TxgT::from(0)))
             .returning(|_| Box::new(future::ok::<(), Error>(())));
+        forest.expect_serialize()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_| {
+                Ok(TreeOnDisk::default())
+            });
         idml.expect_write_label()
             .once()
             .in_sequence(&mut seq)

@@ -21,8 +21,8 @@ pub(super) mod tree;
 cfg_if! {
     if #[cfg(test)]{
         mod tree_mock;
-        pub use self::tree_mock::RangeQueryMock as RangeQuery;
-        pub use self::tree_mock::TreeMock as Tree;
+        pub use self::tree_mock::MockRangeQuery as RangeQuery;
+        pub use self::tree_mock::MockTree as Tree;
     } else {
         pub use self::tree::RangeQuery;
         pub use self::tree::Tree;
