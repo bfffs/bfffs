@@ -22,8 +22,8 @@ use std::{
 cfg_if! {
     if #[cfg(test)]{
         mod dataset_mock;
-        pub use self::dataset_mock::ReadOnlyDatasetMock as ReadOnlyDataset;
-        pub use self::dataset_mock::ReadWriteDatasetMock as ReadWriteDataset;
+        pub use self::dataset_mock::MockReadOnlyDataset as ReadOnlyDataset;
+        pub use self::dataset_mock::MockReadWriteDataset as ReadWriteDataset;
     } else {
         mod dataset;
         use crate::common::tree;

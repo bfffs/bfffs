@@ -1921,7 +1921,7 @@ use crate::common::{
     tree::{Key, MinValue, Value}
 };
 use futures::Async;
-use mockall::Sequence;
+use mockall::{Sequence, predicate::*};
 use pretty_assertions::assert_eq;
 use simulacrum::*;
 use std::borrow::Borrow;
@@ -1933,7 +1933,7 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .unwrap();
     let mut ds = ReadOnlyFilesystem::default();
     ds.expect_last_key()
-        .called_once()
+        .once()
         .returning(|_| Box::new(Ok(Some(FSKey::min_value())).into_future()));
     let mut opt_ds = Some(ds);
     let mut db = Database::default();
@@ -1986,8 +1986,8 @@ fn create() {
     let filename2 = filename.clone();
     let old_ts = time::Timespec::new(0, 0);
     ds.expect_get()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::Inode))
+        .once()
+        .with(eq(FSKey::new(1, ObjKey::Inode)))
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
@@ -2004,9 +2004,9 @@ fn create() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().size == 0 &&
             args.1.as_inode().unwrap().nlink == 1 &&
@@ -2014,25 +2014,25 @@ fn create() {
             args.1.as_inode().unwrap().perm == 0o644 &&
             args.1.as_inode().unwrap().uid == 123 &&
             args.1.as_inode().unwrap().gid == 456
-        })).returning(|_| Box::new(Ok(None).into_future()));
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        }).returning(|_| Box::new(Ok(None).into_future()));
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_direntry() &&
             args.1.as_direntry().unwrap().dtype == libc::DT_REG &&
             args.1.as_direntry().unwrap().name == filename2 &&
             args.1.as_direntry().unwrap().ino == ino
-        })).returning(|_| Box::new(Ok(None).into_future()));
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        }).returning(|_| Box::new(Ok(None).into_future()));
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().file_type == FileType::Dir &&
             args.1.as_inode().unwrap().atime == old_ts &&
             args.1.as_inode().unwrap().mtime != old_ts &&
             args.1.as_inode().unwrap().ctime != old_ts &&
             args.1.as_inode().unwrap().birthtime == old_ts
-        })).returning(|_| Box::new(Ok(None).into_future()));
+        }).returning(|_| Box::new(Ok(None).into_future()));
     let mut opt_ds = Some(ds);
     db.expect_fswrite()
         .called_once()
@@ -2058,8 +2058,8 @@ fn create_hash_collision() {
     let other_filename2 = other_filename.clone();
     let old_ts = time::Timespec::new(0, 0);
     ds.expect_get()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::Inode))
+        .once()
+        .with(eq(FSKey::new(1, ObjKey::Inode)))
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
@@ -2076,63 +2076,66 @@ fn create_hash_collision() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode()
-        })).returning(|_| Box::new(Ok(None).into_future()));
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        }).returning(|_| Box::new(Ok(None).into_future()));
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_direntry()
-        })).returning(move |_| {
+        }).returning(move |_| {
             // Return a different directory entry
             let name = other_filename2.clone();
             let dirent = Dirent{ino: other_ino, dtype: libc::DT_REG, name};
             let v = FSValue::DirEntry(dirent);
             Box::new(Ok(Some(v)).into_future())
         });
-    ds.then().expect_get()
-        .called_once()
-        .with(passes(move |args: &FSKey| {
+    ds.expect_get()
+        .once()
+        .withf(move |args: &FSKey| {
             args.is_direntry()
-        })).returning(move |_| {
+        }).returning(move |_| {
             // Return the dirent that we just inserted
             let name = filename2.clone();
             let dirent = Dirent{ino: 1, dtype: libc::DT_REG, name};
             let v = FSValue::DirEntry(dirent);
             Box::new(Ok(Some(v)).into_future())
         });
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             // Check that we're inserting a bucket with both direntries.  The
             // order doesn't matter.
-            let dirents = args.1.as_direntries().unwrap();
-            args.0.is_direntry() &&
-            dirents[0].dtype == libc::DT_REG &&
-            dirents[0].name == other_filename &&
-            dirents[0].ino == other_ino &&
-            dirents[1].dtype == libc::DT_REG &&
-            dirents[1].name == filename3 &&
-            dirents[1].ino == ino
-        })).returning(move |_| {
+            if let Some(dirents) = args.1.as_direntries() {
+                args.0.is_direntry() &&
+                dirents[0].dtype == libc::DT_REG &&
+                dirents[0].name == other_filename &&
+                dirents[0].ino == other_ino &&
+                dirents[1].dtype == libc::DT_REG &&
+                dirents[1].name == filename3 &&
+                dirents[1].ino == ino
+            } else {
+                false
+            }
+        }).returning(move |_| {
             // Return the dirent that we just inserted
             let name = filename4.clone();
             let dirent = Dirent{ino: 1, dtype: libc::DT_REG, name};
             let v = FSValue::DirEntry(dirent);
             Box::new(Ok(Some(v)).into_future())
         });
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().file_type == FileType::Dir &&
             args.1.as_inode().unwrap().atime == old_ts &&
             args.1.as_inode().unwrap().mtime != old_ts &&
             args.1.as_inode().unwrap().ctime != old_ts &&
             args.1.as_inode().unwrap().birthtime == old_ts
-        })).returning(|_| Box::new(Ok(None).into_future()));
+        }).returning(|_| Box::new(Ok(None).into_future()));
 
     let mut opt_ds = Some(ds);
     db.expect_fswrite()
@@ -2225,7 +2228,7 @@ fn deleteextattr_3way_collision() {
     let namespace = ExtAttrNamespace::User;
 
     ds.expect_remove()
-    .called_once()
+    .once()
     .returning(move |_| {
         // Return the three values
         let dbs0 = Arc::new(DivBufShared::from(Vec::from(value0.as_bytes())));
@@ -2246,15 +2249,15 @@ fn deleteextattr_3way_collision() {
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1, extattr2]);
         boxfut!(Ok(Some(v)).into_future())
     });
-    ds.then().expect_insert()
-    .called_once()
-    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+    .once()
+    .withf(move |args: &(FSKey, FSValue<RID>)| {
         // name0 and name1 should be reinserted
         let extattrs = args.1.as_extattrs().unwrap();
         let ie0 = extattrs[0].as_inline().unwrap();
         let ie1 = extattrs[1].as_inline().unwrap();
         ie0.name == name0 && ie1.name == name1 && extattrs.len() == 2
-    })).returning(|_| {
+    }).returning(|_| {
         Box::new(Ok(None).into_future())
     });
 
@@ -2286,7 +2289,7 @@ fn deleteextattr_3way_collision_enoattr() {
     let namespace = ExtAttrNamespace::User;
 
     ds.expect_remove()
-    .called_once()
+    .once()
     .returning(move |_| {
         // Return the first two values
         let dbs0 = Arc::new(DivBufShared::from(Vec::from(value0.as_bytes())));
@@ -2302,15 +2305,15 @@ fn deleteextattr_3way_collision_enoattr() {
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
         boxfut!(Ok(Some(v)).into_future())
     });
-    ds.then().expect_insert()
-    .called_once()
-    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+    .once()
+    .withf(move |args: &(FSKey, FSValue<RID>)| {
         // name0 and name1 should be reinserted
         let extattrs = args.1.as_extattrs().unwrap();
         let ie0 = extattrs[0].as_inline().unwrap();
         let ie1 = extattrs[1].as_inline().unwrap();
         ie0.name == name0 && ie1.name == name1 && extattrs.len() == 2
-    })).returning(|_| {
+    }).returning(|_| {
         Box::new(Ok(None).into_future())
     });
 
@@ -2336,15 +2339,15 @@ fn rename_eio() {
         name: dstname.clone()
     };
     ds.expect_get()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::dir_entry(&dstname)))
+        .once()
+        .with(eq(FSKey::new(1, ObjKey::dir_entry(&dstname))))
         .returning(move |_| {
             let v = FSValue::DirEntry(dst_dirent.clone());
             Box::new(Ok(Some(v)).into_future())
         });
-    ds.then().expect_remove()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::dir_entry(&srcname)))
+    ds.expect_remove()
+        .once()
+        .with(eq(FSKey::new(1, ObjKey::dir_entry(&srcname))))
         .returning(move |_| {
             Box::new(Err(Error::EIO).into_future())
         });
@@ -2374,8 +2377,8 @@ fn rmdir_with_blob_extattr() {
 
     // First it must do a lookup
     ds.expect_get()
-        .called_once()
-        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .once()
+        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
         .returning(move |_| {
             let dirent = Dirent {
                 ino,
@@ -2386,9 +2389,9 @@ fn rmdir_with_blob_extattr() {
             Box::new(Ok(v).into_future())
         });
     // This part comes from ok_to_rmdir
-    ds.then().expect_range()
-        .called_once()
-        .with(FSKey::obj_range(ino))
+    ds.expect_range()
+        .once()
+        .with(eq(FSKey::obj_range(ino)))
         .returning(move |_| {
             // Return one blob extattr, one inline extattr, one inode, and two
             // directory entries for "." and ".."
@@ -2443,9 +2446,9 @@ fn rmdir_with_blob_extattr() {
             let items = vec![(k0, v0), (k1, v1), (k2, v2), (k3, v3), (k4, v4)];
             mock_range_query(items)
         });
-    ds.then().expect_remove()
-        .called_once()
-        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+    ds.expect_remove()
+        .once()
+        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
         .returning(move |_| {
             let dirent = Dirent {
                 ino,
@@ -2456,14 +2459,14 @@ fn rmdir_with_blob_extattr() {
             Box::new(Ok(v).into_future())
         });
     ds.expect_range_delete()
-        .called_once()
-        .with(FSKey::obj_range(ino))
+        .once()
+        .with(eq(FSKey::obj_range(ino)))
         .returning(|_| {
             Box::new(Ok(()).into_future())
         });
     ds.expect_range()
-        .called_once()
-        .with(FSKey::extattr_range(ino))
+        .once()
+        .with(eq(FSKey::extattr_range(ino)))
         .returning(move |_| {
             // Return one blob extattr and one inline extattr
             let namespace = ExtAttrNamespace::User;
@@ -2483,14 +2486,14 @@ fn rmdir_with_blob_extattr() {
             mock_range_query(extents)
         });
     ds.expect_delete_blob()
-        .called_once()
-        .with(passes(move |rid: &RID| xattr_blob_rid == *rid))
+        .once()
+        .withf(move |rid: &RID| xattr_blob_rid == *rid)
         .returning(|_| {
             Box::new(Ok(()).into_future())
          });
     ds.expect_get()
-        .called_once()
-        .with(FSKey::new(parent_ino, ObjKey::Inode))
+        .once()
+        .with(eq(FSKey::new(parent_ino, ObjKey::Inode)))
         .returning(|_| {
             let now = time::get_time();
             let inode = Inode {
@@ -2509,11 +2512,11 @@ fn rmdir_with_blob_extattr() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
     ds.expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0 == FSKey::new(parent_ino, ObjKey::Inode) &&
             args.1.as_inode().unwrap().nlink == 2
-        })).returning(|_| {
+        }).returning(|_| {
             let now = time::get_time();
             let inode = Inode {
                 size: 0,
@@ -2554,8 +2557,8 @@ fn setextattr() {
     let namespace = ExtAttrNamespace::User;
 
     ds.expect_insert()
-    .called_once()
-    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    .once()
+    .withf(move |args: &(FSKey, FSValue<RID>)| {
         let extattr = args.1.as_extattr().unwrap();
         let ie = extattr.as_inline().unwrap();
         args.0.is_extattr() &&
@@ -2564,7 +2567,7 @@ fn setextattr() {
         ie.namespace == namespace &&
         ie.name == name2 &&
         &ie.extent.buf.try_const().unwrap()[..] == value2.as_bytes()
-    })).returning(|_| Box::new(Ok(None).into_future()));
+    }).returning(|_| Box::new(Ok(None).into_future()));
 
     let mut opt_ds = Some(ds);
     db.expect_fswrite()
@@ -2601,12 +2604,15 @@ fn setextattr_3way_collision() {
     let namespace = ExtAttrNamespace::User;
 
     ds.expect_insert()
-    .called_once()
-    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
-        let extattr = args.1.as_extattr().unwrap();
-        let ie = extattr.as_inline().unwrap();
-        ie.name == name2a
-    })).returning(move |_| {
+    .once()
+    .withf(move |args: &(FSKey, FSValue<RID>)| {
+        if let Some(extattr) = args.1.as_extattr() {
+            let ie = extattr.as_inline().unwrap();
+            ie.name == name2a
+        } else {
+            false
+        }
+    }).returning(move |_| {
         // Return the previous two values
         let dbs0 = Arc::new(DivBufShared::from(Vec::from(value0.as_bytes())));
         let extent0 = InlineExtent::new(dbs0);
@@ -2621,13 +2627,13 @@ fn setextattr_3way_collision() {
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
         boxfut!(Ok(Some(v)).into_future())
     });
-    ds.then().expect_get()
-    .called_once()
-    .with(passes(move |arg: &FSKey| {
+    ds.expect_get()
+    .once()
+    .withf(move |arg: &FSKey| {
         arg.is_extattr() &&
         arg.objtype() == 3 &&
         arg.object() == ino
-    })).returning(move |_| {
+    }).returning(move |_| {
         // Return the newly inserted value2
         let dbs2 = Arc::new(DivBufShared::from(Vec::from(value2a.as_bytes())));
         let extent2 = InlineExtent::new(dbs2);
@@ -2637,15 +2643,15 @@ fn setextattr_3way_collision() {
         let v = FSValue::ExtAttr(extattr2);
         boxfut!(Ok(Some(v)).into_future())
     });
-    ds.then().expect_insert()
-    .called_once()
-    .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+    .once()
+    .withf(move |args: &(FSKey, FSValue<RID>)| {
         let extattrs = args.1.as_extattrs().unwrap();
         let ie0 = extattrs[0].as_inline().unwrap();
         let ie1 = extattrs[1].as_inline().unwrap();
         let ie2 = extattrs[2].as_inline().unwrap();
         ie0.name == name0 && ie1.name == name1 && ie2.name == name2c
-    })).returning(move |_| {
+    }).returning(move |_| {
         // Return a copy of the recently inserted value2
         let dbs2 = Arc::new(DivBufShared::from(Vec::from(value2b.as_bytes())));
         let extent2 = InlineExtent::new(dbs2);
@@ -2705,8 +2711,8 @@ fn unlink() {
     let filename2 = filename.clone();
 
     ds.expect_remove()
-        .called_once()
-        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .once()
+        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
         .returning(move |_| {
             let dirent = Dirent {
                 ino,
@@ -2716,9 +2722,9 @@ fn unlink() {
             let v = Some(FSValue::DirEntry(dirent));
             Box::new(Ok(v).into_future())
         });
-    ds.then().expect_get()
-        .called_once()
-        .with(FSKey::new(ino, ObjKey::Inode))
+    ds.expect_get()
+        .once()
+        .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
             let now = time::get_time();
             let inode = Inode {
@@ -2738,9 +2744,9 @@ fn unlink() {
         });
 
     let old_ts = time::Timespec::new(0, 0);
-    ds.then().expect_get()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::Inode))
+    ds.expect_get()
+        .once()
+        .with(eq(FSKey::new(1, ObjKey::Inode)))
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
@@ -2757,9 +2763,9 @@ fn unlink() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
-    ds.then().expect_range()
-        .called_once()
-        .with(FSKey::extent_range(ino, ..))
+    ds.expect_range()
+        .once()
+        .with(eq(FSKey::extent_range(ino, ..)))
         .returning(move |_| {
             // Return one blob extent and one embedded extent
             let k0 = FSKey::new(ino, ObjKey::Extent(0));
@@ -2771,30 +2777,30 @@ fn unlink() {
             let extents = vec![(k0, v0), (k1, v1)];
             mock_range_query(extents)
         });
-    ds.then().expect_range()
-        .called_once()
-        .with(FSKey::extattr_range(ino))
+    ds.expect_range()
+        .once()
+        .with(eq(FSKey::extattr_range(ino)))
         .returning(move |_| {
             mock_range_query(Vec::new())
         });
-    ds.then().expect_delete_blob()
-        .called_once()
-        .with(passes(move |rid: &RID| blob_rid == *rid))
+    ds.expect_delete_blob()
+        .once()
+        .withf(move |rid: &RID| blob_rid == *rid)
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.then().expect_range_delete()
-        .called_once()
-        .with(FSKey::obj_range(ino))
+    ds.expect_range_delete()
+        .once()
+        .with(eq(FSKey::obj_range(ino)))
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().file_type == FileType::Dir &&
             args.1.as_inode().unwrap().atime == old_ts &&
             args.1.as_inode().unwrap().mtime != old_ts &&
             args.1.as_inode().unwrap().ctime != old_ts &&
             args.1.as_inode().unwrap().birthtime == old_ts
-        })).returning(|_| Box::new(Ok(None).into_future()));
+        }).returning(|_| Box::new(Ok(None).into_future()));
     let mut opt_ds = Some(ds);
 
     db.expect_fswrite()
@@ -2816,8 +2822,8 @@ fn unlink_hardlink() {
     let filename2 = filename.clone();
 
     ds.expect_remove()
-        .called_once()
-        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .once()
+        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
         .returning(move |_| {
             let dirent = Dirent {
                 ino,
@@ -2828,8 +2834,8 @@ fn unlink_hardlink() {
             Box::new(Ok(v).into_future())
         });
     ds.expect_get()
-        .called_once()
-        .with(FSKey::new(ino, ObjKey::Inode))
+        .once()
+        .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
             let now = time::get_time();
             let inode = Inode {
@@ -2848,9 +2854,9 @@ fn unlink_hardlink() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
     let old_ts = time::Timespec::new(0, 0);
-    ds.then().expect_get()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::Inode))
+    ds.expect_get()
+        .once()
+        .with(eq(FSKey::new(1, ObjKey::Inode)))
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
@@ -2867,22 +2873,22 @@ fn unlink_hardlink() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().nlink == 1
-        })).returning(|_| Box::new(Ok(None).into_future()));
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+        }).returning(|_| Box::new(Ok(None).into_future()));
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().file_type == FileType::Dir &&
             args.1.as_inode().unwrap().atime == old_ts &&
             args.1.as_inode().unwrap().mtime != old_ts &&
             args.1.as_inode().unwrap().ctime != old_ts &&
             args.1.as_inode().unwrap().birthtime == old_ts
-        })).returning(|_| Box::new(Ok(None).into_future()));
+        }).returning(|_| Box::new(Ok(None).into_future()));
 
     let mut opt_ds = Some(ds);
 
@@ -2907,8 +2913,8 @@ fn unlink_with_blob_extattr() {
     let filename2 = filename.clone();
 
     ds.expect_remove()
-        .called_once()
-        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .once()
+        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
         .returning(move |_| {
             let dirent = Dirent {
                 ino,
@@ -2919,8 +2925,8 @@ fn unlink_with_blob_extattr() {
             Box::new(Ok(v).into_future())
         });
     ds.expect_get()
-        .called_once()
-        .with(FSKey::new(ino, ObjKey::Inode))
+        .once()
+        .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
             let now = time::get_time();
             let inode = Inode {
@@ -2939,9 +2945,9 @@ fn unlink_with_blob_extattr() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
     let old_ts = time::Timespec::new(0, 0);
-    ds.then().expect_get()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::Inode))
+    ds.expect_get()
+        .once()
+        .with(eq(FSKey::new(1, ObjKey::Inode)))
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
@@ -2959,9 +2965,9 @@ fn unlink_with_blob_extattr() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
 
-    ds.then().expect_range()
-        .called_once()
-        .with(FSKey::extent_range(ino, ..))
+    ds.expect_range()
+        .once()
+        .with(eq(FSKey::extent_range(ino, ..)))
         .returning(move |_| {
             // Return one blob extent and one embedded extent
             let k0 = FSKey::new(ino, ObjKey::Extent(0));
@@ -2973,12 +2979,9 @@ fn unlink_with_blob_extattr() {
             let extents = vec![(k0, v0), (k1, v1)];
             mock_range_query(extents)
         });
-    // NB: there is no requirement that extents be deleted before extattrs, but
-    // Simulacrum forces us to choose, since you can't set two Simulacrum mocks
-    // for the same method in the same era.
-    ds.then().expect_range()
-        .called_once()
-        .with(FSKey::extattr_range(ino))
+    ds.expect_range()
+        .once()
+        .with(eq(FSKey::extattr_range(ino)))
         .returning(move |_| {
             // Return one blob extattr and one inline extattr
             let namespace = ExtAttrNamespace::User;
@@ -2998,27 +3001,27 @@ fn unlink_with_blob_extattr() {
             mock_range_query(extents)
         });
     ds.expect_delete_blob()
-        .called_once()
-        .with(passes(move |rid: &RID| blob_rid == *rid))
+        .once()
+        .withf(move |rid: &RID| blob_rid == *rid)
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.then().expect_delete_blob()
-        .called_once()
-        .with(passes(move |rid: &RID| xattr_blob_rid == *rid))
+    ds.expect_delete_blob()
+        .once()
+        .withf(move |rid: &RID| xattr_blob_rid == *rid)
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.then().expect_range_delete()
-        .called_once()
-        .with(FSKey::obj_range(ino))
+    ds.expect_range_delete()
+        .once()
+        .with(eq(FSKey::obj_range(ino)))
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().file_type == FileType::Dir &&
             args.1.as_inode().unwrap().atime == old_ts &&
             args.1.as_inode().unwrap().mtime != old_ts &&
             args.1.as_inode().unwrap().ctime != old_ts &&
             args.1.as_inode().unwrap().birthtime == old_ts
-        })).returning(|_| Box::new(Ok(None).into_future()));
+        }).returning(|_| Box::new(Ok(None).into_future()));
     let mut opt_ds = Some(ds);
 
     db.expect_fswrite()
@@ -3042,8 +3045,8 @@ fn unlink_with_extattr_hash_collision() {
     let filename2 = filename.clone();
 
     ds.expect_remove()
-        .called_once()
-        .with(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        .once()
+        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
         .returning(move |_| {
             let dirent = Dirent {
                 ino,
@@ -3054,8 +3057,8 @@ fn unlink_with_extattr_hash_collision() {
             Box::new(Ok(v).into_future())
         });
     ds.expect_get()
-        .called_once()
-        .with(FSKey::new(ino, ObjKey::Inode))
+        .once()
+        .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
             let now = time::get_time();
             let inode = Inode {
@@ -3074,9 +3077,9 @@ fn unlink_with_extattr_hash_collision() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
     let old_ts = time::Timespec::new(0, 0);
-    ds.then().expect_get()
-        .called_once()
-        .with(FSKey::new(1, ObjKey::Inode))
+    ds.expect_get()
+        .once()
+        .with(eq(FSKey::new(1, ObjKey::Inode)))
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
@@ -3093,17 +3096,17 @@ fn unlink_with_extattr_hash_collision() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
-    ds.then().expect_range()
-        .called_once()
-        .with(FSKey::extent_range(ino, ..))
+    ds.expect_range()
+        .once()
+        .with(eq(FSKey::extent_range(ino, ..)))
         .returning(move |_| {
             // The file is empty
             let extents = vec![];
             mock_range_query(extents)
         });
-    ds.then().expect_range()
-        .called_once()
-        .with(FSKey::extattr_range(ino))
+    ds.expect_range()
+        .once()
+        .with(eq(FSKey::extattr_range(ino)))
         .returning(move |_| {
             // Return one blob extattr and one inline extattr, in the same
             // bucket
@@ -3123,24 +3126,24 @@ fn unlink_with_extattr_hash_collision() {
             let extents = vec![(k0, v)];
             mock_range_query(extents)
         });
-    ds.then().expect_delete_blob()
-        .called_once()
-        .with(passes(move |rid: &RID| xattr_blob_rid == *rid))
+    ds.expect_delete_blob()
+        .once()
+        .withf(move |rid: &RID| xattr_blob_rid == *rid)
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.then().expect_range_delete()
-        .called_once()
-        .with(FSKey::obj_range(ino))
+    ds.expect_range_delete()
+        .once()
+        .with(eq(FSKey::obj_range(ino)))
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.then().expect_insert()
-        .called_once()
-        .with(passes(move |args: &(FSKey, FSValue<RID>)| {
+    ds.expect_insert()
+        .once()
+        .withf(move |args: &(FSKey, FSValue<RID>)| {
             args.0.is_inode() &&
             args.1.as_inode().unwrap().file_type == FileType::Dir &&
             args.1.as_inode().unwrap().atime == old_ts &&
             args.1.as_inode().unwrap().mtime != old_ts &&
             args.1.as_inode().unwrap().ctime != old_ts &&
             args.1.as_inode().unwrap().birthtime == old_ts
-        })).returning(|_| Box::new(Ok(None).into_future()));
+        }).returning(|_| Box::new(Ok(None).into_future()));
 
     let mut opt_ds = Some(ds);
     db.expect_fswrite()

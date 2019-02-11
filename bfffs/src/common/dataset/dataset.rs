@@ -124,7 +124,7 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
         self.dataset.allocated()
     }
 
-    pub fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error>
+    pub fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error> + Send
     {
         self.dataset.last_key()
     }
@@ -171,7 +171,9 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
         self.dataset.allocated()
     }
 
-    pub fn delete_blob(&self, rid: RID) -> impl Future<Item=(), Error=Error> {
+    pub fn delete_blob(&self, rid: RID)
+        -> impl Future<Item=(), Error=Error> + Send
+    {
         self.dataset.delete_blob(rid, self.txg)
     }
 

@@ -7,311 +7,72 @@ use crate::common::{
     tree::{Key, Value},
 };
 use futures::Future;
-use simulacrum::*;
+use mockall::mock;
 use std::{
     borrow::Borrow,
-    marker::PhantomData,
+    fmt::Debug,
     ops::RangeBounds
 };
 use super::*;
 
-pub struct ReadOnlyDatasetMock<K: Key, V: Value> {
-    e: Expectations,
-    a: PhantomData<K>,
-    b: PhantomData<V>,
-}
-
-impl<K: Key, V: Value> ReadOnlyDatasetMock<K, V> {
-    pub fn allocated(&self) -> LbaT {
-        self.e.was_called_returning::<(), LbaT> ("allocated", ())
+mock! {
+    pub ReadOnlyDataset<K: Key, V: Value> {
+        fn allocated(&self) -> LbaT;
+        fn last_key(&self)
+            -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
+        fn size(&self) -> LbaT;
     }
-
-    pub fn expect_allocated(&mut self) -> Method<(), LbaT> {
-        self.e.expect::<(), LbaT>("allocated")
-    }
-
-    pub fn dump_trees(&self) -> impl Future<Item=(), Error=Error> + Send {
-        self.e.was_called_returning::<(), Box<dyn Future<Item=(), Error=Error> + Send>>
-            ("dump_trees", ())
-    }
-
-    pub fn expect_get(&mut self) -> Method<K,
-        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
-    {
-        self.e.expect::<K, Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
-            ("get")
-    }
-
-    pub fn expect_get_blob(&mut self) -> Method<RID,
-        Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
-    {
-        self.e.expect::<RID,
-            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
-    }
-
-    pub fn expect_range<R, T>(&mut self) -> Method<R, RangeQuery<K, T, V>>
-        where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
-    {
-        self.e.expect::<R, RangeQuery<K, T, V>>("range")
-    }
-
-    pub fn last_key(&self) -> impl Future<Item=Option<K>, Error=Error>
-    {
-        self.e.was_called_returning::<(),
-            Box<dyn Future<Item=Option<K>, Error=Error> + Send>>("last_key", ())
-    }
-
-    pub fn expect_last_key(&mut self) -> Method<(),
-        Box<dyn Future<Item=Option<K>, Error=Error> + Send>>
-    {
-        self.e.expect::<(), Box<dyn Future<Item=Option<K>, Error=Error> + Send>>
-            ("last_key")
-    }
-
-    pub fn size(&self) -> LbaT {
-        self.e.was_called_returning::<(), LbaT> ("size", ())
-    }
-
-    pub fn expect_size(&mut self) -> Method<(), LbaT> {
-        self.e.expect::<(), LbaT>("size")
-    }
-
-    pub fn then(&mut self) -> &mut Self {
-        self.e.then();
-        self
+    trait ReadDataset<K: Key, V: Value> {
+        fn get(&self, k: K)
+            -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
+        fn get_blob(&self, rid: RID)
+            -> Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>;
+        fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
+            where K: Borrow<T>,
+                  R: RangeBounds<T> + 'static,
+                  T: Ord + Clone + Send + 'static;
     }
 }
 
-impl<K: Key, V: Value> Default for ReadOnlyDatasetMock<K, V> {
-    fn default() -> Self {
-        Self {
-            e: Expectations::new(),
-            a: PhantomData,
-            b: PhantomData,
-        }
+mock! {
+    pub ReadWriteDataset<K: Key, V: Value> {
+        fn allocated(&self) -> LbaT;
+        fn delete_blob(&self, rid: RID)
+            -> Box<Future<Item=(), Error=Error> + Send>;
+        fn insert(&self, k: K, v: V)
+            -> Box<Future<Item=Option<V>, Error=Error> + Send>;
+        fn last_key(&self)
+            -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
+        fn put_blob(&self, dbs: DivBufShared, compression: Compression)
+            -> Box<Future<Item=RID, Error=Error> + Send>;
+        fn range_delete<R, T>(&self, range: R)
+            -> Box<Future<Item=(), Error=Error> + Send>
+            where K: Borrow<T>,
+                  R: Debug + Clone + RangeBounds<T> + Send + 'static,
+                  T: Debug + Ord + Clone + Send + 'static;
+        fn remove(&self, k: K)
+            -> Box<Future<Item=Option<V>, Error=Error> + Send>;
+        fn remove_blob(&self, rid: RID)
+            -> Box<Future<Item=Box<DivBufShared>, Error=Error> + Send>;
+        fn size(&self) -> LbaT;
+    }
+    trait ReadDataset<K: Key, V: Value> {
+        fn get(&self, k: K)
+            -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
+        fn get_blob(&self, rid: RID)
+            -> Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>;
+        fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
+            where K: Borrow<T>,
+                  R: RangeBounds<T> + 'static,
+                  T: Ord + Clone + Send + 'static;
     }
 }
 
-impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDatasetMock<K, V> {
-    fn get(&self, k: K) -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
-    {
-        self.e.was_called_returning::<K,
-            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("get", k)
-    }
-
-    fn get_blob(&self, rid: RID)
-        -> Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>
-    {
-        self.e.was_called_returning::<RID,
-            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
-            ("get_blob", rid)
-    }
-
-    fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
-        where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
-    {
-        self.e.was_called_returning::<R,
-            RangeQuery<K, T, V>>
-            ("range", range)
-    }
-}
-
-pub struct ReadWriteDatasetMock<K: Key, V: Value> {
-    e: Expectations,
-    a: PhantomData<K>,
-    b: PhantomData<V>,
-}
-
-impl<K: Key, V: Value> ReadWriteDatasetMock<K, V> {
-    pub fn allocated(&self) -> LbaT {
-        self.e.was_called_returning::<(), LbaT> ("allocated", ())
-    }
-
-    pub fn expect_allocated(&mut self) -> Method<(), LbaT> {
-        self.e.expect::<(), LbaT>("allocated")
-    }
-
-    pub fn delete_blob(&self, rid: RID) -> impl Future<Item=(), Error=Error> {
-        self.e.was_called_returning::<RID,
-            Box<dyn Future<Item=(), Error=Error> + Send>>
-            ("delete_blob", rid)
-    }
-
-    pub fn expect_delete_blob(&mut self) -> Method<RID,
-        Box<dyn Future<Item=(), Error=Error> + Send>>
-    {
-        self.e.expect::<RID, Box<dyn Future<Item=(), Error=Error> + Send>>
-            ("delete_blob")
-    }
-
-    pub fn expect_get(&mut self) -> Method<K,
-        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
-    {
-        self.e.expect::<K, Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
-            ("get")
-    }
-
-    pub fn expect_get_blob(&mut self) -> Method<RID,
-        Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
-    {
-        self.e.expect::<RID,
-            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>("get_blob")
-    }
-
-    pub fn insert(&self, k: K, v: V)
-        -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
-    {
-        self.e.was_called_returning::<(K, V),
-            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
-                ("insert", (k, v))
-    }
-
-    pub fn expect_insert(&mut self) -> Method<(K, V),
-        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
-    {
-        self.e.expect::<(K, V), Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
-            ("insert")
-    }
-
-    pub fn put_blob(&self, dbs: DivBufShared, compression: Compression)
-        -> impl Future<Item=RID, Error=Error> + Send
-    {
-        self.e.was_called_returning::<(DivBufShared, Compression),
-            Box<dyn Future<Item=RID, Error=Error> + Send>>("put_blob",
-            (dbs, compression))
-    }
-
-    pub fn expect_put_blob(&mut self) -> Method<(DivBufShared, Compression),
-        Box<dyn Future<Item=RID, Error=Error> + Send>>
-    {
-        self.e.expect::<(DivBufShared, Compression),
-                        Box<dyn Future<Item=RID, Error=Error> + Send>>
-            ("put_blob")
-    }
-
-    pub fn expect_range<R, T>(&mut self) -> Method<R, RangeQuery<K, T, V>>
-        where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
-    {
-        self.e.expect::<R, RangeQuery<K, T, V>>("range")
-    }
-
-    pub fn range_delete<R, T>(&self, range: R)
-        -> impl Future<Item=(), Error=Error>
-        where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
-    {
-        self.e.was_called_returning::<R,
-            Box<dyn Future<Item=(), Error=Error> + Send>>
-            ("range_delete", range)
-    }
-
-    pub fn expect_range_delete<R, T>(&mut self)
-        -> Method<R, Box<dyn Future<Item=(), Error=Error> + Send>>
-        where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
-    {
-        self.e.expect::<R, Box<dyn Future<Item=(), Error=Error> + Send>>
-            ("range_delete")
-    }
-
-    pub fn remove(&self, k: K) -> impl Future<Item=Option<V>, Error=Error>
-    {
-        self.e.was_called_returning::<K,
-            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("remove", k)
-    }
-
-    pub fn expect_remove(&mut self) -> Method<K,
-        Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
-    {
-        self.e.expect::<K, Box<dyn Future<Item=Option<V>, Error=Error> + Send>>
-            ("remove")
-    }
-
-    pub fn remove_blob(&self, rid: RID)
-        -> impl Future<Item=Box<DivBufShared>, Error=Error> + Send
-    {
-        self.e.was_called_returning::<RID,
-            Box<dyn Future<Item=Box<DivBufShared>, Error=Error> + Send>>
-                ("remove_blob", rid)
-    }
-
-    pub fn expect_remove_blob(&mut self) -> Method<RID,
-        Box<dyn Future<Item=Box<DivBufShared>, Error=Error> + Send>>
-    {
-        self.e.expect::<RID, Box<dyn Future<Item=Box<DivBufShared>,
-                                            Error=Error> + Send>>
-            ("remove_blob")
-    }
-
-    pub fn size(&self) -> LbaT {
-        self.e.was_called_returning::<(), LbaT> ("size", ())
-    }
-
-    pub fn expect_size(&mut self) -> Method<(), LbaT> {
-        self.e.expect::<(), LbaT>("size")
-    }
-
-    pub fn then(&mut self) -> &mut Self {
-        self.e.then();
-        self
-    }
-}
-
-impl<K: Key, V: Value> Default for ReadWriteDatasetMock<K, V> {
-    fn default() -> Self {
-        Self {
-            e: Expectations::new(),
-            a: PhantomData,
-            b: PhantomData,
-        }
-    }
-}
-
-impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDatasetMock<K, V> {
-    fn get(&self, k: K) -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>
-    {
-        self.e.was_called_returning::<K,
-            Box<dyn Future<Item=Option<V>, Error=Error> + Send>>("get", k)
-    }
-
-    fn get_blob(&self, rid: RID)
-        -> Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>
-    {
-        self.e.was_called_returning::<RID,
-            Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>>
-            ("get_blob", rid)
-    }
-
-    fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
-        where K: Borrow<T>,
-              R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
-    {
-        self.e.was_called_returning::<R, RangeQuery<K, T, V>> ("range", range)
-    }
-}
-
-impl<K, V> AsRef<ReadWriteDatasetMock<K, V>> for ReadWriteDatasetMock<K, V>
+impl<K, V> AsRef<MockReadWriteDataset<K, V>> for MockReadWriteDataset<K, V>
     where K: Key, V: Value
 {
     fn as_ref(&self) -> &Self {
         self
     }
 }
-
-// XXX totally unsafe!  But Simulacrum doesn't support mocking Send traits.  So
-// we have to cheat.  This works as long as the mocks are only used in
-// single-threaded unit tests.
-unsafe impl<K: Key, V: Value> Send for ReadOnlyDatasetMock<K, V> {}
-unsafe impl<K: Key, V: Value> Sync for ReadOnlyDatasetMock<K, V> {}
-unsafe impl<K: Key, V: Value> Send for ReadWriteDatasetMock<K, V> {}
-unsafe impl<K: Key, V: Value> Sync for ReadWriteDatasetMock<K, V> {}
 // LCOV_EXCL_STOP
