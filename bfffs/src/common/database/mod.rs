@@ -15,17 +15,14 @@ mod database;
 
 cfg_if! {
     if #[cfg(test)]{
-        mod database_mock;
-        pub use self::database_mock::DatabaseMock as Database;
-        pub use self::database_mock::ReadOnlyFilesystem;
-        pub use self::database_mock::ReadWriteFilesystem;
+        pub use self::database::MockDatabase as Database;
     } else {
         pub use self::database::Database;
-        pub use self::database::ReadOnlyFilesystem;
-        pub use self::database::ReadWriteFilesystem;
     }
 }
 
+pub use self::database::ReadOnlyFilesystem;
+pub use self::database::ReadWriteFilesystem;
 
 /// Keys into the Forest
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,

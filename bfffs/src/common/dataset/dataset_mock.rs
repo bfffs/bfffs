@@ -11,7 +11,8 @@ use mockall::mock;
 use std::{
     borrow::Borrow,
     fmt::Debug,
-    ops::RangeBounds
+    ops::RangeBounds,
+    sync::Arc
 };
 use super::*;
 
@@ -20,6 +21,8 @@ mock! {
         fn allocated(&self) -> LbaT;
         fn last_key(&self)
             -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
+        fn new<K2: Key, V2: Value>(idml: Arc<IDML>, tree: Arc<ITree<K2, V2>>)
+            -> ReadOnlyDataset<K2, V2>;
         fn size(&self) -> LbaT;
     }
     trait ReadDataset<K: Key, V: Value> {
@@ -35,7 +38,10 @@ mock! {
 }
 
 mock! {
-    pub ReadWriteDataset<K: Key, V: Value> {
+    pub ReadWriteDataset<K, V>
+        where K: Key,
+              V: Value
+    {
         fn allocated(&self) -> LbaT;
         fn delete_blob(&self, rid: RID)
             -> Box<Future<Item=(), Error=Error> + Send>;
@@ -43,6 +49,10 @@ mock! {
             -> Box<Future<Item=Option<V>, Error=Error> + Send>;
         fn last_key(&self)
             -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
+        fn new<K2, V2>(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT)
+            -> ReadWriteDataset<K2, V2>
+            where K2: Key,
+                  V2: Value;
         fn put_blob(&self, dbs: DivBufShared, compression: Compression)
             -> Box<Future<Item=RID, Error=Error> + Send>;
         fn range_delete<R, T>(&self, range: R)

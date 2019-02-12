@@ -5,7 +5,7 @@ use crate::{
     common::{
         *,
         cleaner::*,
-        dataset::{ITree, ReadWriteDataset},
+        dataset::{ITree, ReadOnlyDataset, ReadWriteDataset},
         dml::DML,
         fs_tree::*,
         idml::*,
@@ -14,7 +14,6 @@ use crate::{
         tree::{Tree, TreeOnDisk}
     }
 };
-#[cfg(not(test))] use crate::common::dataset::ReadOnlyDataset;
 use futures::{
     Future,
     IntoFuture,
@@ -26,9 +25,10 @@ use futures::{
 };
 use futures_locks::Mutex;
 #[cfg(not(test))] use libc;
+#[cfg(test)] use mockall::automock;
 use std::collections::BTreeMap;
 use std::{
-    io,
+    ffi::{OsString, OsStr},
     ops::Range,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -36,16 +36,13 @@ use std::{
     },
     time::{Duration, Instant}
 };
-#[cfg(not(test))] use std::ffi::{OsString, OsStr};
+#[cfg(not(test))] use std::io;
 use super::*;
 #[cfg(not(test))] use time;
-use tokio::{
-    executor::Executor,
-    runtime::current_thread
-};
+use tokio::executor::Executor;
+#[cfg(not(test))] use tokio::runtime::current_thread;
 use tokio::timer;
 
-#[cfg(not(test))]
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
 
@@ -222,7 +219,6 @@ impl Inner {
         }).unwrap()
     }
 
-    #[cfg(not(test))]
     fn rw_filesystem(inner: &Arc<Inner>, tree_id: TreeID, txg: TxgT)
         -> impl Future<Item=ReadWriteFilesystem, Error=Error>
     {
@@ -231,7 +227,6 @@ impl Inner {
             .map(move |fs| ReadWriteFilesystem::new(idml2, fs, txg))
     }
 
-    #[cfg(not(test))]
     fn fswrite<F, B, R>(inner: Arc<Self>, tree_id: TreeID, f: F)
         -> impl Future<Item = R, Error = Error>
         where F: FnOnce(ReadWriteFilesystem) -> B,
@@ -275,6 +270,7 @@ pub struct Database {
 // Some of these methods have no unit tests.  Their test coverage is provided
 // instead by integration tests.
 #[cfg_attr(test, allow(unused))]
+#[cfg_attr(test, automock)]
 impl Database {
     /// Foreground consistency check.  Prints any irregularities to stderr
     ///
@@ -340,6 +336,7 @@ impl Database {
     /// `std::fs::File`.
     ///
     /// Must be called from the synchronous domain.
+    #[cfg(not(test))]
     pub fn dump(&self, f: &mut io::Write, tree: TreeID) -> Result<(), Error> {
         let mut rt = current_thread::Runtime::new().unwrap();
         rt.block_on(future::lazy(|| {
@@ -356,7 +353,7 @@ impl Database {
     /// Get the value of the `name` property for the dataset identified by
     /// `tree`.
     pub fn get_prop(&self, tree_id: TreeID, name: PropertyName)
-        -> impl Future<Item=(Property, PropertySource), Error=Error>
+        -> impl Future<Item=(Property, PropertySource), Error=Error> + Send
     {
         // Outline:
         // 1) Look for the property in the propcache
@@ -410,9 +407,8 @@ impl Database {
     /// Create a new, blank filesystem
     ///
     /// Must be called from the tokio domain.
-    #[cfg(not(test))]
     pub fn new_fs(&self, props: Vec<Property>)
-        -> impl Future<Item=TreeID, Error=Error>
+        -> impl Future<Item=TreeID, Error=Error> + Send
     {
         self.inner.dirty.store(true, Ordering::Relaxed);
         let idml2 = self.inner.idml.clone();
@@ -487,15 +483,24 @@ impl Database {
     /// Perform a read-only operation on a Filesystem
     #[cfg(not(test))]
     pub fn fsread<F, B, R>(&self, tree_id: TreeID, f: F)
-        -> impl Future<Item = R, Error = Error>
-        where F: FnOnce(ReadOnlyFilesystem) -> B + 'static,
+        -> impl Future<Item = R, Error = Error> + Send
+        where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
               B: IntoFuture<Item = R, Error = Error> + 'static,
-              R: 'static
+              <B as IntoFuture>::Future: Send,
+              R: 'static,
     {
         self.ro_filesystem(tree_id)
             .and_then(|ds| f(ds).into_future())
     }
 
+    /// See comments for `fswrite_inner`.
+    #[cfg(test)]
+    #[doc(hidden)]
+    pub fn fsread_inner(&self, tree_id: TreeID)
+        -> ReadOnlyDataset<FSKey, FSValue<RID>>
+    {
+        unimplemented!()
+    }
     fn new<E>(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>,
               handle: E) -> Self
         where E: Clone + Executor + 'static
@@ -523,7 +528,6 @@ impl Database {
         Database::new(idml, forest, handle)
     }
 
-    #[cfg(not(test))]
     fn ro_filesystem(&self, tree_id: TreeID)
         -> impl Future<Item=ReadOnlyFilesystem, Error=Error>
     {
@@ -537,9 +541,8 @@ impl Database {
 
     // TODO: Make prop an Option.  A None value will signify that the property
     // should be inherited.
-    #[cfg(not(test))]
     pub fn set_prop(&self, tree_id: TreeID, prop: Property)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Item=(), Error=Error> + Send
     {
         // Outline:
         // 1) Open the dataset's tree and set the property there.
@@ -580,7 +583,7 @@ impl Database {
     }
 
     /// Finish the current transaction group and start a new one.
-    pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> {
+    pub fn sync_transaction(&self) -> impl Future<Item=(), Error=Error> + Send {
         self.syncer.kick().join(Database::sync_transaction_priv(&self.inner))
             .map(drop)
     }
@@ -656,14 +659,53 @@ impl Database {
     /// recovery, either all will have completed, or none will have.
     #[cfg(not(test))]
     pub fn fswrite<F, B, R>(&self, tree_id: TreeID, f: F)
-        -> impl Future<Item = R, Error = Error>
-        where F: FnOnce(ReadWriteFilesystem) -> B,
-              B: Future<Item = R, Error = Error>,
+        -> impl Future<Item = R, Error = Error> + Send
+        where F: FnOnce(ReadWriteFilesystem) -> B + Send + 'static,
+              B: Future<Item = R, Error = Error> + Send,
+              R: 'static
     {
         Inner::fswrite(self.inner.clone(), tree_id, f)
     }
+
+    /// Helper for MockDatabase::fswrite.
+    ///
+    /// Mockall can't naïvely mock methods with closure arguments, because
+    /// closures can't be named.  Instead we'll let mockall mock this helper
+    /// method, and manually write `MockDatabase::fswrite`.
+    ///
+    /// Once `Box<FnOnce>` becomes stable in Rust 1.34.0, then it should be
+    /// possible for Mockall to automatically turn the closure into a boxed
+    /// FnOnce object, and this helper can go away.
+    #[cfg(test)]
+    #[doc(hidden)]
+    pub fn fswrite_inner(&self, tree_id: TreeID)
+        -> ReadWriteDataset<FSKey, FSValue<RID>>
+    {
+        unimplemented!()
+    }
 }
 
+#[cfg(test)]
+impl MockDatabase {
+    pub fn fsread<F, B, R>(&self, tree_id: TreeID, f: F)
+        -> impl Future<Item = R, Error = Error> + Send
+        where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
+              B: IntoFuture<Item = R, Error = Error> + Send + 'static,
+              <B as IntoFuture>::Future: Send,
+              R: 'static,
+    {
+        f(self.fsread_inner(tree_id)).into_future()
+    }
+
+    pub fn fswrite<F, B, R>(&self, tree_id: TreeID, f: F)
+        -> impl Future<Item = R, Error = Error> + Send
+        where F: FnOnce(ReadWriteFilesystem) -> B + Send + 'static,
+              B: Future<Item = R, Error = Error> + Send,
+              R: 'static
+    {
+        f(self.fswrite_inner(tree_id))
+    }
+}
 
 // LCOV_EXCL_START
 #[cfg(test)]

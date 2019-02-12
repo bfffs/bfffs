@@ -27,11 +27,11 @@ use libc;
 use std::{
     cmp,
     ffi::{OsStr, OsString},
-    io,
     mem,
     os::unix::ffi::OsStrExt,
     sync::Arc,
 };
+#[cfg(not(test))] use std::io;
 use time;
 use tokio_io_pool;
 
@@ -812,6 +812,7 @@ impl Fs {
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
     /// `std::fs::File`.
+    #[cfg(not(test))]
     pub fn dump(&self, f: &mut io::Write) -> Result<(), i32> {
         self.db.dump(f, self.tree)
         .map_err(|e| e.into())
@@ -1921,9 +1922,8 @@ use crate::common::{
     tree::{Key, MinValue, Value}
 };
 use futures::Async;
-use mockall::{Sequence, predicate::*};
+use mockall::{Predicate, Sequence, params, predicate::*};
 use pretty_assertions::assert_eq;
-use simulacrum::*;
 use std::borrow::Borrow;
 
 fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
@@ -1935,16 +1935,15 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
     ds.expect_last_key()
         .once()
         .returning(|_| Box::new(Ok(Some(FSKey::min_value())).into_future()));
-    let mut opt_ds = Some(ds);
     let mut db = Database::default();
     db.expect_new_fs()
-        .called_once()
+        .once()
         .returning(|_| Box::new(Ok(TreeID::Fs(0)).into_future()));
-    db.expect_fsread()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fsread_inner()
+        .once()
+        .return_once(move |_| ds);
     db.expect_get_prop()
-        .called_times(2)
+        .times(2)
         .returning(|(_tree_id, propname)| {
             let prop = Property::default_value(propname);
             let source = PropertySource::Default;
@@ -2033,10 +2032,9 @@ fn create() {
             args.1.as_inode().unwrap().ctime != old_ts &&
             args.1.as_inode().unwrap().birthtime == old_ts
         }).returning(|_| Box::new(Ok(None).into_future()));
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
     assert_eq!(ino, fs.create(1, &filename, 0o644, 123, 456).unwrap());
@@ -2137,10 +2135,9 @@ fn create_hash_collision() {
             args.1.as_inode().unwrap().birthtime == old_ts
         }).returning(|_| Box::new(Ok(None).into_future()));
 
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
     assert_eq!(ino, fs.create(1, &filename, 0o644, 123, 456).unwrap());
@@ -2261,10 +2258,9 @@ fn deleteextattr_3way_collision() {
         Box::new(Ok(None).into_future())
     });
 
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.deleteextattr(ino, namespace, &name2);
     assert_eq!(Ok(()), r);
@@ -2317,10 +2313,9 @@ fn deleteextattr_3way_collision_enoattr() {
         Box::new(Ok(None).into_future())
     });
 
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.deleteextattr(ino, namespace, &name2);
     assert_eq!(Err(libc::ENOATTR), r);
@@ -2352,10 +2347,9 @@ fn rename_eio() {
             Box::new(Err(Error::EIO).into_future())
         });
 
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
 
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.rename(1, &srcname, 1, &dstname);
@@ -2534,10 +2528,9 @@ fn rmdir_with_blob_extattr() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
 
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.rmdir(1, &filename);
     assert_eq!(Ok(()), r);
@@ -2569,10 +2562,9 @@ fn setextattr() {
         &ie.extent.buf.try_const().unwrap()[..] == value2.as_bytes()
     }).returning(|_| Box::new(Ok(None).into_future()));
 
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.setextattr(ino, namespace, &name, value.as_bytes());
     assert_eq!(Ok(()), r);
@@ -2662,10 +2654,9 @@ fn setextattr_3way_collision() {
         boxfut!(Ok(Some(v)).into_future())
     });
 
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.setextattr(ino, namespace, &name2, value2.as_bytes());
     assert_eq!(Ok(()), r);
@@ -2675,15 +2666,13 @@ fn setextattr_3way_collision() {
 fn set_props() {
     let (rt, mut db, tree_id) = setup();
     db.expect_set_prop()
-        .called_once()
-        .with(passes(move |args: &(TreeID, Property)| {
-            args.0 == tree_id && args.1 == Property::Atime(false)
-        })).returning(|_| boxfut!(Ok(()).into_future()));
-    db.then().expect_set_prop()
-        .called_once()
-        .with(passes(move |args: &(TreeID, Property)| {
-            args.0 == tree_id && args.1 == Property::RecordSize(13)
-        })).returning(|_| boxfut!(Ok(()).into_future()));
+        .once()
+        .with(params!(eq(tree_id), eq(Property::Atime(false))))
+        .returning(|_| boxfut!(Ok(()).into_future()));
+    db.expect_set_prop()
+        .once()
+        .with(params!(eq(tree_id), eq(Property::RecordSize(13))))
+        .returning(|_| boxfut!(Ok(()).into_future()));
     let mut fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     fs.set_props(vec![Property::Atime(false), Property::RecordSize(13)]);
     rt.shutdown_on_idle();
@@ -2693,7 +2682,7 @@ fn set_props() {
 fn sync() {
     let (rt, mut db, tree_id) = setup();
     db.expect_sync_transaction()
-        .called_once()
+        .once()
         .returning(|_| Box::new(Ok(()).into_future()));
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
@@ -2801,11 +2790,10 @@ fn unlink() {
             args.1.as_inode().unwrap().ctime != old_ts &&
             args.1.as_inode().unwrap().birthtime == old_ts
         }).returning(|_| Box::new(Ok(None).into_future()));
-    let mut opt_ds = Some(ds);
 
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.unlink(1, &filename);
     assert_eq!(Ok(()), r);
@@ -2890,11 +2878,9 @@ fn unlink_hardlink() {
             args.1.as_inode().unwrap().birthtime == old_ts
         }).returning(|_| Box::new(Ok(None).into_future()));
 
-    let mut opt_ds = Some(ds);
-
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.unlink(1, &filename);
     assert_eq!(Ok(()), r);
@@ -3022,11 +3008,10 @@ fn unlink_with_blob_extattr() {
             args.1.as_inode().unwrap().ctime != old_ts &&
             args.1.as_inode().unwrap().birthtime == old_ts
         }).returning(|_| Box::new(Ok(None).into_future()));
-    let mut opt_ds = Some(ds);
 
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.unlink(1, &filename);
     assert_eq!(Ok(()), r);
@@ -3145,14 +3130,11 @@ fn unlink_with_extattr_hash_collision() {
             args.1.as_inode().unwrap().birthtime == old_ts
         }).returning(|_| Box::new(Ok(None).into_future()));
 
-    let mut opt_ds = Some(ds);
-    db.expect_fswrite()
-        .called_once()
-        .returning(move |_| opt_ds.take().unwrap());
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.unlink(1, &filename);
     assert_eq!(Ok(()), r);
 }
-
-
 }
