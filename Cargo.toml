@@ -9,6 +9,4 @@ lto = true
 members = ["bfffs", "bfffs-fio", "bfffs-fuse", "isa-l"]
 
 [patch.crates-io]
-predicates = { git = "https://github.com/assert-rs/predicates-rs/", rev = "0efce97" }
-predicates-tree = { git = "https://github.com/assert-rs/predicates-rs/", rev = "0efce97" }
 downcast = { git = "https://github.com/asomers/downcast-rs/", rev = "c65a1aa"}
