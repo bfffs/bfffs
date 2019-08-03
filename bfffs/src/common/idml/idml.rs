@@ -197,7 +197,7 @@ impl<'a> IDML {
         IDML{cache, ddml, next_rid, transaction, trees}
     }
 
-    pub fn dump_trees(&self, f: &mut io::Write) -> Result<(), Error>
+    pub fn dump_trees(&self, f: &mut dyn io::Write) -> Result<(), Error>
     {
         self.trees.ridt.dump(f)?;
         self.trees.alloct.dump(f)
@@ -565,16 +565,16 @@ struct Label {
 mock!{
     pub IDML {
         fn allocated(&self) -> LbaT;
-        fn check(&self) -> Box<Future<Item=bool, Error=Error>>;
+        fn check(&self) -> Box<dyn Future<Item=bool, Error=Error>>;
         fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
-            -> Box<Future<Item=(), Error=Error> + Send>;
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
         fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self;
         fn dump_trees(&self, f: &mut (io::Write + 'static))
             -> Result<(), Error>;
         fn flush(&self, idx: u32, txg: TxgT)
-            -> Box<Future<Item=(), Error=Error> + Send>;
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
         fn list_closed_zones(&self)
-            -> Box<Stream<Item=ClosedZone, Error=Error> + Send>;
+            -> Box<dyn Stream<Item=ClosedZone, Error=Error> + Send>;
         fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
                      mut label_reader: LabelReader) -> (Self, LabelReader);
         fn shutdown(&self);
@@ -590,7 +590,7 @@ mock!{
         // in advance_transaction and only mock the txg used.
         fn advance_transaction_inner(&self) -> TxgT;
         fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
-            -> Box<Future<Item=(), Error=Error> + Send>;
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
     }
     trait DML {
         type Addr = RID;

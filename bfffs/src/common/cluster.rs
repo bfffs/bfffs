@@ -29,7 +29,7 @@ use std::{
     path::Path,
 };
 
-pub type ClusterFut = Future<Item = (), Error = Error>;
+pub type ClusterFut = dyn Future<Item = (), Error = Error>;
 
 /// Minimal in-memory representation of a zone.
 ///

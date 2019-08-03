@@ -102,7 +102,7 @@ impl FakeDDML {
     }
 
     /// Just like `put`, but separate for record-keeping purposes
-    fn put_data(&self, cacheref: Box<CacheRef>, compression: Compression,
+    fn put_data(&self, cacheref: Box<dyn CacheRef>, compression: Compression,
                              _txg: TxgT)
         -> Box<dyn Future<Item=DRP, Error=Error> + Send>
     {

@@ -99,7 +99,7 @@ pub trait Locator : Send + Sync {
     /// - `start`:  The first `ChunkId` whose location will be returned
     /// - `end`:    The first `ChunkId` beyond the end of the iterator
     fn iter(&self, start: ChunkId, end: ChunkId)
-        -> Box<Iterator<Item=(ChunkId, Chunkloc)>>;
+        -> Box<dyn Iterator<Item=(ChunkId, Chunkloc)>>;
 
     /// Like [`iter`], but only iterates through Data chunks, skipping Parity
     ///
@@ -112,7 +112,7 @@ pub trait Locator : Send + Sync {
     ///
     /// [`iter`]: #method.iter
     fn iter_data(&self, start: ChunkId, end: ChunkId)
-        -> Box<Iterator<Item=(ChunkId, Chunkloc)>>;
+        -> Box<dyn Iterator<Item=(ChunkId, Chunkloc)>>;
 
     /// Inverse of `id2loc`.
     ///

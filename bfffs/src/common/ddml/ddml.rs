@@ -172,7 +172,7 @@ impl DDML {
     fn put_common<T>(&self, cacheref: &T, compression: Compression,
                      txg: TxgT)
         -> impl Future<Item=DRP, Error=Error> + Send
-        where T: borrow::Borrow<CacheRef>
+        where T: borrow::Borrow<dyn CacheRef>
     {
         // Outline:
         // 1) Serialize
@@ -208,7 +208,7 @@ impl DDML {
     pub fn put_direct<T>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
         -> impl Future<Item=DRP, Error=Error> + Send
-        where T: borrow::Borrow<CacheRef>
+        where T: borrow::Borrow<dyn CacheRef>
     {
         self.put_common(cacheref, compression, txg)
     }
@@ -308,12 +308,12 @@ mock! {
         fn allocated(&self) -> LbaT;
         fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT);
         fn delete_direct(&self, drp: &DRP, txg: TxgT)
-            -> Box<Future<Item=(), Error=Error> + Send>;
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
         fn flush(&self, idx: u32)
             -> Box<dyn Future<Item=(), Error=Error> + Send>;
         fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
         fn get_direct<T: Cacheable>(&self, drp: &DRP)
-            -> Box<Future<Item=Box<T>, Error=Error> + Send>;
+            -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>;
         fn list_closed_zones(&self)
             -> Box<dyn Stream<Item=ClosedZone, Error=Error> + Send>;
         fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
@@ -322,7 +322,7 @@ mock! {
         fn put_direct<T: 'static>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
             -> Box<dyn Future<Item=DRP, Error=Error> + Send>
-            where T: borrow::Borrow<CacheRef>;
+            where T: borrow::Borrow<dyn CacheRef>;
         fn shutdown(&self);
         fn size(&self) -> LbaT;
         fn write_label(&self, labeller: LabelWriter)

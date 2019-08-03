@@ -701,7 +701,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     // `&mut Formatter` isn't `Send`, so these Futures can only be used with the
     // current_thread Runtime.  Given that limitation, we may as well
     // instantiate our own Runtime
-    pub fn dump(&self, f: &mut io::Write) -> Result<(), Error> {
+    pub fn dump(&self, f: &mut dyn io::Write) -> Result<(), Error> {
         // Outline:
         // * Lock the whole tree and proceed bottom-up.
         // * YAMLize each Node
@@ -738,7 +738,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     fn dump_r<'a>(dml: Arc<D>, node: TreeReadGuard<A, K, V>,
-                  f: Rc<RefCell<&'a mut io::Write>>)
+                  f: Rc<RefCell<&'a mut dyn io::Write>>)
         -> Box<dyn Future<Item=TreeReadGuard<A, K, V>, Error=Error> + 'a>
     {
         type ChildFut<'a, A, K, V> =

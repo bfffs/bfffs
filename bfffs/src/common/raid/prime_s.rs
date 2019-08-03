@@ -292,12 +292,12 @@ impl Locator for PrimeS {
     }
 
     fn iter(&self, start: ChunkId, end: ChunkId)
-        -> Box<Iterator<Item=(ChunkId, Chunkloc)>> {
+        -> Box<dyn Iterator<Item=(ChunkId, Chunkloc)>> {
         Box::new(PrimeSIter::new(self, start, end))
     }
 
     fn iter_data(&self, start: ChunkId, end: ChunkId)
-        -> Box<Iterator<Item=(ChunkId, Chunkloc)>> {
+        -> Box<dyn Iterator<Item=(ChunkId, Chunkloc)>> {
         assert!(start.is_data());
         assert!(end.is_data());
         Box::new(PrimeSIterData::new(self, start, end))

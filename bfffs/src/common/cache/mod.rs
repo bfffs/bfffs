@@ -36,7 +36,7 @@ pub trait Cacheable: Any + Debug + Send + Sync {
     /// Returns true if the two `Cacheable`s' contents are equal
     // This doesn't implement PartialEq because the rhs is &Cacheable instead of
     // &Self.
-    fn eq(&self, other: &Cacheable) -> bool;
+    fn eq(&self, other: &dyn Cacheable) -> bool;
 
     /// How much space does this object use in the Cache?
     fn len(&self) -> usize;
@@ -48,7 +48,7 @@ pub trait Cacheable: Any + Debug + Send + Sync {
     fn make_ref(&self) -> Box<dyn CacheRef>;
 }
 
-downcast!(Cacheable);
+downcast!(dyn Cacheable);
 
 /// Types that implement `CacheRef` are read-only handles to cached objects.
 pub trait CacheRef: Any + Send {
@@ -64,14 +64,14 @@ pub trait CacheRef: Any + Send {
     fn to_owned(self) -> Box<dyn Cacheable>;
 }
 
-downcast!(CacheRef);
+downcast!(dyn CacheRef);
 
 impl Cacheable for DivBufShared {
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized {
         dbs
     }
 
-    fn eq(&self, other: &Cacheable) -> bool {
+    fn eq(&self, other: &dyn Cacheable) -> bool {
         if let Ok(other_dbs) = other.downcast_ref::<DivBufShared>() {
             self.try_const().unwrap()[..] == other_dbs.try_const().unwrap()[..]
         } else {
@@ -104,8 +104,8 @@ impl CacheRef for DivBuf {
     }
 }
 
-impl Borrow<CacheRef> for DivBuf {
-    fn borrow(&self) -> &CacheRef {
-        self as &CacheRef
+impl Borrow<dyn CacheRef> for DivBuf {
+    fn borrow(&self) -> &dyn CacheRef {
+        self as &dyn CacheRef
     }
 }

@@ -337,7 +337,8 @@ impl Database {
     ///
     /// Must be called from the synchronous domain.
     #[cfg(not(test))]
-    pub fn dump(&self, f: &mut io::Write, tree: TreeID) -> Result<(), Error> {
+    pub fn dump(&self, f: &mut dyn io::Write, tree: TreeID) -> Result<(), Error>
+    {
         let mut rt = current_thread::Runtime::new().unwrap();
         rt.block_on(future::lazy(|| {
             Inner::open_filesystem(&self.inner, tree)
