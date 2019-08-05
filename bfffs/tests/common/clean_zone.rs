@@ -1,7 +1,7 @@
 // vim: tw=80
 use galvanic_test::test_suite;
 
-/// Constructs a real filesystem, fills it, and cleans it.
+// Constructs a real filesystem, fills it, and cleans it.
 test_suite! {
     name t;
 

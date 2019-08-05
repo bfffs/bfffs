@@ -1,7 +1,7 @@
 // vim: tw=80
 use galvanic_test::test_suite;
 
-/// Constructs a real filesystem and tests the common FS routines, without mounting
+// Constructs a real filesystem and tests the common FS routines, without mounting
 test_suite! {
     name device_manager;
 
