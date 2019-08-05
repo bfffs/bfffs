@@ -24,6 +24,7 @@ use std::{
     borrow::Borrow,
     cell::RefCell,
     collections::{BTreeMap, HashSet, VecDeque},
+    convert::identity,
     fmt::Debug,
     io,
     mem,
@@ -617,7 +618,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 };
                 last_key = *keys.end();
                 r
-            }).all(|x| x);
+            }).all(identity);
             (children_passed && sorted, first_key..=last_key, start..end)
         });
         Box::new(fut)

@@ -198,7 +198,7 @@ test_suite! {
     use pretty_assertions::assert_eq;
     use std::{
         fs,
-        io::{self, Read},
+        io::Read,
         num::NonZeroU64,
         os::unix::fs::FileExt,
         path::PathBuf
@@ -239,27 +239,6 @@ test_suite! {
         }
     });
 
-    // NB: write_all_at can be replaced by
-    // std::os::unix::fs::FileExt::write_all_at once that stabilizes
-    // https://github.com/rust-lang/rust/issues/51984
-    fn write_all_at<T: FileExt>(t: &T, mut buf: &[u8], mut offset: u64)
-        -> io::Result<()>
-    {
-        while !buf.is_empty() {
-            match t.write_at(buf, offset) {
-                Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero,
-                    "failed to write whole buffer")),
-                Ok(n) => {
-                    buf = &buf[n..];
-                    offset += n as u64
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
-
     /// Open the golden master label
     test open(fixture) {
         let golden_uuid = Uuid::parse_str(
@@ -269,9 +248,9 @@ test_suite! {
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
             let offset0 = 0;
-            write_all_at(&f, &GOLDEN, offset0).unwrap();
+            f.write_all_at(&GOLDEN, offset0).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
-            write_all_at(&f, &GOLDEN, offset1).unwrap();
+            f.write_all_at(&GOLDEN, offset1).unwrap();
         }
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             VdevFile::open(fixture.val.0)
@@ -291,13 +270,13 @@ test_suite! {
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
             let offset0 = 0;
-            write_all_at(&f, &GOLDEN, offset0).unwrap();
+            f.write_all_at(&GOLDEN, offset0).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
-            write_all_at(&f, &GOLDEN, offset1).unwrap();
+            f.write_all_at(&GOLDEN, offset1).unwrap();
             let zeros = [0u8; 1];
             // Corrupt the labels' checksum
-            write_all_at(&f, &zeros, offset0 + 16).unwrap();
-            write_all_at(&f, &zeros, offset1 + 16).unwrap();
+            f.write_all_at(&zeros, offset0 + 16).unwrap();
+            f.write_all_at(&zeros, offset1 + 16).unwrap();
         }
         let mut rt = current_thread::Runtime::new().unwrap();
         let e = rt.block_on(future::lazy(|| {
@@ -315,7 +294,7 @@ test_suite! {
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
             let offset0 = 0;
-            write_all_at(&f, &GOLDEN, offset0).unwrap();
+            f.write_all_at(&GOLDEN, offset0).unwrap();
         }
         t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             VdevFile::open(fixture.val.0)
@@ -346,7 +325,7 @@ test_suite! {
                 .write(true)
                 .open(fixture.val.0.clone()).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
-            write_all_at(&f, &GOLDEN, offset1).unwrap();
+            f.write_all_at(&GOLDEN, offset1).unwrap();
         }
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
             VdevFile::open(fixture.val.0)

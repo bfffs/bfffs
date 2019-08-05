@@ -12,6 +12,7 @@ use metrohash::MetroHash64;
 #[cfg(test)] use mockall::mock;
 use std::{
     borrow,
+    convert::identity,
     hash::Hasher,
     sync::{Arc, Mutex}
 };
@@ -102,7 +103,7 @@ impl DDML {
             } else {
                 None
             }
-        }).filter_map(|opt_zone| opt_zone)
+        }).filter_map(identity)
     }
 
     /// Read a record from disk
