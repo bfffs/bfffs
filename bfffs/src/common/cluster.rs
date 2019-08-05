@@ -1880,8 +1880,9 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
     #[test]
     fn find_empty_enospc() {
         let mut fsm = FreeSpaceMap::new(2);
-        fsm.open_zone(0, 0, 1000, 0, TxgT::from(0)).unwrap().is_none();
-        fsm.open_zone(1, 1000, 2000, 0, TxgT::from(0)).unwrap().is_none();
+        assert!(fsm.open_zone(0, 0, 1000, 0, TxgT::from(0)).unwrap().is_none());
+        assert!(
+            fsm.open_zone(1, 1000, 2000, 0, TxgT::from(0)).unwrap().is_none());
         fsm.finish_zone(1, TxgT::from(0));
         assert_eq!(fsm.find_empty(), None);
     }
@@ -1889,15 +1890,16 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
     #[test]
     fn find_empty_explicit() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(0, 0, 1000, 0, TxgT::from(0)).unwrap().is_none();
-        fsm.open_zone(2, 2000, 3000, 0, TxgT::from(0)).unwrap().is_none();
+        assert!(fsm.open_zone(0, 0, 1000, 0, TxgT::from(0)).unwrap().is_none());
+        assert!(
+            fsm.open_zone(2, 2000, 3000, 0, TxgT::from(0)).unwrap().is_none());
         assert_eq!(fsm.find_empty(), Some(1));
     }
 
     #[test]
     fn find_empty_implicit() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(0, 0, 1000, 0, TxgT::from(0)).unwrap().is_none();
+        assert!(fsm.open_zone(0, 0, 1000, 0, TxgT::from(0)).unwrap().is_none());
         assert_eq!(fsm.find_empty(), Some(1));
     }
 
@@ -1905,7 +1907,8 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
     fn finish() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, 0, TxgT::from(0)).unwrap().is_none();
+        assert!(
+            fsm.open_zone(zid, 0, 1000, 0, TxgT::from(0)).unwrap().is_none());
         fsm.finish_zone(zid, TxgT::from(1));
         assert!(!fsm.open_zones.contains_key(&zid));
         assert!(!fsm.is_empty(zid));
@@ -2171,7 +2174,8 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
     fn try_allocate_only_closed_zones() {
         let zid: ZoneT = 0;
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.open_zone(zid, 0, 1000, 0, TxgT::from(0)).unwrap().is_none();
+        assert!(
+            fsm.open_zone(zid, 0, 1000, 0, TxgT::from(0)).unwrap().is_none());
         fsm.finish_zone(zid, TxgT::from(0));
         assert!(fsm.try_allocate(64).0.is_none());
     }
