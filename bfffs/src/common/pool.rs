@@ -1,6 +1,5 @@
 // vim: tw=80
 
-use atomic::{Atomic, Ordering};
 use crate::{
     boxfut,
     common::{*, label::*}
@@ -16,7 +15,10 @@ use futures::{
 use std::{
     ops::Range,
     rc::Rc,
-    sync::Arc
+    sync::{
+        atomic::{AtomicU32, AtomicU64, Ordering},
+        Arc
+    }
 };
 #[cfg(not(test))] use std::{
     num::NonZeroU64,
@@ -351,10 +353,7 @@ pub struct Label {
 struct Stats {
     /// The queue depth of each `Cluster`, including both commands that have
     /// been sent to the disks, and commands that are pending in `VdevBlock`
-    // NB: 32 bits would be preferable for queue_depth, once stable Rust
-    // supports atomic 32-bit ints
-    // https://github.com/rust-lang/rust/issues/32976
-    queue_depth: Vec<Atomic<u64>>,
+    queue_depth: Vec<AtomicU32>,
 
     /// "Best" number of commands to queue to each VdevRaid
     optimum_queue_depth: Vec<f64>,
@@ -364,7 +363,7 @@ struct Stats {
 
     /// The total amount of allocated space in each `Cluster`, excluding
     /// space that has already been freed but not erased.
-    allocated_space: Vec<Atomic<LbaT>>,
+    allocated_space: Vec<AtomicU64>,
 }
 
 impl Stats {
@@ -568,7 +567,7 @@ impl Pool {
         );
         let allocated_fut = future::join_all(clusters.iter()
             .map(|cluster| cluster.allocated()
-                .map(Atomic::new)
+                .map(AtomicU64::new)
             ).collect::<Vec<_>>()
         );
         let oqd_fut = future::join_all(clusters.iter()
@@ -577,7 +576,7 @@ impl Pool {
             ).collect::<Vec<_>>()
         );
         let queue_depth: Vec<_> = clusters.iter()
-            .map(|_| Atomic::new(0))
+            .map(|_| AtomicU32::new(0))
             .collect();
         size_fut.join3(allocated_fut, oqd_fut)
         .map(move |(size, allocated_space, optimum_queue_depth)| {
@@ -1140,9 +1139,9 @@ mod stats {
     fn allocated() {
         let stats = Stats {
             optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![Atomic::new(0), Atomic::new(0)],
+            queue_depth: vec![AtomicU32::new(0), AtomicU32::new(0)],
             size: vec![1000, 1000],
-            allocated_space: vec![Atomic::new(10), Atomic::new(900)]
+            allocated_space: vec![AtomicU64::new(10), AtomicU64::new(900)]
         };
         assert_eq!(stats.allocated(), 910);
     }
@@ -1152,14 +1151,14 @@ mod stats {
         // Two clusters, one full and one empty.  Choose the empty one
         let mut stats = Stats {
             optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![Atomic::new(0), Atomic::new(0)],
+            queue_depth: vec![AtomicU32::new(0), AtomicU32::new(0)],
             size: vec![1000, 1000],
-            allocated_space: vec![Atomic::new(0), Atomic::new(1000)]
+            allocated_space: vec![AtomicU64::new(0), AtomicU64::new(1000)]
         };
         assert_eq!(stats.choose_cluster(), 0);
 
         // Try the reverse, too
-        stats.allocated_space = vec![Atomic::new(1000), Atomic::new(0)];
+        stats.allocated_space = vec![AtomicU64::new(1000), AtomicU64::new(0)];
         assert_eq!(stats.choose_cluster(), 1);
     }
 
@@ -1168,14 +1167,14 @@ mod stats {
         // Two clusters, one busy and one idle.  Choose the idle one
         let mut stats = Stats {
             optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![Atomic::new(0), Atomic::new(10)],
+            queue_depth: vec![AtomicU32::new(0), AtomicU32::new(10)],
             size: vec![1000, 1000],
-            allocated_space: vec![Atomic::new(0), Atomic::new(0)]
+            allocated_space: vec![AtomicU64::new(0), AtomicU64::new(0)]
         };
         assert_eq!(stats.choose_cluster(), 0);
 
         // Try the reverse, too
-        stats.queue_depth = vec![Atomic::new(10), Atomic::new(0)];
+        stats.queue_depth = vec![AtomicU32::new(10), AtomicU32::new(0)];
         assert_eq!(stats.choose_cluster(), 1);
     }
 
@@ -1185,15 +1184,15 @@ mod stats {
         // full.  Choose the not very full one.
         let mut stats = Stats {
             optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![Atomic::new(0), Atomic::new(10)],
+            queue_depth: vec![AtomicU32::new(0), AtomicU32::new(10)],
             size: vec![1000, 1000],
-            allocated_space: vec![Atomic::new(960), Atomic::new(50)]
+            allocated_space: vec![AtomicU64::new(960), AtomicU64::new(50)]
         };
         assert_eq!(stats.choose_cluster(), 1);
 
         // Try the reverse, too
-        stats.queue_depth = vec![Atomic::new(10), Atomic::new(0)];
-        stats.allocated_space = vec![Atomic::new(50), Atomic::new(960)];
+        stats.queue_depth = vec![AtomicU32::new(10), AtomicU32::new(0)];
+        stats.allocated_space = vec![AtomicU64::new(50), AtomicU64::new(960)];
         assert_eq!(stats.choose_cluster(), 0);
     }
 }

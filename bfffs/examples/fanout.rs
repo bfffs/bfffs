@@ -5,7 +5,6 @@
 //! simulating both sequential and random insertion into a large file.  It
 //! computes the Tree's padding fraction (lower is better) and the overall
 //! metadata fraction of the file system.
-use atomic::{Atomic, Ordering};
 use bfffs::{
     boxfut,
     common::{
@@ -26,7 +25,11 @@ use std::{
     io::Write,
     num::NonZeroU8,
     str::FromStr,
-    sync::{Arc, Mutex}
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+        Mutex
+    }
 };
 use tokio_io_pool::Runtime;
 
@@ -75,7 +78,7 @@ impl Stats {
 
 struct FakeDDML {
     name: &'static str,
-    next_lba: Arc<Atomic<u64>>,
+    next_lba: Arc<AtomicU64>,
     save: bool,
     stats: Stats
 }
@@ -89,7 +92,7 @@ impl FakeDDML {
         DRP::new(pba, z, lsize, csize, checksum)
     }
 
-    fn new(name: &'static str, next_lba: Arc<Atomic<u64>>, save: bool) -> Self {
+    fn new(name: &'static str, next_lba: Arc<AtomicU64>, save: bool) -> Self {
         FakeDDML {
             name,
             next_lba,
@@ -173,10 +176,10 @@ impl DML for FakeDDML {
 
 struct FakeIDML {
     alloct: Arc<Tree<DRP, FakeDDML, PBA, RID>>,
-    data_size: Atomic<u64>,
+    data_size: AtomicU64,
     data_ddml: Arc<FakeDDML>,
     name: &'static str,
-    next_rid: Atomic<u64>,
+    next_rid: AtomicU64,
     ridt: Arc<Tree<DRP, FakeDDML, RID, RidtEntry>>,
     save: bool,
     stats: Stats
@@ -196,10 +199,10 @@ impl FakeIDML {
         let ridt = Arc::new(Tree::create(ridt_ddml.clone(), true, 4.22, 3.73));
         FakeIDML {
             alloct,
-            data_size: Atomic::<u64>::default(),
+            data_size: AtomicU64::default(),
             data_ddml,
             name,
-            next_rid: Atomic::<u64>::default(),
+            next_rid: AtomicU64::default(),
             ridt,
             save,
             stats: Stats::default()
@@ -302,7 +305,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     const INODE: u64 = 2;
 
     let mut rt = Runtime::new();
-    let next_lba = Arc::new(Atomic::default());
+    let next_lba = Arc::new(AtomicU64::default());
     let alloct_ddml = Arc::new(FakeDDML::new(&"alloct", next_lba.clone(),
                                              save));
     let ridt_ddml = Arc::new(FakeDDML::new(&"ridt", next_lba.clone(), save));

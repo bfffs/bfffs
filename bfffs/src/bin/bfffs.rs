@@ -122,6 +122,7 @@ use bfffs::common::idml::IDML;
 use bfffs::common::pool::{ClusterProxy, Pool};
 use futures::Future;
 use std::{
+    convert::TryFrom,
     num::NonZeroU64,
     str::FromStr,
     sync::Mutex
@@ -207,7 +208,7 @@ impl Builder {
         let clusters = Vec::new();
         let properties = propstrings.into_iter()
             .map(|ps| {
-                Property::try_from_str(ps).unwrap_or_else(|_e| {
+                Property::try_from(ps).unwrap_or_else(|_e| {
                     eprintln!("Invalid property specification {}", ps);
                     std::process::exit(2);
                 })

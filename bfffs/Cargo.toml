@@ -12,7 +12,6 @@ doctest = false
 nightly = []
 
 [dependencies]
-atomic = "0.3"
 bincode = { version = "1.0.1", features = ["i128"] }
 bitfield = "0.13.1"
 blosc = { git = "https://github.com/asomers/blosc-rs/", rev = "04c9e02"}

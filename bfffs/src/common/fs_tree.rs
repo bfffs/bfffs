@@ -18,6 +18,7 @@ use libc;
 use metrohash::MetroHash64;
 use serde::de::DeserializeOwned;
 use std::{
+    convert::TryFrom,
     ffi::{OsString, OsStr},
     hash::{Hash, Hasher},
     mem,
@@ -230,7 +231,7 @@ impl MinValue for FSKey {
 }
 
 /// `FSValue`s that are stored as in in-BTree hash tables
-pub trait HTItem: Clone + Send + Sized + 'static {
+pub trait HTItem: TryFrom<FSValue<RID>, Error=()> + Clone + Send + Sized + 'static {
     /// Some other type that may be used by the `same` method
     type Aux: Clone + Copy + Send;
 
@@ -239,10 +240,6 @@ pub trait HTItem: Clone + Send + Sized + 'static {
 
     /// Retrieve this item's aux data.
     fn aux(&self) -> Self::Aux;
-
-    /// Create an `HTItem` from an `FSValue` that is known to contain a single
-    /// item of the desired type.
-    fn from_fsvalue(fsvalue: FSValue<RID>) -> Option<Self>;
 
     /// Create an `HTItem` from an `FSValue` whose contents are unknown.  It
     /// could be a single item, a bucket, or even a totally different item type.
@@ -285,10 +282,6 @@ impl HTItem for Dirent {
         self.ino
     }
 
-    fn from_fsvalue(fsvalue: FSValue<RID>) -> Option<Self> {
-        fsvalue.into_dirent()
-    }
-
     fn from_table(fsvalue: Option<FSValue<RID>>) -> HTValue<Self> {
         match fsvalue {
             Some(FSValue::DirEntry(x)) => HTValue::Single(x),
@@ -311,6 +304,18 @@ impl HTItem for Dirent {
         // just check the name
         self.name == name.as_ref()
     }   // LCOV_EXCL_LINE kcov false negative
+}
+
+impl TryFrom<FSValue<RID>> for Dirent {
+    type Error = ();
+
+    fn try_from(fsvalue: FSValue<RID>) -> Result<Self, ()> {
+        if let FSValue::DirEntry(dirent) = fsvalue {
+            Ok(dirent)
+        } else {
+            Err(())
+        }
+    }
 }
 
 /// In-memory representation of a small extended attribute
@@ -419,10 +424,6 @@ impl HTItem for ExtAttr<RID> {
         self.namespace()
     }
 
-    fn from_fsvalue(fsvalue: FSValue<RID>) -> Option<Self> {
-        fsvalue.into_extattr()
-    }
-
     fn from_table(fsvalue: Option<FSValue<RID>>) -> HTValue<Self> {
         match fsvalue {
             Some(FSValue::ExtAttr(x)) => HTValue::Single(x),
@@ -442,6 +443,18 @@ impl HTItem for ExtAttr<RID> {
 
     fn same<T: AsRef<OsStr>>(&self, aux: Self::Aux, name: T) -> bool {
         self.namespace() == aux && self.name() == name.as_ref()
+    }
+}
+
+impl TryFrom<FSValue<RID>> for ExtAttr<RID> {
+    type Error = ();
+
+    fn try_from(fsvalue: FSValue<RID>) -> Result<Self, ()> {
+        if let FSValue::ExtAttr(extent) = fsvalue {
+            Ok(extent)
+        } else {
+            Err(())
+        }
     }
 }
 
@@ -703,22 +716,6 @@ impl<A: Addr> FSValue<A> {
     pub fn as_mut_inode(&mut self) -> Option<&mut Inode> {
         if let FSValue::Inode(ref mut inode) = self {
             Some(inode)
-        } else {
-            None
-        }
-    }
-
-    pub fn into_dirent(self) -> Option<Dirent> {
-        if let FSValue::DirEntry(dirent) = self {
-            Some(dirent)
-        } else {
-            None
-        }
-    }
-
-    pub fn into_extattr(self) -> Option<ExtAttr<A>> {
-        if let FSValue::ExtAttr(extent) = self {
-            Some(extent)
         } else {
             None
         }

@@ -1,7 +1,6 @@
 // vim: tw=80
 //! Common VFS implementation
 
-use atomic::*;
 use bitfield::*;
 use crate::{
     *,
@@ -21,7 +20,10 @@ use futures::{
     Stream,
     future,
     stream,
-    sync::{mpsc, oneshot}
+    sync::{
+        mpsc,
+        oneshot
+    }
 };
 use libc;
 use std::{
@@ -29,7 +31,10 @@ use std::{
     ffi::{OsStr, OsString},
     mem,
     os::unix::ffi::OsStrExt,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    }
 };
 #[cfg(not(test))] use std::io;
 use time;
@@ -136,7 +141,7 @@ mod htable {
                         let fut = dataset.as_ref().get(key)
                         .and_then(move |r| {
                             let v = r.unwrap();
-                            let new = T::from_fsvalue(v).unwrap();
+                            let new = T::try_from(v).unwrap();
                             let values = vec![old, new];
                             let fsvalue = T::into_bucket(values);
                             dataset.as_ref().insert(key, fsvalue)
@@ -151,7 +156,7 @@ mod htable {
                     let fut = dataset.as_ref().get(key)
                     .and_then(move |r| {
                         let v = r.unwrap();
-                        let new = T::from_fsvalue(v).unwrap();
+                        let new = T::try_from(v).unwrap();
                         let r = if let Some(i) = old.iter().position(|x| {
                             x.same(aux, &name)
                         }) {
@@ -300,7 +305,7 @@ impl<'a> From<&'a [u8]> for Uio {
 /// system-dependent filesystem interfaces.
 pub struct Fs {
     db: Arc<Database>,
-    next_object: Atomic<u64>,
+    next_object: AtomicU64,
     handle: tokio_io_pool::Handle,
     tree: TreeID,
 
@@ -780,7 +785,7 @@ impl Fs {
             }).map_err(Error::unhandled)
         ).unwrap();
         let (last_key, (atimep, _), (recsizep, _)) = rx.wait().unwrap();
-        let next_object = Atomic::new(last_key.unwrap().object() + 1);
+        let next_object = AtomicU64::new(last_key.unwrap().object() + 1);
         let atime = atimep.as_bool();
         let record_size = recsizep.as_u8();
         Fs{db: database, next_object, handle, tree, atime, record_size}

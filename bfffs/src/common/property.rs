@@ -2,6 +2,7 @@
 //! Dataset Properties
 use crate::common::Error;
 use serde_derive::*;
+use std::convert::TryFrom;
 
 /// All dataset properties are associated with this fake inode number.
 pub const PROPERTY_OBJECT: u64 = 0;
@@ -59,11 +60,13 @@ impl Property {
             _ => panic!(format!("{:?} is not a u8 Property", self))
         }
     }
+}
 
-    // This should be TryFrom::try_from once that trait is stabilized
-    // https://github.com/rust-lang/rust/issues/33417
-    pub fn try_from_str<S: AsRef<str>>(s: S) -> Result<Self, Error> {
-        let mut words = s.as_ref().splitn(2, '=');
+impl TryFrom<&str> for Property {
+    type Error = Error;
+
+    fn try_from(s: &str) -> Result<Self, Error> {
+        let mut words = s.splitn(2, '=');
         let propname = words.next().ok_or(Error::EINVAL)?;
         let propval = words.next();
         if propval.is_none() {
@@ -145,21 +148,21 @@ use pretty_assertions::assert_eq;
 use super::*;
 
 #[test]
-fn property_try_from_str() {
-    assert_eq!(Ok(Property::Atime(true)), Property::try_from_str("atime=true"));
-    assert_eq!(Ok(Property::Atime(true)), Property::try_from_str("atime=on"));
-    assert_eq!(Ok(Property::Atime(true)), Property::try_from_str("atime"));
+fn property_try_from() {
+    assert_eq!(Ok(Property::Atime(true)), Property::try_from("atime=true"));
+    assert_eq!(Ok(Property::Atime(true)), Property::try_from("atime=on"));
+    assert_eq!(Ok(Property::Atime(true)), Property::try_from("atime"));
     assert_eq!(Ok(Property::Atime(false)),
-               Property::try_from_str("atime=false"));
-    assert_eq!(Ok(Property::Atime(false)), Property::try_from_str("atime=off"));
-    assert_eq!(Err(Error::EINVAL), Property::try_from_str("atime=xyz"));
+               Property::try_from("atime=false"));
+    assert_eq!(Ok(Property::Atime(false)), Property::try_from("atime=off"));
+    assert_eq!(Err(Error::EINVAL), Property::try_from("atime=xyz"));
     assert_eq!(Ok(Property::RecordSize(12)),
-               Property::try_from_str("record_size=4096"));
+               Property::try_from("record_size=4096"));
     assert_eq!(Ok(Property::RecordSize(13)),
-               Property::try_from_str("record_size=8192"));
-    assert_eq!(Err(Error::EINVAL), Property::try_from_str("record_size=12"));
-    assert_eq!(Err(Error::EINVAL), Property::try_from_str("record_size=true"));
-    assert_eq!(Err(Error::EINVAL), Property::try_from_str("record_size"));
+               Property::try_from("record_size=8192"));
+    assert_eq!(Err(Error::EINVAL), Property::try_from("record_size=12"));
+    assert_eq!(Err(Error::EINVAL), Property::try_from("record_size=true"));
+    assert_eq!(Err(Error::EINVAL), Property::try_from("record_size"));
 }
 
 }

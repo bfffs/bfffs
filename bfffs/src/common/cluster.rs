@@ -18,6 +18,7 @@ use std::{
     cell::RefCell,
     cmp,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
+    convert::TryFrom,
     fmt::{self, Display, Formatter},
     hash::Hash,
     ops::Range,
@@ -267,11 +268,8 @@ impl<'a> FreeSpaceMap {
         assert!(!self.is_empty(zone_id), "Can't free from an empty zone");
         let zone = self.zones.get_mut(zone_id as usize).expect(
             "Can't free from an empty zone");
-        // NB: the next two lines can be replaced by u32::try_from(length), once
-        // that feature is stabilized
-        // https://github.com/rust-lang/rust/issues/33417
-        assert!(length < LbaT::from(u32::max_value()));
-        zone.freed_blocks += length as u32;
+        zone.freed_blocks += u32::try_from(length).expect(
+            "Freeing multiple GB at a time?  Zones can't be that big...");
         assert!(zone.freed_blocks <= zone.total_blocks,
                 "Double free detected.  freed={:?}, total={:?}",
                 zone.freed_blocks, zone.total_blocks);

@@ -1,11 +1,11 @@
 //! Tests regarding Tree::clean_zone
 // LCOV_EXCL_START
 
-use atomic::{Atomic, Ordering};
 use crate::common::ddml::*;
 use futures::{future::IntoFuture, future};
 use mockall::{Predicate, params, predicate::*};
 use pretty_assertions::assert_eq;
+use std::sync::atomic::{AtomicU64, Ordering};
 use super::*;
 use tokio::runtime::current_thread;
 
@@ -89,7 +89,7 @@ fn basic() {
             .withf_unsafe(move |args: &(*const DRP, TxgT)| *args.0 == drpl8)
             .return_once(move |_| Box::new(future::ok(Box::new(ln8))));
     }
-    let next_lba = Atomic::<u64>::new(0);
+    let next_lba = AtomicU64::new(0);
     mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
         .times(3)
         .with(params!(always(), always(), eq(TxgT::from(42))))

@@ -1,7 +1,4 @@
 // vim: tw=80
-// use the atomic crate since libstd's AtomicU64 type is still unstable
-// https://github.com/rust-lang/rust/issues/32976
-use atomic::{Atomic, Ordering};
 use crate::{
     boxfut,
     common::*
@@ -32,6 +29,7 @@ use std::{
     ops::{Bound, Deref, DerefMut, Range, RangeBounds, RangeInclusive},
     rc::Rc,
     sync::{
+        atomic::{AtomicU64, Ordering},
         Arc,
     }
 };
@@ -82,7 +80,7 @@ fn ranges_overlap<R, T, U>(x: &R, y: &Range<U>) -> bool
 mod atomic_u64_serializer {
     use super::*;
 
-    pub fn serialize<S>(x: &Atomic<u64>, s: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(x: &AtomicU64, s: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
         s.serialize_u64(x.load(Ordering::Relaxed) as u64)
@@ -337,7 +335,7 @@ struct Inner<A: Addr, D: DML, K: Key, V: Value> {
     // Use atomics so it can be modified from an immutable reference.  Accesses
     // should be very rare, so performance is not a concern.
     #[serde(with = "atomic_u64_serializer")]
-    height: Atomic<u64>,
+    height: AtomicU64,
     limits: Limits,
     /// Root node
     #[serde(with = "tree_root_serializer")]
@@ -384,7 +382,7 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
         };
         let leaf_compressor = Compression::LZ4(Some(leaf_ts));
         Inner {
-            height: Atomic::new(height),
+            height: AtomicU64::new(height),
             limits,
             root: RwLock::new(root_elem),
             dml,

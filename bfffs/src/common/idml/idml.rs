@@ -1,8 +1,5 @@
 // vim: tw=80
 
-// use the atomic crate since libstd's AtomicU64 type is still unstable
-// https://github.com/rust-lang/rust/issues/32976
-use atomic::{Atomic, Ordering};
 use crate::{
     boxfut,
     common::{
@@ -18,7 +15,10 @@ use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
 use std::{
     io,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex
+    },
 };
 use super::*;
 
@@ -43,7 +43,7 @@ pub struct IDML {
     ddml: Arc<DDML>,
 
     /// Holds the next RID to allocate.  They are never reused.
-    next_rid: Atomic<u64>,
+    next_rid: AtomicU64,
 
     /// Current transaction group
     transaction: RwLock<TxgT>,
@@ -189,7 +189,7 @@ impl<'a> IDML {
 
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
         let alloct = DTree::<PBA, RID>::create(ddml.clone(), true, 16.5, 2.809);
-        let next_rid = Atomic::new(0);
+        let next_rid = AtomicU64::new(0);
         let ridt = DTree::<RID, RidtEntry>::create(ddml.clone(), true, 4.22,
             3.73);
         let transaction = RwLock::new(TxgT::from(0));
@@ -247,7 +247,7 @@ impl<'a> IDML {
         let alloct = DTree::open(ddml.clone(), true, l.alloct);
         let ridt = DTree::open(ddml.clone(), true, l.ridt);
         let transaction = RwLock::new(l.txg);
-        let next_rid = Atomic::new(l.next_rid);
+        let next_rid = AtomicU64::new(l.next_rid);
         let trees = Arc::new(Trees{alloct, ridt});
         let idml = IDML{cache, ddml, next_rid, transaction, trees};
         (idml, label_reader)
