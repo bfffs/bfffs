@@ -10,7 +10,7 @@ use std::{
     borrow::{Borrow, BorrowMut},
     fs::OpenOptions,
     io,
-    mem,
+    mem::{self, MaybeUninit},
     num::NonZeroU64,
     os::unix::{
         fs::OpenOptionsExt,
@@ -270,14 +270,13 @@ impl VdevFile {
     const DEFAULT_LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
 
     fn candelete(fd: RawFd) -> Result<bool, Error> {
-        let mut name: [u8; 64] = unsafe { mem::uninitialized() };
-        name[0..16].copy_from_slice(b"GEOM::candelete\0");
-        let len = mem::size_of::<c_int>() as c_int;
-        let value: ffi::diocgattr_arg_value = unsafe { mem::uninitialized() };
-        let mut arg = ffi::diocgattr_arg{name, len, value};
+        let mut arg = MaybeUninit::<ffi::diocgattr_arg>::uninit();
         let r = unsafe {
-            ffi::diocgattr(fd, &mut arg)
-        }.map(|_| unsafe { arg.value.i } != 0)
+            let p = arg.as_mut_ptr();
+            (*p).name[0..16].copy_from_slice(b"GEOM::candelete\0");
+            (*p).len = mem::size_of::<c_int>() as c_int;
+            ffi::diocgattr(fd, p)
+        }.map(|_| unsafe { arg.assume_init().value.i } != 0)
         .map_err(Error::from);
         if r == Err(Error::ENOTTY) {
             // This vdev doesn't support DIOCGATTR, so it must not support
@@ -370,6 +369,7 @@ impl VdevFile {
     {
         let lba = LabelReader::lba(label);
         let offset = lba * BYTES_PER_LBA as u64;
+        // TODO: figure out how to use mem::MaybeUninit with divbuf
         let dbs = DivBufShared::uninitialized(LABEL_SIZE);
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
