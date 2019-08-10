@@ -944,7 +944,7 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
         Arc::new(Node(RwLock::new(node_data)))
     }
 
-    fn eq(&self, o: &Cacheable) -> bool {
+    fn eq(&self, o: &dyn Cacheable) -> bool {
         if let Ok(other) = o.downcast_ref::<Arc<Node<A, K, V>>>() {
             // Since the cache is strictly read-only, try_read is guaranteed to
             // work if both values are cached, which is probably the only

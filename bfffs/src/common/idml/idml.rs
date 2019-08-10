@@ -197,7 +197,7 @@ impl<'a> IDML {
         IDML{cache, ddml, next_rid, transaction, trees}
     }
 
-    pub fn dump_trees(&self, f: &mut io::Write) -> Result<(), Error>
+    pub fn dump_trees(&self, f: &mut dyn io::Write) -> Result<(), Error>
     {
         self.trees.ridt.dump(f)?;
         self.trees.alloct.dump(f)

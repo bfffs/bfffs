@@ -33,7 +33,7 @@ use crate::common::cluster::MockCluster as Cluster;
 #[cfg(not(test))]
 use crate::common::cluster::Cluster;
 
-pub type PoolFut = Future<Item = (), Error = Error>;
+pub type PoolFut = dyn Future<Item = (), Error = Error>;
 
 /// Communication type used between `ClusterProxy` and `ClusterServer`
 #[derive(Debug)]

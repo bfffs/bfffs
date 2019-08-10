@@ -185,10 +185,10 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
             let handle = rt.handle().clone();
             let r = rt.block_on(future::lazy(move || {
                 if let Ok(fut) = dev_manager.import_by_name(pool, handle) {
-                    Box::new(fut) as Box<Future<Item = _, Error = _> + Send>
+                    Box::new(fut) as Box<dyn Future<Item = _, Error = _> + Send>
                 } else {
                     Box::new(Err(Error::ENOENT).into_future())
-                        as Box<Future<Item = _, Error = _> + Send>
+                        as Box<dyn Future<Item = _, Error = _> + Send>
                 }
             }));
             if let Ok(db) = r {

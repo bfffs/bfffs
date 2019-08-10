@@ -172,7 +172,7 @@ impl DDML {
     fn put_common<T>(&self, cacheref: &T, compression: Compression,
                      txg: TxgT)
         -> impl Future<Item=DRP, Error=Error> + Send
-        where T: borrow::Borrow<CacheRef>
+        where T: borrow::Borrow<dyn CacheRef>
     {
         // Outline:
         // 1) Serialize
@@ -208,7 +208,7 @@ impl DDML {
     pub fn put_direct<T>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
         -> impl Future<Item=DRP, Error=Error> + Send
-        where T: borrow::Borrow<CacheRef>
+        where T: borrow::Borrow<dyn CacheRef>
     {
         self.put_common(cacheref, compression, txg)
     }

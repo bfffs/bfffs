@@ -4,7 +4,7 @@ use crate::common::*;
 use futures;
 
 /// Future representing an operation on a vdev.
-pub type VdevFut = futures::Future<Item = (), Error = Error>;
+pub type VdevFut = dyn futures::Future<Item = (), Error = Error>;
 
 /// Boxed `VdevFut`
 pub type BoxVdevFut = Box<dyn futures::Future<Item = (), Error = Error>>;

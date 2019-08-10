@@ -208,7 +208,7 @@ impl VdevLeafApi for VdevFile {
     fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
         let off = lba * (BYTES_PER_LBA as u64);
         let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecMutContainer(iovec)) as Box<BorrowMut<[u8]>>
+            Box::new(IoVecMutContainer(iovec)) as Box<dyn BorrowMut<[u8]>>
         }).collect();
         let fut = VdevFileLioFut(self.file.readv_at(containers, off).unwrap());
         Box::new(fut)
@@ -248,7 +248,7 @@ impl VdevLeafApi for VdevFile {
         let lbas = bytes / BYTES_PER_LBA as LbaT;
         assert!(lba + lbas <= self.reserved_space());
         let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
+            Box::new(IoVecContainer(iovec)) as Box<dyn Borrow<[u8]>>
         }).collect();
         let off = lba * (BYTES_PER_LBA as u64);
         let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
@@ -258,7 +258,7 @@ impl VdevLeafApi for VdevFile {
     fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
         let off = lba * (BYTES_PER_LBA as u64);
         let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecContainer(iovec)) as Box<Borrow<[u8]>>
+            Box::new(IoVecContainer(iovec)) as Box<dyn Borrow<[u8]>>
         }).collect();
         let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
         Box::new(fut)
@@ -392,7 +392,7 @@ impl VdevFile {
         LABEL_COUNT * (LABEL_LBAS as u64 + self.spacemap_space)
     }
 
-    fn write_at_unchecked(&self, buf: Box<Borrow<[u8]>>, lba: LbaT)
+    fn write_at_unchecked(&self, buf: Box<dyn Borrow<[u8]>>, lba: LbaT)
         -> impl Future<Item = (), Error = Error>
     {
         {
