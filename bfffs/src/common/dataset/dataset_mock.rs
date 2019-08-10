@@ -21,8 +21,8 @@ mock! {
         fn allocated(&self) -> LbaT;
         fn last_key(&self)
             -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
-        fn new<K2: Key, V2: Value>(idml: Arc<IDML>, tree: Arc<ITree<K2, V2>>)
-            -> ReadOnlyDataset<K2, V2>;
+        fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>)
+            -> ReadOnlyDataset<K, V>;
         fn size(&self) -> LbaT;
     }
     trait ReadDataset<K: Key, V: Value> {
@@ -49,10 +49,8 @@ mock! {
             -> Box<Future<Item=Option<V>, Error=Error> + Send>;
         fn last_key(&self)
             -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
-        fn new<K2, V2>(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT)
-            -> ReadWriteDataset<K2, V2>
-            where K2: Key,
-                  V2: Value;
+        fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT)
+            -> ReadWriteDataset<K, V>;
         fn put_blob(&self, dbs: DivBufShared, compression: Compression)
             -> Box<Future<Item=RID, Error=Error> + Send>;
         fn range_delete<R, T>(&self, range: R)

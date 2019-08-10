@@ -24,8 +24,8 @@ mock! {
         fn check(&self) -> Box<Future<Item=bool, Error=Error> + Send>;
         fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
             -> Box<Future<Item=(), Error=Error> + Send>;
-        fn create<A2: Addr, D2: DML<Addr=A2> + 'static>(dml: Arc<D2>,
-            seq: bool, lzratio: f32, izratio: f32) -> MockTree<A2, D2, K, V>;
+        fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)
+            -> MockTree<A, D, K, V>;
         fn flush(&self, txg: TxgT)
             -> Box<dyn Future<Item=(), Error=Error> + Send>;
         fn get(&self, k: K)
@@ -34,9 +34,8 @@ mock! {
             -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
         fn last_key(&self)
             -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
-        fn open<A2: Addr, D2: DML<Addr=A2> + 'static>(dml: Arc<D2>, seq: bool,
-                                                      on_disk: TreeOnDisk<A2>)
-            -> MockTree<A2, D2, K, V>;
+        fn open(dml: Arc<D>, seq: bool, on_disk: TreeOnDisk<A>)
+            -> MockTree<A, D, K, V>;
         fn range<R, T>(&self, range: R) -> RangeQuery<A, D, K, T, V>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
