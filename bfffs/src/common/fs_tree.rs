@@ -808,9 +808,9 @@ fn fsvalue_flush_inline_extattr_long() {
     let mut idml = IDML::default();
     idml.expect_put()
         .once()
-        .withf(move |args: &(DivBufShared, _, _)| {
-            args.0.len() == BYTES_PER_LBA
-        }).returning(move |_| boxfut!(Ok(rid).into_future()));
+        .withf(|cacheable: &DivBufShared, _compression, _txg| {
+            cacheable.len() == BYTES_PER_LBA
+        }).returning(move |_, _, _| boxfut!(Ok(rid).into_future()));
     let txg = TxgT(0);
     let mut rt = current_thread::Runtime::new().unwrap();
 
@@ -860,9 +860,9 @@ fn fsvalue_flush_inline_extent_long() {
     let mut idml = IDML::default();
     idml.expect_put()
         .once()
-        .withf(move |args: &(DivBufShared, _, _)| {
-            args.0.len() == BYTES_PER_LBA
-        }).returning(move |_| boxfut!(Ok(rid).into_future()));
+        .withf(|cacheable: &DivBufShared, _compression, _txg| {
+            cacheable.len() == BYTES_PER_LBA
+        }).returning(move |_, _, _| boxfut!(Ok(rid).into_future()));
     let txg = TxgT(0);
     let mut rt = current_thread::Runtime::new().unwrap();
 

@@ -846,7 +846,7 @@ test_suite! {
     use futures::{Poll, future};
     use mockall::*;
     use mockall::predicate::*;
-    use predicates::boolean::PredicateBooleanExt;
+    use mockall::PredicateBooleanExt;
     use permutohedron;
     use pretty_assertions::assert_eq;
     use super::*;
@@ -866,14 +866,14 @@ test_suite! {
             let mut leaf = MockVdevFile::new();
             leaf.expect_size()
                 .once()
-                .return_const(262_144);
+                .return_const(262_144u64);
             leaf.expect_lba2zone()
                 .with(ge(1).and(lt(1<<16)))
                 .return_const(Some(0));
             leaf.expect_optimum_queue_depth()
-                .return_const(10);
+                .return_const(10u32);
             leaf.expect_spacemap_space()
-                .return_const(1);
+                .return_const(1u64);
             leaf.expect_zone_limits()
                 .with(eq(0))
                 .return_const((1, 1 << 16));
@@ -896,10 +896,10 @@ test_suite! {
         // The first operation succeeds asynchronously.  When it does, that will
         // cause the second to be reissued.
         leaf.expect_read_at()
-            .with(params!(always(), eq(1)))
+            .with(always(), eq(1))
             .once()
             .in_sequence(&mut seq0)
-            .returning( move |_| {
+            .returning( move |_, _| {
                 let mut seq1 = Sequence::new();
                 let mut fut = MockVdevFut::new();
                 fut.expect_poll()
@@ -914,10 +914,10 @@ test_suite! {
             });
 
         leaf.expect_read_at()
-            .with(params!(always(), eq(2)))
+            .with(always(), eq(2))
             .once()
             .in_sequence(&mut seq0)
-            .returning( move |_| {
+            .returning( move |_, _| {
                 let mut seq1 = Sequence::new();
                 let mut fut = MockVdevFut::new();
                 fut.expect_poll()
@@ -950,20 +950,20 @@ test_suite! {
         let mut seq0 = Sequence::new();
 
         leaf.expect_read_at()
-            .with(params!(always(), eq(1)))
+            .with(always(), eq(1))
             .once()
             .in_sequence(&mut seq0)
-            .returning(move |_| {
+            .returning(move |_, _| {
                 let mut seq1 = Sequence::new();
                 let mut fut = MockVdevFut::new();
                 fut.expect_poll()
                     .once()
                     .in_sequence(&mut seq1)
-                    .return_once(|_| Err(Error::EAGAIN));
+                    .return_once(|| Err(Error::EAGAIN));
                 fut.expect_poll()
                     .once()
                     .in_sequence(&mut seq1)
-                    .return_once(|_| Ok(Async::Ready(())));
+                    .return_once(|| Ok(Async::Ready(())));
                 Box::new(fut)
             });
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -1014,8 +1014,8 @@ test_suite! {
     test basic_read_at(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_read_at()
-            .with(params!(always(), eq(2)))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .with(always(), eq(2))
+            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
@@ -1029,8 +1029,8 @@ test_suite! {
     test basic_readv_at(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_readv_at()
-            .with(params!(always(), eq(2)))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .with(always(), eq(2))
+            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = vec![dbs0.try_mut().unwrap()];
@@ -1044,7 +1044,7 @@ test_suite! {
     test basic_sync_all(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_sync_all()
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .returning(|| Box::new(future::ok::<(), Error>(())));
 
         let vdev = VdevBlock::new(leaf);
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
@@ -1302,15 +1302,15 @@ test_suite! {
         let fut0 = Box::new(receiver.map_err(move |_| e));
         let fut1 = Box::new(future::ok::<(), Error>(()));
         leaf.expect_read_at()
-            .with(params!(always(), eq(1)))
+            .with(always(), eq(1))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(move |_| fut0);
+            .return_once_st(move |_, _| fut0);
         leaf.expect_read_at()
-            .with(params!(always(), eq(2)))
+            .with(always(), eq(2))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(move |_| {
+            .return_once_st(move |_, _| {
                 sender.send(()).unwrap();
                 fut1
             });
@@ -1343,25 +1343,25 @@ test_suite! {
         .unzip();
         for (i, f) in futs.into_iter().enumerate().rev() {
             leaf.expect_write_at()
-                .with(params!(always(), eq(i as LbaT + 1)))
+                .with(always(), eq(i as LbaT + 1))
                 .once()
                 .in_sequence(&mut seq)
-                .return_once_st(|_| Box::new(f));
+                .return_once_st(|_, _| Box::new(f));
         }
         // Schedule the final two operations in reverse LBA order, but verify
         // that they get issued in actual LBA order
         let final_fut = future::ok::<(), Error>(());
         leaf.expect_write_at()
-            .with(params!(always(), eq(LbaT::from(num_ops) - 1)))
+            .with(always(), eq(LbaT::from(num_ops) - 1))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(|_| Box::new(final_fut));
+            .return_once_st(|_, _| Box::new(final_fut));
         let penultimate_fut = future::ok::<(), Error>(());
         leaf.expect_write_at()
-            .with(params!(always(), eq(LbaT::from(num_ops))))
+            .with(always(), eq(LbaT::from(num_ops)))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(|_| Box::new(penultimate_fut));
+            .return_once_st(|_, _| Box::new(penultimate_fut));
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let vdev = VdevBlock::new(leaf);
@@ -1398,9 +1398,9 @@ test_suite! {
     test basic_write_at(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_write_at()
-            .with(params!(always(), eq(1)))
+            .with(always(), eq(1))
             .once()
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
@@ -1414,8 +1414,8 @@ test_suite! {
     test basic_writev_at(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_writev_at()
-            .with(params!(always(), eq(1)))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .with(always(), eq(1))
+            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = vec![dbs.try_const().unwrap()];

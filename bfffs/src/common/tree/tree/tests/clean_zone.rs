@@ -3,7 +3,7 @@
 
 use crate::common::ddml::*;
 use futures::{future::IntoFuture, future};
-use mockall::{Predicate, params, predicate::*};
+use mockall::predicate::*;
 use pretty_assertions::assert_eq;
 use std::sync::atomic::{AtomicU64, Ordering};
 use super::*;
@@ -64,36 +64,33 @@ fn basic() {
 
     let mut mock = DDML::default();
     type T = Arc<Node<DRP, u32, f32>>;
-    // Safe because the test is single-threaded
-    unsafe {
-        mock.expect_get::<T, T>()
-            .withf_unsafe(move |arg: & *const DRP| **arg == drpi1)
-            .returning(move |_| Box::new(future::ok(Box::new(in1.clone()))));
-        mock.expect_get::<T, T>()
-            .withf_unsafe(move |arg: & *const DRP| **arg == drpi2)
-            .returning(move |_| Box::new(future::ok(Box::new(in2.clone()))));
-        mock.expect_pop::<T, T>()
-            .once()
-            .withf_unsafe(move |args: &(*const DRP, TxgT)| *args.0 == drpl3)
-            .return_once(move |_| Box::new(future::ok(Box::new(ln3))));
-        mock.expect_pop::<T, T>()
-            .once()
-            .withf_unsafe(move |args: &(*const DRP, TxgT)| *args.0 == drpi1)
-            .return_once(move |_| Box::new(future::ok(Box::new(in1_c))));
-        mock.expect_pop::<T, T>()
-            .once()
-            .withf_unsafe(move |args: &(*const DRP, TxgT)| *args.0 == drpi2)
-            .return_once(move |_| Box::new(future::ok(Box::new(in2_c))));
-        mock.expect_pop::<T, T>()
-            .once()
-            .withf_unsafe(move |args: &(*const DRP, TxgT)| *args.0 == drpl8)
-            .return_once(move |_| Box::new(future::ok(Box::new(ln8))));
-    }
+    mock.expect_get::<T, T>()
+        .with(eq(drpi1))
+        .returning(move |_| Box::new(future::ok(Box::new(in1.clone()))));
+    mock.expect_get::<T, T>()
+        .with(eq(drpi2))
+        .returning(move |_| Box::new(future::ok(Box::new(in2.clone()))));
+    mock.expect_pop::<T, T>()
+        .once()
+        .with(eq(drpl3), always())
+        .return_once(move |_, _| Box::new(future::ok(Box::new(ln3))));
+    mock.expect_pop::<T, T>()
+        .once()
+        .with(eq(drpi1), always())
+        .return_once(move |_, _| Box::new(future::ok(Box::new(in1_c))));
+    mock.expect_pop::<T, T>()
+        .once()
+        .with(eq(drpi2), always())
+        .return_once(move |_, _| Box::new(future::ok(Box::new(in2_c))));
+    mock.expect_pop::<T, T>()
+        .once()
+        .with(eq(drpl8), always())
+        .return_once(move |_, _| Box::new(future::ok(Box::new(ln8))));
     let next_lba = AtomicU64::new(0);
     mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
         .times(3)
-        .with(params!(always(), always(), eq(TxgT::from(42))))
-        .returning(move |(_cacheable, compression, _txg)| {
+        .with(always(), always(), eq(TxgT::from(42)))
+        .returning(move |_cacheable, compression, _txg| {
             let lba = next_lba.fetch_add(1, Ordering::Relaxed);
             let drp = DRP::new(PBA{cluster: 1, lba}, compression, 0, 0, 0);
             Box::new(Ok(drp).into_future())
@@ -356,25 +353,21 @@ fn dirty_root() {
 
     let mut mock = DDML::default();
     type T = Arc<Node<DRP, u32, f32>>;
-    // Safe because the test is single-threaded
-    unsafe {
-        mock.expect_get::<T, T>()
-            .withf_unsafe(move |arg: & *const DRP| **arg == drpir )
-            .returning(move |_arg: *const DRP| {
-                Box::new(future::ok(Box::new(inr.clone())))
-            });
-        mock.expect_pop::<T, T>()
-            .once()
-            .withf_unsafe(move |args: &(*const DRP, TxgT)|
-                 *args.0 == drpir && args.1 == TxgT::from(42)
-            ).return_once(move |_args: (*const DRP, TxgT)| {
-                Box::new(future::ok(Box::new(inr_c)))
-            });
-    }
+    mock.expect_get::<T, T>()
+        .with(eq(drpir))
+        .returning(move |_| {
+            Box::new(future::ok(Box::new(inr.clone())))
+        });
+    mock.expect_pop::<T, T>()
+        .once()
+        .with(eq(drpir), eq(TxgT::from(42)))
+        .return_once(move |_, _| {
+            Box::new(future::ok(Box::new(inr_c)))
+        });
     mock.expect_put::<T>()
         .once()
-        .with(params!(always(), always(), eq(TxgT::from(42))))
-        .returning(move |(_cacheable, _compression, _txg)| {
+        .with(always(), always(), eq(TxgT::from(42)))
+        .returning(move |_cacheable, _compression, _txg| {
             let drp = DRP::random(Compression::None, 1024);
             Box::new(Ok(drp).into_future())
         });

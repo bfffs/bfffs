@@ -2072,7 +2072,7 @@ root:
 fn range_delete_fix_three_times() {
     let mut mock = MockDML::new();
     mock.expect_delete()
-        .returning(move |_| Box::new(future::ok::<(), Error>(())));
+        .returning(move |_, _| Box::new(future::ok::<(), Error>(())));
 
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
@@ -5941,7 +5941,7 @@ root:
 fn range_delete_pass2_steal_creates_an_lca() {
     let mut mock = MockDML::new();
     mock.expect_delete()
-        .returning(move |_| Box::new(future::ok::<(), Error>(())));
+        .returning(move |_, _| Box::new(future::ok::<(), Error>(())));
 
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"

@@ -1927,7 +1927,7 @@ use crate::common::{
     tree::{Key, MinValue, Value}
 };
 use futures::Async;
-use mockall::{Predicate, Sequence, params, predicate::*};
+use mockall::{Sequence, predicate::*};
 use pretty_assertions::assert_eq;
 use std::borrow::Borrow;
 
@@ -1939,7 +1939,7 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
     let mut ds = ReadOnlyFilesystem::default();
     ds.expect_last_key()
         .once()
-        .returning(|_| Box::new(Ok(Some(FSKey::min_value())).into_future()));
+        .returning(|| Box::new(Ok(Some(FSKey::min_value())).into_future()));
     let mut db = Database::default();
     db.expect_new_fs()
         .once()
@@ -1949,7 +1949,7 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .return_once(move |_| ds);
     db.expect_get_prop()
         .times(2)
-        .returning(|(_tree_id, propname)| {
+        .returning(|_tree_id, propname| {
             let prop = Property::default_value(propname);
             let source = PropertySource::Default;
             Box::new(Ok((prop, source)).into_future())
@@ -1971,12 +1971,12 @@ fn mock_range_query<K, T, V>(items: Vec<(K, V)>) -> RangeQuery<K, T, V>
         rq.expect_poll()
             .once()
             .in_sequence(&mut seq)
-            .return_once(|_| Ok(Async::Ready(Some(item))));
+            .return_once(|| Ok(Async::Ready(Some(item))));
     }
     rq.expect_poll()
         .once()
         .in_sequence(&mut seq)
-        .return_once(|_| Ok(Async::Ready(None)));
+        .return_once(|| Ok(Async::Ready(None)));
     rq
 }
 
@@ -2010,33 +2010,33 @@ fn create() {
         });
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_inode() &&
-            args.1.as_inode().unwrap().size == 0 &&
-            args.1.as_inode().unwrap().nlink == 1 &&
-            args.1.as_inode().unwrap().file_type == FileType::Reg(12) &&
-            args.1.as_inode().unwrap().perm == 0o644 &&
-            args.1.as_inode().unwrap().uid == 123 &&
-            args.1.as_inode().unwrap().gid == 456
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(|key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().size == 0 &&
+            value.as_inode().unwrap().nlink == 1 &&
+            value.as_inode().unwrap().file_type == FileType::Reg(12) &&
+            value.as_inode().unwrap().perm == 0o644 &&
+            value.as_inode().unwrap().uid == 123 &&
+            value.as_inode().unwrap().gid == 456
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_direntry() &&
-            args.1.as_direntry().unwrap().dtype == libc::DT_REG &&
-            args.1.as_direntry().unwrap().name == filename2 &&
-            args.1.as_direntry().unwrap().ino == ino
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(move |key, value| {
+            key.is_direntry() &&
+            value.as_direntry().unwrap().dtype == libc::DT_REG &&
+            value.as_direntry().unwrap().name == filename2 &&
+            value.as_direntry().unwrap().ino == ino
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_inode() &&
-            args.1.as_inode().unwrap().file_type == FileType::Dir &&
-            args.1.as_inode().unwrap().atime == old_ts &&
-            args.1.as_inode().unwrap().mtime != old_ts &&
-            args.1.as_inode().unwrap().ctime != old_ts &&
-            args.1.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(move |key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().file_type == FileType::Dir &&
+            value.as_inode().unwrap().atime == old_ts &&
+            value.as_inode().unwrap().mtime != old_ts &&
+            value.as_inode().unwrap().ctime != old_ts &&
+            value.as_inode().unwrap().birthtime == old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
@@ -2081,14 +2081,14 @@ fn create_hash_collision() {
         });
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_inode()
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(|key, _value| {
+            key.is_inode()
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_direntry()
-        }).returning(move |_| {
+        .withf(|key, _value| {
+            key.is_direntry()
+        }).returning(move |_, _| {
             // Return a different directory entry
             let name = other_filename2.clone();
             let dirent = Dirent{ino: other_ino, dtype: libc::DT_REG, name};
@@ -2108,11 +2108,11 @@ fn create_hash_collision() {
         });
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
+        .withf(move |key, value| {
             // Check that we're inserting a bucket with both direntries.  The
             // order doesn't matter.
-            if let Some(dirents) = args.1.as_direntries() {
-                args.0.is_direntry() &&
+            if let Some(dirents) = value.as_direntries() {
+                key.is_direntry() &&
                 dirents[0].dtype == libc::DT_REG &&
                 dirents[0].name == other_filename &&
                 dirents[0].ino == other_ino &&
@@ -2122,7 +2122,7 @@ fn create_hash_collision() {
             } else {
                 false
             }
-        }).returning(move |_| {
+        }).returning(move |_, _| {
             // Return the dirent that we just inserted
             let name = filename4.clone();
             let dirent = Dirent{ino: 1, dtype: libc::DT_REG, name};
@@ -2131,14 +2131,14 @@ fn create_hash_collision() {
         });
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_inode() &&
-            args.1.as_inode().unwrap().file_type == FileType::Dir &&
-            args.1.as_inode().unwrap().atime == old_ts &&
-            args.1.as_inode().unwrap().mtime != old_ts &&
-            args.1.as_inode().unwrap().ctime != old_ts &&
-            args.1.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(move |key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().file_type == FileType::Dir &&
+            value.as_inode().unwrap().atime == old_ts &&
+            value.as_inode().unwrap().mtime != old_ts &&
+            value.as_inode().unwrap().ctime != old_ts &&
+            value.as_inode().unwrap().birthtime == old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
 
     db.expect_fswrite_inner()
         .once()
@@ -2253,13 +2253,13 @@ fn deleteextattr_3way_collision() {
     });
     ds.expect_insert()
     .once()
-    .withf(move |args: &(FSKey, FSValue<RID>)| {
+    .withf(move |_key, value| {
         // name0 and name1 should be reinserted
-        let extattrs = args.1.as_extattrs().unwrap();
+        let extattrs = value.as_extattrs().unwrap();
         let ie0 = extattrs[0].as_inline().unwrap();
         let ie1 = extattrs[1].as_inline().unwrap();
         ie0.name == name0 && ie1.name == name1 && extattrs.len() == 2
-    }).returning(|_| {
+    }).returning(|_, _| {
         Box::new(Ok(None).into_future())
     });
 
@@ -2308,13 +2308,13 @@ fn deleteextattr_3way_collision_enoattr() {
     });
     ds.expect_insert()
     .once()
-    .withf(move |args: &(FSKey, FSValue<RID>)| {
+    .withf(move |_key, value| {
         // name0 and name1 should be reinserted
-        let extattrs = args.1.as_extattrs().unwrap();
+        let extattrs = value.as_extattrs().unwrap();
         let ie0 = extattrs[0].as_inline().unwrap();
         let ie1 = extattrs[1].as_inline().unwrap();
         ie0.name == name0 && ie1.name == name1 && extattrs.len() == 2
-    }).returning(|_| {
+    }).returning(|_, _| {
         Box::new(Ok(None).into_future())
     });
 
@@ -2512,10 +2512,10 @@ fn rmdir_with_blob_extattr() {
         });
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0 == FSKey::new(parent_ino, ObjKey::Inode) &&
-            args.1.as_inode().unwrap().nlink == 2
-        }).returning(|_| {
+        .withf(move |key, value| {
+            *key == FSKey::new(parent_ino, ObjKey::Inode) &&
+            value.as_inode().unwrap().nlink == 2
+        }).returning(|_, _| {
             let now = time::get_time();
             let inode = Inode {
                 size: 0,
@@ -2556,16 +2556,16 @@ fn setextattr() {
 
     ds.expect_insert()
     .once()
-    .withf(move |args: &(FSKey, FSValue<RID>)| {
-        let extattr = args.1.as_extattr().unwrap();
+    .withf(move |key, value| {
+        let extattr = value.as_extattr().unwrap();
         let ie = extattr.as_inline().unwrap();
-        args.0.is_extattr() &&
-        args.0.objtype() == 3 &&
-        args.0.object() == ino &&
+        key.is_extattr() &&
+        key.objtype() == 3 &&
+        key.object() == ino &&
         ie.namespace == namespace &&
         ie.name == name2 &&
         &ie.extent.buf.try_const().unwrap()[..] == value2.as_bytes()
-    }).returning(|_| Box::new(Ok(None).into_future()));
+    }).returning(|_, _| Box::new(Ok(None).into_future()));
 
     db.expect_fswrite_inner()
         .once()
@@ -2602,14 +2602,14 @@ fn setextattr_3way_collision() {
 
     ds.expect_insert()
     .once()
-    .withf(move |args: &(FSKey, FSValue<RID>)| {
-        if let Some(extattr) = args.1.as_extattr() {
+    .withf(move |_key, value| {
+        if let Some(extattr) = value.as_extattr() {
             let ie = extattr.as_inline().unwrap();
             ie.name == name2a
         } else {
             false
         }
-    }).returning(move |_| {
+    }).returning(move |_, _| {
         // Return the previous two values
         let dbs0 = Arc::new(DivBufShared::from(Vec::from(value0.as_bytes())));
         let extent0 = InlineExtent::new(dbs0);
@@ -2642,13 +2642,13 @@ fn setextattr_3way_collision() {
     });
     ds.expect_insert()
     .once()
-    .withf(move |args: &(FSKey, FSValue<RID>)| {
-        let extattrs = args.1.as_extattrs().unwrap();
+    .withf(move |_key, value| {
+        let extattrs = value.as_extattrs().unwrap();
         let ie0 = extattrs[0].as_inline().unwrap();
         let ie1 = extattrs[1].as_inline().unwrap();
         let ie2 = extattrs[2].as_inline().unwrap();
         ie0.name == name0 && ie1.name == name1 && ie2.name == name2c
-    }).returning(move |_| {
+    }).returning(move |_, _| {
         // Return a copy of the recently inserted value2
         let dbs2 = Arc::new(DivBufShared::from(Vec::from(value2b.as_bytes())));
         let extent2 = InlineExtent::new(dbs2);
@@ -2672,12 +2672,12 @@ fn set_props() {
     let (rt, mut db, tree_id) = setup();
     db.expect_set_prop()
         .once()
-        .with(params!(eq(tree_id), eq(Property::Atime(false))))
-        .returning(|_| boxfut!(Ok(()).into_future()));
+        .with(eq(tree_id), eq(Property::Atime(false)))
+        .returning(|_, _| boxfut!(Ok(()).into_future()));
     db.expect_set_prop()
         .once()
-        .with(params!(eq(tree_id), eq(Property::RecordSize(13))))
-        .returning(|_| boxfut!(Ok(()).into_future()));
+        .with(eq(tree_id), eq(Property::RecordSize(13)))
+        .returning(|_, _| boxfut!(Ok(()).into_future()));
     let mut fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     fs.set_props(vec![Property::Atime(false), Property::RecordSize(13)]);
     rt.shutdown_on_idle();
@@ -2688,7 +2688,7 @@ fn sync() {
     let (rt, mut db, tree_id) = setup();
     db.expect_sync_transaction()
         .once()
-        .returning(|_| Box::new(Ok(()).into_future()));
+        .returning(|| Box::new(Ok(()).into_future()));
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
     fs.sync();
@@ -2787,14 +2787,14 @@ fn unlink() {
         .returning(|_| Box::new(Ok(()).into_future()));
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_inode() &&
-            args.1.as_inode().unwrap().file_type == FileType::Dir &&
-            args.1.as_inode().unwrap().atime == old_ts &&
-            args.1.as_inode().unwrap().mtime != old_ts &&
-            args.1.as_inode().unwrap().ctime != old_ts &&
-            args.1.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(move |key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().file_type == FileType::Dir &&
+            value.as_inode().unwrap().atime == old_ts &&
+            value.as_inode().unwrap().mtime != old_ts &&
+            value.as_inode().unwrap().ctime != old_ts &&
+            value.as_inode().unwrap().birthtime == old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
 
     db.expect_fswrite_inner()
         .once()
@@ -2868,20 +2868,20 @@ fn unlink_hardlink() {
         });
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_inode() &&
-            args.1.as_inode().unwrap().nlink == 1
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(|key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().nlink == 1
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_inode() &&
-            args.1.as_inode().unwrap().file_type == FileType::Dir &&
-            args.1.as_inode().unwrap().atime == old_ts &&
-            args.1.as_inode().unwrap().mtime != old_ts &&
-            args.1.as_inode().unwrap().ctime != old_ts &&
-            args.1.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(move |key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().file_type == FileType::Dir &&
+            value.as_inode().unwrap().atime == old_ts &&
+            value.as_inode().unwrap().mtime != old_ts &&
+            value.as_inode().unwrap().ctime != old_ts &&
+            value.as_inode().unwrap().birthtime == old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
 
     db.expect_fswrite_inner()
         .once()
@@ -3005,14 +3005,14 @@ fn unlink_with_blob_extattr() {
         .returning(|_| Box::new(Ok(()).into_future()));
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_inode() &&
-            args.1.as_inode().unwrap().file_type == FileType::Dir &&
-            args.1.as_inode().unwrap().atime == old_ts &&
-            args.1.as_inode().unwrap().mtime != old_ts &&
-            args.1.as_inode().unwrap().ctime != old_ts &&
-            args.1.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(move |key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().file_type == FileType::Dir &&
+            value.as_inode().unwrap().atime == old_ts &&
+            value.as_inode().unwrap().mtime != old_ts &&
+            value.as_inode().unwrap().ctime != old_ts &&
+            value.as_inode().unwrap().birthtime == old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
 
     db.expect_fswrite_inner()
         .once()
@@ -3126,14 +3126,14 @@ fn unlink_with_extattr_hash_collision() {
         .returning(|_| Box::new(Ok(()).into_future()));
     ds.expect_insert()
         .once()
-        .withf(move |args: &(FSKey, FSValue<RID>)| {
-            args.0.is_inode() &&
-            args.1.as_inode().unwrap().file_type == FileType::Dir &&
-            args.1.as_inode().unwrap().atime == old_ts &&
-            args.1.as_inode().unwrap().mtime != old_ts &&
-            args.1.as_inode().unwrap().ctime != old_ts &&
-            args.1.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_| Box::new(Ok(None).into_future()));
+        .withf(move |key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().file_type == FileType::Dir &&
+            value.as_inode().unwrap().atime == old_ts &&
+            value.as_inode().unwrap().mtime != old_ts &&
+            value.as_inode().unwrap().ctime != old_ts &&
+            value.as_inode().unwrap().birthtime == old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
 
     db.expect_fswrite_inner()
         .once()

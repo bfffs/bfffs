@@ -744,7 +744,7 @@ mod database {
         let mut idml = IDML::default();
         idml.expect_shutdown()
             .once()
-            .returning(drop);
+            .return_const(());
         let forest = Tree::default();
 
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -762,7 +762,7 @@ mod database {
         let mut idml = IDML::default();
         idml.expect_shutdown()
             .times(2)
-            .returning(drop);
+            .return_const(());
         let forest = Tree::default();
 
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -785,7 +785,7 @@ mod database {
 
         idml.expect_advance_transaction_inner()
             .once()
-            .returning(|_| TxgT::from(0));
+            .returning(|| TxgT::from(0));
 
         forest.expect_flush()
             .once()
@@ -797,8 +797,8 @@ mod database {
         idml.expect_flush()
             .once()
             .in_sequence(&mut seq)
-            .with(eq((0, TxgT::from(0))))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .with(eq(0), eq(TxgT::from(0)))
+            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
         idml.expect_sync_all()
             .once()
             .in_sequence(&mut seq)
@@ -807,19 +807,19 @@ mod database {
         forest.expect_serialize()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| {
+            .returning(|| {
                 Ok(TreeOnDisk::default())
             });
         idml.expect_write_label()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
 
         idml.expect_flush()
             .once()
             .in_sequence(&mut seq)
-            .with(eq((1, TxgT::from(0))))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .with(eq(1), eq(TxgT::from(0)))
+            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
         idml.expect_sync_all()
             .once()
             .in_sequence(&mut seq)
@@ -828,7 +828,7 @@ mod database {
         idml.expect_write_label()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
 
         idml.expect_sync_all()
             .once()

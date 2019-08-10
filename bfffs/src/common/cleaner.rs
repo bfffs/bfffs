@@ -160,7 +160,7 @@ fn background() {
     let mut idml = IDML::default();
     idml.expect_list_closed_zones()
         .once()
-        .returning(|_| {
+        .returning(|| {
             let czs = vec![
                 ClosedZone{freed_blocks: 0, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
@@ -186,7 +186,7 @@ fn no_sufficiently_dirty_zones() {
     let mut idml = IDML::default();
     idml.expect_list_closed_zones()
         .once()
-        .returning(|_| {
+        .returning(|| {
             let czs = vec![
                 ClosedZone{freed_blocks: 1, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
@@ -208,7 +208,7 @@ fn one_sufficiently_dirty_zone() {
     let mut idml = IDML::default();
     idml.expect_list_closed_zones()
         .once()
-        .returning(|_| {
+        .returning(|| {
             let czs = vec![
                 ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
@@ -217,13 +217,13 @@ fn one_sufficiently_dirty_zone() {
         });
     idml.expect_txg()
         .once()
-        .returning(|_| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
+        .returning(|| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
     idml.expect_clean_zone()
         .once()
-        .withf(move |args: &(ClosedZone, TxgT)| {
-            args.0.pba == PBA::new(0, 0) &&
-            args.1 == TXG
-        }).returning(|_| Box::new(future::ok::<(), Error>(())));
+        .withf(move |zone, txg| {
+            zone.pba == PBA::new(0, 0) &&
+            *txg == TXG
+        }).returning(|_, _| Box::new(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
     current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
         cleaner.clean_now()
@@ -238,7 +238,7 @@ fn two_sufficiently_dirty_zones() {
     let mut idml = IDML::default();
     idml.expect_list_closed_zones()
         .once()
-        .returning(|_| {
+        .returning(|| {
             let czs = vec![
                 ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)},
@@ -252,23 +252,23 @@ fn two_sufficiently_dirty_zones() {
     idml.expect_txg()
         .once()
         .in_sequence(&mut seq)
-        .returning(|_| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
+        .returning(|| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
     idml.expect_clean_zone()
         .once()
-        .withf(move |args: &(ClosedZone, TxgT)| {
-            args.0.pba == PBA::new(2, 0) &&
-            args.1 == TXG
-        }).returning(|_| Box::new(future::ok::<(), Error>(())));
+        .withf(move |zone, txg| {
+            zone.pba == PBA::new(2, 0) &&
+            *txg == TXG
+        }).returning(|_, _| Box::new(future::ok::<(), Error>(())));
     idml.expect_txg()
         .once()
         .in_sequence(&mut seq)
-        .returning(|_| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
+        .returning(|| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
     idml.expect_clean_zone()
         .once()
-        .withf(move |args: &(ClosedZone, TxgT)| {
-            args.0.pba == PBA::new(0, 0) &&
-            args.1 == TXG
-        }).returning(|_| Box::new(future::ok::<(), Error>(())));
+        .withf(move |zone, txg| {
+            zone.pba == PBA::new(0, 0) &&
+            *txg == TXG
+        }).returning(|_, _| Box::new(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
     current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
         cleaner.clean_now()

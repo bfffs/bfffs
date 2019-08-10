@@ -387,9 +387,7 @@ mod ddml {
     use divbuf::DivBufShared;
     use futures::{IntoFuture, future};
     use mockall::{
-        params,
         self,
-        Predicate,
         Sequence,
         predicate::*
     };
@@ -405,23 +403,19 @@ mod ddml {
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 4096, checksum: 0};
         let mut cache = Cache::default();
-        // Safe because the test is single-threaded
-        unsafe {
-            cache.expect_remove()
-                .once()
-                .in_sequence(&mut seq)
-                .withf_unsafe(move |key: &*const Key| {
-                    **key == Key::PBA(pba)
-                }).return_once(
-                    |_| Some(Box::new(DivBufShared::from(vec![0u8;4096])))
-                );
-        }
-        let mut pool = Pool::default();
-        pool.expect_free()
-            .with(params!(eq(pba), eq(1)))
+        cache.expect_remove()
             .once()
             .in_sequence(&mut seq)
-            .return_once(|_| Box::new(Ok(()).into_future()));
+            .with(eq(Key::PBA(pba)))
+            .return_once(
+                |_| Some(Box::new(DivBufShared::from(vec![0u8;4096])))
+            );
+        let mut pool = Pool::default();
+        pool.expect_free()
+            .with(eq(pba), eq(1))
+            .once()
+            .in_sequence(&mut seq)
+            .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
@@ -435,14 +429,10 @@ mod ddml {
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 4096, checksum: 0};
         let mut cache = Cache::default();
-        // Safe because the test is single-threaded
-        unsafe {
-            cache.expect_remove()
-                .once()
-                .withf_unsafe(move |key: &*const Key| {
-                    **key == Key::PBA(pba)
-                }).return_once(|_| None);
-        }
+        cache.expect_remove()
+            .once()
+            .with(eq(Key::PBA(pba)))
+            .return_once(|_| None);
         let pool = Pool::default();
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
@@ -457,8 +447,8 @@ mod ddml {
         let cache = Cache::default();
         let mut pool = Pool::default();
         pool.expect_read()
-            .withf(|(dbm, pba)| dbm.len() == 4096 && *pba == PBA::default())
-            .returning(|(mut dbm, _pba)| {
+            .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
+            .returning(|mut dbm, _pba| {
                 for x in dbm.iter_mut() {
                     *x = 0;
                 }
@@ -479,16 +469,12 @@ mod ddml {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let mut cache = Cache::default();
         let pool = Pool::default();
-        // Safe because the test is single-threaded
-        unsafe {
-            cache.expect_get()
-                .once()
-                .withf_unsafe(move |key: &*const Key| {
-                    **key == Key::PBA(pba)
-                }).returning(move |_| {
-                    Some(Box::new(dbs.try_const().unwrap()))
-                });
-        }
+        cache.expect_get()
+            .once()
+            .with(eq(Key::PBA(pba)))
+            .returning(move |_| {
+                Some(Box::new(dbs.try_const().unwrap()))
+            });
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         ddml.get::<DivBufShared, DivBuf>(&drp);
@@ -506,20 +492,16 @@ mod ddml {
         let owned_by_cache2 = owned_by_cache.clone();
         let mut cache = Cache::default();
         let mut pool = Pool::default();
-        // Safe because the test is single-threaded
-        unsafe {
-            cache.expect_get::<DivBuf>()
-                .once()
-                .in_sequence(&mut seq)
-                .withf_unsafe(move |key: &*const Key| {
-                    **key == Key::PBA(pba)
-                }).return_const(None);
-        }
-        pool.expect_read()
-            .withf(|(dbm, pba)| dbm.len() == 4096 && *pba == PBA::default())
+        cache.expect_get::<DivBuf>()
             .once()
             .in_sequence(&mut seq)
-            .returning(|(mut dbm, _pba)| {
+            .with(eq(Key::PBA(pba)))
+            .return_const(None);
+        pool.expect_read()
+            .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|mut dbm, _pba| {
                 for x in dbm.iter_mut() {
                     *x = 0;
                 }
@@ -528,8 +510,8 @@ mod ddml {
         cache.expect_insert()
             .once()
             .in_sequence(&mut seq)
-            .with(params!(eq(Key::PBA(pba)), always()))
-            .return_once(move |(_, dbs)| {;
+            .with(eq(Key::PBA(pba)), always())
+            .return_once(move |_, dbs| {;
                 owned_by_cache2.lock().unwrap().push(dbs);
             });
 
@@ -546,17 +528,13 @@ mod ddml {
                       csize: 1, checksum: 0xdead_beef_dead_beef};
         let mut cache = Cache::default();
         let mut pool = Pool::default();
-        // Safe because the test is single-threaded
-        unsafe {
-            cache.expect_get::<DivBuf>()
-                .once()
-                .withf_unsafe(move |key: &*const Key| {
-                    **key == Key::PBA(pba)
-                }).return_const(None);
-        }
+        cache.expect_get::<DivBuf>()
+            .once()
+            .with(eq(Key::PBA(pba)))
+            .return_const(None);
         pool.expect_read()
-            .withf(|(dbm, pba)| dbm.len() == 4096 && *pba == PBA::default())
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
+            .return_once(|_, _| Box::new(future::ok::<(), Error>(())));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -576,8 +554,8 @@ mod ddml {
             total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1)};
         let clz0_1 = clz0.clone();
         pool.expect_find_closed_zone()
-            .with(eq((0, 0)))
-            .return_once(move |_| {
+            .with(eq(0), eq(0))
+            .return_once(move |_, _| {
                 let next = Some((0, 11));
                 Box::new(Ok((Some(clz0_1), next)).into_future())
             });
@@ -586,33 +564,33 @@ mod ddml {
             total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3)};
         let clz1_1 = clz1.clone();
         pool.expect_find_closed_zone()
-            .with(eq((0, 11)))
-            .return_once(move |_| {
+            .with(eq(0), eq(11))
+            .return_once(move |_, _| {
                 let next = Some((0, 31));
                 Box::new(Ok((Some(clz1_1), next)).into_future())
             });
 
         pool.expect_find_closed_zone()
-            .with(eq((0, 31)))
-            .return_once(|_| Box::new(Ok((None, Some((1, 0)))).into_future()));
+            .with(eq(0), eq(31))
+            .return_once(|_, _| Box::new(Ok((None, Some((1, 0)))).into_future()));
 
         // The second cluster has no closed zones
         pool.expect_find_closed_zone()
-            .with(eq((1, 0)))
-            .return_once(|_| Box::new(Ok((None, Some((2, 0)))).into_future()));
+            .with(eq(1), eq(0))
+            .return_once(|_, _| Box::new(Ok((None, Some((2, 0)))).into_future()));
 
         // The third cluster has one closed zone
         let clz2 = ClosedZone{pba: PBA::new(2, 10), freed_blocks: 5, zid: 2,
             total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1)};
         let clz2_1 = clz2.clone();
         pool.expect_find_closed_zone()
-            .with(eq((2, 0)))
-            .return_once(move |_|
+            .with(eq(2), eq(0))
+            .return_once(move |_, _|
             Box::new(Ok((Some(clz2_1), Some((2, 11)))).into_future()));
 
         pool.expect_find_closed_zone()
-            .with(eq((2, 11)))
-            .return_once(|_| Box::new(Ok((None, None)).into_future()));
+            .with(eq(2), eq(11))
+            .return_once(|_, _| Box::new(Ok((None, None)).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -631,19 +609,15 @@ mod ddml {
                       csize: 4096, checksum: 0};
         let mut cache = Cache::default();
         let mut pool = Pool::default();
-        // Safe because the test is single-threaded
-        unsafe {
-            cache.expect_remove()
-                .once()
-                .withf_unsafe(move |key: &*const Key| {
-                    **key == Key::PBA(pba)
-                }).returning(|_| {
-                    Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
-                });
-        }
+        cache.expect_remove()
+            .once()
+            .with(eq(Key::PBA(pba)))
+            .returning(|_| {
+                Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
+            });
         pool.expect_free()
-            .with(eq((pba, 1)))
-            .return_once(|_| Box::new(Ok(()).into_future()));
+            .with(eq(pba), eq(1))
+            .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0));
@@ -657,29 +631,25 @@ mod ddml {
         let mut seq = Sequence::new();
         let mut cache = Cache::default();
         let mut pool = Pool::default();
-        // Safe because the test is single-threaded
-        unsafe {
-            cache.expect_remove()
-                .once()
-                .withf_unsafe(move |key: &*const Key| {
-                    **key == Key::PBA(pba)
-                }).return_once(|_| None);
-        }
+        cache.expect_remove()
+            .once()
+            .with(eq(Key::PBA(pba)))
+            .return_once(|_| None);
         pool.expect_read()
-            .with(params!(always(), eq(pba)))
+            .with(always(), eq(pba))
             .once()
             .in_sequence(&mut seq)
-            .returning(|(mut dbm, _pba)| {
+            .returning(|mut dbm, _pba| {
                 for x in dbm.iter_mut() {
                     *x = 0;
                 }
                 Box::new(future::ok::<(), Error>(()))
             });
         pool.expect_free()
-            .with(eq((pba, 1)))
+            .with(eq(pba), eq(1))
             .once()
             .in_sequence(&mut seq)
-            .return_once(|_| Box::new(Ok(()).into_future()));
+            .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
@@ -694,17 +664,13 @@ mod ddml {
                       csize: 1, checksum: 0xdead_beef_dead_beef};
         let mut cache = Cache::default();
         let mut pool = Pool::default();
-        // Safe because the test is single-threaded
-        unsafe {
-            cache.expect_remove()
-                .once()
-                .withf_unsafe(move |key: &*const Key| {
-                    **key == Key::PBA(pba)
-                }).return_once(|_| None);
-        }
+        cache.expect_remove()
+            .once()
+            .with(eq(Key::PBA(pba)))
+            .return_once(|_| None);
         pool.expect_read()
-            .with(params!(always(), eq(pba)))
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .with(always(), eq(pba))
+            .return_once(|_, _| Box::new(future::ok::<(), Error>(())));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();
@@ -723,20 +689,20 @@ mod ddml {
         let cache = Cache::default();
         let mut pool = Pool::default();
         pool.expect_read()
-            .with(params!(always(), eq(pba)))
+            .with(always(), eq(pba))
             .once()
             .in_sequence(&mut seq)
-            .returning(|(mut dbm, _pba)| {
+            .returning(|mut dbm, _pba| {
                 for x in dbm.iter_mut() {
                     *x = 0;
                 }
                 Box::new(future::ok::<(), Error>(()))
             });
         pool.expect_free()
-            .with(eq((pba, 1)))
+            .with(eq(pba), eq(1))
             .once()
             .in_sequence(&mut seq)
-            .return_once(|_| Box::new(Ok(()).into_future()));
+            .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
@@ -750,12 +716,12 @@ mod ddml {
         let pba = PBA::default();
         cache.expect_insert()
             .once()
-            .with(params!(eq(Key::PBA(pba)), always()))
-            .returning(drop);
+            .with(eq(Key::PBA(pba)), always())
+            .return_const(());
         let mut pool = Pool::default();
         pool.expect_write()
-            .with(params!(always(), eq(TxgT::from(42))))
-            .return_once(move |_| Box::new(future::ok::<PBA, Error>(pba)));
+            .with(always(), eq(TxgT::from(42)))
+            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
@@ -776,12 +742,12 @@ mod ddml {
         let pba = PBA::default();
         cache.expect_insert()
             .once()
-            .with(params!(eq(Key::PBA(pba)), always()))
-            .returning(drop);
+            .with(eq(Key::PBA(pba)), always())
+            .return_const(());
         let mut pool = Pool::default();
         pool.expect_write()
-            .with(params!(always(), eq(TxgT::from(42))))
-            .return_once(move |_| Box::new(future::ok::<PBA, Error>(pba)));
+            .with(always(), eq(TxgT::from(42)))
+            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 8192]);
@@ -803,12 +769,12 @@ mod ddml {
         let pba = PBA::default();
         cache.expect_insert()
             .once()
-            .with(params!(eq(Key::PBA(pba)), always()))
-            .returning(drop);
+            .with(eq(Key::PBA(pba)), always())
+            .return_const(());
         let mut pool = Pool::default();
         pool.expect_write()
-            .with(params!(always(), eq(TxgT::from(42))))
-            .return_once(move |_| Box::new(future::ok::<PBA, Error>(pba)));
+            .with(always(), eq(TxgT::from(42)))
+            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let mut rng = XorShiftRng::seed_from_u64(12345);
@@ -831,12 +797,12 @@ mod ddml {
         let pba = PBA::default();
         cache.expect_insert()
             .once()
-            .with(params!(eq(Key::PBA(pba)), always()))
-            .returning(drop);
+            .with(eq(Key::PBA(pba)), always())
+            .return_const(());
         let mut pool = Pool::default();
         pool.expect_write()
-            .with(params!(always(), eq(TxgT::from(42))))
-            .return_once(move |_| Box::new(future::ok::<PBA, Error>(pba)));
+            .with(always(), eq(TxgT::from(42)))
+            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 1024]);
@@ -856,8 +822,8 @@ mod ddml {
         let mut pool = Pool::default();
         let txg = TxgT::from(42);
         pool.expect_write()
-            .with(params!(always(), eq(txg)))
-            .return_once(move |_| Box::new(future::ok::<PBA, Error>(pba)));
+            .with(always(), eq(txg))
+            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
@@ -876,7 +842,7 @@ mod ddml {
         let cache = Cache::default();
         let mut pool = Pool::default();
         pool.expect_sync_all()
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|| Box::new(future::ok::<(), Error>(())));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let mut rt = current_thread::Runtime::new().unwrap();

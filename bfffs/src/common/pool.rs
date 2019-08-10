@@ -770,11 +770,7 @@ mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
     use futures::{IntoFuture, future};
-    use mockall::{
-        Predicate,
-        params,
-        predicate::*
-    };
+    use mockall::predicate::*;
     use pretty_assertions::assert_eq;
     use tokio::runtime::current_thread;
 
@@ -795,8 +791,8 @@ mod pool {
     fn find_closed_zone() {
         let cluster = || {
             let mut c = Cluster::default();
-            c.expect_allocated().return_const(0);
-            c.expect_optimum_queue_depth().return_const(10);
+            c.expect_allocated().return_const(0u64);
+            c.expect_optimum_queue_depth().return_const(10u32);
             c.expect_find_closed_zone()
                 .with(eq(0))
                 .return_const(Some(cluster::ClosedZone {
@@ -818,7 +814,7 @@ mod pool {
             c.expect_find_closed_zone()
                 .with(eq(4))
                 .return_const(None);
-            c.expect_size().return_const(32_768_000);
+            c.expect_size().return_const(32_768_000u64);
             c.expect_uuid().return_const(Uuid::new_v4());
             c
         };
@@ -863,18 +859,18 @@ mod pool {
     fn free() {
         let cluster = || {
             let mut c = Cluster::default();
-            c.expect_allocated().return_const(0);
-            c.expect_optimum_queue_depth().return_const(10);
-            c.expect_size().return_const(32_768_000);
+            c.expect_allocated().return_const(0u64);
+            c.expect_optimum_queue_depth().return_const(10u32);
+            c.expect_size().return_const(32_768_000u64);
             c.expect_uuid().return_const(Uuid::new_v4());
             c
         };
         let c0 = cluster();
         let mut c1 = cluster();
         c1.expect_free()
-            .with(params!(eq(12345), eq(16)))
+            .with(eq(12345), eq(16))
             .once()
-            .return_once(|_| Box::new(Ok(()).into_future()));
+            .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
@@ -895,9 +891,9 @@ mod pool {
     fn new() {
         let cluster = || {
             let mut c = Cluster::default();
-            c.expect_optimum_queue_depth().return_const(10);
-            c.expect_allocated().return_const(500);
-            c.expect_size().return_const(1000);
+            c.expect_optimum_queue_depth().return_const(10u32);
+            c.expect_allocated().return_const(500u64);
+            c.expect_size().return_const(1000u64);
             c.expect_uuid().return_const(Uuid::new_v4());
             c
         };
@@ -921,14 +917,14 @@ mod pool {
     #[test]
     fn read() {
         let mut cluster = Cluster::default();
-        cluster.expect_allocated().return_const(0);
-        cluster.expect_optimum_queue_depth().return_const(10);
-        cluster.expect_size().return_const(32_768_000);
+        cluster.expect_allocated().return_const(0u64);
+        cluster.expect_optimum_queue_depth().return_const(10u32);
+        cluster.expect_size().return_const(32_768_000u64);
         cluster.expect_uuid().return_const(Uuid::new_v4());
         cluster.expect_read()
-            .with(params!(always(), eq(10)))
+            .with(always(), eq(10))
             .once()
-            .returning(|(mut iovec, _lba): (IoVecMut, LbaT)| {
+            .returning(|mut iovec, _lba| {
                 iovec.copy_from_slice(&vec![99; 4096][..]);
                 Box::new( future::ok::<(), Error>(()))
             });
@@ -954,13 +950,13 @@ mod pool {
     fn read_error() {
         let e = Error::EIO;
         let mut cluster = Cluster::default();
-        cluster.expect_allocated().return_const(0);
-        cluster.expect_optimum_queue_depth().return_const(10);
-        cluster.expect_size().return_const(32_768_000);
+        cluster.expect_allocated().return_const(0u64);
+        cluster.expect_optimum_queue_depth().return_const(10u32);
+        cluster.expect_size().return_const(32_768_000u64);
         cluster.expect_uuid().return_const(Uuid::new_v4());
         cluster.expect_read()
             .once()
-            .return_once(move |_| Box::new(Err(e).into_future()));
+            .return_once(move |_, _| Box::new(Err(e).into_future()));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(move || {
@@ -981,13 +977,13 @@ mod pool {
     fn sync_all() {
         let cluster = || {
             let mut c = Cluster::default();
-            c.expect_allocated().return_const(0);
-            c.expect_optimum_queue_depth().return_const(10);
-            c.expect_size().return_const(32_768_000);
+            c.expect_allocated().return_const(0u64);
+            c.expect_optimum_queue_depth().return_const(10u32);
+            c.expect_size().return_const(32_768_000u64);
             c.expect_uuid().return_const(Uuid::new_v4());
             c.expect_sync_all()
                 .once()
-                .return_once(|_| Box::new(future::ok::<(), Error>(())));
+                .return_once(|| Box::new(future::ok::<(), Error>(())));
             c
         };
 
@@ -1006,15 +1002,15 @@ mod pool {
     #[test]
     fn write() {
         let mut cluster = Cluster::default();
-            cluster.expect_allocated().return_const(0);
-            cluster.expect_optimum_queue_depth().return_const(10);
-            cluster.expect_size().return_const(32_768_000);
+            cluster.expect_allocated().return_const(0u64);
+            cluster.expect_optimum_queue_depth().return_const(10u32);
+            cluster.expect_size().return_const(32_768_000u64);
             cluster.expect_uuid().return_const(Uuid::new_v4());
             cluster.expect_write()
-                .withf(|(buf, txg)| {
+                .withf(|buf, txg| {
                     buf.len() == BYTES_PER_LBA && *txg == TxgT::from(42)
                 }).once()
-                .return_once(|_| Ok((0, Box::new(future::ok::<(), Error>(())))));
+                .return_once(|_, _| Ok((0, Box::new(future::ok::<(), Error>(())))));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
@@ -1032,13 +1028,13 @@ mod pool {
     fn write_async_error() {
         let e = Error::EIO;
         let mut cluster = Cluster::default();
-            cluster.expect_allocated().return_const(0);
-            cluster.expect_optimum_queue_depth().return_const(10);
-            cluster.expect_size().return_const(32_768_000);
+            cluster.expect_allocated().return_const(0u64);
+            cluster.expect_optimum_queue_depth().return_const(10u32);
+            cluster.expect_size().return_const(32_768_000u64);
             cluster.expect_uuid().return_const(Uuid::new_v4());
             cluster.expect_write()
                 .once()
-                .return_once(move |_| Ok((0, Box::new(Err(e).into_future()))));
+                .return_once(move |_, _| Ok((0, Box::new(Err(e).into_future()))));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
@@ -1056,13 +1052,13 @@ mod pool {
     fn write_sync_error() {
         let e = Error::ENOSPC;
         let mut cluster = Cluster::default();
-            cluster.expect_allocated().return_const(0);
-            cluster.expect_optimum_queue_depth().return_const(10);
-            cluster.expect_size().return_const(32_768_000);
+            cluster.expect_allocated().return_const(0u64);
+            cluster.expect_optimum_queue_depth().return_const(10u32);
+            cluster.expect_size().return_const(32_768_000u64);
             cluster.expect_uuid().return_const(Uuid::new_v4());
             cluster.expect_write()
                 .once()
-                .return_once(move |_| Err(e));
+                .return_once(move |_, _| Err(e));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {
@@ -1080,16 +1076,16 @@ mod pool {
     #[test]
     fn write_and_free() {
         let mut cluster = Cluster::default();
-        cluster.expect_allocated().return_const(0);
-        cluster.expect_optimum_queue_depth().return_const(10);
-        cluster.expect_size().return_const(32_768_000);
+        cluster.expect_allocated().return_const(0u64);
+        cluster.expect_optimum_queue_depth().return_const(10u32);
+        cluster.expect_size().return_const(32_768_000u64);
         cluster.expect_uuid().return_const(Uuid::new_v4());
         cluster.expect_write()
             .once()
-            .return_once(|_| Ok((0, Box::new(future::ok::<(), Error>(())))));
+            .return_once(|_, _| Ok((0, Box::new(future::ok::<(), Error>(())))));
         cluster.expect_free()
             .once()
-            .return_once(|_| Box::new(Ok(()).into_future()));
+            .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let mut rt = current_thread::Runtime::new().unwrap();
         let pool = rt.block_on(future::lazy(|| {

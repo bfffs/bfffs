@@ -1215,11 +1215,7 @@ mod t {
 use super::*;
 use futures::future;
 use galvanic_test::*;
-use mockall::{
-    Predicate,
-    params,
-    predicate::*
-};
+use mockall::predicate::*;
 
 // pet kcov
 #[test]
@@ -1240,7 +1236,7 @@ test_suite! {
     name basic;
 
     use super::*;
-    use predicates::boolean::PredicateBooleanExt;
+    use mockall::PredicateBooleanExt;
     use pretty_assertions::assert_eq;
 
     fixture!( mocks(n: i16, k: i16, f:i16, chunksize: LbaT) -> VdevRaid {
@@ -1250,7 +1246,7 @@ test_suite! {
             for _ in 0..*self.n {
                 let mut mock = VdevBlock::default();
                 mock.expect_size()
-                    .return_const(262_144);
+                    .return_const(262_144u64);
                 mock.expect_lba2zone()
                     .with(eq(0))
                     .return_const(None);
@@ -1261,7 +1257,7 @@ test_suite! {
                     .with(ge(65536).and(lt(131072)))
                     .return_const(Some(1));
                 mock.expect_optimum_queue_depth()
-                    .return_const(10);
+                    .return_const(10u32);
                 mock.expect_zone_limits()
                     .with(eq(0))
                     .return_const((1, 65536));
@@ -1389,13 +1385,13 @@ fn read_at_one_stripe() {
 
         let mut m0 = VdevBlock::default();
         m0.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         m0.expect_open_zone()
             .once()
             .with(eq(65536))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m0.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         m0.expect_zone_limits()
             .with(eq(0))
             .return_const((1, 65536));
@@ -1406,13 +1402,13 @@ fn read_at_one_stripe() {
 
         let mut m1 = VdevBlock::default();
         m1.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         m1.expect_open_zone()
             .once()
             .with(eq(65536))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m1.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         m1.expect_zone_limits()
             .with(eq(0))
             .return_const((1, 65536));
@@ -1421,21 +1417,21 @@ fn read_at_one_stripe() {
             .return_const((65536, 131_072));
         m1.expect_read_at()
             .once()
-            .withf(|(buf, lba): &(IoVecMut, LbaT)| {
+            .withf(|buf, lba| {
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                     && *lba == 65536
-            }).return_once(|_|  Box::new( future::ok::<(), Error>(())));
+            }).return_once(|_, _|  Box::new( future::ok::<(), Error>(())));
         blockdevs.push(m1);
 
         let mut m2 = VdevBlock::default();
         m2.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         m2.expect_open_zone()
             .once()
             .with(eq(65536))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m2.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         m2.expect_zone_limits()
             .with(eq(0))
             .return_const((1, 65536));
@@ -1444,10 +1440,10 @@ fn read_at_one_stripe() {
             .return_const((65536, 131_072));
         m2.expect_read_at()
             .once()
-            .withf(|(buf, lba): &(IoVecMut, LbaT)| {
+            .withf(|buf, lba| {
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                     && *lba == 65536
-            }).return_once(|_|  Box::new( future::ok::<(), Error>(())));
+            }).return_once(|_, _|  Box::new( future::ok::<(), Error>(())));
         blockdevs.push(m2);
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
@@ -1471,14 +1467,14 @@ fn sync_all() {
 
     let bd = || {
         let mut bd = VdevBlock::default();
-        bd.expect_size().return_const(262_144);
+        bd.expect_size().return_const(262_144u64);
         bd.expect_zone_limits()
             .with(eq(0))
             .return_const(zl0);
         bd.expect_sync_all()
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         bd
     };
 
@@ -1515,7 +1511,7 @@ fn sync_all_unflushed() {
             .with(eq(60_000))
             .return_const(Some(1));
         bd.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         bd.expect_zone_limits()
             .with(eq(0))
             .return_const(zl0);
@@ -1528,9 +1524,9 @@ fn sync_all_unflushed() {
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_sync_all()
             .once()
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         bd
     };
 
@@ -1567,7 +1563,7 @@ fn write_at_one_stripe() {
         let mut blockdevs = Vec::<VdevBlock>::new();
         let mut m0 = VdevBlock::default();
         m0.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         m0.expect_lba2zone()
             .with(eq(65536))
             .return_const(Some(1));
@@ -1576,7 +1572,7 @@ fn write_at_one_stripe() {
             .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m0.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         m0.expect_zone_limits()
             .with(eq(0))
             .return_const((1, 65536));
@@ -1585,15 +1581,15 @@ fn write_at_one_stripe() {
             .return_const((65536, 131_072));
         m0.expect_write_at()
             .once()
-            .withf(|(buf, lba)|
+            .withf(|buf, lba|
                    buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                    && *lba == 65536
-            ).return_once(|_| Box::new( future::ok::<(), Error>(())));
+            ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
 
         blockdevs.push(m0);
         let mut m1 = VdevBlock::default();
         m1.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         m1.expect_lba2zone()
             .with(eq(65536))
             .return_const(Some(1));
@@ -1602,7 +1598,7 @@ fn write_at_one_stripe() {
             .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m1.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         m1.expect_zone_limits()
             .with(eq(0))
             .return_const((1, 65536));
@@ -1611,15 +1607,15 @@ fn write_at_one_stripe() {
             .return_const((65536, 131_072));
         m1.expect_write_at()
             .once()
-            .withf(|(buf, lba)|
+            .withf(|buf, lba|
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                 && *lba == 65536
-            ).return_once(|_| Box::new( future::ok::<(), Error>(())));
+            ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
 
         blockdevs.push(m1);
         let mut m2 = VdevBlock::default();
         m2.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         m2.expect_lba2zone()
             .with(eq(65536))
             .return_const(Some(1));
@@ -1628,7 +1624,7 @@ fn write_at_one_stripe() {
             .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         m2.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         m2.expect_zone_limits()
             .with(eq(0))
             .return_const((1, 65536));
@@ -1637,10 +1633,10 @@ fn write_at_one_stripe() {
             .return_const((65536, 131_072));
         m2.expect_write_at()
             .once()
-            .withf(|(buf, lba)|
+            .withf(|buf, lba|
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                 && *lba == 65536
-            ).return_once(|_| Box::new( future::ok::<(), Error>(())));
+            ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
         blockdevs.push(m2);
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
@@ -1667,7 +1663,7 @@ fn write_at_and_flush_zone() {
     let bd = || {
         let mut bd = VdevBlock::default();
         bd.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         bd.expect_lba2zone()
             .with(eq(60_000))
             .return_const(Some(1));
@@ -1682,41 +1678,41 @@ fn write_at_and_flush_zone() {
             .once()
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         bd
     };
 
     let mut bd0 = bd();
     bd0.expect_writev_at()
         .once()
-        .withf(|(buf, lba)|
+        .withf(|buf, lba|
             // The first segment is user data
             buf[0][..] == vec![1u8; BYTES_PER_LBA][..] &&
             // Later segments are zero-fill from flush_zone
             buf[1][..] == vec![0u8; BYTES_PER_LBA][..] &&
             *lba == 60_000
-        ).return_once(|_| Box::new( future::ok::<(), Error>(())));
+        ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
 
     let mut bd1 = bd();
     // This write is from the zero-fill
     bd1.expect_writev_at()
         .once()
-        .withf(|(buf, lba)|
+        .withf(|buf, lba|
             buf.len() == 1 &&
             buf[0][..] == vec![0u8; 2 * BYTES_PER_LBA][..] &&
             *lba == 60_000
-    ).return_once(|_| Box::new( future::ok::<(), Error>(())));
+    ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
 
     // This write is generated parity
     let mut bd2 = bd();
     bd2.expect_write_at()
         .once()
-        .withf(|(buf, lba)|
+        .withf(|buf, lba|
             // single disk parity is a simple XOR
             buf[0..4096] == vec![1u8; BYTES_PER_LBA][..] &&
             buf[4096..8192] == vec![0u8; BYTES_PER_LBA][..] &&
             *lba == 60_000
-    ).return_once(|_| Box::new( future::ok::<(), Error>(())));
+    ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
 
     blockdevs.push(bd0);
     blockdevs.push(bd1);
@@ -1749,7 +1745,7 @@ fn erase_zone() {
     let bd = || {
         let mut bd = VdevBlock::default();
         bd.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         bd.expect_lba2zone()
             .with(eq(60_000))
             .return_const(Some(1));
@@ -1760,11 +1756,11 @@ fn erase_zone() {
             .with(eq(1))
             .return_const(zl1);
         bd.expect_erase_zone()
-            .with(eq((1, 59_999)))
+            .with(eq(1), eq(59_999))
             .once()
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_, _| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         bd
     };
 
@@ -1795,7 +1791,7 @@ fn flush_zone_closed() {
     let bd = || {
         let mut bd = VdevBlock::default();
         bd.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         bd.expect_lba2zone()
             .with(eq(60_000))
             .return_const(Some(1));
@@ -1803,7 +1799,7 @@ fn flush_zone_closed() {
             .with(eq(0))
             .return_const(zl0);
         bd.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         bd
     };
 
@@ -1835,7 +1831,7 @@ fn flush_zone_empty_stripe_buffer() {
     let bd = || {
         let mut bd = VdevBlock::default();
         bd.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         bd.expect_lba2zone()
             .with(eq(60_000))
             .return_const(Some(1));
@@ -1850,7 +1846,7 @@ fn flush_zone_empty_stripe_buffer() {
             .with(eq(60_000))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         bd
     };
 
@@ -1885,7 +1881,7 @@ fn open_zone_reopen() {
     let bd = || {
         let mut bd = VdevBlock::default();
         bd.expect_size()
-            .return_const(262_144);
+            .return_const(262_144u64);
         bd.expect_lba2zone()
             .with(eq(1))
             .return_const(Some(0));
@@ -1903,11 +1899,11 @@ fn open_zone_reopen() {
             .with(eq(4096))
             .return_once(|_| Box::new(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
-            .return_const(10);
+            .return_const(10u32);
         bd.expect_write_at()
-            .with(params!(always(), eq(4196)))
+            .with(always(), eq(4196))
             .once()
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _| Box::new( future::ok::<(), Error>(())));
         bd
     };
     blockdevs.push(bd());    //disk 0
@@ -1939,7 +1935,7 @@ fn open_zone_zero_fill_wasted_chunks() {
         let bd = || {
             let mut bd = VdevBlock::default();
             bd.expect_size()
-                .return_const(262_144);
+                .return_const(262_144u64);
             bd.expect_lba2zone()
                 .with(eq(1))
                 .return_const(Some(0));
@@ -1954,13 +1950,13 @@ fn open_zone_zero_fill_wasted_chunks() {
                 .with(eq(32))
                 .return_once(|_| Box::new(future::ok::<(), Error>(())));
             bd.expect_optimum_queue_depth()
-                .return_const(10);
+                .return_const(10u32);
             bd.expect_writev_at()
                 .once()
-                .withf(|(sglist, lba)| {
+                .withf(|sglist, lba| {
                     let len = sglist.iter().map(|b| b.len()).sum::<usize>();
                     len == 3 * BYTES_PER_LBA && *lba == 32
-                }).return_once(|_| Box::new( future::ok::<(), Error>(())));
+                }).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
             bd
         };
 
@@ -1993,7 +1989,7 @@ fn open_zone_zero_fill_wasted_stripes() {
         let bd = |gap_chunks: LbaT| {
             let mut bd = VdevBlock::default();
             bd.expect_size()
-                .return_const(262_144);
+                .return_const(262_144u64);
             bd.expect_lba2zone()
                 .with(eq(1))
                 .return_const(Some(0));
@@ -2008,15 +2004,15 @@ fn open_zone_zero_fill_wasted_stripes() {
                 .with(eq(32))
                 .return_once(|_| Box::new(future::ok::<(), Error>(())));
             bd.expect_optimum_queue_depth()
-                .return_const(10);
+                .return_const(10u32);
             if gap_chunks > 0 {
                 bd.expect_writev_at()
                     .once()
-                    .withf(move |(sglist, lba)| {
+                    .withf(move |sglist, lba| {
                         let gap_lbas = gap_chunks * CHUNKSIZE; 
                         let len = sglist.iter().map(|b| b.len()).sum::<usize>();
                         len == gap_lbas as usize * BYTES_PER_LBA && *lba == 32
-                    }).return_once(|_| Box::new( future::ok::<(), Error>(())));
+                    }).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
             }
             bd
         };
