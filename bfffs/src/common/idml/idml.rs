@@ -583,11 +583,10 @@ mock!{
         // the expectations easier to write
         fn txg(&self)
             -> Box<dyn Future<Item=&'static TxgT, Error=Error> + Send>;
-        // advance_transaction is impossible to perfectly mock with Mockall,
-        // because f is typically a closure, and closures cannot be named.  If f
-        // were Boxed, then it would work.  But I don't want to impose that
-        // limitation on the production code.  Instead, we'll use special logic
-        // in advance_transaction and only mock the txg used.
+        // advance_transaction is difficult to mock with Mockall, because f's
+        // output is typically a chained future that is difficult to name.
+        // Instead, we'll use special logic in advance_transaction and only mock
+        // the txg used.
         fn advance_transaction_inner(&self) -> TxgT;
         fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
             -> Box<dyn Future<Item=(), Error=Error> + Send>;

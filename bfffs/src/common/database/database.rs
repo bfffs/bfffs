@@ -670,13 +670,10 @@ impl Database {
 
     /// Helper for MockDatabase::fswrite.
     ///
-    /// Mockall can't naïvely mock methods with closure arguments, because
-    /// closures can't be named.  Instead we'll let mockall mock this helper
-    /// method, and manually write `MockDatabase::fswrite`.
-    ///
-    /// Once `Box<FnOnce>` becomes stable in Rust 1.34.0, then it should be
-    /// possible for Mockall to automatically turn the closure into a boxed
-    /// FnOnce object, and this helper can go away.
+    /// Mockall can't mock fswrite.  Even though it can handle the closure, it
+    /// requires that the closures's output type be named, which isn't feasible
+    /// in this case.  Instead we'll let mockall mock this helper method, and
+    /// manually write `MockDatabase::fswrite`.
     #[cfg(test)]
     #[doc(hidden)]
     pub fn fswrite_inner(&self, tree_id: TreeID)
