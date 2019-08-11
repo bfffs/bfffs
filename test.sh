@@ -10,12 +10,13 @@ cargo +stable test --all
 
 # bfffs-fio should stay in consistent style.  The other crates can't, because
 # rustfmt screws them up.
-cargo +nightly fmt --package bfffs-fio -- --check
+cargo +nightly-2019-05-20-x86_64-unknown-freebsd fmt \
+	--package bfffs-fio -- --check
 
 # Measure test coverage, too.  Only measure test coverage for the main crate,
 # because cargo-kcov doesn't work with workspaces that have features.
 # https://github.com/kennytm/cargo-kcov/issues/39
 if which -s kcov ; then
 	cd bfffs;
-	env CARGO_TARGET_DIR=/localhome/somers/src/rust/bfffs/target_cov cargo +nightly kcov --all -v --features nightly -- --include-path="src"
+	env CARGO_TARGET_DIR=/localhome/somers/src/rust/bfffs/target_cov cargo +nightly kcov --all -v --features nightly -- --include-path="src" --exclude-path="src/bin"
 fi
