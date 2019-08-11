@@ -26,6 +26,7 @@ mock! {
             -> Box<dyn Future<Item=(), Error=Error> + Send>;
         fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)
             -> MockTree<A, D, K, V>;
+        fn dump(&self, f: &mut (dyn io::Write + 'static)) -> Result<(), Error>;
         fn flush(&self, txg: TxgT)
             -> Box<dyn Future<Item=(), Error=Error> + Send>;
         fn get(&self, k: K)
@@ -48,18 +49,6 @@ mock! {
         fn remove(&self, k: K, txg: TxgT)
             -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
         fn serialize(&self) -> Result<TreeOnDisk<A>, Error>;
-    }
-}
-impl<A, D, K, V> MockTree<A, D, K, V>
-    where A: Addr,
-          D: DML<Addr=A>,
-          K: Key,
-          V: Value
-{
-    // Simply stub the mock dump function.  It's not used during unit tests, and
-    // mockall complains that f isn't 'static
-    pub fn dump(&self, _f: &mut dyn io::Write) -> Result<(), Error> {
-        unimplemented!()
     }
 }
 // LCOV_EXCL_STOP
