@@ -21,9 +21,9 @@ mock! {
               K: Key,
               V: Value
     {
-        fn check(&self) -> Box<Future<Item=bool, Error=Error> + Send>;
+        fn check(&self) -> Box<dyn Future<Item=bool, Error=Error> + Send>;
         fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
-            -> Box<Future<Item=(), Error=Error> + Send>;
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
         fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)
             -> MockTree<A, D, K, V>;
         fn flush(&self, txg: TxgT)
@@ -58,7 +58,7 @@ impl<A, D, K, V> MockTree<A, D, K, V>
 {
     // Simply stub the mock dump function.  It's not used during unit tests, and
     // mockall complains that f isn't 'static
-    pub fn dump(&self, _f: &mut io::Write) -> Result<(), Error> {
+    pub fn dump(&self, _f: &mut dyn io::Write) -> Result<(), Error> {
         unimplemented!()
     }
 }

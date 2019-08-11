@@ -758,7 +758,7 @@ mock! {
         fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut>;
         fn new(leaf: VdevLeaf) -> Self;
         fn open<P: AsRef<Path> + 'static>(path: P)
-            -> Box<Future<Item=(Self, LabelReader), Error=Error>>;
+            -> Box<dyn Future<Item=(Self, LabelReader), Error=Error>>;
         fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
         fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;

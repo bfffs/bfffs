@@ -461,7 +461,7 @@ mock!{
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
-        fn sync_all(&self) -> Box<futures::Future<Item = (),
+        fn sync_all(&self) -> Box<dyn futures::Future<Item = (),
                                   Error = Error>>;
         fn uuid(&self) -> Uuid;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);

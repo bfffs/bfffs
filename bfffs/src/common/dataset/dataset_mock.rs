@@ -44,24 +44,24 @@ mock! {
     {
         fn allocated(&self) -> LbaT;
         fn delete_blob(&self, rid: RID)
-            -> Box<Future<Item=(), Error=Error> + Send>;
+            -> Box<dyn Future<Item=(), Error=Error> + Send>;
         fn insert(&self, k: K, v: V)
-            -> Box<Future<Item=Option<V>, Error=Error> + Send>;
+            -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
         fn last_key(&self)
             -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
         fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT)
             -> ReadWriteDataset<K, V>;
         fn put_blob(&self, dbs: DivBufShared, compression: Compression)
-            -> Box<Future<Item=RID, Error=Error> + Send>;
+            -> Box<dyn Future<Item=RID, Error=Error> + Send>;
         fn range_delete<R, T>(&self, range: R)
-            -> Box<Future<Item=(), Error=Error> + Send>
+            -> Box<dyn Future<Item=(), Error=Error> + Send>
             where K: Borrow<T>,
                   R: Debug + Clone + RangeBounds<T> + Send + 'static,
                   T: Debug + Ord + Clone + Send + 'static;
         fn remove(&self, k: K)
-            -> Box<Future<Item=Option<V>, Error=Error> + Send>;
+            -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
         fn remove_blob(&self, rid: RID)
-            -> Box<Future<Item=Box<DivBufShared>, Error=Error> + Send>;
+            -> Box<dyn Future<Item=Box<DivBufShared>, Error=Error> + Send>;
         fn size(&self) -> LbaT;
     }
     trait ReadDataset<K: Key, V: Value> {
