@@ -21,12 +21,10 @@ use std::{
     convert::TryFrom,
     fmt::{self, Display, Formatter},
     hash::Hash,
-    ops::Range,
-    rc::Rc,
-};
-#[cfg(not(test))] use std::{
     num::NonZeroU64,
+    ops::Range,
     path::Path,
+    rc::Rc,
 };
 
 pub type ClusterFut = dyn Future<Item = (), Error = Error>;
@@ -715,7 +713,6 @@ impl Cluster {
     ///                         disks may fail before the array becomes
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
-    #[cfg(not(test))]
     pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
         lbas_per_zone: Option<NonZeroU64>, redundancy: i16, paths: Vec<P>)
         -> Self

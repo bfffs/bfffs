@@ -1,24 +1,41 @@
 // vim: tw=80
 
-use crate::common::{Uuid, pool, raid, vdev::Vdev, vdev_file};
 #[cfg(not(test))]
-use crate::common::{Error, cache, cluster, database, ddml, idml, label,
-    vdev_block};
-use futures::{Future, future};
-#[cfg(not(test))] use futures::{
+use crate::common::vdev::Vdev;
+use crate::common::{Error, Uuid, cache, database, ddml, idml, label, pool,
+                    raid};
+use futures::{
+    Future,
     Stream,
+    future,
     stream,
     sync::oneshot
 };
 use std::{
-    borrow::ToOwned,
     collections::BTreeMap,
-    path::{Path, PathBuf},
-    sync::Mutex
+    path::PathBuf,
+    sync::{Arc, Mutex, MutexGuard}
 };
-#[cfg(not(test))] use std::sync::{Arc, MutexGuard};
+#[cfg(not(test))]
+use std::{
+    borrow::ToOwned,
+    path::Path
+};
+#[cfg(not(test))]
 use tokio::runtime::current_thread;
-#[cfg(not(test))] use tokio::executor::{self, DefaultExecutor, Executor};
+use tokio::executor::{self, DefaultExecutor, Executor};
+
+#[cfg(not(test))] use crate::common::pool::Pool;
+#[cfg(test)] use crate::common::pool::MockPool as Pool;
+
+#[cfg(not(test))] use crate::common::cluster::Cluster;
+#[cfg(test)] use crate::common::cluster::MockCluster as Cluster;
+
+#[cfg(not(test))] use crate::common::vdev_block::VdevBlock;
+#[cfg(test)] use crate::common::vdev_block::MockVdevBlock as VdevBlock;
+
+#[cfg(not(test))] use crate::common::vdev_file::VdevFile;
+#[cfg(test)] use crate::common::vdev_file::MockVdevFile as VdevFile;
 
 #[derive(Default)]
 struct Inner {
@@ -38,7 +55,6 @@ impl DevManager {
     // we do that, then we can't automatically infer whether the result should
     // be Send (it's based on whether E: Send).  So until specialization is
     // available, we must do it like this.
-    #[cfg(not(test))]
     pub fn import_by_name<E, S>(&self, name: S, handle: E)
         -> Result<impl Future<Item = database::Database, Error = Error>, Error>
         where E: Clone + Executor + 'static,
@@ -62,7 +78,6 @@ impl DevManager {
 
     /// Import a pool by its UUID
     // TODO: handle the ENOENT case
-    #[cfg(not(test))]
     pub fn import_by_uuid<E>(&self, uuid: Uuid, handle: E)
         -> impl Future<Item = database::Database, Error = Error>
         where E: Clone + Executor + 'static
@@ -72,7 +87,6 @@ impl DevManager {
     }
 
     /// Import a pool that is already known to exist
-    #[cfg(not(test))]
     fn import<E>(&self, uuid: Uuid, handle: E, inner: MutexGuard<Inner>)
         -> impl Future<Item = database::Database, Error = Error>
         where E: Clone + Executor + 'static
@@ -99,7 +113,7 @@ impl DevManager {
         });
         future::join_all(proxies).map_err(|_| Error::EPIPE)
             .and_then(move |proxies| {
-                pool::Pool::open(Some(uuid), proxies)
+                Pool::open(Some(uuid), proxies)
             }).map(|(pool, label_reader)| {
                 let cache = cache::Cache::with_capacity(1_000_000_000);
                 let arc_cache = Arc::new(Mutex::new(cache));
@@ -112,9 +126,8 @@ impl DevManager {
 
     /// Import all of the clusters from a Pool.  For debugging purposes only.
     #[doc(hidden)]
-    #[cfg(not(test))]
     pub fn import_clusters(&self, uuid: Uuid)
-        -> impl Future<Item = Vec<cluster::Cluster>, Error = Error>
+        -> impl Future<Item = Vec<Cluster>, Error = Error>
     {
         let inner = self.inner.lock().unwrap();
         let (_pool, raids, mut leaves) = self.open_labels(uuid, inner);
@@ -135,19 +148,17 @@ impl DevManager {
             }).collect::<Vec<_>>()
     }
 
-    #[cfg(not(test))]
     fn open_cluster(leaf_paths: Vec<PathBuf>, uuid: Uuid)
-        -> impl Future<Item=(cluster::Cluster, label::LabelReader), Error=Error>
+        -> impl Future<Item=(Cluster, label::LabelReader), Error=Error>
     {
         DevManager::open_vdev_blocks(leaf_paths)
         .and_then(move |vdev_blocks| {
             let (vdev_raid_api, reader) = raid::open(Some(uuid), vdev_blocks);
-            cluster::Cluster::open(vdev_raid_api)
+            Cluster::open(vdev_raid_api)
             .map(move |cluster| (cluster, reader))
         })
     }
 
-    #[cfg(not(test))]
     fn open_labels(&self, uuid: Uuid, mut inner: MutexGuard<Inner>)
         -> (pool::Label, Vec<raid::Label>, BTreeMap<Uuid, Vec<PathBuf>>)
     {
@@ -165,15 +176,14 @@ impl DevManager {
         (pool, raids, leaves)
     }
 
-    #[cfg(not(test))]
     fn open_vdev_blocks(leaf_paths: Vec<PathBuf>)
-        -> impl Future<Item=Vec<(vdev_block::VdevBlock, label::LabelReader)>,
+        -> impl Future<Item=Vec<(VdevBlock, label::LabelReader)>,
                        Error=Error>
     {
         stream::iter_ok(leaf_paths.into_iter())
-        .and_then(vdev_file::VdevFile::open)
+        .and_then(VdevFile::open)
         .map(|(leaf, reader)| {
-            (vdev_block::VdevBlock::new(leaf), reader)
+            (VdevBlock::new(leaf), reader)
         }).collect()
     }
 
@@ -181,13 +191,15 @@ impl DevManager {
     ///
     /// If present, retain the device in the `DevManager` for use as a spare or
     /// for building Pools.
+    // Disable in test mode because MockVdevFile::Open requires P: 'static
+    #[cfg(not(test))]
     pub fn taste<P: AsRef<Path>>(&self, p: P) {
         // taste should be called from the synchronous domain, so it needs to
         // create its own temporary Runtime
         let mut rt = current_thread::Runtime::new().unwrap();
         rt.block_on(future::lazy(move || {
             let pathbuf = p.as_ref().to_owned();
-            vdev_file::VdevFile::open(p)
+            VdevFile::open(p)
                 .map(move |(vdev_file, mut reader)| {
                     let mut inner = self.inner.lock().unwrap();
                     inner.leaves.insert(vdev_file.uuid(), pathbuf);

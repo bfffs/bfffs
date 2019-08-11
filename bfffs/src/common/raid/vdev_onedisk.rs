@@ -9,8 +9,8 @@ use crate::{
     }
 };
 use futures::{Future, IntoFuture};
-use std::collections::BTreeMap;
-#[cfg(not(test))] use std::{
+use std::{
+    collections::BTreeMap,
     num::NonZeroU64,
     path::Path
 };
@@ -49,7 +49,6 @@ impl VdevOneDisk {
     ///                         simulated zones on devices that don't have
     ///                         native zones.
     /// * `path`:               Pathnames of file or device
-    #[cfg(not(test))]
     // Hide from docs.  The public API should just be raid::create, but this
     // function technically needs to be public for testing purposes.
     #[doc(hidden)]

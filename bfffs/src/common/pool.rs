@@ -522,7 +522,6 @@ impl Pool {
     /// Create a new `Pool` from some freshly created `Cluster`s.
     ///
     /// Must be called from within the context of a Tokio Runtime.
-    #[cfg(not(test))]
     pub fn create(name: String, clusters: Vec<ClusterProxy>)
         -> impl Future<Item=Self, Error=Error>
     {

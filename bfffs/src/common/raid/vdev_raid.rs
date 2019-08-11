@@ -16,11 +16,9 @@ use std::{
     collections::BTreeMap,
     cmp,
     mem,
-    ptr
-};
-#[cfg(not(test))] use std::{
     num::NonZeroU64,
-    path::Path
+    path::Path,
+    ptr
 };
 use super::{
     codec::*,
@@ -247,11 +245,9 @@ macro_rules! issue_1stripe_ops {
 }
 
 impl VdevRaid {
-    #[cfg(not(test))]
     const DEFAULT_CHUNKSIZE: LbaT = 16;
 
     /// Choose the best declustering layout for the requirements given.
-    #[cfg(not(test))]
     fn choose_layout(num_disks: i16, _disks_per_stripe: i16, _redundancy: i16,
                      chunksize: Option<NonZeroU64>)
         -> (LayoutAlgorithm, LbaT)
@@ -278,7 +274,6 @@ impl VdevRaid {
     ///                         disks may fail before the array becomes
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
-    #[cfg(not(test))]
     // Hide from docs.  The public API should just be raid::create, but this
     // function technically needs to be public for testing purposes.
     #[doc(hidden)]

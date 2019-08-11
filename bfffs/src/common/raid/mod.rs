@@ -15,11 +15,9 @@ use crate::common::{
 use std::{
     collections::BTreeMap,
     iter::once,
-    rc::Rc
-};
-#[cfg(not(test))] use std::{
     num::NonZeroU64,
     path::Path,
+    rc::Rc
 };
 
 #[cfg(test)]
@@ -79,7 +77,6 @@ impl<'a> Label {
 ///                         disks may fail before the array becomes
 ///                         inoperable.
 /// * `paths`:              Slice of pathnames of files and/or devices
-#[cfg(not(test))]
 pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
     lbas_per_zone: Option<NonZeroU64>, redundancy: i16,
     mut paths: Vec<P>) -> Rc<dyn VdevRaidApi>
