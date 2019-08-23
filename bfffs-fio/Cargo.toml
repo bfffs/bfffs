@@ -15,7 +15,7 @@ bfffs = { path = "../bfffs" }
 futures = "0.1.14"
 lazy_static = "1.0"
 libc = "0.2.44"
-memoffset = "0.2"
+memoffset = "0.5.1"
 tokio-io-pool = "0.1.4"
 
 [lib]
