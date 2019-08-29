@@ -22,4 +22,4 @@ features=  [ "suggestions", "color", "wrap_help" ]
 
 [dev-dependencies]
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
-mockall = "0.3.0"
+mockall = "0.4.0"
