@@ -465,6 +465,7 @@ impl Filesystem for FuseFs {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 impl From<Fs> for FuseFs {
     fn from(fs: Fs) -> Self {
@@ -476,10 +477,106 @@ impl From<Fs> for FuseFs {
 mod t {
 
 use super::*;
+use mockall::{PredicateStrExt, predicate};
+
+mod create {
+    use super::*;
+    use bfffs::common::fs::{GetAttr, Mode};
+
+    #[test]
+    fn enotdir() {
+        let mode: u16 = 0o644;
+        const NAME: &'static str = "foo.txt";
+        let parent = 42;
+
+        let mut request = Request::default();
+        request.expect_uid().return_const(12345u32);
+        request.expect_gid().return_const(12345u32);
+
+        let mut reply = ReplyCreate::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ENOTDIR))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_create()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::str::contains(NAME).from_utf8(),
+                predicate::eq(mode),
+                predicate::always(),
+                predicate::always(),
+            ).return_const(Err(libc::ENOTDIR));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.create(&request, parent, &OsString::from(NAME), mode.into(),
+            0, reply);
+    }
+
+    #[test]
+    fn ok() {
+        let mode: u16 = 0o644;
+        const NAME: &'static str = "foo.txt";
+        let parent = 42;
+        let ino = 43;
+        let uid = 12345u32;
+        let gid = 54321u32;
+
+        let mut request = Request::default();
+        request.expect_uid().return_const(uid);
+        request.expect_gid().return_const(gid);
+
+        let mut reply = ReplyCreate::new();
+        reply.expect_created()
+            .times(1)
+            .withf(move |_ttl, attr, _gen, _fh, _flags| {
+                attr.ino == ino &&
+                attr.size == 0 &&
+                attr.kind == FileType::RegularFile &&
+                attr.perm == mode &&
+                attr.nlink == 1 &&
+                attr.uid == uid &&
+                attr.gid == gid
+            }).return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_create()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::str::contains(NAME).from_utf8(),
+                predicate::eq(mode),
+                predicate::always(),
+                predicate::always(),
+            ).return_const(Ok(ino));
+        mock_fs.expect_getattr()
+            .with(predicate::eq(ino))
+            .return_const(Ok(GetAttr {
+                ino,
+                size: 0,
+                blocks: 0,
+                atime: Timespec{sec: 0, nsec: 0},
+                mtime: Timespec{sec: 0, nsec: 0},
+                ctime: Timespec{sec: 0, nsec: 0},
+                birthtime: Timespec{sec: 0, nsec: 0},
+                mode: Mode(mode | libc::S_IFREG),
+                nlink: 1,
+                uid,
+                gid,
+                rdev: 0,
+                flags: 0
+            }));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.create(&request, parent, &OsString::from(NAME), mode.into(),
+            0, reply);
+    }
+}
 
 mod removexattr {
     use super::*;
-    use mockall::predicate;
 
     #[test]
     fn enoattr() {
@@ -536,7 +633,6 @@ mod removexattr {
 mod getxattr {
     use super::*;
     use divbuf::DivBufShared;
-    use mockall::predicate;
 
     #[test]
     fn length_enoattr() {
@@ -696,7 +792,6 @@ mod getxattr {
 mod listxattr {
     use super::*;
     use bfffs::common::fs_tree::{InlineExtAttr, InlineExtent};
-    use mockall::predicate;
 
     #[test]
     fn length_eperm() {
@@ -824,7 +919,6 @@ mod listxattr {
 
 mod setxattr {
     use super::*;
-    use mockall::predicate;
 
     #[test]
     fn value_erofs() {
@@ -883,3 +977,4 @@ mod setxattr {
 }
 
 }
+// LCOV_EXCL_STOP
