@@ -511,7 +511,7 @@ mod ddml {
             .once()
             .in_sequence(&mut seq)
             .with(eq(Key::PBA(pba)), always())
-            .return_once(move |_, dbs| {;
+            .return_once(move |_, dbs| {
                 owned_by_cache2.lock().unwrap().push(dbs);
             });
 

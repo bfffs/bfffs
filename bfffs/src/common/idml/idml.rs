@@ -833,7 +833,7 @@ mod t {
             .once()
             .in_sequence(&mut seq)
             .with(eq(Key::Rid(RID(42))), always())
-            .returning(move |_, dbs| {;
+            .returning(move |_, dbs| {
                 owned_by_cache2.lock().unwrap().push(dbs);
             });
         let mut ddml = DDML::default();
