@@ -1994,6 +1994,120 @@ mod readlink {
     }
 }
 
+mod rename {
+    use super::*;
+
+    #[test]
+    fn enotdir() {
+        let parent = 42;
+        let newparent = 43;
+        let name = OsStr::from_bytes(b"foo");
+        let newname = OsStr::from_bytes(b"bar");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ENOTDIR))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_rename()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(name),
+                predicate::eq(newparent),
+                predicate::eq(newname),
+            ).return_const(Err(libc::ENOTDIR));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.rename(&request, parent, name, newparent, newname, reply);
+    }
+
+    #[test]
+    fn ok() {
+        let parent = 42;
+        let newparent = 43;
+        let name = OsStr::from_bytes(b"foo");
+        let newname = OsStr::from_bytes(b"bar");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_ok()
+            .times(1)
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_rename()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(name),
+                predicate::eq(newparent),
+                predicate::eq(newname),
+            ).return_const(Ok(()));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.rename(&request, parent, name, newparent, newname, reply);
+    }
+}
+
+mod rmdir {
+    use super::*;
+
+    #[test]
+    fn enotdir() {
+        let parent = 42;
+        let name = OsStr::from_bytes(b"foo");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ENOTDIR))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_rmdir()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(name)
+            ).returning(move |_, _| Err(libc::ENOTDIR));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.rmdir(&request, parent, name, reply);
+    }
+
+    #[test]
+    fn ok() {
+        let parent = 42;
+        let name = OsStr::from_bytes(b"foo");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_ok()
+            .times(1)
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_rmdir()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(name)
+            ).returning(move |_, _| Ok(()));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.rmdir(&request, parent, name, reply);
+    }
+}
+
 mod setattr {
     use super::*;
 
@@ -2152,6 +2266,103 @@ mod setxattr {
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.setxattr(&request, inode, packed_name, v, 0, 0, reply);
+    }
+}
+
+mod symlink {
+    use super::*;
+
+    #[test]
+    fn eloop() {
+        const NAME: &'static [u8] = b"foo";
+        let mode: u16 = 0o755;
+        let parent = 42;
+
+        let mut request = Request::default();
+        request.expect_uid().return_const(12345u32);
+        request.expect_gid().return_const(12345u32);
+
+        let mut reply = ReplyEntry::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ELOOP))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_symlink()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(mode),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(OsStr::from_bytes(NAME)),
+            ).return_const(Err(libc::ELOOP));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.symlink(&request, parent, OsStr::from_bytes(NAME),
+            Path::new(OsStr::from_bytes(NAME)), reply);
+    }
+
+    #[test]
+    fn ok() {
+        const NAME: &'static [u8] = b"foo";
+        let mode: u16 = 0o755;
+        let parent = 42;
+        let ino = 43;
+        let uid = 12345;
+        let gid = 54321;
+
+        let mut request = Request::default();
+        request.expect_uid().return_const(uid);
+        request.expect_gid().return_const(gid);
+
+        let mut reply = ReplyEntry::new();
+        reply.expect_entry()
+            .times(1)
+            .withf(move |_ttl, attr, _gen| {
+                attr.ino == ino &&
+                attr.size == 0 &&
+                attr.kind == FileType::Symlink &&
+                attr.perm == mode &&
+                attr.nlink == 1 &&
+                attr.uid == uid &&
+                attr.gid == gid
+            }).return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_symlink()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(mode),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(OsStr::from_bytes(NAME)),
+            ).return_const(Ok(ino));
+        mock_fs.expect_getattr()
+            .with(predicate::eq(ino))
+            .return_const(Ok(GetAttr {
+                ino,
+                size: 0,
+                blocks: 0,
+                atime: Timespec{sec: 0, nsec: 0},
+                mtime: Timespec{sec: 0, nsec: 0},
+                ctime: Timespec{sec: 0, nsec: 0},
+                birthtime: Timespec{sec: 0, nsec: 0},
+                mode: Mode(mode | libc::S_IFLNK),
+                nlink: 1,
+                uid,
+                gid,
+                rdev: 0,
+                flags: 0
+            }));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.symlink(&request, parent, OsStr::from_bytes(NAME),
+            Path::new(OsStr::from_bytes(NAME)), reply);
     }
 }
 
