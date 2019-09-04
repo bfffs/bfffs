@@ -6,28 +6,23 @@
 # Usage: Run the script. "use_graph.svg" will be created in PWD.
 
 TEMPFILE=`mktemp -t use_graph.dot`
-cargo +nightly-2018-10-15-x86_64-unknown-freebsd modules graph > $TEMPFILE
-sed '
+# Until cargo-modules gets released with Rust 2018 support, use my local build
+/usr/home/somers/src/rust/cargo-modules/target/debug/cargo-modules --enable-edition-2018 modules graph > $TEMPFILE
+sed -E '
 # Exclude test modules
-/::t::/d
-/::t"/d
+/::t\>/d
+/::benches\>/d
+/::tests\>/d
+/_mock\>/d
 #
 # Exclude boring modules
-/"::bfffs"/d
-/"::common"/d
-/"::common::cache_mock"/d
-/"::common::database_mock"/d
-/"::common::ddml_mock"/d
-/"::common::idml_mock"/d
-/"::common::tree_mock"/d
-/"::common::sgcursor"/d
-/"::common::tree::atomic_u64_serializer"/d
-/"::common::tree::tree_root_serializer"/d
-/"::common::tree::node::node_serializer"/d
-/"::common::fs_tree::dbs_serializer"/d
-/"::common::vdev"/d
-#
-# Exclude submodule edges, leaving just the use edges
-/->.*weight=100/d
+/"bfffs"/d
+/"bfffs::common"/d
+/"bfffs::common::raid::sgcursor"/d
+/"bfffs::common::tree::tree::atomic_u64_serializer"/d
+/"bfffs::common::tree::tree::tree_root_serializer"/d
+/"bfffs::common::tree::node::node_serializer"/d
+/"bfffs::common::fs_tree::dbs_serializer"/d
+/"bfffs::common::vdev"/d
 ' < $TEMPFILE | dot -Tsvg -o use_graph.svg
 rm $TEMPFILE
