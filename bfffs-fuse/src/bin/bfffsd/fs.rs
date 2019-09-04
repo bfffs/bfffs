@@ -631,6 +631,78 @@ mod removexattr {
     }
 }
 
+mod getattr {
+    use super::*;
+
+    #[test]
+    fn enoent() {
+        let ino = 42;
+
+        let request = Request::default();
+        let mut reply = ReplyAttr::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ENOENT))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_getattr()
+            .times(1)
+            .with(predicate::eq(ino))
+            .return_const(Err(libc::ENOENT));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.getattr(&request, ino, reply);
+    }
+
+    #[test]
+    fn ok() {
+        let ino = 42;
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o644;
+        let size = 1024;
+
+        let request = Request::default();
+        let mut reply = ReplyAttr::new();
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_getattr()
+            .with( predicate::eq(ino))
+            .times(1)
+            .return_const(Ok(GetAttr {
+                ino,
+                size,
+                blocks: 0,
+                atime: Timespec{sec: 0, nsec: 0},
+                mtime: Timespec{sec: 0, nsec: 0},
+                ctime: Timespec{sec: 0, nsec: 0},
+                birthtime: Timespec{sec: 0, nsec: 0},
+                mode: Mode(mode | libc::S_IFREG),
+                nlink: 1,
+                uid,
+                gid,
+                rdev: 0,
+                flags: 0
+            }));
+        reply.expect_attr()
+            .times(1)
+            .withf(move |_ttl, attr| {
+                attr.ino == ino &&
+                attr.size == size &&
+                attr.kind == FileType::RegularFile &&
+                attr.perm == mode &&
+                attr.nlink == 1 &&
+                attr.uid == uid &&
+                attr.gid == gid &&
+                attr.rdev == 0
+            }).return_const(());
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.getattr(&request, ino, reply);
+    }
+}
+
 mod getxattr {
     use super::*;
     use divbuf::DivBufShared;
@@ -915,6 +987,186 @@ mod listxattr {
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.listxattr(&request, inode, wantsize, reply);
+    }
+}
+
+mod lookup {
+    use super::*;
+
+    #[test]
+    fn enoent() {
+        let parent = 42;
+        let name = b"foo.txt";
+
+        let request = Request::default();
+        let mut reply = ReplyEntry::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ENOENT))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_lookup()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(OsStr::from_bytes(&name[..]))
+            ).return_const(Err(libc::ENOENT));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.lookup(&request, parent, OsStr::from_bytes(&name[..]), reply);
+    }
+
+    #[test]
+    fn ok() {
+        let parent = 42;
+        let ino = 43;
+        let name = b"foo.txt";
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o644;
+        let size = 1024;
+
+        let request = Request::default();
+        let mut reply = ReplyEntry::new();
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_lookup()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(OsStr::from_bytes(&name[..]))
+            ).return_const(Ok(ino));
+        mock_fs.expect_getattr()
+            .with( predicate::eq(ino))
+            .times(1)
+            .return_const(Ok(GetAttr {
+                ino,
+                size,
+                blocks: 0,
+                atime: Timespec{sec: 0, nsec: 0},
+                mtime: Timespec{sec: 0, nsec: 0},
+                ctime: Timespec{sec: 0, nsec: 0},
+                birthtime: Timespec{sec: 0, nsec: 0},
+                mode: Mode(mode | libc::S_IFREG),
+                nlink: 1,
+                uid,
+                gid,
+                rdev: 0,
+                flags: 0
+            }));
+        reply.expect_entry()
+            .times(1)
+            .withf(move |_ttl, attr, _gen| {
+                attr.ino == ino &&
+                attr.size == size &&
+                attr.kind == FileType::RegularFile &&
+                attr.perm == mode &&
+                attr.nlink == 1 &&
+                attr.uid == uid &&
+                attr.gid == gid &&
+                attr.rdev == 0
+            }).return_const(());
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.lookup(&request, parent, OsStr::from_bytes(&name[..]), reply);
+    }
+}
+
+mod mkdir {
+    use super::*;
+
+    #[test]
+    fn eperm() {
+        let mode: u16 = 0o755;
+        const NAME: &'static [u8; 3] = b"foo";
+        let parent = 42;
+        let uid = 12345u32;
+        let gid = 54321u32;
+
+        let mut request = Request::default();
+        request.expect_uid().return_const(uid);
+        request.expect_gid().return_const(gid);
+
+        let mut reply = ReplyEntry::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EPERM))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_mkdir()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(mode),
+                predicate::eq(uid),
+                predicate::eq(gid),
+            ).return_const(Err(libc::EPERM));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.mkdir(&request, parent, OsStr::from_bytes(NAME),
+            (libc::S_IFDIR | mode).into(), reply);
+    }
+
+    #[test]
+    fn ok() {
+        let mode: u16 = 0o755;
+        const NAME: &'static [u8; 3] = b"foo";
+        let parent = 42;
+        let ino = 43;
+        let uid = 12345u32;
+        let gid = 54321u32;
+
+        let mut request = Request::default();
+        request.expect_uid().return_const(uid);
+        request.expect_gid().return_const(gid);
+
+        let mut reply = ReplyEntry::new();
+        reply.expect_entry()
+            .times(1)
+            .withf(move |_ttl, attr, _gen| {
+                attr.ino == ino &&
+                attr.size == 0 &&
+                attr.kind == FileType::Directory &&
+                attr.perm == mode &&
+                attr.nlink == 1 &&
+                attr.uid == uid &&
+                attr.gid == gid
+            }).return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_mkdir()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(mode),
+                predicate::eq(uid),
+                predicate::eq(gid),
+            ).return_const(Ok(ino));
+        mock_fs.expect_getattr()
+            .times(1)
+            .return_const(Ok(GetAttr {
+                ino,
+                size: 0,
+                blocks: 0,
+                atime: Timespec{sec: 0, nsec: 0},
+                mtime: Timespec{sec: 0, nsec: 0},
+                ctime: Timespec{sec: 0, nsec: 0},
+                birthtime: Timespec{sec: 0, nsec: 0},
+                mode: Mode(mode | libc::S_IFDIR),
+                nlink: 1,
+                uid,
+                gid,
+                rdev: 0,
+                flags: 0
+            }));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.mkdir(&request, parent, OsStr::from_bytes(NAME),
+            (libc::S_IFDIR | mode).into(), reply);
     }
 }
 
@@ -1695,6 +1947,53 @@ mod readdir {
     }
 }
 
+mod readlink {
+    use super::*;
+
+    #[test]
+    fn enoent() {
+        let ino = 42;
+
+        let request = Request::default();
+        let mut reply = ReplyData::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ENOENT))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_readlink()
+            .times(1)
+            .with(predicate::eq(ino))
+            .return_const(Err(libc::ENOENT));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.readlink(&request, ino, reply);
+    }
+
+    #[test]
+    fn ok() {
+        let ino = 42;
+        let name = b"some_file.txt";
+
+        let request = Request::default();
+        let mut reply = ReplyData::new();
+        reply.expect_data()
+            .times(1)
+            .with(predicate::eq(&name[..]))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_readlink()
+            .times(1)
+            .with(predicate::eq(ino))
+            .return_const(Ok(OsStr::from_bytes(&name[..]).to_owned()));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.readlink(&request, ino, reply);
+    }
+}
+
 mod setattr {
     use super::*;
 
@@ -1853,6 +2152,59 @@ mod setxattr {
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.setxattr(&request, inode, packed_name, v, 0, 0, reply);
+    }
+}
+
+mod unlink {
+    use super::*;
+
+    #[test]
+    fn eisdir() {
+        let parent = 42;
+        let name = OsStr::from_bytes(b"foo");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EISDIR))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_unlink()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(name)
+            ).returning(move |_, _| Err(libc::EISDIR));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.unlink(&request, parent, name, reply);
+    }
+
+    #[test]
+    fn ok() {
+        let parent = 42;
+        let name = OsStr::from_bytes(b"foo");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_ok()
+            .times(1)
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_unlink()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(name)
+            ).returning(move |_, _| Ok(()));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.unlink(&request, parent, name, reply);
     }
 }
 
