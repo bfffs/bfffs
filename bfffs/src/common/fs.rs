@@ -1289,7 +1289,7 @@ impl Fs {
         let (tx, rx) = oneshot::channel();
         // We only need a writeable FS reference if we're going to update atime.
         // If not, then only get a read reference.  Read references are better
-        // because then can be held during txg syncs.
+        // because they can be held during txg syncs.
         if self.atime {
             self.handle.spawn(
                 self.db.fswrite(self.tree, move |ds| {
