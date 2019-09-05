@@ -25,11 +25,7 @@ use tokio_file::{AioFut, File, LioFut};
 /// because they're not really intended to be a stable interface.
 #[doc(hidden)]
 mod ffi {
-    use nix::{
-        convert_ioctl_res, ioc, ioctl_readwrite, ioctl_write_ptr,
-        request_code_readwrite, request_code_write,
-        libc::{c_int, off_t}
-    };
+    use nix::{ ioctl_readwrite, ioctl_write_ptr, libc::{c_int, off_t} };
     const DISK_IDENT_SIZE: usize = 256;
 
     #[repr(C)]
