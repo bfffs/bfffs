@@ -32,6 +32,7 @@ mock! {
                   gid: u32) -> Result<u64, i32>;
         fn deleteextattr(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
             -> Result<(), i32>;
+        fn fsync(&self, ino: u64) -> Result<(), i32>;
         fn getattr(&self, ino: u64) -> Result<GetAttr, i32>;
         fn getextattr(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
             -> Result<DivBuf, i32>;

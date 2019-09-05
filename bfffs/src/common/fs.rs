@@ -823,6 +823,15 @@ impl Fs {
         .map_err(|e| e.into())
     }
 
+    /// Sync a file's data and metadata to disk so it can be recovered after a
+    /// crash.
+    pub fn fsync(&self, _ino: u64) -> Result<(), i32> {
+        // Until we come up with a better mechanism, we must sync the entire
+        // file system.
+        self.sync();
+        Ok(())
+    }
+
     pub fn getattr(&self, ino: u64) -> Result<GetAttr, i32> {
         let (tx, rx) = oneshot::channel();
         self.handle.spawn(
@@ -2327,6 +2336,19 @@ fn deleteextattr_3way_collision_enoattr() {
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let r = fs.deleteextattr(ino, namespace, &name2);
     assert_eq!(Err(libc::ENOATTR), r);
+}
+
+#[test]
+fn fsync() {
+    let ino = 42;
+
+    let (rt, mut db, tree_id) = setup();
+    db.expect_sync_transaction()
+        .once()
+        .returning(|| Box::new(Ok(()).into_future()));
+    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+
+    assert!(fs.fsync(ino).is_ok());
 }
 
 /// Reading the source returns EIO.  Don't delete the dest

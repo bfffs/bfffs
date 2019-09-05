@@ -163,6 +163,15 @@ impl Filesystem for FuseFs {
         self.fs.sync()
     }
 
+    fn fsync(&mut self, _req: &Request, ino: u64, _fh: u64, _datasync: bool,
+             reply: ReplyEmpty)
+    {
+        match self.fs.fsync(ino) {
+            Ok(()) => reply.ok(),
+            Err(e) => reply.error(e)
+        }
+    }
+
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let ttl = Timespec { sec: 0, nsec: 0 };
         match self.do_getattr(ino) {
@@ -638,6 +647,57 @@ mod removexattr {
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.removexattr(&request, inode, packed_name, reply);
+    }
+}
+
+mod fsync {
+    use super::*;
+
+    #[test]
+    fn eio() {
+        let ino = 42;
+        let fh = 0xdeadbeef;
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EIO))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_fsync()
+            .times(1)
+            .with(
+                predicate::eq(ino),
+            ).return_const(Err(libc::EIO));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.fsync(&request, ino, fh, false, reply);
+    }
+
+    #[test]
+    fn ok() {
+        let ino = 42;
+        let fh = 0xdeadbeef;
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_ok()
+            .times(1)
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_fsync()
+            .times(1)
+            .with(
+                predicate::eq(ino),
+            ).return_const(Ok(()));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.fsync(&request, ino, fh, false, reply);
     }
 }
 
