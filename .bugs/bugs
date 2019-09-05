@@ -9,7 +9,7 @@ node underflow after range_delete                            | owner:Alan Somers
 nchildren < 2 in fix_int during range_delete                 | owner:Alan Somers <asomers@gmail.com>, open:False, id:40b01ebb2240366623383aafbd96de5a6ca815cf, time:1540178983.24
 range_delete_pass2 doesn't fix underflowing nodes that get stolen | owner:Alan Somers <asomers@gmail.com>, open:False, id:4a99d7fbd8891cb8e0453d2b6306ce28c37e34a0, time:1539362545.92
 DowncastError ONLY ON NIGHTLY                                | owner:"hg.user", open:False, id:529defe6770c6591f6a7a1d8ff32d259993917a4, time:1535047452.46
-Fs::getxattr may truncate attributes                         | owner:Alan Somers <asomers@gmail.com>, open:True, id:66d9862b386fcf369e4feb900a60b1d8af64826d, time:1566616385.64
+Fs::getxattr may truncate attributes                         | owner:Alan Somers <asomers@gmail.com>, open:False, id:66d9862b386fcf369e4feb900a60b1d8af64826d, time:1566616385.64
 DDML::put_common tries to truncate DivBufShares that are still referenced | owner:"hg.user", open:False, id:709377ba5f51040cacb7f3e922d469400bfe422a, time:1535047528.71
 Indirect block has no reverse mapping in the allocation table | owner:Alan Somers <asomers@gmail.com>, open:False, id:9bdac7a9a2d47f2b379b960fc025d0fde0680613, time:1539901696.22
 panic on ENOSPC                                              | owner:Alan Somers <asomers@gmail.com>, open:True, id:b0b5fdd1bedaac5af7c640184b1528a00d339f5f, time:1543622833.23

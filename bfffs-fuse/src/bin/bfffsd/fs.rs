@@ -183,7 +183,13 @@ impl Filesystem for FuseFs {
         } else {
             match self.fs.getextattr(ino, ns, name) {
                 // data copy
-                Ok(buf) => reply.data(&buf[..]),
+                Ok(buf) => {
+                    if buf.len() <= size as usize {
+                        reply.data(&buf[..])
+                    } else {
+                        reply.error(libc::ERANGE)
+                    }
+                },
                 Err(errno) => reply.error(errno)
             }
         }
@@ -800,8 +806,6 @@ mod getxattr {
     // use, because the kernel first asks for the size of the attribute.  So
     // during normal use, this error can only be the result of a race.
     #[test]
-    // Ignored due to bug 66d9862
-    #[ignore]
     fn value_erange() {
         let inode = 42;
         let packed_name = OsStr::from_bytes(b"system.md5");
