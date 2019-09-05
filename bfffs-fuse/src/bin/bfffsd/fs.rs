@@ -837,7 +837,7 @@ mod getxattr {
     #[test]
     fn value_ok() {
         let inode = 42;
-        let packed_name = OsStr::from_bytes(b"system.md5");
+        let packed_name = OsStr::from_bytes(b"user.md5");
         let wantsize = 80;
         let v = b"ed7e85e23a86d29980a6de32b082fd5b";
 
@@ -854,7 +854,7 @@ mod getxattr {
             .times(1)
             .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
                 *ino == inode &&
-                *ns == ExtAttrNamespace::System &&
+                *ns == ExtAttrNamespace::User &&
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| {
                 let dbs = DivBufShared::from(&v[..]);
@@ -1041,6 +1041,49 @@ mod listxattr {
                 predicate::eq(wantsize),
                 predicate::always()
             ).returning(|_ino, _size, _f| Err(libc::EPERM));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.listxattr(&request, inode, wantsize, reply);
+    }
+
+    // The list of attributes doesn't fit in the space requested.  This is most
+    // likely due to a race; an attribute was added after the kernel requested
+    // the size of the attribute list.
+    #[test]
+    fn list_erange() {
+        let inode = 42;
+        let wantsize = 10;
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ERANGE))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_listextattr()
+            .times(1)
+            .with(predicate::eq(inode),
+                predicate::eq(wantsize),
+                predicate::always()
+            ).returning(|_ino, wantsize, f| {
+                let mut buf = Vec::with_capacity(wantsize as usize);
+                let md5 = ExtAttr::Inline(InlineExtAttr {
+                    namespace: ExtAttrNamespace::System,
+                    name: OsString::from("md5"),
+                    extent: InlineExtent::default()
+                });
+                let icon = ExtAttr::Inline(InlineExtAttr {
+                    namespace: ExtAttrNamespace::User,
+                    name: OsString::from("icon"),
+                    extent: InlineExtent::default()
+                });
+                f(&mut buf, &md5);
+                f(&mut buf, &icon);
+                Ok(buf)
+            });
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.listxattr(&request, inode, wantsize, reply);

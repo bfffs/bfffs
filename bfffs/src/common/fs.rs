@@ -1065,7 +1065,7 @@ impl Fs {
     ///
     /// # Parameters
     ///
-    /// - `size`:       The expected length of list that will be returned
+    /// - `size`:       A hint of the expected length of the attr list
     /// - `f`:          A function that filters each extended attribute
     ///                 and packs it into an expandable buffer
     ///
