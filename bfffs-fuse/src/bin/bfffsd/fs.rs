@@ -866,6 +866,100 @@ mod getxattr {
     }
 }
 
+mod link {
+    use super::*;
+
+    // POSIX stupidly requires link(2) to return EPERM for directories.  EISDIR
+    // would've been a better choice
+    #[test]
+    fn eperm() {
+        const NAME: &'static [u8] = b"foo";
+        let parent = 42;
+        let ino = 43;
+
+        let request = Request::default();
+
+        let mut reply = ReplyEntry::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EPERM))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_link()
+            .times(1)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(ino),
+                predicate::eq(OsStr::from_bytes(NAME)),
+            ).return_const(Err(libc::EPERM));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.link(&request, ino, parent, OsStr::from_bytes(NAME), reply);
+    }
+
+    #[test]
+    fn ok() {
+        let mut seq = Sequence::new();
+        const NAME: &'static [u8] = b"foo";
+        let parent = 42;
+        let ino = 43;
+        let size = 1024;
+        let mode = 0o644;
+        let uid = 123;
+        let gid = 456;
+
+        let request = Request::default();
+
+        let mut reply = ReplyEntry::new();
+        reply.expect_entry()
+            .times(1)
+            .withf(move |_ttl, attr, _gen| {
+                attr.ino == ino &&
+                attr.size == size &&
+                attr.kind == FileType::RegularFile &&
+                attr.perm == mode &&
+                attr.nlink == 1 &&
+                attr.uid == uid &&
+                attr.gid == gid &&
+                attr.rdev == 0
+            }).return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_link()
+            .times(1)
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq(parent),
+                predicate::eq(ino),
+                predicate::eq(OsStr::from_bytes(NAME)),
+            ).return_const(Ok(ino));
+        mock_fs.expect_getattr()
+            .with( predicate::eq(ino))
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_const(Ok(GetAttr {
+                ino,
+                size,
+                blocks: 0,
+                atime: Timespec{sec: 0, nsec: 0},
+                mtime: Timespec{sec: 0, nsec: 0},
+                ctime: Timespec{sec: 0, nsec: 0},
+                birthtime: Timespec{sec: 0, nsec: 0},
+                mode: Mode(mode | libc::S_IFREG),
+                nlink: 1,
+                uid,
+                gid,
+                rdev: 0,
+                flags: 0
+            }));
+
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.link(&request, ino, parent, OsStr::from_bytes(NAME), reply);
+    }
+}
+
 mod listxattr {
     use super::*;
     use bfffs::common::fs_tree::{InlineExtAttr, InlineExtent};
