@@ -614,6 +614,13 @@ impl InlineExtent {
     }
 }
 
+// Useful for the fuse unit tests
+impl Default for InlineExtent {
+    fn default() -> Self {
+        InlineExtent { buf: Arc::new(DivBufShared::with_capacity(0)) }
+    }
+}
+
 impl PartialEq for InlineExtent {
     fn eq(self: &Self, other: &Self) -> bool {
         self.buf.try_const().unwrap() == other.buf.try_const().unwrap()

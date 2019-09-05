@@ -6,8 +6,9 @@ edition = "2018"
 
 [dependencies]
 bfffs = { path = "../bfffs" }
+cfg-if = "0.1"
 env_logger = "0.5"
-fuse = "0.3"
+fuse = "0.3.1"
 futures = "0.1.14"
 libc = "0.2.44"
 time = "0.1"
@@ -18,3 +19,7 @@ tokio-io-pool = "0.1.4"
 version = "2"
 default-features = false
 features=  [ "suggestions", "color", "wrap_help" ]
+
+[dev-dependencies]
+divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
+mockall = "0.3.0"

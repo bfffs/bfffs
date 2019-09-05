@@ -67,7 +67,7 @@ fn main() {
             OsStr::from_bytes(b"-o"),
             OsStr::from_bytes(b"direct_io"),
         ];
-        fuse::mount(fs, &mountpoint, &opts[..]).unwrap();
+        fs::mount(fs, &mountpoint, &opts[..]).unwrap();
     });
 
     // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term, this

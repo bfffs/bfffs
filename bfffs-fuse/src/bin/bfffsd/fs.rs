@@ -5,9 +5,10 @@ use bfffs::common::database::*;
 use bfffs::common::{
     RID,
     database::TreeID,
-    fs::{ExtAttr, ExtAttrNamespace, Fs, SetAttr}
+    fs::{ExtAttr, ExtAttrNamespace, SetAttr}
 };
-use fuse::*;
+use cfg_if::cfg_if;
+use fuse::{FileAttr, FileType };
 use libc;
 use std::{
     ffi::{OsString, OsStr},
@@ -18,6 +19,31 @@ use std::{
 };
 use time::Timespec;
 use tokio_io_pool;
+
+cfg_if! {
+    if #[cfg(test)] {
+        mod mock;
+        use self::mock::Filesystem;
+        use self::mock::MockFs as Fs;
+        use self::mock::MockRequest as Request;
+        use self::mock::MockReplyAttr as ReplyAttr;
+        use self::mock::MockReplyCreate as ReplyCreate;
+        use self::mock::MockReplyData as ReplyData;
+        use self::mock::MockReplyDirectory as ReplyDirectory;
+        use self::mock::MockReplyEmpty as ReplyEmpty;
+        use self::mock::MockReplyEntry as ReplyEntry;
+        use self::mock::MockReplyStatfs as ReplyStatfs;
+        use self::mock::MockReplyWrite as ReplyWrite;
+        use self::mock::MockReplyXattr as ReplyXattr;
+        pub use self::mock::mount;
+    } else {
+        use fuse::{Filesystem, ReplyAttr, ReplyCreate, ReplyData,
+                   ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyStatfs,
+                   ReplyWrite, ReplyXattr, Request};
+        use bfffs::common::fs::Fs;
+        pub use fuse::mount;
+    }
+}
 
 /// FUSE's handle to an BFFFS filesystem.  One per mountpoint.
 ///
@@ -437,4 +463,423 @@ impl Filesystem for FuseFs {
             Err(errno) => reply.error(errno)
         }
     }
+}
+
+#[cfg(test)]
+impl From<Fs> for FuseFs {
+    fn from(fs: Fs) -> Self {
+        Self{fs}
+    }
+}
+
+#[cfg(test)]
+mod t {
+
+use super::*;
+
+mod removexattr {
+    use super::*;
+    use mockall::predicate;
+
+    #[test]
+    fn enoattr() {
+        let inode = 42;
+        let packed_name = OsStr::from_bytes(b"system.md5");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ENOATTR))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_deleteextattr()
+            .times(1)
+            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
+                *ino == inode &&
+                *ns == ExtAttrNamespace::System &&
+                name == OsStr::from_bytes(b"md5")
+            }).returning(move |_, _, _| Err(libc::ENOATTR));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.removexattr(&request, inode, packed_name, reply);
+    }
+
+    #[test]
+    fn ok() {
+        let inode = 42;
+        let packed_name = OsStr::from_bytes(b"system.md5");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_ok()
+            .times(1)
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_deleteextattr()
+            .times(1)
+            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
+                *ino == inode &&
+                *ns == ExtAttrNamespace::System &&
+                name == OsStr::from_bytes(b"md5")
+            }).returning(move |_, _, _| Ok(()));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.removexattr(&request, inode, packed_name, reply);
+    }
+}
+
+mod getxattr {
+    use super::*;
+    use divbuf::DivBufShared;
+    use mockall::predicate;
+
+    #[test]
+    fn length_enoattr() {
+        let inode = 42;
+        let packed_name = OsStr::from_bytes(b"system.md5");
+        let wantsize = 0;
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ENOATTR))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_getextattrlen()
+            .times(1)
+            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
+                *ino == inode &&
+                *ns == ExtAttrNamespace::System &&
+                name == OsStr::from_bytes(b"md5")
+            }).returning(move |_, _, _| Err(libc::ENOATTR));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.getxattr(&request, inode, packed_name, wantsize, reply);
+    }
+
+    #[test]
+    fn length_ok() {
+        let inode = 42;
+        let packed_name = OsStr::from_bytes(b"system.md5");
+        let wantsize = 0;
+        let size = 16;
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_size()
+            .times(1)
+            .with(predicate::eq(size))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_getextattrlen()
+            .times(1)
+            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
+                *ino == inode &&
+                *ns == ExtAttrNamespace::System &&
+                name == OsStr::from_bytes(b"md5")
+            }).returning(move |_, _, _| Ok(size));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.getxattr(&request, inode, packed_name, wantsize, reply);
+    }
+
+    #[test]
+    fn value_enoattr() {
+        let inode = 42;
+        let packed_name = OsStr::from_bytes(b"system.md5");
+        let wantsize = 80;
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ENOATTR))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_getextattr()
+            .times(1)
+            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
+                *ino == inode &&
+                *ns == ExtAttrNamespace::System &&
+                name == OsStr::from_bytes(b"md5")
+            }).return_const(Err(libc::ENOATTR));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.getxattr(&request, inode, packed_name, wantsize, reply);
+    }
+
+    // The FUSE protocol requires a file system to return ERANGE if the
+    // attribute's value can't fit in the size requested by the client.
+    // That's contrary to how FreeBSD's getextattr(2) works and contrary to how
+    // BFFFS's Fs::getextattr works.  It's also hard to trigger during normal
+    // use, because the kernel first asks for the size of the attribute.  So
+    // during normal use, this error can only be the result of a race.
+    #[test]
+    // Ignored due to bug 66d9862
+    #[ignore]
+    fn value_erange() {
+        let inode = 42;
+        let packed_name = OsStr::from_bytes(b"system.md5");
+        let wantsize = 16;
+        let v = b"ed7e85e23a86d29980a6de32b082fd5b";
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::ERANGE))
+            .return_const(());
+        reply.expect_data()
+            .times(0);
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_getextattr()
+            .times(1)
+            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
+                *ino == inode &&
+                *ns == ExtAttrNamespace::System &&
+                name == OsStr::from_bytes(b"md5")
+            }).returning(move |_, _, _| {
+                let dbs = DivBufShared::from(&v[..]);
+                Ok(dbs.try_const().unwrap())
+            });
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.getxattr(&request, inode, packed_name, wantsize, reply);
+    }
+
+    #[test]
+    fn value_ok() {
+        let inode = 42;
+        let packed_name = OsStr::from_bytes(b"system.md5");
+        let wantsize = 80;
+        let v = b"ed7e85e23a86d29980a6de32b082fd5b";
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_data()
+            .times(1)
+            .with(predicate::eq(&v[..]))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_getextattr()
+            .times(1)
+            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
+                *ino == inode &&
+                *ns == ExtAttrNamespace::System &&
+                name == OsStr::from_bytes(b"md5")
+            }).returning(move |_, _, _| {
+                let dbs = DivBufShared::from(&v[..]);
+                Ok(dbs.try_const().unwrap())
+            });
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.getxattr(&request, inode, packed_name, wantsize, reply);
+    }
+}
+
+mod listxattr {
+    use super::*;
+    use bfffs::common::fs_tree::{InlineExtAttr, InlineExtent};
+    use mockall::predicate;
+
+    #[test]
+    fn length_eperm() {
+        let inode = 42;
+        let wantsize = 0;
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_error()
+            .times(1)
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_listextattrlen()
+            .times(1)
+            .with(predicate::eq(inode), predicate::always())
+            .returning(|_ino, _f| Err(libc::EPERM));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.listxattr(&request, inode, wantsize, reply);
+    }
+
+    #[test]
+    fn length_ok() {
+        let inode = 42;
+        let wantsize = 0;
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_size()
+            .times(1)
+            .with(predicate::eq(21))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_listextattrlen()
+            .times(1)
+            .with(predicate::eq(inode), predicate::always())
+            .returning(|_ino, f| {
+                Ok(
+                    f(&ExtAttr::Inline(InlineExtAttr {
+                        namespace: ExtAttrNamespace::System,
+                        name: OsString::from("md5"),
+                        extent: InlineExtent::default()
+                    })) +
+                    f(&ExtAttr::Inline(InlineExtAttr {
+                        namespace: ExtAttrNamespace::User,
+                        name: OsString::from("icon"),
+                        extent: InlineExtent::default()
+                    }))
+                )
+            });
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.listxattr(&request, inode, wantsize, reply);
+    }
+
+    #[test]
+    fn list_eperm() {
+        let inode = 42;
+        let wantsize = 1024;
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_error()
+            .times(1)
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_listextattr()
+            .times(1)
+            .with(predicate::eq(inode),
+                predicate::eq(wantsize),
+                predicate::always()
+            ).returning(|_ino, _size, _f| Err(libc::EPERM));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.listxattr(&request, inode, wantsize, reply);
+    }
+
+    #[test]
+    fn list_ok() {
+        let inode = 42;
+        let wantsize = 1024;
+        let expected = b"system.md5\0user.icon\0";
+
+        let request = Request::default();
+
+        let mut reply = ReplyXattr::new();
+        reply.expect_data()
+            .times(1)
+            .with(predicate::eq(&expected[..]))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_listextattr()
+            .times(1)
+            .with(predicate::eq(inode),
+                predicate::eq(wantsize),
+                predicate::always()
+            ).returning(|_ino, wantsize, f| {
+                let mut buf = Vec::with_capacity(wantsize as usize);
+                let md5 = ExtAttr::Inline(InlineExtAttr {
+                    namespace: ExtAttrNamespace::System,
+                    name: OsString::from("md5"),
+                    extent: InlineExtent::default()
+                });
+                let icon = ExtAttr::Inline(InlineExtAttr {
+                    namespace: ExtAttrNamespace::User,
+                    name: OsString::from("icon"),
+                    extent: InlineExtent::default()
+                });
+                f(&mut buf, &md5);
+                f(&mut buf, &icon);
+                Ok(buf)
+            });
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.listxattr(&request, inode, wantsize, reply);
+    }
+}
+
+mod setxattr {
+    use super::*;
+    use mockall::predicate;
+
+    #[test]
+    fn value_erofs() {
+        let inode = 42;
+        let packed_name = OsStr::from_bytes(b"system.md5");
+        let v = b"ed7e85e23a86d29980a6de32b082fd5b";
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EROFS))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_setextattr()
+            .times(1)
+            .with(
+                predicate::eq(inode),
+                predicate::eq(ExtAttrNamespace::System),
+                predicate::eq(OsStr::from_bytes(b"md5")),
+                predicate::eq(&v[..])
+            ).return_const(Err(libc::EROFS));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.setxattr(&request, inode, packed_name, v, 0, 0, reply);
+    }
+
+    #[test]
+    fn value_ok() {
+        let inode = 42;
+        let packed_name = OsStr::from_bytes(b"system.md5");
+        let v = b"ed7e85e23a86d29980a6de32b082fd5b";
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_ok()
+            .times(1)
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_setextattr()
+            .times(1)
+            .with(
+                predicate::eq(inode),
+                predicate::eq(ExtAttrNamespace::System),
+                predicate::eq(OsStr::from_bytes(b"md5")),
+                predicate::eq(&v[..])
+            ).return_const(Ok(()));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.setxattr(&request, inode, packed_name, v, 0, 0, reply);
+    }
+}
+
 }
