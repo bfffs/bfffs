@@ -116,12 +116,12 @@ test_suite! {
             fs.rmdir(1, &OsString::from(fname)).unwrap();
         }
         fs.sync();
-        let mut statvfs = fs.statvfs();
+        let mut statvfs = fs.statvfs().unwrap();
         println!("Before cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
         assert!(rt.block_on(db.check()).unwrap());
         db.clean().wait().unwrap();
-        statvfs = fs.statvfs();
+        statvfs = fs.statvfs().unwrap();
         println!("After cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
         assert!(rt.block_on(db.check()).unwrap());
@@ -148,11 +148,11 @@ test_suite! {
             fs.rmdir(1, &OsString::from(fname)).unwrap();
         }
         fs.sync();
-        let mut statvfs = fs.statvfs();
+        let mut statvfs = fs.statvfs().unwrap();
         println!("Before cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
         db.clean().wait().unwrap();
-        statvfs = fs.statvfs();
+        statvfs = fs.statvfs().unwrap();
         println!("After cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
     }

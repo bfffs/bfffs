@@ -70,7 +70,7 @@ mock! {
         fn setextattr(&self, ino: u64, ns: ExtAttrNamespace,
                       name: &OsStr, data: &[u8]) -> Result<(), i32>;
         fn set_props(&mut self, props: Vec<Property>);
-        fn statvfs(&self) -> libc::statvfs;
+        fn statvfs(&self) -> Result<libc::statvfs, i32>;
         fn symlink(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
                    gid: u32, link: &OsStr) -> Result<u64, i32>;
         fn sync(&self);

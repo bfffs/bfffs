@@ -1705,8 +1705,8 @@ impl Fs {
         })).unwrap();
     }
 
-    pub fn statvfs(&self) -> libc::statvfs {
-        let (tx, rx) = oneshot::channel::<libc::statvfs>();
+    pub fn statvfs(&self) -> Result<libc::statvfs, i32> {
+        let (tx, rx) = oneshot::channel::<Result<libc::statvfs, i32>>();
         let rs = 1 << self.record_size;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
@@ -1725,9 +1725,12 @@ impl Fs {
                     f_fsid: 0,
                     f_namemax: 255,
                 };
+                Ok(r).into_future()
+            }).map_err(Error::into)
+            .then(|r| {
                 tx.send(r).ok().expect("Fs::statvfs: send failed");
-                Ok(()).into_future()
-            }).map_err(Error::unhandled)
+                Ok(())
+            })
         ).unwrap();
         rx.wait().unwrap()
     }

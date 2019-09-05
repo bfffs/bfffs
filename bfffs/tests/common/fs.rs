@@ -1790,14 +1790,14 @@ root:
     }
 
     test statvfs(mocks) {
-        let statvfs = mocks.val.0.statvfs();
+        let statvfs = mocks.val.0.statvfs().unwrap();
         assert_eq!(statvfs.f_blocks, 262_144);
         assert_eq!(statvfs.f_bsize, 4096);
         assert_eq!(statvfs.f_frsize, 4096);
     }
 
     test statvfs_8k(mocks(vec![Property::RecordSize(13)])) {
-        let statvfs = mocks.val.0.statvfs();
+        let statvfs = mocks.val.0.statvfs().unwrap();
         assert_eq!(statvfs.f_blocks, 262_144);
         assert_eq!(statvfs.f_bsize, 8192);
         assert_eq!(statvfs.f_frsize, 4096);

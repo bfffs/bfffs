@@ -429,10 +429,14 @@ impl Filesystem for FuseFs {
     }
 
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
-        let statvfs = self.fs.statvfs();
-        reply.statfs(statvfs.f_blocks, statvfs.f_bfree, statvfs.f_bavail,
-                     statvfs.f_files, statvfs.f_ffree, statvfs.f_bsize as u32,
-                     statvfs.f_namemax as u32, statvfs.f_frsize as u32);
+        match self.fs.statvfs() {
+            Ok(statvfs) =>
+                reply.statfs(statvfs.f_blocks, statvfs.f_bfree,
+                             statvfs.f_bavail, statvfs.f_files, statvfs.f_ffree,
+                             statvfs.f_bsize as u32, statvfs.f_namemax as u32,
+                             statvfs.f_frsize as u32),
+            Err(e) => reply.error(e)
+        };
     }
 
     fn symlink(&mut self, req: &Request, parent: u64, name: &OsStr,
@@ -2266,6 +2270,72 @@ mod setxattr {
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.setxattr(&request, inode, packed_name, v, 0, 0, reply);
+    }
+}
+
+mod statfs {
+    use super::*;
+
+    #[test]
+    fn eio() {
+        let ino = 42;
+
+        let request = Request::default();
+
+        let mut reply = ReplyStatfs::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EIO))
+            .return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_statvfs()
+            .times(1)
+            .return_const(Err(libc::EIO));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.statfs(&request, ino, reply);
+    }
+
+    #[test]
+    fn ok() {
+        let ino = 42;
+
+        let request = Request::default();
+
+        let mut reply = ReplyStatfs::new();
+        reply.expect_statfs()
+            .times(1)
+            .with(
+                predicate::eq(100000),
+                predicate::eq(200000),
+                predicate::eq(300000),
+                predicate::eq(10000),
+                predicate::eq(20000),
+                predicate::eq(4096),
+                predicate::eq(1000),
+                predicate::eq(512),
+            ).return_const(());
+
+        let mut mock_fs = Fs::default();
+        mock_fs.expect_statvfs()
+            .times(1)
+            .return_const(Ok(libc::statvfs {
+                f_bavail: 300000,
+                f_bfree: 200000,
+                f_blocks: 100000,
+                f_favail: 30000,
+                f_ffree: 20000,
+                f_files: 10000,
+                f_bsize: 4096,
+                f_flag: 0,
+                f_frsize: 512,
+                f_fsid: 0,
+                f_namemax: 1000,
+            }));
+
+        let mut fusefs = FuseFs::from(mock_fs);
+        fusefs.statfs(&request, ino, reply);
     }
 }
 
