@@ -1490,6 +1490,7 @@ fn sync_all() {
 
 // It's illegal to sync a VdevRaid without flushing its zones first
 #[test]
+#[cfg(debug_assertions)]
 #[should_panic(expected = "Must call flush_zone before sync_all")]
 fn sync_all_unflushed() {
     let k = 3;
