@@ -63,8 +63,6 @@ fn main() {
         let fs = FuseFs::new(db, handle2, tree_id);
         let opts = [
             OsStr::from_bytes(b"-o"),
-            OsStr::from_bytes(b"allow_other"),
-            OsStr::from_bytes(b"-o"),
             OsStr::from_bytes(b"direct_io"),
         ];
         fs::mount(fs, &mountpoint, &opts[..]).unwrap();
