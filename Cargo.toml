@@ -7,6 +7,3 @@ lto = true
 
 [workspace]
 members = ["bfffs", "bfffs-fio", "bfffs-fuse", "isa-l"]
-
-[patch.crates-io]
-mockall = { git = "https://github.com/asomers/mockall.git", rev = "0deadb0" }
