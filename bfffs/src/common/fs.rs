@@ -1948,7 +1948,7 @@ mod t {
 use super::*;
 use crate::common::{
     dataset::RangeQuery,
-    tree::{Key, MinValue, Value}
+    tree::{Key, Value}
 };
 use futures::Async;
 use mockall::{Sequence, predicate::*};
@@ -1963,7 +1963,10 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
     let mut ds = ReadOnlyFilesystem::default();
     ds.expect_last_key()
         .once()
-        .returning(|| Box::new(Ok(Some(FSKey::min_value())).into_future()));
+        .returning(|| {
+            let root_inode_key = FSKey::new(1, ObjKey::Inode);
+            Box::new(Ok(Some(root_inode_key)).into_future())
+        });
     let mut db = Database::default();
     db.expect_new_fs()
         .once()
@@ -2008,14 +2011,14 @@ fn mock_range_query<K, T, V>(items: Vec<(K, V)>) -> RangeQuery<K, T, V>
 fn create() {
     let (rt, mut db, tree_id) = setup();
     let mut ds = ReadWriteFilesystem::default();
-    // For the unit tests, we skip creating the "/" directory
-    let ino = 1;
+    let root_ino = 1;
+    let ino = 2;
     let filename = OsString::from("x");
     let filename2 = filename.clone();
     let old_ts = time::Timespec::new(0, 0);
     ds.expect_get()
         .once()
-        .with(eq(FSKey::new(1, ObjKey::Inode)))
+        .with(eq(FSKey::new(root_ino, ObjKey::Inode)))
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
@@ -2066,7 +2069,7 @@ fn create() {
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    assert_eq!(ino, fs.create(1, &filename, 0o644, 123, 456).unwrap());
+    assert_eq!(ino, fs.create(root_ino, &filename, 0o644, 123, 456).unwrap());
 }
 
 /// Create experiences a hash collision when adding the new directory entry
@@ -2074,8 +2077,8 @@ fn create() {
 fn create_hash_collision() {
     let (rt, mut db, tree_id) = setup();
     let mut ds = ReadWriteFilesystem::default();
-    // For the unit tests, we skip creating the "/" directory
-    let ino = 1;
+    let root_ino = 1;
+    let ino = 2;
     let other_ino = 100;
     let filename = OsString::from("x");
     let filename2 = filename.clone();
@@ -2086,7 +2089,7 @@ fn create_hash_collision() {
     let old_ts = time::Timespec::new(0, 0);
     ds.expect_get()
         .once()
-        .with(eq(FSKey::new(1, ObjKey::Inode)))
+        .with(eq(FSKey::new(root_ino, ObjKey::Inode)))
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
@@ -2126,7 +2129,7 @@ fn create_hash_collision() {
         }).returning(move |_| {
             // Return the dirent that we just inserted
             let name = filename2.clone();
-            let dirent = Dirent{ino: 1, dtype: libc::DT_REG, name};
+            let dirent = Dirent{ino, dtype: libc::DT_REG, name};
             let v = FSValue::DirEntry(dirent);
             Box::new(Ok(Some(v)).into_future())
         });
@@ -2149,7 +2152,7 @@ fn create_hash_collision() {
         }).returning(move |_, _| {
             // Return the dirent that we just inserted
             let name = filename4.clone();
-            let dirent = Dirent{ino: 1, dtype: libc::DT_REG, name};
+            let dirent = Dirent{ino, dtype: libc::DT_REG, name};
             let v = FSValue::DirEntry(dirent);
             Box::new(Ok(Some(v)).into_future())
         });
@@ -2169,7 +2172,7 @@ fn create_hash_collision() {
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    assert_eq!(ino, fs.create(1, &filename, 0o644, 123, 456).unwrap());
+    assert_eq!(ino, fs.create(root_ino, &filename, 0o644, 123, 456).unwrap());
 }
 
 // Pet kcov
