@@ -1737,6 +1737,22 @@ root:
         assert_eq!(&db[..], &expected[..]);
     }
 
+    // truncating a file should update the mtime
+    test setattr_truncate_updates_mtime(mocks) {
+        // Create a file
+        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        clear_timestamps(&mocks.val.0, ino);
+
+        // Then truncate the file
+        let mut attr = SetAttr::default();
+        attr.size = Some(4096);
+        mocks.val.0.setattr(ino, attr).unwrap();
+
+        // mtime should've changed
+        assert_ts_changed(&mocks.val.0, ino, false, true, true, false);
+    }
+
     /// Overwrite an existing extended attribute
     test setextattr_overwrite(mocks) {
         let filename = OsString::from("x");

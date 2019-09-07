@@ -636,8 +636,15 @@ impl Fs {
             let new_size = attr.size.unwrap_or(iv.size);
             iv.size = new_size;
             iv.atime = attr.atime.unwrap_or(iv.atime);
-            iv.mtime = attr.mtime.unwrap_or(iv.mtime);
             iv.ctime = attr.ctime.unwrap_or(iv.ctime);
+            iv.mtime = attr.mtime.unwrap_or_else(|| {
+                if attr.size.is_some() {
+                    // Always update mtime when truncating
+                    iv.ctime
+                } else {
+                    iv.mtime
+                }
+            });
             iv.birthtime = attr.birthtime.unwrap_or(iv.birthtime);
             iv.flags = attr.flags.unwrap_or(iv.flags);
 
