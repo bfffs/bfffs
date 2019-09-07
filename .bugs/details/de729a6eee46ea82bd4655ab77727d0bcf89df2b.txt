@@ -1,0 +1,27 @@
+# Lines starting with '#' and sections without content
+# are not displayed by a call to 'details'
+#
+[paths]
+# Paths related to this bug.
+# suggested format: REPO_PATH:LINENUMBERS
+
+
+[details]
+When renaming a directory, it's imperative that the destination's parent
+directory is not a child of the directory being moved.  In that case, the
+file system should return EINVAL.
+
+[expected]
+# The expected result
+
+
+[actual]
+# What happened instead
+
+
+[reproduce]
+# Reproduction steps
+From pjdfstest, run tests/rename/rename_018.t
+
+[comments]
+# Comments and updates - leave your name

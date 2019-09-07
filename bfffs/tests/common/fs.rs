@@ -1341,6 +1341,24 @@ root:
         assert_eq!(dstdir_attr.nlink, 3);
     }
 
+    // It should not be possible to move a directory to a subdirectory of itself
+    #[ignore = "bug de729a6"]
+    test rename_loop(mocks) {
+        //let src = OsString::from("src");
+        let srcdir = OsString::from("srcdir");
+        let dst = OsString::from("dst");
+        let dstdir = OsString::from("dstdir");
+        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        .unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(srcdir_ino, &dstdir, 0o755, 0, 0)
+        .unwrap();
+        //let ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
+        //.unwrap();
+
+        let e = mocks.val.0.rename(1, &srcdir, dstdir_ino, &dst).unwrap_err();
+        assert_eq!(libc::EINVAL, e);
+    }
+
     // Rename a non-directory to a multiply-linked file.  The destination
     // directory entry should be removed, but not the inode.
     test rename_nondir_to_hardlink(mocks) {
