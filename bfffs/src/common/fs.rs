@@ -1664,6 +1664,11 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    /// Return the inode of the root directory
+    pub fn root(&self) -> u64 {
+        1
+    }
+
     pub fn setattr(&self, ino: u64, mut attr: SetAttr) -> Result<(), i32> {
         let (tx, rx) = oneshot::channel();
         self.handle.spawn(
@@ -2069,7 +2074,7 @@ fn create() {
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    assert_eq!(ino, fs.create(root_ino, &filename, 0o644, 123, 456).unwrap());
+    assert_eq!(ino, fs.create(fs.root(), &filename, 0o644, 123, 456).unwrap());
 }
 
 /// Create experiences a hash collision when adding the new directory entry
@@ -2172,7 +2177,7 @@ fn create_hash_collision() {
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    assert_eq!(ino, fs.create(root_ino, &filename, 0o644, 123, 456).unwrap());
+    assert_eq!(ino, fs.create(fs.root(), &filename, 0o644, 123, 456).unwrap());
 }
 
 // Pet kcov

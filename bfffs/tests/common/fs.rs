@@ -125,12 +125,13 @@ test_suite! {
     }
 
     test create(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.lookup(1, &OsString::from("x")).unwrap(), ino);
+        assert_eq!(mocks.val.0.lookup(root, &OsString::from("x")).unwrap(), ino);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -145,7 +146,7 @@ test_suite! {
         assert_eq!(u64::from(dirent.d_fileno), ino);
 
         // The parent dir's link count should not have increased
-        let parent_attr = mocks.val.0.getattr(1).unwrap();
+        let parent_attr = mocks.val.0.getattr(root).unwrap();
         assert_eq!(parent_attr.nlink, 1);
     }
 
@@ -154,25 +155,28 @@ test_suite! {
     /// open(_, O_CREAT)
     #[should_panic]
     test create_eexist(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let _ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let _ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
     }
 
     /// Create should update the parent dir's timestamps
     test create_timestamps(mocks) {
-        clear_timestamps(&mocks.val.0, 1);
+        let root = mocks.val.0.root();
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0).unwrap();
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
     test deleteextattr(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let value = [1u8, 2, 3];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
         mocks.val.0.deleteextattr(ino, ns, &name).unwrap();
         assert_eq!(mocks.val.0.getextattr(ino, ns, &name), Err(libc::ENOATTR));
@@ -180,6 +184,7 @@ test_suite! {
 
     /// deleteextattr with a hash collision.
     test deleteextattr_collision(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
         let ns1 = ExtAttrNamespace::System;
@@ -189,7 +194,7 @@ test_suite! {
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
 
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
         // First try deleting the attributes in order
         mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
@@ -215,6 +220,7 @@ test_suite! {
     /// deleteextattr of a nonexistent attribute that hash-collides with an
     /// existing one.
     test deleteextattr_collision_enoattr(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
         let ns1 = ExtAttrNamespace::System;
@@ -223,7 +229,7 @@ test_suite! {
         assert_extattrs_collide(ns0, &name0, ns1, &name1);
         let value0 = [0u8, 1, 2];
 
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
         mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
 
@@ -233,21 +239,23 @@ test_suite! {
     }
 
     test deleteextattr_enoattr(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         assert_eq!(mocks.val.0.deleteextattr(ino, ns, &name),
                    Err(libc::ENOATTR));
     }
 
     /// rmextattr(2) should not modify any timestamps
     test deleteextattr_timestamps(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let value = [1u8, 2, 3];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
         clear_timestamps(&mocks.val.0, ino);
 
@@ -258,7 +266,8 @@ test_suite! {
     // Dumps a nearly FS tree.  All of the real work is done in Tree::dump, so
     // the bulk of testing is in the tree tests.
     test dump(mocks) {
-        clear_timestamps(&mocks.val.0, 1);
+        let root = mocks.val.0.root();
+        clear_timestamps(&mocks.val.0, root);
         mocks.val.0.sync();
 
         let mut buf = Vec::with_capacity(1024);
@@ -325,7 +334,8 @@ root:
 
     /// getattr on the filesystem's root directory
     test getattr(mocks) {
-        let attr = mocks.val.0.getattr(1).unwrap();
+        let root = mocks.val.0.root();
+        let attr = mocks.val.0.getattr(root).unwrap();
         assert_eq!(attr.nlink, 1);
         assert_eq!(attr.flags, 0);
         assert!(attr.atime.sec > 0);
@@ -339,11 +349,12 @@ root:
     }
 
     test getextattr(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let value = [1u8, 2, 3];
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
         assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name).unwrap(),
                    3);
@@ -353,11 +364,12 @@ root:
 
     /// Read a large extattr as a blob
     test getextattr_blob(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let value = vec![42u8; 4096];
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
 
         // Sync the filesystem to flush the InlineExtent to a BlobExtent
@@ -372,6 +384,7 @@ root:
     /// A collision between a blob extattr and an inline one.  Get the blob
     /// extattr.
     test getextattr_blob_collision(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
         let ns1 = ExtAttrNamespace::System;
@@ -381,7 +394,7 @@ root:
         let value0 = [0u8, 1, 2];
         let value1 = vec![42u8; 4096];
 
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
         mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
         mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
@@ -393,6 +406,7 @@ root:
 
     /// setextattr and getextattr with a hash collision.
     test getextattr_collision(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
         let ns1 = ExtAttrNamespace::System;
@@ -402,7 +416,7 @@ root:
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
 
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
         mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
         mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
@@ -416,13 +430,14 @@ root:
 
     // The same attribute name exists in two namespaces
     test getextattr_dual_namespaces(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let value1 = [1u8, 2, 3];
         let value2 = [4u8, 5, 6, 7];
         let ns1 = ExtAttrNamespace::User;
         let ns2 = ExtAttrNamespace::System;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, ns1, &name, &value1[..]).unwrap();
         mocks.val.0.setextattr(ino, ns2, &name, &value2[..]).unwrap();
 
@@ -437,10 +452,11 @@ root:
 
     // The file exists, but its extended attribute does not
     test getextattr_enoattr(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name),
                    Err(libc::ENOATTR));
         assert_eq!(mocks.val.0.getextattr(ino, namespace, &name),
@@ -461,11 +477,12 @@ root:
 
     /// Read an InlineExtAttr from disk
     test getextattr_inline(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let value = vec![0, 1, 2, 3, 4];
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
 
         // Sync the filesystem to store the InlineExtent on disk
@@ -483,11 +500,12 @@ root:
 
     /// getextattr(2) should not modify any timestamps
     test getextattr_timestamps(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let value = [1u8, 2, 3];
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
         clear_timestamps(&mocks.val.0, ino);
 
@@ -496,10 +514,11 @@ root:
     }
 
     test link(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
-        let ino = mocks.val.0.create(1, &src, 0o644, 0, 0).unwrap();
-        let l_ino = mocks.val.0.link(1, ino, &dst).unwrap();
+        let ino = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
+        let l_ino = mocks.val.0.link(root, ino, &dst).unwrap();
         assert_eq!(ino, l_ino);
 
         // The target's link count should've increased
@@ -507,28 +526,30 @@ root:
         assert_eq!(attr.nlink, 2);
 
         // The parent should have a new directory entry
-        assert_eq!(mocks.val.0.lookup(1, &dst).unwrap(), ino);
+        assert_eq!(mocks.val.0.lookup(root, &dst).unwrap(), ino);
     }
 
     /// link(2) should update the inode's ctime
     test link_ctime(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
-        let ino = mocks.val.0.create(1, &src, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
         clear_timestamps(&mocks.val.0, ino);
-        mocks.val.0.link(1, ino, &dst).unwrap();
+        mocks.val.0.link(root, ino, &dst).unwrap();
         assert_ts_changed(&mocks.val.0, ino, false, false, true, false);
     }
 
     ///link(2) should update the parent's mtime and ctime
     test link_parent_timestamps(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
-        let ino = mocks.val.0.create(1, &src, 0o644, 0, 0).unwrap();
-        clear_timestamps(&mocks.val.0, 1);
+        let ino = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.link(1, ino, &dst).unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        mocks.val.0.link(root, ino, &dst).unwrap();
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
 
@@ -567,12 +588,13 @@ root:
     }
 
     test listextattr(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name1 = OsString::from("foo");
         let name2 = OsString::from("bar");
         let ns = ExtAttrNamespace::User;
         let value = [0u8, 1, 2];
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, ns, &name1, &value[..]).unwrap();
         mocks.val.0.setextattr(ino, ns, &name2, &value[..]).unwrap();
 
@@ -590,6 +612,7 @@ root:
 
     /// setextattr and listextattr with a cross-namespace hash collision.
     test listextattr_collision_separate_namespaces(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
         let ns1 = ExtAttrNamespace::System;
@@ -599,7 +622,7 @@ root:
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
 
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
         mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
         mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
@@ -620,6 +643,7 @@ root:
     }
 
     test listextattr_dual_namespaces(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name1 = OsString::from("foo");
         let name2 = OsString::from("bean");
@@ -628,7 +652,7 @@ root:
         let value1 = [0u8, 1, 2];
         let value2 = [3u8, 4, 5];
 
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
         mocks.val.0.setextattr(ino, ns2, &name2, &value2[..]).unwrap();
 
@@ -646,8 +670,9 @@ root:
     }
 
     test listextattr_empty(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         let lenf = self::listextattr_lenf(ExtAttrNamespace::User);
         let lsf = self::listextattr_lsf(ExtAttrNamespace::User);
         assert_eq!(mocks.val.0.listextattrlen(ino, lenf), Ok(0));
@@ -656,25 +681,28 @@ root:
 
     /// Lookup of a directory entry that has a hash collision
     test lookup_collision(mocks) {
+        let root = mocks.val.0.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
-        let ino0 = mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
-        let ino1 = mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
+        let ino0 = mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
+        let ino1 = mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(1, &filename0), Ok(ino0));
-        assert_eq!(mocks.val.0.lookup(1, &filename1), Ok(ino1));
+        assert_eq!(mocks.val.0.lookup(root, &filename0), Ok(ino0));
+        assert_eq!(mocks.val.0.lookup(root, &filename1), Ok(ino1));
     }
 
     test lookup_enoent(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("nonexistent");
-        assert_eq!(mocks.val.0.lookup(1, &filename), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &filename), Err(libc::ENOENT));
     }
 
     test mkdir(mocks) {
-        let ino = mocks.val.0.mkdir(1, &OsString::from("x"), 0o755, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.mkdir(root, &OsString::from("x"), 0o755, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.lookup(1, &OsString::from("x")).unwrap(), ino);
+        assert_eq!(mocks.val.0.lookup(root, &OsString::from("x")).unwrap(), ino);
 
         // The new dir should have "." and ".." directory entries
         let mut entries = mocks.val.0.readdir(ino, 0, 0);
@@ -684,7 +712,7 @@ root:
             CStr::from_ptr(&dotdot.d_name as *const c_char)
         };
         assert_eq!(dotdot_name, CString::new("..").unwrap().as_c_str());
-        assert_eq!(dotdot.d_fileno, 1);
+        assert_eq!(u64::from(dotdot.d_fileno), root);
         let (dot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dot.d_type, libc::DT_DIR);
         let dot_name = unsafe{
@@ -694,7 +722,7 @@ root:
         assert_eq!(u64::from(dot.d_fileno), ino);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -709,7 +737,7 @@ root:
         assert_eq!(u64::from(dirent.d_fileno), ino);
 
         // The parent dir's link count should've increased
-        let parent_attr = mocks.val.0.getattr(1).unwrap();
+        let parent_attr = mocks.val.0.getattr(root).unwrap();
         assert_eq!(parent_attr.nlink, 2);
     }
 
@@ -717,33 +745,36 @@ root:
     // Note that it's practically impossible to find a collision for a specific
     // name, like "." or "..", so those cases won't have test coverage
     test mkdir_collision(mocks) {
+        let root = mocks.val.0.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
-        let ino0 = mocks.val.0.mkdir(1, &filename0, 0o755, 0, 0).unwrap();
-        let ino1 = mocks.val.0.mkdir(1, &filename1, 0o755, 0, 0).unwrap();
+        let ino0 = mocks.val.0.mkdir(root, &filename0, 0o755, 0, 0).unwrap();
+        let ino1 = mocks.val.0.mkdir(root, &filename1, 0o755, 0, 0).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(1, &filename0), Ok(ino0));
-        assert_eq!(mocks.val.0.lookup(1, &filename1), Ok(ino1));
+        assert_eq!(mocks.val.0.lookup(root, &filename0), Ok(ino0));
+        assert_eq!(mocks.val.0.lookup(root, &filename1), Ok(ino1));
     }
 
     /// mkdir(2) should update the parent dir's timestamps
     test mkdir_timestamps(mocks) {
-        clear_timestamps(&mocks.val.0, 1);
+        let root = mocks.val.0.root();
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.mkdir(1, &OsString::from("x"), 0o755, 0, 0).unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        mocks.val.0.mkdir(root, &OsString::from("x"), 0o755, 0, 0).unwrap();
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
     test mkchar(mocks) {
-        let ino = mocks.val.0.mkchar(1, &OsString::from("x"), 0o644, 0, 0, 42)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.mkchar(root, &OsString::from("x"), 0o644, 0, 0, 42)
         .unwrap();
         let attr = mocks.val.0.getattr(ino).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFCHR | 0o644);
         assert_eq!(attr.rdev, 42);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -760,21 +791,23 @@ root:
 
     /// mknod(2) should update the parent dir's timestamps
     test mkchar_timestamps(mocks) {
-        clear_timestamps(&mocks.val.0, 1);
+        let root = mocks.val.0.root();
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.mkchar(1, &OsString::from("x"), 0o644, 0, 0, 42).unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        mocks.val.0.mkchar(root, &OsString::from("x"), 0o644, 0, 0, 42).unwrap();
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
     test mkblock(mocks) {
-        let ino = mocks.val.0.mkblock(1, &OsString::from("x"), 0o644, 0, 0, 42)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.mkblock(root, &OsString::from("x"), 0o644, 0, 0, 42)
         .unwrap();
         let attr = mocks.val.0.getattr(ino).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFBLK | 0o644);
         assert_eq!(attr.rdev, 42);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -791,20 +824,22 @@ root:
 
     /// mknod(2) should update the parent dir's timestamps
     test mkblock_timestamps(mocks) {
-        clear_timestamps(&mocks.val.0, 1);
+        let root = mocks.val.0.root();
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.mkblock(1, &OsString::from("x"), 0o644, 0, 0, 42).unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        mocks.val.0.mkblock(root, &OsString::from("x"), 0o644, 0, 0, 42).unwrap();
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
     test mkfifo(mocks) {
-        let ino = mocks.val.0.mkfifo(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.mkfifo(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let attr = mocks.val.0.getattr(ino).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFIFO | 0o644);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -821,20 +856,22 @@ root:
 
     /// mkfifo(2) should update the parent dir's timestamps
     test mkfifo_timestamps(mocks) {
-        clear_timestamps(&mocks.val.0, 1);
+        let root = mocks.val.0.root();
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.mkfifo(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        mocks.val.0.mkfifo(root, &OsString::from("x"), 0o644, 0, 0).unwrap();
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
     test mksock(mocks) {
-        let ino = mocks.val.0.mksock(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.mksock(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let attr = mocks.val.0.getattr(ino).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFSOCK | 0o644);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -851,16 +888,18 @@ root:
 
     /// mksock(2) should update the parent dir's timestamps
     test mksock_timestamps(mocks) {
-        clear_timestamps(&mocks.val.0, 1);
+        let root = mocks.val.0.root();
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.mkfifo(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        mocks.val.0.mkfifo(root, &OsString::from("x"), 0o644, 0, 0).unwrap();
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
     // Read a hole that's bigger than the zero region
     test read_big_hole(mocks) {
+        let root = mocks.val.0.root();
         let holesize = 2 * ZERO_REGION_LEN;
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
@@ -879,7 +918,8 @@ root:
 
     // Read a single BlobExtent record
     test read_blob(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
         let r = mocks.val.0.write(ino, 0, &buf[..], 0);
@@ -894,14 +934,16 @@ root:
     }
 
     test read_empty_file(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let sglist = mocks.val.0.read(ino, 0, 1024).unwrap();
         assert!(sglist.is_empty());
     }
 
     test read_empty_file_past_start(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let sglist = mocks.val.0.read(ino, 2048, 2048).unwrap();
         assert!(sglist.is_empty());
@@ -909,7 +951,8 @@ root:
 
     // Read a hole within a sparse file
     test read_hole(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
@@ -928,7 +971,8 @@ root:
     // Read a record within a sparse file that is partially occupied by an
     // inline extent
     test read_partial_hole(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 2048];
         let mut rng = thread_rng();
@@ -950,7 +994,8 @@ root:
     // Read a chunk of a file that includes a partial hole at the beginning and
     // data at the end.
     test read_partial_hole_trailing_edge(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 2048];
         let mut rng = thread_rng();
@@ -971,7 +1016,8 @@ root:
 
     // A read that's smaller than a record, at both ends
     test read_partial_record(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
@@ -988,7 +1034,8 @@ root:
     }
 
     test read_past_eof(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 2048];
         let mut rng = thread_rng();
@@ -1004,7 +1051,8 @@ root:
 
     /// A read that spans 3 records, where the middle record is a hole
     test read_spans_hole(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
@@ -1023,7 +1071,8 @@ root:
 
     /// read(2) should update the file's atime
     test read_timestamps(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
         mocks.val.0.write(ino, 0, &buf[..], 0).unwrap();
@@ -1035,9 +1084,10 @@ root:
 
     // When atime is disabled, reading a file should not update its atime.
     test read_timestamps_no_atime(mocks(vec![Property::Atime(false)])) {
+        let root = mocks.val.0.root();
         let (fs, _rt, _cache) = mocks.val;
 
-        let ino = fs.create(1, &OsString::from("x"), 0o644, 0, 0).unwrap();
+        let ino = fs.create(root, &OsString::from("x"), 0o644, 0, 0).unwrap();
         let buf = vec![42u8; 4096];
         fs.write(ino, 0, &buf[..], 0).unwrap();
         clear_timestamps(&fs, ino);
@@ -1048,7 +1098,8 @@ root:
 
     // A read that's split across two records
     test read_two_recs(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 8192];
         let mut rng = thread_rng();
@@ -1069,7 +1120,8 @@ root:
 
     // Read past EOF, in an entirely different record
     test read_well_past_eof(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
@@ -1084,7 +1136,8 @@ root:
     }
 
     test readdir(mocks) {
-        let mut entries = mocks.val.0.readdir(1, 0, 0);
+        let root = mocks.val.0.root();
+        let mut entries = mocks.val.0.readdir(root, 0, 0);
         let (dotdot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dotdot.d_type, libc::DT_DIR);
         let dotdot_name = unsafe{
@@ -1097,17 +1150,18 @@ root:
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
         assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
-        assert_eq!(dot.d_fileno, 1);
+        assert_eq!(u64::from(dot.d_fileno), root);
     }
 
     // Readdir of a directory with a hash collision
     test readdir_collision(mocks) {
+        let root = mocks.val.0.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
 
-        mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
-        mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
+        mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
+        mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
 
         // There's no requirement for the order of readdir's output.
         let mut expected = HashSet::new();
@@ -1115,7 +1169,7 @@ root:
         expected.insert(OsString::from(".."));
         expected.insert(filename0.clone());
         expected.insert(filename1.clone());
-        for result in mocks.val.0.readdir(1, 0, 0) {
+        for result in mocks.val.0.readdir(root, 0, 0) {
             let entry = result.unwrap().0;
             let nameptr = entry.d_name.as_ptr() as *const u8;
             let namelen = usize::from(entry.d_namlen);
@@ -1131,16 +1185,17 @@ root:
     // readdir again with the provided offset, and it must see neither duplicate
     // nor missing entries
     test readdir_collision_at_offset(mocks) {
+        let root = mocks.val.0.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
 
-        let ino0 = mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
-        let _ino1 = mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
+        let ino0 = mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
+        let _ino1 = mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
 
         // There's no requirement for the order of readdir's output, but
         // filename0 happens to come first.
-        let mut stream0 = mocks.val.0.readdir(1, 0, 0);
+        let mut stream0 = mocks.val.0.readdir(root, 0, 0);
         let (result0, offset0) = stream0.next().unwrap().unwrap();
         assert_eq!(u64::from(result0.d_fileno), ino0);
 
@@ -1150,7 +1205,7 @@ root:
         expected.insert(OsString::from(".."));
         expected.insert(filename1.clone());
         drop(stream0);
-        let stream1 = mocks.val.0.readdir(1, 0, offset0);
+        let stream1 = mocks.val.0.readdir(root, 0, offset0);
         for result in stream1 {
             let entry = result.unwrap().0;
             let nameptr = entry.d_name.as_ptr() as *const u8;
@@ -1167,31 +1222,35 @@ root:
     // in the kernel-provided buffer.
     // Just check that nothing panics.
     test readdir_partial(mocks) {
-        let mut entries = mocks.val.0.readdir(1, 0, 0);
+        let root = mocks.val.0.root();
+        let mut entries = mocks.val.0.readdir(root, 0, 0);
         let _ = entries.next().unwrap().unwrap();
     }
 
     /// readdir(2) should not update any timestamps
     test readdir_timestamps(mocks) {
-        clear_timestamps(&mocks.val.0, 1);
+        let root = mocks.val.0.root();
+        clear_timestamps(&mocks.val.0, root);
 
-        let mut entries = mocks.val.0.readdir(1, 0, 0);
+        let mut entries = mocks.val.0.readdir(root, 0, 0);
         entries.next().unwrap().unwrap();
         entries.next().unwrap().unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, false, false, false);
+        assert_ts_changed(&mocks.val.0, root, false, false, false, false);
     }
 
     test readlink(mocks) {
+        let root = mocks.val.0.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
-        let ino = mocks.val.0.symlink(1, &srcname, 0o642, 0, 0, &dstname)
+        let ino = mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname)
         .unwrap();
         assert_eq!(dstname, mocks.val.0.readlink(ino).unwrap());
     }
 
     // Calling readlink on a non-symlink should return EINVAL
     test readlink_einval(mocks) {
-        assert_eq!(Err(libc::EINVAL), mocks.val.0.readlink(1));
+        let root = mocks.val.0.root();
+        assert_eq!(Err(libc::EINVAL), mocks.val.0.readlink(root));
     }
 
     test readlink_enoent(mocks) {
@@ -1200,9 +1259,10 @@ root:
 
     /// readlink(2) should not update any timestamps
     test readlink_timestamps(mocks) {
+        let root = mocks.val.0.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
-        let ino = mocks.val.0.symlink(1, &srcname, 0o642, 0, 0, &dstname)
+        let ino = mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname)
         .unwrap();
         clear_timestamps(&mocks.val.0, ino);
 
@@ -1213,6 +1273,7 @@ root:
     // Rename a file that has a hash collision in both the source and
     // destination directories
     test rename_collision(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("F0jS2Tptj7");
         let src_c = OsString::from("PLe01T116a");
         let srcdir = OsString::from("srcdir");
@@ -1222,8 +1283,8 @@ root:
         assert_dirents_collide(&src, &src_c);
         assert_dirents_collide(&dst, &dst_c);
 
-        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0).unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0).unwrap();
+        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0).unwrap();
+        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0).unwrap();
         let src_c_ino = mocks.val.0.create(srcdir_ino, &src_c, 0o644, 0, 0)
         .unwrap();
         let dst_c_ino = mocks.val.0.create(dstdir_ino, &dst_c, 0o644, 0, 0)
@@ -1250,13 +1311,14 @@ root:
 
     // Rename a directory.  The target is also a directory
     test rename_dir_to_dir(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0)
+        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
         let src_ino = mocks.val.0.mkdir(srcdir_ino, &src, 0o755, 0, 0)
         .unwrap();
@@ -1275,10 +1337,11 @@ root:
     }
 
     test rename_dir_to_dir_same_parent(mocks) {
+        let root = mocks.val.0.root();
         let parent = OsString::from("parent");
         let src = OsString::from("src");
         let dst = OsString::from("dst");
-        let parent_ino = mocks.val.0.mkdir(1, &parent, 0o755, 0, 0).unwrap();
+        let parent_ino = mocks.val.0.mkdir(root, &parent, 0o755, 0, 0).unwrap();
         let src_ino = mocks.val.0.mkdir(parent_ino, &src, 0o755, 0, 0).unwrap();
         let dst_ino = mocks.val.0.mkdir(parent_ino, &dst, 0o755, 0, 0).unwrap();
 
@@ -1294,14 +1357,15 @@ root:
     // Rename a directory.  The target is also a directory that isn't empty.
     // Nothing should change.
     test rename_dir_to_nonemptydir(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
         let dstf = OsString::from("dstf");
-        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0)
+        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
         let src_ino = mocks.val.0.mkdir(srcdir_ino, &src, 0o755, 0, 0)
         .unwrap();
@@ -1320,13 +1384,14 @@ root:
 
     // Rename a directory.  The target name does not exist
     test rename_dir_to_nothing(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0)
+        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
         let ino = mocks.val.0.mkdir(srcdir_ino, &src, 0o755, 0, 0)
         .unwrap();
@@ -1344,52 +1409,55 @@ root:
     // It should not be possible to move a directory to a subdirectory of itself
     #[ignore = "bug de729a6"]
     test rename_loop(mocks) {
+        let root = mocks.val.0.root();
         //let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
         let dstdir_ino = mocks.val.0.mkdir(srcdir_ino, &dstdir, 0o755, 0, 0)
         .unwrap();
         //let ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
         //.unwrap();
 
-        let e = mocks.val.0.rename(1, &srcdir, dstdir_ino, &dst).unwrap_err();
+        let e = mocks.val.0.rename(root, &srcdir, dstdir_ino, &dst).unwrap_err();
         assert_eq!(libc::EINVAL, e);
     }
 
     // Rename a non-directory to a multiply-linked file.  The destination
     // directory entry should be removed, but not the inode.
     test rename_nondir_to_hardlink(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
         let lnk = OsString::from("lnk");
-        let src_ino = mocks.val.0.create(1, &src, 0o644, 0, 0)
+        let src_ino = mocks.val.0.create(root, &src, 0o644, 0, 0)
         .unwrap();
-        let dst_ino = mocks.val.0.create(1, &dst, 0o644, 0, 0)
+        let dst_ino = mocks.val.0.create(root, &dst, 0o644, 0, 0)
         .unwrap();
-        let lnk_ino = mocks.val.0.link(1, dst_ino, &lnk).unwrap();
+        let lnk_ino = mocks.val.0.link(root, dst_ino, &lnk).unwrap();
         assert_eq!(dst_ino, lnk_ino);
 
-        mocks.val.0.rename(1, &src, 1, &dst).unwrap();
+        mocks.val.0.rename(root, &src, root, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(1, &dst), Ok(src_ino));
-        assert_eq!(mocks.val.0.lookup(1, &src), Err(libc::ENOENT));
-        assert_eq!(mocks.val.0.lookup(1, &lnk), Ok(lnk_ino));
+        assert_eq!(mocks.val.0.lookup(root, &dst), Ok(src_ino));
+        assert_eq!(mocks.val.0.lookup(root, &src), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &lnk), Ok(lnk_ino));
         let lnk_attr = mocks.val.0.getattr(lnk_ino).unwrap();
         assert_eq!(lnk_attr.nlink, 1);
     }
 
     // Rename a non-directory.  The target is also a non-directory
     test rename_nondir_to_nondir(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0)
+        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
         let src_ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
         .unwrap();
@@ -1409,13 +1477,14 @@ root:
 
     // Rename a non-directory.  The target name does not exist
     test rename_nondir_to_nothing(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0)
+        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
         let ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
         .unwrap();
@@ -1433,14 +1502,15 @@ root:
     // Rename a regular file to a symlink.  Make sure the target is a symlink
     // afterwards
     test rename_reg_to_symlink(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
         let linktarget = OsString::from("nonexistent");
-        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0)
+        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
         let src_ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
         .unwrap();
@@ -1467,31 +1537,33 @@ root:
 
     // Rename a file with extended attributes.
     test rename_reg_with_extattrs(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
         let name = OsString::from("foo");
         let value = [1u8, 2, 3];
         let ns = ExtAttrNamespace::User;
 
-        let ino = mocks.val.0.create(1, &src, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
 
-        mocks.val.0.rename(1, &src, 1, &dst).unwrap();
+        mocks.val.0.rename(root, &src, root, &dst).unwrap();
 
-        let new_ino = mocks.val.0.lookup(1, &dst).unwrap();
+        let new_ino = mocks.val.0.lookup(root, &dst).unwrap();
         let v = mocks.val.0.getextattr(new_ino, ns, &name).unwrap();
         assert_eq!(&v[..], &value);
     }
 
     // rename updates a file's parent directories' ctime and mtime
     test rename_timestamps(mocks) {
+        let root = mocks.val.0.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(1, &srcdir, 0o755, 0, 0)
+        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(1, &dstdir, 0o755, 0, 0)
+        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
         let ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
         .unwrap();
@@ -1510,82 +1582,89 @@ root:
 
     #[allow(clippy::block_in_if_condition_stmt)]
     test rmdir(mocks) {
+        let root = mocks.val.0.root();
         let dirname = OsString::from("x");
-        let ino = mocks.val.0.mkdir(1, &dirname, 0o755, 0, 0)
+        let ino = mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0)
         .unwrap();
-        mocks.val.0.rmdir(1, &dirname).unwrap();
+        mocks.val.0.rmdir(root, &dirname).unwrap();
 
         // Make sure it's gone
         assert_eq!(mocks.val.0.getattr(ino).unwrap_err(), libc::ENOENT);
-        assert!(mocks.val.0.readdir(1, 0, 0)
+        assert!(mocks.val.0.readdir(root, 0, 0)
             .filter(|r| {
                 let dirent = r.unwrap().0;
                 dirent.d_name[0] == 'x' as i8
             }).nth(0).is_none());
 
         // Make sure the parent dir's refcount dropped
-        let inode = mocks.val.0.getattr(1).unwrap();
+        let inode = mocks.val.0.getattr(root).unwrap();
         assert_eq!(inode.nlink, 1);
     }
 
     /// Remove a directory whose name has a hash collision
     test rmdir_collision(mocks) {
+        let root = mocks.val.0.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
-        let ino0 = mocks.val.0.mkdir(1, &filename0, 0o755, 0, 0).unwrap();
-        let _ino1 = mocks.val.0.mkdir(1, &filename1, 0o755, 0, 0).unwrap();
-        mocks.val.0.rmdir(1, &filename1).unwrap();
+        let ino0 = mocks.val.0.mkdir(root, &filename0, 0o755, 0, 0).unwrap();
+        let _ino1 = mocks.val.0.mkdir(root, &filename1, 0o755, 0, 0).unwrap();
+        mocks.val.0.rmdir(root, &filename1).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(1, &filename0), Ok(ino0));
-        assert_eq!(mocks.val.0.lookup(1, &filename1), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &filename0), Ok(ino0));
+        assert_eq!(mocks.val.0.lookup(root, &filename1), Err(libc::ENOENT));
     }
 
     test rmdir_enoent(mocks) {
+        let root = mocks.val.0.root();
         let dirname = OsString::from("x");
-        assert_eq!(mocks.val.0.rmdir(1, &dirname).unwrap_err(), libc::ENOENT);
+        assert_eq!(mocks.val.0.rmdir(root, &dirname).unwrap_err(), libc::ENOENT);
     }
 
     #[should_panic]
     test rmdir_enotdir(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        mocks.val.0.create(1, &filename, 0o644, 0, 0)
+        mocks.val.0.create(root, &filename, 0o644, 0, 0)
             .unwrap();
-        mocks.val.0.rmdir(1, &filename).unwrap();
+        mocks.val.0.rmdir(root, &filename).unwrap();
     }
 
     test rmdir_enotempty(mocks) {
+        let root = mocks.val.0.root();
         let dirname = OsString::from("x");
-        let ino = mocks.val.0.mkdir(1, &dirname, 0o755, 0, 0)
+        let ino = mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0)
         .unwrap();
         mocks.val.0.mkdir(ino, &dirname, 0o755, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.rmdir(1, &dirname).unwrap_err(), libc::ENOTEMPTY);
+        assert_eq!(mocks.val.0.rmdir(root, &dirname).unwrap_err(), libc::ENOTEMPTY);
     }
 
     /// Try to remove a directory that isn't empty, and that has a hash
     /// collision with another file or directory
     test rmdir_enotempty_collision(mocks) {
+        let root = mocks.val.0.root();
         let filename0 = OsString::from("basedir");
         let filename1 = OsString::from("HsxUh682JQ");
         let filename2 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename1, &filename2);
-        let ino0 = mocks.val.0.mkdir(1, &filename0, 0o755, 0, 0).unwrap();
+        let ino0 = mocks.val.0.mkdir(root, &filename0, 0o755, 0, 0).unwrap();
         let _ino1 = mocks.val.0.mkdir(ino0, &filename1, 0o755, 0, 0).unwrap();
         let _ino2 = mocks.val.0.mkdir(ino0, &filename2, 0o755, 0, 0).unwrap();
-        assert_eq!(mocks.val.0.rmdir(1, &filename0), Err(libc::ENOTEMPTY));
+        assert_eq!(mocks.val.0.rmdir(root, &filename0), Err(libc::ENOTEMPTY));
     }
 
     /// Remove a directory with an extended attribute
     test rmdir_extattr(mocks) {
+        let root = mocks.val.0.root();
         let dirname = OsString::from("x");
         let xname = OsString::from("foo");
         let xvalue1 = [0u8, 1, 2];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.mkdir(1, &dirname, 0o755, 0, 0)
+        let ino = mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0)
         .unwrap();
         mocks.val.0.setextattr(ino, ns, &xname, &xvalue1[..]).unwrap();
-        mocks.val.0.rmdir(1, &dirname).unwrap();
+        mocks.val.0.rmdir(root, &dirname).unwrap();
 
         // Make sure the xattr is gone.  As I read things, POSIX allows us to
         // return either ENOATTR or ENOENT in this case.
@@ -1595,19 +1674,21 @@ root:
 
     /// Removing a directory should update its parent's timestamps
     test rmdir_timestamps(mocks) {
+        let root = mocks.val.0.root();
         let dirname = OsString::from("x");
-        mocks.val.0.mkdir(1, &dirname, 0o755, 0, 0).unwrap();
-        clear_timestamps(&mocks.val.0, 1);
+        mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.rmdir(1, &dirname).unwrap();
+        mocks.val.0.rmdir(root, &dirname).unwrap();
 
         // Timestamps should've been updated
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
     test setattr(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0)
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0)
         .unwrap();
         let perm = 0o1357;
         let uid = 12345;
@@ -1668,7 +1749,8 @@ root:
 
     // setattr updates a file's ctime and mtime
     test setattr_timestamps(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         clear_timestamps(&mocks.val.0, ino);
 
@@ -1691,8 +1773,9 @@ root:
 
     // truncating a file should delete data past the truncation point
     test setattr_truncate(mocks) {
+        let root = mocks.val.0.root();
         // First write two records
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 8192];
         let r = mocks.val.0.write(ino, 0, &buf[..], 0);
@@ -1716,8 +1799,9 @@ root:
 
     // Like setattr_truncate, but everything happens within a single record
     test setattr_truncate_partial_records(mocks) {
+        let root = mocks.val.0.root();
         // First write one record
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
         let r = mocks.val.0.write(ino, 0, &buf[..], 0);
@@ -1741,8 +1825,9 @@ root:
 
     // Like setattr_truncate_partial_record, but the record is a Blob
     test setattr_truncate_partial_blob_record(mocks) {
+        let root = mocks.val.0.root();
         // First write one record
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
         let r = mocks.val.0.write(ino, 0, &buf[..], 0);
@@ -1767,8 +1852,9 @@ root:
 
     // truncating a file should update the mtime
     test setattr_truncate_updates_mtime(mocks) {
+        let root = mocks.val.0.root();
         // Create a file
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         clear_timestamps(&mocks.val.0, ino);
 
@@ -1783,12 +1869,13 @@ root:
 
     /// Overwrite an existing extended attribute
     test setextattr_overwrite(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let value1 = [0u8, 1, 2];
         let value2 = [3u8, 4, 5, 6];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, ns, &name, &value1[..]).unwrap();
         mocks.val.0.setextattr(ino, ns, &name, &value2[..]).unwrap();
         let v = mocks.val.0.getextattr(ino, ns, &name).unwrap();
@@ -1798,6 +1885,7 @@ root:
     /// Overwrite an existing extended attribute that hash-collided with a
     /// different xattr
     test setextattr_collision_overwrite(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
         let ns1 = ExtAttrNamespace::System;
@@ -1808,7 +1896,7 @@ root:
         let value1 = [3u8, 4, 5, 6];
         let value1a = [4u8, 7, 8, 9, 10];
 
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
         mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
         mocks.val.0.setextattr(ino, ns1, &name1, &value1a[..]).unwrap();
@@ -1820,11 +1908,12 @@ root:
 
     /// setextattr(2) should not update any timestamps
     test setextattr_timestamps(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let value = [0u8, 1, 2];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         clear_timestamps(&mocks.val.0, ino);
 
         mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
@@ -1834,13 +1923,14 @@ root:
     /// The file already has a blob extattr.  Set another extattr and flush them
     /// both.
     test setextattr_with_blob(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
         let name1 = OsString::from("foo");
         let value1 = vec![42u8; 4096];
         let name2 = OsString::from("bar");
         let value2 = [3u8, 4, 5, 6];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(ino, ns, &name1, &value1[..]).unwrap();
         mocks.val.0.sync(); // Create a blob ExtAttr
         mocks.val.0.setextattr(ino, ns, &name2, &value2[..]).unwrap();
@@ -1865,14 +1955,15 @@ root:
     }
 
     test symlink(mocks) {
+        let root = mocks.val.0.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
-        let ino = mocks.val.0.symlink(1, &srcname, 0o642, 0, 0, &dstname)
+        let ino = mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname)
         .unwrap();
-        assert_eq!(mocks.val.0.lookup(1, &srcname).unwrap(), ino);
+        assert_eq!(mocks.val.0.lookup(root, &srcname).unwrap(), ino);
 
         // The parent dir should have an "src" symlink entry
-        let entries = mocks.val.0.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -1892,19 +1983,21 @@ root:
 
     /// symlink should update the parent dir's timestamps
     test symlink_timestamps(mocks) {
+        let root = mocks.val.0.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
-        clear_timestamps(&mocks.val.0, 1);
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.symlink(1, &srcname, 0o642, 0, 0, &dstname).unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname).unwrap();
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
     test unlink(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let ino = mocks.val.0.create(1, &filename, 0o644, 0, 0)
+        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0)
         .unwrap();
-        let r = mocks.val.0.unlink(1, &filename);
+        let r = mocks.val.0.unlink(root, &filename);
         assert_eq!(Ok(()), r);
 
         // Check that the inode is gone
@@ -1912,7 +2005,7 @@ root:
         assert_eq!(Err(libc::ENOENT), inode, "Inode was not removed");
 
         // The parent dir should not have an "x" directory entry
-        let entries = mocks.val.0.readdir(1, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0, 0);
         let x_de = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -1924,59 +2017,64 @@ root:
     // Unlink a file that has a name collision with another file in the same
     // directory.
     test unlink_collision(mocks) {
+        let root = mocks.val.0.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
-        let ino0 = mocks.val.0.create(1, &filename0, 0o644, 0, 0).unwrap();
-        let _ino1 = mocks.val.0.create(1, &filename1, 0o644, 0, 0).unwrap();
+        let ino0 = mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
+        let _ino1 = mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
 
-        mocks.val.0.unlink(1, &filename1).unwrap();
+        mocks.val.0.unlink(root, &filename1).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(1, &filename0), Ok(ino0));
-        assert_eq!(mocks.val.0.lookup(1, &filename1), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &filename0), Ok(ino0));
+        assert_eq!(mocks.val.0.lookup(root, &filename1), Err(libc::ENOENT));
     }
 
     test unlink_enoent(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let e = mocks.val.0.unlink(1, &filename).unwrap_err();
+        let e = mocks.val.0.unlink(root, &filename).unwrap_err();
         assert_eq!(e, libc::ENOENT);
     }
 
     // When unlinking a hardlink, the file should not be removed until its link
     // count reaches zero.
     test unlink_hardlink(mocks) {
+        let root = mocks.val.0.root();
         let name1 = OsString::from("name1");
         let name2 = OsString::from("name2");
-        let ino = mocks.val.0.create(1, &name1, 0o644, 0, 0)
+        let ino = mocks.val.0.create(root, &name1, 0o644, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.link(1, ino, &name2).unwrap(), ino);
+        assert_eq!(mocks.val.0.link(root, ino, &name2).unwrap(), ino);
 
-        mocks.val.0.unlink(1, &name1).unwrap();
+        mocks.val.0.unlink(root, &name1).unwrap();
         // File should still exist, now with link count 1.
         let attr = mocks.val.0.getattr(ino).unwrap();
         assert_eq!(attr.nlink, 1);
-        assert_eq!(mocks.val.0.lookup(1, &name1), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &name1), Err(libc::ENOENT));
 
-        mocks.val.0.unlink(1, &name2).unwrap();
+        mocks.val.0.unlink(root, &name2).unwrap();
         // File should actually be gone now
-        assert_eq!(mocks.val.0.lookup(1, &name1), Err(libc::ENOENT));
-        assert_eq!(mocks.val.0.lookup(1, &name2), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &name1), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &name2), Err(libc::ENOENT));
         assert_eq!(mocks.val.0.getattr(ino), Err(libc::ENOENT));
     }
 
     /// unlink(2) should update the parent dir's timestamps
     test unlink_timestamps(mocks) {
+        let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        mocks.val.0.create(1, &filename, 0o644, 0, 0).unwrap();
-        clear_timestamps(&mocks.val.0, 1);
+        mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.unlink(1, &filename).unwrap();
-        assert_ts_changed(&mocks.val.0, 1, false, true, true, false);
+        mocks.val.0.unlink(root, &filename).unwrap();
+        assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
     // A very simple single record write to an empty file
     test write(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
         let r = mocks.val.0.write(ino, 0, &buf[..], 0);
@@ -1993,7 +2091,8 @@ root:
 
     // A partial single record write appended to the file's end
     test write_append(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf0 = vec![0u8; 1024];
         let mut rng = thread_rng();
@@ -2010,7 +2109,8 @@ root:
 
     // A partial record write appended to a partial record at file's end
     test write_append_to_partial_record(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf0 = vec![0u8; 1024];
         let mut rng = thread_rng();
@@ -2035,7 +2135,8 @@ root:
 
     // write can RMW BlobExtents
     test write_partial_blob_record(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf0 = vec![0u8; 4096];
         let mut rng = thread_rng();
@@ -2062,7 +2163,8 @@ root:
     // Partially fill a hole that's at neither the beginning nor the end of the
     // file
     test write_partial_hole(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut attr = SetAttr::default();
         attr.size = Some(4096 * 4);
@@ -2083,7 +2185,8 @@ root:
 
     // A partial single record write that needs RMW on both ends
     test write_partial_record(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf0 = vec![0u8; 4096];
         let mut rng = thread_rng();
@@ -2105,7 +2208,8 @@ root:
 
     // write updates a file's ctime and mtime
     test write_timestamps(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         clear_timestamps(&mocks.val.0, ino);
 
@@ -2119,7 +2223,8 @@ root:
 
     // A write to an empty file that's split across two records
     test write_two_recs(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 8192];
         let mut rng = thread_rng();
@@ -2143,7 +2248,8 @@ root:
 
     // A write to an empty file that's split across three records
     test write_three_recs(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 12288];
         let mut rng = thread_rng();
@@ -2170,7 +2276,8 @@ root:
 
     // Write one hold record and a partial one to an initially empty file.
     test write_one_and_a_half_records(mocks) {
-        let ino = mocks.val.0.create(1, &OsString::from("x"), 0o644, 0, 0)
+        let root = mocks.val.0.root();
+        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 6144];
         let mut rng = thread_rng();
@@ -2268,10 +2375,11 @@ test_suite! {
         }
 
         fn mkdir(&mut self) {
+            let root = self.fs.root();
             let num: u64 = self.rng.gen();
             let fname = format!("{:x}", num);
             info!("mkdir {}", fname);
-            let ino = self.fs.mkdir(1, &OsString::from(&fname), 0o755, 0, 0)
+            let ino = self.fs.mkdir(root, &OsString::from(&fname), 0o755, 0, 0)
             .unwrap();
             self.dirs.push((num, ino));
         }
@@ -2328,7 +2436,7 @@ test_suite! {
             let num: u64 = self.rng.gen();
             let fname = format!("{:x}_x", num);
             info!("rm {}", fname);
-            assert_eq!(self.fs.unlink(1, &OsString::from(&fname)),
+            assert_eq!(self.fs.unlink(self.fs.root(), &OsString::from(&fname)),
                        Err(Error::ENOENT.into()));
         }
 
@@ -2337,7 +2445,7 @@ test_suite! {
                 let idx = self.rng.gen_range(0, self.files.len());
                 let fname = format!("{:x}", self.files.remove(idx).0);
                 info!("rm {}", fname);
-                self.fs.unlink(1, &OsString::from(&fname)).unwrap();
+                self.fs.unlink(self.fs.root(), &OsString::from(&fname)).unwrap();
             }
         }
 
@@ -2346,7 +2454,7 @@ test_suite! {
                 let idx = self.rng.gen_range(0, self.dirs.len());
                 let fname = format!("{:x}", self.dirs.remove(idx).0);
                 info!("rmdir {}", fname);
-                self.fs.rmdir(1, &OsString::from(&fname)).unwrap();
+                self.fs.rmdir(self.fs.root(), &OsString::from(&fname)).unwrap();
             }
         }
 
@@ -2383,11 +2491,11 @@ test_suite! {
             // The BTree is basically a flat namespace, so there's little test
             // coverage to be gained by testing a hierarchical directory
             // structure.  Instead, we'll stick all files in the root directory,
-            // which has inode 1.
+            let root = self.fs.root();
             let num: u64 = self.rng.gen();
             let fname = format!("{:x}", num);
             info!("Touch {}", fname);
-            let ino = self.fs.create(1, &OsString::from(&fname), 0o644, 0, 0)
+            let ino = self.fs.create(root, &OsString::from(&fname), 0o644, 0, 0)
             .unwrap();
             self.files.push((num, ino));
         }
