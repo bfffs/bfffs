@@ -1263,6 +1263,9 @@ impl Fs {
                     // TODO: check permissions, file flags, etc
                     // The VFS should've already checked that inode is a
                     // directory.
+                    // If the directory weren't empty, the loop should've
+                    // already discovered that, since DirEntrys's keys are
+                    // sorted lower than Inodes'
                     assert_eq!(inode.file_type, FileType::Dir,
                                "rmdir of a non-directory");
                     assert_eq!(inode.nlink, 2,
@@ -1544,7 +1547,7 @@ impl Fs {
                             let now = time::get_time();
                             inode.mtime = now;
                             inode.ctime = now;
-                            if isdir && !samedir {
+                            if isdir && (!samedir || old_dst_ino.is_some()) {
                                 inode.nlink -= 1;
                             }
                         }

@@ -1264,6 +1264,23 @@ root:
         assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
     }
 
+    test rename_dir_to_dir_same_parent(mocks) {
+        let parent = OsString::from("parent");
+        let src = OsString::from("src");
+        let dst = OsString::from("dst");
+        let parent_ino = mocks.val.0.mkdir(1, &parent, 0o755, 0, 0).unwrap();
+        let src_ino = mocks.val.0.mkdir(parent_ino, &src, 0o755, 0, 0).unwrap();
+        let dst_ino = mocks.val.0.mkdir(parent_ino, &dst, 0o755, 0, 0).unwrap();
+
+        mocks.val.0.rename(parent_ino, &src, parent_ino, &dst).unwrap();
+
+        assert_eq!(mocks.val.0.lookup(parent_ino, &dst), Ok(src_ino));
+        assert_eq!(mocks.val.0.lookup(parent_ino, &src), Err(libc::ENOENT));
+        let parent_inode = mocks.val.0.getattr(parent_ino).unwrap();
+        assert_eq!(parent_inode.nlink, 3);
+        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
+    }
+
     // Rename a directory.  The target is also a directory that isn't empty.
     // Nothing should change.
     test rename_dir_to_nonemptydir(mocks) {
