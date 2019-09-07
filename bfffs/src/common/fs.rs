@@ -1015,12 +1015,17 @@ impl Fs {
                     let dfut = ds.insert(dirent_key, dirent_value);
 
                     let now = time::get_time();
-                    let mut attr = SetAttr::default();
-                    attr.ctime = Some(now);
-                    attr.mtime = Some(now);
-                    let ts_fut = Fs::do_setattr(ds, parent, attr);
+                    let mut parent_attr = SetAttr::default();
+                    parent_attr.ctime = Some(now);
+                    parent_attr.mtime = Some(now);
+                    let parent_fut = Fs::do_setattr(ds.clone(), parent,
+                        parent_attr);
 
-                    ifut.join3(dfut, ts_fut)
+                    let mut ctime_attr = SetAttr::default();
+                    ctime_attr.ctime = Some(now);
+                    let ctime_fut = Fs::do_setattr(ds, ino, ctime_attr);
+
+                    ifut.join4(dfut, parent_fut, ctime_fut)
                 }).map(move |_| tx.send(Ok(ino)).unwrap())
             }).map_err(Error::unhandled)
         ).unwrap();

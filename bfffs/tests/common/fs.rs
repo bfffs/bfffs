@@ -510,8 +510,18 @@ root:
         assert_eq!(mocks.val.0.lookup(1, &dst).unwrap(), ino);
     }
 
+    /// link(2) should update the inode's ctime
+    test link_ctime(mocks) {
+        let src = OsString::from("src");
+        let dst = OsString::from("dst");
+        let ino = mocks.val.0.create(1, &src, 0o644, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, ino);
+        mocks.val.0.link(1, ino, &dst).unwrap();
+        assert_ts_changed(&mocks.val.0, ino, false, false, true, false);
+    }
+
     ///link(2) should update the parent's mtime and ctime
-    test link_timestamps(mocks) {
+    test link_parent_timestamps(mocks) {
         let src = OsString::from("src");
         let dst = OsString::from("dst");
         let ino = mocks.val.0.create(1, &src, 0o644, 0, 0).unwrap();
