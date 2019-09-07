@@ -1658,10 +1658,7 @@ impl Fs {
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 if attr.ctime.is_none() {
-                    let now = time::get_time();
-                    if attr.ctime.is_none() {
-                        attr.ctime = Some(now);
-                    }
+                    attr.ctime = Some(time::get_time());
                 }
                 Fs::do_setattr(ds, ino, attr)
                 .map(move |_| tx.send(Ok(())).unwrap())
