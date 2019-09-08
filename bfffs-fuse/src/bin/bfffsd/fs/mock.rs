@@ -39,7 +39,7 @@ mock! {
         fn getextattrlen(&self, fd: &FileData, ns: ExtAttrNamespace,
             name: &OsStr) -> Result<u32, i32>;
         fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
-            -> Result<u64, i32>;
+            -> Result<(), i32>;
         fn lookup(&self, parent: &FileData, name: &OsStr)
             -> Result<FileData, i32>;
         // TODO: After upgrading mockall to 0.4.0 (which allows where clauses

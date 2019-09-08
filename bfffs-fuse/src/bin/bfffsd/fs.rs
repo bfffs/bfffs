@@ -1028,7 +1028,7 @@ mod link {
                 predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(OsStr::from_bytes(NAME)),
-            ).return_const(Ok(ino));
+            ).return_const(Ok(()));
         mock_fs.expect_getattr()
             .with( predicate::function(move |fd: &FileData| fd.ino == ino))
             .times(1)

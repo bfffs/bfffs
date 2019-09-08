@@ -1014,9 +1014,8 @@ impl Fs {
     }
 
     /// Create a hardlink from `fd` to `parent/name`.
-    // TODO: consider returning () instead of u64
     pub fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
-        -> Result<u64, i32>
+        -> Result<(), i32>
     {
         // Outline:
         // * Increase the target's link count
@@ -1059,7 +1058,7 @@ impl Fs {
                     let ctime_fut = Fs::do_setattr(ds, ino, ctime_attr);
 
                     ifut.join4(dfut, parent_fut, ctime_fut)
-                }).map(move |_| tx.send(Ok(ino)).unwrap())
+                }).map(move |_| tx.send(Ok(())).unwrap())
             }).map_err(Error::unhandled)
         ).unwrap();
         rx.wait().unwrap()

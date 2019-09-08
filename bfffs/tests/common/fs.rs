@@ -520,8 +520,7 @@ root:
         let src = OsString::from("src");
         let dst = OsString::from("dst");
         let fd = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
-        let l_ino = mocks.val.0.link(root, &fd, &dst).unwrap();
-        assert_eq!(fd.ino, l_ino);
+        mocks.val.0.link(root, &fd, &dst).unwrap();
 
         // The target's link count should've increased
         let attr = mocks.val.0.getattr(&fd).unwrap();
@@ -1451,15 +1450,14 @@ root:
         .unwrap();
         let dst_fd = mocks.val.0.create(root, &dst, 0o644, 0, 0)
         .unwrap();
-        let lnk_ino = mocks.val.0.link(root, &dst_fd, &lnk).unwrap();
-        assert_eq!(dst_fd.ino, lnk_ino);
+        mocks.val.0.link(root, &dst_fd, &lnk).unwrap();
 
         mocks.val.0.rename(root, &src, root, &dst).unwrap();
 
         assert_eq!(mocks.val.0.lookup(root, &dst).unwrap().ino, src_fd.ino);
         assert_eq!(mocks.val.0.lookup(root, &src).unwrap_err(), libc::ENOENT);
         let lnk_fd = mocks.val.0.lookup(root, &lnk).unwrap();
-        assert_eq!(lnk_fd.ino, lnk_ino);
+        assert_eq!(lnk_fd.ino, dst_fd.ino);
         let lnk_attr = mocks.val.0.getattr(&lnk_fd).unwrap();
         assert_eq!(lnk_attr.nlink, 1);
     }
@@ -2071,7 +2069,7 @@ root:
         let name2 = OsString::from("name2");
         let fd = mocks.val.0.create(root, &name1, 0o644, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.link(root, &fd, &name2).unwrap(), fd.ino);
+        mocks.val.0.link(root, &fd, &name2).unwrap();
 
         mocks.val.0.unlink(root, &name1).unwrap();
         // File should still exist, now with link count 1.
