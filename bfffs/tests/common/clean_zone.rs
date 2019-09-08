@@ -84,19 +84,20 @@ test_suite! {
     // that zone 0 is clean, because the public API doesn't expose zones.
     test clean_zone(mocks(1 << 20, 32)) {
         let (db, fs, _rt) = mocks.val;
+        let root = fs.root();
         let small_filename = OsString::from("small");
-        let small_ino = fs.create(1, &small_filename, 0o644, 0, 0).unwrap();
+        let small_fd = fs.create(root, &small_filename, 0o644, 0, 0).unwrap();
         let buf = vec![42u8; 4096];
-        fs.write(small_ino, 0, &buf[..], 0).unwrap();
+        fs.write(&small_fd, 0, &buf[..], 0).unwrap();
 
         let big_filename = OsString::from("big");
-        let big_ino = fs.create(1, &big_filename, 0o644, 0, 0).unwrap();
+        let big_fd = fs.create(root, &big_filename, 0o644, 0, 0).unwrap();
         for i in 0..18 {
-            fs.write(big_ino, i * 4096, &buf[..], 0).unwrap();
+            fs.write(&big_fd, i * 4096, &buf[..], 0).unwrap();
         }
         fs.sync();
 
-        fs.unlink(1, &big_filename).unwrap();
+        fs.unlink(root, &big_filename).unwrap();
         fs.sync();
 
         db.clean().wait().unwrap();
@@ -106,14 +107,15 @@ test_suite! {
     #[ignore = "Test is slow" ]
     test clean_zone_leak(mocks(1 << 30, 512)) {
         let (db, fs, mut rt) = mocks.val;
+        let root = fs.root();
         for i in 0..16384 {
             let fname = format!("f.{}", i);
-            fs.mkdir(1, &OsString::from(fname), 0o755, 0, 0).unwrap();
+            fs.mkdir(root, &OsString::from(fname), 0o755, 0, 0).unwrap();
         }
         fs.sync();
         for i in 0..8000 {
             let fname = format!("f.{}", i);
-            fs.rmdir(1, &OsString::from(fname)).unwrap();
+            fs.rmdir(root, &OsString::from(fname)).unwrap();
         }
         fs.sync();
         let mut statvfs = fs.statvfs().unwrap();
@@ -138,14 +140,15 @@ test_suite! {
     #[ignore = "Test is slow and intermittent" ]
     test get_mut(mocks(1 << 30, 512)) {
         let (db, fs, _rt) = mocks.val;
+        let root = fs.root();
         for i in 0..16384 {
             let fname = format!("f.{}", i);
-            fs.mkdir(1, &OsString::from(fname), 0o755, 0, 0).unwrap();
+            fs.mkdir(root, &OsString::from(fname), 0o755, 0, 0).unwrap();
         }
         fs.sync();
         for i in 0..8192 {
             let fname = format!("f.{}", 2 * i);
-            fs.rmdir(1, &OsString::from(fname)).unwrap();
+            fs.rmdir(root, &OsString::from(fname)).unwrap();
         }
         fs.sync();
         let mut statvfs = fs.statvfs().unwrap();

@@ -5,7 +5,7 @@ use bfffs::common::database::*;
 use bfffs::common::{
     RID,
     database::TreeID,
-    fs::{ExtAttr, ExtAttrNamespace, SetAttr}
+    fs::{ExtAttr, ExtAttrNamespace, FileData, SetAttr}
 };
 use cfg_if::cfg_if;
 use fuse::{FileAttr, FileType };
@@ -55,8 +55,8 @@ pub struct FuseFs {
 
 impl FuseFs {
     /// Private helper for getattr-like operations
-    fn do_getattr(&self, ino: u64) -> Result<FileAttr, i32> {
-        match self.fs.getattr(ino) {
+    fn do_getattr(&self, fd: &FileData) -> Result<FileAttr, i32> {
+        match self.fs.getattr(fd) {
             Ok(attr) => {
                 let kind = match attr.mode.file_type() {
                     libc::S_IFIFO => FileType::NamedPipe,
@@ -99,9 +99,9 @@ impl FuseFs {
     }
 
     /// Private helper for FUSE methods that take a `ReplyEntry`
-    fn reply_entry(&self, r: Result<u64, i32>, reply: ReplyEntry) {
+    fn reply_entry(&self, r: Result<FileData, i32>, reply: ReplyEntry) {
         // FUSE combines the function of VOP_GETATTR with many other VOPs.
-        match r.and_then(|ino| self.do_getattr(ino)) {
+        match r.and_then(|fd| self.do_getattr(&fd)) {
             Ok(file_attr) => {
                 // The generation number is only used for filesystems exported
                 // by NFS, and is only needed if the filesystem reuses deleted
@@ -140,12 +140,16 @@ impl Filesystem for FuseFs {
     fn create(&mut self, req: &Request, parent: u64, name: &OsStr,
               mode: u32, _flags: u32, reply: ReplyCreate) {
         let ttl = Timespec { sec: 0, nsec: 0 };
+        // XXX Here and elsewhere, constructing a FileData is just temporary
+        // until bfffs-fuse learns how to store them.  Eventually bfffs-fuse
+        // should never construct a FileData itself.
+        let parent_fd = FileData{ino: parent};
 
         // FUSE combines the functions of VOP_CREATE and VOP_GETATTR
         // into one.
         let perm = (mode & 0o7777) as u16;
-        match self.fs.create(parent, name, perm, req.uid(), req.gid())
-            .and_then(|ino| self.do_getattr(ino)) {
+        match self.fs.create(&parent_fd, name, perm, req.uid(), req.gid())
+            .and_then(|fd| self.do_getattr(&fd)) {
             Ok(file_attr) => {
                 // The generation number is only used for filesystems exported
                 // by NFS, and is only needed if the filesystem reuses deleted
@@ -166,7 +170,8 @@ impl Filesystem for FuseFs {
     fn fsync(&mut self, _req: &Request, ino: u64, _fh: u64, _datasync: bool,
              reply: ReplyEmpty)
     {
-        match self.fs.fsync(ino) {
+        let fd = FileData{ino};
+        match self.fs.fsync(&fd) {
             Ok(()) => reply.ok(),
             Err(e) => reply.error(e)
         }
@@ -174,7 +179,8 @@ impl Filesystem for FuseFs {
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let ttl = Timespec { sec: 0, nsec: 0 };
-        match self.do_getattr(ino) {
+        let fd = FileData{ino};
+        match self.do_getattr(&fd) {
             Ok(file_attr) => reply.attr(&ttl, &file_attr),
             Err(errno) => reply.error(errno)
         }
@@ -183,14 +189,15 @@ impl Filesystem for FuseFs {
     fn getxattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
                 size: u32, reply: ReplyXattr)
     {
+        let fd = FileData{ino};
         let (ns, name) = FuseFs::split_xattr_name(packed_name);
         if size == 0 {
-            match self.fs.getextattrlen(ino, ns, name) {
+            match self.fs.getextattrlen(&fd, ns, name) {
                 Ok(len) => reply.size(len),
                 Err(errno) => reply.error(errno)
             }
         } else {
-            match self.fs.getextattr(ino, ns, name) {
+            match self.fs.getextattr(&fd, ns, name) {
                 // data copy
                 Ok(buf) => {
                     if buf.len() <= size as usize {
@@ -207,13 +214,19 @@ impl Filesystem for FuseFs {
     fn link(&mut self, _req: &Request, parent: u64, ino: u64,
             name: &OsStr, reply: ReplyEntry)
     {
-        self.reply_entry(self.fs.link(ino, parent, name), reply);
+        let fd = FileData{ino};
+        let parent_fd = FileData{ino: parent};
+        match self.fs.link(&parent_fd, &fd, name) {
+            Ok(_) => self.reply_entry(Ok(fd), reply),
+            Err(e) => reply.error(e)
+        }
     }
 
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr,
                reply: ReplyEntry)
     {
-        self.reply_entry(self.fs.lookup(parent, name), reply);
+        let parent_fd = FileData{ino: parent};
+        self.reply_entry(self.fs.lookup(&parent_fd, name), reply);
     }
 
     /// Get a list of all of the file's extended attributes
@@ -230,6 +243,7 @@ impl Filesystem for FuseFs {
     fn listxattr(&mut self, _req: &Request, ino: u64, size: u32,
                  reply: ReplyXattr)
     {
+        let fd = FileData{ino};
         if size == 0 {
             let f = |extattr: &ExtAttr<RID>| {
                 let name = extattr.name();
@@ -239,7 +253,7 @@ impl Filesystem for FuseFs {
                 } as u32;
                 prefix_len + name.as_bytes().len() as u32 + 1
             };
-            match self.fs.listextattrlen(ino, f) {
+            match self.fs.listextattrlen(&fd, f) {
                 Ok(len) => reply.size(len),
                 Err(errno) => reply.error(errno)
             }
@@ -253,7 +267,7 @@ impl Filesystem for FuseFs {
                 buf.extend_from_slice(extattr.name().as_bytes());
                 buf.push(b'\0');
             };
-            match self.fs.listextattr(ino, size, f) {
+            match self.fs.listextattr(&fd, size, f) {
                 Ok(buf) => {
                     if buf.len() <= size as usize {
                         // data copy
@@ -270,24 +284,28 @@ impl Filesystem for FuseFs {
     fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
                  reply: ReplyEntry)
     {
+        let parent_fd = FileData{ino: parent};
         let perm = (mode & 0o7777) as u16;
-        let r = self.fs.mkdir(parent, name, perm, req.uid(), req.gid());
+        let r = self.fs.mkdir(&parent_fd, name, perm, req.uid(), req.gid());
         self.reply_entry(r, reply);
     }
 
     fn mknod(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
              rdev: u32, reply: ReplyEntry)
     {
+        let parent_fd = FileData{ino: parent};
         let perm = (mode & 0o7777) as u16;
         let r = match mode as u16 & libc::S_IFMT {
             libc::S_IFIFO =>
-                self.fs.mkfifo(parent, name, perm, req.uid(), req.gid()),
+                self.fs.mkfifo(&parent_fd, name, perm, req.uid(), req.gid()),
             libc::S_IFCHR =>
-                self.fs.mkchar(parent, name, perm, req.uid(), req.gid(), rdev),
+                self.fs.mkchar(&parent_fd, name, perm, req.uid(), req.gid(),
+                    rdev),
             libc::S_IFBLK =>
-                self.fs.mkblock(parent, name, perm, req.uid(), req.gid(), rdev),
+                self.fs.mkblock(&parent_fd, name, perm, req.uid(), req.gid(),
+                    rdev),
             libc::S_IFSOCK =>
-                self.fs.mksock(parent, name, perm, req.uid(), req.gid()),
+                self.fs.mksock(&parent_fd, name, perm, req.uid(), req.gid()),
             _ => Err(libc::EOPNOTSUPP)
         };
         self.reply_entry(r, reply);
@@ -296,7 +314,8 @@ impl Filesystem for FuseFs {
     fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
             size: u32, reply: ReplyData)
     {
-        match self.fs.read(ino, offset as u64, size as usize) {
+        let fd = FileData{ino};
+        match self.fs.read(&fd, offset as u64, size as usize) {
             Ok(ref sglist) if sglist.is_empty() => reply.data(&[]),
             Ok(sglist) => {
                 if sglist.len() == 1 {
@@ -318,10 +337,11 @@ impl Filesystem for FuseFs {
         }
     }
 
-    fn readdir(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64,
+    fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
                mut reply: ReplyDirectory)
     {
-        for v in self.fs.readdir(ino, fh, offset) {
+        let fd = FileData{ino};
+        for v in self.fs.readdir(&fd, offset) {
             match v {
                 Ok((dirent, offset)) => {
                     let ft = match dirent.d_type {
@@ -354,7 +374,8 @@ impl Filesystem for FuseFs {
     }
 
     fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
-        match self.fs.readlink(ino) {
+        let fd = FileData{ino};
+        match self.fs.readlink(&fd) {
             Ok(path) => reply.data(&path.as_bytes()),
             Err(errno) => reply.error(errno)
         }
@@ -363,8 +384,9 @@ impl Filesystem for FuseFs {
     fn removexattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
                    reply: ReplyEmpty)
     {
+        let fd = FileData{ino};
         let (ns, name) = FuseFs::split_xattr_name(packed_name);
-        match self.fs.deleteextattr(ino, ns, name) {
+        match self.fs.deleteextattr(&fd, ns, name) {
             Ok(()) => reply.ok(),
             Err(errno) => reply.error(errno)
         }
@@ -377,15 +399,19 @@ impl Filesystem for FuseFs {
     fn rename(&mut self, _req: &Request, parent: u64, name: &OsStr,
         newparent: u64, newname: &OsStr, reply: ReplyEmpty)
     {
-        match self.fs.rename(parent, name, newparent, newname) {
+        let parent_fd = FileData{ino: parent};
+        let newparent_fd = FileData{ino: newparent};
+        match self.fs.rename(&parent_fd, name, &newparent_fd, newname) {
             Ok(()) => reply.ok(),
             Err(errno) => reply.error(errno)
         }
     }
 
     fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr,
-             reply: ReplyEmpty) {
-        match self.fs.rmdir(parent, name) {
+             reply: ReplyEmpty)
+    {
+        let parent_fd = FileData{ino: parent};
+        match self.fs.rmdir(&parent_fd, name) {
             Ok(()) => reply.ok(),
             Err(errno) => reply.error(errno)
         }
@@ -407,6 +433,7 @@ impl Filesystem for FuseFs {
                flags: Option<u32>,
                reply: ReplyAttr)
     {
+        let fd = FileData{ino};
         let attr = SetAttr {
             perm: mode.map(|m| (m & 0o7777) as u16),
             uid,
@@ -418,8 +445,8 @@ impl Filesystem for FuseFs {
             birthtime: crtime,
             flags: flags.map(u64::from)
         };
-        let r = self.fs.setattr(ino, attr)
-        .and_then(|_| self.do_getattr(ino));
+        let r = self.fs.setattr(&fd, attr)
+        .and_then(|_| self.do_getattr(&fd));
         // FUSE combines the functions of VOP_SETATTR and VOP_GETATTR
         // into one.
         match r {
@@ -436,8 +463,9 @@ impl Filesystem for FuseFs {
     fn setxattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
                 value: &[u8], _flags: u32, _position: u32, reply: ReplyEmpty)
     {
+        let fd = FileData{ino};
         let (ns, name) = FuseFs::split_xattr_name(packed_name);
-        match self.fs.setextattr(ino, ns, name, value) {
+        match self.fs.setextattr(&fd, ns, name, value) {
             Ok(()) => reply.ok(),
             Err(errno) => reply.error(errno)
         }
@@ -460,7 +488,8 @@ impl Filesystem for FuseFs {
         // Weirdly, FUSE doesn't supply the symlink's mode.  Use a sensible
         // default.
         let perm = 0o755;
-        let r = self.fs.symlink(parent, name, perm, req.uid(), req.gid(),
+        let parent_fd = FileData{ino: parent};
+        let r = self.fs.symlink(&parent_fd, name, perm, req.uid(), req.gid(),
                                 link.as_os_str());
         self.reply_entry(r, reply);
     }
@@ -468,7 +497,8 @@ impl Filesystem for FuseFs {
     fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr,
               reply: ReplyEmpty)
     {
-        match self.fs.unlink(parent, name) {
+        let parent_fd = FileData{ino: parent};
+        match self.fs.unlink(&parent_fd, name) {
             Ok(()) => reply.ok(),
             Err(errno) => reply.error(errno)
         }
@@ -477,7 +507,8 @@ impl Filesystem for FuseFs {
     fn write(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
              data: &[u8], flags: u32, reply: ReplyWrite)
     {
-        match self.fs.write(ino, offset as u64, data, flags) {
+        let fd = FileData{ino};
+        match self.fs.write(&fd, offset as u64, data, flags) {
             Ok(lsize) => reply.written(lsize),
             Err(errno) => reply.error(errno)
         }
@@ -496,7 +527,7 @@ impl From<Fs> for FuseFs {
 mod t {
 
 use super::*;
-use bfffs::common::fs::{GetAttr, Mode};
+use bfffs::common::fs::{FileData, GetAttr, Mode};
 use mockall::{PredicateStrExt, Sequence, predicate};
 use std::mem;
 
@@ -507,7 +538,7 @@ mod create {
     fn enotdir() {
         let mode: u16 = 0o644;
         const NAME: &'static str = "foo.txt";
-        let parent = 42;
+        let parent_ino = 42;
 
         let mut request = Request::default();
         request.expect_uid().return_const(12345u32);
@@ -523,15 +554,15 @@ mod create {
         mock_fs.expect_create()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent_ino),
                 predicate::str::contains(NAME).from_utf8(),
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
-            ).return_const(Err(libc::ENOTDIR));
+            ).returning(|_, _, _, _, _| Err(libc::ENOTDIR));
 
         let mut fusefs = FuseFs::from(mock_fs);
-        fusefs.create(&request, parent, &OsString::from(NAME), mode.into(),
+        fusefs.create(&request, parent_ino, &OsString::from(NAME), mode.into(),
             0, reply);
     }
 
@@ -539,7 +570,7 @@ mod create {
     fn ok() {
         let mode: u16 = 0o644;
         const NAME: &'static str = "foo.txt";
-        let parent = 42;
+        let parent_ino = 42;
         let ino = 43;
         let uid = 12345u32;
         let gid = 54321u32;
@@ -565,14 +596,14 @@ mod create {
         mock_fs.expect_create()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent_ino),
                 predicate::str::contains(NAME).from_utf8(),
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
-            ).return_const(Ok(ino));
+            ).returning(move |_, _, _, _, _| Ok(FileData{ino}));
         mock_fs.expect_getattr()
-            .with(predicate::eq(ino))
+            .with(predicate::function(move |fd: &FileData| fd.ino == ino))
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
@@ -590,7 +621,7 @@ mod create {
             }));
 
         let mut fusefs = FuseFs::from(mock_fs);
-        fusefs.create(&request, parent, &OsString::from(NAME), mode.into(),
+        fusefs.create(&request, parent_ino, &OsString::from(NAME), mode.into(),
             0, reply);
     }
 }
@@ -614,8 +645,8 @@ mod removexattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_deleteextattr()
             .times(1)
-            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
-                *ino == inode &&
+            .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
+                fd.ino == inode &&
                 *ns == ExtAttrNamespace::System &&
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| Err(libc::ENOATTR));
@@ -639,8 +670,8 @@ mod removexattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_deleteextattr()
             .times(1)
-            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
-                *ino == inode &&
+            .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
+                fd.ino == inode &&
                 *ns == ExtAttrNamespace::System &&
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| Ok(()));
@@ -670,7 +701,7 @@ mod fsync {
         mock_fs.expect_fsync()
             .times(1)
             .with(
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
             ).return_const(Err(libc::EIO));
 
         let mut fusefs = FuseFs::from(mock_fs);
@@ -693,7 +724,7 @@ mod fsync {
         mock_fs.expect_fsync()
             .times(1)
             .with(
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
             ).return_const(Ok(()));
 
         let mut fusefs = FuseFs::from(mock_fs);
@@ -718,7 +749,7 @@ mod getattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_getattr()
             .times(1)
-            .with(predicate::eq(ino))
+            .with(predicate::function(move |fd: &FileData| fd.ino == ino))
             .return_const(Err(libc::ENOENT));
 
         let mut fusefs = FuseFs::from(mock_fs);
@@ -738,7 +769,7 @@ mod getattr {
 
         let mut mock_fs = Fs::default();
         mock_fs.expect_getattr()
-            .with( predicate::eq(ino))
+            .with( predicate::function(move |fd: &FileData| fd.ino == ino))
             .times(1)
             .return_const(Ok(GetAttr {
                 ino,
@@ -794,8 +825,8 @@ mod getxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_getextattrlen()
             .times(1)
-            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
-                *ino == inode &&
+            .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
+                fd.ino == inode &&
                 *ns == ExtAttrNamespace::System &&
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| Err(libc::ENOATTR));
@@ -822,8 +853,8 @@ mod getxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_getextattrlen()
             .times(1)
-            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
-                *ino == inode &&
+            .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
+                fd.ino == inode &&
                 *ns == ExtAttrNamespace::System &&
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| Ok(size));
@@ -849,8 +880,8 @@ mod getxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_getextattr()
             .times(1)
-            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
-                *ino == inode &&
+            .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
+                fd.ino == inode &&
                 *ns == ExtAttrNamespace::System &&
                 name == OsStr::from_bytes(b"md5")
             }).return_const(Err(libc::ENOATTR));
@@ -885,8 +916,8 @@ mod getxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_getextattr()
             .times(1)
-            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
-                *ino == inode &&
+            .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
+                fd.ino == inode &&
                 *ns == ExtAttrNamespace::System &&
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| {
@@ -916,8 +947,8 @@ mod getxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_getextattr()
             .times(1)
-            .withf(move |ino: &u64, ns: &ExtAttrNamespace, name: &OsStr| {
-                *ino == inode &&
+            .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
+                fd.ino == inode &&
                 *ns == ExtAttrNamespace::User &&
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| {
@@ -953,13 +984,13 @@ mod link {
         mock_fs.expect_link()
             .times(1)
             .with(
-                predicate::eq(parent),
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(OsStr::from_bytes(NAME)),
             ).return_const(Err(libc::EPERM));
 
         let mut fusefs = FuseFs::from(mock_fs);
-        fusefs.link(&request, ino, parent, OsStr::from_bytes(NAME), reply);
+        fusefs.link(&request, parent, ino, OsStr::from_bytes(NAME), reply);
     }
 
     #[test]
@@ -994,12 +1025,12 @@ mod link {
             .times(1)
             .in_sequence(&mut seq)
             .with(
-                predicate::eq(parent),
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(OsStr::from_bytes(NAME)),
             ).return_const(Ok(ino));
         mock_fs.expect_getattr()
-            .with( predicate::eq(ino))
+            .with( predicate::function(move |fd: &FileData| fd.ino == ino))
             .times(1)
             .in_sequence(&mut seq)
             .return_const(Ok(GetAttr {
@@ -1020,7 +1051,7 @@ mod link {
 
 
         let mut fusefs = FuseFs::from(mock_fs);
-        fusefs.link(&request, ino, parent, OsStr::from_bytes(NAME), reply);
+        fusefs.link(&request, parent, ino, OsStr::from_bytes(NAME), reply);
     }
 }
 
@@ -1043,8 +1074,10 @@ mod listxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_listextattrlen()
             .times(1)
-            .with(predicate::eq(inode), predicate::always())
-            .returning(|_ino, _f| Err(libc::EPERM));
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino == inode),
+                predicate::always()
+            ).returning(|_ino, _f| Err(libc::EPERM));
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.listxattr(&request, inode, wantsize, reply);
@@ -1066,8 +1099,10 @@ mod listxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_listextattrlen()
             .times(1)
-            .with(predicate::eq(inode), predicate::always())
-            .returning(|_ino, f| {
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino == inode),
+                predicate::always()
+            ).returning(|_ino, f| {
                 Ok(
                     f(&ExtAttr::Inline(InlineExtAttr {
                         namespace: ExtAttrNamespace::System,
@@ -1101,7 +1136,7 @@ mod listxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_listextattr()
             .times(1)
-            .with(predicate::eq(inode),
+            .with(predicate::function(move |fd: &FileData| fd.ino == inode),
                 predicate::eq(wantsize),
                 predicate::always()
             ).returning(|_ino, _size, _f| Err(libc::EPERM));
@@ -1129,7 +1164,7 @@ mod listxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_listextattr()
             .times(1)
-            .with(predicate::eq(inode),
+            .with(predicate::function(move |fd: &FileData| fd.ino == inode),
                 predicate::eq(wantsize),
                 predicate::always()
             ).returning(|_ino, wantsize, f| {
@@ -1170,7 +1205,7 @@ mod listxattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_listextattr()
             .times(1)
-            .with(predicate::eq(inode),
+            .with(predicate::function(move |fd: &FileData| fd.ino == inode),
                 predicate::eq(wantsize),
                 predicate::always()
             ).returning(|_ino, wantsize, f| {
@@ -1214,9 +1249,9 @@ mod lookup {
         mock_fs.expect_lookup()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(OsStr::from_bytes(&name[..]))
-            ).return_const(Err(libc::ENOENT));
+            ).returning(|_, _| Err(libc::ENOENT));
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.lookup(&request, parent, OsStr::from_bytes(&name[..]), reply);
@@ -1239,11 +1274,11 @@ mod lookup {
         mock_fs.expect_lookup()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(OsStr::from_bytes(&name[..]))
-            ).return_const(Ok(ino));
+            ).returning(move |_, _| Ok(FileData{ino}));
         mock_fs.expect_getattr()
-            .with( predicate::eq(ino))
+            .with( predicate::function(move |fd: &FileData| fd.ino == ino))
             .times(1)
             .return_const(Ok(GetAttr {
                 ino,
@@ -1303,12 +1338,12 @@ mod mkdir {
         mock_fs.expect_mkdir()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(OsStr::from_bytes(NAME)),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).return_const(Err(libc::EPERM));
+            ).returning(|_, _, _, _, _| Err(libc::EPERM));
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.mkdir(&request, parent, OsStr::from_bytes(NAME),
@@ -1345,12 +1380,12 @@ mod mkdir {
         mock_fs.expect_mkdir()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(OsStr::from_bytes(NAME)),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).return_const(Ok(ino));
+            ).returning(move |_, _, _, _, _| Ok(FileData{ino}));
         mock_fs.expect_getattr()
             .times(1)
             .return_const(Ok(GetAttr {
@@ -1412,13 +1447,13 @@ mod mknod {
             .times(1)
             .in_sequence(&mut seq)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::str::contains(NAME).from_utf8(),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
                 predicate::eq(rdev)
-            ).return_const(Ok(ino));
+            ).returning(move |_, _, _, _, _, _| Ok(FileData{ino}));
         mock_fs.expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
@@ -1477,13 +1512,13 @@ mod mknod {
             .times(1)
             .in_sequence(&mut seq)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::str::contains(NAME).from_utf8(),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
                 predicate::eq(rdev)
-            ).return_const(Ok(ino));
+            ).returning(move |_, _, _, _, _, _| Ok(FileData{ino}));
         mock_fs.expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
@@ -1530,12 +1565,12 @@ mod mknod {
         mock_fs.expect_mkfifo()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::str::contains(NAME).from_utf8(),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).return_const(Err(libc::EPERM));
+            ).returning(|_, _, _, _, _| Err(libc::EPERM));
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.mknod(&request, parent, &OsString::from(NAME),
@@ -1574,12 +1609,12 @@ mod mknod {
             .times(1)
             .in_sequence(&mut seq)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::str::contains(NAME).from_utf8(),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).return_const(Ok(ino));
+            ).returning(move |_, _, _, _, _| Ok(FileData{ino}));
         mock_fs.expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
@@ -1636,12 +1671,12 @@ mod mknod {
             .times(1)
             .in_sequence(&mut seq)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::str::contains(NAME).from_utf8(),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).return_const(Ok(ino));
+            ).returning(move |_, _, _, _, _| Ok(FileData{ino}));
         mock_fs.expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
@@ -1690,7 +1725,7 @@ mod read {
         mock_fs.expect_read()
             .times(1)
             .with(
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(len as usize),
             ).return_const(Err(libc::EIO));
@@ -1718,7 +1753,7 @@ mod read {
         mock_fs.expect_read()
             .times(1)
             .with(
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(len as usize),
             ).return_const(Ok(SGList::new()));
@@ -1747,7 +1782,7 @@ mod read {
         mock_fs.expect_read()
             .times(1)
             .with(
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(len as usize),
             ).returning(|_ino, _ofs, _len| {
@@ -1785,7 +1820,7 @@ mod read {
         mock_fs.expect_read()
             .times(1)
             .with(
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(len as usize),
             ).returning(|_ino, _ofs, _len| {
@@ -1979,10 +2014,10 @@ mod readdir {
         mock_fs.expect_readdir()
             .times(1)
             .with(
-                predicate::eq(u64::from(dot_ino)),
-                predicate::eq(fh),
-                predicate::eq(ofs),
-            ).return_once(move |_, _, _| Box::new(contents.into_iter()));
+                predicate::function(move |h: &FileData|
+                                    u64::from(dot_ino) == h.ino
+                ),predicate::eq(ofs),
+            ).return_once(move |_, _| Box::new(contents.into_iter()));
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.readdir(&request, dot_ino.into(), fh, ofs, reply);
@@ -2005,10 +2040,9 @@ mod readdir {
         mock_fs.expect_readdir()
             .times(1)
             .with(
-                predicate::eq(ino),
-                predicate::eq(fh),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(ofs),
-            ).returning(|_, _, _| Box::new(vec![Err(libc::EIO)].into_iter()));
+            ).returning(|_, _| Box::new(vec![Err(libc::EIO)].into_iter()));
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.readdir(&request, ino, fh, ofs, reply);
@@ -2077,10 +2111,10 @@ mod readdir {
         mock_fs.expect_readdir()
             .times(1)
             .with(
-                predicate::eq(u64::from(ino)),
-                predicate::eq(fh),
-                predicate::eq(ofs),
-            ).return_once(move |_, _, _| Box::new(contents.into_iter()));
+                predicate::function(move |fd: &FileData|
+                                    u64::from(ino) == fd.ino
+                ), predicate::eq(ofs),
+            ).return_once(move |_, _| Box::new(contents.into_iter()));
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.readdir(&request, ino.into(), fh, ofs, reply);
@@ -2142,10 +2176,10 @@ mod readdir {
         mock_fs.expect_readdir()
             .times(1)
             .with(
-                predicate::eq(u64::from(ino)),
-                predicate::eq(fh),
-                predicate::eq(ofs),
-            ).return_once(move |_, _, _| Box::new(contents.into_iter()));
+                predicate::function(move |fd: &FileData|
+                                    u64::from(ino) == fd.ino
+                ), predicate::eq(ofs),
+            ).return_once(move |_, _| Box::new(contents.into_iter()));
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.readdir(&request, ino.into(), fh, ofs, reply);
@@ -2169,7 +2203,7 @@ mod readlink {
         let mut mock_fs = Fs::default();
         mock_fs.expect_readlink()
             .times(1)
-            .with(predicate::eq(ino))
+            .with(predicate::function(move |fd: &FileData| fd.ino == ino))
             .return_const(Err(libc::ENOENT));
 
         let mut fusefs = FuseFs::from(mock_fs);
@@ -2191,7 +2225,7 @@ mod readlink {
         let mut mock_fs = Fs::default();
         mock_fs.expect_readlink()
             .times(1)
-            .with(predicate::eq(ino))
+            .with(predicate::function(move |fd: &FileData| fd.ino == ino))
             .return_const(Ok(OsStr::from_bytes(&name[..]).to_owned()));
 
         let mut fusefs = FuseFs::from(mock_fs);
@@ -2221,9 +2255,9 @@ mod rename {
         mock_fs.expect_rename()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(name),
-                predicate::eq(newparent),
+                predicate::function(move |fd: &FileData| fd.ino == newparent),
                 predicate::eq(newname),
             ).return_const(Err(libc::ENOTDIR));
 
@@ -2249,9 +2283,9 @@ mod rename {
         mock_fs.expect_rename()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(name),
-                predicate::eq(newparent),
+                predicate::function(move |fd: &FileData| fd.ino == newparent),
                 predicate::eq(newname),
             ).return_const(Ok(()));
 
@@ -2280,7 +2314,7 @@ mod rmdir {
         mock_fs.expect_rmdir()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(name)
             ).returning(move |_, _| Err(libc::ENOTDIR));
 
@@ -2304,7 +2338,7 @@ mod rmdir {
         mock_fs.expect_rmdir()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(name)
             ).returning(move |_, _| Ok(()));
 
@@ -2332,8 +2366,8 @@ mod setattr {
         let mut mock_fs = Fs::default();
         mock_fs.expect_setattr()
             .times(1)
-            .withf(move |inode, attr| {
-                *inode == ino &&
+            .withf(move |fd, attr| {
+                fd.ino == ino &&
                 attr.size.is_none() &&
                 attr.atime.is_none() &&
                 attr.mtime.is_none() &&
@@ -2378,8 +2412,8 @@ mod setattr {
         mock_fs.expect_setattr()
             .times(1)
             .in_sequence(&mut seq)
-            .withf(move |inode, attr| {
-                *inode == ino &&
+            .withf(move |fd, attr| {
+                fd.ino == ino &&
                 attr.size.is_none() &&
                 attr.atime.is_none() &&
                 attr.mtime.is_none() &&
@@ -2436,7 +2470,7 @@ mod setxattr {
         mock_fs.expect_setextattr()
             .times(1)
             .with(
-                predicate::eq(inode),
+                predicate::function(move |fd: &FileData| fd.ino == inode),
                 predicate::eq(ExtAttrNamespace::System),
                 predicate::eq(OsStr::from_bytes(b"md5")),
                 predicate::eq(&v[..])
@@ -2463,7 +2497,7 @@ mod setxattr {
         mock_fs.expect_setextattr()
             .times(1)
             .with(
-                predicate::eq(inode),
+                predicate::function(move |fd: &FileData| fd.ino == inode),
                 predicate::eq(ExtAttrNamespace::System),
                 predicate::eq(OsStr::from_bytes(b"md5")),
                 predicate::eq(&v[..])
@@ -2563,13 +2597,13 @@ mod symlink {
         mock_fs.expect_symlink()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(OsStr::from_bytes(NAME)),
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
                 predicate::eq(OsStr::from_bytes(NAME)),
-            ).return_const(Err(libc::ELOOP));
+            ).returning(|_, _, _, _, _, _| Err(libc::ELOOP));
 
         let mut fusefs = FuseFs::from(mock_fs);
         fusefs.symlink(&request, parent, OsStr::from_bytes(NAME),
@@ -2606,15 +2640,15 @@ mod symlink {
         mock_fs.expect_symlink()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(OsStr::from_bytes(NAME)),
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
                 predicate::eq(OsStr::from_bytes(NAME)),
-            ).return_const(Ok(ino));
+            ).returning(move |_, _, _, _, _, _| Ok(FileData{ino}));
         mock_fs.expect_getattr()
-            .with(predicate::eq(ino))
+            .with(predicate::function(move |fd: &FileData| fd.ino == ino))
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
@@ -2657,7 +2691,7 @@ mod unlink {
         mock_fs.expect_unlink()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(name)
             ).returning(move |_, _| Err(libc::EISDIR));
 
@@ -2681,7 +2715,7 @@ mod unlink {
         mock_fs.expect_unlink()
             .times(1)
             .with(
-                predicate::eq(parent),
+                predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::eq(name)
             ).returning(move |_, _| Ok(()));
 
@@ -2711,7 +2745,7 @@ mod write {
         mock_fs.expect_write()
             .times(1)
             .with(
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(DATA),
                 predicate::always()
@@ -2740,7 +2774,7 @@ mod write {
         mock_fs.expect_write()
             .times(1)
             .with(
-                predicate::eq(ino),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(DATA),
                 predicate::always()

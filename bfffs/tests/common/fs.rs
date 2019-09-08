@@ -98,10 +98,10 @@ test_suite! {
 
     /// Assert that some combination of timestamps have changed since they were
     /// last cleared.
-    fn assert_ts_changed(ds: &Fs, ino: u64, atime: bool, mtime: bool,
+    fn assert_ts_changed(ds: &Fs, fd: &FileData, atime: bool, mtime: bool,
                          ctime: bool, birthtime: bool)
     {
-        let attr = ds.getattr(ino).unwrap();
+        let attr = ds.getattr(fd).unwrap();
         let ts0 = Timespec{sec: 0, nsec: 0};
         assert!(atime ^ (attr.atime == ts0));
         assert!(mtime ^ (attr.mtime == ts0));
@@ -109,7 +109,7 @@ test_suite! {
         assert!(birthtime ^ (attr.birthtime == ts0));
     }
 
-    fn clear_timestamps(ds: &Fs, ino: u64) {
+    fn clear_timestamps(ds: &Fs, fd: &FileData) {
         let attr = SetAttr {
             perm: None,
             uid: None,
@@ -121,17 +121,18 @@ test_suite! {
             birthtime: Some(Timespec{sec: 0, nsec: 0}),
             flags: None,
         };
-        ds.setattr(ino, attr).unwrap();
+        ds.setattr(fd, attr).unwrap();
     }
 
     test create(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.lookup(root, &OsString::from("x")).unwrap(), ino);
+        assert_eq!(mocks.val.0.lookup(root, &OsString::from("x")).unwrap().ino,
+            fd.ino);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(root, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -143,7 +144,7 @@ test_suite! {
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
 
         // The parent dir's link count should not have increased
         let parent_attr = mocks.val.0.getattr(root).unwrap();
@@ -157,7 +158,7 @@ test_suite! {
     test create_eexist(mocks) {
         let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let _ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        let _fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
     }
 
@@ -176,10 +177,11 @@ test_suite! {
         let name = OsString::from("foo");
         let value = [1u8, 2, 3];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
-        mocks.val.0.deleteextattr(ino, ns, &name).unwrap();
-        assert_eq!(mocks.val.0.getextattr(ino, ns, &name), Err(libc::ENOATTR));
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &name, &value[..]).unwrap();
+        mocks.val.0.deleteextattr(&fd, ns, &name).unwrap();
+        assert_eq!(mocks.val.0.getextattr(&fd, ns, &name).unwrap_err(),
+            libc::ENOATTR);
     }
 
     /// deleteextattr with a hash collision.
@@ -194,27 +196,27 @@ test_suite! {
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
 
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
         // First try deleting the attributes in order
-        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
-        mocks.val.0.deleteextattr(ino, ns0, &name0).unwrap();
-        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_err());
-        assert!(mocks.val.0.getextattr(ino, ns1, &name1).is_ok());
-        mocks.val.0.deleteextattr(ino, ns1, &name1).unwrap();
-        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_err());
-        assert!(mocks.val.0.getextattr(ino, ns1, &name1).is_err());
+        mocks.val.0.setextattr(&fd, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.deleteextattr(&fd, ns0, &name0).unwrap();
+        assert!(mocks.val.0.getextattr(&fd, ns0, &name0).is_err());
+        assert!(mocks.val.0.getextattr(&fd, ns1, &name1).is_ok());
+        mocks.val.0.deleteextattr(&fd, ns1, &name1).unwrap();
+        assert!(mocks.val.0.getextattr(&fd, ns0, &name0).is_err());
+        assert!(mocks.val.0.getextattr(&fd, ns1, &name1).is_err());
 
         // Repeat, this time out-of-order
-        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
-        mocks.val.0.deleteextattr(ino, ns1, &name1).unwrap();
-        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_ok());
-        assert!(mocks.val.0.getextattr(ino, ns1, &name1).is_err());
-        mocks.val.0.deleteextattr(ino, ns0, &name0).unwrap();
-        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_err());
-        assert!(mocks.val.0.getextattr(ino, ns1, &name1).is_err());
+        mocks.val.0.setextattr(&fd, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.deleteextattr(&fd, ns1, &name1).unwrap();
+        assert!(mocks.val.0.getextattr(&fd, ns0, &name0).is_ok());
+        assert!(mocks.val.0.getextattr(&fd, ns1, &name1).is_err());
+        mocks.val.0.deleteextattr(&fd, ns0, &name0).unwrap();
+        assert!(mocks.val.0.getextattr(&fd, ns0, &name0).is_err());
+        assert!(mocks.val.0.getextattr(&fd, ns1, &name1).is_err());
     }
 
     /// deleteextattr of a nonexistent attribute that hash-collides with an
@@ -229,13 +231,13 @@ test_suite! {
         assert_extattrs_collide(ns0, &name0, ns1, &name1);
         let value0 = [0u8, 1, 2];
 
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
-        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns0, &name0, &value0[..]).unwrap();
 
-        assert_eq!(mocks.val.0.deleteextattr(ino, ns1, &name1),
+        assert_eq!(mocks.val.0.deleteextattr(&fd, ns1, &name1),
                    Err(libc::ENOATTR));
-        assert!(mocks.val.0.getextattr(ino, ns0, &name0).is_ok());
+        assert!(mocks.val.0.getextattr(&fd, ns0, &name0).is_ok());
     }
 
     test deleteextattr_enoattr(mocks) {
@@ -243,8 +245,8 @@ test_suite! {
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        assert_eq!(mocks.val.0.deleteextattr(ino, ns, &name),
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        assert_eq!(mocks.val.0.deleteextattr(&fd, ns, &name),
                    Err(libc::ENOATTR));
     }
 
@@ -255,12 +257,12 @@ test_suite! {
         let name = OsString::from("foo");
         let value = [1u8, 2, 3];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
-        clear_timestamps(&mocks.val.0, ino);
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &name, &value[..]).unwrap();
+        clear_timestamps(&mocks.val.0, &&fd);
 
-        mocks.val.0.deleteextattr(ino, ns, &name).unwrap();
-        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
+        mocks.val.0.deleteextattr(&fd, ns, &name).unwrap();
+        assert_ts_changed(&mocks.val.0, &fd, false, false, false, false);
     }
 
     // Dumps a nearly FS tree.  All of the real work is done in Tree::dump, so
@@ -354,11 +356,11 @@ root:
         let name = OsString::from("foo");
         let value = [1u8, 2, 3];
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
-        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name).unwrap(),
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, namespace, &name, &value[..]).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(&fd, namespace, &name).unwrap(),
                    3);
-        let v = mocks.val.0.getextattr(ino, namespace, &name).unwrap();
+        let v = mocks.val.0.getextattr(&fd, namespace, &name).unwrap();
         assert_eq!(&v[..], &value);
     }
 
@@ -369,15 +371,15 @@ root:
         let name = OsString::from("foo");
         let value = vec![42u8; 4096];
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, namespace, &name, &value[..]).unwrap();
 
         // Sync the filesystem to flush the InlineExtent to a BlobExtent
         mocks.val.0.sync();
 
-        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name).unwrap(),
+        assert_eq!(mocks.val.0.getextattrlen(&fd, namespace, &name).unwrap(),
                    4096);
-        let v = mocks.val.0.getextattr(ino, namespace, &name).unwrap();
+        let v = mocks.val.0.getextattr(&fd, namespace, &name).unwrap();
         assert_eq!(&v[..], &value[..]);
     }
 
@@ -394,13 +396,13 @@ root:
         let value0 = [0u8, 1, 2];
         let value1 = vec![42u8; 4096];
 
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
-        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns1, &name1, &value1[..]).unwrap();
         mocks.val.0.sync(); // Flush the large xattr into a blob
-        assert_eq!(mocks.val.0.getextattrlen(ino, ns1, &name1).unwrap(), 4096);
-        let v1 = mocks.val.0.getextattr(ino, ns1, &name1).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(&fd, ns1, &name1).unwrap(), 4096);
+        let v1 = mocks.val.0.getextattr(&fd, ns1, &name1).unwrap();
         assert_eq!(&v1[..], &value1[..]);
     }
 
@@ -416,15 +418,15 @@ root:
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
 
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
-        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
-        assert_eq!(mocks.val.0.getextattrlen(ino, ns0, &name0).unwrap(), 3);
-        let v0 = mocks.val.0.getextattr(ino, ns0, &name0).unwrap();
+        mocks.val.0.setextattr(&fd, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns1, &name1, &value1[..]).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(&fd, ns0, &name0).unwrap(), 3);
+        let v0 = mocks.val.0.getextattr(&fd, ns0, &name0).unwrap();
         assert_eq!(&v0[..], &value0);
-        assert_eq!(mocks.val.0.getextattrlen(ino, ns1, &name1).unwrap(), 4);
-        let v1 = mocks.val.0.getextattr(ino, ns1, &name1).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(&fd, ns1, &name1).unwrap(), 4);
+        let v1 = mocks.val.0.getextattr(&fd, ns1, &name1).unwrap();
         assert_eq!(&v1[..], &value1);
     }
 
@@ -437,16 +439,16 @@ root:
         let value2 = [4u8, 5, 6, 7];
         let ns1 = ExtAttrNamespace::User;
         let ns2 = ExtAttrNamespace::System;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, ns1, &name, &value1[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns2, &name, &value2[..]).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, ns1, &name, &value1[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns2, &name, &value2[..]).unwrap();
 
-        assert_eq!(mocks.val.0.getextattrlen(ino, ns1, &name).unwrap(), 3);
-        let v1 = mocks.val.0.getextattr(ino, ns1, &name).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(&fd, ns1, &name).unwrap(), 3);
+        let v1 = mocks.val.0.getextattr(&fd, ns1, &name).unwrap();
         assert_eq!(&v1[..], &value1);
 
-        assert_eq!(mocks.val.0.getextattrlen(ino, ns2, &name).unwrap(), 4);
-        let v2 = mocks.val.0.getextattr(ino, ns2, &name).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(&fd, ns2, &name).unwrap(), 4);
+        let v2 = mocks.val.0.getextattr(&fd, ns2, &name).unwrap();
         assert_eq!(&v2[..], &value2);
     }
 
@@ -456,10 +458,10 @@ root:
         let filename = OsString::from("x");
         let name = OsString::from("foo");
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name),
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        assert_eq!(mocks.val.0.getextattrlen(&fd, namespace, &name),
                    Err(libc::ENOATTR));
-        assert_eq!(mocks.val.0.getextattr(ino, namespace, &name),
+        assert_eq!(mocks.val.0.getextattr(&fd, namespace, &name),
                    Err(libc::ENOATTR));
     }
 
@@ -468,10 +470,10 @@ root:
     test getextattr_enoent(mocks) {
         let name = OsString::from("foo");
         let namespace = ExtAttrNamespace::User;
-        let ino = 9999;
-        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name),
+        let fd = FileData{ino: 9999};
+        assert_eq!(mocks.val.0.getextattrlen(&fd, namespace, &name),
                    Err(libc::ENOATTR));
-        assert_eq!(mocks.val.0.getextattr(ino, namespace, &name),
+        assert_eq!(mocks.val.0.getextattr(&fd, namespace, &name),
                    Err(libc::ENOATTR));
     }
 
@@ -482,8 +484,8 @@ root:
         let name = OsString::from("foo");
         let value = vec![0, 1, 2, 3, 4];
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, namespace, &name, &value[..]).unwrap();
 
         // Sync the filesystem to store the InlineExtent on disk
         mocks.val.0.sync();
@@ -492,9 +494,9 @@ root:
         mocks.val.2.lock().unwrap().drop_cache();
 
         // Read the extattr from disk
-        assert_eq!(mocks.val.0.getextattrlen(ino, namespace, &name).unwrap(),
+        assert_eq!(mocks.val.0.getextattrlen(&fd, namespace, &name).unwrap(),
                    5);
-        let v = mocks.val.0.getextattr(ino, namespace, &name).unwrap();
+        let v = mocks.val.0.getextattr(&fd, namespace, &name).unwrap();
         assert_eq!(&v[..], &value[..]);
     }
 
@@ -505,28 +507,28 @@ root:
         let name = OsString::from("foo");
         let value = [1u8, 2, 3];
         let namespace = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, namespace, &name, &value[..]).unwrap();
-        clear_timestamps(&mocks.val.0, ino);
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, namespace, &name, &value[..]).unwrap();
+        clear_timestamps(&mocks.val.0, &fd);
 
-        mocks.val.0.getextattr(ino, namespace, &name).unwrap();
-        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
+        mocks.val.0.getextattr(&fd, namespace, &name).unwrap();
+        assert_ts_changed(&mocks.val.0, &fd, false, false, false, false);
     }
 
     test link(mocks) {
         let root = mocks.val.0.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
-        let ino = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
-        let l_ino = mocks.val.0.link(root, ino, &dst).unwrap();
-        assert_eq!(ino, l_ino);
+        let fd = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
+        let l_ino = mocks.val.0.link(root, &fd, &dst).unwrap();
+        assert_eq!(fd.ino, l_ino);
 
         // The target's link count should've increased
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.nlink, 2);
 
         // The parent should have a new directory entry
-        assert_eq!(mocks.val.0.lookup(root, &dst).unwrap(), ino);
+        assert_eq!(mocks.val.0.lookup(root, &dst).unwrap().ino, fd.ino);
     }
 
     /// link(2) should update the inode's ctime
@@ -534,10 +536,10 @@ root:
         let root = mocks.val.0.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
-        let ino = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
-        clear_timestamps(&mocks.val.0, ino);
-        mocks.val.0.link(root, ino, &dst).unwrap();
-        assert_ts_changed(&mocks.val.0, ino, false, false, true, false);
+        let fd = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, &fd);
+        mocks.val.0.link(root, &fd, &dst).unwrap();
+        assert_ts_changed(&mocks.val.0, &fd, false, false, true, false);
     }
 
     ///link(2) should update the parent's mtime and ctime
@@ -545,10 +547,10 @@ root:
         let root = mocks.val.0.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
-        let ino = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
+        let fd = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
         clear_timestamps(&mocks.val.0, root);
 
-        mocks.val.0.link(root, ino, &dst).unwrap();
+        mocks.val.0.link(root, &fd, &dst).unwrap();
         assert_ts_changed(&mocks.val.0, root, false, true, true, false);
     }
 
@@ -594,9 +596,9 @@ root:
         let name2 = OsString::from("bar");
         let ns = ExtAttrNamespace::User;
         let value = [0u8, 1, 2];
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, ns, &name1, &value[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns, &name2, &value[..]).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &name1, &value[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &name2, &value[..]).unwrap();
 
         // expected has the form of <length as u8><value as [u8]>...
         // values are _not_ null terminated.
@@ -605,8 +607,8 @@ root:
 
         let lenf = self::listextattr_lenf(ns);
         let lsf = self::listextattr_lsf(ns);
-        assert_eq!(mocks.val.0.listextattrlen(ino, lenf).unwrap(), 8);
-        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf).unwrap()[..],
+        assert_eq!(mocks.val.0.listextattrlen(&fd, lenf).unwrap(), 8);
+        assert_eq!(&mocks.val.0.listextattr(&fd, 64, lsf).unwrap()[..],
                    &expected[..]);
     }
 
@@ -622,23 +624,23 @@ root:
         let value0 = [0u8, 1, 2];
         let value1 = [3u8, 4, 5, 6];
 
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
 
-        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns1, &name1, &value1[..]).unwrap();
 
         let expected0 = b"\x0aBWCdLQkApB";
         let lenf0 = self::listextattr_lenf(ns0);
         let lsf0 = self::listextattr_lsf(ns0);
-        assert_eq!(mocks.val.0.listextattrlen(ino, lenf0).unwrap(), 11);
-        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf0).unwrap()[..],
+        assert_eq!(mocks.val.0.listextattrlen(&fd, lenf0).unwrap(), 11);
+        assert_eq!(&mocks.val.0.listextattr(&fd, 64, lsf0).unwrap()[..],
                    &expected0[..]);
 
         let expected1 = b"\x0aD6tLLI4mys";
         let lenf1 = self::listextattr_lenf(ns1);
         let lsf1 = self::listextattr_lsf(ns1);
-        assert_eq!(mocks.val.0.listextattrlen(ino, lenf1).unwrap(), 11);
-        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf1).unwrap()[..],
+        assert_eq!(mocks.val.0.listextattrlen(&fd, lenf1).unwrap(), 11);
+        assert_eq!(&mocks.val.0.listextattr(&fd, 64, lsf1).unwrap()[..],
                    &expected1[..]);
     }
 
@@ -652,31 +654,31 @@ root:
         let value1 = [0u8, 1, 2];
         let value2 = [3u8, 4, 5];
 
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns2, &name2, &value2[..]).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns2, &name2, &value2[..]).unwrap();
 
         // Test queries for a single namespace
         let lenf = self::listextattr_lenf(ns1);
         let lsf = self::listextattr_lsf(ns1);
-        assert_eq!(mocks.val.0.listextattrlen(ino, lenf), Ok(4));
-        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf).unwrap()[..],
+        assert_eq!(mocks.val.0.listextattrlen(&fd, lenf), Ok(4));
+        assert_eq!(&mocks.val.0.listextattr(&fd, 64, lsf).unwrap()[..],
                    &b"\x03foo"[..]);
         let lenf = self::listextattr_lenf(ns2);
         let lsf = self::listextattr_lsf(ns2);
-        assert_eq!(mocks.val.0.listextattrlen(ino, lenf), Ok(5));
-        assert_eq!(&mocks.val.0.listextattr(ino, 64, lsf).unwrap()[..],
+        assert_eq!(mocks.val.0.listextattrlen(&fd, lenf), Ok(5));
+        assert_eq!(&mocks.val.0.listextattr(&fd, 64, lsf).unwrap()[..],
                    &b"\x04bean"[..]);
     }
 
     test listextattr_empty(mocks) {
         let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
         let lenf = self::listextattr_lenf(ExtAttrNamespace::User);
         let lsf = self::listextattr_lsf(ExtAttrNamespace::User);
-        assert_eq!(mocks.val.0.listextattrlen(ino, lenf), Ok(0));
-        assert!(mocks.val.0.listextattr(ino, 64, lsf).unwrap().is_empty());
+        assert_eq!(mocks.val.0.listextattrlen(&fd, lenf), Ok(0));
+        assert!(mocks.val.0.listextattr(&fd, 64, lsf).unwrap().is_empty());
     }
 
     /// Lookup of a directory entry that has a hash collision
@@ -685,44 +687,46 @@ root:
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
-        let ino0 = mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
-        let ino1 = mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
+        let fd0 = mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
+        let fd1 = mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(root, &filename0), Ok(ino0));
-        assert_eq!(mocks.val.0.lookup(root, &filename1), Ok(ino1));
+        assert_eq!(mocks.val.0.lookup(root, &filename0).unwrap().ino, fd0.ino);
+        assert_eq!(mocks.val.0.lookup(root, &filename1).unwrap().ino, fd1.ino);
     }
 
     test lookup_enoent(mocks) {
         let root = mocks.val.0.root();
         let filename = OsString::from("nonexistent");
-        assert_eq!(mocks.val.0.lookup(root, &filename), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &filename).unwrap_err(),
+            libc::ENOENT);
     }
 
     test mkdir(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.mkdir(root, &OsString::from("x"), 0o755, 0, 0)
+        let fd = mocks.val.0.mkdir(root, &OsString::from("x"), 0o755, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.lookup(root, &OsString::from("x")).unwrap(), ino);
+        assert_eq!(mocks.val.0.lookup(root, &OsString::from("x")).unwrap().ino,
+            fd.ino);
 
         // The new dir should have "." and ".." directory entries
-        let mut entries = mocks.val.0.readdir(ino, 0, 0);
+        let mut entries = mocks.val.0.readdir(&fd, 0);
         let (dotdot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dotdot.d_type, libc::DT_DIR);
         let dotdot_name = unsafe{
             CStr::from_ptr(&dotdot.d_name as *const c_char)
         };
         assert_eq!(dotdot_name, CString::new("..").unwrap().as_c_str());
-        assert_eq!(u64::from(dotdot.d_fileno), root);
+        assert_eq!(u64::from(dotdot.d_fileno), root.ino);
         let (dot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dot.d_type, libc::DT_DIR);
         let dot_name = unsafe{
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
         assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
-        assert_eq!(u64::from(dot.d_fileno), ino);
+        assert_eq!(u64::from(dot.d_fileno), fd.ino);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(root, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -734,7 +738,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
 
         // The parent dir's link count should've increased
         let parent_attr = mocks.val.0.getattr(root).unwrap();
@@ -749,11 +753,11 @@ root:
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
-        let ino0 = mocks.val.0.mkdir(root, &filename0, 0o755, 0, 0).unwrap();
-        let ino1 = mocks.val.0.mkdir(root, &filename1, 0o755, 0, 0).unwrap();
+        let fd0 = mocks.val.0.mkdir(root, &filename0, 0o755, 0, 0).unwrap();
+        let fd1 = mocks.val.0.mkdir(root, &filename1, 0o755, 0, 0).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(root, &filename0), Ok(ino0));
-        assert_eq!(mocks.val.0.lookup(root, &filename1), Ok(ino1));
+        assert_eq!(mocks.val.0.lookup(root, &filename0).unwrap().ino, fd0.ino);
+        assert_eq!(mocks.val.0.lookup(root, &filename1).unwrap().ino, fd1.ino);
     }
 
     /// mkdir(2) should update the parent dir's timestamps
@@ -767,14 +771,14 @@ root:
 
     test mkchar(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.mkchar(root, &OsString::from("x"), 0o644, 0, 0, 42)
+        let fd = mocks.val.0.mkchar(root, &OsString::from("x"), 0o644, 0, 0, 42)
         .unwrap();
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFCHR | 0o644);
         assert_eq!(attr.rdev, 42);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(root, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -786,7 +790,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
     }
 
     /// mknod(2) should update the parent dir's timestamps
@@ -800,14 +804,14 @@ root:
 
     test mkblock(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.mkblock(root, &OsString::from("x"), 0o644, 0, 0, 42)
+        let fd = mocks.val.0.mkblock(root, &OsString::from("x"), 0o644, 0, 0, 42)
         .unwrap();
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFBLK | 0o644);
         assert_eq!(attr.rdev, 42);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(root, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -819,7 +823,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
     }
 
     /// mknod(2) should update the parent dir's timestamps
@@ -833,13 +837,13 @@ root:
 
     test mkfifo(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.mkfifo(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.mkfifo(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFIFO | 0o644);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(root, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -851,7 +855,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
     }
 
     /// mkfifo(2) should update the parent dir's timestamps
@@ -865,13 +869,13 @@ root:
 
     test mksock(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.mksock(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.mksock(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFSOCK | 0o644);
 
         // The parent dir should have an "x" directory entry
-        let entries = mocks.val.0.readdir(root, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -883,7 +887,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
     }
 
     /// mksock(2) should update the parent dir's timestamps
@@ -899,17 +903,17 @@ root:
     test read_big_hole(mocks) {
         let root = mocks.val.0.root();
         let holesize = 2 * ZERO_REGION_LEN;
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, holesize as u64, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, holesize as u64, &buf[..], 0);
         assert_eq!(Ok(4096), r);
 
-        let sglist = mocks.val.0.read(ino, 0, holesize).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, holesize).unwrap();
         let expected = vec![0u8; ZERO_REGION_LEN];
         assert_eq!(sglist.len(), 2);
         assert_eq!(&sglist[0][..], &expected[..]);
@@ -919,50 +923,50 @@ root:
     // Read a single BlobExtent record
     test read_blob(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(4096), r);
 
         // Sync the filesystem to flush the InlineExtent to a BlobExtent
         mocks.val.0.sync();
 
-        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[..]);
     }
 
     test read_empty_file(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        let sglist = mocks.val.0.read(ino, 0, 1024).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 1024).unwrap();
         assert!(sglist.is_empty());
     }
 
     test read_empty_file_past_start(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        let sglist = mocks.val.0.read(ino, 2048, 2048).unwrap();
+        let sglist = mocks.val.0.read(&fd, 2048, 2048).unwrap();
         assert!(sglist.is_empty());
     }
 
     // Read a hole within a sparse file
     test read_hole(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 4096, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 4096, &buf[..], 0);
         assert_eq!(Ok(4096), r);
 
-        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 4096).unwrap();
         let db = &sglist[0];
         let expected = [0u8; 4096];
         assert_eq!(&db[..], &expected[..]);
@@ -972,20 +976,20 @@ root:
     // inline extent
     test read_partial_hole(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 2048];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(2048), r);
-        let r = mocks.val.0.write(ino, 4096, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 4096, &buf[..], 0);
         assert_eq!(Ok(2048), r);
 
         // The file should now have a hole from offset 2048 to 4096
-        let sglist = mocks.val.0.read(ino, 3072, 1024).unwrap();
+        let sglist = mocks.val.0.read(&fd, 3072, 1024).unwrap();
         let db = &sglist[0];
         let expected = [0u8; 1024];
         assert_eq!(&db[..], &expected[..]);
@@ -995,20 +999,20 @@ root:
     // data at the end.
     test read_partial_hole_trailing_edge(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 2048];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(2048), r);
-        let r = mocks.val.0.write(ino, 4096, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 4096, &buf[..], 0);
         assert_eq!(Ok(2048), r);
 
         // The file should now have a hole from offset 2048 to 4096
-        let sglist = mocks.val.0.read(ino, 3072, 2048).unwrap();
+        let sglist = mocks.val.0.read(&fd, 3072, 2048).unwrap();
         assert_eq!(sglist.len(), 2);
         assert_eq!(&sglist[0][..], &[0u8; 1024][..]);
         assert_eq!(&sglist[1][..], &buf[0..1024]);
@@ -1017,17 +1021,17 @@ root:
     // A read that's smaller than a record, at both ends
     test read_partial_record(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(4096), r);
 
-        let sglist = mocks.val.0.read(ino, 1024, 2048).unwrap();
+        let sglist = mocks.val.0.read(&fd, 1024, 2048).unwrap();
         let db = &sglist[0];
         assert_eq!(db.len(), 2048);
         assert_eq!(&db[..], &buf[1024..3072]);
@@ -1035,34 +1039,34 @@ root:
 
     test read_past_eof(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 2048];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(2048), r);
 
-        let sglist = mocks.val.0.read(ino, 2048, 1024).unwrap();
+        let sglist = mocks.val.0.read(&fd, 2048, 1024).unwrap();
         assert!(sglist.is_empty());
     }
 
     /// A read that spans 3 records, where the middle record is a hole
     test read_spans_hole(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        assert_eq!(4096, mocks.val.0.write(ino, 0, &buf[..], 0).unwrap());
-        assert_eq!(4096, mocks.val.0.write(ino, 8192, &buf[..], 0).unwrap());
+        assert_eq!(4096, mocks.val.0.write(&fd, 0, &buf[..], 0).unwrap());
+        assert_eq!(4096, mocks.val.0.write(&fd, 8192, &buf[..], 0).unwrap());
 
-        let sglist = mocks.val.0.read(ino, 0, 12288).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 12288).unwrap();
         assert_eq!(sglist.len(), 3);
         assert_eq!(&sglist[0][..], &buf[..]);
         assert_eq!(&sglist[1][..], &[0u8; 4096][..]);
@@ -1072,46 +1076,46 @@ root:
     /// read(2) should update the file's atime
     test read_timestamps(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
-        mocks.val.0.write(ino, 0, &buf[..], 0).unwrap();
-        clear_timestamps(&mocks.val.0, ino);
+        mocks.val.0.write(&fd, 0, &buf[..], 0).unwrap();
+        clear_timestamps(&mocks.val.0, &fd);
 
-        mocks.val.0.read(ino, 0, 4096).unwrap();
-        assert_ts_changed(&mocks.val.0, ino, true, false, false, false);
+        mocks.val.0.read(&fd, 0, 4096).unwrap();
+        assert_ts_changed(&mocks.val.0, &fd, true, false, false, false);
     }
 
     // When atime is disabled, reading a file should not update its atime.
     test read_timestamps_no_atime(mocks(vec![Property::Atime(false)])) {
-        let root = mocks.val.0.root();
         let (fs, _rt, _cache) = mocks.val;
+        let root = fs.root();
 
-        let ino = fs.create(root, &OsString::from("x"), 0o644, 0, 0).unwrap();
+        let fd = fs.create(root, &OsString::from("x"), 0o644, 0, 0).unwrap();
         let buf = vec![42u8; 4096];
-        fs.write(ino, 0, &buf[..], 0).unwrap();
-        clear_timestamps(&fs, ino);
+        fs.write(&fd, 0, &buf[..], 0).unwrap();
+        clear_timestamps(&fs, &fd);
 
-        fs.read(ino, 0, 4096).unwrap();
-        assert_ts_changed(&fs, ino, false, false, false, false);
+        fs.read(&fd, 0, 4096).unwrap();
+        assert_ts_changed(&fs, &fd, false, false, false, false);
     }
 
     // A read that's split across two records
     test read_two_recs(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 8192];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf[0..4096], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[0..4096], 0);
         assert_eq!(Ok(4096), r);
-        let r = mocks.val.0.write(ino, 4096, &buf[4096..8192], 0);
+        let r = mocks.val.0.write(&fd, 4096, &buf[4096..8192], 0);
         assert_eq!(Ok(4096), r);
 
-        let sglist = mocks.val.0.read(ino, 0, 8192).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 8192).unwrap();
         let db0 = &sglist[0];
         assert_eq!(&db0[..], &buf[0..4096]);
         let db1 = &sglist[1];
@@ -1121,23 +1125,23 @@ root:
     // Read past EOF, in an entirely different record
     test read_well_past_eof(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 4096];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(4096), r);
 
-        let sglist = mocks.val.0.read(ino, 1 << 30, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 1 << 30, 4096).unwrap();
         assert!(sglist.is_empty());
     }
 
     test readdir(mocks) {
         let root = mocks.val.0.root();
-        let mut entries = mocks.val.0.readdir(root, 0, 0);
+        let mut entries = mocks.val.0.readdir(root, 0);
         let (dotdot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dotdot.d_type, libc::DT_DIR);
         let dotdot_name = unsafe{
@@ -1150,7 +1154,7 @@ root:
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
         assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
-        assert_eq!(u64::from(dot.d_fileno), root);
+        assert_eq!(u64::from(dot.d_fileno), root.ino);
     }
 
     // Readdir of a directory with a hash collision
@@ -1169,7 +1173,7 @@ root:
         expected.insert(OsString::from(".."));
         expected.insert(filename0.clone());
         expected.insert(filename1.clone());
-        for result in mocks.val.0.readdir(root, 0, 0) {
+        for result in mocks.val.0.readdir(root, 0) {
             let entry = result.unwrap().0;
             let nameptr = entry.d_name.as_ptr() as *const u8;
             let namelen = usize::from(entry.d_namlen);
@@ -1190,14 +1194,14 @@ root:
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
 
-        let ino0 = mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
-        let _ino1 = mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
+        let fd0 = mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
+        let _fd1 = mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
 
         // There's no requirement for the order of readdir's output, but
         // filename0 happens to come first.
-        let mut stream0 = mocks.val.0.readdir(root, 0, 0);
+        let mut stream0 = mocks.val.0.readdir(root, 0);
         let (result0, offset0) = stream0.next().unwrap().unwrap();
-        assert_eq!(u64::from(result0.d_fileno), ino0);
+        assert_eq!(u64::from(result0.d_fileno), fd0.ino);
 
         // Now interrupt the stream, and resume with the supplied offset.
         let mut expected = HashSet::new();
@@ -1205,7 +1209,7 @@ root:
         expected.insert(OsString::from(".."));
         expected.insert(filename1.clone());
         drop(stream0);
-        let stream1 = mocks.val.0.readdir(root, 0, offset0);
+        let stream1 = mocks.val.0.readdir(root, offset0);
         for result in stream1 {
             let entry = result.unwrap().0;
             let nameptr = entry.d_name.as_ptr() as *const u8;
@@ -1223,7 +1227,7 @@ root:
     // Just check that nothing panics.
     test readdir_partial(mocks) {
         let root = mocks.val.0.root();
-        let mut entries = mocks.val.0.readdir(root, 0, 0);
+        let mut entries = mocks.val.0.readdir(root, 0);
         let _ = entries.next().unwrap().unwrap();
     }
 
@@ -1232,7 +1236,7 @@ root:
         let root = mocks.val.0.root();
         clear_timestamps(&mocks.val.0, root);
 
-        let mut entries = mocks.val.0.readdir(root, 0, 0);
+        let mut entries = mocks.val.0.readdir(root, 0);
         entries.next().unwrap().unwrap();
         entries.next().unwrap().unwrap();
         assert_ts_changed(&mocks.val.0, root, false, false, false, false);
@@ -1242,19 +1246,20 @@ root:
         let root = mocks.val.0.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
-        let ino = mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname)
+        let fd = mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname)
         .unwrap();
-        assert_eq!(dstname, mocks.val.0.readlink(ino).unwrap());
+        assert_eq!(dstname, mocks.val.0.readlink(&fd).unwrap());
     }
 
     // Calling readlink on a non-symlink should return EINVAL
     test readlink_einval(mocks) {
         let root = mocks.val.0.root();
-        assert_eq!(Err(libc::EINVAL), mocks.val.0.readlink(root));
+        assert_eq!(libc::EINVAL, mocks.val.0.readlink(root).unwrap_err());
     }
 
     test readlink_enoent(mocks) {
-        assert_eq!(Err(libc::ENOENT), mocks.val.0.readlink(1000));
+        let fd = FileData{ino: 1000};
+        assert_eq!(libc::ENOENT, mocks.val.0.readlink(&fd).unwrap_err());
     }
 
     /// readlink(2) should not update any timestamps
@@ -1262,12 +1267,12 @@ root:
         let root = mocks.val.0.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
-        let ino = mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname)
+        let fd = mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname)
         .unwrap();
-        clear_timestamps(&mocks.val.0, ino);
+        clear_timestamps(&mocks.val.0, &fd);
 
-        assert_eq!(dstname, mocks.val.0.readlink(ino).unwrap());
-        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
+        assert_eq!(dstname, mocks.val.0.readlink(&fd).unwrap());
+        assert_ts_changed(&mocks.val.0, &fd, false, false, false, false);
     }
 
     // Rename a file that has a hash collision in both the source and
@@ -1283,30 +1288,35 @@ root:
         assert_dirents_collide(&src, &src_c);
         assert_dirents_collide(&dst, &dst_c);
 
-        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0).unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0).unwrap();
-        let src_c_ino = mocks.val.0.create(srcdir_ino, &src_c, 0o644, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0).unwrap();
+        let dstdir_fd = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0).unwrap();
+        let src_c_fd = mocks.val.0.create(&srcdir_fd, &src_c, 0o644, 0, 0)
         .unwrap();
-        let dst_c_ino = mocks.val.0.create(dstdir_ino, &dst_c, 0o644, 0, 0)
+        let dst_c_fd = mocks.val.0.create(&dstdir_fd, &dst_c, 0o644, 0, 0)
         .unwrap();
-        let src_ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
+        let src_fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
         .unwrap();
-        let dst_ino = mocks.val.0.create(dstdir_ino, &dst, 0o644, 0, 0)
+        let dst_fd = mocks.val.0.create(&dstdir_fd, &dst, 0o644, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(src_ino));
-        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
-        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
+            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
+            libc::ENOENT);
+        let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
         assert_eq!(srcdir_inode.nlink, 2);
-        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 2);
-        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.getattr(&dst_fd).unwrap_err(),
+            libc::ENOENT);
 
         // Finally, make sure we didn't upset the colliding files
-        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src_c), Ok(src_c_ino));
-        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst_c), Ok(dst_c_ino));
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src_c).unwrap().ino,
+            src_c_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst_c).unwrap().ino,
+            dst_c_fd.ino);
     }
 
     // Rename a directory.  The target is also a directory
@@ -1316,24 +1326,26 @@ root:
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
+        let dstdir_fd = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
-        let src_ino = mocks.val.0.mkdir(srcdir_ino, &src, 0o755, 0, 0)
+        let src_fd = mocks.val.0.mkdir(&srcdir_fd, &src, 0o755, 0, 0)
         .unwrap();
-        let dst_ino = mocks.val.0.mkdir(dstdir_ino, &dst, 0o755, 0, 0)
+        let dst_fd = mocks.val.0.mkdir(&dstdir_fd, &dst, 0o755, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(src_ino));
-        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
-        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
+            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
+            libc::ENOENT);
+        let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
         assert_eq!(srcdir_inode.nlink, 2);
-        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 3);
-        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.getattr(&dst_fd), Err(libc::ENOENT));
     }
 
     test rename_dir_to_dir_same_parent(mocks) {
@@ -1341,17 +1353,19 @@ root:
         let parent = OsString::from("parent");
         let src = OsString::from("src");
         let dst = OsString::from("dst");
-        let parent_ino = mocks.val.0.mkdir(root, &parent, 0o755, 0, 0).unwrap();
-        let src_ino = mocks.val.0.mkdir(parent_ino, &src, 0o755, 0, 0).unwrap();
-        let dst_ino = mocks.val.0.mkdir(parent_ino, &dst, 0o755, 0, 0).unwrap();
+        let parent_fd = mocks.val.0.mkdir(root, &parent, 0o755, 0, 0).unwrap();
+        let src_fd = mocks.val.0.mkdir(&parent_fd, &src, 0o755, 0, 0).unwrap();
+        let dst_fd = mocks.val.0.mkdir(&parent_fd, &dst, 0o755, 0, 0).unwrap();
 
-        mocks.val.0.rename(parent_ino, &src, parent_ino, &dst).unwrap();
+        mocks.val.0.rename(&parent_fd, &src, &parent_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(parent_ino, &dst), Ok(src_ino));
-        assert_eq!(mocks.val.0.lookup(parent_ino, &src), Err(libc::ENOENT));
-        let parent_inode = mocks.val.0.getattr(parent_ino).unwrap();
+        assert_eq!(mocks.val.0.lookup(&parent_fd, &dst).unwrap().ino,
+            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&parent_fd, &src).unwrap_err(),
+            libc::ENOENT);
+        let parent_inode = mocks.val.0.getattr(&parent_fd).unwrap();
         assert_eq!(parent_inode.nlink, 3);
-        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.getattr(&dst_fd), Err(libc::ENOENT));
     }
 
     // Rename a directory.  The target is also a directory that isn't empty.
@@ -1363,23 +1377,26 @@ root:
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
         let dstf = OsString::from("dstf");
-        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
+        let dstdir_fd = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
-        let src_ino = mocks.val.0.mkdir(srcdir_ino, &src, 0o755, 0, 0)
+        let src_fd = mocks.val.0.mkdir(&srcdir_fd, &src, 0o755, 0, 0)
         .unwrap();
-        let dst_ino = mocks.val.0.mkdir(dstdir_ino, &dst, 0o755, 0, 0)
+        let dst_fd = mocks.val.0.mkdir(&dstdir_fd, &dst, 0o755, 0, 0)
         .unwrap();
-        let dstf_ino = mocks.val.0.create(dst_ino, &dstf, 0o644, 0, 0)
+        let dstf_fd = mocks.val.0.create(&dst_fd, &dstf, 0o644, 0, 0)
         .unwrap();
 
-        assert_eq!(mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst),
+        assert_eq!(mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst),
                    Err(libc::ENOTEMPTY));
 
-        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Ok(src_ino));
-        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(dst_ino));
-        assert_eq!(mocks.val.0.lookup(dst_ino, &dstf), Ok(dstf_ino));
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap().ino,
+            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
+            dst_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&dst_fd, &dstf).unwrap().ino,
+            dstf_fd.ino);
     }
 
     // Rename a directory.  The target name does not exist
@@ -1389,20 +1406,21 @@ root:
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
+        let dstdir_fd = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
-        let ino = mocks.val.0.mkdir(srcdir_ino, &src, 0o755, 0, 0)
+        let fd = mocks.val.0.mkdir(&srcdir_fd, &src, 0o755, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(ino));
-        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
-        let srcdir_attr = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino, fd.ino);
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
+            libc::ENOENT);
+        let srcdir_attr = mocks.val.0.getattr(&srcdir_fd).unwrap();
         assert_eq!(srcdir_attr.nlink, 2);
-        let dstdir_attr = mocks.val.0.getattr(dstdir_ino).unwrap();
+        let dstdir_attr = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_attr.nlink, 3);
     }
 
@@ -1410,18 +1428,15 @@ root:
     #[ignore = "bug de729a6"]
     test rename_loop(mocks) {
         let root = mocks.val.0.root();
-        //let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(srcdir_ino, &dstdir, 0o755, 0, 0)
+        let dstdir_fd = mocks.val.0.mkdir(&srcdir_fd, &dstdir, 0o755, 0, 0)
         .unwrap();
-        //let ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
-        //.unwrap();
 
-        let e = mocks.val.0.rename(root, &srcdir, dstdir_ino, &dst).unwrap_err();
+        let e = mocks.val.0.rename(root, &srcdir, &dstdir_fd, &dst).unwrap_err();
         assert_eq!(libc::EINVAL, e);
     }
 
@@ -1432,19 +1447,20 @@ root:
         let src = OsString::from("src");
         let dst = OsString::from("dst");
         let lnk = OsString::from("lnk");
-        let src_ino = mocks.val.0.create(root, &src, 0o644, 0, 0)
+        let src_fd = mocks.val.0.create(root, &src, 0o644, 0, 0)
         .unwrap();
-        let dst_ino = mocks.val.0.create(root, &dst, 0o644, 0, 0)
+        let dst_fd = mocks.val.0.create(root, &dst, 0o644, 0, 0)
         .unwrap();
-        let lnk_ino = mocks.val.0.link(root, dst_ino, &lnk).unwrap();
-        assert_eq!(dst_ino, lnk_ino);
+        let lnk_ino = mocks.val.0.link(root, &dst_fd, &lnk).unwrap();
+        assert_eq!(dst_fd.ino, lnk_ino);
 
         mocks.val.0.rename(root, &src, root, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(root, &dst), Ok(src_ino));
-        assert_eq!(mocks.val.0.lookup(root, &src), Err(libc::ENOENT));
-        assert_eq!(mocks.val.0.lookup(root, &lnk), Ok(lnk_ino));
-        let lnk_attr = mocks.val.0.getattr(lnk_ino).unwrap();
+        assert_eq!(mocks.val.0.lookup(root, &dst).unwrap().ino, src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(root, &src).unwrap_err(), libc::ENOENT);
+        let lnk_fd = mocks.val.0.lookup(root, &lnk).unwrap();
+        assert_eq!(lnk_fd.ino, lnk_ino);
+        let lnk_attr = mocks.val.0.getattr(&lnk_fd).unwrap();
         assert_eq!(lnk_attr.nlink, 1);
     }
 
@@ -1455,24 +1471,27 @@ root:
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
+        let dstdir_fd = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
-        let src_ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
+        let src_fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
         .unwrap();
-        let dst_ino = mocks.val.0.create(dstdir_ino, &dst, 0o644, 0, 0)
+        let dst_fd = mocks.val.0.create(&dstdir_fd, &dst, 0o644, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(src_ino));
-        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
-        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
+            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
+            libc::ENOENT);
+        let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
         assert_eq!(srcdir_inode.nlink, 2);
-        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 2);
-        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.getattr(&dst_fd).unwrap_err(),
+            libc::ENOENT);
     }
 
     // Rename a non-directory.  The target name does not exist
@@ -1482,20 +1501,22 @@ root:
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
+        let dstdir_fd = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
-        let ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
+        let fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(ino));
-        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
-        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
+            fd.ino);
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
+            libc::ENOENT);
+        let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
         assert_eq!(srcdir_inode.nlink, 2);
-        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 2);
     }
 
@@ -1508,29 +1529,31 @@ root:
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
         let linktarget = OsString::from("nonexistent");
-        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
+        let dstdir_fd = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
-        let src_ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
+        let src_fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
         .unwrap();
-        let dst_ino = mocks.val.0.symlink(dstdir_ino, &dst, 0o642, 0, 0,
+        let dst_fd = mocks.val.0.symlink(&dstdir_fd, &dst, 0o642, 0, 0,
                                           &linktarget)
         .unwrap();
 
-        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(dstdir_ino, &dst), Ok(src_ino));
-        assert_eq!(mocks.val.0.lookup(srcdir_ino, &src), Err(libc::ENOENT));
-        let srcdir_inode = mocks.val.0.getattr(srcdir_ino).unwrap();
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
+            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
+            libc::ENOENT);
+        let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
         assert_eq!(srcdir_inode.nlink, 2);
-        let dstdir_inode = mocks.val.0.getattr(dstdir_ino).unwrap();
+        let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 2);
-        assert_eq!(mocks.val.0.getattr(dst_ino), Err(libc::ENOENT));
-        let (de, _) = mocks.val.0.readdir(dstdir_ino, 0, 0)
+        assert_eq!(mocks.val.0.getattr(&dst_fd), Err(libc::ENOENT));
+        let (de, _) = mocks.val.0.readdir(&dstdir_fd, 0)
             .filter(|r| {
                 let dirent = r.unwrap().0;
-                u64::from(dirent.d_fileno) == src_ino
+                u64::from(dirent.d_fileno) == src_fd.ino
             }).nth(0).unwrap().unwrap();
         assert_eq!(de.d_type, libc::DT_REG);
     }
@@ -1544,13 +1567,13 @@ root:
         let value = [1u8, 2, 3];
         let ns = ExtAttrNamespace::User;
 
-        let ino = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
+        let fd = mocks.val.0.create(root, &src, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &name, &value[..]).unwrap();
 
         mocks.val.0.rename(root, &src, root, &dst).unwrap();
 
-        let new_ino = mocks.val.0.lookup(root, &dst).unwrap();
-        let v = mocks.val.0.getextattr(new_ino, ns, &name).unwrap();
+        let new_fd = mocks.val.0.lookup(root, &dst).unwrap();
+        let v = mocks.val.0.getextattr(&new_fd, ns, &name).unwrap();
         assert_eq!(&v[..], &value);
     }
 
@@ -1561,36 +1584,36 @@ root:
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_ino = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(root, &srcdir, 0o755, 0, 0)
         .unwrap();
-        let dstdir_ino = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
+        let dstdir_fd = mocks.val.0.mkdir(root, &dstdir, 0o755, 0, 0)
         .unwrap();
-        let ino = mocks.val.0.create(srcdir_ino, &src, 0o644, 0, 0)
+        let fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
         .unwrap();
-        clear_timestamps(&mocks.val.0, srcdir_ino);
-        clear_timestamps(&mocks.val.0, dstdir_ino);
-        clear_timestamps(&mocks.val.0, ino);
+        clear_timestamps(&mocks.val.0, &srcdir_fd);
+        clear_timestamps(&mocks.val.0, &dstdir_fd);
+        clear_timestamps(&mocks.val.0, &fd);
 
-        mocks.val.0.rename(srcdir_ino, &src, dstdir_ino, &dst).unwrap();
+        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
         // Timestamps should've been updated for parent directories, but not for
         // the file itself
-        assert_ts_changed(&mocks.val.0, srcdir_ino, false, true, true, false);
-        assert_ts_changed(&mocks.val.0, dstdir_ino, false, true, true, false);
-        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
+        assert_ts_changed(&mocks.val.0, &srcdir_fd, false, true, true, false);
+        assert_ts_changed(&mocks.val.0, &dstdir_fd, false, true, true, false);
+        assert_ts_changed(&mocks.val.0, &fd, false, false, false, false);
     }
 
     #[allow(clippy::block_in_if_condition_stmt)]
     test rmdir(mocks) {
         let root = mocks.val.0.root();
         let dirname = OsString::from("x");
-        let ino = mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0)
+        let fd = mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0)
         .unwrap();
         mocks.val.0.rmdir(root, &dirname).unwrap();
 
         // Make sure it's gone
-        assert_eq!(mocks.val.0.getattr(ino).unwrap_err(), libc::ENOENT);
-        assert!(mocks.val.0.readdir(root, 0, 0)
+        assert_eq!(mocks.val.0.getattr(&fd).unwrap_err(), libc::ENOENT);
+        assert!(mocks.val.0.readdir(root, 0)
             .filter(|r| {
                 let dirent = r.unwrap().0;
                 dirent.d_name[0] == 'x' as i8
@@ -1607,12 +1630,13 @@ root:
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
-        let ino0 = mocks.val.0.mkdir(root, &filename0, 0o755, 0, 0).unwrap();
-        let _ino1 = mocks.val.0.mkdir(root, &filename1, 0o755, 0, 0).unwrap();
+        let fd0 = mocks.val.0.mkdir(root, &filename0, 0o755, 0, 0).unwrap();
+        let _fd1 = mocks.val.0.mkdir(root, &filename1, 0o755, 0, 0).unwrap();
         mocks.val.0.rmdir(root, &filename1).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(root, &filename0), Ok(ino0));
-        assert_eq!(mocks.val.0.lookup(root, &filename1), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &filename0).unwrap().ino, fd0.ino);
+        assert_eq!(mocks.val.0.lookup(root, &filename1).unwrap_err(),
+            libc::ENOENT);
     }
 
     test rmdir_enoent(mocks) {
@@ -1633,9 +1657,9 @@ root:
     test rmdir_enotempty(mocks) {
         let root = mocks.val.0.root();
         let dirname = OsString::from("x");
-        let ino = mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0)
+        let fd = mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0)
         .unwrap();
-        mocks.val.0.mkdir(ino, &dirname, 0o755, 0, 0)
+        mocks.val.0.mkdir(&fd, &dirname, 0o755, 0, 0)
         .unwrap();
         assert_eq!(mocks.val.0.rmdir(root, &dirname).unwrap_err(), libc::ENOTEMPTY);
     }
@@ -1648,10 +1672,11 @@ root:
         let filename1 = OsString::from("HsxUh682JQ");
         let filename2 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename1, &filename2);
-        let ino0 = mocks.val.0.mkdir(root, &filename0, 0o755, 0, 0).unwrap();
-        let _ino1 = mocks.val.0.mkdir(ino0, &filename1, 0o755, 0, 0).unwrap();
-        let _ino2 = mocks.val.0.mkdir(ino0, &filename2, 0o755, 0, 0).unwrap();
-        assert_eq!(mocks.val.0.rmdir(root, &filename0), Err(libc::ENOTEMPTY));
+        let fd0 = mocks.val.0.mkdir(root, &filename0, 0o755, 0, 0).unwrap();
+        let _fd1 = mocks.val.0.mkdir(&fd0, &filename1, 0o755, 0, 0).unwrap();
+        let _fd2 = mocks.val.0.mkdir(&fd0, &filename2, 0o755, 0, 0).unwrap();
+        assert_eq!(mocks.val.0.rmdir(root, &filename0).unwrap_err(),
+         libc::ENOTEMPTY);
     }
 
     /// Remove a directory with an extended attribute
@@ -1661,14 +1686,14 @@ root:
         let xname = OsString::from("foo");
         let xvalue1 = [0u8, 1, 2];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0)
+        let fd = mocks.val.0.mkdir(root, &dirname, 0o755, 0, 0)
         .unwrap();
-        mocks.val.0.setextattr(ino, ns, &xname, &xvalue1[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &xname, &xvalue1[..]).unwrap();
         mocks.val.0.rmdir(root, &dirname).unwrap();
 
         // Make sure the xattr is gone.  As I read things, POSIX allows us to
         // return either ENOATTR or ENOENT in this case.
-        assert_eq!(mocks.val.0.getextattr(ino, ns, &xname).unwrap_err(),
+        assert_eq!(mocks.val.0.getextattr(&fd, ns, &xname).unwrap_err(),
                    libc::ENOATTR);
     }
 
@@ -1688,7 +1713,7 @@ root:
     test setattr(mocks) {
         let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0)
         .unwrap();
         let perm = 0o1357;
         let uid = 12345;
@@ -1725,8 +1750,8 @@ root:
             birthtime: Some(birthtime),
             flags: Some(flags)
         };
-        mocks.val.0.setattr(ino, attr).unwrap();
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert(attr);
 
         // Now test using setattr to update nothing
@@ -1742,17 +1767,17 @@ root:
             birthtime: None,
             flags: None,
         };
-        mocks.val.0.setattr(ino, attr).unwrap();
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert(attr);
     }
 
     // setattr updates a file's ctime and mtime
     test setattr_timestamps(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        clear_timestamps(&mocks.val.0, ino);
+        clear_timestamps(&mocks.val.0, &fd);
 
         let attr = SetAttr {
             perm: None,
@@ -1765,33 +1790,33 @@ root:
             birthtime: None,
             flags: None,
         };
-        mocks.val.0.setattr(ino, attr).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Timestamps should've been updated
-        assert_ts_changed(&mocks.val.0, ino, false, false, true, false);
+        assert_ts_changed(&mocks.val.0, &fd, false, false, true, false);
     }
 
     // truncating a file should delete data past the truncation point
     test setattr_truncate(mocks) {
         let root = mocks.val.0.root();
         // First write two records
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 8192];
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(8192), r);
 
         // Then truncate one of them.
         let mut attr = SetAttr::default();
         attr.size = Some(4096);
-        mocks.val.0.setattr(ino, attr).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Now extend the file past the truncated record
         attr.size = Some(8192);
-        mocks.val.0.setattr(ino, attr).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Finally, read the truncated record.  It should be a hole
-        let sglist = mocks.val.0.read(ino, 4096, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 4096, 4096).unwrap();
         let db = &sglist[0];
         let expected = [0u8; 4096];
         assert_eq!(&db[..], &expected[..]);
@@ -1801,23 +1826,23 @@ root:
     test setattr_truncate_partial_records(mocks) {
         let root = mocks.val.0.root();
         // First write one record
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(4096), r);
 
         // Then truncate it.
         let mut attr = SetAttr::default();
         attr.size = Some(1000);
-        mocks.val.0.setattr(ino, attr).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Now extend the file past the truncated record
         attr.size = Some(4000);
-        mocks.val.0.setattr(ino, attr).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Finally, read from the truncated area.  It should be a hole
-        let sglist = mocks.val.0.read(ino, 2000, 1000).unwrap();
+        let sglist = mocks.val.0.read(&fd, 2000, 1000).unwrap();
         let db = &sglist[0];
         let expected = [0u8; 1000];
         assert_eq!(&db[..], &expected[..]);
@@ -1827,24 +1852,24 @@ root:
     test setattr_truncate_partial_blob_record(mocks) {
         let root = mocks.val.0.root();
         // First write one record
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(4096), r);
         mocks.val.0.sync(); // Create a blob record
 
         // Then truncate it.
         let mut attr = SetAttr::default();
         attr.size = Some(1000);
-        mocks.val.0.setattr(ino, attr).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Now extend the file past the truncated record
         attr.size = Some(4000);
-        mocks.val.0.setattr(ino, attr).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Finally, read from the truncated area.  It should be a hole
-        let sglist = mocks.val.0.read(ino, 2000, 1000).unwrap();
+        let sglist = mocks.val.0.read(&fd, 2000, 1000).unwrap();
         let db = &sglist[0];
         let expected = [0u8; 1000];
         assert_eq!(&db[..], &expected[..]);
@@ -1854,17 +1879,17 @@ root:
     test setattr_truncate_updates_mtime(mocks) {
         let root = mocks.val.0.root();
         // Create a file
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        clear_timestamps(&mocks.val.0, ino);
+        clear_timestamps(&mocks.val.0, &fd);
 
         // Then truncate the file
         let mut attr = SetAttr::default();
         attr.size = Some(4096);
-        mocks.val.0.setattr(ino, attr).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
 
         // mtime should've changed
-        assert_ts_changed(&mocks.val.0, ino, false, true, true, false);
+        assert_ts_changed(&mocks.val.0, &fd, false, true, true, false);
     }
 
     /// Overwrite an existing extended attribute
@@ -1875,10 +1900,10 @@ root:
         let value1 = [0u8, 1, 2];
         let value2 = [3u8, 4, 5, 6];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, ns, &name, &value1[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns, &name, &value2[..]).unwrap();
-        let v = mocks.val.0.getextattr(ino, ns, &name).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &name, &value1[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &name, &value2[..]).unwrap();
+        let v = mocks.val.0.getextattr(&fd, ns, &name).unwrap();
         assert_eq!(&v[..], &value2);
     }
 
@@ -1896,13 +1921,13 @@ root:
         let value1 = [3u8, 4, 5, 6];
         let value1a = [4u8, 7, 8, 9, 10];
 
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, ns0, &name0, &value0[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns1, &name1, &value1[..]).unwrap();
-        mocks.val.0.setextattr(ino, ns1, &name1, &value1a[..]).unwrap();
-        let v0 = mocks.val.0.getextattr(ino, ns0, &name0).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, ns0, &name0, &value0[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns1, &name1, &value1[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns1, &name1, &value1a[..]).unwrap();
+        let v0 = mocks.val.0.getextattr(&fd, ns0, &name0).unwrap();
         assert_eq!(&v0[..], &value0);
-        let v1 = mocks.val.0.getextattr(ino, ns1, &name1).unwrap();
+        let v1 = mocks.val.0.getextattr(&fd, ns1, &name1).unwrap();
         assert_eq!(&v1[..], &value1a);
     }
 
@@ -1913,11 +1938,11 @@ root:
         let name = OsString::from("foo");
         let value = [0u8, 1, 2];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        clear_timestamps(&mocks.val.0, ino);
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        clear_timestamps(&mocks.val.0, &fd);
 
-        mocks.val.0.setextattr(ino, ns, &name, &value[..]).unwrap();
-        assert_ts_changed(&mocks.val.0, ino, false, false, false, false);
+        mocks.val.0.setextattr(&fd, ns, &name, &value[..]).unwrap();
+        assert_ts_changed(&mocks.val.0, &fd, false, false, false, false);
     }
 
     /// The file already has a blob extattr.  Set another extattr and flush them
@@ -1930,13 +1955,13 @@ root:
         let name2 = OsString::from("bar");
         let value2 = [3u8, 4, 5, 6];
         let ns = ExtAttrNamespace::User;
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
-        mocks.val.0.setextattr(ino, ns, &name1, &value1[..]).unwrap();
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &name1, &value1[..]).unwrap();
         mocks.val.0.sync(); // Create a blob ExtAttr
-        mocks.val.0.setextattr(ino, ns, &name2, &value2[..]).unwrap();
+        mocks.val.0.setextattr(&fd, ns, &name2, &value2[..]).unwrap();
         mocks.val.0.sync(); // Achieve coverage of BlobExtAttr::flush
 
-        let v = mocks.val.0.getextattr(ino, ns, &name1).unwrap();
+        let v = mocks.val.0.getextattr(&fd, ns, &name1).unwrap();
         assert_eq!(&v[..], &value1[..]);
     }
 
@@ -1958,12 +1983,12 @@ root:
         let root = mocks.val.0.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
-        let ino = mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname)
+        let fd = mocks.val.0.symlink(root, &srcname, 0o642, 0, 0, &dstname)
         .unwrap();
-        assert_eq!(mocks.val.0.lookup(root, &srcname).unwrap(), ino);
+        assert_eq!(mocks.val.0.lookup(root, &srcname).unwrap().ino, fd.ino);
 
         // The parent dir should have an "src" symlink entry
-        let entries = mocks.val.0.readdir(root, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -1975,9 +2000,9 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name.to_str().unwrap(), srcname.to_str().unwrap());
-        assert_eq!(u64::from(dirent.d_fileno), ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
 
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFLNK | 0o642);
     }
 
@@ -1995,17 +2020,17 @@ root:
     test unlink(mocks) {
         let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let ino = mocks.val.0.create(root, &filename, 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &filename, 0o644, 0, 0)
         .unwrap();
         let r = mocks.val.0.unlink(root, &filename);
         assert_eq!(Ok(()), r);
 
         // Check that the inode is gone
-        let inode = mocks.val.0.getattr(ino);
+        let inode = mocks.val.0.getattr(&fd);
         assert_eq!(Err(libc::ENOENT), inode, "Inode was not removed");
 
         // The parent dir should not have an "x" directory entry
-        let entries = mocks.val.0.readdir(root, 0, 0);
+        let entries = mocks.val.0.readdir(root, 0);
         let x_de = entries
         .map(|r| r.unwrap())
         .filter(|(dirent, _ofs)| {
@@ -2021,13 +2046,14 @@ root:
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
-        let ino0 = mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
-        let _ino1 = mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
+        let fd0 = mocks.val.0.create(root, &filename0, 0o644, 0, 0).unwrap();
+        let _fd1 = mocks.val.0.create(root, &filename1, 0o644, 0, 0).unwrap();
 
         mocks.val.0.unlink(root, &filename1).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(root, &filename0), Ok(ino0));
-        assert_eq!(mocks.val.0.lookup(root, &filename1), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &filename0).unwrap().ino, fd0.ino);
+        assert_eq!(mocks.val.0.lookup(root, &filename1).unwrap_err(),
+            libc::ENOENT);
     }
 
     test unlink_enoent(mocks) {
@@ -2043,21 +2069,25 @@ root:
         let root = mocks.val.0.root();
         let name1 = OsString::from("name1");
         let name2 = OsString::from("name2");
-        let ino = mocks.val.0.create(root, &name1, 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &name1, 0o644, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.link(root, ino, &name2).unwrap(), ino);
+        assert_eq!(mocks.val.0.link(root, &fd, &name2).unwrap(), fd.ino);
 
         mocks.val.0.unlink(root, &name1).unwrap();
         // File should still exist, now with link count 1.
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.nlink, 1);
-        assert_eq!(mocks.val.0.lookup(root, &name1), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &name1).unwrap_err(),
+            libc::ENOENT);
 
         mocks.val.0.unlink(root, &name2).unwrap();
         // File should actually be gone now
-        assert_eq!(mocks.val.0.lookup(root, &name1), Err(libc::ENOENT));
-        assert_eq!(mocks.val.0.lookup(root, &name2), Err(libc::ENOENT));
-        assert_eq!(mocks.val.0.getattr(ino), Err(libc::ENOENT));
+        assert_eq!(mocks.val.0.lookup(root, &name1).unwrap_err(),
+            libc::ENOENT);
+        assert_eq!(mocks.val.0.lookup(root, &name2).unwrap_err(),
+            libc::ENOENT);
+        assert_eq!(mocks.val.0.getattr(&fd).unwrap_err(),
+            libc::ENOENT);
     }
 
     /// unlink(2) should update the parent dir's timestamps
@@ -2074,17 +2104,17 @@ root:
     // A very simple single record write to an empty file
     test write(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let buf = vec![42u8; 4096];
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(4096), r);
 
         // Check the file size
-        let attr = mocks.val.0.getattr(ino).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.size, 4096);
 
-        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[..]);
     }
@@ -2092,17 +2122,17 @@ root:
     // A partial single record write appended to the file's end
     test write_append(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf0 = vec![0u8; 1024];
         let mut rng = thread_rng();
         for x in &mut buf0 {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf0[..], 0);
         assert_eq!(Ok(1024), r);
 
-        let sglist = mocks.val.0.read(ino, 0, 1024).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 1024).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf0[..]);
     }
@@ -2110,7 +2140,7 @@ root:
     // A partial record write appended to a partial record at file's end
     test write_append_to_partial_record(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf0 = vec![0u8; 1024];
         let mut rng = thread_rng();
@@ -2122,12 +2152,12 @@ root:
         for x in &mut buf1 {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf0[..], 0);
         assert_eq!(Ok(1024), r);
-        let r = mocks.val.0.write(ino, 1024, &buf1[..], 0);
+        let r = mocks.val.0.write(&fd, 1024, &buf1[..], 0);
         assert_eq!(Ok(1024), r);
 
-        let sglist = mocks.val.0.read(ino, 0, 2048).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 2048).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[0..1024], &buf0[..]);
         assert_eq!(&db[1024..2048], &buf1[..]);
@@ -2136,24 +2166,24 @@ root:
     // write can RMW BlobExtents
     test write_partial_blob_record(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf0 = vec![0u8; 4096];
         let mut rng = thread_rng();
         for x in &mut buf0 {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf0[..], 0);
         assert_eq!(Ok(4096), r);
 
         // Sync the fs to flush the InlineExtent to a BlobExtent
         mocks.val.0.sync();
 
         let buf1 = vec![0u8; 2048];
-        let r = mocks.val.0.write(ino, 512, &buf1[..], 0);
+        let r = mocks.val.0.write(&fd, 512, &buf1[..], 0);
         assert_eq!(Ok(2048), r);
 
-        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[0..512], &buf0[0..512]);
         assert_eq!(&db[512..2560], &buf1[..]);
@@ -2164,21 +2194,21 @@ root:
     // file
     test write_partial_hole(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut attr = SetAttr::default();
         attr.size = Some(4096 * 4);
-        mocks.val.0.setattr(ino, attr).unwrap();
+        mocks.val.0.setattr(&fd, attr).unwrap();
 
         let mut buf0 = vec![0u8; 2048];
         let mut rng = thread_rng();
         for x in &mut buf0 {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 9216, &buf0[..], 0);
+        let r = mocks.val.0.write(&fd, 9216, &buf0[..], 0);
         assert_eq!(Ok(2048), r);
 
-        let sglist = mocks.val.0.read(ino, 9216, 2048).unwrap();
+        let sglist = mocks.val.0.read(&fd, 9216, 2048).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf0[..]);
     }
@@ -2186,20 +2216,20 @@ root:
     // A partial single record write that needs RMW on both ends
     test write_partial_record(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf0 = vec![0u8; 4096];
         let mut rng = thread_rng();
         for x in &mut buf0 {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf0[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf0[..], 0);
         assert_eq!(Ok(4096), r);
         let buf1 = vec![0u8; 2048];
-        let r = mocks.val.0.write(ino, 512, &buf1[..], 0);
+        let r = mocks.val.0.write(&fd, 512, &buf1[..], 0);
         assert_eq!(Ok(2048), r);
 
-        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[0..512], &buf0[0..512]);
         assert_eq!(&db[512..2560], &buf1[..]);
@@ -2209,39 +2239,39 @@ root:
     // write updates a file's ctime and mtime
     test write_timestamps(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        clear_timestamps(&mocks.val.0, ino);
+        clear_timestamps(&mocks.val.0, &fd);
 
         let buf = vec![42u8; 4096];
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(4096), r);
 
         // Timestamps should've been updated
-        assert_ts_changed(&mocks.val.0, ino, false, true, true, false);
+        assert_ts_changed(&mocks.val.0, &fd, false, true, true, false);
     }
 
     // A write to an empty file that's split across two records
     test write_two_recs(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 8192];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(8192), r);
 
         // Check the file size
-        let inode = mocks.val.0.getattr(ino).unwrap();
+        let inode = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(inode.size, 8192);
 
-        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[0..4096]);
-        let sglist = mocks.val.0.read(ino, 4096, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 4096, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[4096..8192]);
     }
@@ -2249,27 +2279,27 @@ root:
     // A write to an empty file that's split across three records
     test write_three_recs(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 12288];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(12288), r);
 
         // Check the file size
-        let inode = mocks.val.0.getattr(ino).unwrap();
+        let inode = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(inode.size, 12288);
 
-        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[0..4096]);
-        let sglist = mocks.val.0.read(ino, 4096, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 4096, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[4096..8192]);
-        let sglist = mocks.val.0.read(ino, 8192, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 8192, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[8192..12288]);
     }
@@ -2277,24 +2307,24 @@ root:
     // Write one hold record and a partial one to an initially empty file.
     test write_one_and_a_half_records(mocks) {
         let root = mocks.val.0.root();
-        let ino = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
+        let fd = mocks.val.0.create(root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
         let mut buf = vec![0u8; 6144];
         let mut rng = thread_rng();
         for x in &mut buf {
             *x = rng.gen();
         }
-        let r = mocks.val.0.write(ino, 0, &buf[..], 0);
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
         assert_eq!(Ok(6144), r);
 
         // Check the file size
-        let inode = mocks.val.0.getattr(ino).unwrap();
+        let inode = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(inode.size, 6144);
 
-        let sglist = mocks.val.0.read(ino, 0, 4096).unwrap();
+        let sglist = mocks.val.0.read(&fd, 0, 4096).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[0..4096]);
-        let sglist = mocks.val.0.read(ino, 4096, 2048).unwrap();
+        let sglist = mocks.val.0.read(&fd, 4096, 2048).unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[4096..6144]);
     }
@@ -2352,9 +2382,9 @@ test_suite! {
 
     struct TortureTest {
         db: Option<Arc<Database>>,
-        dirs: Vec<(u64, u64)>,
+        dirs: Vec<(u64, FileData)>,
         fs: Fs,
-        files: Vec<(u64, u64)>,
+        files: Vec<(u64, FileData)>,
         rng: XorShiftRng,
         rt: Option<Runtime>,
         w: Vec<(Op, f64)>,
@@ -2379,20 +2409,20 @@ test_suite! {
             let num: u64 = self.rng.gen();
             let fname = format!("{:x}", num);
             info!("mkdir {}", fname);
-            let ino = self.fs.mkdir(root, &OsString::from(&fname), 0o755, 0, 0)
+            let fd = self.fs.mkdir(root, &OsString::from(&fname), 0o755, 0, 0)
             .unwrap();
-            self.dirs.push((num, ino));
+            self.dirs.push((num, fd));
         }
 
         fn ls(&mut self) {
             let idx = self.rng.gen_range(0, self.dirs.len() + 1);
-            let (fname, ino) = if idx == self.dirs.len() {
-                ("/".to_owned(), 1)
+            let (fname, fd) = if idx == self.dirs.len() {
+                ("/".to_owned(), self.fs.root())
             } else {
-                let spec = self.dirs[idx];
-                (format!("{:x}", spec.0), spec.1)
+                let spec = &self.dirs[idx];
+                (format!("{:x}", spec.0), &spec.1)
             };
-            let c = self.fs.readdir(ino, 0, 0).count();
+            let c = self.fs.readdir(&fd, 0).count();
             info!("ls {}: {} entries", fname, c);
         }
 
@@ -2420,11 +2450,11 @@ test_suite! {
             if !self.files.is_empty() {
                 // Pick a random file to read from
                 let idx = self.rng.gen_range(0, self.files.len());
-                let ino = self.files[idx].1;
+                let fd = &self.files[idx].1;
                 // Pick a random offset within the first 8KB
                 let ofs = 2048 * self.rng.gen_range(0, 4);
                 info!("read {:x} at offset {}", self.files[idx].0, ofs);
-                let r = self.fs.read(ino, ofs, 2048);
+                let r = self.fs.read(&fd, ofs, 2048);
                 // TODO: check buffer contents
                 assert!(r.is_ok());
             }
@@ -2445,7 +2475,8 @@ test_suite! {
                 let idx = self.rng.gen_range(0, self.files.len());
                 let fname = format!("{:x}", self.files.remove(idx).0);
                 info!("rm {}", fname);
-                self.fs.unlink(self.fs.root(), &OsString::from(&fname)).unwrap();
+                self.fs.unlink(self.fs.root(), &OsString::from(&fname))
+                    .unwrap();
             }
         }
 
@@ -2495,9 +2526,9 @@ test_suite! {
             let num: u64 = self.rng.gen();
             let fname = format!("{:x}", num);
             info!("Touch {}", fname);
-            let ino = self.fs.create(root, &OsString::from(&fname), 0o644, 0, 0)
+            let fd = self.fs.create(root, &OsString::from(&fname), 0o644, 0, 0)
             .unwrap();
-            self.files.push((num, ino));
+            self.files.push((num, fd));
         }
 
         /// Write to a file.
@@ -2509,17 +2540,17 @@ test_suite! {
             if !self.files.is_empty() {
                 // Pick a random file to write to
                 let idx = self.rng.gen_range(0, self.files.len());
-                let ino = self.files[idx].1;
+                let fd = &self.files[idx].1;
                 // Pick a random offset within the first 8KB
                 let piece: u64 = self.rng.gen_range(0, 4);
                 let ofs = 2048 * piece;
                 // Use a predictable fill value
-                let fill = (ino.wrapping_mul(piece) %
+                let fill = (fd.ino.wrapping_mul(piece) %
                             u64::from(u8::max_value()))
                     as u8;
                 let buf = [fill; 2048];
                 info!("write {:x} at offset {}", self.files[idx].0, ofs);
-                let r = self.fs.write(ino, ofs, &buf[..], 0);
+                let r = self.fs.write(&fd, ofs, &buf[..], 0);
                 assert!(r.is_ok());
             }
         }

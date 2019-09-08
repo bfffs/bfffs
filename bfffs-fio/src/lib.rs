@@ -2,7 +2,7 @@
 use bfffs::common::{
     database::TreeID,
     device_manager::DevManager,
-    fs::Fs,
+    fs::{FileData, Fs},
     Error,
 };
 use futures::{future, Future, IntoFuture};
@@ -235,10 +235,10 @@ pub unsafe extern "C" fn fio_bfffs_open(
         .lookup(fs.root(), file_name)
         .or_else(|_| fs.create(fs.root(), file_name, 0o600, 0, 0));
     match r {
-        Ok(ino) => {
+        Ok(fd) => {
             // Store the inode number where fio would put its file
             // descriptor
-            (*f).fd = ino as i32;
+            (*f).fd = fd.ino as i32;
             0
         }
         Err(e) => {
@@ -258,21 +258,26 @@ pub unsafe extern "C" fn fio_bfffs_queue(
     let fs_opt = FS.lock().unwrap();
     let fs = fs_opt.as_ref().unwrap();
 
-    let (ddir, ino, offset, data) = {
+    let (ddir, fd, offset, data) = {
         let data: &[u8] = slice::from_raw_parts(
             (*io_u).xfer_buf as *mut u8,
             (*io_u).xfer_buflen as usize,
         );
         let ino = (*(*io_u).file).fd as u64;
-        ((*io_u).ddir, ino, (*io_u).offset, data)
+        // XXX The FIO API requires us to be able to uniquely identify a
+        // FileData based on the contents of a c_int (they assume it's a file
+        // descriptor).  For now, we just cram the inode number in there.  That
+        // will have to change at some point in the future.
+        let fd = FileData{ino};
+        ((*io_u).ddir, fd, (*io_u).offset, data)
     };
 
     match ddir {
         fio_ddir_DDIR_READ => {
-            fs.read(ino, offset, data.len()).unwrap();
+            fs.read(&fd, offset, data.len()).unwrap();
         }
         fio_ddir_DDIR_WRITE => {
-            fs.write(ino, offset, data, 0).unwrap();
+            fs.write(&fd, offset, data, 0).unwrap();
         }
         fio_ddir_DDIR_SYNC => {
             // Until we support fsync, we must sync the entire filesystem

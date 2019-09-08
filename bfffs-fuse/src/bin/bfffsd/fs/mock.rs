@@ -3,7 +3,7 @@
 //! Mock objects for bfffsd::fs
 use bfffs::common::{
     database::{Database, TreeID},
-    fs::{ExtAttr, ExtAttrNamespace, GetAttr, SetAttr},
+    fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr},
     property::Property,
     SGList,
     RID,
@@ -28,59 +28,62 @@ use time::Timespec;
  */
 mock! {
     pub Fs {
-        fn create(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<u64, i32>;
-        fn deleteextattr(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
-            -> Result<(), i32>;
-        fn fsync(&self, ino: u64) -> Result<(), i32>;
-        fn getattr(&self, ino: u64) -> Result<GetAttr, i32>;
-        fn getextattr(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
+        fn create(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32) -> Result<FileData, i32>;
+        fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
+            name: &OsStr) -> Result<(), i32>;
+        fn fsync(&self, fd: &FileData) -> Result<(), i32>;
+        fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32>;
+        fn getextattr(&self, fd: &FileData, ns: ExtAttrNamespace, name: &OsStr)
             -> Result<DivBuf, i32>;
-        fn getextattrlen(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
-            -> Result<u32, i32>;
-        fn link(&self, parent: u64, ino: u64, name: &OsStr) -> Result<u64, i32>;
-        fn lookup(&self, parent: u64, name: &OsStr) -> Result<u64, i32>;
+        fn getextattrlen(&self, fd: &FileData, ns: ExtAttrNamespace,
+            name: &OsStr) -> Result<u32, i32>;
+        fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
+            -> Result<u64, i32>;
+        fn lookup(&self, parent: &FileData, name: &OsStr)
+            -> Result<FileData, i32>;
         // TODO: After upgrading mockall to 0.4.0 (which allows where clauses
         // with closures), restore the definitions of listextattr and
         // listextattrlen to the originals, which use where clauses
         fn listextattr<F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static>(
-            &self, ino: u64, size: u32, f: F) -> Result<Vec<u8>, i32>;
+            &self, fd: &FileData, size: u32, f: F) -> Result<Vec<u8>, i32>;
         fn listextattrlen<F: Fn(&ExtAttr<RID>)
-            -> u32 + Send + 'static>(&self, ino: u64, f: F) -> Result<u32, i32>;
-        fn mkdir(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                 gid: u32) -> Result<u64, i32>;
-        fn mkblock(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, rdev: u32) -> Result<u64, i32>;
-        fn mkchar(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32, rdev: u32) -> Result<u64, i32>;
-        fn mkfifo(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<u64, i32>;
-        fn mksock(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<u64, i32>;
+            -> u32 + Send + 'static>(&self, fd: &FileData, f: F)
+                -> Result<u32, i32>;
+        fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                 gid: u32) -> Result<FileData, i32>;
+        fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                   gid: u32, rdev: u32) -> Result<FileData, i32>;
+        fn mkchar(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32, rdev: u32) -> Result<FileData, i32>;
+        fn mkfifo(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32) -> Result<FileData, i32>;
+        fn mksock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32) -> Result<FileData, i32>;
         fn new(database: Arc<Database>, handle: tokio_io_pool::Handle,
                tree: TreeID) -> Self;
-        fn read(&self, ino: u64, offset: u64, size: usize)
+        fn read(&self, fd: &FileData, offset: u64, size: usize)
             -> Result<SGList, i32>;
-        fn readdir(&self, ino: u64, _fh: u64, soffs: i64)
+        fn readdir(&self, fd: &FileData, soffs: i64)
             -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>;
-        fn readlink(&self, ino: u64) -> Result<OsString, i32>;
-        fn rename(&self, parent: u64, name: &OsStr,
-                  newparent: u64, newname: &OsStr) -> Result<(), i32>;
-        fn rmdir(&self, parent: u64, name: &OsStr) -> Result<(), i32>;
-        fn setattr(&self, ino: u64, mut attr: SetAttr) -> Result<(), i32>;
-        fn setextattr(&self, ino: u64, ns: ExtAttrNamespace,
+        fn readlink(&self, fd: &FileData) -> Result<OsString, i32>;
+        fn rename(&self, parent: &FileData, name: &OsStr,
+                  newparent: &FileData, newname: &OsStr) -> Result<(), i32>;
+        fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32>;
+        fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32>;
+        fn setextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                       name: &OsStr, data: &[u8]) -> Result<(), i32>;
         fn set_props(&mut self, props: Vec<Property>);
         fn statvfs(&self) -> Result<libc::statvfs, i32>;
-        fn symlink(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, link: &OsStr) -> Result<u64, i32>;
+        fn symlink(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                   gid: u32, link: &OsStr) -> Result<FileData, i32>;
         fn sync(&self);
-        fn unlink(&self, parent: u64, name: &OsStr) -> Result<(), i32>;
+        fn unlink(&self, parent: &FileData, name: &OsStr) -> Result<(), i32>;
         // Change write's signature slightly.  The real write takes a IU:
         // Into<UIO>, but Mockall can't mock non-'static, non-reference
         // arguments.  So we change the argument to &[u8], which is how
         // bfffs-fuse uses it anyway.
-        fn write(&self, ino: u64, offset: u64, data: &[u8], _flags: u32)
+        fn write(&self, fd: &FileData, offset: u64, data: &[u8], _flags: u32)
             -> Result<u32, i32>;
         //fn write<IU>(&self, ino: u64, offset: u64, data: IU, _flags: u32)
             //-> Result<u32, i32>

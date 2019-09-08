@@ -299,6 +299,20 @@ impl<'a> From<&'a [u8]> for Uio {
     }
 }
 
+/// Information about an in-use file
+///
+/// Basically, this is the stuff that would go in a vnode's v_data field
+#[derive(Debug)]
+pub struct FileData {
+    pub ino: u64
+}
+
+impl FileData {
+    fn new(ino: u64) -> FileData {
+        FileData{ino}
+    }
+}
+
 /// Generic Filesystem layer.
 ///
 /// Bridges the synchronous with Tokio domains, and the system-independent with
@@ -307,6 +321,8 @@ pub struct Fs {
     db: Arc<Database>,
     next_object: AtomicU64,
     handle: tokio_io_pool::Handle,
+    // the root directory's FileData
+    root: FileData,
     tree: TreeID,
 
     // These options may only be changed when the filesystem is mounting or
@@ -391,9 +407,9 @@ type CreateCallback = fn(&Arc<ReadWriteFilesystem>, u64, u64)
         -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>;
 
 /// Arguments for Fs::do_create
-struct CreateArgs
+struct CreateArgs<'a>
 {
-    parent: u64,
+    parent: &'a FileData,
     file_type: FileType,
     flags: u64,
     name: OsString,
@@ -404,7 +420,7 @@ struct CreateArgs
     cb: CreateCallback
 }
 
-impl CreateArgs {
+impl<'a> CreateArgs<'a> {
     const DEFAULT_CB: CreateCallback = Fs::create_ts_callback;
 
     pub fn callback(mut self, f: CreateCallback) -> Self
@@ -419,7 +435,7 @@ impl CreateArgs {
         //self
     //}
 
-    pub fn new(parent: u64, name: &OsStr, perm: u16, uid: u32,
+    pub fn new(parent: &'a FileData, name: &OsStr, perm: u16, uid: u32,
                gid: u32, file_type: FileType) -> Self
     {
         let cb = Self::DEFAULT_CB;
@@ -435,13 +451,14 @@ impl CreateArgs {
 
 impl Fs {
     /// Delete an extended attribute
-    pub fn deleteextattr(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
+    pub fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
+                         name: &OsStr)
         -> Result<(), i32>
     {
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
         let name = name.to_owned();
-        let key = FSKey::new(ino, objkey);
+        let key = FSKey::new(fd.ino, objkey);
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
                 htable::remove::<ReadWriteFilesystem, ExtAttr<RID>>(dataset,
@@ -457,7 +474,7 @@ impl Fs {
     }
 
     fn do_create(&self, args: CreateArgs)
-        -> Result<u64, i32>
+        -> Result<FileData, i32>
     {
         let (tx, rx) = oneshot::channel();
         let ino = self.next_object();
@@ -469,7 +486,8 @@ impl Fs {
             dtype: args.file_type.dtype(),
             name:   args.name
         };
-        let parent_dirent_key = FSKey::new(args.parent, parent_dirent_objkey);
+        let parent_dirent_key = FSKey::new(args.parent.ino,
+                                           parent_dirent_objkey);
 
         let now = time::get_time();
         let inode = Inode {
@@ -488,7 +506,7 @@ impl Fs {
         let inode_value = FSValue::Inode(inode);
 
         let cb = args.cb;
-        let parent_ino = args.parent;
+        let parent_ino = args.parent.ino;
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
@@ -501,7 +519,8 @@ impl Fs {
                     "Create of an existing file.  The VFS should prevent this");
                     assert!(inode_r.is_none(),
                     "Inode double-create detected, ino={}", ino);
-                    tx.send(Ok(ino)).unwrap()
+                    let fd = FileData::new(ino);
+                    tx.send(Ok(fd)).unwrap()
                 })
             }).map_err(Error::unhandled)
         ).unwrap();
@@ -795,15 +814,23 @@ impl Fs {
         let next_object = AtomicU64::new(last_key.unwrap().object() + 1);
         let atime = atimep.as_bool();
         let record_size = recsizep.as_u8();
-        Fs{db: database, next_object, handle, tree, atime, record_size}
+        Fs{
+            db: database,
+            next_object,
+            handle,
+            tree,
+            atime,
+            record_size,
+            root: FileData{ino: 1}
+        }
     }
 
     fn next_object(&self) -> u64 {
         self.next_object.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub fn create(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<u64, i32>
+    pub fn create(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32) -> Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Reg(self.record_size));
@@ -832,14 +859,15 @@ impl Fs {
 
     /// Sync a file's data and metadata to disk so it can be recovered after a
     /// crash.
-    pub fn fsync(&self, _ino: u64) -> Result<(), i32> {
+    pub fn fsync(&self, _fd: &FileData) -> Result<(), i32> {
         // Until we come up with a better mechanism, we must sync the entire
         // file system.
         self.sync();
         Ok(())
     }
 
-    pub fn getattr(&self, ino: u64) -> Result<GetAttr, i32> {
+    pub fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32> {
+        let ino = fd.ino;
         let (tx, rx) = oneshot::channel();
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
@@ -854,7 +882,7 @@ impl Fs {
                                 _ => 0
                             };
                             let attr = GetAttr {
-                                ino,
+                                ino: ino,
                                 size: inode.size,
                                 blocks: 0,
                                 atime: inode.atime,
@@ -885,13 +913,13 @@ impl Fs {
     }
 
     /// Retrieve the value of an extended attribute
-    pub fn getextattr(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
+    pub fn getextattr(&self, fd: &FileData, ns: ExtAttrNamespace, name: &OsStr)
         -> Result<DivBuf, i32>
     {
         let owned_name = name.to_owned();
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
-        let key = FSKey::new(ino, objkey);
+        let key = FSKey::new(fd.ino, objkey);
         type MyFut = Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
@@ -922,13 +950,14 @@ impl Fs {
     }
 
     /// Retrieve the length of the value of an extended attribute
-    pub fn getextattrlen(&self, ino: u64, ns: ExtAttrNamespace, name: &OsStr)
+    pub fn getextattrlen(&self, fd: &FileData, ns: ExtAttrNamespace,
+                         name: &OsStr)
         -> Result<u32, i32>
     {
         let owned_name = name.to_owned();
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
-        let key = FSKey::new(ino, objkey);
+        let key = FSKey::new(fd.ino, objkey);
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 dataset.get(key)
@@ -984,14 +1013,18 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    /// Create a hardlink from `ino` to `parent/name`.
-    pub fn link(&self, parent: u64, ino: u64, name: &OsStr) -> Result<u64, i32>
+    /// Create a hardlink from `fd` to `parent/name`.
+    // TODO: consider returning () instead of u64
+    pub fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
+        -> Result<u64, i32>
     {
         // Outline:
         // * Increase the target's link count
         // * Add the new directory entry
         // * Update the parent's mtime and ctime
         let (tx, rx) = oneshot::channel();
+        let ino = fd.ino;
+        let parent_ino = parent.ino;
         let name = name.to_owned();
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
@@ -1010,7 +1043,7 @@ impl Fs {
 
                     let dirent_objkey = ObjKey::dir_entry(&name);
                     let dirent = Dirent { ino, dtype, name };
-                    let dirent_key = FSKey::new(parent, dirent_objkey);
+                    let dirent_key = FSKey::new(parent_ino, dirent_objkey);
                     let dirent_value = FSValue::DirEntry(dirent);
                     let dfut = ds.insert(dirent_key, dirent_value);
 
@@ -1018,7 +1051,7 @@ impl Fs {
                     let mut parent_attr = SetAttr::default();
                     parent_attr.ctime = Some(now);
                     parent_attr.mtime = Some(now);
-                    let parent_fut = Fs::do_setattr(ds.clone(), parent,
+                    let parent_fut = Fs::do_setattr(ds.clone(), parent_ino,
                         parent_attr);
 
                     let mut ctime_attr = SetAttr::default();
@@ -1060,19 +1093,25 @@ impl Fs {
         }).flatten()
     }
 
-    pub fn lookup(&self, parent: u64, name: &OsStr) -> Result<u64, i32>
+    /// Lookup a file by its file name.
+    ///
+    /// NB: The client is responsible for managing the lifetime of the returned
+    /// `FileData` object.  In particular, the client must ensure that there are
+    /// never two `FileData`s for the same directory entry at the same time.
+    pub fn lookup(&self, parent: &FileData, name: &OsStr)
+        -> Result<FileData, i32>
     {
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::dir_entry(name);
         let owned_name = name.to_owned();
-        let key = FSKey::new(parent, objkey);
+        let key = FSKey::new(parent.ino, objkey);
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let rfs = htable::ReadFilesystem::ReadOnly(&dataset);
                 htable::get::<Dirent>(&rfs, key, 0, owned_name)
                 .then(move |r| {
                     match r {
-                        Ok(de) => tx.send(Ok(de.ino)),
+                        Ok(de) => tx.send(Ok(FileData::new(de.ino))),
                         Err(e) => tx.send(Err(e.into()))
                     }.unwrap();
                     future::ok::<(), Error>(())
@@ -1093,11 +1132,12 @@ impl Fs {
     /// # Returns
     ///
     /// A buffer containing all extended attributes' names packed by `f`.
-    pub fn listextattr<F>(&self, ino: u64, size: u32, f: F)
+    pub fn listextattr<F>(&self, fd: &FileData, size: u32, f: F)
         -> Result<Vec<u8>, i32>
         where F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
+        let ino = fd.ino;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let buf = Vec::with_capacity(size as usize);
@@ -1131,10 +1171,11 @@ impl Fs {
     /// # Returns
     ///
     /// The length of buffer that would be required for `listextattr`.
-    pub fn listextattrlen<F>(&self, ino: u64, f: F) -> Result<u32, i32>
+    pub fn listextattrlen<F>(&self, fd: &FileData, f: F) -> Result<u32, i32>
         where F: Fn(&ExtAttr<RID>) -> u32 + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
+        let ino = fd.ino;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 dataset.range(FSKey::extattr_range(ino))
@@ -1153,12 +1194,12 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn mkdir(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                 gid: u32) -> Result<u64, i32>
+    pub fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                 gid: u32) -> Result<FileData, i32>
     {
         let nlink = 2;  // One for the parent dir, and one for "."
 
-        fn f(dataset: &Arc<ReadWriteFilesystem>, parent: u64, ino: u64)
+        fn f(dataset: &Arc<ReadWriteFilesystem>, parent_ino: u64, ino: u64)
             -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>
         {
             let dot_dirent = Dirent {
@@ -1171,7 +1212,7 @@ impl Fs {
             let dot_dirent_key = FSKey::new(ino, dot_dirent_objkey);
 
             let dotdot_dirent = Dirent {
-                ino: parent,
+                ino: parent_ino,
                 dtype: libc::DT_DIR,
                 name:  OsString::from("..")
             };
@@ -1179,7 +1220,7 @@ impl Fs {
             let dotdot_dirent_objkey = ObjKey::dir_entry(&dotdot_filename);
             let dotdot_dirent_key = FSKey::new(ino, dotdot_dirent_objkey);
 
-            let parent_inode_key = FSKey::new(parent, ObjKey::Inode);
+            let parent_inode_key = FSKey::new(parent_ino, ObjKey::Inode);
             let dataset2 = dataset.clone();
             let dataset3 = dataset.clone();
             let dataset4 = dataset.clone();
@@ -1214,8 +1255,8 @@ impl Fs {
     }
 
     /// Make a block device
-    pub fn mkblock(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, rdev: u32) -> Result<u64, i32>
+    pub fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                   gid: u32, rdev: u32) -> Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Block(rdev));
@@ -1223,24 +1264,24 @@ impl Fs {
     }
 
     /// Make a character device
-    pub fn mkchar(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32, rdev: u32) -> Result<u64, i32>
+    pub fn mkchar(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32, rdev: u32) -> Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Char(rdev));
         self.do_create(create_args)
     }
 
-    pub fn mkfifo(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<u64, i32>
+    pub fn mkfifo(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32) -> Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Fifo);
         self.do_create(create_args)
     }
 
-    pub fn mksock(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<u64, i32>
+    pub fn mksock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                  gid: u32) -> Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Socket);
@@ -1306,11 +1347,12 @@ impl Fs {
         })
     }
 
-    pub fn read(&self, ino: u64, offset: u64, size: usize)
+    pub fn read(&self, fd: &FileData, offset: u64, size: usize)
         -> Result<SGList, i32>
     {
-        let inode_key = FSKey::new(ino, ObjKey::Inode);
         let (tx, rx) = oneshot::channel();
+        let ino = fd.ino;
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
         // We only need a writeable FS reference if we're going to update atime.
         // If not, then only get a read reference.  Read references are better
         // because they can be held during txg syncs.
@@ -1356,7 +1398,7 @@ impl Fs {
 
     // TODO: instead of the full size struct libc::dirent, use a variable size
     // structure in the mpsc channel
-    pub fn readdir(&self, ino: u64, _fh: u64, soffs: i64)
+    pub fn readdir(&self, fd: &FileData, soffs: i64)
         -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>
     {
         type T = Result<(libc::dirent, i64), i32>;
@@ -1404,6 +1446,7 @@ impl Fs {
         };
 
         let (tx, rx) = mpsc::channel(CHANSIZE);
+        let ino = fd.ino;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let cursor = Cursor::from(soffs);
@@ -1451,8 +1494,9 @@ impl Fs {
         rx.wait().map(Result::unwrap)
     }
 
-    pub fn readlink(&self, ino: u64) -> Result<OsString, i32> {
+    pub fn readlink(&self, fd: &FileData) -> Result<OsString, i32> {
         let (tx, rx) = oneshot::channel();
+        let ino = fd.ino;
         self.handle.spawn(
             self.db.fsread(self.tree, move |dataset| {
                 let key = FSKey::new(ino, ObjKey::Inode);
@@ -1481,8 +1525,8 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn rename(&self, parent: u64, name: &OsStr,
-        newparent: u64, newname: &OsStr) -> Result<(), i32>
+    pub fn rename(&self, parent: &FileData, name: &OsStr,
+        newparent: &FileData, newname: &OsStr) -> Result<(), i32>
     {
         // Outline:
         // 0)  Check conditions
@@ -1501,14 +1545,16 @@ impl Fs {
         let owned_newname = newname.to_owned();
         let owned_newname2 = owned_newname.clone();
         let owned_newname3 = owned_newname.clone();
-        let samedir = parent == newparent;
+        let parent_ino = parent.ino;
+        let newparent_ino = newparent.ino;
+        let samedir = parent_ino == newparent_ino;
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let ds4 = ds.clone();
                 let ds5 = ds.clone();
                 let ds6 = ds.clone();
-                let dst_de_key = FSKey::new(newparent, dst_objkey);
+                let dst_de_key = FSKey::new(newparent_ino, dst_objkey);
                 // 0) Check conditions
                 htable::get(&htable::ReadFilesystem::ReadWrite(ds.as_ref()),
                             dst_de_key, 0, owned_newname)
@@ -1521,7 +1567,7 @@ impl Fs {
                             } else {
                                 // Is it a nonempty directory?
                                 boxfut!(Fs::ok_to_rmdir(&ds4, dirent.ino,
-                                    newparent, owned_newname3))
+                                    newparent_ino, owned_newname3))
                             }
                         },
                         Err(Error::ENOENT) => {
@@ -1535,7 +1581,7 @@ impl Fs {
                     }
                 }).and_then(move |_| {
                     // 1) Remove the source directory entry
-                    let src_de_key = FSKey::new(parent, src_objkey);
+                    let src_de_key = FSKey::new(parent_ino, src_objkey);
                     htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
                         (ds5.clone(), src_de_key, 0, owned_name2)
                 }).and_then(move |mut dirent| {
@@ -1550,7 +1596,7 @@ impl Fs {
                 }).and_then(move |(old_dst_ino, isdir)| {
                     // 3a) Decrement parent dir's link count
                     let ds2 = ds.clone();
-                    let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
+                    let parent_ino_key = FSKey::new(parent_ino, ObjKey::Inode);
                     let p_nlink_fut = ds.get(parent_ino_key)
                     .and_then(move |r| {
                         let mut value = r.unwrap();
@@ -1570,7 +1616,7 @@ impl Fs {
                     if !samedir {
                         // 3b) Increment new parent dir's link count
                         let ds3 = ds.clone();
-                        let newparent_ino_key = FSKey::new(newparent,
+                        let newparent_ino_key = FSKey::new(newparent_ino,
                                                            ObjKey::Inode);
                         let fut = ds.get(newparent_ino_key)
                         .and_then(move |r| {
@@ -1594,7 +1640,7 @@ impl Fs {
                     let unlink_fut = if let Some(v) = old_dst_ino {
                         // 3ci) Decrement old dst's link count
                         if isdir {
-                            let fut = Fs::do_rmdir(ds, newparent, v, false);
+                            let fut = Fs::do_rmdir(ds, newparent_ino, v, false);
                             boxfut!(fut)
                         } else {
                             let fut = Fs::do_unlink(ds.clone(), v)
@@ -1617,13 +1663,14 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn rmdir(&self, parent: u64, name: &OsStr) -> Result<(), i32> {
+    pub fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32> {
         // Outline:
         // 1) Lookup the directory
         // 2) Check that the directory is empty
         // 3) Remove its parent's directory entry
         // 4) Actually remove it
         let (tx, rx) = oneshot::channel();
+        let parent_ino = parent.ino;
         let owned_name = name.to_os_string();
         let owned_name2 = owned_name.clone();
         let owned_name3 = owned_name.clone();
@@ -1633,23 +1680,23 @@ impl Fs {
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
                 // 1) Lookup the directory
-                let key = FSKey::new(parent, objkey);
+                let key = FSKey::new(parent_ino, objkey);
                 htable::get(&htable::ReadFilesystem::ReadWrite(&ds), key, 0,
                             owned_name3)
                 .and_then(move |de: Dirent| {
                     let ino = de.ino;
                     // 2) Check that the directory is empty
-                    Fs::ok_to_rmdir(&ds, ino, parent, owned_name2)
+                    Fs::ok_to_rmdir(&ds, ino, parent_ino, owned_name2)
                     .map(move |_| ino)
                 }).and_then(move |ino| {
                     // 3) Remove the parent dir's dir_entry
-                    let de_key = FSKey::new(parent, objkey);
+                    let de_key = FSKey::new(parent_ino, objkey);
                     let dirent_fut = htable::remove::<Arc<ReadWriteFilesystem>,
                                                       Dirent>
                         (ds2.clone(), de_key, 0, owned_name);
 
                     // 4) Actually remove the directory
-                    let dfut = Fs::do_rmdir(ds2, parent, ino, true);
+                    let dfut = Fs::do_rmdir(ds2, parent_ino, ino, true);
 
                     dirent_fut.join(dfut)
                 }).then(move |r| {
@@ -1665,12 +1712,13 @@ impl Fs {
     }
 
     /// Return the inode of the root directory
-    pub fn root(&self) -> u64 {
-        1
+    pub fn root<'a>(&'a self) -> &'a FileData {
+        &self.root
     }
 
-    pub fn setattr(&self, ino: u64, mut attr: SetAttr) -> Result<(), i32> {
+    pub fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32> {
         let (tx, rx) = oneshot::channel();
+        let ino = fd.ino;
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
@@ -1684,10 +1732,11 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn setextattr(&self, ino: u64, ns: ExtAttrNamespace,
+    pub fn setextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                       name: &OsStr, data: &[u8]) -> Result<(), i32>
     {
         let (tx, rx) = oneshot::channel();
+        let ino = fd.ino;
         let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(ino, objkey);
         // Data copy
@@ -1763,8 +1812,8 @@ impl Fs {
 
     /// Create a symlink from `name` to `link`.  Returns the link's inode on
     /// success, or an errno on failure.
-    pub fn symlink(&self, parent: u64, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, link: &OsStr) -> Result<u64, i32>
+    pub fn symlink(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
+                   gid: u32, link: &OsStr) -> Result<FileData, i32>
     {
         let file_type = FileType::Link(link.to_os_string());
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
@@ -1782,19 +1831,20 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn unlink(&self, parent: u64, name: &OsStr) -> Result<(), i32> {
+    pub fn unlink(&self, parent: &FileData, name: &OsStr) -> Result<(), i32> {
         // Outline:
         // 1) Lookup and remove the directory entry
         // 2) Unlink the Inode
         // 3) Update parent's mtime and ctime
         let (tx, rx) = oneshot::channel();
+        let parent_ino = parent.ino;
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
         self.handle.spawn(
             self.db.fswrite(self.tree, move |ds| {
                 let dataset = Arc::new(ds);
                 // 1) Lookup and remove the directory entry
-                let key = FSKey::new(parent, dekey);
+                let key = FSKey::new(parent_ino, dekey);
                 htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
                     (dataset.clone(), key, 0, owned_name)
                 .and_then(move |dirent|  {
@@ -1804,7 +1854,7 @@ impl Fs {
                     let mut attr = SetAttr::default();
                     attr.ctime = Some(now);
                     attr.mtime = Some(now);
-                    let ts_fut = Fs::do_setattr(dataset, parent, attr);
+                    let ts_fut = Fs::do_setattr(dataset, parent_ino, attr);
                     unlink_fut.join(ts_fut)
                 }).then(move |r| {
                     match r {
@@ -1818,7 +1868,7 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn write<IU>(&self, ino: u64, offset: u64, data: IU, _flags: u32)
+    pub fn write<IU>(&self, fd: &FileData, offset: u64, data: IU, _flags: u32)
         -> Result<u32, i32>
         where IU: Into<Uio>
     {
@@ -1833,6 +1883,7 @@ impl Fs {
         //         Then write it as an InlineExtent
         //  3) Set file length
         let (tx, rx) = oneshot::channel();
+        let ino = fd.ino;
         let uio = data.into();
 
         self.handle.spawn(
@@ -2074,7 +2125,8 @@ fn create() {
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    assert_eq!(ino, fs.create(fs.root(), &filename, 0o644, 123, 456).unwrap());
+    let fd = fs.create(fs.root(), &filename, 0o644, 123, 456).unwrap();
+    assert_eq!(ino, fd.ino);
 }
 
 /// Create experiences a hash collision when adding the new directory entry
@@ -2177,7 +2229,8 @@ fn create_hash_collision() {
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    assert_eq!(ino, fs.create(fs.root(), &filename, 0o644, 123, 456).unwrap());
+    let fd = fs.create(fs.root(), &filename, 0o644, 123, 456).unwrap();
+    assert_eq!(ino, fd.ino);
 }
 
 // Pet kcov
@@ -2299,7 +2352,8 @@ fn deleteextattr_3way_collision() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.deleteextattr(ino, namespace, &name2);
+    let fd = FileData::new(ino);
+    let r = fs.deleteextattr(&fd, namespace, &name2);
     assert_eq!(Ok(()), r);
 }
 
@@ -2354,7 +2408,8 @@ fn deleteextattr_3way_collision_enoattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.deleteextattr(ino, namespace, &name2);
+    let fd = FileData::new(ino);
+    let r = fs.deleteextattr(&fd, namespace, &name2);
     assert_eq!(Err(libc::ENOATTR), r);
 }
 
@@ -2368,7 +2423,8 @@ fn fsync() {
         .returning(|| Box::new(Ok(()).into_future()));
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    assert!(fs.fsync(ino).is_ok());
+    let fd = FileData::new(ino);
+    assert!(fs.fsync(&fd).is_ok());
 }
 
 /// Reading the source returns EIO.  Don't delete the dest
@@ -2402,7 +2458,8 @@ fn rename_eio() {
         .return_once(move |_| ds);
 
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.rename(1, &srcname, 1, &dstname);
+    let root = fs.root();
+    let r = fs.rename(root, &srcname, root, &dstname);
     assert_eq!(Err(libc::EIO), r);
 }
 
@@ -2582,7 +2639,7 @@ fn rmdir_with_blob_extattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.rmdir(1, &filename);
+    let r = fs.rmdir(fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -2592,7 +2649,7 @@ fn rmdir_with_blob_extattr() {
 fn setextattr() {
     let (rt, mut db, tree_id) = setup();
     let mut ds = ReadWriteFilesystem::default();
-    let ino = 1;
+    let root_ino = 1;
     let name = OsString::from("foo");
     let name2 = name.clone();
     let value = OsString::from("bar");
@@ -2606,7 +2663,7 @@ fn setextattr() {
         let ie = extattr.as_inline().unwrap();
         key.is_extattr() &&
         key.objtype() == 3 &&
-        key.object() == ino &&
+        key.object() == root_ino &&
         ie.namespace == namespace &&
         ie.name == name2 &&
         &ie.extent.buf.try_const().unwrap()[..] == value2.as_bytes()
@@ -2616,7 +2673,7 @@ fn setextattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.setextattr(ino, namespace, &name, value.as_bytes());
+    let r = fs.setextattr(fs.root(), namespace, &name, value.as_bytes());
     assert_eq!(Ok(()), r);
 }
 
@@ -2626,7 +2683,7 @@ fn setextattr() {
 fn setextattr_3way_collision() {
     let (rt, mut db, tree_id) = setup();
     let mut ds = ReadWriteFilesystem::default();
-    let ino = 1;
+    let root_ino = 1;
     // name0 and name1 are already set
     let name0 = OsString::from("foo");
     let name0a = name0.clone();
@@ -2674,7 +2731,7 @@ fn setextattr_3way_collision() {
     .withf(move |arg: &FSKey| {
         arg.is_extattr() &&
         arg.objtype() == 3 &&
-        arg.object() == ino
+        arg.object() == root_ino
     }).returning(move |_| {
         // Return the newly inserted value2
         let dbs2 = Arc::new(DivBufShared::from(Vec::from(value2a.as_bytes())));
@@ -2708,7 +2765,7 @@ fn setextattr_3way_collision() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.setextattr(ino, namespace, &name2, value2.as_bytes());
+    let r = fs.setextattr(fs.root(), namespace, &name2, value2.as_bytes());
     assert_eq!(Ok(()), r);
 }
 
@@ -2845,7 +2902,7 @@ fn unlink() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(1, &filename);
+    let r = fs.unlink(fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -2932,7 +2989,7 @@ fn unlink_hardlink() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(1, &filename);
+    let r = fs.unlink(fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -3063,7 +3120,7 @@ fn unlink_with_blob_extattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(1, &filename);
+    let r = fs.unlink(fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -3184,7 +3241,7 @@ fn unlink_with_extattr_hash_collision() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(1, &filename);
+    let r = fs.unlink(fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 }
