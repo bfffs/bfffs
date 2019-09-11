@@ -86,18 +86,18 @@ test_suite! {
         let (db, fs, _rt) = mocks.val;
         let root = fs.root();
         let small_filename = OsString::from("small");
-        let small_fd = fs.create(root, &small_filename, 0o644, 0, 0).unwrap();
+        let small_fd = fs.create(&root, &small_filename, 0o644, 0, 0).unwrap();
         let buf = vec![42u8; 4096];
         fs.write(&small_fd, 0, &buf[..], 0).unwrap();
 
         let big_filename = OsString::from("big");
-        let big_fd = fs.create(root, &big_filename, 0o644, 0, 0).unwrap();
+        let big_fd = fs.create(&root, &big_filename, 0o644, 0, 0).unwrap();
         for i in 0..18 {
             fs.write(&big_fd, i * 4096, &buf[..], 0).unwrap();
         }
         fs.sync();
 
-        fs.unlink(root, &big_filename).unwrap();
+        fs.unlink(&root, &big_filename).unwrap();
         fs.sync();
 
         db.clean().wait().unwrap();
@@ -110,12 +110,12 @@ test_suite! {
         let root = fs.root();
         for i in 0..16384 {
             let fname = format!("f.{}", i);
-            fs.mkdir(root, &OsString::from(fname), 0o755, 0, 0).unwrap();
+            fs.mkdir(&root, &OsString::from(fname), 0o755, 0, 0).unwrap();
         }
         fs.sync();
         for i in 0..8000 {
             let fname = format!("f.{}", i);
-            fs.rmdir(root, &OsString::from(fname)).unwrap();
+            fs.rmdir(&root, &OsString::from(fname)).unwrap();
         }
         fs.sync();
         let mut statvfs = fs.statvfs().unwrap();
@@ -143,12 +143,12 @@ test_suite! {
         let root = fs.root();
         for i in 0..16384 {
             let fname = format!("f.{}", i);
-            fs.mkdir(root, &OsString::from(fname), 0o755, 0, 0).unwrap();
+            fs.mkdir(&root, &OsString::from(fname), 0o755, 0, 0).unwrap();
         }
         fs.sync();
         for i in 0..8192 {
             let fname = format!("f.{}", 2 * i);
-            fs.rmdir(root, &OsString::from(fname)).unwrap();
+            fs.rmdir(&root, &OsString::from(fname)).unwrap();
         }
         fs.sync();
         let mut statvfs = fs.statvfs().unwrap();

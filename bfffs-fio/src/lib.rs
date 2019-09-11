@@ -231,9 +231,11 @@ pub unsafe extern "C" fn fio_bfffs_open(
         OsStr::from_bytes(CStr::from_ptr((*f).file_name).to_bytes());
     let mut fs_opt = FS.lock().unwrap();
     let fs = fs_opt.as_mut().unwrap();
+    let root = fs.root();
     let r = fs
-        .lookup(fs.root(), file_name)
-        .or_else(|_| fs.create(fs.root(), file_name, 0o600, 0, 0));
+        .lookup(&root, file_name)
+        .or_else(|_| fs.create(&root, file_name, 0o600, 0, 0));
+    fs.inactive(root);
     match r {
         Ok(fd) => {
             // Store the inode number where fio would put its file

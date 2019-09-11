@@ -32,6 +32,7 @@ mock! {
                   gid: u32) -> Result<FileData, i32>;
         fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
             name: &OsStr) -> Result<(), i32>;
+        fn inactive(&self, fd: FileData);
         fn fsync(&self, fd: &FileData) -> Result<(), i32>;
         fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32>;
         fn getextattr(&self, fd: &FileData, ns: ExtAttrNamespace, name: &OsStr)
@@ -70,6 +71,7 @@ mock! {
         fn rename(&self, parent: &FileData, name: &OsStr,
                   newparent: &FileData, newname: &OsStr) -> Result<(), i32>;
         fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32>;
+        fn root(&self) -> FileData;
         fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32>;
         fn setextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                       name: &OsStr, data: &[u8]) -> Result<(), i32>;

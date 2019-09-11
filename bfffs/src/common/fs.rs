@@ -321,8 +321,6 @@ pub struct Fs {
     db: Arc<Database>,
     next_object: AtomicU64,
     handle: tokio_io_pool::Handle,
-    // the root directory's FileData
-    root: FileData,
     tree: TreeID,
 
     // These options may only be changed when the filesystem is mounting or
@@ -821,7 +819,6 @@ impl Fs {
             tree,
             atime,
             record_size,
-            root: FileData{ino: 1}
         }
     }
 
@@ -855,6 +852,14 @@ impl Fs {
     pub fn dump(&self, f: &mut dyn io::Write) -> Result<(), i32> {
         self.db.dump(f, self.tree)
         .map_err(|e| e.into())
+    }
+
+    /// Tell the file system that the given file is no longer needed by the
+    /// client.  Its resources may be freed.
+    // Fs::inactive consumes fd because the client should not longer need it.
+    pub fn inactive(&self, _fd: FileData) {
+        // Simply drop the FileData.
+        // TODO: free the file's storage if its link count is 0
     }
 
     /// Sync a file's data and metadata to disk so it can be recovered after a
@@ -1710,9 +1715,9 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    /// Return the inode of the root directory
-    pub fn root<'a>(&'a self) -> &'a FileData {
-        &self.root
+    /// Lookup the root directory
+    pub fn root(&self) -> FileData {
+        FileData{ ino: 1 }
     }
 
     pub fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32> {
@@ -2124,7 +2129,7 @@ fn create() {
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    let fd = fs.create(fs.root(), &filename, 0o644, 123, 456).unwrap();
+    let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).unwrap();
     assert_eq!(ino, fd.ino);
 }
 
@@ -2228,7 +2233,7 @@ fn create_hash_collision() {
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    let fd = fs.create(fs.root(), &filename, 0o644, 123, 456).unwrap();
+    let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).unwrap();
     assert_eq!(ino, fd.ino);
 }
 
@@ -2458,7 +2463,7 @@ fn rename_eio() {
 
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let root = fs.root();
-    let r = fs.rename(root, &srcname, root, &dstname);
+    let r = fs.rename(&root, &srcname, &root, &dstname);
     assert_eq!(Err(libc::EIO), r);
 }
 
@@ -2638,7 +2643,7 @@ fn rmdir_with_blob_extattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.rmdir(fs.root(), &filename);
+    let r = fs.rmdir(&fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -2672,7 +2677,7 @@ fn setextattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.setextattr(fs.root(), namespace, &name, value.as_bytes());
+    let r = fs.setextattr(&fs.root(), namespace, &name, value.as_bytes());
     assert_eq!(Ok(()), r);
 }
 
@@ -2764,7 +2769,7 @@ fn setextattr_3way_collision() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.setextattr(fs.root(), namespace, &name2, value2.as_bytes());
+    let r = fs.setextattr(&fs.root(), namespace, &name2, value2.as_bytes());
     assert_eq!(Ok(()), r);
 }
 
@@ -2901,7 +2906,7 @@ fn unlink() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(fs.root(), &filename);
+    let r = fs.unlink(&fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -2988,7 +2993,7 @@ fn unlink_hardlink() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(fs.root(), &filename);
+    let r = fs.unlink(&fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -3119,7 +3124,7 @@ fn unlink_with_blob_extattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(fs.root(), &filename);
+    let r = fs.unlink(&fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -3240,7 +3245,7 @@ fn unlink_with_extattr_hash_collision() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(fs.root(), &filename);
+    let r = fs.unlink(&fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
 }
