@@ -10,6 +10,7 @@ use lazy_static::lazy_static;
 use memoffset::offset_of;
 use std::{
     borrow::Borrow,
+    collections::hash_map::HashMap,
     ffi::{CStr, OsStr},
     mem,
     os::unix::ffi::OsStrExt,
@@ -116,7 +117,9 @@ pub extern "C" fn rust_ctor()
 lazy_static! {
     static ref RUNTIME: Mutex<Runtime> = Mutex::new(Runtime::new());
     // TODO: remove the Mutex once there is a fs::Handle that is Sync
-    static ref FS: Mutex<Option<Fs>> = Mutex::new(None);
+    static ref FS: Mutex<Option<Fs>> = Mutex::default();
+    static ref ROOT: Mutex<Option<FileData>> = Mutex::default();
+    static ref FILES: Mutex<HashMap<libc::c_int, FileData>> = Mutex::default();
 }
 
 #[no_mangle]
@@ -125,6 +128,10 @@ pub unsafe extern "C" fn fio_bfffs_close(
     f: *mut fio_file,
 ) -> libc::c_int
 {
+    let fs_opt = FS.lock().unwrap();
+    let fs = fs_opt.as_ref().unwrap();
+    let fd = FILES.lock().unwrap().remove(&(*f).fd).unwrap();
+    fs.inactive(fd);
     (*f).fd = -1;
     0
 }
@@ -196,7 +203,9 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
                 // For now, hardcode tree_id to 0
                 let tree_id = TreeID::Fs(0);
                 let root_fs = Fs::new(adb, rt.handle().clone(), tree_id);
+                let root = root_fs.root();
                 *fs = Some(root_fs);
+                *ROOT.lock().unwrap() = Some(root);
                 0
             } else {
                 eprintln!("Pool not found");
@@ -231,16 +240,18 @@ pub unsafe extern "C" fn fio_bfffs_open(
         OsStr::from_bytes(CStr::from_ptr((*f).file_name).to_bytes());
     let mut fs_opt = FS.lock().unwrap();
     let fs = fs_opt.as_mut().unwrap();
-    let root = fs.root();
+    let root_opt = ROOT.lock().unwrap();
+    let root = root_opt.as_ref().unwrap();
     let r = fs
         .lookup(&root, file_name)
         .or_else(|_| fs.create(&root, file_name, 0o600, 0, 0));
-    fs.inactive(root);
     match r {
         Ok(fd) => {
             // Store the inode number where fio would put its file
             // descriptor
-            (*f).fd = fd.ino() as i32;
+            let filedesc = fd.ino() as i32;
+            (*f).fd = filedesc;
+            FILES.lock().unwrap().insert(filedesc, fd);
             0
         }
         Err(e) => {
@@ -259,27 +270,24 @@ pub unsafe extern "C" fn fio_bfffs_queue(
 {
     let fs_opt = FS.lock().unwrap();
     let fs = fs_opt.as_ref().unwrap();
+    let files = FILES.lock().unwrap();
 
     let (ddir, fd, offset, data) = {
         let data: &[u8] = slice::from_raw_parts(
             (*io_u).xfer_buf as *mut u8,
             (*io_u).xfer_buflen as usize,
         );
-        let ino = (*(*io_u).file).fd as u64;
-        // XXX The FIO API requires us to be able to uniquely identify a
-        // FileData based on the contents of a c_int (they assume it's a file
-        // descriptor).  For now, we just cram the inode number in there.  That
-        // will have to change at some point in the future.
-        let fd = FileData::new_for_tests(ino);
+        let filedesc = (*(*io_u).file).fd;
+        let fd = files.get(&filedesc).unwrap();
         ((*io_u).ddir, fd, (*io_u).offset, data)
     };
 
     match ddir {
         fio_ddir_DDIR_READ => {
-            fs.read(&fd, offset, data.len()).unwrap();
+            fs.read(fd, offset, data.len()).unwrap();
         }
         fio_ddir_DDIR_WRITE => {
-            fs.write(&fd, offset, data, 0).unwrap();
+            fs.write(fd, offset, data, 0).unwrap();
         }
         fio_ddir_DDIR_SYNC => {
             // Until we support fsync, we must sync the entire filesystem

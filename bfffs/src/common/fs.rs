@@ -304,7 +304,8 @@ impl<'a> From<&'a [u8]> for Uio {
 /// Basically, this is the stuff that would go in a vnode's v_data field
 #[derive(Debug)]
 pub struct FileData {
-    ino: u64
+    ino: u64,
+    parent: Option<u64>
 }
 
 impl FileData {
@@ -314,13 +315,17 @@ impl FileData {
     }
 
     /// Create a new `FileData`
-    fn new(ino: u64) -> FileData {
-        FileData{ino}
+    fn new(parent: Option<u64>, ino: u64) -> FileData {
+        FileData{ino, parent}
     }
 
     /// Create a new `FileData` for use in tests outside of this module
-    pub fn new_for_tests(ino: u64) -> Self {
-        FileData::new(ino)
+    pub fn new_for_tests(parent: Option<u64>, ino: u64) -> Self {
+        FileData::new(parent, ino)
+    }
+
+    pub fn parent(&self) -> Option<u64> {
+        self.parent
     }
 }
 
@@ -528,7 +533,7 @@ impl Fs {
                     "Create of an existing file.  The VFS should prevent this");
                     assert!(inode_r.is_none(),
                     "Inode double-create detected, ino={}", ino);
-                    let fd = FileData::new(ino);
+                    let fd = FileData::new(Some(parent_ino), ino);
                     tx.send(Ok(fd)).unwrap()
                 })
             }).map_err(Error::unhandled)
@@ -1116,6 +1121,7 @@ impl Fs {
     pub fn lookup(&self, parent: &FileData, name: &OsStr)
         -> Result<FileData, i32>
     {
+        let parent_ino = parent.ino;
         let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::dir_entry(name);
         let owned_name = name.to_owned();
@@ -1126,7 +1132,10 @@ impl Fs {
                 htable::get::<Dirent>(&rfs, key, 0, owned_name)
                 .then(move |r| {
                     match r {
-                        Ok(de) => tx.send(Ok(FileData::new(de.ino))),
+                        Ok(de) => {
+                            let fd = FileData::new(Some(parent_ino), de.ino);
+                            tx.send(Ok(fd))
+                        },
                         Err(e) => tx.send(Err(e.into()))
                     }.unwrap();
                     future::ok::<(), Error>(())
@@ -1728,7 +1737,7 @@ impl Fs {
 
     /// Lookup the root directory
     pub fn root(&self) -> FileData {
-        FileData{ ino: 1 }
+        FileData{ ino: 1 , parent: None}
     }
 
     pub fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32> {
@@ -2367,7 +2376,7 @@ fn deleteextattr_3way_collision() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let fd = FileData::new(ino);
+    let fd = FileData::new(Some(1), ino);
     let r = fs.deleteextattr(&fd, namespace, &name2);
     assert_eq!(Ok(()), r);
 }
@@ -2423,7 +2432,7 @@ fn deleteextattr_3way_collision_enoattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let fd = FileData::new(ino);
+    let fd = FileData::new(Some(1), ino);
     let r = fs.deleteextattr(&fd, namespace, &name2);
     assert_eq!(Err(libc::ENOATTR), r);
 }
@@ -2438,7 +2447,7 @@ fn fsync() {
         .returning(|| Box::new(Ok(()).into_future()));
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
-    let fd = FileData::new(ino);
+    let fd = FileData::new(Some(1), ino);
     assert!(fs.fsync(&fd).is_ok());
 }
 

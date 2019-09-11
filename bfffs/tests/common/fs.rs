@@ -470,7 +470,7 @@ root:
     test getextattr_enoent(mocks) {
         let name = OsString::from("foo");
         let namespace = ExtAttrNamespace::User;
-        let fd = FileData::new_for_tests(9999);
+        let fd = FileData::new_for_tests(Some(1), 9999);
         assert_eq!(mocks.val.0.getextattrlen(&fd, namespace, &name),
                    Err(libc::ENOATTR));
         assert_eq!(mocks.val.0.getextattr(&fd, namespace, &name),
@@ -1261,7 +1261,7 @@ root:
     }
 
     test readlink_enoent(mocks) {
-        let fd = FileData::new_for_tests(1000);
+        let fd = FileData::new_for_tests(Some(1), 1000);
         assert_eq!(libc::ENOENT, mocks.val.0.readlink(&fd).unwrap_err());
     }
 

@@ -701,7 +701,7 @@ fn assert_not_cached(fusefs: &FuseFs, parent_ino: u64, name: &OsStr,
 
 fn make_mock_fs() -> FuseFs {
     let mut mock_fs = Fs::default();
-    mock_fs.expect_root().returning(|| FileData::new_for_tests(1));
+    mock_fs.expect_root().returning(|| FileData::new_for_tests(None, 1));
     FuseFs::from(mock_fs)
 }
 
@@ -735,7 +735,7 @@ mod create {
                 predicate::always(),
             ).returning(|_, _, _, _, _| Err(libc::ENOTDIR));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.create(&request, parent, name, mode.into(), 0, reply);
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -767,7 +767,9 @@ mod create {
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
-            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _, _, _, _|
+                Ok(FileData::new_for_tests(Some(parent), ino))
+            );
         fusefs.fs.expect_getattr()
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Err(libc::EIO));
@@ -776,7 +778,7 @@ mod create {
             .times(1)
             .return_const(());
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.create(&request, parent, name,
             mode.into(), 0, reply);
         assert_not_cached(&fusefs, parent, name, Some(ino));
@@ -817,7 +819,9 @@ mod create {
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
-            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _, _, _, _|
+                Ok(FileData::new_for_tests(Some(parent), ino))
+            );
         fusefs.fs.expect_getattr()
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Ok(GetAttr {
@@ -836,7 +840,7 @@ mod create {
                 flags: 0
             }));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.create(&request, parent, name,
             mode.into(), 0, reply);
         assert_cached(&fusefs, parent, name, ino);
@@ -868,7 +872,7 @@ mod removexattr {
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| Err(libc::ENOATTR));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.removexattr(&request, ino, packed_name, reply);
     }
 
@@ -893,7 +897,7 @@ mod removexattr {
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| Ok(()));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.removexattr(&request, ino, packed_name, reply);
     }
 }
@@ -920,7 +924,9 @@ mod forget {
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::eq(name)
-            ).returning(move |_, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _|
+                Ok(FileData::new_for_tests(Some(parent), ino))
+            );
         fusefs.fs.expect_getattr()
             .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
@@ -949,7 +955,7 @@ mod forget {
                 attr.ino == ino
             }).return_const(());
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.lookup(&request, parent, name, reply);
         fusefs.forget(&request, ino, 1);
         assert!(!fusefs.files.contains_key(&ino))
@@ -979,7 +985,7 @@ mod fsync {
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
             ).return_const(Err(libc::EIO));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.fsync(&request, ino, fh, false, reply);
     }
 
@@ -1002,7 +1008,7 @@ mod fsync {
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
             ).return_const(Ok(()));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.fsync(&request, ino, fh, false, reply);
     }
 }
@@ -1027,7 +1033,7 @@ mod getattr {
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Err(libc::ENOENT));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.getattr(&request, ino, reply);
     }
 
@@ -1074,7 +1080,7 @@ mod getattr {
                 attr.rdev == 0
             }).return_const(());
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.getattr(&request, ino, reply);
     }
 }
@@ -1106,7 +1112,7 @@ mod getxattr {
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| Err(libc::ENOATTR));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.getxattr(&request, ino, packed_name, wantsize, reply);
     }
 
@@ -1134,7 +1140,7 @@ mod getxattr {
                 name == OsStr::from_bytes(b"md5")
             }).returning(move |_, _, _| Ok(size));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.getxattr(&request, ino, packed_name, wantsize, reply);
     }
 
@@ -1161,7 +1167,7 @@ mod getxattr {
                 name == OsStr::from_bytes(b"md5")
             }).return_const(Err(libc::ENOATTR));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.getxattr(&request, ino, packed_name, wantsize, reply);
     }
 
@@ -1200,7 +1206,7 @@ mod getxattr {
                 Ok(dbs.try_const().unwrap())
             });
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.getxattr(&request, ino, packed_name, wantsize, reply);
     }
 
@@ -1231,7 +1237,7 @@ mod getxattr {
                 Ok(dbs.try_const().unwrap())
             });
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.getxattr(&request, ino, packed_name, wantsize, reply);
     }
 }
@@ -1264,8 +1270,8 @@ mod link {
                 predicate::eq(name),
             ).return_const(Err(libc::EPERM));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.link(&request, ino, parent, name, reply);
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -1301,8 +1307,8 @@ mod link {
             .in_sequence(&mut seq)
             .return_const(Err(libc::EIO));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.link(&request, ino, parent, name, reply);
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -1364,8 +1370,8 @@ mod link {
             }));
 
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.link(&request, ino, parent, name, reply);
         assert_cached(&fusefs, parent, name, ino);
     }
@@ -1395,7 +1401,7 @@ mod listxattr {
                 predicate::always()
             ).returning(|_ino, _f| Err(libc::EPERM));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.listxattr(&request, ino, wantsize, reply);
     }
 
@@ -1433,7 +1439,7 @@ mod listxattr {
                 )
             });
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.listxattr(&request, ino, wantsize, reply);
     }
 
@@ -1457,7 +1463,7 @@ mod listxattr {
                 predicate::always()
             ).returning(|_ino, _size, _f| Err(libc::EPERM));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.listxattr(&request, ino, wantsize, reply);
     }
 
@@ -1500,7 +1506,7 @@ mod listxattr {
                 Ok(buf)
             });
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.listxattr(&request, ino, wantsize, reply);
     }
 
@@ -1541,7 +1547,7 @@ mod listxattr {
                 Ok(buf)
             });
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.listxattr(&request, ino, wantsize, reply);
     }
 }
@@ -1594,8 +1600,8 @@ mod lookup {
                 attr.rdev == 0
             }).return_const(());
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.names.insert((parent, name.to_owned()), ino);
         fusefs.lookup(&request, parent, name, reply);
     }
@@ -1620,7 +1626,7 @@ mod lookup {
                 predicate::eq(name)
             ).returning(|_, _| Err(libc::ENOENT));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.lookup(&request, parent, name, reply);
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -1645,7 +1651,9 @@ mod lookup {
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::eq(name)
-            ).returning(move |_, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _|
+                Ok(FileData::new_for_tests(Some(parent), ino))
+            );
         fusefs.fs.expect_getattr()
             .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
@@ -1677,7 +1685,7 @@ mod lookup {
                 attr.rdev == 0
             }).return_const(());
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.names.insert((parent, name.to_owned()),
                              ino);
         fusefs.lookup(&request, parent, name, reply);
@@ -1701,7 +1709,9 @@ mod lookup {
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::eq(name)
-            ).returning(move |_, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _|
+                Ok(FileData::new_for_tests(Some(parent), ino))
+            );
         fusefs.fs.expect_getattr()
             .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
@@ -1715,7 +1725,7 @@ mod lookup {
             .with(predicate::eq(libc::EIO))
             .return_const(());
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.names.insert((parent, name.to_owned()), ino);
         fusefs.lookup(&request, parent, name, reply);
         assert!(!fusefs.files.contains_key(&ino));
@@ -1740,7 +1750,9 @@ mod lookup {
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::eq(name)
-            ).returning(move |_, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _|
+                Ok(FileData::new_for_tests(Some(parent), ino))
+            );
         fusefs.fs.expect_getattr()
             .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
@@ -1772,7 +1784,7 @@ mod lookup {
                 attr.rdev == 0
             }).return_const(());
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.lookup(&request, parent, name, reply);
         assert_cached(&fusefs, parent, name, ino);
     }
@@ -1810,7 +1822,7 @@ mod mkdir {
                 predicate::eq(gid),
             ).returning(|_, _, _, _, _| Err(libc::EPERM));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.mkdir(&request, parent, name,
             (libc::S_IFDIR | mode).into(), reply);
         assert_not_cached(&fusefs, parent, name, None);
@@ -1845,7 +1857,9 @@ mod mkdir {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _, _, _, _|
+                Ok(FileData::new_for_tests(Some(parent), ino))
+            );
         fusefs.fs.expect_getattr()
             .times(1)
             .return_const(Err(libc::EIO));
@@ -1854,7 +1868,7 @@ mod mkdir {
             .times(1)
             .return_const(());
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.mkdir(&request, parent, name,
             (libc::S_IFDIR | mode).into(), reply);
         assert_not_cached(&fusefs, parent, name, None);
@@ -1895,7 +1909,9 @@ mod mkdir {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _, _, _, _|
+                Ok(FileData::new_for_tests(Some(parent), ino))
+            );
         fusefs.fs.expect_getattr()
             .times(1)
             .return_const(Ok(GetAttr {
@@ -1914,7 +1930,7 @@ mod mkdir {
                 flags: 0
             }));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.mkdir(&request, parent, name,
             (libc::S_IFDIR | mode).into(), reply);
         assert_cached(&fusefs, parent, name, ino);
@@ -1965,7 +1981,7 @@ mod mknod {
                 predicate::eq(gid),
                 predicate::eq(rdev)
             ).returning(move |_, _, _, _, _, _|
-                Ok(FileData::new_for_tests(ino))
+                Ok(FileData::new_for_tests(Some(parent), ino))
             );
         fusefs.fs.expect_getattr()
             .times(1)
@@ -1986,7 +2002,7 @@ mod mknod {
                 flags: 0
             }));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.mknod(&request, parent, name,
             (libc::S_IFBLK | mode).into(), rdev, reply);
         assert_cached(&fusefs, parent, name, ino);
@@ -2033,7 +2049,7 @@ mod mknod {
                 predicate::eq(gid),
                 predicate::eq(rdev)
             ).returning(move |_, _, _, _, _, _|
-                Ok(FileData::new_for_tests(ino))
+                Ok(FileData::new_for_tests(Some(parent), ino))
             );
         fusefs.fs.expect_getattr()
             .times(1)
@@ -2054,7 +2070,7 @@ mod mknod {
                 flags: 0
             }));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.mknod(&request, parent, name,
             (libc::S_IFCHR | mode).into(), rdev, reply);
         assert_cached(&fusefs, parent, name, ino);
@@ -2089,7 +2105,7 @@ mod mknod {
                 predicate::eq(gid),
             ).returning(|_, _, _, _, _| Err(libc::EPERM));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.mknod(&request, parent, name,
             (libc::S_IFIFO | mode).into(), 0, reply);
         assert_not_cached(&fusefs, parent, name, None);
@@ -2132,7 +2148,7 @@ mod mknod {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(Some(parent), ino)));
         fusefs.fs.expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
@@ -2152,7 +2168,7 @@ mod mknod {
                 flags: 0
             }));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.mknod(&request, parent, name,
             (libc::S_IFIFO | mode).into(), 0, reply);
         assert_cached(&fusefs, parent, name, ino);
@@ -2195,7 +2211,7 @@ mod mknod {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(ino)));
+            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(Some(parent), ino)));
         fusefs.fs.expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
@@ -2215,7 +2231,7 @@ mod mknod {
                 flags: 0
             }));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.mknod(&request, parent, name,
             (libc::S_IFSOCK | mode).into(), 0, reply);
         assert_cached(&fusefs, parent, name, ino);
@@ -2250,7 +2266,7 @@ mod read {
                 predicate::eq(len as usize),
             ).return_const(Err(libc::EIO));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.read(&request, ino, fh, ofs, len, reply);
     }
 
@@ -2278,7 +2294,7 @@ mod read {
                 predicate::eq(len as usize),
             ).return_const(Ok(SGList::new()));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.read(&request, ino, fh, ofs, len, reply);
     }
 
@@ -2311,7 +2327,7 @@ mod read {
                 Ok(vec![db])
             });
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.read(&request, ino, fh, ofs, len, reply);
     }
 
@@ -2351,7 +2367,7 @@ mod read {
                 Ok(vec![db0, db1])
             });
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.read(&request, ino, fh, ofs, len, reply);
     }
 }
@@ -2540,7 +2556,7 @@ mod readdir {
             ).return_once(move |_, _| Box::new(contents.into_iter()));
 
         fusefs.files.insert(dot_ino.into(),
-            FileData::new_for_tests(dot_ino.into()));
+            FileData::new_for_tests(Some(1), dot_ino.into()));
         fusefs.readdir(&request, dot_ino.into(), fh, ofs, reply);
     }
 
@@ -2565,7 +2581,7 @@ mod readdir {
                 predicate::eq(ofs),
             ).returning(|_, _| Box::new(vec![Err(libc::EIO)].into_iter()));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.readdir(&request, ino, fh, ofs, reply);
     }
 
@@ -2637,7 +2653,8 @@ mod readdir {
                 ), predicate::eq(ofs),
             ).return_once(move |_, _| Box::new(contents.into_iter()));
 
-        fusefs.files.insert(ino.into(), FileData::new_for_tests(ino.into()));
+        fusefs.files.insert(ino.into(),
+            FileData::new_for_tests(Some(1), ino.into()));
         fusefs.readdir(&request, ino.into(), fh, ofs, reply);
     }
 
@@ -2702,7 +2719,8 @@ mod readdir {
                 ), predicate::eq(ofs),
             ).return_once(move |_, _| Box::new(contents.into_iter()));
 
-        fusefs.files.insert(ino.into(), FileData::new_for_tests(ino.into()));
+        fusefs.files.insert(ino.into(),
+            FileData::new_for_tests(Some(1), ino.into()));
         fusefs.readdir(&request, ino.into(), fh, ofs, reply);
     }
 }
@@ -2727,7 +2745,7 @@ mod readlink {
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Err(libc::ENOENT));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.readlink(&request, ino, reply);
     }
 
@@ -2749,7 +2767,7 @@ mod readlink {
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Ok(name.to_owned()));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.readlink(&request, ino, reply);
     }
 }
@@ -2782,8 +2800,9 @@ mod rename {
                 predicate::eq(newname),
             ).return_const(Err(libc::ENOTDIR));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
-        fusefs.files.insert(newparent, FileData::new_for_tests(newparent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs.files.insert(newparent,
+            FileData::new_for_tests(Some(1), newparent));
         fusefs.rename(&request, parent, name, newparent, newname, reply);
         assert_not_cached(&fusefs, newparent, newname, None);
     }
@@ -2813,11 +2832,13 @@ mod rename {
                 predicate::eq(newname),
             ).return_const(Ok(()));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
-        fusefs.files.insert(newparent, FileData::new_for_tests(newparent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs.files.insert(newparent,
+            FileData::new_for_tests(Some(1), newparent));
         fusefs.names.insert((parent, name.to_owned()), ino);
         fusefs.rename(&request, parent, name, newparent, newname, reply);
         assert_not_cached(&fusefs, parent, name, None);
+        // TODO: verify that the inode's cache entry has been reparented
     }
 }
 
@@ -2845,7 +2866,7 @@ mod rmdir {
                 predicate::eq(name)
             ).returning(move |_, _| Err(libc::ENOTDIR));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.rmdir(&request, parent, name, reply);
     }
 
@@ -2869,7 +2890,7 @@ mod rmdir {
                 predicate::eq(name)
             ).returning(move |_, _| Ok(()));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.rmdir(&request, parent, name, reply);
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -2907,7 +2928,7 @@ mod setattr {
                 attr.flags.is_none()
             }).return_const(Err(libc::EPERM));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.setattr(&request, ino, Some(mode as u32), None, None, None, None,
             None, None, None, None, None, None, reply);
     }
@@ -2971,7 +2992,7 @@ mod setattr {
                 flags: 0
             }));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.setattr(&request, ino, Some(mode as u32), None, None, None, None,
             None, None, None, None, None, None, reply);
     }
@@ -3004,7 +3025,7 @@ mod setxattr {
                 predicate::eq(&v[..])
             ).return_const(Err(libc::EROFS));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.setxattr(&request, ino, packed_name, v, 0, 0, reply);
     }
 
@@ -3031,7 +3052,7 @@ mod setxattr {
                 predicate::eq(&v[..])
             ).return_const(Ok(()));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.setxattr(&request, ino, packed_name, v, 0, 0, reply);
     }
 }
@@ -3131,7 +3152,7 @@ mod symlink {
                 predicate::eq(name),
             ).returning(|_, _, _, _, _, _| Err(libc::ELOOP));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.symlink(&request, parent, name,
             Path::new(name), reply);
         assert_not_cached(&fusefs, parent, name, None);
@@ -3174,7 +3195,7 @@ mod symlink {
                 predicate::always(),
                 predicate::eq(name),
             ).returning(move |_, _, _, _, _, _|
-                Ok(FileData::new_for_tests(ino))
+                Ok(FileData::new_for_tests(Some(parent), ino))
             );
         fusefs.fs.expect_getattr()
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
@@ -3194,7 +3215,7 @@ mod symlink {
                 flags: 0
             }));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.symlink(&request, parent, name,
             Path::new(name), reply);
     }
@@ -3224,7 +3245,7 @@ mod unlink {
                 predicate::eq(name)
             ).returning(move |_, _| Err(libc::EISDIR));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.unlink(&request, parent, name, reply);
     }
 
@@ -3248,7 +3269,7 @@ mod unlink {
                 predicate::eq(name)
             ).returning(move |_, _| Ok(()));
 
-        fusefs.files.insert(parent, FileData::new_for_tests(parent));
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.unlink(&request, parent, name, reply);
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -3281,7 +3302,7 @@ mod write {
                 predicate::always()
             ).return_const(Err(libc::EROFS));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.write(&request, ino, fh, ofs, DATA, 0, reply);
     }
 
@@ -3310,7 +3331,7 @@ mod write {
                 predicate::always()
             ).return_const(Ok(DATA.len() as u32));
 
-        fusefs.files.insert(ino, FileData::new_for_tests(ino));
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(1), ino));
         fusefs.write(&request, ino, fh, ofs, DATA, 0, reply);
     }
 }
