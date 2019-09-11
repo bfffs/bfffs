@@ -305,6 +305,8 @@ impl<'a> From<&'a [u8]> for Uio {
 #[derive(Debug)]
 pub struct FileData {
     ino: u64,
+    /// This file's parent's inode number.  Only valid for directories that
+    /// aren't the root directory.
     parent: Option<u64>
 }
 
@@ -329,8 +331,11 @@ impl FileData {
     }
 
     pub fn reparent(&mut self, parent: u64) {
-        assert!(self.parent.is_some(), "Can't reparent the root directory");
-        self.parent = Some(parent);
+        if self.parent.is_some() {
+            self.parent = Some(parent);
+        } else {
+            // Probably a non-directory, which doesn't store its parent.
+        }
     }
 }
 
@@ -508,6 +513,13 @@ impl Fs {
         let parent_dirent_key = FSKey::new(args.parent.ino,
                                            parent_dirent_objkey);
 
+        let cb = args.cb;
+        let parent_ino = args.parent.ino;
+        let fd_parent = if args.file_type == FileType::Dir {
+            Some(parent_ino)
+        } else {
+            None
+        };
         let now = time::get_time();
         let inode = Inode {
             size: 0,
@@ -524,8 +536,6 @@ impl Fs {
         };
         let inode_value = FSValue::Inode(inode);
 
-        let cb = args.cb;
-        let parent_ino = args.parent.ino;
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
@@ -538,7 +548,7 @@ impl Fs {
                     "Create of an existing file.  The VFS should prevent this");
                     assert!(inode_r.is_none(),
                     "Inode double-create detected, ino={}", ino);
-                    let fd = FileData::new(Some(parent_ino), ino);
+                    let fd = FileData::new(fd_parent, ino);
                     tx.send(Ok(fd)).unwrap()
                 })
             }).map_err(Error::unhandled)
@@ -1138,7 +1148,14 @@ impl Fs {
                 .then(move |r| {
                     match r {
                         Ok(de) => {
-                            let fd = FileData::new(Some(parent_ino), de.ino);
+                            // TODO: set fd_parent correctly when "name" is "."
+                            // or ".."
+                            let fd_parent = if de.dtype == libc::DT_DIR {
+                                Some(parent_ino)
+                            } else {
+                                None
+                            };
+                            let fd = FileData::new(fd_parent, de.ino);
                             tx.send(Ok(fd))
                         },
                         Err(e) => tx.send(Err(e.into()))
