@@ -240,7 +240,7 @@ pub unsafe extern "C" fn fio_bfffs_open(
         Ok(fd) => {
             // Store the inode number where fio would put its file
             // descriptor
-            (*f).fd = fd.ino as i32;
+            (*f).fd = fd.ino() as i32;
             0
         }
         Err(e) => {
@@ -270,7 +270,7 @@ pub unsafe extern "C" fn fio_bfffs_queue(
         // FileData based on the contents of a c_int (they assume it's a file
         // descriptor).  For now, we just cram the inode number in there.  That
         // will have to change at some point in the future.
-        let fd = FileData{ino};
+        let fd = FileData::new_for_tests(ino);
         ((*io_u).ddir, fd, (*io_u).offset, data)
     };
 

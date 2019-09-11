@@ -126,10 +126,10 @@ test_suite! {
 
     test create(mocks) {
         let root = mocks.val.0.root();
-        let fd = mocks.val.0.create(&root, &OsString::from("x"), 0o644, 0, 0)
+        let fd0 = mocks.val.0.create(&root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.lookup(&root, &OsString::from("x")).unwrap().ino,
-            fd.ino);
+        let fd1 = mocks.val.0.lookup(&root, &OsString::from("x")).unwrap();
+        assert_eq!(fd1.ino(), fd0.ino());
 
         // The parent dir should have an "x" directory entry
         let entries = mocks.val.0.readdir(&root, 0);
@@ -144,7 +144,7 @@ test_suite! {
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd0.ino());
 
         // The parent dir's link count should not have increased
         let parent_attr = mocks.val.0.getattr(&root).unwrap();
@@ -470,7 +470,7 @@ root:
     test getextattr_enoent(mocks) {
         let name = OsString::from("foo");
         let namespace = ExtAttrNamespace::User;
-        let fd = FileData{ino: 9999};
+        let fd = FileData::new_for_tests(9999);
         assert_eq!(mocks.val.0.getextattrlen(&fd, namespace, &name),
                    Err(libc::ENOATTR));
         assert_eq!(mocks.val.0.getextattr(&fd, namespace, &name),
@@ -527,7 +527,7 @@ root:
         assert_eq!(attr.nlink, 2);
 
         // The parent should have a new directory entry
-        assert_eq!(mocks.val.0.lookup(&root, &dst).unwrap().ino, fd.ino);
+        assert_eq!(mocks.val.0.lookup(&root, &dst).unwrap().ino(), fd.ino());
     }
 
     /// link(2) should update the inode's ctime
@@ -689,8 +689,10 @@ root:
         let fd0 = mocks.val.0.create(&root, &filename0, 0o644, 0, 0).unwrap();
         let fd1 = mocks.val.0.create(&root, &filename1, 0o644, 0, 0).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&root, &filename0).unwrap().ino, fd0.ino);
-        assert_eq!(mocks.val.0.lookup(&root, &filename1).unwrap().ino, fd1.ino);
+        assert_eq!(mocks.val.0.lookup(&root, &filename0).unwrap().ino(),
+            fd0.ino());
+        assert_eq!(mocks.val.0.lookup(&root, &filename1).unwrap().ino(),
+            fd1.ino());
     }
 
     test lookup_enoent(mocks) {
@@ -704,8 +706,8 @@ root:
         let root = mocks.val.0.root();
         let fd = mocks.val.0.mkdir(&root, &OsString::from("x"), 0o755, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.lookup(&root, &OsString::from("x")).unwrap().ino,
-            fd.ino);
+        let fd1 = mocks.val.0.lookup(&root, &OsString::from("x")).unwrap();
+        assert_eq!(fd1.ino(), fd.ino());
 
         // The new dir should have "." and ".." directory entries
         let mut entries = mocks.val.0.readdir(&fd, 0);
@@ -715,14 +717,14 @@ root:
             CStr::from_ptr(&dotdot.d_name as *const c_char)
         };
         assert_eq!(dotdot_name, CString::new("..").unwrap().as_c_str());
-        assert_eq!(u64::from(dotdot.d_fileno), root.ino);
+        assert_eq!(u64::from(dotdot.d_fileno), root.ino());
         let (dot, _) = entries.next().unwrap().unwrap();
         assert_eq!(dot.d_type, libc::DT_DIR);
         let dot_name = unsafe{
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
         assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
-        assert_eq!(u64::from(dot.d_fileno), fd.ino);
+        assert_eq!(u64::from(dot.d_fileno), fd.ino());
 
         // The parent dir should have an "x" directory entry
         let entries = mocks.val.0.readdir(&root, 0);
@@ -737,7 +739,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
 
         // The parent dir's link count should've increased
         let parent_attr = mocks.val.0.getattr(&root).unwrap();
@@ -755,8 +757,10 @@ root:
         let fd0 = mocks.val.0.mkdir(&root, &filename0, 0o755, 0, 0).unwrap();
         let fd1 = mocks.val.0.mkdir(&root, &filename1, 0o755, 0, 0).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&root, &filename0).unwrap().ino, fd0.ino);
-        assert_eq!(mocks.val.0.lookup(&root, &filename1).unwrap().ino, fd1.ino);
+        assert_eq!(mocks.val.0.lookup(&root, &filename0).unwrap().ino(),
+            fd0.ino());
+        assert_eq!(mocks.val.0.lookup(&root, &filename1).unwrap().ino(),
+            fd1.ino());
     }
 
     /// mkdir(2) should update the parent dir's timestamps
@@ -789,7 +793,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
     }
 
     /// mknod(2) should update the parent dir's timestamps
@@ -822,7 +826,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
     }
 
     /// mknod(2) should update the parent dir's timestamps
@@ -854,7 +858,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
     }
 
     /// mkfifo(2) should update the parent dir's timestamps
@@ -886,7 +890,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
     }
 
     /// mksock(2) should update the parent dir's timestamps
@@ -1153,7 +1157,7 @@ root:
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
         assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
-        assert_eq!(u64::from(dot.d_fileno), root.ino);
+        assert_eq!(u64::from(dot.d_fileno), root.ino());
     }
 
     // Readdir of a directory with a hash collision
@@ -1200,7 +1204,7 @@ root:
         // filename0 happens to come first.
         let mut stream0 = mocks.val.0.readdir(&root, 0);
         let (result0, offset0) = stream0.next().unwrap().unwrap();
-        assert_eq!(u64::from(result0.d_fileno), fd0.ino);
+        assert_eq!(u64::from(result0.d_fileno), fd0.ino());
 
         // Now interrupt the stream, and resume with the supplied offset.
         let mut expected = HashSet::new();
@@ -1257,7 +1261,7 @@ root:
     }
 
     test readlink_enoent(mocks) {
-        let fd = FileData{ino: 1000};
+        let fd = FileData::new_for_tests(1000);
         assert_eq!(libc::ENOENT, mocks.val.0.readlink(&fd).unwrap_err());
     }
 
@@ -1300,8 +1304,8 @@ root:
 
         mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
-            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
+            src_fd.ino());
         assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
             libc::ENOENT);
         let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
@@ -1312,10 +1316,10 @@ root:
             libc::ENOENT);
 
         // Finally, make sure we didn't upset the colliding files
-        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src_c).unwrap().ino,
-            src_c_fd.ino);
-        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst_c).unwrap().ino,
-            dst_c_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src_c).unwrap().ino(),
+            src_c_fd.ino());
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst_c).unwrap().ino(),
+            dst_c_fd.ino());
     }
 
     // Rename a directory.  The target is also a directory
@@ -1336,8 +1340,8 @@ root:
 
         mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
-            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
+            src_fd.ino());
         assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
             libc::ENOENT);
         let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
@@ -1358,8 +1362,8 @@ root:
 
         mocks.val.0.rename(&parent_fd, &src, &parent_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&parent_fd, &dst).unwrap().ino,
-            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&parent_fd, &dst).unwrap().ino(),
+            src_fd.ino());
         assert_eq!(mocks.val.0.lookup(&parent_fd, &src).unwrap_err(),
             libc::ENOENT);
         let parent_inode = mocks.val.0.getattr(&parent_fd).unwrap();
@@ -1390,12 +1394,12 @@ root:
         assert_eq!(mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst),
                    Err(libc::ENOTEMPTY));
 
-        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap().ino,
-            src_fd.ino);
-        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
-            dst_fd.ino);
-        assert_eq!(mocks.val.0.lookup(&dst_fd, &dstf).unwrap().ino,
-            dstf_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap().ino(),
+            src_fd.ino());
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
+            dst_fd.ino());
+        assert_eq!(mocks.val.0.lookup(&dst_fd, &dstf).unwrap().ino(),
+            dstf_fd.ino());
     }
 
     // Rename a directory.  The target name does not exist
@@ -1414,7 +1418,8 @@ root:
 
         mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino, fd.ino);
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
+            fd.ino());
         assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
             libc::ENOENT);
         let srcdir_attr = mocks.val.0.getattr(&srcdir_fd).unwrap();
@@ -1435,7 +1440,8 @@ root:
         let dstdir_fd = mocks.val.0.mkdir(&srcdir_fd, &dstdir, 0o755, 0, 0)
         .unwrap();
 
-        let e = mocks.val.0.rename(&root, &srcdir, &dstdir_fd, &dst).unwrap_err();
+        let e = mocks.val.0.rename(&root, &srcdir, &dstdir_fd, &dst)
+            .unwrap_err();
         assert_eq!(libc::EINVAL, e);
     }
 
@@ -1454,10 +1460,11 @@ root:
 
         mocks.val.0.rename(&root, &src, &root, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&root, &dst).unwrap().ino, src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&root, &dst).unwrap().ino(),
+            src_fd.ino());
         assert_eq!(mocks.val.0.lookup(&root, &src).unwrap_err(), libc::ENOENT);
         let lnk_fd = mocks.val.0.lookup(&root, &lnk).unwrap();
-        assert_eq!(lnk_fd.ino, dst_fd.ino);
+        assert_eq!(lnk_fd.ino(), dst_fd.ino());
         let lnk_attr = mocks.val.0.getattr(&lnk_fd).unwrap();
         assert_eq!(lnk_attr.nlink, 1);
     }
@@ -1480,8 +1487,8 @@ root:
 
         mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
-            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
+            src_fd.ino());
         assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
             libc::ENOENT);
         let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
@@ -1508,8 +1515,8 @@ root:
 
         mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
-            fd.ino);
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
+            fd.ino());
         assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
             libc::ENOENT);
         let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
@@ -1539,8 +1546,8 @@ root:
 
         mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino,
-            src_fd.ino);
+        assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
+            src_fd.ino());
         assert_eq!(mocks.val.0.lookup(&srcdir_fd, &src).unwrap_err(),
             libc::ENOENT);
         let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
@@ -1551,7 +1558,7 @@ root:
         let (de, _) = mocks.val.0.readdir(&dstdir_fd, 0)
             .filter(|r| {
                 let dirent = r.unwrap().0;
-                u64::from(dirent.d_fileno) == src_fd.ino
+                u64::from(dirent.d_fileno) == src_fd.ino()
             }).nth(0).unwrap().unwrap();
         assert_eq!(de.d_type, libc::DT_REG);
     }
@@ -1632,7 +1639,8 @@ root:
         let _fd1 = mocks.val.0.mkdir(&root, &filename1, 0o755, 0, 0).unwrap();
         mocks.val.0.rmdir(&root, &filename1).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&root, &filename0).unwrap().ino, fd0.ino);
+        assert_eq!(mocks.val.0.lookup(&root, &filename0).unwrap().ino(),
+            fd0.ino());
         assert_eq!(mocks.val.0.lookup(&root, &filename1).unwrap_err(),
             libc::ENOENT);
     }
@@ -1640,7 +1648,8 @@ root:
     test rmdir_enoent(mocks) {
         let root = mocks.val.0.root();
         let dirname = OsString::from("x");
-        assert_eq!(mocks.val.0.rmdir(&root, &dirname).unwrap_err(), libc::ENOENT);
+        assert_eq!(mocks.val.0.rmdir(&root, &dirname).unwrap_err(),
+            libc::ENOENT);
     }
 
     #[should_panic]
@@ -1659,7 +1668,8 @@ root:
         .unwrap();
         mocks.val.0.mkdir(&fd, &dirname, 0o755, 0, 0)
         .unwrap();
-        assert_eq!(mocks.val.0.rmdir(&root, &dirname).unwrap_err(), libc::ENOTEMPTY);
+        assert_eq!(mocks.val.0.rmdir(&root, &dirname).unwrap_err(),
+            libc::ENOTEMPTY);
     }
 
     /// Try to remove a directory that isn't empty, and that has a hash
@@ -1983,7 +1993,7 @@ root:
         let srcname = OsString::from("src");
         let fd = mocks.val.0.symlink(&root, &srcname, 0o642, 0, 0, &dstname)
         .unwrap();
-        assert_eq!(mocks.val.0.lookup(&root, &srcname).unwrap().ino, fd.ino);
+        assert_eq!(mocks.val.0.lookup(&root, &srcname).unwrap().ino(), fd.ino());
 
         // The parent dir should have an "src" symlink entry
         let entries = mocks.val.0.readdir(&root, 0);
@@ -1998,7 +2008,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name.to_str().unwrap(), srcname.to_str().unwrap());
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino);
+        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
 
         let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.mode.0, libc::S_IFLNK | 0o642);
@@ -2049,7 +2059,8 @@ root:
 
         mocks.val.0.unlink(&root, &filename1).unwrap();
 
-        assert_eq!(mocks.val.0.lookup(&root, &filename0).unwrap().ino, fd0.ino);
+        assert_eq!(mocks.val.0.lookup(&root, &filename0).unwrap().ino(),
+            fd0.ino());
         assert_eq!(mocks.val.0.lookup(&root, &filename1).unwrap_err(),
             libc::ENOENT);
     }
@@ -2546,7 +2557,7 @@ test_suite! {
                 let piece: u64 = self.rng.gen_range(0, 4);
                 let ofs = 2048 * piece;
                 // Use a predictable fill value
-                let fill = (fd.ino.wrapping_mul(piece) %
+                let fill = (fd.ino().wrapping_mul(piece) %
                             u64::from(u8::max_value()))
                     as u8;
                 let buf = [fill; 2048];

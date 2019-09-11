@@ -304,12 +304,23 @@ impl<'a> From<&'a [u8]> for Uio {
 /// Basically, this is the stuff that would go in a vnode's v_data field
 #[derive(Debug)]
 pub struct FileData {
-    pub ino: u64
+    ino: u64
 }
 
 impl FileData {
+    pub fn ino(&self) -> u64
+    {
+        self.ino
+    }
+
+    /// Create a new `FileData`
     fn new(ino: u64) -> FileData {
         FileData{ino}
+    }
+
+    /// Create a new `FileData` for use in tests outside of this module
+    pub fn new_for_tests(ino: u64) -> Self {
+        FileData::new(ino)
     }
 }
 
