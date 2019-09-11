@@ -524,7 +524,7 @@ impl Filesystem for FuseFs {
         let newparent_fd = self.files.get(&newparent)
             .expect("rename before lookup or after forget");
         match self.fs.rename(&parent_fd, name, &newparent_fd, newname) {
-            Ok(()) => {
+            Ok(ino) => {
                 // Remove the cached destination file, if any
                 self.uncache_name(newparent, newname);
                 // Remove the cached source name (but not inode)
@@ -536,6 +536,10 @@ impl Filesystem for FuseFs {
                         self.names.insert(newname_key, ino);
                     },
                     None => ()  // Renaming uncached entries is OK
+                }
+                // Reparent the moved file
+                if let Some(fd) = self.files.get_mut(&ino) {
+                    fd.reparent(newparent);
                 }
                 reply.ok()
             },
@@ -2830,15 +2834,16 @@ mod rename {
                 predicate::eq(name),
                 predicate::function(move |fd: &FileData| fd.ino() == newparent),
                 predicate::eq(newname),
-            ).return_const(Ok(()));
+            ).return_const(Ok(ino));
 
         fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.files.insert(newparent,
             FileData::new_for_tests(Some(1), newparent));
         fusefs.names.insert((parent, name.to_owned()), ino);
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(parent), ino));
         fusefs.rename(&request, parent, name, newparent, newname, reply);
         assert_not_cached(&fusefs, parent, name, None);
-        // TODO: verify that the inode's cache entry has been reparented
+        assert_eq!(Some(newparent), fusefs.files.get(&ino).unwrap().parent());
     }
 }
 

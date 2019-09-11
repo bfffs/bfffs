@@ -69,7 +69,7 @@ mock! {
             -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>;
         fn readlink(&self, fd: &FileData) -> Result<OsString, i32>;
         fn rename(&self, parent: &FileData, name: &OsStr,
-                  newparent: &FileData, newname: &OsStr) -> Result<(), i32>;
+                  newparent: &FileData, newname: &OsStr) -> Result<u64, i32>;
         fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32>;
         fn root(&self) -> FileData;
         fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32>;

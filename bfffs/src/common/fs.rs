@@ -327,6 +327,11 @@ impl FileData {
     pub fn parent(&self) -> Option<u64> {
         self.parent
     }
+
+    pub fn reparent(&mut self, parent: u64) {
+        assert!(self.parent.is_some(), "Can't reparent the root directory");
+        self.parent = Some(parent);
+    }
 }
 
 /// Generic Filesystem layer.
@@ -1549,8 +1554,9 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    /// Rename a file.  Return the inode number of the renamed file.
     pub fn rename(&self, parent: &FileData, name: &OsStr,
-        newparent: &FileData, newname: &OsStr) -> Result<(), i32>
+        newparent: &FileData, newname: &OsStr) -> Result<u64, i32>
     {
         // Outline:
         // 0)  Check conditions
@@ -1561,7 +1567,7 @@ impl Fs {
         //     parent.
         // 3ci) If dst existed and is not a directory, decrement its link count
         // 3cii) If dst existed and is a directory, remove it
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = oneshot::channel::<Result<u64, i32>>();
         let src_objkey = ObjKey::dir_entry(&name);
         let owned_name = name.to_owned();
         let owned_name2 = owned_name.clone();
@@ -1612,12 +1618,13 @@ impl Fs {
                     // 2) Insert the new directory entry
                     let isdir = dirent.dtype == libc::DT_DIR;
                     dirent.name = owned_newname2.clone();
+                    let ino = dirent.ino;
                     htable::insert(ds6, dst_de_key, dirent, owned_newname2)
                     .map(move |r| {
                         let old_dst_ino = r.map(|dirent| dirent.ino);
-                        (old_dst_ino, isdir)
+                        (ino, old_dst_ino, isdir)
                     })
-                }).and_then(move |(old_dst_ino, isdir)| {
+                }).and_then(move |(ino, old_dst_ino, isdir)| {
                     // 3a) Decrement parent dir's link count
                     let ds2 = ds.clone();
                     let parent_ino_key = FSKey::new(parent_ino, ObjKey::Inode);
@@ -1675,9 +1682,10 @@ impl Fs {
                         boxfut!(Ok(()).into_future())
                     };
                     unlink_fut.join3(p_nlink_fut, np_nlink_fut)
+                    .map(move |_| ino)
                 }).then(move |r| {
                     match r {
-                        Ok(_) => tx.send(Ok(())),
+                        Ok(ino) => tx.send(Ok(ino)),
                         Err(e) => tx.send(Err(e.into()))
                     }.expect("FS::rename: send failed");
                     Ok(()).into_future()

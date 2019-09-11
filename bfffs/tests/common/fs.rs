@@ -1302,7 +1302,8 @@ root:
         let dst_fd = mocks.val.0.create(&dstdir_fd, &dst, 0o644, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
+        assert_eq!(src_fd.ino(),
+            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap());
 
         assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
             src_fd.ino());
@@ -1338,7 +1339,9 @@ root:
         let dst_fd = mocks.val.0.mkdir(&dstdir_fd, &dst, 0o755, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
+        assert_eq!(src_fd.ino(),
+            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+        );
 
         assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
             src_fd.ino());
@@ -1360,7 +1363,9 @@ root:
         let src_fd = mocks.val.0.mkdir(&parent_fd, &src, 0o755, 0, 0).unwrap();
         let dst_fd = mocks.val.0.mkdir(&parent_fd, &dst, 0o755, 0, 0).unwrap();
 
-        mocks.val.0.rename(&parent_fd, &src, &parent_fd, &dst).unwrap();
+        assert_eq!(src_fd.ino(),
+            mocks.val.0.rename(&parent_fd, &src, &parent_fd, &dst).unwrap()
+        );
 
         assert_eq!(mocks.val.0.lookup(&parent_fd, &dst).unwrap().ino(),
             src_fd.ino());
@@ -1416,7 +1421,9 @@ root:
         let fd = mocks.val.0.mkdir(&srcdir_fd, &src, 0o755, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
+        assert_eq!(fd.ino(),
+            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+        );
 
         assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
             fd.ino());
@@ -1458,7 +1465,9 @@ root:
         .unwrap();
         mocks.val.0.link(&root, &dst_fd, &lnk).unwrap();
 
-        mocks.val.0.rename(&root, &src, &root, &dst).unwrap();
+        assert_eq!(src_fd.ino(),
+            mocks.val.0.rename(&root, &src, &root, &dst).unwrap()
+        );
 
         assert_eq!(mocks.val.0.lookup(&root, &dst).unwrap().ino(),
             src_fd.ino());
@@ -1485,7 +1494,9 @@ root:
         let dst_fd = mocks.val.0.create(&dstdir_fd, &dst, 0o644, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
+        assert_eq!(src_fd.ino(),
+            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+        );
 
         assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
             src_fd.ino());
@@ -1513,7 +1524,9 @@ root:
         let fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
         .unwrap();
 
-        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
+        assert_eq!(fd.ino(),
+            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+        );
 
         assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
             fd.ino());
@@ -1544,7 +1557,9 @@ root:
                                           &linktarget)
         .unwrap();
 
-        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
+        assert_eq!(src_fd.ino(),
+            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+        );
 
         assert_eq!(mocks.val.0.lookup(&dstdir_fd, &dst).unwrap().ino(),
             src_fd.ino());
@@ -1575,7 +1590,9 @@ root:
         let fd = mocks.val.0.create(&root, &src, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(&fd, ns, &name, &value[..]).unwrap();
 
-        mocks.val.0.rename(&root, &src, &root, &dst).unwrap();
+        assert_eq!(fd.ino(),
+            mocks.val.0.rename(&root, &src, &root, &dst).unwrap()
+        );
 
         let new_fd = mocks.val.0.lookup(&root, &dst).unwrap();
         let v = mocks.val.0.getextattr(&new_fd, ns, &name).unwrap();
@@ -1599,7 +1616,9 @@ root:
         clear_timestamps(&mocks.val.0, &dstdir_fd);
         clear_timestamps(&mocks.val.0, &fd);
 
-        mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap();
+        assert_eq!(fd.ino(),
+            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+        );
 
         // Timestamps should've been updated for parent directories, but not for
         // the file itself
