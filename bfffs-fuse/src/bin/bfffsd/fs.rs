@@ -222,6 +222,7 @@ impl Filesystem for FuseFs {
         // XXX will FUSE_FORGET ever be sent with nlookup less than the actual
         // lookup count?  Not as far as I know.
         // TODO: track nlookup in the cache
+        // TODO: figure out how to expire entries from the name cache, too
         let fd = self.files.remove(&ino)
             .expect("Forget before lookup or double-forget");
         self.fs.inactive(fd);
@@ -678,8 +679,24 @@ mod t {
 
 use super::*;
 use bfffs::common::fs::{FileData, GetAttr, Mode};
-use mockall::{PredicateStrExt, Sequence, predicate};
+use mockall::{Sequence, predicate};
 use std::mem;
+
+fn assert_cached(fusefs: &FuseFs, parent_ino: u64, name: &OsStr, ino: u64) {
+    assert!(fusefs.files.contains_key(&ino));
+    let key = (parent_ino, name.to_owned());
+    assert_eq!(Some(&ino), fusefs.names.get(&key));
+}
+
+fn assert_not_cached(fusefs: &FuseFs, parent_ino: u64, name: &OsStr,
+                     ino: Option<u64>)
+{
+    if let Some(i) = ino {
+        assert!(!fusefs.files.contains_key(&i));
+    }
+    let key = (parent_ino, name.to_owned());
+    assert!(!fusefs.names.contains_key(&key));
+}
 
 fn make_mock_fs() -> FuseFs {
     let mut mock_fs = Fs::default();
@@ -693,7 +710,7 @@ mod create {
     #[test]
     fn enotdir() {
         let mode: u16 = 0o644;
-        const NAME: &'static str = "foo.txt";
+        let name = OsStr::from_bytes(b"foo.txt");
         let parent_ino = 42;
 
         let mut request = Request::default();
@@ -711,21 +728,63 @@ mod create {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent_ino),
-                predicate::str::contains(NAME).from_utf8(),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
             ).returning(|_, _, _, _, _| Err(libc::ENOTDIR));
 
         fusefs.files.insert(parent_ino, FileData{ino: parent_ino});
-        fusefs.create(&request, parent_ino, &OsString::from(NAME), mode.into(),
-            0, reply);
+        fusefs.create(&request, parent_ino, name, mode.into(), 0, reply);
+        assert_not_cached(&fusefs, parent_ino, name, None);
+    }
+
+    // The file gets created successfully, but fetching its attributes fails
+    #[test]
+    fn getattr_eio() {
+        let mode: u16 = 0o644;
+        let name = OsStr::from_bytes(b"foo.txt");
+        let parent_ino = 42;
+        let ino = 43;
+
+        let mut request = Request::default();
+        request.expect_uid().return_const(12345u32);
+        request.expect_gid().return_const(12345u32);
+
+        let mut reply = ReplyCreate::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EIO))
+            .return_const(());
+
+        let mut fusefs = make_mock_fs();
+        fusefs.fs.expect_create()
+            .times(1)
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino == parent_ino),
+                predicate::eq(name),
+                predicate::eq(mode),
+                predicate::always(),
+                predicate::always(),
+            ).returning(move |_, _, _, _, _| Ok(FileData{ino}));
+        fusefs.fs.expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino == ino))
+            .return_const(Err(libc::EIO));
+        fusefs.fs.expect_inactive()
+            .withf(move |fd| fd.ino == ino)
+            .times(1)
+            .return_const(());
+
+        fusefs.files.insert(parent_ino, FileData{ino: parent_ino});
+        fusefs.create(&request, parent_ino, name,
+            mode.into(), 0, reply);
+        assert_not_cached(&fusefs, parent_ino, name, Some(ino));
     }
 
     #[test]
     fn ok() {
         let mode: u16 = 0o644;
-        const NAME: &'static str = "foo.txt";
+        let name = OsStr::from_bytes(b"foo.txt");
         let parent_ino = 42;
         let ino = 43;
         let uid = 12345u32;
@@ -753,7 +812,7 @@ mod create {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent_ino),
-                predicate::str::contains(NAME).from_utf8(),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
@@ -777,8 +836,9 @@ mod create {
             }));
 
         fusefs.files.insert(parent_ino, FileData{ino: parent_ino});
-        fusefs.create(&request, parent_ino, &OsString::from(NAME), mode.into(),
-            0, reply);
+        fusefs.create(&request, parent_ino, name,
+            mode.into(), 0, reply);
+        assert_cached(&fusefs, parent_ino, name, ino);
     }
 }
 
@@ -844,7 +904,7 @@ mod forget {
     fn one() {
         let parent = 42;
         let ino = 43;
-        let name = b"foo.txt";
+        let name = OsStr::from_bytes(b"foo.txt");
         let uid = 12345u32;
         let gid = 54321u32;
         let mode = 0o644;
@@ -858,7 +918,7 @@ mod forget {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::eq(OsStr::from_bytes(&name[..]))
+                predicate::eq(name)
             ).returning(move |_, _| Ok(FileData{ino}));
         fusefs.fs.expect_getattr()
             .with( predicate::function(move |fd: &FileData| fd.ino == ino))
@@ -889,8 +949,9 @@ mod forget {
             }).return_const(());
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.lookup(&request, parent, OsStr::from_bytes(&name[..]), reply);
+        fusefs.lookup(&request, parent, name, reply);
         fusefs.forget(&request, ino, 1);
+        assert!(!fusefs.files.contains_key(&ino))
     }
 }
 
@@ -1181,7 +1242,7 @@ mod link {
     // would've been a better choice
     #[test]
     fn eperm() {
-        const NAME: &'static [u8] = b"foo";
+        let name = OsStr::from_bytes(b"foo.txt");
         let parent = 42;
         let ino = 43;
 
@@ -1199,18 +1260,56 @@ mod link {
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::function(move |fd: &FileData| fd.ino == ino),
-                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(name),
             ).return_const(Err(libc::EPERM));
 
         fusefs.files.insert(parent, FileData{ino: parent});
         fusefs.files.insert(ino, FileData{ino});
-        fusefs.link(&request, ino, parent, OsStr::from_bytes(NAME), reply);
+        fusefs.link(&request, ino, parent, name, reply);
+        assert_not_cached(&fusefs, parent, name, None);
+    }
+
+    // link completes successfully, but the subsequent getattr does not
+    #[test]
+    fn getattr_eio() {
+        let mut seq = Sequence::new();
+        let name = OsStr::from_bytes(b"foo.txt");
+        let parent = 42;
+        let ino = 43;
+
+        let request = Request::default();
+
+        let mut reply = ReplyEntry::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EIO))
+            .return_const(());
+
+        let mut fusefs = make_mock_fs();
+        fusefs.fs.expect_link()
+            .times(1)
+            .in_sequence(&mut seq)
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino == parent),
+                predicate::function(move |fd: &FileData| fd.ino == ino),
+                predicate::eq(name),
+            ).return_const(Ok(()));
+        fusefs.fs.expect_getattr()
+            .with( predicate::function(move |fd: &FileData| fd.ino == ino))
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_const(Err(libc::EIO));
+
+        fusefs.files.insert(parent, FileData{ino: parent});
+        fusefs.files.insert(ino, FileData{ino});
+        fusefs.link(&request, ino, parent, name, reply);
+        assert_not_cached(&fusefs, parent, name, None);
     }
 
     #[test]
     fn ok() {
         let mut seq = Sequence::new();
-        const NAME: &'static [u8] = b"foo";
+        let name = OsStr::from_bytes(b"foo.txt");
         let parent = 42;
         let ino = 43;
         let size = 1024;
@@ -1241,7 +1340,7 @@ mod link {
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
                 predicate::function(move |fd: &FileData| fd.ino == ino),
-                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(name),
             ).return_const(Ok(()));
         fusefs.fs.expect_getattr()
             .with( predicate::function(move |fd: &FileData| fd.ino == ino))
@@ -1266,7 +1365,8 @@ mod link {
 
         fusefs.files.insert(parent, FileData{ino: parent});
         fusefs.files.insert(ino, FileData{ino});
-        fusefs.link(&request, ino, parent, OsStr::from_bytes(NAME), reply);
+        fusefs.link(&request, ino, parent, name, reply);
+        assert_cached(&fusefs, parent, name, ino);
     }
 }
 
@@ -1449,9 +1549,60 @@ mod lookup {
     use super::*;
 
     #[test]
+    fn cached() {
+        let parent = 42;
+        let ino = 43;
+        let name = OsStr::from_bytes(b"foo.txt");
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o644;
+        let size = 1024;
+
+        let request = Request::default();
+        let mut reply = ReplyEntry::new();
+
+        let mut fusefs = make_mock_fs();
+        fusefs.fs.expect_getattr()
+            .with( predicate::function(move |fd: &FileData| fd.ino == ino))
+            .times(1)
+            .return_const(Ok(GetAttr {
+                ino,
+                size,
+                blocks: 0,
+                atime: Timespec{sec: 0, nsec: 0},
+                mtime: Timespec{sec: 0, nsec: 0},
+                ctime: Timespec{sec: 0, nsec: 0},
+                birthtime: Timespec{sec: 0, nsec: 0},
+                mode: Mode(mode | libc::S_IFREG),
+                nlink: 1,
+                uid,
+                gid,
+                rdev: 0,
+                flags: 0
+            }));
+        reply.expect_entry()
+            .times(1)
+            .withf(move |_ttl, attr, _gen| {
+                attr.ino == ino &&
+                attr.size == size &&
+                attr.kind == FileType::RegularFile &&
+                attr.perm == mode &&
+                attr.nlink == 1 &&
+                attr.uid == uid &&
+                attr.gid == gid &&
+                attr.rdev == 0
+            }).return_const(());
+
+        fusefs.files.insert(parent, FileData{ino: parent});
+        fusefs.files.insert(ino, FileData{ino: ino});
+        fusefs.names.insert((parent, name.to_owned()), ino);
+        fusefs.lookup(&request, parent, name, reply);
+    }
+
+    #[test]
     fn enoent() {
         let parent = 42;
-        let name = b"foo.txt";
+        let name = OsStr::from_bytes(b"foo.txt");
 
         let request = Request::default();
         let mut reply = ReplyEntry::new();
@@ -1465,18 +1616,20 @@ mod lookup {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::eq(OsStr::from_bytes(&name[..]))
+                predicate::eq(name)
             ).returning(|_, _| Err(libc::ENOENT));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.lookup(&request, parent, OsStr::from_bytes(&name[..]), reply);
+        fusefs.lookup(&request, parent, name, reply);
+        assert_not_cached(&fusefs, parent, name, None);
     }
 
+    // The file's name is cached, but its FileData is not
     #[test]
-    fn ok() {
+    fn name_cached() {
         let parent = 42;
         let ino = 43;
-        let name = b"foo.txt";
+        let name = OsStr::from_bytes(b"foo.txt");
         let uid = 12345u32;
         let gid = 54321u32;
         let mode = 0o644;
@@ -1490,7 +1643,7 @@ mod lookup {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::eq(OsStr::from_bytes(&name[..]))
+                predicate::eq(name)
             ).returning(move |_, _| Ok(FileData{ino}));
         fusefs.fs.expect_getattr()
             .with( predicate::function(move |fd: &FileData| fd.ino == ino))
@@ -1524,7 +1677,103 @@ mod lookup {
             }).return_const(());
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.lookup(&request, parent, OsStr::from_bytes(&name[..]), reply);
+        fusefs.names.insert((parent, name.to_owned()),
+                             ino);
+        fusefs.lookup(&request, parent, name, reply);
+        assert_cached(&fusefs, parent, name, ino);
+    }
+
+    // The file's name is cached, but its FileData is not, and getattr returns
+    // an error.  We must not leak the FileData.
+    #[test]
+    fn name_cached_getattr_io() {
+        let parent = 42;
+        let ino = 43;
+        let name = OsStr::from_bytes(b"foo.txt");
+
+        let request = Request::default();
+        let mut reply = ReplyEntry::new();
+
+        let mut fusefs = make_mock_fs();
+        fusefs.fs.expect_lookup()
+            .times(1)
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino == parent),
+                predicate::eq(name)
+            ).returning(move |_, _| Ok(FileData{ino}));
+        fusefs.fs.expect_getattr()
+            .with( predicate::function(move |fd: &FileData| fd.ino == ino))
+            .times(1)
+            .return_const(Err(libc::EIO));
+        fusefs.fs.expect_inactive()
+            .withf(move |fd| fd.ino == ino)
+            .return_const(());
+
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EIO))
+            .return_const(());
+
+        fusefs.files.insert(parent, FileData{ino: parent});
+        fusefs.names.insert((parent, name.to_owned()), ino);
+        fusefs.lookup(&request, parent, name, reply);
+        assert!(!fusefs.files.contains_key(&ino));
+    }
+
+    #[test]
+    fn ok() {
+        let parent = 42;
+        let ino = 43;
+        let name = OsStr::from_bytes(b"foo.txt");
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o644;
+        let size = 1024;
+
+        let request = Request::default();
+        let mut reply = ReplyEntry::new();
+
+        let mut fusefs = make_mock_fs();
+        fusefs.fs.expect_lookup()
+            .times(1)
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino == parent),
+                predicate::eq(name)
+            ).returning(move |_, _| Ok(FileData{ino}));
+        fusefs.fs.expect_getattr()
+            .with( predicate::function(move |fd: &FileData| fd.ino == ino))
+            .times(1)
+            .return_const(Ok(GetAttr {
+                ino,
+                size,
+                blocks: 0,
+                atime: Timespec{sec: 0, nsec: 0},
+                mtime: Timespec{sec: 0, nsec: 0},
+                ctime: Timespec{sec: 0, nsec: 0},
+                birthtime: Timespec{sec: 0, nsec: 0},
+                mode: Mode(mode | libc::S_IFREG),
+                nlink: 1,
+                uid,
+                gid,
+                rdev: 0,
+                flags: 0
+            }));
+        reply.expect_entry()
+            .times(1)
+            .withf(move |_ttl, attr, _gen| {
+                attr.ino == ino &&
+                attr.size == size &&
+                attr.kind == FileType::RegularFile &&
+                attr.perm == mode &&
+                attr.nlink == 1 &&
+                attr.uid == uid &&
+                attr.gid == gid &&
+                attr.rdev == 0
+            }).return_const(());
+
+        fusefs.files.insert(parent, FileData{ino: parent});
+        fusefs.lookup(&request, parent, name, reply);
+        assert_cached(&fusefs, parent, name, ino);
     }
 }
 
@@ -1534,7 +1783,7 @@ mod mkdir {
     #[test]
     fn eperm() {
         let mode: u16 = 0o755;
-        const NAME: &'static [u8; 3] = b"foo";
+        let name = OsStr::from_bytes(b"foo.txt");
         let parent = 42;
         let uid = 12345u32;
         let gid = 54321u32;
@@ -1554,21 +1803,66 @@ mod mkdir {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
             ).returning(|_, _, _, _, _| Err(libc::EPERM));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.mkdir(&request, parent, OsStr::from_bytes(NAME),
+        fusefs.mkdir(&request, parent, name,
             (libc::S_IFDIR | mode).into(), reply);
+        assert_not_cached(&fusefs, parent, name, None);
+    }
+
+    // The mkdir succeeds, but fetching attributes afterwards fails
+    #[test]
+    fn getattr_eio() {
+        let mode: u16 = 0o755;
+        let name = OsStr::from_bytes(b"foo");
+        let parent = 42;
+        let ino = 43;
+        let uid = 12345u32;
+        let gid = 54321u32;
+
+        let mut request = Request::default();
+        request.expect_uid().return_const(uid);
+        request.expect_gid().return_const(gid);
+
+        let mut reply = ReplyEntry::new();
+        reply.expect_error()
+            .times(1)
+            .with(predicate::eq(libc::EIO))
+            .return_const(());
+
+        let mut fusefs = make_mock_fs();
+        fusefs.fs.expect_mkdir()
+            .times(1)
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino == parent),
+                predicate::eq(name),
+                predicate::eq(mode),
+                predicate::eq(uid),
+                predicate::eq(gid),
+            ).returning(move |_, _, _, _, _| Ok(FileData{ino}));
+        fusefs.fs.expect_getattr()
+            .times(1)
+            .return_const(Err(libc::EIO));
+        fusefs.fs.expect_inactive()
+            .withf(move |fd| fd.ino == ino)
+            .times(1)
+            .return_const(());
+
+        fusefs.files.insert(parent, FileData{ino: parent});
+        fusefs.mkdir(&request, parent, name,
+            (libc::S_IFDIR | mode).into(), reply);
+        assert_not_cached(&fusefs, parent, name, None);
     }
 
     #[test]
     fn ok() {
         let mode: u16 = 0o755;
-        const NAME: &'static [u8; 3] = b"foo";
+        let name = OsStr::from_bytes(b"foo");
         let parent = 42;
         let ino = 43;
         let uid = 12345u32;
@@ -1596,7 +1890,7 @@ mod mkdir {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
@@ -1620,8 +1914,9 @@ mod mkdir {
             }));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.mkdir(&request, parent, OsStr::from_bytes(NAME),
+        fusefs.mkdir(&request, parent, name,
             (libc::S_IFDIR | mode).into(), reply);
+        assert_cached(&fusefs, parent, name, ino);
     }
 }
 
@@ -1632,7 +1927,7 @@ mod mknod {
     fn blk() {
         let mut seq = Sequence::new();
         let mode: u16 = 0o644;
-        const NAME: &'static str = "foo";
+        let name = OsStr::from_bytes(b"foo");
         let parent = 42;
         let ino = 43;
         let uid = 12345u32;
@@ -1663,7 +1958,7 @@ mod mknod {
             .in_sequence(&mut seq)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::str::contains(NAME).from_utf8(),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
@@ -1689,15 +1984,16 @@ mod mknod {
             }));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.mknod(&request, parent, &OsString::from(NAME),
+        fusefs.mknod(&request, parent, name,
             (libc::S_IFBLK | mode).into(), rdev, reply);
+        assert_cached(&fusefs, parent, name, ino);
     }
 
     #[test]
     fn char() {
         let mut seq = Sequence::new();
         let mode: u16 = 0o644;
-        const NAME: &'static str = "foo";
+        let name = OsStr::from_bytes(b"foo");
         let parent = 42;
         let ino = 43;
         let uid = 12345u32;
@@ -1728,7 +2024,7 @@ mod mknod {
             .in_sequence(&mut seq)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::str::contains(NAME).from_utf8(),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
@@ -1754,14 +2050,15 @@ mod mknod {
             }));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.mknod(&request, parent, &OsString::from(NAME),
+        fusefs.mknod(&request, parent, name,
             (libc::S_IFCHR | mode).into(), rdev, reply);
+        assert_cached(&fusefs, parent, name, ino);
     }
 
     #[test]
     fn eperm() {
         let mode: u16 = 0o644;
-        const NAME: &'static str = "foo.pipe";
+        let name = OsStr::from_bytes(b"foo.pipe");
         let parent = 42;
         let uid = 12345u32;
         let gid = 54321u32;
@@ -1781,22 +2078,23 @@ mod mknod {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::str::contains(NAME).from_utf8(),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
             ).returning(|_, _, _, _, _| Err(libc::EPERM));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.mknod(&request, parent, &OsString::from(NAME),
+        fusefs.mknod(&request, parent, name,
             (libc::S_IFIFO | mode).into(), 0, reply);
+        assert_not_cached(&fusefs, parent, name, None);
     }
 
     #[test]
     fn fifo() {
         let mut seq = Sequence::new();
         let mode: u16 = 0o644;
-        const NAME: &'static str = "foo.pipe";
+        let name = OsStr::from_bytes(b"foo.pipe");
         let parent = 42;
         let ino = 43;
         let uid = 12345u32;
@@ -1825,7 +2123,7 @@ mod mknod {
             .in_sequence(&mut seq)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::str::contains(NAME).from_utf8(),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
@@ -1850,15 +2148,16 @@ mod mknod {
             }));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.mknod(&request, parent, &OsString::from(NAME),
+        fusefs.mknod(&request, parent, name,
             (libc::S_IFIFO | mode).into(), 0, reply);
+        assert_cached(&fusefs, parent, name, ino);
     }
 
     #[test]
     fn sock() {
         let mut seq = Sequence::new();
         let mode: u16 = 0o644;
-        const NAME: &'static str = "foo.sock";
+        let name = OsStr::from_bytes(b"foo.sock");
         let parent = 42;
         let ino = 43;
         let uid = 12345u32;
@@ -1887,7 +2186,7 @@ mod mknod {
             .in_sequence(&mut seq)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::str::contains(NAME).from_utf8(),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
@@ -1912,8 +2211,9 @@ mod mknod {
             }));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.mknod(&request, parent, &OsString::from(NAME),
+        fusefs.mknod(&request, parent, name,
             (libc::S_IFSOCK | mode).into(), 0, reply);
+        assert_cached(&fusefs, parent, name, ino);
     }
 }
 
@@ -2428,20 +2728,20 @@ mod readlink {
     #[test]
     fn ok() {
         let ino = 42;
-        let name = b"some_file.txt";
+        let name = OsStr::from_bytes(b"some_file.txt");
 
         let request = Request::default();
         let mut reply = ReplyData::new();
         reply.expect_data()
             .times(1)
-            .with(predicate::eq(&name[..]))
+            .with(predicate::eq(name.as_bytes()))
             .return_const(());
 
         let mut fusefs = make_mock_fs();
         fusefs.fs.expect_readlink()
             .times(1)
             .with(predicate::function(move |fd: &FileData| fd.ino == ino))
-            .return_const(Ok(OsStr::from_bytes(&name[..]).to_owned()));
+            .return_const(Ok(name.to_owned()));
 
         fusefs.files.insert(ino, FileData{ino});
         fusefs.readlink(&request, ino, reply);
@@ -2479,12 +2779,14 @@ mod rename {
         fusefs.files.insert(parent, FileData{ino: parent});
         fusefs.files.insert(newparent, FileData{ino: newparent});
         fusefs.rename(&request, parent, name, newparent, newname, reply);
+        assert_not_cached(&fusefs, newparent, newname, None);
     }
 
     #[test]
     fn ok() {
         let parent = 42;
         let newparent = 43;
+        let ino = 44;
         let name = OsStr::from_bytes(b"foo");
         let newname = OsStr::from_bytes(b"bar");
 
@@ -2507,7 +2809,9 @@ mod rename {
 
         fusefs.files.insert(parent, FileData{ino: parent});
         fusefs.files.insert(newparent, FileData{ino: newparent});
+        fusefs.names.insert((parent, name.to_owned()), ino);
         fusefs.rename(&request, parent, name, newparent, newname, reply);
+        assert_not_cached(&fusefs, parent, name, None);
     }
 }
 
@@ -2561,6 +2865,7 @@ mod rmdir {
 
         fusefs.files.insert(parent, FileData{ino: parent});
         fusefs.rmdir(&request, parent, name, reply);
+        assert_not_cached(&fusefs, parent, name, None);
     }
 }
 
@@ -2794,7 +3099,7 @@ mod symlink {
 
     #[test]
     fn eloop() {
-        const NAME: &'static [u8] = b"foo";
+        let name = OsStr::from_bytes(b"foo");
         let mode: u16 = 0o755;
         let parent = 42;
 
@@ -2813,21 +3118,22 @@ mod symlink {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
-                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(name),
             ).returning(|_, _, _, _, _, _| Err(libc::ELOOP));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.symlink(&request, parent, OsStr::from_bytes(NAME),
-            Path::new(OsStr::from_bytes(NAME)), reply);
+        fusefs.symlink(&request, parent, name,
+            Path::new(name), reply);
+        assert_not_cached(&fusefs, parent, name, None);
     }
 
     #[test]
     fn ok() {
-        const NAME: &'static [u8] = b"foo";
+        let name = OsStr::from_bytes(b"foo");
         let mode: u16 = 0o755;
         let parent = 42;
         let ino = 43;
@@ -2856,11 +3162,11 @@ mod symlink {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino == parent),
-                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(name),
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
-                predicate::eq(OsStr::from_bytes(NAME)),
+                predicate::eq(name),
             ).returning(move |_, _, _, _, _, _| Ok(FileData{ino}));
         fusefs.fs.expect_getattr()
             .with(predicate::function(move |fd: &FileData| fd.ino == ino))
@@ -2881,8 +3187,8 @@ mod symlink {
             }));
 
         fusefs.files.insert(parent, FileData{ino: parent});
-        fusefs.symlink(&request, parent, OsStr::from_bytes(NAME),
-            Path::new(OsStr::from_bytes(NAME)), reply);
+        fusefs.symlink(&request, parent, name,
+            Path::new(name), reply);
     }
 }
 
@@ -2936,6 +3242,7 @@ mod unlink {
 
         fusefs.files.insert(parent, FileData{ino: parent});
         fusefs.unlink(&request, parent, name, reply);
+        assert_not_cached(&fusefs, parent, name, None);
     }
 }
 
