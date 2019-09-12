@@ -243,7 +243,7 @@ pub unsafe extern "C" fn fio_bfffs_open(
     let root_opt = ROOT.lock().unwrap();
     let root = root_opt.as_ref().unwrap();
     let r = fs
-        .lookup(&root, file_name)
+        .lookup(None, &root, file_name)
         .or_else(|_| fs.create(&root, file_name, 0o600, 0, 0));
     match r {
         Ok(fd) => {

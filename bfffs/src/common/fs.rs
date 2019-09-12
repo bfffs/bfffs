@@ -1133,11 +1133,21 @@ impl Fs {
     /// NB: The client is responsible for managing the lifetime of the returned
     /// `FileData` object.  In particular, the client must ensure that there are
     /// never two `FileData`s for the same directory entry at the same time.
-    pub fn lookup(&self, parent: &FileData, name: &OsStr)
-        -> Result<FileData, i32>
+    pub fn lookup(&self, grandparent: Option<&FileData>, parent: &FileData,
+        name: &OsStr) -> Result<FileData, i32>
     {
-        let parent_ino = parent.ino;
         let (tx, rx) = oneshot::channel();
+
+        let dot = name == OsStr::from_bytes(b".");
+        let dotdot = name == OsStr::from_bytes(b"..");
+        let parent_ino = if dot {
+            parent.parent()
+        } else if dotdot {
+            grandparent.unwrap().parent()
+        } else {
+            Some(parent.ino())
+        };
+
         let objkey = ObjKey::dir_entry(name);
         let owned_name = name.to_owned();
         let key = FSKey::new(parent.ino, objkey);
@@ -1148,10 +1158,8 @@ impl Fs {
                 .then(move |r| {
                     match r {
                         Ok(de) => {
-                            // TODO: set fd_parent correctly when "name" is "."
-                            // or ".."
                             let fd_parent = if de.dtype == libc::DT_DIR {
-                                Some(parent_ino)
+                                parent_ino
                             } else {
                                 None
                             };

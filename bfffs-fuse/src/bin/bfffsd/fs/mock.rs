@@ -41,8 +41,8 @@ mock! {
             name: &OsStr) -> Result<u32, i32>;
         fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
             -> Result<(), i32>;
-        fn lookup(&self, parent: &FileData, name: &OsStr)
-            -> Result<FileData, i32>;
+        fn lookup<'a>(&self, grandparent: Option<&'a FileData>,
+            parent: &'a FileData, name: &OsStr) -> Result<FileData, i32>;
         // TODO: After upgrading mockall to 0.4.0 (which allows where clauses
         // with closures), restore the definitions of listextattr and
         // listextattrlen to the originals, which use where clauses

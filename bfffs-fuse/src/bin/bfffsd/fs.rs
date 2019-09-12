@@ -302,6 +302,7 @@ impl Filesystem for FuseFs {
     {
         let parent_fd = self.files.get(&parent)
             .expect("lookup of child before lookup of parent");
+        let grandparent_fd = self.files.get(&parent);
         match self.names.get(&(parent, name.to_owned())) {
             Some(ino) => match self.files.get(ino) {
                 Some(fd) => {
@@ -313,7 +314,7 @@ impl Filesystem for FuseFs {
                 },
                 None => {
                     // Only name is cached
-                    let r = self.fs.lookup(&parent_fd, name)
+                    let r = self.fs.lookup(grandparent_fd, &parent_fd, name)
                     .and_then(|fd| {
                         match self.do_getattr(&fd) {
                             Ok(file_attr) => {
@@ -336,7 +337,7 @@ impl Filesystem for FuseFs {
             },
             None => {
                 // Name is not cached
-                let r = self.fs.lookup(&parent_fd, name);
+                let r = self.fs.lookup(grandparent_fd, &parent_fd, name);
                 self.handle_new_entry(r, parent, name, reply);
             }
         }
@@ -926,9 +927,10 @@ mod forget {
         fusefs.fs.expect_lookup()
             .times(1)
             .with(
+                predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::eq(name)
-            ).returning(move |_, _|
+            ).returning(move |_, _, _|
                 Ok(FileData::new_for_tests(None, ino))
             );
         fusefs.fs.expect_getattr()
@@ -1626,9 +1628,10 @@ mod lookup {
         fusefs.fs.expect_lookup()
             .times(1)
             .with(
+                predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::eq(name)
-            ).returning(|_, _| Err(libc::ENOENT));
+            ).returning(|_, _, _| Err(libc::ENOENT));
 
         fusefs.files.insert(parent, FileData::new_for_tests(None, parent));
         fusefs.lookup(&request, parent, name, reply);
@@ -1653,9 +1656,10 @@ mod lookup {
         fusefs.fs.expect_lookup()
             .times(1)
             .with(
+                predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::eq(name)
-            ).returning(move |_, _|
+            ).returning(move |_, _, _|
                 Ok(FileData::new_for_tests(None, ino))
             );
         fusefs.fs.expect_getattr()
@@ -1711,9 +1715,10 @@ mod lookup {
         fusefs.fs.expect_lookup()
             .times(1)
             .with(
+                predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::eq(name)
-            ).returning(move |_, _|
+            ).returning(move |_, _, _|
                 Ok(FileData::new_for_tests(None, ino))
             );
         fusefs.fs.expect_getattr()
@@ -1752,9 +1757,10 @@ mod lookup {
         fusefs.fs.expect_lookup()
             .times(1)
             .with(
+                predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::eq(name)
-            ).returning(move |_, _|
+            ).returning(move |_, _, _|
                 Ok(FileData::new_for_tests(None, ino))
             );
         fusefs.fs.expect_getattr()
