@@ -19,5 +19,5 @@ null_raid uses too many IOPs                                 | owner:Alan Somers
 Node underflow after range_delete with min_fanout > 2        | owner:Alan Somers <asomers@gmail.com>, open:False, id:c2bd7069a3422387a6b40c4fd337cf01b3740c80, time:1539029603.41
 Tree::rewrite_node doesn't update node's TXG range           | owner:"hg.user", open:True, id:c92cb41103d75c95273276c4683503886bed4420, time:1535045181.12
 node.0.get_mut() fails in Tree::flush_r                      | owner:Alan Somers <asomers@gmail.com>, open:False, id:d5b4dab35d9be12ff1505e886ed5ca8ad4b6a526, time:1535669947.97
-rename should disallow directory loops                       | owner:Alan Somers <asomers@gmail.com>, open:True, id:de729a6eee46ea82bd4655ab77727d0bcf89df2b, time:1567829880.31
+rename should disallow directory loops                       | owner:Alan Somers <asomers@gmail.com>, open:False, id:de729a6eee46ea82bd4655ab77727d0bcf89df2b, time:1567829880.31
 subtract with overflow during range_delete                   | owner:Alan Somers <asomers@gmail.com>, open:False, id:e6fd45d251114bc6ea5ab503a5ae67d029a6fa56, time:1540053932.23

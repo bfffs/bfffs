@@ -524,6 +524,50 @@ impl Filesystem for FuseFs {
             .expect("rename before lookup or after forget");
         let newparent_fd = self.files.get(&newparent)
             .expect("rename before lookup or after forget");
+        let mut target_fd = None;
+
+        // Dirloop check
+        let target_ino = match self.names.get(&(parent, name.to_owned())) {
+            Some(ino) => *ino,
+            None => {
+                let grandparent_fd = self.files.get(&parent);
+                match self.fs.lookup(grandparent_fd, &parent_fd, name) {
+                    Ok(fd) => {
+                        let ino = fd.ino();
+                        target_fd = Some(fd);
+                        ino
+                    },
+                    Err(e) => {
+                        reply.error(e);
+                        return();
+                    }
+                }
+            }
+        };
+        let mut fd = self.files.get(&newparent)
+            .expect("Uncached destination directory");
+        loop {
+            match fd.parent() {
+                None => {
+                    // Root directory, or not a directory
+                    break;
+                },
+                Some(ino) if target_ino == ino => {
+                    // Dirloop detected!
+                    reply.error(libc::EINVAL);
+                    if let Some(fd) = target_fd {
+                        self.fs.inactive(fd);
+                    }
+                    return;
+                },
+                // Keep recursing
+                _ => {
+                    fd = self.files.get(&fd.parent().unwrap())
+                        .expect("Uncached parent directory");
+                }
+            }
+        }
+
         match self.fs.rename(&parent_fd, name, &newparent_fd, newname) {
             Ok(ino) => {
                 // Remove the cached destination file, if any
@@ -544,7 +588,17 @@ impl Filesystem for FuseFs {
                 }
                 reply.ok()
             },
-            Err(errno) => reply.error(errno)
+            Err(errno) => {
+                reply.error(errno);
+                if let Some(fd) = target_fd {
+                    self.fs.inactive(fd);
+                }
+                return;
+            }
+        }
+
+        if let Some(fd) = target_fd {
+            self.files.insert(target_ino, fd);
         }
     }
 
@@ -2826,6 +2880,7 @@ mod rename {
     fn enotdir() {
         let parent = 42;
         let newparent = 43;
+        let ino = 44;
         let name = OsStr::from_bytes(b"foo");
         let newname = OsStr::from_bytes(b"bar");
 
@@ -2850,8 +2905,67 @@ mod rename {
         fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.files.insert(newparent,
             FileData::new_for_tests(None, newparent));
+        fusefs.names.insert((parent, name.to_owned()), ino);
         fusefs.rename(&request, parent, name, newparent, newname, reply);
         assert_not_cached(&fusefs, newparent, newname, None);
+    }
+
+    // It should not be possible to create directory loops
+    #[test]
+    fn dirloop() {
+        let parent = 42;
+        let child = 43;
+        let name = OsStr::from_bytes(b"parent");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_error()
+            .with(predicate::eq(libc::EINVAL))
+            .times(1)
+            .return_const(());
+
+        let mut fusefs = make_mock_fs();
+
+        fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs.files.insert(child,
+            FileData::new_for_tests(Some(parent), child));
+        fusefs.names.insert((1, name.to_owned()), parent);
+        fusefs.rename(&request, 1, name, child, name, reply);
+        assert_not_cached(&fusefs, child, name, None);
+        assert_cached(&fusefs, 1, name, parent);
+        assert_eq!(Some(1), fusefs.files.get(&parent).unwrap().parent());
+    }
+
+    // It should not be possible to create directory loops
+    #[test]
+    fn dirloop_grandchild() {
+        let grandparent = 41;
+        let parent = 42;
+        let child = 43;
+        let name = OsStr::from_bytes(b"grandparent");
+
+        let request = Request::default();
+
+        let mut reply = ReplyEmpty::new();
+        reply.expect_error()
+            .with(predicate::eq(libc::EINVAL))
+            .times(1)
+            .return_const(());
+
+        let mut fusefs = make_mock_fs();
+
+        fusefs.files.insert(grandparent,
+            FileData::new_for_tests(Some(1), grandparent));
+        fusefs.files.insert(parent,
+            FileData::new_for_tests(Some(grandparent), parent));
+        fusefs.files.insert(child,
+            FileData::new_for_tests(Some(parent), child));
+        fusefs.names.insert((1, name.to_owned()), grandparent);
+        fusefs.rename(&request, 1, name, child, name, reply);
+        assert_not_cached(&fusefs, child, name, None);
+        assert_cached(&fusefs, 1, name, grandparent);
+        assert_eq!(Some(1), fusefs.files.get(&grandparent).unwrap().parent());
     }
 
     // Rename a regular file
