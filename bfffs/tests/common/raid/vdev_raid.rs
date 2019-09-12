@@ -546,7 +546,7 @@ test_suite! {
         let (start, _) = raid.val.0.zone_limits(zone);
         let dbsw = DivBufShared::from(vec![0;4096]);
         let wbuf = dbsw.try_const().unwrap();
-        raid.val.0.write_at(wbuf, zone, start);
+        let _ = raid.val.0.write_at(wbuf, zone, start);
     }
 
     // Opening a closed zone should allow writing

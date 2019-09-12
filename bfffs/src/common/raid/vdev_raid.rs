@@ -1211,6 +1211,7 @@ use super::*;
 use futures::future;
 use galvanic_test::*;
 use mockall::predicate::*;
+use tokio::runtime::current_thread::Runtime;
 
 // pet kcov
 #[test]
@@ -1445,10 +1446,12 @@ fn read_at_one_stripe() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let rbuf = dbs.try_mut().unwrap();
-        vdev_raid.read_at(rbuf, 131_072);
+        Runtime::new().unwrap().block_on(future::lazy(|| {
+            vdev_raid.open_zone(1)
+            .and_then(|_| vdev_raid.read_at(rbuf, 131_072))
+        })).unwrap();
 }
 
 #[test]
@@ -1485,7 +1488,9 @@ fn sync_all() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.sync_all();
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.sync_all()
+    })).unwrap();
 }
 
 // It's illegal to sync a VdevRaid without flushing its zones first
@@ -1539,12 +1544,16 @@ fn sync_all_unflushed() {
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
 
-    vdev_raid.open_zone(1);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try_const().unwrap();
-    vdev_raid.write_at(wbuf, 1, 120_000);
-    // Don't flush zone 1 before syncing.  Syncing should panic
-    vdev_raid.sync_all();
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.open_zone(1)
+        .and_then(|_| vdev_raid.write_at(wbuf, 1, 120_000))
+        .and_then(|_| {
+            // Don't flush zone 1 before syncing.  Syncing should panic
+            vdev_raid.sync_all()
+        })
+    })).unwrap();
 }
 
 // Use mock VdevBlock objects to test that RAID writes hit the right LBAs from
@@ -1639,10 +1648,12 @@ fn write_at_one_stripe() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1);
         let dbs = DivBufShared::from(vec![0u8; 16384]);
         let wbuf = dbs.try_const().unwrap();
-        vdev_raid.write_at(wbuf, 1, 131_072);
+        Runtime::new().unwrap().block_on(future::lazy(|| {
+            vdev_raid.open_zone(1)
+            .and_then(|_| vdev_raid.write_at(wbuf, 1, 131_072))
+        })).unwrap()
 }
 
 // Partially written stripes should be flushed by flush_zone
@@ -1718,11 +1729,13 @@ fn write_at_and_flush_zone() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1);
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try_const().unwrap();
-    vdev_raid.write_at(wbuf, 1, 120_000);
-    vdev_raid.flush_zone(1);
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.open_zone(1)
+        .and_then(|_| vdev_raid.write_at(wbuf, 1, 120_000))
+        .and_then(|_| vdev_raid.flush_zone(1).1)
+    })).unwrap();
 }
 
 // Erase a zone.  VdevRaid doesn't care whether it still has allocated data;
@@ -1771,7 +1784,9 @@ fn erase_zone() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.erase_zone(0);
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.erase_zone(0)
+    })).unwrap();
 }
 
 // Flushing a closed zone is a no-op
@@ -1810,7 +1825,9 @@ fn flush_zone_closed() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.flush_zone(0);
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.flush_zone(0).1
+    })).unwrap()
 }
 
 // Flushing an open zone is a no-op if the stripe buffer is empty
@@ -1857,8 +1874,10 @@ fn flush_zone_empty_stripe_buffer() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1);
-    vdev_raid.flush_zone(1);
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.open_zone(1)
+        .and_then(|_| vdev_raid.flush_zone(1).1)
+    })).unwrap();
 }
 
 // Reopen a zone that was previously used and unmounted without being closed.
@@ -1909,10 +1928,12 @@ fn open_zone_reopen() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.reopen_zone(1, 100);
     let dbs = DivBufShared::from(vec![0u8; 4096]);
     let wbuf = dbs.try_const().unwrap();
-    vdev_raid.write_at(wbuf, 1, 4196);
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.reopen_zone(1, 100)
+        .and_then(|_| vdev_raid.write_at(wbuf, 1, 4196))
+    })).unwrap();
 }
 
 // Open a zone that has wasted leading space due to a chunksize misaligned with
@@ -1966,7 +1987,9 @@ fn open_zone_zero_fill_wasted_chunks() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1);
+        Runtime::new().unwrap().block_on(future::lazy(|| {
+            vdev_raid.open_zone(1)
+        })).unwrap();
 }
 
 // Open a zone that has some leading wasted space.  Use mock VdevBlock objects
@@ -2028,7 +2051,9 @@ fn open_zone_zero_fill_wasted_stripes() {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       blockdevs.into_boxed_slice());
-        vdev_raid.open_zone(1);
+        Runtime::new().unwrap().block_on(future::lazy(|| {
+            vdev_raid.open_zone(1)
+        })).unwrap();
 }
 }
 // LCOV_EXCL_START

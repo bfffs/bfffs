@@ -135,7 +135,7 @@ test_suite! {
     test write_at_overwrite_label(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
-        vdev.val.0.write_at(wbuf.clone(), 0);
+        let _ = vdev.val.0.write_at(wbuf.clone(), 0);
     }
 
     test write_at_lba(vdev) {

@@ -477,7 +477,9 @@ mod ddml {
             });
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        ddml.get::<DivBufShared, DivBuf>(&drp);
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+            ddml.get::<DivBufShared, DivBuf>(&drp)
+        })).unwrap();
     }
 
     #[test]
@@ -620,7 +622,9 @@ mod ddml {
             .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0));
+        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+            ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
+        })).unwrap();
     }
 
     #[test]
