@@ -1580,6 +1580,9 @@ impl Fs {
     }
 
     /// Rename a file.  Return the inode number of the renamed file.
+    ///
+    /// NB: This function performs no dirloop protection.  That is the
+    /// responsibility of the client.
     pub fn rename(&self, parent: &FileData, name: &OsStr,
         newparent: &FileData, newname: &OsStr) -> Result<u64, i32>
     {
@@ -1603,6 +1606,11 @@ impl Fs {
         let parent_ino = parent.ino;
         let newparent_ino = newparent.ino;
         let samedir = parent_ino == newparent_ino;
+
+        if name == OsStr::from_bytes(b".") || name == OsStr::from_bytes(b"..") {
+            return Err(libc::EINVAL);
+        }
+
         self.handle.spawn(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);

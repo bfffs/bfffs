@@ -1465,7 +1465,33 @@ root:
         assert_eq!(dstdir_attr.nlink, 3);
     }
 
-    // TODO: test that "." and ".." can't be renamed
+    // Attempting to rename "." should return EINVAL
+    test rename_dot(mocks) {
+        let root = mocks.val.0.root();
+        let dot = OsStr::from_bytes(b".");
+        let srcdir = OsStr::from_bytes(b"srcdir");
+        let dst = OsStr::from_bytes(b"dst");
+        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0)
+        .unwrap();
+
+        assert_eq!(Err(libc::EINVAL),
+            mocks.val.0.rename(&srcdir_fd, &dot, &srcdir_fd, &dst)
+        );
+    }
+
+    // Attempting to rename ".." should return EINVAL
+    test rename_dotdot(mocks) {
+        let root = mocks.val.0.root();
+        let dotdot = OsStr::from_bytes(b"..");
+        let srcdir = OsStr::from_bytes(b"srcdir");
+        let dst = OsStr::from_bytes(b"dst");
+        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0)
+        .unwrap();
+
+        assert_eq!(Err(libc::EINVAL),
+            mocks.val.0.rename(&srcdir_fd, &dotdot, &srcdir_fd, &dst)
+        );
+    }
 
     // Rename a non-directory to a multiply-linked file.  The destination
     // directory entry should be removed, but not the inode.
