@@ -6,7 +6,6 @@ use futures::future;
 use mockall::predicate::eq;
 use pretty_assertions::assert_eq;
 use super::*;
-use tokio::runtime::current_thread;
 
 #[test]
 fn check_bad_root_txgs() {
@@ -52,8 +51,7 @@ root:
                     257: 257.0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(!rt.block_on(tree.check()).unwrap());
+    assert!(!tree.check().wait().unwrap());
 }
 
 #[test]
@@ -136,8 +134,7 @@ root:
                               13: 13.0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(!rt.block_on(tree.check()).unwrap());
+    assert!(!tree.check().wait().unwrap());
 }
 
 #[test]
@@ -184,8 +181,7 @@ root:
                     14: 14.0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(!rt.block_on(tree.check()).unwrap());
+    assert!(!tree.check().wait().unwrap());
 }
 
 #[test]
@@ -271,8 +267,7 @@ root:
                               13: 13.0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(rt.block_on(tree.check()).unwrap());
+    assert!(tree.check().wait().unwrap());
 }
 
 #[test]
@@ -281,8 +276,7 @@ fn check_empty() {
     let dml = Arc::new(mock);
     let tree = Tree::<u32, MockDML, u32, f32>::create(dml, false, 1.0, 1.0);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(rt.block_on(tree.check()).unwrap());
+    assert!(tree.check().wait().unwrap());
 }
 
 #[test]
@@ -328,8 +322,7 @@ root:
                     14: 14.0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(!rt.block_on(tree.check()).unwrap());
+    assert!(!tree.check().wait().unwrap());
 }
 
 // The root Node is always allowed to underflow
@@ -381,8 +374,7 @@ root:
                     23: 23.0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(rt.block_on(tree.check()).unwrap());
+    assert!(tree.check().wait().unwrap());
 }
 
 // The root node is allowed to underflow if it's a leaf
@@ -411,8 +403,7 @@ root:
           0: 0.0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(rt.block_on(tree.check()).unwrap());
+    assert!(tree.check().wait().unwrap());
 }
 
 #[test]
@@ -445,8 +436,7 @@ root:
           5: 5.0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(!rt.block_on(tree.check()).unwrap());
+    assert!(!tree.check().wait().unwrap());
 }
 
 // The tree is unsorted overall, even though each Node is correctly sorted
@@ -495,8 +485,7 @@ root:
                     11: 11.0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    assert!(!rt.block_on(tree.check()).unwrap());
+    assert!(!tree.check().wait().unwrap());
 }
 
 /// Recompute start TXGs on Tree flush
@@ -560,8 +549,7 @@ root:
               Addr: 256
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush(TxgT::from(42)));
+    let r = tree.flush(TxgT::from(42)).wait();
     assert!(r.is_ok());
     let root_elem = Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap();
@@ -655,8 +643,7 @@ root:
               end: 16
             ptr:
               Addr: 6"#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(4, TxgT::from(42)));
+    let r2 = tree.remove(4, TxgT::from(42)).wait();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -792,8 +779,7 @@ root:
             ptr:
               Addr: 1280
 "#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.insert(15, 15.0, TxgT::from(42)));
+    let r2 = tree.insert(15, 15.0, TxgT::from(42)).wait();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -959,8 +945,7 @@ root:
                               24: 24.0
                               25: 25.0
                               26: 26.0"#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(26, TxgT::from(42)));
+    let r2 = tree.remove(26, TxgT::from(42)).wait();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---

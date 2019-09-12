@@ -394,7 +394,6 @@ mod ddml {
     use pretty_assertions::assert_eq;
     use rand::{RngCore, SeedableRng};
     use rand_xorshift::XorShiftRng;
-    use tokio::runtime::current_thread;
 
     #[test]
     fn delete_hot() {
@@ -418,9 +417,7 @@ mod ddml {
             .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.delete(&drp, TxgT::from(0))
-        })).unwrap();
+        ddml.delete(&drp, TxgT::from(0)).wait().unwrap();
     }
 
     #[test]
@@ -456,9 +453,7 @@ mod ddml {
             });
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.get_direct::<DivBufShared>(&drp)
-        })).unwrap();
+        ddml.get_direct::<DivBufShared>(&drp).wait().unwrap();
     }
 
     #[test]
@@ -477,9 +472,7 @@ mod ddml {
             });
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.get::<DivBufShared, DivBuf>(&drp)
-        })).unwrap();
+        ddml.get::<DivBufShared, DivBuf>(&drp).wait().unwrap();
     }
 
     #[test]
@@ -518,9 +511,7 @@ mod ddml {
             });
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.get::<DivBufShared, DivBuf>(&drp)
-        })).unwrap();
+        ddml.get::<DivBufShared, DivBuf>(&drp).wait().unwrap();
     }
 
     #[test]
@@ -539,10 +530,7 @@ mod ddml {
             .return_once(|_, _| Box::new(future::ok::<(), Error>(())));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let err = rt.block_on(future::lazy(|| {
-            ddml.get::<DivBufShared, DivBuf>(&drp)
-        })).unwrap_err();
+        let err = ddml.get::<DivBufShared, DivBuf>(&drp).wait().unwrap_err();
         assert_eq!(err, Error::ECKSUM);
     }
 
@@ -595,11 +583,8 @@ mod ddml {
             .return_once(|_, _| Box::new(Ok((None, None)).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        let mut rt = current_thread::Runtime::new().unwrap();
 
-        let closed_zones = rt.block_on(
-            ddml.list_closed_zones().collect()
-        ).unwrap();
+        let closed_zones = ddml.list_closed_zones().collect().wait().unwrap();
         let expected = vec![clz0, clz1, clz2];
         assert_eq!(closed_zones, expected);
     }
@@ -622,9 +607,7 @@ mod ddml {
             .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
-        })).unwrap();
+        ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0)).wait().unwrap();
     }
 
     #[test]
@@ -656,9 +639,7 @@ mod ddml {
             .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
-        })).unwrap();
+        ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0)).wait().unwrap();
     }
 
     #[test]
@@ -677,10 +658,8 @@ mod ddml {
             .return_once(|_, _| Box::new(future::ok::<(), Error>(())));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let err = rt.block_on(future::lazy(|| {
-            ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
-        })).unwrap_err();
+        let err = ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0)).wait()
+            .unwrap_err();
         assert_eq!(err, Error::ECKSUM);
     }
 
@@ -709,9 +688,7 @@ mod ddml {
             .return_once(|_, _| Box::new(Ok(()).into_future()));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            ddml.pop_direct::<DivBufShared>(&drp)
-        })).unwrap();
+        ddml.pop_direct::<DivBufShared>(&drp).wait().unwrap();
     }
 
     #[test]
@@ -729,10 +706,9 @@ mod ddml {
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let drp = rt.block_on(
-            ddml.put(dbs, Compression::None, TxgT::from(42))
-        ).unwrap();
+        let drp = ddml.put(dbs, Compression::None, TxgT::from(42))
+            .wait()
+            .unwrap();
         assert!(!drp.is_compressed());
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
@@ -755,10 +731,9 @@ mod ddml {
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 8192]);
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let drp = rt.block_on(
-            ddml.put(dbs, Compression::Zstd(None), TxgT::from(42))
-        ).unwrap();
+        let drp = ddml.put(dbs, Compression::Zstd(None), TxgT::from(42))
+            .wait()
+            .unwrap();
         assert!(drp.is_compressed());
         assert!(drp.csize < 8192);
         assert_eq!(drp.lsize, 8192);
@@ -785,10 +760,9 @@ mod ddml {
         let mut v = vec![0u8; 8192];
         rng.fill_bytes(&mut v[..]);
         let dbs = DivBufShared::from(v);
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let drp = rt.block_on(
-            ddml.put(dbs, Compression::Zstd(None), TxgT::from(42))
-        ).unwrap();
+        let drp = ddml.put(dbs, Compression::Zstd(None), TxgT::from(42))
+            .wait()
+            .unwrap();
         assert!(!drp.is_compressed());
         assert_eq!(drp.csize, 8192);
         assert_eq!(drp.lsize, 8192);
@@ -810,10 +784,9 @@ mod ddml {
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 1024]);
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let drp = rt.block_on(
-            ddml.put(dbs, Compression::None, TxgT::from(42))
-        ).unwrap();
+        let drp = ddml.put(dbs, Compression::None, TxgT::from(42))
+            .wait()
+            .unwrap();
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 1024);
         assert_eq!(drp.lsize, 1024);
@@ -832,10 +805,7 @@ mod ddml {
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let db = Box::new(dbs.try_const().unwrap()) as Box<dyn CacheRef>;
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let drp = rt.block_on(
-            ddml.put_direct(&db, Compression::None, txg)
-        ).unwrap();
+        let drp = ddml.put_direct(&db, Compression::None, txg).wait().unwrap();
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
@@ -849,8 +819,7 @@ mod ddml {
             .return_once(|| Box::new(future::ok::<(), Error>(())));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        let mut rt = current_thread::Runtime::new().unwrap();
-        assert!(rt.block_on(ddml.sync_all(TxgT::from(0))).is_ok());
+        assert!(ddml.sync_all(TxgT::from(0)).wait().is_ok());
     }
 }
 }

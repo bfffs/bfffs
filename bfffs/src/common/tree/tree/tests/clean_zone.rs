@@ -7,7 +7,6 @@ use mockall::predicate::*;
 use pretty_assertions::assert_eq;
 use std::sync::atomic::{AtomicU64, Ordering};
 use super::*;
-use tokio::runtime::current_thread;
 
 #[test]
 fn basic() {
@@ -199,11 +198,10 @@ root:
                           checksum: 0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
     let txgs = TxgT::from(20)..TxgT::from(30);
-    rt.block_on(tree.clean_zone(start..end, txgs, TxgT::from(42))).unwrap();
+    tree.clean_zone(start..end, txgs, TxgT::from(42)).wait().unwrap();
     let clean_tree = format!("{}", tree);
     assert_eq!(clean_tree,
 r#"---
@@ -397,10 +395,9 @@ root:
       checksum: 0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
     let txgs = TxgT::from(1000)..TxgT::from(1001);  // XXX placeholder
-    rt.block_on(tree.clean_zone(start..end, txgs, TxgT::from(42))).unwrap();
+    tree.clean_zone(start..end, txgs, TxgT::from(42)).wait().unwrap();
 }
 // LCOV_EXCL_STOP

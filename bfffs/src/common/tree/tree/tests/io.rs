@@ -445,8 +445,7 @@ root:
               Addr: 256
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.insert(0, 0, TxgT::from(42)));
+    let r = tree.insert(0, 0, TxgT::from(42)).wait();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -514,8 +513,7 @@ root:
     Addr: 0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.insert(0, 0, TxgT::from(42)));
+    let r = tree.insert(0, 0, TxgT::from(42)).wait();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -568,9 +566,8 @@ root:
     Addr: 0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
     assert!(!tree.is_dirty());
-    rt.block_on(tree.insert(0, 0, TxgT::from(42))).unwrap();
+    tree.insert(0, 0, TxgT::from(42)).wait().unwrap();
     assert!(tree.is_dirty());
 }
 
@@ -707,10 +704,7 @@ root:
             ptr:
               Addr: 2
 "#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    rt.block_on(
-        tree.range_delete(5..25, TxgT::from(42))
-    ).unwrap();
+    tree.range_delete(5..25, TxgT::from(42)).wait().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
@@ -918,10 +912,7 @@ root:
                       ptr:
                         Addr: 175
 "#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    rt.block_on(
-        tree.range_delete(4..32, TxgT::from(42))
-    ).unwrap();
+    tree.range_delete(4..32, TxgT::from(42)).wait().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
@@ -1059,10 +1050,7 @@ root:
   ptr:
     Addr: 0
 "#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(
-        tree.range(1..3).collect()
-    );
+    let r = tree.range(1..3).collect().wait();
     assert_eq!(r, Ok(vec![(1, 1.0), (2, 2.0)]));
 }
 
@@ -1104,19 +1092,16 @@ root:
     Addr: 102
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(future::lazy(|| {
-        let root_guard = tree.i.root.try_read().unwrap();
-        root_guard.rlock(&dml).map(|node| {
-            let int_data = (*node).as_int();
-            assert_eq!(int_data.nchildren(), 2);
-            // Validate IntElems as well as possible using their public API
-            assert_eq!(int_data.children[0].key, 0);
-            assert!(!int_data.children[0].ptr.is_mem());
-            assert_eq!(int_data.children[1].key, 256);
-            assert!(!int_data.children[1].ptr.is_mem());
-        })
-    }));
+    let root_guard = tree.i.root.try_read().unwrap();
+    let r = root_guard.rlock(&dml).map(|node| {
+        let int_data = (*node).as_int();
+        assert_eq!(int_data.nchildren(), 2);
+        // Validate IntElems as well as possible using their public API
+        assert_eq!(int_data.children[0].key, 0);
+        assert!(!int_data.children[0].ptr.is_mem());
+        assert_eq!(int_data.children[1].key, 256);
+        assert!(!int_data.children[1].ptr.is_mem());
+    }).wait();
     assert!(r.is_ok());
 }
 
@@ -1150,8 +1135,7 @@ root:
     Addr: 0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.get(1));
+    let r = tree.get(1).wait();
     assert_eq!(Ok(Some(200)), r);
 }
 
@@ -1196,8 +1180,7 @@ root:
             ptr:
               Addr: 0
 "#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r2 = rt.block_on(tree.remove(1, TxgT::from(42)));
+    let r2 = tree.remove(1, TxgT::from(42)).wait();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -1355,8 +1338,7 @@ root:
     Addr: 0
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush(TxgT::from(42)));
+    let r = tree.flush(TxgT::from(42)).wait();
     assert!(r.is_ok());
 }
 
@@ -1429,8 +1411,7 @@ root:
               Addr: 256
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush(TxgT::from(42)));
+    let r = tree.flush(TxgT::from(42)).wait();
     assert!(r.is_ok());
     let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap()
@@ -1486,8 +1467,7 @@ root:
               Addr: 256
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush(TxgT::from(42)));
+    let r = tree.flush(TxgT::from(42)).wait();
     assert!(r.is_ok());
     let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap()
@@ -1531,8 +1511,7 @@ root:
           1: 200
 "#);
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let r = rt.block_on(tree.flush(TxgT::from(42)));
+    let r = tree.flush(TxgT::from(42)).wait();
     assert!(r.is_ok());
     let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap()

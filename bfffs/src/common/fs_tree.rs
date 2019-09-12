@@ -778,7 +778,6 @@ mod t {
 use crate::common::idml::IDML;
 use pretty_assertions::assert_eq;
 use super::*;
-use tokio::runtime::current_thread;
 
 // pet kcov
 #[test]
@@ -819,7 +818,6 @@ fn fsvalue_flush_inline_extattr_long() {
             cacheable.len() == BYTES_PER_LBA
         }).returning(move |_, _, _| boxfut!(Ok(rid).into_future()));
     let txg = TxgT(0);
-    let mut rt = current_thread::Runtime::new().unwrap();
 
     let namespace = ExtAttrNamespace::User;
     let name = OsString::from("bar");
@@ -828,9 +826,7 @@ fn fsvalue_flush_inline_extattr_long() {
     let iea = InlineExtAttr{namespace, name, extent};
     let unflushed: FSValue<RID> = FSValue::ExtAttr(ExtAttr::Inline(iea));
 
-    let flushed = rt.block_on(future::lazy(|| {
-        unflushed.flush(&idml, txg)
-    })).unwrap();
+    let flushed = unflushed.flush(&idml, txg).wait().unwrap();
 
     if let ExtAttr::Inline(_) = flushed.as_extattr().unwrap() {
         panic!("Long extattr should've become a BlobExtattr");
@@ -842,7 +838,6 @@ fn fsvalue_flush_inline_extattr_long() {
 fn fsvalue_flush_inline_extattr_short() {
     let idml = IDML::default();
     let txg = TxgT(0);
-    let mut rt = current_thread::Runtime::new().unwrap();
 
     let namespace = ExtAttrNamespace::User;
     let name = OsString::from("bar");
@@ -851,9 +846,7 @@ fn fsvalue_flush_inline_extattr_short() {
     let iea = InlineExtAttr{namespace, name, extent};
     let unflushed: FSValue<RID> = FSValue::ExtAttr(ExtAttr::Inline(iea));
 
-    let flushed = rt.block_on(future::lazy(|| {
-        unflushed.flush(&idml, txg)
-    })).unwrap();
+    let flushed = unflushed.flush(&idml, txg).wait().unwrap();
 
     if let ExtAttr::Blob(_) = flushed.as_extattr().unwrap() {
         panic!("Short extattr should remain inline");
@@ -871,14 +864,11 @@ fn fsvalue_flush_inline_extent_long() {
             cacheable.len() == BYTES_PER_LBA
         }).returning(move |_, _, _| boxfut!(Ok(rid).into_future()));
     let txg = TxgT(0);
-    let mut rt = current_thread::Runtime::new().unwrap();
 
     let data = Arc::new(DivBufShared::from(vec![42u8; BYTES_PER_LBA]));
     let ile = InlineExtent::new(data);
     let unflushed: FSValue<RID> = FSValue::InlineExtent(ile);
-    let flushed = rt.block_on(future::lazy(|| {
-        unflushed.flush(&idml, txg)
-    })).unwrap();
+    let flushed = unflushed.flush(&idml, txg).wait().unwrap();
 
     if let Extent::Inline(_) = flushed.as_extent().unwrap() {
         panic!("Long extent should've become a BlobExtent");
@@ -890,14 +880,11 @@ fn fsvalue_flush_inline_extent_long() {
 fn fsvalue_flush_inline_extent_short() {
     let idml = IDML::default();
     let txg = TxgT(0);
-    let mut rt = current_thread::Runtime::new().unwrap();
 
     let data = Arc::new(DivBufShared::from(vec![0, 1, 2, 3, 4, 5]));
     let ile = InlineExtent::new(data);
     let unflushed: FSValue<RID> = FSValue::InlineExtent(ile);
-    let flushed = rt.block_on(future::lazy(|| {
-        unflushed.flush(&idml, txg)
-    })).unwrap();
+    let flushed = unflushed.flush(&idml, txg).wait().unwrap();
 
     if let Extent::Blob(_) = flushed.as_extent().unwrap() {
         panic!("Short extent should remain inline");
