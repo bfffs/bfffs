@@ -1373,85 +1373,85 @@ test_suite! {
 // real VdevBlocks.  Functional testing will verify the data.
 #[test]
 fn read_at_one_stripe() {
-        let k = 3;
-        let f = 1;
-        const CHUNKSIZE : LbaT = 2;
+    let k = 3;
+    let f = 1;
+    const CHUNKSIZE : LbaT = 2;
 
-        let mut blockdevs = Vec::<VdevBlock>::new();
+    let mut blockdevs = Vec::<VdevBlock>::new();
 
-        let mut m0 = VdevBlock::default();
-        m0.expect_size()
-            .return_const(262_144u64);
-        m0.expect_open_zone()
-            .once()
-            .with(eq(65536))
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
-        m0.expect_optimum_queue_depth()
-            .return_const(10u32);
-        m0.expect_zone_limits()
-            .with(eq(0))
-            .return_const((1, 65536));
-        m0.expect_zone_limits()
-            .with(eq(1))
-            .return_const((65536, 131_072));
-        blockdevs.push(m0);
+    let mut m0 = VdevBlock::default();
+    m0.expect_size()
+        .return_const(262_144u64);
+    m0.expect_open_zone()
+        .once()
+        .with(eq(65536))
+        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+    m0.expect_optimum_queue_depth()
+        .return_const(10u32);
+    m0.expect_zone_limits()
+        .with(eq(0))
+        .return_const((1, 65536));
+    m0.expect_zone_limits()
+        .with(eq(1))
+        .return_const((65536, 131_072));
+    blockdevs.push(m0);
 
-        let mut m1 = VdevBlock::default();
-        m1.expect_size()
-            .return_const(262_144u64);
-        m1.expect_open_zone()
-            .once()
-            .with(eq(65536))
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
-        m1.expect_optimum_queue_depth()
-            .return_const(10u32);
-        m1.expect_zone_limits()
-            .with(eq(0))
-            .return_const((1, 65536));
-        m1.expect_zone_limits()
-            .with(eq(1))
-            .return_const((65536, 131_072));
-        m1.expect_read_at()
-            .once()
-            .withf(|buf, lba| {
-                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-                    && *lba == 65536
-            }).return_once(|_, _|  Box::new( future::ok::<(), Error>(())));
-        blockdevs.push(m1);
+    let mut m1 = VdevBlock::default();
+    m1.expect_size()
+        .return_const(262_144u64);
+    m1.expect_open_zone()
+        .once()
+        .with(eq(65536))
+        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+    m1.expect_optimum_queue_depth()
+        .return_const(10u32);
+    m1.expect_zone_limits()
+        .with(eq(0))
+        .return_const((1, 65536));
+    m1.expect_zone_limits()
+        .with(eq(1))
+        .return_const((65536, 131_072));
+    m1.expect_read_at()
+        .once()
+        .withf(|buf, lba| {
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+                && *lba == 65536
+        }).return_once(|_, _|  Box::new( future::ok::<(), Error>(())));
+    blockdevs.push(m1);
 
-        let mut m2 = VdevBlock::default();
-        m2.expect_size()
-            .return_const(262_144u64);
-        m2.expect_open_zone()
-            .once()
-            .with(eq(65536))
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
-        m2.expect_optimum_queue_depth()
-            .return_const(10u32);
-        m2.expect_zone_limits()
-            .with(eq(0))
-            .return_const((1, 65536));
-        m2.expect_zone_limits()
-            .with(eq(1))
-            .return_const((65536, 131_072));
-        m2.expect_read_at()
-            .once()
-            .withf(|buf, lba| {
-                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-                    && *lba == 65536
-            }).return_once(|_, _|  Box::new( future::ok::<(), Error>(())));
-        blockdevs.push(m2);
+    let mut m2 = VdevBlock::default();
+    m2.expect_size()
+        .return_const(262_144u64);
+    m2.expect_open_zone()
+        .once()
+        .with(eq(65536))
+        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+    m2.expect_optimum_queue_depth()
+        .return_const(10u32);
+    m2.expect_zone_limits()
+        .with(eq(0))
+        .return_const((1, 65536));
+    m2.expect_zone_limits()
+        .with(eq(1))
+        .return_const((65536, 131_072));
+    m2.expect_read_at()
+        .once()
+        .withf(|buf, lba| {
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+                && *lba == 65536
+        }).return_once(|_, _|  Box::new( future::ok::<(), Error>(())));
+    blockdevs.push(m2);
 
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
-                                      Uuid::new_v4(),
-                                      LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice());
-        let dbs = DivBufShared::from(vec![0u8; 16384]);
-        let rbuf = dbs.try_mut().unwrap();
-        Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev_raid.open_zone(1)
-            .and_then(|_| vdev_raid.read_at(rbuf, 131_072))
-        })).unwrap();
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                  Uuid::new_v4(),
+                                  LayoutAlgorithm::PrimeS,
+                                  blockdevs.into_boxed_slice());
+    let dbs = DivBufShared::from(vec![0u8; 16384]);
+    let rbuf = dbs.try_mut().unwrap();
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.open_zone(1)
+        .and_then(|_| vdev_raid.read_at(rbuf, 131_072))
+    })).unwrap();
 }
 
 #[test]
@@ -1561,99 +1561,99 @@ fn sync_all_unflushed() {
 // real VdevBlocks.  Functional testing will verify the data.
 #[test]
 fn write_at_one_stripe() {
-        let k = 3;
-        let f = 1;
-        const CHUNKSIZE : LbaT = 2;
+    let k = 3;
+    let f = 1;
+    const CHUNKSIZE : LbaT = 2;
 
-        let mut blockdevs = Vec::<VdevBlock>::new();
-        let mut m0 = VdevBlock::default();
-        m0.expect_size()
-            .return_const(262_144u64);
-        m0.expect_lba2zone()
-            .with(eq(65536))
-            .return_const(Some(1));
-        m0.expect_open_zone()
-            .with(eq(65536))
-            .once()
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
-        m0.expect_optimum_queue_depth()
-            .return_const(10u32);
-        m0.expect_zone_limits()
-            .with(eq(0))
-            .return_const((1, 65536));
-        m0.expect_zone_limits()
-            .with(eq(1))
-            .return_const((65536, 131_072));
-        m0.expect_write_at()
-            .once()
-            .withf(|buf, lba|
-                   buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-                   && *lba == 65536
-            ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+    let mut blockdevs = Vec::<VdevBlock>::new();
+    let mut m0 = VdevBlock::default();
+    m0.expect_size()
+        .return_const(262_144u64);
+    m0.expect_lba2zone()
+        .with(eq(65536))
+        .return_const(Some(1));
+    m0.expect_open_zone()
+        .with(eq(65536))
+        .once()
+        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+    m0.expect_optimum_queue_depth()
+        .return_const(10u32);
+    m0.expect_zone_limits()
+        .with(eq(0))
+        .return_const((1, 65536));
+    m0.expect_zone_limits()
+        .with(eq(1))
+        .return_const((65536, 131_072));
+    m0.expect_write_at()
+        .once()
+        .withf(|buf, lba|
+               buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+               && *lba == 65536
+        ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
 
-        blockdevs.push(m0);
-        let mut m1 = VdevBlock::default();
-        m1.expect_size()
-            .return_const(262_144u64);
-        m1.expect_lba2zone()
-            .with(eq(65536))
-            .return_const(Some(1));
-        m1.expect_open_zone()
-            .with(eq(65536))
-            .once()
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
-        m1.expect_optimum_queue_depth()
-            .return_const(10u32);
-        m1.expect_zone_limits()
-            .with(eq(0))
-            .return_const((1, 65536));
-        m1.expect_zone_limits()
-            .with(eq(1))
-            .return_const((65536, 131_072));
-        m1.expect_write_at()
-            .once()
-            .withf(|buf, lba|
-                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-                && *lba == 65536
-            ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+    blockdevs.push(m0);
+    let mut m1 = VdevBlock::default();
+    m1.expect_size()
+        .return_const(262_144u64);
+    m1.expect_lba2zone()
+        .with(eq(65536))
+        .return_const(Some(1));
+    m1.expect_open_zone()
+        .with(eq(65536))
+        .once()
+        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+    m1.expect_optimum_queue_depth()
+        .return_const(10u32);
+    m1.expect_zone_limits()
+        .with(eq(0))
+        .return_const((1, 65536));
+    m1.expect_zone_limits()
+        .with(eq(1))
+        .return_const((65536, 131_072));
+    m1.expect_write_at()
+        .once()
+        .withf(|buf, lba|
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+            && *lba == 65536
+        ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
 
-        blockdevs.push(m1);
-        let mut m2 = VdevBlock::default();
-        m2.expect_size()
-            .return_const(262_144u64);
-        m2.expect_lba2zone()
-            .with(eq(65536))
-            .return_const(Some(1));
-        m2.expect_open_zone()
-            .with(eq(65536))
-            .once()
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
-        m2.expect_optimum_queue_depth()
-            .return_const(10u32);
-        m2.expect_zone_limits()
-            .with(eq(0))
-            .return_const((1, 65536));
-        m2.expect_zone_limits()
-            .with(eq(1))
-            .return_const((65536, 131_072));
-        m2.expect_write_at()
-            .once()
-            .withf(|buf, lba|
-                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
-                && *lba == 65536
-            ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
-        blockdevs.push(m2);
+    blockdevs.push(m1);
+    let mut m2 = VdevBlock::default();
+    m2.expect_size()
+        .return_const(262_144u64);
+    m2.expect_lba2zone()
+        .with(eq(65536))
+        .return_const(Some(1));
+    m2.expect_open_zone()
+        .with(eq(65536))
+        .once()
+        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+    m2.expect_optimum_queue_depth()
+        .return_const(10u32);
+    m2.expect_zone_limits()
+        .with(eq(0))
+        .return_const((1, 65536));
+    m2.expect_zone_limits()
+        .with(eq(1))
+        .return_const((65536, 131_072));
+    m2.expect_write_at()
+        .once()
+        .withf(|buf, lba|
+            buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+            && *lba == 65536
+        ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+    blockdevs.push(m2);
 
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
-                                      Uuid::new_v4(),
-                                      LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice());
-        let dbs = DivBufShared::from(vec![0u8; 16384]);
-        let wbuf = dbs.try_const().unwrap();
-        Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev_raid.open_zone(1)
-            .and_then(|_| vdev_raid.write_at(wbuf, 1, 131_072))
-        })).unwrap()
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                  Uuid::new_v4(),
+                                  LayoutAlgorithm::PrimeS,
+                                  blockdevs.into_boxed_slice());
+    let dbs = DivBufShared::from(vec![0u8; 16384]);
+    let wbuf = dbs.try_const().unwrap();
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.open_zone(1)
+        .and_then(|_| vdev_raid.write_at(wbuf, 1, 131_072))
+    })).unwrap()
 }
 
 // Partially written stripes should be flushed by flush_zone
@@ -1941,55 +1941,55 @@ fn open_zone_reopen() {
 // Use highly unrealistic disks with 32 LBAs per zone
 #[test]
 fn open_zone_zero_fill_wasted_chunks() {
-        let k = 5;
-        let f = 1;
-        const CHUNKSIZE : LbaT = 5;
-        let zl0 = (1, 32);
-        let zl1 = (32, 64);
+    let k = 5;
+    let f = 1;
+    const CHUNKSIZE : LbaT = 5;
+    let zl0 = (1, 32);
+    let zl1 = (32, 64);
 
-        let mut blockdevs = Vec::<VdevBlock>::new();
+    let mut blockdevs = Vec::<VdevBlock>::new();
 
-        let bd = || {
-            let mut bd = VdevBlock::default();
-            bd.expect_size()
-                .return_const(262_144u64);
-            bd.expect_lba2zone()
-                .with(eq(1))
-                .return_const(Some(0));
-            bd.expect_zone_limits()
-                .with(eq(0))
-                .return_const(zl0);
-            bd.expect_zone_limits()
-                .with(eq(1))
-                .return_const(zl1);
-            bd.expect_open_zone()
-                .once()
-                .with(eq(32))
-                .return_once(|_| Box::new(future::ok::<(), Error>(())));
-            bd.expect_optimum_queue_depth()
-                .return_const(10u32);
-            bd.expect_writev_at()
-                .once()
-                .withf(|sglist, lba| {
-                    let len = sglist.iter().map(|b| b.len()).sum::<usize>();
-                    len == 3 * BYTES_PER_LBA && *lba == 32
-                }).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
-            bd
-        };
+    let bd = || {
+        let mut bd = VdevBlock::default();
+        bd.expect_size()
+            .return_const(262_144u64);
+        bd.expect_lba2zone()
+            .with(eq(1))
+            .return_const(Some(0));
+        bd.expect_zone_limits()
+            .with(eq(0))
+            .return_const(zl0);
+        bd.expect_zone_limits()
+            .with(eq(1))
+            .return_const(zl1);
+        bd.expect_open_zone()
+            .once()
+            .with(eq(32))
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        bd.expect_optimum_queue_depth()
+            .return_const(10u32);
+        bd.expect_writev_at()
+            .once()
+            .withf(|sglist, lba| {
+                let len = sglist.iter().map(|b| b.len()).sum::<usize>();
+                len == 3 * BYTES_PER_LBA && *lba == 32
+            }).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+        bd
+    };
 
-        blockdevs.push(bd());    //disk 0
-        blockdevs.push(bd());    //disk 1
-        blockdevs.push(bd());    //disk 2
-        blockdevs.push(bd());    //disk 3
-        blockdevs.push(bd());    //disk 4
+    blockdevs.push(bd());    //disk 0
+    blockdevs.push(bd());    //disk 1
+    blockdevs.push(bd());    //disk 2
+    blockdevs.push(bd());    //disk 3
+    blockdevs.push(bd());    //disk 4
 
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
-                                      Uuid::new_v4(),
-                                      LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice());
-        Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev_raid.open_zone(1)
-        })).unwrap();
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                  Uuid::new_v4(),
+                                  LayoutAlgorithm::PrimeS,
+                                  blockdevs.into_boxed_slice());
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.open_zone(1)
+    })).unwrap();
 }
 
 // Open a zone that has some leading wasted space.  Use mock VdevBlock objects
@@ -1997,63 +1997,63 @@ fn open_zone_zero_fill_wasted_chunks() {
 // Use highly unrealistic disks with 32 LBAs per zone
 #[test]
 fn open_zone_zero_fill_wasted_stripes() {
-        let k = 5;
-        let f = 1;
-        const CHUNKSIZE : LbaT = 1;
-        let zl0 = (1, 32);
-        let zl1 = (32, 64);
+    let k = 5;
+    let f = 1;
+    const CHUNKSIZE : LbaT = 1;
+    let zl0 = (1, 32);
+    let zl1 = (32, 64);
 
-        let mut blockdevs = Vec::<VdevBlock>::new();
+    let mut blockdevs = Vec::<VdevBlock>::new();
 
-        let bd = |gap_chunks: LbaT| {
-            let mut bd = VdevBlock::default();
-            bd.expect_size()
-                .return_const(262_144u64);
-            bd.expect_lba2zone()
-                .with(eq(1))
-                .return_const(Some(0));
-            bd.expect_zone_limits()
-                .with(eq(0))
-                .return_const(zl0);
-            bd.expect_zone_limits()
-                .with(eq(1))
-                .return_const(zl1);
-            bd.expect_open_zone()
+    let bd = |gap_chunks: LbaT| {
+        let mut bd = VdevBlock::default();
+        bd.expect_size()
+            .return_const(262_144u64);
+        bd.expect_lba2zone()
+            .with(eq(1))
+            .return_const(Some(0));
+        bd.expect_zone_limits()
+            .with(eq(0))
+            .return_const(zl0);
+        bd.expect_zone_limits()
+            .with(eq(1))
+            .return_const(zl1);
+        bd.expect_open_zone()
+            .once()
+            .with(eq(32))
+            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        bd.expect_optimum_queue_depth()
+            .return_const(10u32);
+        if gap_chunks > 0 {
+            bd.expect_writev_at()
                 .once()
-                .with(eq(32))
-                .return_once(|_| Box::new(future::ok::<(), Error>(())));
-            bd.expect_optimum_queue_depth()
-                .return_const(10u32);
-            if gap_chunks > 0 {
-                bd.expect_writev_at()
-                    .once()
-                    .withf(move |sglist, lba| {
-                        let gap_lbas = gap_chunks * CHUNKSIZE; 
-                        let len = sglist.iter().map(|b| b.len()).sum::<usize>();
-                        len == gap_lbas as usize * BYTES_PER_LBA && *lba == 32
-                    }).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
-            }
-            bd
-        };
+                .withf(move |sglist, lba| {
+                    let gap_lbas = gap_chunks * CHUNKSIZE; 
+                    let len = sglist.iter().map(|b| b.len()).sum::<usize>();
+                    len == gap_lbas as usize * BYTES_PER_LBA && *lba == 32
+                }).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+        }
+        bd
+    };
 
-        // On this layout, zone 1 begins at the third row in the repetition.
-        // Stripes 2 and 3 are wasted, so disks 0, 1, 2, 4, and 5 have a wasted
-        // LBA that needs zero-filling.  Disks 3 and 6 have no wasted LBA.
-        blockdevs.push(bd(1));  //disk 0
-        blockdevs.push(bd(2));  //disk 1
-        blockdevs.push(bd(1));  //disk 2
-        blockdevs.push(bd(0));  //disk 3
-        blockdevs.push(bd(1));  //disk 4
-        blockdevs.push(bd(1));  //disk 5
-        blockdevs.push(bd(0));  //disk 6
+    // On this layout, zone 1 begins at the third row in the repetition.
+    // Stripes 2 and 3 are wasted, so disks 0, 1, 2, 4, and 5 have a wasted
+    // LBA that needs zero-filling.  Disks 3 and 6 have no wasted LBA.
+    blockdevs.push(bd(1));  //disk 0
+    blockdevs.push(bd(2));  //disk 1
+    blockdevs.push(bd(1));  //disk 2
+    blockdevs.push(bd(0));  //disk 3
+    blockdevs.push(bd(1));  //disk 4
+    blockdevs.push(bd(1));  //disk 5
+    blockdevs.push(bd(0));  //disk 6
 
-        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
-                                      Uuid::new_v4(),
-                                      LayoutAlgorithm::PrimeS,
-                                      blockdevs.into_boxed_slice());
-        Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev_raid.open_zone(1)
-        })).unwrap();
+    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                  Uuid::new_v4(),
+                                  LayoutAlgorithm::PrimeS,
+                                  blockdevs.into_boxed_slice());
+    Runtime::new().unwrap().block_on(future::lazy(|| {
+        vdev_raid.open_zone(1)
+    })).unwrap();
 }
 }
 // LCOV_EXCL_START
