@@ -796,8 +796,9 @@ impl Fs {
             }
         }).and_then(move |mut iv| {
             if iv.nlink > 1 {
-                // 2a) Decrement the link count
+                // 2a) Decrement the link count and touch the ctime
                 iv.nlink -= 1;
+                iv.ctime = time::get_time();
                 let nlink = iv.nlink;
                 let fut = dataset.insert(key, FSValue::Inode(iv))
                 .map(move |_| nlink);

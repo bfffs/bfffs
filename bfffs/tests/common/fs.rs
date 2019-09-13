@@ -1505,6 +1505,7 @@ root:
         let dst_fd = mocks.val.0.create(&root, &dst, 0o644, 0, 0)
         .unwrap();
         mocks.val.0.link(&root, &dst_fd, &lnk).unwrap();
+        clear_timestamps(&mocks.val.0, &dst_fd);
 
         assert_eq!(src_fd.ino(),
             mocks.val.0.rename(&root, &src, &root, &dst).unwrap()
@@ -1518,6 +1519,7 @@ root:
         assert_eq!(lnk_fd.ino(), dst_fd.ino());
         let lnk_attr = mocks.val.0.getattr(&lnk_fd).unwrap();
         assert_eq!(lnk_attr.nlink, 1);
+        assert_ts_changed(&mocks.val.0, &lnk_fd, false, false, true, false);
     }
 
     // Rename a non-directory.  The target is also a non-directory
@@ -1646,7 +1648,7 @@ root:
     }
 
     // rename updates a file's parent directories' ctime and mtime
-    test rename_timestamps(mocks) {
+    test rename_parent_timestamps(mocks) {
         let root = mocks.val.0.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
@@ -2130,6 +2132,19 @@ root:
             fd0.ino());
         assert_eq!(mocks.val.0.lookup(None, &root, &filename1).unwrap_err(),
             libc::ENOENT);
+    }
+
+    // When unlinking a multiply linked file, its ctime should be updated
+    test unlink_ctime(mocks) {
+        let root = mocks.val.0.root();
+        let name1 = OsString::from("name1");
+        let name2 = OsString::from("name2");
+        let fd = mocks.val.0.create(&root, &name1, 0o644, 0, 0).unwrap();
+        mocks.val.0.link(&root, &fd, &name2).unwrap();
+        clear_timestamps(&mocks.val.0, &fd);
+
+        mocks.val.0.unlink(&root, &name2).unwrap();
+        assert_ts_changed(&mocks.val.0, &fd, false, false, true, false);
     }
 
     test unlink_enoent(mocks) {
