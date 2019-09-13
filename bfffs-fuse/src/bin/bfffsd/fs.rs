@@ -60,6 +60,13 @@ pub struct FuseFs {
 }
 
 impl FuseFs {
+    // Allow the kernel to cache attributes and entries for an unlimited amount
+    // of time, since all changes will come through the kernel.
+    const TTL: Timespec = Timespec{
+        sec: i64::max_value(),
+        nsec: i32::max_value()
+    };
+
     fn cache_file(&mut self, parent_ino: u64, name: &OsStr, fd: FileData) {
         let name_key = (parent_ino, name.to_owned());
         assert!(self.names.insert(name_key, fd.ino()).is_none(),
@@ -124,8 +131,7 @@ impl FuseFs {
         // and is only needed if the filesystem reuses deleted inodes.  BFFFS
         // does not reuse deleted inodes.
         let gen = 0;
-        let ttl = Timespec { sec: 0, nsec: 0 };
-        reply.entry(&ttl, attr, gen)
+        reply.entry(&Self::TTL, attr, gen)
     }
 
     /// Private helper for FUSE methods that take a `ReplyEntry`
@@ -183,7 +189,6 @@ impl FuseFs {
 impl Filesystem for FuseFs {
     fn create(&mut self, req: &Request, parent: u64, name: &OsStr,
               mode: u32, _flags: u32, reply: ReplyCreate) {
-        let ttl = Timespec { sec: 0, nsec: 0 };
         let parent_fd = self.files.get(&parent)
             .expect("create before lookup of parent directory");
 
@@ -206,7 +211,7 @@ impl Filesystem for FuseFs {
                 // by NFS, and is only needed if the filesystem reuses deleted
                 // inodes.  BFFFS does not reuse deleted inodes.
                 let gen = 0;
-                reply.created(&ttl, &file_attr, gen, 0, 0)
+                reply.created(&Self::TTL, &file_attr, gen, 0, 0)
             },
             Err(e) => {
                 reply.error(e)
@@ -240,11 +245,10 @@ impl Filesystem for FuseFs {
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        let ttl = Timespec { sec: 0, nsec: 0 };
         let fd = self.files.get(&ino)
             .expect("getattr before lookup or after forget");
         match self.do_getattr(&fd) {
-            Ok(file_attr) => reply.attr(&ttl, &file_attr),
+            Ok(file_attr) => reply.attr(&Self::TTL, &file_attr),
             Err(errno) => reply.error(errno)
         }
     }
@@ -651,8 +655,7 @@ impl Filesystem for FuseFs {
         // into one.
         match r {
             Ok(file_attr) => {
-                let ttl = Timespec { sec: 0, nsec: 0 };
-                reply.attr(&ttl, &file_attr)
+                reply.attr(&Self::TTL, &file_attr)
             },
             Err(e) => {
                 reply.error(e)
