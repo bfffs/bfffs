@@ -140,7 +140,7 @@ impl FuseFs {
                     Ok(file_attr)
                 },
                 Err(e) => {
-                    self.fs.inactive(fd);
+                    self.fs.reclaim(fd);
                     Err(e)
                 }
             }
@@ -196,7 +196,7 @@ impl Filesystem for FuseFs {
                 if r.is_ok() {
                     self.cache_file(parent, name, fd);
                 } else {
-                    self.fs.inactive(fd);
+                    self.fs.reclaim(fd);
                 }
                 r
             });
@@ -225,7 +225,7 @@ impl Filesystem for FuseFs {
         // TODO: figure out how to expire entries from the name cache, too
         let fd = self.files.remove(&ino)
             .expect("Forget before lookup or double-forget");
-        self.fs.inactive(fd);
+        self.fs.reclaim(fd);
     }
 
     fn fsync(&mut self, _req: &Request, ino: u64, _fh: u64, _datasync: bool,
@@ -324,7 +324,7 @@ impl Filesystem for FuseFs {
                                 Ok(file_attr)
                             },
                             Err(e) => {
-                                self.fs.inactive(fd);
+                                self.fs.reclaim(fd);
                                 Err(e)
                             }
                         }
@@ -556,7 +556,7 @@ impl Filesystem for FuseFs {
                     // Dirloop detected!
                     reply.error(libc::EINVAL);
                     if let Some(fd) = target_fd {
-                        self.fs.inactive(fd);
+                        self.fs.reclaim(fd);
                     }
                     return;
                 },
@@ -591,7 +591,7 @@ impl Filesystem for FuseFs {
             Err(errno) => {
                 reply.error(errno);
                 if let Some(fd) = target_fd {
-                    self.fs.inactive(fd);
+                    self.fs.reclaim(fd);
                 }
                 return;
             }
@@ -832,7 +832,7 @@ mod create {
         fusefs.fs.expect_getattr()
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Err(libc::EIO));
-        fusefs.fs.expect_inactive()
+        fusefs.fs.expect_reclaim()
             .withf(move |fd| fd.ino() == ino)
             .times(1)
             .return_const(());
@@ -1005,7 +1005,7 @@ mod forget {
                 rdev: 0,
                 flags: 0
             }));
-        fusefs.fs.expect_inactive()
+        fusefs.fs.expect_reclaim()
             .withf(move |fd| fd.ino() == ino)
             .times(1)
             .return_const(());
@@ -1779,7 +1779,7 @@ mod lookup {
             .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
             .return_const(Err(libc::EIO));
-        fusefs.fs.expect_inactive()
+        fusefs.fs.expect_reclaim()
             .withf(move |fd| fd.ino() == ino)
             .return_const(());
 
@@ -1927,7 +1927,7 @@ mod mkdir {
         fusefs.fs.expect_getattr()
             .times(1)
             .return_const(Err(libc::EIO));
-        fusefs.fs.expect_inactive()
+        fusefs.fs.expect_reclaim()
             .withf(move |fd| fd.ino() == ino)
             .times(1)
             .return_const(());

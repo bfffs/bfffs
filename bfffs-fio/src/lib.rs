@@ -131,7 +131,7 @@ pub unsafe extern "C" fn fio_bfffs_close(
     let fs_opt = FS.lock().unwrap();
     let fs = fs_opt.as_ref().unwrap();
     let fd = FILES.lock().unwrap().remove(&(*f).fd).unwrap();
-    fs.inactive(fd);
+    fs.reclaim(fd);
     (*f).fd = -1;
     0
 }
