@@ -10,3 +10,4 @@ syntax: glob
 Cargo.lock
 target
 target_cov
+
