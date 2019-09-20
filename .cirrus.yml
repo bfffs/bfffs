@@ -1,0 +1,25 @@
+freebsd_instance:
+  image: freebsd-11-3-stable-amd64-v20190801
+
+test_task:
+  name: cargo test 
+  matrix:
+    - container:
+       image: rust:1.36.0
+    - container:
+       image: rustlang/rust:nightly
+  cargo_cache:
+    folder: $CARGO_HOME/registry
+  build_script:
+    - if rustc --version | grep -q nightly; then
+    -   cargo build --all-features --all
+    - else
+    -   cargo build --all
+    - fi
+  test_script:
+    - if rustc --version | grep -q nightly; then
+    -   cargo test --all-features --all --all-targets
+    - else
+    -   cargo test --all
+    - fi
+  before_cache_script: rm -rf $CARGO_HOME/registry/index
