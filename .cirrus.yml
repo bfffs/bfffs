@@ -3,23 +3,21 @@ freebsd_instance:
 
 test_task:
   name: cargo test 
-  matrix:
-    - container:
-       image: rust:1.36.0
-    - container:
-       image: rustlang/rust:nightly
+  setup_script:
+    - fetch https://sh.rustup.rs -o rustup.sh
+    - sh rustup.sh -y
+    - $HOME/.cargo/bin/rustup toolchain install 1.36.0
+    - $HOME/.cargo/bin/rustup toolchain install nightly
+    # In 11.3, aio on ufs is considered unsafe
+    - sysctl vfs.aio.enable_unsafe=1
   cargo_cache:
     folder: $CARGO_HOME/registry
-  build_script:
-    - if rustc --version | grep -q nightly; then
-    -   cargo build --all-features --all
-    - else
-    -   cargo build --all
-    - fi
-  test_script:
-    - if rustc --version | grep -q nightly; then
-    -   cargo test --all-features --all --all-targets
-    - else
-    -   cargo test --all
-    - fi
+  nightly_build_script:
+    - cargo +nightly build --all-features --all
+  stable_build_script:
+    - cargo +stable build --all
+  nightly_test_script:
+    - cargo test --all-features --all --all-targets
+  stable_test_script:
+    - cargo test --all
   before_cache_script: rm -rf $CARGO_HOME/registry/index
