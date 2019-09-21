@@ -4,6 +4,7 @@ freebsd_instance:
 test_task:
   name: cargo test 
   setup_script:
+    - pkg install -y c-blosc isa-l fusefs-libs
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y
     - $HOME/.cargo/bin/rustup toolchain install 1.36.0
@@ -12,6 +13,7 @@ test_task:
     - sysctl vfs.aio.enable_unsafe=1
   cargo_cache:
     folder: $CARGO_HOME/registry
+    fingerprint_script: cat Cargo.lock || echo ""
   nightly_build_script:
     - cargo +nightly build --all-features --all
   stable_build_script:
