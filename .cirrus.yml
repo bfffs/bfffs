@@ -15,11 +15,15 @@ test_task:
     folder: $CARGO_HOME/registry
     fingerprint_script: cat Cargo.lock || echo ""
   nightly_build_script:
+    - . $HOME/.cargo/env
     - cargo +nightly build --all-features --all
   stable_build_script:
-    - cargo +stable build --all
+    - . $HOME/.cargo/env
+    - cargo +1.36.0 build --all
   nightly_test_script:
+    - . $HOME/.cargo/env
     - cargo test --all-features --all --all-targets
   stable_test_script:
-    - cargo test --all
+    - . $HOME/.cargo/env
+    - cargo +1.36.0 test --all
   before_cache_script: rm -rf $CARGO_HOME/registry/index
