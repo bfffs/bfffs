@@ -4,7 +4,7 @@ freebsd_instance:
 test_task:
   name: cargo test 
   setup_script:
-    - pkg install -y c-blosc isa-l fusefs-libs
+    - pkg install -y c-blosc isa-l fusefs-libs pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y
     - $HOME/.cargo/bin/rustup toolchain install 1.36.0
