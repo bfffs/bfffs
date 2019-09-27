@@ -28,10 +28,6 @@ isa-l = { path = "../isa-l" }
 lazy_static = "1.0"
 libc = "0.2.44"
 metrohash = "1.0"
-# modulo is available in nightly libstd only.  Once it stabilizes, we can
-# remove this crate.
-# https://github.com/rust-lang/rust/issues/49048
-modulo = "0.1.2"
 nix = "0.15.0"
 num-traits = "^0.1"
 serde = "1.0.60"

@@ -12,7 +12,6 @@
 
 use fixedbitset::FixedBitSet;
 use crate::common::*;
-use modulo::Mod;
 use std::{
     fmt::Debug,
     iter::FusedIterator,
@@ -187,7 +186,7 @@ impl PrimeS {
     fn id2loc_int(&self, chunkid: &ChunkId) -> ChunklocInt {
         // The chunk address
         let id = chunkid.address();
-        let a = id.modulo(self.datachunks as u64);
+        let a = id.rem_euclid(self.datachunks as u64);
         debug_assert!(a < i32::max_value() as u64);
         let a = a as i32;
         // The repetition and iteration
@@ -196,7 +195,7 @@ impl PrimeS {
         let s = a / i32::from(self.m);
         debug_assert!(s <= i32::from(i16::max_value()));
         // The stride
-        let y = (z.modulo(i16::from(self.n - 1))) + 1;
+        let y = (z.rem_euclid(i16::from(self.n - 1))) + 1;
         ChunklocInt{a, r, s: s as i16, y, z}
     }
 
@@ -207,8 +206,8 @@ impl PrimeS {
         // Good candidate for a combined division-modulo operation, if one ever
         // gets added
         // https://github.com/rust-lang/rust/issues/49048
-        let rep = id / self.datachunks as u64;
-        let iter = id.modulo(self.datachunks as u64) as i32 /
+        let rep = id.div_euclid(self.datachunks as u64);
+        let iter = id.rem_euclid(self.datachunks as u64) as i32 /
                    (i32::from(self.m) * i32::from(self.n));
         debug_assert!(iter <= i32::from(i16::max_value()));
         (rep, iter as i16)
@@ -234,8 +233,8 @@ impl PrimeS {
         let o2 = (0 .. self.f).fold(0, |acc, j| {
                 let cb_stripe = ((i32::from(disk) * y_inv - i32::from(j)) *
                                  i32::from(self.m_inv) - 1)
-                    .modulo(i32::from(self.n));
-                let x = if s.modulo(i32::from(self.n)) > cb_stripe {
+                    .rem_euclid(i32::from(self.n));
+                let x = if s.rem_euclid(i32::from(self.n)) > cb_stripe {
                     1
                 } else {
                     0
@@ -284,7 +283,7 @@ impl Locator for PrimeS {
         let s = i32::from(cli.s);
         let m = i32::from(self.m);
         let y = i32::from(cli.y);
-        let disk = ((s * m + b) * y).modulo(i32::from(self.n));
+        let disk = ((s * m + b) * y).rem_euclid(i32::from(self.n));
         let disk = disk as i16;
         let o3 = cli.r * self.depth as u64;
         let offset = self.offset_within_iteration(&cli, b, disk) as u64 + o3;
@@ -313,13 +312,13 @@ impl Locator for PrimeS {
         // repetition
         let r = chunkloc.offset / self.depth as u64;
         // Offset relative to start of repetition
-        let offset = chunkloc.offset.modulo(self.depth as u64) as i32;
+        let offset = chunkloc.offset.rem_euclid(self.depth as u64) as i32;
         // iteration
         let z = offset / i32::from(self.k);
         debug_assert!(z < i32::from(i16::max_value()));
         let z = z as i16;
         // stride
-        let y = z.modulo(i16::from(self.n - 1)) + 1;
+        let y = z.rem_euclid(i16::from(self.n - 1)) + 1;
         // inverse of the stride, mod n
         let y_inv = i32::from(invmod(y, i16::from(self.n)));
         let disk = i32::from(chunkloc.disk);
@@ -328,7 +327,7 @@ impl Locator for PrimeS {
         let mut stripes = FixedBitSet::with_capacity(usize::from(self.n));
         for i in 0..i32::from(self.k) {
             stripes.insert(((disk * y_inv - i) * i32::from(self.m_inv))
-                           .modulo(i32::from(self.n)) as usize);
+                           .rem_euclid(i32::from(self.n)) as usize);
         }
         let offset_in_iter = offset - i32::from(self.k) * i32::from(z);
         // stripe
@@ -337,7 +336,7 @@ impl Locator for PrimeS {
             .unwrap() as i16 + i16::from(self.n) * z;
         // position of stripe unit within stripe
         let b = (disk * y_inv - i32::from(s) * i32::from(self.m))
-            .modulo(i32::from(self.n)) as u8;
+            .rem_euclid(i32::from(self.n)) as u8;
         // number of data chunks preceding this repetition
         let o = r * self.datachunks() as u64;
         if b >= self.m {
@@ -394,7 +393,7 @@ impl PrimeSIter {
     /// iterator should return.
     fn new(layout: &PrimeS, start: ChunkId, end: ChunkId) -> Self {
         let cli = layout.id2loc_int(&start);
-        let s_z = cli.s.modulo(i16::from(layout.stripes_per_iteration()));
+        let s_z = cli.s.rem_euclid(i16::from(layout.stripes_per_iteration()));
         let b = PrimeS::offset_within_stripe(start, cli.a, cli.s, layout.m);
         debug_assert!(b < layout.k);
         // Start with offset contributions from previous iterations
@@ -406,7 +405,7 @@ impl PrimeSIter {
             for b in 0..end {
                 let disk = ((s * i32::from(layout.m) + i32::from(b))
                             * i32::from(cli.y))
-                    .modulo(i32::from(layout.n));
+                    .rem_euclid(i32::from(layout.n));
                 o[disk as usize] += 1;
             }
         }
@@ -429,7 +428,7 @@ impl PrimeSIter {
         let b = PrimeS::offset_within_stripe(self.id, self.a, self.stripe,
                                              self.m);
         let disk = ((i32::from(self.stripe) * i32::from(self.m) + i32::from(b))
-                    * i32::from(self.y)).modulo(i32::from(self.n));
+                    * i32::from(self.y)).rem_euclid(i32::from(self.n));
         let disk = disk as i16;
         let o3 = self.r * self.depth as u64;
         let offset = self.o[disk as usize] as u64 + o3;
@@ -501,7 +500,7 @@ impl Iterator for PrimeSIter {
                         self.o[disk as usize] += 1;
                         self.z += 1;
                         self.stripe += 1;
-                        self.y = self.z.modulo(self.n - 1) + 1;
+                        self.y = self.z.rem_euclid(self.n - 1) + 1;
                     }
                 } else {
                     self.a += i32::from(self.m);
@@ -567,7 +566,7 @@ impl Iterator for PrimeSIterData {
                     let b = self.0.m + i;
                     let disk = ((stripe * i32::from(self.0.m) +
                                  i32::from(b)) * i32::from(self.0.y))
-                        .modulo(i32::from(self.0.n)) as u8;
+                        .rem_euclid(i32::from(self.0.n)) as u8;
                     self.0.o[disk as usize] += 1;
                 }
                 // Roll over to the next stripe
@@ -589,7 +588,7 @@ impl Iterator for PrimeSIterData {
                         self.0.o[disk as usize] += 1;
                         self.0.z += 1;
                         self.0.stripe += 1;
-                        self.0.y = self.0.z.modulo(self.0.n - 1) + 1;
+                        self.0.y = self.0.z.rem_euclid(self.0.n - 1) + 1;
                     }
                 } else {
                     self.0.a += 1;

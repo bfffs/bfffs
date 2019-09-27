@@ -7,7 +7,7 @@ test_task:
     - pkg install -y c-blosc isa-l fusefs-libs pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y
-    - $HOME/.cargo/bin/rustup toolchain install 1.36.0
+    - $HOME/.cargo/bin/rustup toolchain install 1.38.0
     - $HOME/.cargo/bin/rustup toolchain install nightly
     # In 11.3, aio on ufs is considered unsafe
     - sysctl vfs.aio.enable_unsafe=1
@@ -19,11 +19,11 @@ test_task:
     - cargo +nightly build --all-features --all
   stable_build_script:
     - . $HOME/.cargo/env
-    - cargo +1.36.0 build --all
+    - cargo +1.38.0 build --all
   nightly_test_script:
     - . $HOME/.cargo/env
     - cargo +nightly test --all-features --all --all-targets
   stable_test_script:
     - . $HOME/.cargo/env
-    - cargo +1.36.0 test --all
+    - cargo +1.38.0 test --all
   before_cache_script: rm -rf $CARGO_HOME/registry/index
