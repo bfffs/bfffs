@@ -8,6 +8,7 @@ use histogram::Histogram;
 use std::{
     collections::HashMap,
     io::Read,
+    process,
     time
 };
 
@@ -42,6 +43,7 @@ fn main() {
     println!("                          |    min   mean    max stddev |       mean    stddev");
     println!("--------------------------+-----------------------------+---------------------");
     for (ds, typesize) in DATASETS.iter() {
+        let mut found = false;
         // Compression ratios in parts per thousand
         let mut ratios = Vec::new();
         // Compression speeds in MiBps
@@ -58,6 +60,7 @@ fn main() {
         }
         let pat = format!("/tmp/fanout/{}.*.bin", ds);
         for path in glob::glob(&pat).unwrap() {
+            found = true;
             let pb = path.unwrap();
             let mut f = std::fs::File::open(pb).unwrap();
             let mut buf = Vec::new();
@@ -89,6 +92,10 @@ fn main() {
                         .unwrap();
                 }
             }
+        }
+        if !found {
+            eprintln!("No data!  Run examples/fanout first");
+            process::exit(1);
         }
         for z in COMPRESSORS.iter() {
             for (i, (shufname, _)) in SHUFFLES.iter().enumerate() {

@@ -22,7 +22,7 @@ use rand::{Rng, RngCore, SeedableRng, thread_rng};
 use rand_xorshift::XorShiftRng;
 use std::{
     collections::BTreeMap,
-    io::Write,
+    io::{ErrorKind, Write},
     num::NonZeroU8,
     str::FromStr,
     sync::{
@@ -405,6 +405,17 @@ fn main() {
         .unwrap_or(Ok(100_000))
         .unwrap();
     let save = matches.is_present("save");
+    if save {
+        let r = std::fs::create_dir("/tmp/fanout");
+        match r {
+            Ok(_) => (),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => (),
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        }
+    }
     if matches.is_present("sequential") {
         println!("=== Sequential insertion ===");
         experiment(nrecs, save, |i| u64::from(RECSIZE) * i);
