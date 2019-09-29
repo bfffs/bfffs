@@ -32,7 +32,7 @@ mock! {
                   gid: u32) -> Result<FileData, i32>;
         fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
             name: &OsStr) -> Result<(), i32>;
-        fn reclaim(&self, fd: FileData);
+        fn inactive(&self, fd: FileData);
         fn fsync(&self, fd: &FileData) -> Result<(), i32>;
         fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32>;
         fn getextattr(&self, fd: &FileData, ns: ExtAttrNamespace, name: &OsStr)

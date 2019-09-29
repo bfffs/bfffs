@@ -2583,7 +2583,7 @@ test_suite! {
         }
 
         fn shutdown(mut self) {
-            self.fs.reclaim(self.root);
+            self.fs.inactive(self.root);
             drop(self.fs);
             let mut db = Arc::try_unwrap(self.db.take().unwrap())
                 .ok().expect("Arc::try_unwrap");

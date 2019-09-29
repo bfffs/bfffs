@@ -889,8 +889,8 @@ impl Fs {
 
     /// Tell the file system that the given file is no longer needed by the
     /// client.  Its resources may be freed.
-    // Fs::reclaim consumes fd because the client should not longer need it.
-    pub fn reclaim(&self, _fd: FileData) {
+    // Fs::inactive consumes fd because the client should not longer need it.
+    pub fn inactive(&self, _fd: FileData) {
         // Simply drop the FileData.
         // TODO: free the file's storage if its link count is 0
     }
