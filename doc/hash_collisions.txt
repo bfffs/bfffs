@@ -1,0 +1,24 @@
+These extended attribute names exhibit hash collisions as of revision
+e96debb587bd5c8274d74e434cfd515b1b495cfc.  They were calculated with
+examples/hash_collision.rs.
+
+Hash collision: (User, "BWCdLQkApB") and (System, "D6tLLI4mys") have offset 32920951372562077
+Hash collision: (System, "uiYcNd2UdI") and (System, "bPm3HAGEI2") have offset 50910461726663301
+Hash collision: (User, "mvwaJtCqH0") and (System, "OltFxUAacm") have offset 30389059925948260
+Hash collision: (User, "hA3PGCull3") and (User, "wGJnAFBe9K") have offset 12167575302657220
+Hash collision: (User, "p5ihgMdosH") and (System, "zPxg1dq3nX") have offset 67437425206005723
+Hash collision: (User, "aOgmsBGt4l") and (User, "gaCpCtGPx1") have offset 66761898920552381
+Hash collision: (User, "PrZjVUpVrB") and (System, "4uY6jlT2U5") have offset 63038349789740182
+
+And these directory entry names exhibit hash collisions as of revision
+05531d2db0f1f1541f7d1265dbf03a7ce4148f61.
+
+Hash collision: "F0jS2Tptj7" and "PLe01T116a" have offset 38802861629596083
+Hash collision: "Gg1AG3wll2" and "FDCIlvDxYn" have offset 14722753565080956
+Hash collision: "9bnewBAP69" and "DDC7p4lKQ8" have offset 57092076138024455
+Hash collision: "m6L0sESRbT" and "BtCHFSsPI6" have offset 61125705307999758
+Hash collision: "GZnBctUDug" and "AAwlnZBkj5" have offset 14675813687136066
+Hash collision: "ifAm2wFynF" and "tn9EphLgtq" have offset 3281905868825139
+Hash collision: "yG50QLOBzH" and "UUrqQFbTvi" have offset 27038432647027503
+Hash collision: "HsxUh682JQ" and "4FatHJ8I6H" have offset 5280682705534201
+
