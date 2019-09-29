@@ -5013,8 +5013,8 @@ root:
                     12: 12.0"#);
 }
 
-/// At 769:376dcac1d512, this test will cause a node to underflow during pass1,
-/// be stolen left during pass2, and never get fixed.
+/// At 375e9ad5c6f01b09b87d12f2d01a68b3c5dfd58b, this test will cause a node to
+/// underflow during pass1, be stolen left during pass2, and never get fixed.
 /// Regression test for 4a99d7f
 #[test]
 fn range_delete_underflow_and_steal_left() {

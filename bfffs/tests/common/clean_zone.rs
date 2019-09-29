@@ -135,8 +135,9 @@ test_suite! {
     }
 
     /// A regression test for bug d5b4dab35d9be12ff1505e886ed5ca8ad4b6a526
-    /// (node.0.get_mut() fails in Tree::flush_r).  As of 664:7ce31a1d42db, it
-    /// fails about 30% of the time.
+    /// (node.0.get_mut() fails in Tree::flush_r).  As of
+    /// ca9343b86ba5395c56b3c6fa6a4c50cd8f7540fe, it fails about 30% of the
+    /// time.
     #[ignore = "Test is slow and intermittent" ]
     test get_mut(mocks(1 << 30, 512)) {
         let (db, fs, _rt) = mocks.val;
