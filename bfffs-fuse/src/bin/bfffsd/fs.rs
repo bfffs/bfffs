@@ -223,13 +223,14 @@ impl Filesystem for FuseFs {
         self.fs.sync()
     }
 
-    fn forget(&mut self, _req: &Request, ino: u64, _nlookup: u64) {
+    fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {
         // XXX will FUSE_FORGET ever be sent with nlookup less than the actual
         // lookup count?  Not as far as I know.
-        // TODO: track nlookup in the cache
         // TODO: figure out how to expire entries from the name cache, too
-        let fd = self.files.remove(&ino)
+        let mut fd = self.files.remove(&ino)
             .expect("Forget before lookup or double-forget");
+        fd.lookup_count -= nlookup;
+        assert_eq!(fd.lookup_count, 0, "Partial forgets are not yet handled");
         self.fs.reclaim(fd);
     }
 
@@ -312,7 +313,11 @@ impl Filesystem for FuseFs {
                 Some(fd) => {
                     // Name and inode are cached
                     match self.do_getattr(&fd) {
-                        Ok(file_attr) => self.reply_entry(&file_attr, reply),
+                        Ok(file_attr) => {
+                            drop(fd);
+                            self.files.get_mut(ino).unwrap().lookup_count += 1;
+                            self.reply_entry(&file_attr, reply)
+                        },
                         Err(e) => reply.error(e),
                     }
                 },

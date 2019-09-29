@@ -305,6 +305,7 @@ impl<'a> From<&'a [u8]> for Uio {
 #[derive(Debug)]
 pub struct FileData {
     ino: u64,
+    pub lookup_count: u64,
     /// This file's parent's inode number.  Only valid for directories that
     /// aren't the root directory.
     parent: Option<u64>
@@ -318,7 +319,7 @@ impl FileData {
 
     /// Create a new `FileData`
     fn new(parent: Option<u64>, ino: u64) -> FileData {
-        FileData{ino, parent}
+        FileData{ino, lookup_count: 1, parent}
     }
 
     /// Create a new `FileData` for use in tests outside of this module
@@ -1779,7 +1780,7 @@ impl Fs {
 
     /// Lookup the root directory
     pub fn root(&self) -> FileData {
-        FileData{ ino: 1 , parent: None}
+        FileData{ ino: 1 , lookup_count: 1, parent: None}
     }
 
     pub fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32> {
