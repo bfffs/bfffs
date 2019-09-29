@@ -29,7 +29,7 @@ const DATASETS: [(&str, usize); 6] = [
     (&"ridt.43", 43),
     (&"ridt.47", 47),
     (&"fs.32", 32),
-    (&"fs.36", 32),
+    (&"fs.36", 36),
 ];
 
 const SHUFFLES: [(&str, blosc::ShuffleMode); 3] = [
