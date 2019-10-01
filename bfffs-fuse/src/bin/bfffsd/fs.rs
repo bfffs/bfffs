@@ -709,7 +709,17 @@ impl Filesystem for FuseFs {
     {
         let parent_fd = self.files.get(&parent)
             .expect("unlink before lookup or after forget");
-        match self.fs.unlink(&parent_fd, name) {
+        let r = match self.names.get(&(parent, name.to_owned())) {
+            None => {
+                // Name has lookup count of 0; therefore it must not be open
+                self.fs.unlink(&parent_fd, None, name)
+            },
+            Some(ino) => {
+                let fd = self.files.get(ino);
+                self.fs.unlink(&parent_fd, fd, name)
+            }
+        };
+        match r {
             Ok(()) => {
                 self.uncache_name(parent, name);
                 reply.ok()
@@ -3413,8 +3423,9 @@ mod unlink {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
+                predicate::always(),
                 predicate::eq(name)
-            ).returning(move |_, _| Err(libc::EISDIR));
+            ).returning(move |_, _, _| Err(libc::EISDIR));
 
         fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.unlink(&request, parent, name, reply);
@@ -3437,8 +3448,9 @@ mod unlink {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
+                predicate::always(),
                 predicate::eq(name)
-            ).returning(move |_, _| Ok(()));
+            ).returning(move |_, _, _| Ok(()));
 
         fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.unlink(&request, parent, name, reply);

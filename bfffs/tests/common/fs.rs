@@ -2099,7 +2099,7 @@ root:
         let filename = OsString::from("x");
         let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0)
         .unwrap();
-        let r = mocks.val.0.unlink(&root, &filename);
+        let r = mocks.val.0.unlink(&root, Some(&fd), &filename);
         assert_eq!(Ok(()), r);
 
         // Check that the inode is gone
@@ -2124,9 +2124,9 @@ root:
         let filename1 = OsString::from("4FatHJ8I6H");
         assert_dirents_collide(&filename0, &filename1);
         let fd0 = mocks.val.0.create(&root, &filename0, 0o644, 0, 0).unwrap();
-        let _fd1 = mocks.val.0.create(&root, &filename1, 0o644, 0, 0).unwrap();
+        let fd1 = mocks.val.0.create(&root, &filename1, 0o644, 0, 0).unwrap();
 
-        mocks.val.0.unlink(&root, &filename1).unwrap();
+        mocks.val.0.unlink(&root, Some(&fd1), &filename1).unwrap();
 
         assert_eq!(mocks.val.0.lookup(None, &root, &filename0).unwrap().ino(),
             fd0.ino());
@@ -2140,17 +2140,20 @@ root:
         let name1 = OsString::from("name1");
         let name2 = OsString::from("name2");
         let fd = mocks.val.0.create(&root, &name1, 0o644, 0, 0).unwrap();
+        dbg!(&fd);
         mocks.val.0.link(&root, &fd, &name2).unwrap();
         clear_timestamps(&mocks.val.0, &fd);
 
-        mocks.val.0.unlink(&root, &name2).unwrap();
+        mocks.val.0.unlink(&root, Some(&fd), &name2).unwrap();
         assert_ts_changed(&mocks.val.0, &fd, false, false, true, false);
     }
 
     test unlink_enoent(mocks) {
         let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let e = mocks.val.0.unlink(&root, &filename).unwrap_err();
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
+        mocks.val.0.unlink(&root, Some(&fd), &filename).unwrap();
+        let e = mocks.val.0.unlink(&root, Some(&fd), &filename).unwrap_err();
         assert_eq!(e, libc::ENOENT);
     }
 
@@ -2164,14 +2167,14 @@ root:
         .unwrap();
         mocks.val.0.link(&root, &fd, &name2).unwrap();
 
-        mocks.val.0.unlink(&root, &name1).unwrap();
+        mocks.val.0.unlink(&root, Some(&fd), &name1).unwrap();
         // File should still exist, now with link count 1.
         let attr = mocks.val.0.getattr(&fd).unwrap();
         assert_eq!(attr.nlink, 1);
         assert_eq!(mocks.val.0.lookup(None, &root, &name1).unwrap_err(),
             libc::ENOENT);
 
-        mocks.val.0.unlink(&root, &name2).unwrap();
+        mocks.val.0.unlink(&root, Some(&fd), &name2).unwrap();
         // File should actually be gone now
         assert_eq!(mocks.val.0.lookup(None, &root, &name1).unwrap_err(),
             libc::ENOENT);
@@ -2181,14 +2184,38 @@ root:
             libc::ENOENT);
     }
 
+    // Unlink should work on inactive vnodes
+    test unlink_inactive(mocks) {
+        let root = mocks.val.0.root();
+        let filename = OsString::from("x");
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0)
+        .unwrap();
+        mocks.val.0.inactive(fd);
+        let r = mocks.val.0.unlink(&root, None, &filename);
+        assert_eq!(Ok(()), r);
+
+        // Check that the inode is gone
+        let r = mocks.val.0.lookup(None, &root, &filename);
+        assert_eq!(libc::ENOENT, r.expect_err("Inode was not removed"));
+
+        // The parent dir should not have an "x" directory entry
+        let entries = mocks.val.0.readdir(&root, 0);
+        let x_de = entries
+        .map(|r| r.unwrap())
+        .filter(|(dirent, _ofs)| {
+            dirent.d_name[0] == 'x' as i8
+        }).nth(0);
+        assert!(x_de.is_none(), "Directory entry was not removed");
+    }
+
     /// unlink(2) should update the parent dir's timestamps
     test unlink_timestamps(mocks) {
         let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
         clear_timestamps(&mocks.val.0, &root);
 
-        mocks.val.0.unlink(&root, &filename).unwrap();
+        mocks.val.0.unlink(&root, Some(&fd), &filename).unwrap();
         assert_ts_changed(&mocks.val.0, &root, false, true, true, false);
     }
 
@@ -2558,17 +2585,20 @@ test_suite! {
             // could be sorted anywhere amongst them.
             let num: u64 = self.rng.gen();
             let fname = format!("{:x}_x", num);
+            let fd = FileData::new_for_tests(Some(1), num);
             info!("rm {}", fname);
-            assert_eq!(self.fs.unlink(&self.root, &OsString::from(&fname)),
+            assert_eq!(self.fs.unlink(&self.root, Some(&fd),
+                                      &OsString::from(&fname)),
                        Err(Error::ENOENT.into()));
         }
 
         fn rm(&mut self) {
             if !self.files.is_empty() {
                 let idx = self.rng.gen_range(0, self.files.len());
-                let fname = format!("{:x}", self.files.remove(idx).0);
+                let (basename, fd) = self.files.remove(idx);
+                let fname = format!("{:x}", basename);
                 info!("rm {}", fname);
-                self.fs.unlink(&self.root, &OsString::from(&fname))
+                self.fs.unlink(&self.root, Some(&fd), &OsString::from(&fname))
                     .unwrap();
             }
         }

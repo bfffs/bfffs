@@ -80,7 +80,9 @@ mock! {
         fn symlink(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                    gid: u32, link: &OsStr) -> Result<FileData, i32>;
         fn sync(&self);
-        fn unlink(&self, parent: &FileData, name: &OsStr) -> Result<(), i32>;
+        fn unlink<'a>(&self, parent: &'a FileData, fd: Option<&'a FileData>,
+            name: &'a OsStr)
+            -> Result<(), i32>;
         // Change write's signature slightly.  The real write takes a IU:
         // Into<UIO>, but Mockall can't mock non-'static, non-reference
         // arguments.  So we change the argument to &[u8], which is how

@@ -519,6 +519,8 @@ impl Fs {
         let fd_parent = if args.file_type == FileType::Dir {
             Some(parent_ino)
         } else {
+            // Non-directories may be multiply-linked, so the FileData can't
+            // accurately store the parent ino.
             None
         };
         let now = time::get_time();
@@ -1730,6 +1732,13 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    /// Remove a directory entry for a directory
+    ///
+    /// - `parent_fd`:  `FileData` of the parent directory, as returned by
+    ///                 [`lookup`].
+    /// - `name`:       Name of the directory entry to remove.
+    // Note, unlink unlink, rmdir takes no Option<&FileData> argument, because
+    // there is no need to support open-but-deleted directories.
     pub fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32> {
         // Outline:
         // 1) Lookup the directory
@@ -1898,13 +1907,23 @@ impl Fs {
         rx.wait().unwrap()
     }
 
-    pub fn unlink(&self, parent: &FileData, name: &OsStr) -> Result<(), i32> {
+    /// Remove a directory entry for a non-directory
+    ///
+    /// - `parent_fd`:  `FileData` of the parent directory, as returned by
+    ///                 [`lookup`].
+    /// - `fd`:         `FileData` of the directory entry to be removed, if
+    ///                 known.  Must be provided if the file has been looked up!
+    /// - `name`:       Name of the directory entry to remove.
+    pub fn unlink(&self, parent_fd: &FileData, fd: Option<&FileData>,
+        name: &OsStr) -> Result<(), i32>
+    {
         // Outline:
         // 1) Lookup and remove the directory entry
-        // 2) Unlink the Inode
-        // 3) Update parent's mtime and ctime
+        // 2a) Unlink the Inode
+        // 2b) Update parent's mtime and ctime
         let (tx, rx) = oneshot::channel();
-        let parent_ino = parent.ino;
+        let ino = fd.map(|fd| fd.ino);
+        let parent_ino = parent_fd.ino;
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
         self.handle.spawn(
@@ -1915,8 +1934,12 @@ impl Fs {
                 htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
                     (dataset.clone(), key, 0, owned_name)
                 .and_then(move |dirent|  {
-                    // 2) Unlink the inode
+                    if let Some(ino) = ino {
+                        assert_eq!(ino, dirent.ino);
+                    }
+                    // 2a) Unlink the inode
                     let unlink_fut = Fs::do_unlink(dataset.clone(), dirent.ino);
+                    // 2b) Update parent's timestamps
                     let now = time::get_time();
                     let mut attr = SetAttr::default();
                     attr.ctime = Some(now);
@@ -2969,7 +2992,8 @@ fn unlink() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(&fs.root(), &filename);
+    let fd = FileData::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -3056,7 +3080,8 @@ fn unlink_hardlink() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(&fs.root(), &filename);
+    let fd = FileData::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -3187,7 +3212,8 @@ fn unlink_with_blob_extattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(&fs.root(), &filename);
+    let fd = FileData::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);
 }
 
@@ -3308,7 +3334,8 @@ fn unlink_with_extattr_hash_collision() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let r = fs.unlink(&fs.root(), &filename);
+    let fd = FileData::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);
 }
 }

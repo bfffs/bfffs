@@ -97,7 +97,7 @@ test_suite! {
         }
         fs.sync();
 
-        fs.unlink(&root, &big_filename).unwrap();
+        fs.unlink(&root, Some(&big_fd), &big_filename).unwrap();
         fs.sync();
 
         db.clean().wait().unwrap();
