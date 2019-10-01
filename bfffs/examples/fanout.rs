@@ -409,7 +409,7 @@ fn main() {
         let r = std::fs::create_dir("/tmp/fanout");
         match r {
             Ok(_) => (),
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => (),
+            Err(ref e) if e.kind() == ErrorKind::AlreadyExists => (),
             Err(e) => {
                 eprintln!("{}", e);
                 std::process::exit(1);
