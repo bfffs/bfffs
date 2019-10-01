@@ -8,7 +8,10 @@ test_task:
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y
     - $HOME/.cargo/bin/rustup toolchain install 1.38.0
-    - $HOME/.cargo/bin/rustup toolchain install nightly
+    # A bug appeared in nightly-2019-09-28 that causes the build to fail with
+    # an internal compiler error.  Probably related to
+    # https://github.com/rust-lang/rust/issues/54114
+    - $HOME/.cargo/bin/rustup toolchain install nightly-2019-09-26-x86_64-unknown-freebsd
     # In 11.3, aio on ufs is considered unsafe
     - sysctl vfs.aio.enable_unsafe=1
   cargo_cache:
@@ -16,13 +19,13 @@ test_task:
     fingerprint_script: cat Cargo.lock || echo ""
   nightly_build_script:
     - . $HOME/.cargo/env
-    - cargo +nightly build --all-features --all
+    - cargo +nightly-2019-09-26-x86_64-unknown-freebsd build --all-features --all
   stable_build_script:
     - . $HOME/.cargo/env
     - cargo +1.38.0 build --all
   nightly_test_script:
     - . $HOME/.cargo/env
-    - cargo +nightly test --all-features --all --all-targets
+    - cargo +nightly-2019-09-26-x86_64-unknown-freebsd test --all-features --all --all-targets
   stable_test_script:
     - . $HOME/.cargo/env
     - cargo +1.38.0 test --all
