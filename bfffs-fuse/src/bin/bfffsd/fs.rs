@@ -530,29 +530,13 @@ impl Filesystem for FuseFs {
         newparent: u64, newname: &OsStr, reply: ReplyEmpty)
     {
         let parent_fd = self.files.get(&parent)
-            .expect("rename before lookup or after forget");
+            .expect("rename before lookup or after forget of parent");
         let newparent_fd = self.files.get(&newparent)
-            .expect("rename before lookup or after forget");
-        let mut target_fd = None;
+            .expect("rename before lookup or after forget of new parent");
 
         // Dirloop check
-        let target_ino = match self.names.get(&(parent, name.to_owned())) {
-            Some(ino) => *ino,
-            None => {
-                let grandparent_fd = self.files.get(&parent);
-                match self.fs.lookup(grandparent_fd, &parent_fd, name) {
-                    Ok(fd) => {
-                        let ino = fd.ino();
-                        target_fd = Some(fd);
-                        ino
-                    },
-                    Err(e) => {
-                        reply.error(e);
-                        return();
-                    }
-                }
-            }
-        };
+        let target_ino = *self.names.get(&(parent, name.to_owned()))
+            .expect("rename before lookup or after forget of target");
         let mut fd = self.files.get(&newparent)
             .expect("Uncached destination directory");
         loop {
@@ -564,9 +548,6 @@ impl Filesystem for FuseFs {
                 Some(ino) if target_ino == ino => {
                     // Dirloop detected!
                     reply.error(libc::EINVAL);
-                    if let Some(fd) = target_fd {
-                        self.fs.inactive(fd);
-                    }
                     return;
                 },
                 // Keep recursing
@@ -579,18 +560,16 @@ impl Filesystem for FuseFs {
 
         match self.fs.rename(&parent_fd, name, &newparent_fd, newname) {
             Ok(ino) => {
+                assert_eq!(ino, target_ino);
                 // Remove the cached destination file, if any
                 self.uncache_name(newparent, newname);
                 // Remove the cached source name (but not inode)
                 let name_key = (parent, name.to_owned());
-                match self.names.remove(&name_key) {
-                    Some(ino) => {
-                        // And cache it in the new location
-                        let newname_key = (newparent, newname.to_owned());
-                        self.names.insert(newname_key, ino);
-                    },
-                    None => ()  // Renaming uncached entries is OK
-                }
+                let cache_ino = self.names.remove(&name_key).unwrap();
+                assert_eq!(ino, cache_ino);
+                // And cache it in the new location
+                let newname_key = (newparent, newname.to_owned());
+                self.names.insert(newname_key, cache_ino);
                 // Reparent the moved file
                 if let Some(fd) = self.files.get_mut(&ino) {
                     fd.reparent(newparent);
@@ -599,15 +578,8 @@ impl Filesystem for FuseFs {
             },
             Err(errno) => {
                 reply.error(errno);
-                if let Some(fd) = target_fd {
-                    self.fs.inactive(fd);
-                }
                 return;
             }
-        }
-
-        if let Some(fd) = target_fd {
-            self.files.insert(target_ino, fd);
         }
     }
 
