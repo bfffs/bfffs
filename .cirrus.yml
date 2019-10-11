@@ -15,7 +15,7 @@ test_task:
     # In 11.3, aio on ufs is considered unsafe
     - sysctl vfs.aio.enable_unsafe=1
   cargo_cache:
-    folder: $CARGO_HOME/registry
+    folder: $HOME/.cargo/registry
     fingerprint_script: cat Cargo.lock || echo ""
   nightly_build_script:
     - . $HOME/.cargo/env
@@ -29,4 +29,4 @@ test_task:
   stable_test_script:
     - . $HOME/.cargo/env
     - cargo +1.38.0 test --all
-  before_cache_script: rm -rf $CARGO_HOME/registry/index
+  before_cache_script: rm -rf $HOME/.cargo/registry/index
