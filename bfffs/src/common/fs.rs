@@ -1585,10 +1585,29 @@ impl Fs {
 
     /// Rename a file.  Return the inode number of the renamed file.
     ///
+    /// # Arguments
+    ///
+    /// - `parent_fd`:  `FileData` of the parent directory, as returned by
+    ///                 [`lookup`].
+    /// - `fd`:         `FileData` of the directory entry to be moved, if
+    ///                 known.  Must be provided if the file has been looked up!
+    /// - `name`:       Name of the directory entry to move.
+    /// - `newparent`:  `FileData` of the new parent directory
+    /// - `newfd`:      `FileData` of the target file (if it exists).  Must be
+    ///                 provided if the target already exists!
+    /// - `newname`:    New name for the file
+    ///
+    /// # Returns
+    ///
+    /// On success, the inode number of the moved file.
+    ///
     /// NB: This function performs no dirloop protection.  That is the
     /// responsibility of the client.
-    pub fn rename(&self, parent: &FileData, name: &OsStr,
-        newparent: &FileData, newname: &OsStr) -> Result<u64, i32>
+    // XXX newino should really have type Option<&FileData> for consistency,
+    // but I can't figure out how to make such a type work with Mockall.
+    pub fn rename(&self, parent: &FileData, fd: &FileData, name: &OsStr,
+        newparent: &FileData, newino: Option<u64>, newname: &OsStr)
+        -> Result<u64, i32>
     {
         // Outline:
         // 0)  Check conditions
@@ -1602,11 +1621,12 @@ impl Fs {
         let (tx, rx) = oneshot::channel::<Result<u64, i32>>();
         let src_objkey = ObjKey::dir_entry(&name);
         let owned_name = name.to_owned();
-        let owned_name2 = owned_name.clone();
         let dst_objkey = ObjKey::dir_entry(&newname);
         let owned_newname = newname.to_owned();
         let owned_newname2 = owned_newname.clone();
         let owned_newname3 = owned_newname.clone();
+        let ino = fd.ino();
+        let dst_ino = newino;
         let parent_ino = parent.ino;
         let newparent_ino = newparent.ino;
         let samedir = parent_ino == newparent_ino;
@@ -1628,6 +1648,9 @@ impl Fs {
                 .then(move |r: Result<Dirent, Error>| {
                     match r {
                         Ok(dirent) => {
+                            assert_eq!(dst_ino.expect(
+                                "didn't lookup destination before rename"),
+                                dirent.ino);
                             if dirent.dtype != libc::DT_DIR {
                                 // Overwriting non-directories is allowed
                                 boxfut!(Ok(()).into_future())
@@ -1639,6 +1662,7 @@ impl Fs {
                         },
                         Err(Error::ENOENT) => {
                             // Destination doesn't exist.  No problem!
+                            assert!(dst_ino.is_none());
                             boxfut!(Ok(()).into_future())
                         },
                         Err(e) => {
@@ -1650,8 +1674,9 @@ impl Fs {
                     // 1) Remove the source directory entry
                     let src_de_key = FSKey::new(parent_ino, src_objkey);
                     htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
-                        (ds5.clone(), src_de_key, 0, owned_name2)
+                        (ds5.clone(), src_de_key, 0, owned_name)
                 }).and_then(move |mut dirent| {
+                    assert_eq!(ino, dirent.ino);
                     // 2) Insert the new directory entry
                     let isdir = dirent.dtype == libc::DT_DIR;
                     dirent.name = owned_newname2.clone();
@@ -2524,8 +2549,10 @@ fn rename_eio() {
     let mut ds = ReadWriteFilesystem::default();
     let srcname = OsString::from("x");
     let dstname = OsString::from("y");
+    let src_ino = 3;
+    let dst_ino = 4;
     let dst_dirent = Dirent {
-        ino: 3,
+        ino: dst_ino,
         dtype: libc::DT_REG,
         name: dstname.clone()
     };
@@ -2549,7 +2576,8 @@ fn rename_eio() {
 
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let root = fs.root();
-    let r = fs.rename(&root, &srcname, &root, &dstname);
+    let fd = FileData::new_for_tests(Some(root.ino), src_ino);
+    let r = fs.rename(&root, &fd, &srcname, &root, Some(dst_ino), &dstname);
     assert_eq!(Err(libc::EIO), r);
 }
 
