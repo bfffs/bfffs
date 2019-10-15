@@ -6,7 +6,7 @@ test_task:
   setup_script:
     - pkg install -y c-blosc isa-l fusefs-libs pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
-    - sh rustup.sh -y
+    - sh rustup.sh -y --profile=minimal
     - $HOME/.cargo/bin/rustup toolchain install 1.38.0
     # A bug appeared in nightly-2019-09-28 that causes the build to fail with
     # an internal compiler error.  Probably related to
