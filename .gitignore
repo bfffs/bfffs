@@ -7,7 +7,5 @@ syntax: glob
 *.swp
 .byebug_history
 .nfs.*
-Cargo.lock
 target
 target_cov
-
