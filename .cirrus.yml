@@ -2,6 +2,8 @@ freebsd_instance:
   image: freebsd-11-3-stable-amd64-v20190801
 
 task:
+  env:
+    HOME: /tmp # cargo need it
   matrix:
     - name: cargo test (nightly)
       env:
