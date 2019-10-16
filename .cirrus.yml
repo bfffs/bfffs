@@ -26,6 +26,8 @@ task:
   cargo_cache:
     folder: $HOME/.cargo/registry
     fingerprint_script: cat Cargo.lock || echo ""
+  target_cache:
+    folder: target
   build_script:
     - . $HOME/.cargo/env
     - cargo $VERSION build $CARGO_ARGS --all
