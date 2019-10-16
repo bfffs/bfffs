@@ -1,8 +1,17 @@
 freebsd_instance:
   image: freebsd-11-3-stable-amd64-v20190801
 
-test_task:
-  name: cargo test 
+task:
+  env:
+    HOME: /tmp # cargo needs it
+  matrix:
+    - name: cargo test (nightly)
+      env:
+        VERSION: +nightly-2019-09-26-x86_64-unknown-freebsd
+        CARGO_ARGS: --all-features
+    - name: cargo test (stable)
+      env:
+        VERSION: +1.38.0
   setup_script:
     - pkg install -y c-blosc isa-l fusefs-libs pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
@@ -17,16 +26,10 @@ test_task:
   cargo_cache:
     folder: $HOME/.cargo/registry
     fingerprint_script: cat Cargo.lock || echo ""
-  nightly_build_script:
+  build_script:
     - . $HOME/.cargo/env
-    - cargo +nightly-2019-09-26-x86_64-unknown-freebsd build --all-features --all
-  stable_build_script:
+    - cargo $VERSION build $CARGO_ARGS --all
+  test_script:
     - . $HOME/.cargo/env
-    - cargo +1.38.0 build --all
-  nightly_test_script:
-    - . $HOME/.cargo/env
-    - cargo +nightly-2019-09-26-x86_64-unknown-freebsd test --all-features --all --all-targets
-  stable_test_script:
-    - . $HOME/.cargo/env
-    - cargo +1.38.0 test --all
+    - cargo $VERSION test $CARGO_ARGS --all --all-targets
   before_cache_script: rm -rf $HOME/.cargo/registry/index
