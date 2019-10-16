@@ -1,5 +1,5 @@
 freebsd_instance:
-  image_family: freebsd-11-3
+  image_family: freebsd-13-0-snap # 13.0 boots way faster
 
 task:
   matrix:
