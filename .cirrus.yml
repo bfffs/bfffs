@@ -1,11 +1,12 @@
 freebsd_instance:
-  image_family: freebsd-13-0-snap # 13.0 boots way faster
+  image: freebsd-11-3-stable-amd64-v20190801
 
 task:
   matrix:
     - name: cargo test (nightly)
       env:
         VERSION: +nightly-2019-09-26-x86_64-unknown-freebsd
+        CARGO_ARGS: --all-features
     - name: cargo test (stable)
       env:
         VERSION: +1.38.0
@@ -22,13 +23,11 @@ task:
     - sysctl vfs.aio.enable_unsafe=1
   cargo_cache:
     folder: $HOME/.cargo/registry
-    fingerprint_script:
-      - echo $VERSION
-      - cat Cargo.lock || echo ""
+    fingerprint_script: cat Cargo.lock || echo ""
   build_script:
     - . $HOME/.cargo/env
-    - cargo $VERSION build --all-features --all
+    - cargo $VERSION build $CARGO_ARGS --all
   test_script:
     - . $HOME/.cargo/env
-    - cargo $VERSION test --all-features --all --all-targets
+    - cargo $VERSION test $CARGO_ARGS --all --all-targets
   before_cache_script: rm -rf $HOME/.cargo/registry/index
