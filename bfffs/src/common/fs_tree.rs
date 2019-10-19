@@ -56,6 +56,7 @@ enum ObjKeyDiscriminant {
     Extent = 2,
     ExtAttr = 3,
     Property = 4,
+    DyingInode = 5,
 }
 
 /// The per-object portion of a `FSKey`
@@ -81,7 +82,13 @@ pub enum ObjKey {
     ExtAttr(u64),
 
     /// A Dataset property.  Only relevant for object 0.
-    Property(PropertyName)
+    Property(PropertyName),
+
+    /// Inode number of an open-but-deleted inode.
+    ///
+    /// The value is a 56-bit hash of the inode number.  This key is only valid
+    /// for object 0.
+    DyingInode(u64),
 }
 
 impl ObjKey {
@@ -96,6 +103,14 @@ impl ObjKey {
         // TODO: use some salt to defend against DOS attacks
         let namehash = hasher.finish() & ( (1<<56) - 1);
         ObjKey::DirEntry(namehash)
+    }
+
+    pub fn dying_inode(ino: u64) -> Self {
+        let mut hasher = MetroHash64::new();
+        ino.hash(&mut hasher);
+        // TODO: use some salt to defend against DOS attacks
+        let inohash = hasher.finish() & ( (1<<56) - 1);
+        ObjKey::DyingInode(inohash)
     }
 
     /// Create a 'ObjKey::ExtAttr' object from an extended attribute name
@@ -115,6 +130,7 @@ impl ObjKey {
             ObjKey::Extent(_) => ObjKeyDiscriminant::Extent,
             ObjKey::ExtAttr(_) => ObjKeyDiscriminant::ExtAttr,
             ObjKey::Property(_) => ObjKeyDiscriminant::Property,
+            ObjKey::DyingInode(_) => ObjKeyDiscriminant::DyingInode,
         };
         d as u8
     }
@@ -125,7 +141,8 @@ impl ObjKey {
             ObjKey::Inode => 0,
             ObjKey::Extent(x) => *x,
             ObjKey::ExtAttr(x) => *x,
-            ObjKey::Property(prop) => *prop as u64
+            ObjKey::Property(prop) => *prop as u64,
+            ObjKey::DyingInode(x) => *x,
         }
     }
 }
@@ -154,6 +171,15 @@ impl FSKey {
         let objkey = ObjKey::DirEntry(0);
         let start = FSKey::compose(ino, objkey.discriminant(), offset);
         let end = FSKey::compose(ino, objkey.discriminant() + 1, 0);
+        start..end
+    }
+
+    /// Create a range of `FSKey` that will include all dying inodes in this
+    /// file system
+    pub fn dying_inode_range() -> Range<Self> {
+        let objkey = ObjKey::DyingInode(0);
+        let start = FSKey::compose(0, objkey.discriminant(), 0);
+        let end = FSKey::compose(0, objkey.discriminant() + 1, 0);
         start..end
     }
 
@@ -195,6 +221,10 @@ impl FSKey {
 
     pub fn is_direntry(&self) -> bool {
         self.objtype() == ObjKeyDiscriminant::DirEntry as u8
+    }
+
+    pub fn is_dying_inode(&self) -> bool {
+        self.objtype() == ObjKeyDiscriminant::DyingInode as u8
     }
 
     pub fn is_extattr(&self) -> bool {
@@ -315,6 +345,21 @@ impl TryFrom<FSValue<RID>> for Dirent {
         } else {
             Err(())
         }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DyingInode(u64);
+
+impl DyingInode {
+    pub fn ino(&self) -> u64 {
+        self.0
+    }
+}
+
+impl From<u64> for DyingInode {
+    fn from(ino: u64) -> Self {
+        DyingInode(ino)
     }
 }
 
@@ -660,6 +705,10 @@ pub enum FSValue<A: Addr> {
     DirEntries(Vec<Dirent>),
     /// A native dataset property.
     Property(Property),
+    /// Inode number of an open-but-deleted file in this file
+    /// system.  Only valid for object 0.
+    DyingInode(DyingInode),
+    // TODO: hash bucket of DyingInode
     /// For testing purposes only!  Must come last!
     #[cfg(test)]
     #[doc(hidden)]
@@ -678,6 +727,14 @@ impl<A: Addr> FSValue<A> {
     pub fn as_direntry(&self) -> Option<&Dirent> {
         if let FSValue::DirEntry(direntry) = self {
             Some(direntry)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_dying_inode(&self) -> Option<&DyingInode> {
+        if let FSValue::DyingInode(di) = self {
+            Some(di)
         } else {
             None
         }

@@ -2118,10 +2118,11 @@ root:
         .unwrap();
         let r = mocks.val.0.unlink(&root, Some(&fd), &filename);
         assert_eq!(Ok(()), r);
+        mocks.val.0.inactive(fd);
 
         // Check that the inode is gone
-        let inode = mocks.val.0.getattr(&fd);
-        assert_eq!(Err(libc::ENOENT), inode, "Inode was not removed");
+        let r = mocks.val.0.lookup(None, &root, &filename);
+        assert_eq!(libc::ENOENT, r.unwrap_err(), "Dirent was not removed");
 
         // The parent dir should not have an "x" directory entry
         let entries = mocks.val.0.readdir(&root, 0);
@@ -2131,6 +2132,36 @@ root:
             dirent.d_name[0] == 'x' as i8
         }).nth(0);
         assert!(x_de.is_none(), "Directory entry was not removed");
+    }
+
+    // Access an opened but deleted file
+    test unlink_but_opened(mocks) {
+        let root = mocks.val.0.root();
+        let filename = OsString::from("x");
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
+        let r = mocks.val.0.unlink(&root, Some(&fd), &filename);
+        assert_eq!(Ok(()), r);
+
+        let attr = mocks.val.0.getattr(&fd).expect("Inode deleted too soon");
+        assert_eq!(0, attr.nlink);
+
+        mocks.val.0.inactive(fd);
+    }
+
+    // Access an open file that was deleted during a previous TXG
+    test unlink_but_opened_across_txg(mocks) {
+        let root = mocks.val.0.root();
+        let filename = OsString::from("x");
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
+        let r = mocks.val.0.unlink(&root, Some(&fd), &filename);
+        assert_eq!(Ok(()), r);
+
+        mocks.val.0.sync();
+
+        let attr = mocks.val.0.getattr(&fd).expect("Inode deleted too soon");
+        assert_eq!(0, attr.nlink);
+
+        mocks.val.0.inactive(fd);
     }
 
     // Unlink a file that has a name collision with another file in the same
@@ -2144,6 +2175,7 @@ root:
         let fd1 = mocks.val.0.create(&root, &filename1, 0o644, 0, 0).unwrap();
 
         mocks.val.0.unlink(&root, Some(&fd1), &filename1).unwrap();
+        mocks.val.0.inactive(fd1);
 
         assert_eq!(mocks.val.0.lookup(None, &root, &filename0).unwrap().ino(),
             fd0.ino());
@@ -2180,8 +2212,7 @@ root:
         let root = mocks.val.0.root();
         let name1 = OsString::from("name1");
         let name2 = OsString::from("name2");
-        let fd = mocks.val.0.create(&root, &name1, 0o644, 0, 0)
-        .unwrap();
+        let fd = mocks.val.0.create(&root, &name1, 0o644, 0, 0).unwrap();
         mocks.val.0.link(&root, &fd, &name2).unwrap();
 
         mocks.val.0.unlink(&root, Some(&fd), &name1).unwrap();
@@ -2191,13 +2222,21 @@ root:
         assert_eq!(mocks.val.0.lookup(None, &root, &name1).unwrap_err(),
             libc::ENOENT);
 
+        // Even if we drop the file data, the inode should not be deleted,
+        // because it has nlink 1
+        mocks.val.0.inactive(fd);
+        let fd = mocks.val.0.lookup(None, &root, &name2).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
+        assert_eq!(attr.nlink, 1);
+
+        // A second unlink should remove the file
         mocks.val.0.unlink(&root, Some(&fd), &name2).unwrap();
+        mocks.val.0.inactive(fd);
+
         // File should actually be gone now
         assert_eq!(mocks.val.0.lookup(None, &root, &name1).unwrap_err(),
             libc::ENOENT);
         assert_eq!(mocks.val.0.lookup(None, &root, &name2).unwrap_err(),
-            libc::ENOENT);
-        assert_eq!(mocks.val.0.getattr(&fd).unwrap_err(),
             libc::ENOENT);
     }
 
@@ -2205,8 +2244,7 @@ root:
     test unlink_inactive(mocks) {
         let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0)
-        .unwrap();
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.inactive(fd);
         let r = mocks.val.0.unlink(&root, None, &filename);
         assert_eq!(Ok(()), r);
@@ -2233,6 +2271,7 @@ root:
         clear_timestamps(&mocks.val.0, &root);
 
         mocks.val.0.unlink(&root, Some(&fd), &filename).unwrap();
+        mocks.val.0.inactive(fd);
         assert_ts_changed(&mocks.val.0, &root, false, true, true, false);
     }
 
