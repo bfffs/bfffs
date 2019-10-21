@@ -559,12 +559,35 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    // Actually delete an inode, which must already be unlinked
+    fn do_delete_inode(ds: Arc<ReadWriteFilesystem>, ino: u64)
+        -> impl Future<Item=(), Error=Error>
+    {
+        let ds2 = ds.clone();
+        // delete its blob extents and blob extended attributes
+        let extent_stream = ds.range(FSKey::extent_range(ino, ..))
+        .filter_map(move |(_k, v)| {
+            if let Extent::Blob(be) = v.as_extent().unwrap()
+            {
+                Some(be.rid)
+            } else {
+                None
+            }
+        });
+        let extattr_stream = Fs::list_extattr_rids(&*ds, ino);
+        extent_stream.chain(extattr_stream)
+        .for_each(move |rid| ds2.delete_blob(rid))
+        .and_then(move |_| {
+            // Finally, range_delete its key range, including inode,
+            // inline extents, and inline extattrs
+            ds.range_delete(FSKey::obj_range(ino))
+        })
+    }
+
     // Remove the inode if this was its last reference
     fn do_inactive(ds: Arc<ReadWriteFilesystem>, ino: u64)
         -> impl Future<Item=(), Error=Error>
     {
-        let ds2 = ds.clone();
-
         let dikey = FSKey::new(0, ObjKey::dying_inode(ino));
         ds.get(dikey)
         .and_then(move |di| {
@@ -572,25 +595,7 @@ impl Fs {
                 None => boxfut!(Ok(()).into_future()),
                 Some(di2) => {
                     assert_eq!(ino, di2.as_dying_inode().unwrap().ino());
-                    // delete its blob extents and blob extended attributes
-                    let extent_stream = ds.range(FSKey::extent_range(ino, ..))
-                    .filter_map(move |(_k, v)| {
-                        if let Extent::Blob(be) = v.as_extent().unwrap()
-                        {
-                            Some(be.rid)
-                        } else {
-                            None
-                        }
-                    });
-                    let extattr_stream = Fs::list_extattr_rids(&*ds, ino);
-                    let fut = extent_stream.chain(extattr_stream)
-                    .for_each(move |rid| ds2.delete_blob(rid))
-                    .and_then(move |_| {
-                        // Finally, range_delete its key range, including inode,
-                        // inline extents, and inline extattrs
-                        ds.range_delete(FSKey::obj_range(ino))
-                    });
-                    boxfut!(fut)
+                    boxfut!(Fs::do_delete_inode(ds, ino))
                 }
             }
         })
@@ -873,7 +878,9 @@ impl Fs {
         let db2 = database.clone();
         handle.spawn(
             database.fsread(tree, move |dataset| {
-                dataset.last_key()
+                let last_key_fut = dataset.last_key();
+
+                last_key_fut
                 .join3(db2.get_prop(tree, PropertyName::Atime),
                        db2.get_prop(tree, PropertyName::RecordSize))
                 .map(move |r| tx.send(r).unwrap())
@@ -883,9 +890,25 @@ impl Fs {
         let next_object = AtomicU64::new(last_key.unwrap().object() + 1);
         let atime = atimep.as_bool();
         let record_size = recsizep.as_u8();
-        // TODO: read old dying_inodes from disk.  If mounting read-write,
-        // purge them.
-        Fs{
+
+        // In the background, delete all dying inodes.  If there are any, it
+        // means that the previous mount was uncleanly dismounted.
+        handle.spawn(
+            database.fswrite(tree, move |dataset| {
+                let ds = Arc::new(dataset);
+                let ds2 = ds.clone();
+                ds.range(FSKey::dying_inode_range())
+                .for_each(move |(_k, v)| {
+                    let ino = v.as_dying_inode().unwrap().ino();
+                    Fs::do_delete_inode(ds.clone(), ino)
+                }).and_then(move |_| {
+                    // Finally, range delete all of the dying inodes
+                    ds2.range_delete(FSKey::dying_inode_range())
+                })
+            }).map_err(Error::unhandled)
+        ).unwrap();
+
+        Fs {
             db: database,
             next_object,
             handle,
@@ -2188,12 +2211,25 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .pool_size(1)
         .build()
         .unwrap();
-    let mut ds = ReadOnlyFilesystem::default();
-    ds.expect_last_key()
+    let mut rods = ReadOnlyFilesystem::default();
+    let mut rwds = ReadWriteFilesystem::default();
+    rods.expect_last_key()
         .once()
         .returning(|| {
             let root_inode_key = FSKey::new(1, ObjKey::Inode);
             Box::new(Ok(Some(root_inode_key)).into_future())
+        });
+    rwds.expect_range()
+        .once()
+        .with(eq(FSKey::dying_inode_range()))
+        .returning(move |_| {
+            mock_range_query(Vec::new())
+        });
+    rwds.expect_range_delete()
+        .once()
+        .with(eq(FSKey::dying_inode_range()))
+        .returning(|_| {
+            Box::new(Ok(()).into_future())
         });
     let mut db = Database::default();
     db.expect_new_fs()
@@ -2201,7 +2237,10 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .returning(|_| Box::new(Ok(TreeID::Fs(0)).into_future()));
     db.expect_fsread_inner()
         .once()
-        .return_once(move |_| ds);
+        .return_once(move |_| rods);
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| rwds);
     db.expect_get_prop()
         .times(2)
         .returning(|_tree_id, propname| {

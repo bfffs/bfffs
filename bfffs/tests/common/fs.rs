@@ -34,7 +34,9 @@ test_suite! {
     use time::Timespec;
     use tokio_io_pool::Runtime;
 
-    fixture!( mocks(props: Vec<Property>) -> (Fs, Runtime, Arc<Mutex<Cache>>) {
+    fixture!( mocks(props: Vec<Property>)
+              -> (Fs, Runtime, Arc<Mutex<Cache>>, Arc<Database>, TreeID)
+    {
         params { vec![Vec::new()].into_iter() }
 
         setup(&mut self) {
@@ -62,13 +64,14 @@ test_suite! {
             })).unwrap();
             let handle = rt.handle().clone();
             let props = self.props.clone();
-            let fs = rt.block_on(future::lazy(move || {
-                db.new_fs(props)
+            let db2 = db.clone();
+            let (fs, tree_id) = rt.block_on(future::lazy(move || {
+                db2.new_fs(props)
                 .map(move |tree_id| {
-                    Fs::new(db.clone(), handle, tree_id)
+                    (Fs::new(db2, handle, tree_id), tree_id)
                 })
             })).unwrap();
-            (fs, rt, cache)
+            (fs, rt, cache, db, tree_id)
         }
     });
 
@@ -930,6 +933,41 @@ root:
         assert_ts_changed(&mocks.val.0, &root, false, true, true, false);
     }
 
+    // If the file system was unmounted uncleanly and has open but deleted
+    // files, they should be deleted during mount
+    test mount_with_open_but_deleted_files(mocks) {
+        let (fs, rt, _cache, db, tree_id) = mocks.val;
+        let root = fs.root();
+
+        // First create a file, open it, and unlink it, but don't close it
+        let filename = OsString::from("x");
+        let fd = fs.create(&root, &filename, 0o644, 0, 0).unwrap();
+        let r = fs.unlink(&root, Some(&fd), &filename);
+        fs.sync();
+        assert_eq!(Ok(()), r);
+
+        // Unmount, without closing the file
+        drop(fs);
+
+        // Mount again
+        let handle = rt.handle().clone();
+        let fs = Fs::new(db, handle, tree_id);
+
+        // Try to open the file again.
+        // XXX It's not legal to reuse a FileData structure, but it happens to
+        // work, and it's the only way to attempt to open an unlinked inode!
+        // Wait up to 2 seconds for the inode to be deleted
+        let mut r = Err(0);
+        for _ in 0..20 {
+            r = fs.getattr(&fd);
+            if r.is_err() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert_eq!(Err(libc::ENOENT), r);
+    }
+
     // Read a hole that's bigger than the zero region
     test read_big_hole(mocks) {
         let root = mocks.val.0.root();
@@ -1119,7 +1157,7 @@ root:
 
     // When atime is disabled, reading a file should not update its atime.
     test read_timestamps_no_atime(mocks(vec![Property::Atime(false)])) {
-        let (fs, _rt, _cache) = mocks.val;
+        let (fs, _rt, _cache, _db, _tree_id) = mocks.val;
         let root = fs.root();
 
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).unwrap();
