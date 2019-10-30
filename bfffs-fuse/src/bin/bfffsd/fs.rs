@@ -52,7 +52,9 @@ cfg_if! {
 /// Tokio domain.
 pub struct FuseFs {
     fs: Fs,
-    /// Basically a vnode cache for FuseFS
+    /// Basically a vnode cache for FuseFS.  It must always be in sync with
+    /// the real vnode cache in the kernel.  It is an error to drop an entry
+    /// from here if its `lookup_count` is non-zero.
     files: HashMap<u64, FileData>,
     /// A private namecache, indexed by the parent inode and the final
     /// component of the path name.
@@ -529,14 +531,19 @@ impl Filesystem for FuseFs {
     fn rename(&mut self, _req: &Request, parent: u64, name: &OsStr,
         newparent: u64, newname: &OsStr, reply: ReplyEmpty)
     {
+        let new_ino = self.names.get(&(newparent, newname.to_owned()))
+            .cloned();
         let parent_fd = self.files.get(&parent)
             .expect("rename before lookup or after forget of parent");
         let newparent_fd = self.files.get(&newparent)
             .expect("rename before lookup or after forget of new parent");
+        let newname_key = (newparent, newname.to_owned());
 
         // Dirloop check
-        let target_ino = *self.names.get(&(parent, name.to_owned()))
-            .expect("rename before lookup or after forget of target");
+        let src_ino = *self.names.get(&(parent, name.to_owned()))
+            .expect("rename before lookup or after forget of source");
+        let src_fd = self.files.get(&src_ino)
+            .expect("rename before lookup or after forget of source");
         let mut fd = self.files.get(&newparent)
             .expect("Uncached destination directory");
         loop {
@@ -545,7 +552,7 @@ impl Filesystem for FuseFs {
                     // Root directory, or not a directory
                     break;
                 },
-                Some(ino) if target_ino == ino => {
+                Some(ino) if src_ino == ino => {
                     // Dirloop detected!
                     reply.error(libc::EINVAL);
                     return;
@@ -558,9 +565,11 @@ impl Filesystem for FuseFs {
             }
         }
 
-        match self.fs.rename(&parent_fd, name, &newparent_fd, newname) {
+        match self.fs.rename(&parent_fd, &src_fd, name, &newparent_fd,
+            new_ino, newname)
+        {
             Ok(ino) => {
-                assert_eq!(ino, target_ino);
+                assert_eq!(ino, src_ino);
                 // Remove the cached destination file, if any
                 self.uncache_name(newparent, newname);
                 // Remove the cached source name (but not inode)
@@ -568,7 +577,6 @@ impl Filesystem for FuseFs {
                 let cache_ino = self.names.remove(&name_key).unwrap();
                 assert_eq!(ino, cache_ino);
                 // And cache it in the new location
-                let newname_key = (newparent, newname.to_owned());
                 self.names.insert(newname_key, cache_ino);
                 // Reparent the moved file
                 if let Some(fd) = self.files.get_mut(&ino) {
@@ -2828,7 +2836,6 @@ mod readlink {
 
 mod rename {
     use super::*;
-    // TODO: test that the cached vnode for a destination gets removed
 
     // Rename a directory
     #[test]
@@ -2851,10 +2858,12 @@ mod rename {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
+                predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(name),
                 predicate::function(move |fd: &FileData| fd.ino() == newparent),
+                predicate::eq(None),
                 predicate::eq(newname),
-            ).return_const(Ok(ino));
+            ).return_once(move |_, _, _, _, _, _| Ok(ino));
 
         fusefs.files.insert(parent, FileData::new_for_tests(Some(1), parent));
         fusefs.files.insert(newparent,
@@ -2866,11 +2875,13 @@ mod rename {
         assert_eq!(Some(newparent), fusefs.files.get(&ino).unwrap().parent());
     }
 
+    // Rename fails because the src is a directory but the dst is not.
     #[test]
     fn enotdir() {
         let parent = 42;
         let newparent = 43;
         let ino = 44;
+        let dst_ino = 45;
         let name = OsStr::from_bytes(b"foo");
         let newname = OsStr::from_bytes(b"bar");
 
@@ -2887,8 +2898,10 @@ mod rename {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
+                predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(name),
                 predicate::function(move |fd: &FileData| fd.ino() == newparent),
+                predicate::eq(Some(dst_ino)),
                 predicate::eq(newname),
             ).return_const(Err(libc::ENOTDIR));
 
@@ -2896,8 +2909,13 @@ mod rename {
         fusefs.files.insert(newparent,
             FileData::new_for_tests(None, newparent));
         fusefs.names.insert((parent, name.to_owned()), ino);
+        fusefs.files.insert(ino, FileData::new_for_tests(Some(parent), ino));
+        fusefs.files.insert(dst_ino,
+            FileData::new_for_tests(Some(newparent), dst_ino));
+        fusefs.names.insert((newparent, newname.to_owned()), dst_ino);
         fusefs.rename(&request, parent, name, newparent, newname, reply);
-        assert_not_cached(&fusefs, newparent, newname, None);
+        assert_cached(&fusefs, newparent, newname, dst_ino);
+        assert_cached(&fusefs, parent, name, ino);
     }
 
     // It should not be possible to create directory loops
@@ -2979,8 +2997,10 @@ mod rename {
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
+                predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(name),
                 predicate::function(move |fd: &FileData| fd.ino() == newparent),
+                predicate::eq(None),
                 predicate::eq(newname),
             ).return_const(Ok(ino));
 

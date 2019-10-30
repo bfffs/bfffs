@@ -34,7 +34,9 @@ test_suite! {
     use time::Timespec;
     use tokio_io_pool::Runtime;
 
-    fixture!( mocks(props: Vec<Property>) -> (Fs, Runtime, Arc<Mutex<Cache>>) {
+    fixture!( mocks(props: Vec<Property>)
+              -> (Fs, Runtime, Arc<Mutex<Cache>>, Arc<Database>, TreeID)
+    {
         params { vec![Vec::new()].into_iter() }
 
         setup(&mut self) {
@@ -62,13 +64,14 @@ test_suite! {
             })).unwrap();
             let handle = rt.handle().clone();
             let props = self.props.clone();
-            let fs = rt.block_on(future::lazy(move || {
-                db.new_fs(props)
+            let db2 = db.clone();
+            let (fs, tree_id) = rt.block_on(future::lazy(move || {
+                db2.new_fs(props)
                 .map(move |tree_id| {
-                    Fs::new(db.clone(), handle, tree_id)
+                    (Fs::new(db2, handle, tree_id), tree_id)
                 })
             })).unwrap();
-            (fs, rt, cache)
+            (fs, rt, cache, db, tree_id)
         }
     });
 
@@ -930,6 +933,41 @@ root:
         assert_ts_changed(&mocks.val.0, &root, false, true, true, false);
     }
 
+    // If the file system was unmounted uncleanly and has open but deleted
+    // files, they should be deleted during mount
+    test mount_with_open_but_deleted_files(mocks) {
+        let (fs, rt, _cache, db, tree_id) = mocks.val;
+        let root = fs.root();
+
+        // First create a file, open it, and unlink it, but don't close it
+        let filename = OsString::from("x");
+        let fd = fs.create(&root, &filename, 0o644, 0, 0).unwrap();
+        let r = fs.unlink(&root, Some(&fd), &filename);
+        fs.sync();
+        assert_eq!(Ok(()), r);
+
+        // Unmount, without closing the file
+        drop(fs);
+
+        // Mount again
+        let handle = rt.handle().clone();
+        let fs = Fs::new(db, handle, tree_id);
+
+        // Try to open the file again.
+        // XXX It's not legal to reuse a FileData structure, but it happens to
+        // work, and it's the only way to attempt to open an unlinked inode!
+        // Wait up to 2 seconds for the inode to be deleted
+        let mut r = Err(0);
+        for _ in 0..20 {
+            r = fs.getattr(&fd);
+            if r.is_err() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert_eq!(Err(libc::ENOENT), r);
+    }
+
     // Read a hole that's bigger than the zero region
     test read_big_hole(mocks) {
         let root = mocks.val.0.root();
@@ -1119,7 +1157,7 @@ root:
 
     // When atime is disabled, reading a file should not update its atime.
     test read_timestamps_no_atime(mocks(vec![Property::Atime(false)])) {
-        let (fs, _rt, _cache) = mocks.val;
+        let (fs, _rt, _cache, _db, _tree_id) = mocks.val;
         let root = fs.root();
 
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).unwrap();
@@ -1323,17 +1361,21 @@ root:
         let dstdir_fd = mocks.val.0.mkdir(&root, &dstdir, 0o755, 0, 0).unwrap();
         let src_c_fd = mocks.val.0.create(&srcdir_fd, &src_c, 0o644, 0, 0)
         .unwrap();
+        let src_c_ino = src_c_fd.ino();
         let dst_c_fd = mocks.val.0.create(&dstdir_fd, &dst_c, 0o644, 0, 0)
         .unwrap();
-        let src_fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
-        .unwrap();
-        let dst_fd = mocks.val.0.create(&dstdir_fd, &dst, 0o644, 0, 0)
-        .unwrap();
+        let dst_c_ino = dst_c_fd.ino();
+        let src_fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0).unwrap();
+        let src_ino = src_fd.ino();
+        let dst_fd = mocks.val.0.create(&dstdir_fd, &dst, 0o644, 0, 0).unwrap();
 
         assert_eq!(src_fd.ino(),
-            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap());
+            mocks.val.0.rename(&srcdir_fd, &src_fd, &src, &dstdir_fd,
+                Some(dst_fd.ino()), &dst).unwrap()
+        );
 
-        assert_eq!(src_fd.ino(),
+        mocks.val.0.inactive(src_fd);
+        assert_eq!(src_ino,
             mocks.val.0.lookup(Some(&root), &dstdir_fd, &dst).unwrap().ino()
         );
         let r = mocks.val.0.lookup(Some(&root), &srcdir_fd, &src);
@@ -1342,14 +1384,14 @@ root:
         assert_eq!(srcdir_inode.nlink, 2);
         let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 2);
-        assert_eq!(mocks.val.0.getattr(&dst_fd).unwrap_err(),
-            libc::ENOENT);
 
         // Finally, make sure we didn't upset the colliding files
+        mocks.val.0.inactive(src_c_fd);
+        mocks.val.0.inactive(dst_c_fd);
         let src_c_fd1 = mocks.val.0.lookup(Some(&root), &srcdir_fd, &src_c);
-        assert_eq!(src_c_fd1.unwrap().ino(), src_c_fd.ino());
+        assert_eq!(src_c_fd1.unwrap().ino(), src_c_ino);
         let dst_c_fd1 = mocks.val.0.lookup(Some(&root), &dstdir_fd, &dst_c);
-        assert_eq!(dst_c_fd1.unwrap().ino(), dst_c_fd.ino());
+        assert_eq!(dst_c_fd1.unwrap().ino(), dst_c_ino);
     }
 
     // Rename a directory.  The target is also a directory
@@ -1365,22 +1407,24 @@ root:
         .unwrap();
         let src_fd = mocks.val.0.mkdir(&srcdir_fd, &src, 0o755, 0, 0)
         .unwrap();
+        let src_ino = src_fd.ino();
         let dst_fd = mocks.val.0.mkdir(&dstdir_fd, &dst, 0o755, 0, 0)
         .unwrap();
 
         assert_eq!(src_fd.ino(),
-            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+            mocks.val.0.rename(&srcdir_fd, &src_fd, &src, &dstdir_fd,
+                Some(dst_fd.ino()), &dst).unwrap()
         );
 
+        mocks.val.0.inactive(src_fd);
         let dst_fd1 = mocks.val.0.lookup(Some(&root), &dstdir_fd, &dst);
-        assert_eq!(dst_fd1.unwrap().ino(), src_fd.ino());
+        assert_eq!(dst_fd1.unwrap().ino(), src_ino);
         let r = mocks.val.0.lookup(Some(&root), &srcdir_fd, &src);
         assert_eq!(r.unwrap_err(), libc::ENOENT);
         let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
         assert_eq!(srcdir_inode.nlink, 2);
         let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 3);
-        assert_eq!(mocks.val.0.getattr(&dst_fd), Err(libc::ENOENT));
     }
 
     test rename_dir_to_dir_same_parent(mocks) {
@@ -1390,19 +1434,21 @@ root:
         let dst = OsString::from("dst");
         let parent_fd = mocks.val.0.mkdir(&root, &parent, 0o755, 0, 0).unwrap();
         let src_fd = mocks.val.0.mkdir(&parent_fd, &src, 0o755, 0, 0).unwrap();
+        let src_ino = src_fd.ino();
         let dst_fd = mocks.val.0.mkdir(&parent_fd, &dst, 0o755, 0, 0).unwrap();
 
         assert_eq!(src_fd.ino(),
-            mocks.val.0.rename(&parent_fd, &src, &parent_fd, &dst).unwrap()
+            mocks.val.0.rename(&parent_fd, &src_fd, &src, &parent_fd,
+                Some(dst_fd.ino()), &dst).unwrap()
         );
 
+        mocks.val.0.inactive(src_fd);
         let dst_fd1 = mocks.val.0.lookup(Some(&root), &parent_fd, &dst);
-        assert_eq!(dst_fd1.unwrap().ino(), src_fd.ino());
+        assert_eq!(dst_fd1.unwrap().ino(), src_ino);
         let r = mocks.val.0.lookup(Some(&root), &parent_fd, &src);
         assert_eq!(r.unwrap_err(), libc::ENOENT);
         let parent_inode = mocks.val.0.getattr(&parent_fd).unwrap();
         assert_eq!(parent_inode.nlink, 3);
-        assert_eq!(mocks.val.0.getattr(&dst_fd), Err(libc::ENOENT));
     }
 
     // Rename a directory.  The target is also a directory that isn't empty.
@@ -1420,20 +1466,25 @@ root:
         .unwrap();
         let src_fd = mocks.val.0.mkdir(&srcdir_fd, &src, 0o755, 0, 0)
         .unwrap();
+        let src_ino = src_fd.ino();
         let dst_fd = mocks.val.0.mkdir(&dstdir_fd, &dst, 0o755, 0, 0)
         .unwrap();
+        let dst_ino = dst_fd.ino();
         let dstf_fd = mocks.val.0.create(&dst_fd, &dstf, 0o644, 0, 0)
         .unwrap();
 
-        assert_eq!(mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst),
-                   Err(libc::ENOTEMPTY));
+        let r = mocks.val.0.rename(&srcdir_fd, &src_fd, &src,
+            &dstdir_fd, Some(dst_fd.ino()), &dst);
+        assert_eq!(r, Err(libc::ENOTEMPTY));
 
-        assert_eq!(src_fd.ino(),
+        mocks.val.0.inactive(src_fd);
+        assert_eq!(src_ino,
             mocks.val.0.lookup(Some(&root), &srcdir_fd, &src).unwrap().ino()
         );
-        let dst_fd1 = mocks.val.0.lookup(Some(&root), &dstdir_fd, &dst);
-        assert_eq!(dst_fd1.unwrap().ino(), dst_fd.ino());
-        let dstf_fd1 = mocks.val.0.lookup(Some(&dstdir_fd), &dst_fd, &dstf);
+        let dst_fd1 = mocks.val.0.lookup(Some(&root), &dstdir_fd, &dst)
+        .unwrap();
+        assert_eq!(dst_fd1.ino(), dst_ino);
+        let dstf_fd1 = mocks.val.0.lookup(Some(&dstdir_fd), &dst_fd1, &dstf);
         assert_eq!(dstf_fd1.unwrap().ino(), dstf_fd.ino());
     }
 
@@ -1448,15 +1499,17 @@ root:
         .unwrap();
         let dstdir_fd = mocks.val.0.mkdir(&root, &dstdir, 0o755, 0, 0)
         .unwrap();
-        let fd = mocks.val.0.mkdir(&srcdir_fd, &src, 0o755, 0, 0)
-        .unwrap();
+        let fd = mocks.val.0.mkdir(&srcdir_fd, &src, 0o755, 0, 0).unwrap();
+        let src_ino = fd.ino();
 
         assert_eq!(fd.ino(),
-            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+            mocks.val.0.rename(&srcdir_fd, &fd, &src, &dstdir_fd,
+                None, &dst).unwrap()
         );
 
+        mocks.val.0.inactive(fd);
         let dst_fd = mocks.val.0.lookup(Some(&root), &dstdir_fd, &dst).unwrap();
-        assert_eq!(dst_fd.ino(), fd.ino());
+        assert_eq!(dst_fd.ino(), src_ino);
         let r = mocks.val.0.lookup(Some(&root), &srcdir_fd, &src);
         assert_eq!(r.unwrap_err(), libc::ENOENT);
         let srcdir_attr = mocks.val.0.getattr(&srcdir_fd).unwrap();
@@ -1474,9 +1527,9 @@ root:
         let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0)
         .unwrap();
 
-        assert_eq!(Err(libc::EINVAL),
-            mocks.val.0.rename(&srcdir_fd, &dot, &srcdir_fd, &dst)
-        );
+        let r = mocks.val.0.rename(&srcdir_fd, &srcdir_fd, &dot, &srcdir_fd,
+                None, &dst);
+        assert_eq!(Err(libc::EINVAL), r);
     }
 
     // Attempting to rename ".." should return EINVAL
@@ -1488,9 +1541,9 @@ root:
         let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0)
         .unwrap();
 
-        assert_eq!(Err(libc::EINVAL),
-            mocks.val.0.rename(&srcdir_fd, &dotdot, &srcdir_fd, &dst)
-        );
+        let r = mocks.val.0.rename(&srcdir_fd, &root, &dotdot, &srcdir_fd,
+                None, &dst);
+        assert_eq!(Err(libc::EINVAL), r);
     }
 
     // Rename a non-directory to a multiply-linked file.  The destination
@@ -1500,23 +1553,25 @@ root:
         let src = OsString::from("src");
         let dst = OsString::from("dst");
         let lnk = OsString::from("lnk");
-        let src_fd = mocks.val.0.create(&root, &src, 0o644, 0, 0)
-        .unwrap();
-        let dst_fd = mocks.val.0.create(&root, &dst, 0o644, 0, 0)
-        .unwrap();
+        let src_fd = mocks.val.0.create(&root, &src, 0o644, 0, 0).unwrap();
+        let src_ino = src_fd.ino();
+        let dst_fd = mocks.val.0.create(&root, &dst, 0o644, 0, 0).unwrap();
+        let dst_ino = dst_fd.ino();
         mocks.val.0.link(&root, &dst_fd, &lnk).unwrap();
         clear_timestamps(&mocks.val.0, &dst_fd);
 
         assert_eq!(src_fd.ino(),
-            mocks.val.0.rename(&root, &src, &root, &dst).unwrap()
+            mocks.val.0.rename(&root, &src_fd, &src, &root, Some(dst_fd.ino()),
+                &dst).unwrap()
         );
 
+        mocks.val.0.inactive(src_fd);
         assert_eq!(mocks.val.0.lookup(None, &root, &dst).unwrap().ino(),
-            src_fd.ino());
+            src_ino);
         assert_eq!(mocks.val.0.lookup(None, &root, &src).unwrap_err(),
             libc::ENOENT);
         let lnk_fd = mocks.val.0.lookup(None, &root, &lnk).unwrap();
-        assert_eq!(lnk_fd.ino(), dst_fd.ino());
+        assert_eq!(lnk_fd.ino(), dst_ino);
         let lnk_attr = mocks.val.0.getattr(&lnk_fd).unwrap();
         assert_eq!(lnk_attr.nlink, 1);
         assert_ts_changed(&mocks.val.0, &lnk_fd, false, false, true, false);
@@ -1529,29 +1584,26 @@ root:
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0)
-        .unwrap();
-        let dstdir_fd = mocks.val.0.mkdir(&root, &dstdir, 0o755, 0, 0)
-        .unwrap();
-        let src_fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
-        .unwrap();
-        let dst_fd = mocks.val.0.create(&dstdir_fd, &dst, 0o644, 0, 0)
-        .unwrap();
+        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0).unwrap();
+        let dstdir_fd = mocks.val.0.mkdir(&root, &dstdir, 0o755, 0, 0).unwrap();
+        let src_fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0).unwrap();
+        let src_ino = src_fd.ino();
+        let dst_fd = mocks.val.0.create(&dstdir_fd, &dst, 0o644, 0, 0).unwrap();
 
         assert_eq!(src_fd.ino(),
-            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+            mocks.val.0.rename(&srcdir_fd, &src_fd, &src, &dstdir_fd,
+                Some(dst_fd.ino()), &dst).unwrap()
         );
 
+        mocks.val.0.inactive(src_fd);
         let dst_fd1 = mocks.val.0.lookup(Some(&root), &dstdir_fd, &dst);
-        assert_eq!(dst_fd1.unwrap().ino(), src_fd.ino());
+        assert_eq!(dst_fd1.unwrap().ino(), src_ino);
         let r = mocks.val.0.lookup(Some(&root), &srcdir_fd, &src);
         assert_eq!(r.unwrap_err(), libc::ENOENT);
         let srcdir_inode = mocks.val.0.getattr(&srcdir_fd).unwrap();
         assert_eq!(srcdir_inode.nlink, 2);
         let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 2);
-        assert_eq!(mocks.val.0.getattr(&dst_fd).unwrap_err(),
-            libc::ENOENT);
     }
 
     // Rename a non-directory.  The target name does not exist
@@ -1561,18 +1613,19 @@ root:
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
-        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0)
-        .unwrap();
-        let dstdir_fd = mocks.val.0.mkdir(&root, &dstdir, 0o755, 0, 0)
-        .unwrap();
-        let fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
-        .unwrap();
+        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0).unwrap();
+        let dstdir_fd = mocks.val.0.mkdir(&root, &dstdir, 0o755, 0, 0).unwrap();
+        let fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0).unwrap();
+        let src_ino = fd.ino();
 
         assert_eq!(fd.ino(),
-            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+            mocks.val.0.rename(&srcdir_fd, &fd, &src, &dstdir_fd, None,
+                &dst)
+            .unwrap()
         );
 
-        assert_eq!(fd.ino(),
+        mocks.val.0.inactive(fd);
+        assert_eq!(src_ino,
             mocks.val.0.lookup(Some(&root), &dstdir_fd, &dst).unwrap().ino()
         );
         assert_eq!(libc::ENOENT,
@@ -1584,8 +1637,8 @@ root:
         assert_eq!(dstdir_inode.nlink, 2);
     }
 
-    // Rename a regular file to a symlink.  Make sure the target is a symlink
-    // afterwards
+    // Rename a regular file to a symlink.  Make sure the target is a regular
+    // file afterwards
     test rename_reg_to_symlink(mocks) {
         let root = mocks.val.0.root();
         let src = OsString::from("src");
@@ -1593,21 +1646,21 @@ root:
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
         let linktarget = OsString::from("nonexistent");
-        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0)
-        .unwrap();
-        let dstdir_fd = mocks.val.0.mkdir(&root, &dstdir, 0o755, 0, 0)
-        .unwrap();
-        let src_fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0)
-        .unwrap();
+        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0).unwrap();
+        let dstdir_fd = mocks.val.0.mkdir(&root, &dstdir, 0o755, 0, 0).unwrap();
+        let src_fd = mocks.val.0.create(&srcdir_fd, &src, 0o644, 0, 0).unwrap();
+        let src_ino = src_fd.ino();
         let dst_fd = mocks.val.0.symlink(&dstdir_fd, &dst, 0o642, 0, 0,
                                           &linktarget)
         .unwrap();
 
         assert_eq!(src_fd.ino(),
-            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+            mocks.val.0.rename(&srcdir_fd, &src_fd, &src, &dstdir_fd,
+                Some(dst_fd.ino()), &dst).unwrap()
         );
 
-        assert_eq!(src_fd.ino(),
+        mocks.val.0.inactive(src_fd);
+        assert_eq!(src_ino,
             mocks.val.0.lookup(Some(&root), &dstdir_fd, &dst).unwrap().ino()
         );
         assert_eq!(libc::ENOENT,
@@ -1617,11 +1670,10 @@ root:
         assert_eq!(srcdir_inode.nlink, 2);
         let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 2);
-        assert_eq!(mocks.val.0.getattr(&dst_fd), Err(libc::ENOENT));
         let (de, _) = mocks.val.0.readdir(&dstdir_fd, 0)
             .filter(|r| {
                 let dirent = r.unwrap().0;
-                u64::from(dirent.d_fileno) == src_fd.ino()
+                u64::from(dirent.d_fileno) == src_ino
             }).nth(0).unwrap().unwrap();
         assert_eq!(de.d_type, libc::DT_REG);
     }
@@ -1639,9 +1691,11 @@ root:
         mocks.val.0.setextattr(&fd, ns, &name, &value[..]).unwrap();
 
         assert_eq!(fd.ino(),
-            mocks.val.0.rename(&root, &src, &root, &dst).unwrap()
+            mocks.val.0.rename(&root, &fd, &src, &root, None, &dst)
+            .unwrap()
         );
 
+        mocks.val.0.inactive(fd);
         let new_fd = mocks.val.0.lookup(None, &root, &dst).unwrap();
         let v = mocks.val.0.getextattr(&new_fd, ns, &name).unwrap();
         assert_eq!(&v[..], &value);
@@ -1665,7 +1719,8 @@ root:
         clear_timestamps(&mocks.val.0, &fd);
 
         assert_eq!(fd.ino(),
-            mocks.val.0.rename(&srcdir_fd, &src, &dstdir_fd, &dst).unwrap()
+            mocks.val.0.rename(&srcdir_fd, &fd, &src, &dstdir_fd, None,
+                &dst).unwrap()
         );
 
         // Timestamps should've been updated for parent directories, but not for
@@ -2101,10 +2156,11 @@ root:
         .unwrap();
         let r = mocks.val.0.unlink(&root, Some(&fd), &filename);
         assert_eq!(Ok(()), r);
+        mocks.val.0.inactive(fd);
 
         // Check that the inode is gone
-        let inode = mocks.val.0.getattr(&fd);
-        assert_eq!(Err(libc::ENOENT), inode, "Inode was not removed");
+        let r = mocks.val.0.lookup(None, &root, &filename);
+        assert_eq!(libc::ENOENT, r.unwrap_err(), "Dirent was not removed");
 
         // The parent dir should not have an "x" directory entry
         let entries = mocks.val.0.readdir(&root, 0);
@@ -2114,6 +2170,36 @@ root:
             dirent.d_name[0] == 'x' as i8
         }).nth(0);
         assert!(x_de.is_none(), "Directory entry was not removed");
+    }
+
+    // Access an opened but deleted file
+    test unlink_but_opened(mocks) {
+        let root = mocks.val.0.root();
+        let filename = OsString::from("x");
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
+        let r = mocks.val.0.unlink(&root, Some(&fd), &filename);
+        assert_eq!(Ok(()), r);
+
+        let attr = mocks.val.0.getattr(&fd).expect("Inode deleted too soon");
+        assert_eq!(0, attr.nlink);
+
+        mocks.val.0.inactive(fd);
+    }
+
+    // Access an open file that was deleted during a previous TXG
+    test unlink_but_opened_across_txg(mocks) {
+        let root = mocks.val.0.root();
+        let filename = OsString::from("x");
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
+        let r = mocks.val.0.unlink(&root, Some(&fd), &filename);
+        assert_eq!(Ok(()), r);
+
+        mocks.val.0.sync();
+
+        let attr = mocks.val.0.getattr(&fd).expect("Inode deleted too soon");
+        assert_eq!(0, attr.nlink);
+
+        mocks.val.0.inactive(fd);
     }
 
     // Unlink a file that has a name collision with another file in the same
@@ -2127,6 +2213,7 @@ root:
         let fd1 = mocks.val.0.create(&root, &filename1, 0o644, 0, 0).unwrap();
 
         mocks.val.0.unlink(&root, Some(&fd1), &filename1).unwrap();
+        mocks.val.0.inactive(fd1);
 
         assert_eq!(mocks.val.0.lookup(None, &root, &filename0).unwrap().ino(),
             fd0.ino());
@@ -2163,8 +2250,7 @@ root:
         let root = mocks.val.0.root();
         let name1 = OsString::from("name1");
         let name2 = OsString::from("name2");
-        let fd = mocks.val.0.create(&root, &name1, 0o644, 0, 0)
-        .unwrap();
+        let fd = mocks.val.0.create(&root, &name1, 0o644, 0, 0).unwrap();
         mocks.val.0.link(&root, &fd, &name2).unwrap();
 
         mocks.val.0.unlink(&root, Some(&fd), &name1).unwrap();
@@ -2174,13 +2260,21 @@ root:
         assert_eq!(mocks.val.0.lookup(None, &root, &name1).unwrap_err(),
             libc::ENOENT);
 
+        // Even if we drop the file data, the inode should not be deleted,
+        // because it has nlink 1
+        mocks.val.0.inactive(fd);
+        let fd = mocks.val.0.lookup(None, &root, &name2).unwrap();
+        let attr = mocks.val.0.getattr(&fd).unwrap();
+        assert_eq!(attr.nlink, 1);
+
+        // A second unlink should remove the file
         mocks.val.0.unlink(&root, Some(&fd), &name2).unwrap();
+        mocks.val.0.inactive(fd);
+
         // File should actually be gone now
         assert_eq!(mocks.val.0.lookup(None, &root, &name1).unwrap_err(),
             libc::ENOENT);
         assert_eq!(mocks.val.0.lookup(None, &root, &name2).unwrap_err(),
-            libc::ENOENT);
-        assert_eq!(mocks.val.0.getattr(&fd).unwrap_err(),
             libc::ENOENT);
     }
 
@@ -2188,8 +2282,7 @@ root:
     test unlink_inactive(mocks) {
         let root = mocks.val.0.root();
         let filename = OsString::from("x");
-        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0)
-        .unwrap();
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.inactive(fd);
         let r = mocks.val.0.unlink(&root, None, &filename);
         assert_eq!(Ok(()), r);
@@ -2216,6 +2309,7 @@ root:
         clear_timestamps(&mocks.val.0, &root);
 
         mocks.val.0.unlink(&root, Some(&fd), &filename).unwrap();
+        mocks.val.0.inactive(fd);
         assert_ts_changed(&mocks.val.0, &root, false, true, true, false);
     }
 

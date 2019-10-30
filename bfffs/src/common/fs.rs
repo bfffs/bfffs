@@ -559,6 +559,48 @@ impl Fs {
         rx.wait().unwrap()
     }
 
+    // Actually delete an inode, which must already be unlinked
+    fn do_delete_inode(ds: Arc<ReadWriteFilesystem>, ino: u64)
+        -> impl Future<Item=(), Error=Error>
+    {
+        let ds2 = ds.clone();
+        // delete its blob extents and blob extended attributes
+        let extent_stream = ds.range(FSKey::extent_range(ino, ..))
+        .filter_map(move |(_k, v)| {
+            if let Extent::Blob(be) = v.as_extent().unwrap()
+            {
+                Some(be.rid)
+            } else {
+                None
+            }
+        });
+        let extattr_stream = Fs::list_extattr_rids(&*ds, ino);
+        extent_stream.chain(extattr_stream)
+        .for_each(move |rid| ds2.delete_blob(rid))
+        .and_then(move |_| {
+            // Finally, range_delete its key range, including inode,
+            // inline extents, and inline extattrs
+            ds.range_delete(FSKey::obj_range(ino))
+        })
+    }
+
+    // Remove the inode if this was its last reference
+    fn do_inactive(ds: Arc<ReadWriteFilesystem>, ino: u64)
+        -> impl Future<Item=(), Error=Error>
+    {
+        let dikey = FSKey::new(0, ObjKey::dying_inode(ino));
+        ds.get(dikey)
+        .and_then(move |di| {
+            match di {
+                None => boxfut!(Ok(()).into_future()),
+                Some(di2) => {
+                    assert_eq!(ino, di2.as_dying_inode().unwrap().ino());
+                    boxfut!(Fs::do_delete_inode(ds, ino))
+                }
+            }
+        })
+    }
+
     /// Asynchronously read from a file.
     fn do_read<DS>(dataset: DS, ino: u64, fsize: u64, rs: u64, offset: u64,
                    size: usize)
@@ -781,9 +823,11 @@ impl Fs {
     }
 
     /// Unlink a file whose inode number is known and whose directory entry is
-    /// already deleted.  Returns the new link count.
-    fn do_unlink(dataset: Arc<ReadWriteFilesystem>, ino: u64)
-        -> impl Future<Item=u64, Error=Error> + Send
+    /// already deleted.
+    fn do_unlink(dataset: Arc<ReadWriteFilesystem>,
+                 lookup_count: u64,
+                 ino: u64)
+        -> impl Future<Item=(), Error=Error> + Send
     {
         // 1) Lookup the inode
         let key = FSKey::new(ino, ObjKey::Inode);
@@ -798,34 +842,31 @@ impl Fs {
                 },
             }
         }).and_then(move |mut iv| {
-            if iv.nlink > 1 {
-                // 2a) Decrement the link count and touch the ctime
-                iv.nlink -= 1;
-                iv.ctime = time::get_time();
-                let nlink = iv.nlink;
-                let fut = dataset.insert(key, FSValue::Inode(iv))
-                .map(move |_| nlink);
+            // 2a) Decrement the link count and touch the ctime
+            iv.nlink = iv.nlink.saturating_sub(1);
+            let nlink = iv.nlink;
+            iv.ctime = time::get_time();
+            // 2b) Update Inode, if we aren't immediately deleting it
+            if nlink > 0 || lookup_count > 0 {
+                let fut = if nlink == 0 {
+                    // 2c) Record imminent death of inode
+                    let dikey = FSKey::new(0, ObjKey::dying_inode(ino));
+                    let dival = FSValue::DyingInode(DyingInode::from(ino));
+                    let fut = dataset.insert(dikey, dival)
+                    .map(|r|
+                        if r.is_some() {
+                            panic!("Hash collisions on dying inodes are TODO!")
+                        }
+                    ).map(drop);
+                    boxfut!(fut)
+                } else {
+                    boxfut!(Ok(()).into_future())
+                }.join(dataset.insert(key, FSValue::Inode(iv))
+                    .map(drop)
+                ).map(drop);
                 boxfut!(fut)
             } else {
-                let dataset2 = dataset.clone();
-                // 2b) delete its blob extents and blob extended attributes
-                let extent_stream = dataset.range(FSKey::extent_range(ino, ..))
-                .filter_map(move |(_k, v)| {
-                    if let Extent::Blob(be) = v.as_extent().unwrap()
-                    {
-                        Some(be.rid)
-                    } else {
-                        None
-                    }
-                });
-                let extattr_stream = Fs::list_extattr_rids(&*dataset, ino);
-                let fut = extent_stream.chain(extattr_stream)
-                .for_each(move |rid| dataset2.delete_blob(rid))
-                .and_then(move |_| {
-                    // 2c) range_delete its key range
-                    dataset.range_delete(FSKey::obj_range(ino))
-                }).map(|_| 0u64);
-                boxfut!(fut)
+                boxfut!(Fs::do_inactive(dataset, ino))
             }
         })
     }
@@ -837,7 +878,9 @@ impl Fs {
         let db2 = database.clone();
         handle.spawn(
             database.fsread(tree, move |dataset| {
-                dataset.last_key()
+                let last_key_fut = dataset.last_key();
+
+                last_key_fut
                 .join3(db2.get_prop(tree, PropertyName::Atime),
                        db2.get_prop(tree, PropertyName::RecordSize))
                 .map(move |r| tx.send(r).unwrap())
@@ -847,7 +890,25 @@ impl Fs {
         let next_object = AtomicU64::new(last_key.unwrap().object() + 1);
         let atime = atimep.as_bool();
         let record_size = recsizep.as_u8();
-        Fs{
+
+        // In the background, delete all dying inodes.  If there are any, it
+        // means that the previous mount was uncleanly dismounted.
+        handle.spawn(
+            database.fswrite(tree, move |dataset| {
+                let ds = Arc::new(dataset);
+                let ds2 = ds.clone();
+                ds.range(FSKey::dying_inode_range())
+                .for_each(move |(_k, v)| {
+                    let ino = v.as_dying_inode().unwrap().ino();
+                    Fs::do_delete_inode(ds.clone(), ino)
+                }).and_then(move |_| {
+                    // Finally, range delete all of the dying inodes
+                    ds2.range_delete(FSKey::dying_inode_range())
+                })
+            }).map_err(Error::unhandled)
+        ).unwrap();
+
+        Fs {
             db: database,
             next_object,
             handle,
@@ -892,9 +953,23 @@ impl Fs {
     /// Tell the file system that the given file is no longer needed by the
     /// client.  Its resources may be freed.
     // Fs::inactive consumes fd because the client should not longer need it.
-    pub fn inactive(&self, _fd: FileData) {
-        // Simply drop the FileData.
-        // TODO: free the file's storage if its link count is 0
+    pub fn inactive(&self, fd: FileData) {
+        let ino = fd.ino();
+
+        let (tx, rx) = oneshot::channel::<Result<(), Error>>();
+        self.handle.spawn(
+            self.db.fswrite(self.tree, move |dataset| {
+                Fs::do_inactive(Arc::new(dataset), ino)
+                .then(move |r| {
+                    match r {
+                        Ok(_) => tx.send(Ok(())),
+                        Err(e) => tx.send(Err(e.into()))
+                    }.expect("FS::unlink: send failed");
+                    Ok(()).into_future()
+                })
+            }).map_err(Error::unhandled)
+        ).unwrap();
+        rx.wait().unwrap().expect("Fs::inactive should never fail");
     }
 
     /// Sync a file's data and metadata to disk so it can be recovered after a
@@ -1388,6 +1463,9 @@ impl Fs {
                     // It's fine to remove a directory with extended attributes.
                     Ok(found_inode).into_future()
                 },
+                FSValue::DyingInode(_) => {
+                    panic!("Directories should not have dying inodes")
+                },
                 FSValue::InlineExtent(_) | FSValue::BlobExtent(_) => {
                     panic!("Directories should not have extents")
                 },
@@ -1585,10 +1663,29 @@ impl Fs {
 
     /// Rename a file.  Return the inode number of the renamed file.
     ///
+    /// # Arguments
+    ///
+    /// - `parent_fd`:  `FileData` of the parent directory, as returned by
+    ///                 [`lookup`].
+    /// - `fd`:         `FileData` of the directory entry to be moved, if
+    ///                 known.  Must be provided if the file has been looked up!
+    /// - `name`:       Name of the directory entry to move.
+    /// - `newparent`:  `FileData` of the new parent directory
+    /// - `newfd`:      `FileData` of the target file (if it exists).  Must be
+    ///                 provided if the target already exists!
+    /// - `newname`:    New name for the file
+    ///
+    /// # Returns
+    ///
+    /// On success, the inode number of the moved file.
+    ///
     /// NB: This function performs no dirloop protection.  That is the
     /// responsibility of the client.
-    pub fn rename(&self, parent: &FileData, name: &OsStr,
-        newparent: &FileData, newname: &OsStr) -> Result<u64, i32>
+    // XXX newino should really have type Option<&FileData> for consistency,
+    // but I can't figure out how to make such a type work with Mockall.
+    pub fn rename(&self, parent: &FileData, fd: &FileData, name: &OsStr,
+        newparent: &FileData, newino: Option<u64>, newname: &OsStr)
+        -> Result<u64, i32>
     {
         // Outline:
         // 0)  Check conditions
@@ -1602,11 +1699,12 @@ impl Fs {
         let (tx, rx) = oneshot::channel::<Result<u64, i32>>();
         let src_objkey = ObjKey::dir_entry(&name);
         let owned_name = name.to_owned();
-        let owned_name2 = owned_name.clone();
         let dst_objkey = ObjKey::dir_entry(&newname);
         let owned_newname = newname.to_owned();
         let owned_newname2 = owned_newname.clone();
         let owned_newname3 = owned_newname.clone();
+        let ino = fd.ino();
+        let dst_ino = newino;
         let parent_ino = parent.ino;
         let newparent_ino = newparent.ino;
         let samedir = parent_ino == newparent_ino;
@@ -1628,6 +1726,9 @@ impl Fs {
                 .then(move |r: Result<Dirent, Error>| {
                     match r {
                         Ok(dirent) => {
+                            assert_eq!(dst_ino.expect(
+                                "didn't lookup destination before rename"),
+                                dirent.ino);
                             if dirent.dtype != libc::DT_DIR {
                                 // Overwriting non-directories is allowed
                                 boxfut!(Ok(()).into_future())
@@ -1639,6 +1740,7 @@ impl Fs {
                         },
                         Err(Error::ENOENT) => {
                             // Destination doesn't exist.  No problem!
+                            assert!(dst_ino.is_none());
                             boxfut!(Ok(()).into_future())
                         },
                         Err(e) => {
@@ -1650,8 +1752,9 @@ impl Fs {
                     // 1) Remove the source directory entry
                     let src_de_key = FSKey::new(parent_ino, src_objkey);
                     htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
-                        (ds5.clone(), src_de_key, 0, owned_name2)
+                        (ds5.clone(), src_de_key, 0, owned_name)
                 }).and_then(move |mut dirent| {
+                    assert_eq!(ino, dirent.ino);
                     // 2) Insert the new directory entry
                     let isdir = dirent.dtype == libc::DT_DIR;
                     dirent.name = owned_newname2.clone();
@@ -1711,7 +1814,7 @@ impl Fs {
                             let fut = Fs::do_rmdir(ds, newparent_ino, v, false);
                             boxfut!(fut)
                         } else {
-                            let fut = Fs::do_unlink(ds.clone(), v)
+                            let fut = Fs::do_unlink(ds.clone(), 0, v)
                             .map(drop);
                             boxfut!(fut)
                         }
@@ -1923,6 +2026,7 @@ impl Fs {
         // 2b) Update parent's mtime and ctime
         let (tx, rx) = oneshot::channel();
         let ino = fd.map(|fd| fd.ino);
+        let lookup_count = fd.map_or(0, |fd_| fd_.lookup_count);
         let parent_ino = parent_fd.ino;
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
@@ -1938,7 +2042,8 @@ impl Fs {
                         assert_eq!(ino, dirent.ino);
                     }
                     // 2a) Unlink the inode
-                    let unlink_fut = Fs::do_unlink(dataset.clone(), dirent.ino);
+                    let unlink_fut = Fs::do_unlink(dataset.clone(),
+                        lookup_count, dirent.ino);
                     // 2b) Update parent's timestamps
                     let now = time::get_time();
                     let mut attr = SetAttr::default();
@@ -2106,12 +2211,25 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .pool_size(1)
         .build()
         .unwrap();
-    let mut ds = ReadOnlyFilesystem::default();
-    ds.expect_last_key()
+    let mut rods = ReadOnlyFilesystem::default();
+    let mut rwds = ReadWriteFilesystem::default();
+    rods.expect_last_key()
         .once()
         .returning(|| {
             let root_inode_key = FSKey::new(1, ObjKey::Inode);
             Box::new(Ok(Some(root_inode_key)).into_future())
+        });
+    rwds.expect_range()
+        .once()
+        .with(eq(FSKey::dying_inode_range()))
+        .returning(move |_| {
+            mock_range_query(Vec::new())
+        });
+    rwds.expect_range_delete()
+        .once()
+        .with(eq(FSKey::dying_inode_range()))
+        .returning(|_| {
+            Box::new(Ok(()).into_future())
         });
     let mut db = Database::default();
     db.expect_new_fs()
@@ -2119,7 +2237,10 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .returning(|_| Box::new(Ok(TreeID::Fs(0)).into_future()));
     db.expect_fsread_inner()
         .once()
-        .return_once(move |_| ds);
+        .return_once(move |_| rods);
+    db.expect_fswrite_inner()
+        .once()
+        .return_once(move |_| rwds);
     db.expect_get_prop()
         .times(2)
         .returning(|_tree_id, propname| {
@@ -2524,8 +2645,10 @@ fn rename_eio() {
     let mut ds = ReadWriteFilesystem::default();
     let srcname = OsString::from("x");
     let dstname = OsString::from("y");
+    let src_ino = 3;
+    let dst_ino = 4;
     let dst_dirent = Dirent {
-        ino: 3,
+        ino: dst_ino,
         dtype: libc::DT_REG,
         name: dstname.clone()
     };
@@ -2549,7 +2672,8 @@ fn rename_eio() {
 
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let root = fs.root();
-    let r = fs.rename(&root, &srcname, &root, &dstname);
+    let fd = FileData::new_for_tests(Some(root.ino), src_ino);
+    let r = fs.rename(&root, &fd, &srcname, &root, Some(dst_ino), &dstname);
     assert_eq!(Err(libc::EIO), r);
 }
 
@@ -2886,17 +3010,21 @@ fn sync() {
     fs.sync();
 }
 
+// Verify that storage is freed when unlinking a normal file.
 #[test]
 fn unlink() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds0 = ReadWriteFilesystem::default();
+    let mut ds1 = ReadWriteFilesystem::default();
     let parent_ino = 1;
     let ino = 2;
     let blob_rid = RID(99999);
     let filename = OsString::from("x");
     let filename2 = filename.clone();
+    let old_ts = time::Timespec::new(0, 0);
+    let mut seq = Sequence::new();
 
-    ds.expect_remove()
+    ds0.expect_remove()
         .once()
         .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
         .returning(move |_| {
@@ -2908,19 +3036,18 @@ fn unlink() {
             let v = Some(FSValue::DirEntry(dirent));
             Box::new(Ok(v).into_future())
         });
-    ds.expect_get()
+    ds0.expect_get()
         .once()
         .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
-            let now = time::get_time();
             let inode = Inode {
                 size: 4098,
                 nlink: 1,
                 flags: 0,
-                atime: now,
-                mtime: now,
-                ctime: now,
-                birthtime: now,
+                atime: old_ts,
+                mtime: old_ts,
+                ctime: old_ts,
+                birthtime: old_ts,
                 uid: 0,
                 gid: 0,
                 file_type: FileType::Reg(12),
@@ -2929,8 +3056,7 @@ fn unlink() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
 
-    let old_ts = time::Timespec::new(0, 0);
-    ds.expect_get()
+    ds0.expect_get()
         .once()
         .with(eq(FSKey::new(1, ObjKey::Inode)))
         .returning(move |_| {
@@ -2949,7 +3075,39 @@ fn unlink() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
-    ds.expect_range()
+    ds0.expect_insert()
+        .once()
+        .withf(move |key, value| {
+            key.is_inode() &&
+            key.object() == ino &&
+            value.as_inode().unwrap().nlink == 0 &&
+            value.as_inode().unwrap().ctime != old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
+    ds0.expect_insert()
+        .once()
+        .withf(move |key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().file_type == FileType::Dir &&
+            value.as_inode().unwrap().atime == old_ts &&
+            value.as_inode().unwrap().mtime != old_ts &&
+            value.as_inode().unwrap().ctime != old_ts &&
+            value.as_inode().unwrap().birthtime == old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
+    ds0.expect_insert()
+        .once()
+        .withf(move |key, value| {
+            key.is_dying_inode() &&
+            value.as_dying_inode().unwrap().ino() == ino
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
+
+    ds1.expect_get()
+        .once()
+        .withf(move |key| key.is_dying_inode())
+        .returning(move |_| {
+            let v = FSValue::DyingInode(DyingInode::from(ino));
+            Box::new(Ok(Some(v)).into_future())
+        });
+    ds1.expect_range()
         .once()
         .with(eq(FSKey::extent_range(ino, ..)))
         .returning(move |_| {
@@ -2963,141 +3121,51 @@ fn unlink() {
             let extents = vec![(k0, v0), (k1, v1)];
             mock_range_query(extents)
         });
-    ds.expect_range()
+    ds1.expect_range()
         .once()
         .with(eq(FSKey::extattr_range(ino)))
         .returning(move |_| {
             mock_range_query(Vec::new())
         });
-    ds.expect_delete_blob()
+    ds1.expect_delete_blob()
         .once()
         .withf(move |rid: &RID| blob_rid == *rid)
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.expect_range_delete()
+    ds1.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.expect_insert()
-        .once()
-        .withf(move |key, value| {
-            key.is_inode() &&
-            value.as_inode().unwrap().file_type == FileType::Dir &&
-            value.as_inode().unwrap().atime == old_ts &&
-            value.as_inode().unwrap().mtime != old_ts &&
-            value.as_inode().unwrap().ctime != old_ts &&
-            value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
 
     db.expect_fswrite_inner()
         .once()
-        .return_once(move |_| ds);
+        .in_sequence(&mut seq)
+        .return_once(move |_| ds0);
+    db.expect_fswrite_inner()
+        .once()
+        .in_sequence(&mut seq)
+        .return_once(move |_| ds1);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let fd = FileData::new(Some(parent_ino), ino);
     let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);
-}
-
-// Unlink of a multiply linked file
-#[test]
-fn unlink_hardlink() {
-    let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
-    let parent_ino = 1;
-    let ino = 2;
-    let filename = OsString::from("x");
-    let filename2 = filename.clone();
-
-    ds.expect_remove()
-        .once()
-        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
-        .returning(move |_| {
-            let dirent = Dirent {
-                ino,
-                dtype: libc::DT_REG,
-                name: filename2.clone()
-            };
-            let v = Some(FSValue::DirEntry(dirent));
-            Box::new(Ok(v).into_future())
-        });
-    ds.expect_get()
-        .once()
-        .with(eq(FSKey::new(ino, ObjKey::Inode)))
-        .returning(move |_| {
-            let now = time::get_time();
-            let inode = Inode {
-                size: 4098,
-                nlink: 2,
-                flags: 0,
-                atime: now,
-                mtime: now,
-                ctime: now,
-                birthtime: now,
-                uid: 0,
-                gid: 0,
-                file_type: FileType::Reg(12),
-                perm: 0o644,
-            };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
-        });
-    let old_ts = time::Timespec::new(0, 0);
-    ds.expect_get()
-        .once()
-        .with(eq(FSKey::new(1, ObjKey::Inode)))
-        .returning(move |_| {
-            let inode = Inode {
-                size: 0,
-                nlink: 2,
-                flags: 0,
-                atime: old_ts,
-                mtime: old_ts,
-                ctime: old_ts,
-                birthtime: old_ts,
-                uid: 0,
-                gid: 0,
-                file_type: FileType::Dir,
-                perm: 0o755,
-            };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
-        });
-    ds.expect_insert()
-        .once()
-        .withf(|key, value| {
-            key.is_inode() &&
-            value.as_inode().unwrap().nlink == 1
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
-    ds.expect_insert()
-        .once()
-        .withf(move |key, value| {
-            key.is_inode() &&
-            value.as_inode().unwrap().file_type == FileType::Dir &&
-            value.as_inode().unwrap().atime == old_ts &&
-            value.as_inode().unwrap().mtime != old_ts &&
-            value.as_inode().unwrap().ctime != old_ts &&
-            value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
-
-    db.expect_fswrite_inner()
-        .once()
-        .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
-    let fd = FileData::new(Some(parent_ino), ino);
-    let r = fs.unlink(&fs.root(), Some(&fd), &filename);
-    assert_eq!(Ok(()), r);
+    fs.inactive(fd);
 }
 
 // Unlink a file with extended attributes, and don't forget to free them too!
 #[test]
 fn unlink_with_blob_extattr() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds0 = ReadWriteFilesystem::default();
+    let mut ds1 = ReadWriteFilesystem::default();
     let parent_ino = 1;
     let ino = 2;
     let blob_rid = RID(99999);
     let xattr_blob_rid = RID(88888);
     let filename = OsString::from("x");
     let filename2 = filename.clone();
+    let mut seq = Sequence::new();
 
-    ds.expect_remove()
+    ds0.expect_remove()
         .once()
         .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
         .returning(move |_| {
@@ -3109,7 +3177,7 @@ fn unlink_with_blob_extattr() {
             let v = Some(FSValue::DirEntry(dirent));
             Box::new(Ok(v).into_future())
         });
-    ds.expect_get()
+    ds0.expect_get()
         .once()
         .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
@@ -3130,7 +3198,7 @@ fn unlink_with_blob_extattr() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
     let old_ts = time::Timespec::new(0, 0);
-    ds.expect_get()
+    ds0.expect_get()
         .once()
         .with(eq(FSKey::new(1, ObjKey::Inode)))
         .returning(move |_| {
@@ -3149,8 +3217,21 @@ fn unlink_with_blob_extattr() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
+    ds0.expect_insert()
+        .once()
+        .withf(move |key, value| {
+            key.is_dying_inode() &&
+            value.as_dying_inode().unwrap().ino() == ino
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
 
-    ds.expect_range()
+    ds1.expect_get()
+        .once()
+        .withf(move |key| key.is_dying_inode())
+        .returning(move |_| {
+            let v = FSValue::DyingInode(DyingInode::from(ino));
+            Box::new(Ok(Some(v)).into_future())
+        });
+    ds1.expect_range()
         .once()
         .with(eq(FSKey::extent_range(ino, ..)))
         .returning(move |_| {
@@ -3164,7 +3245,7 @@ fn unlink_with_blob_extattr() {
             let extents = vec![(k0, v0), (k1, v1)];
             mock_range_query(extents)
         });
-    ds.expect_range()
+    ds1.expect_range()
         .once()
         .with(eq(FSKey::extattr_range(ino)))
         .returning(move |_| {
@@ -3185,19 +3266,27 @@ fn unlink_with_blob_extattr() {
             let extents = vec![(k0, v0), (k1, v1)];
             mock_range_query(extents)
         });
-    ds.expect_delete_blob()
+    ds1.expect_delete_blob()
         .once()
         .withf(move |rid: &RID| blob_rid == *rid)
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.expect_delete_blob()
+    ds1.expect_delete_blob()
         .once()
         .withf(move |rid: &RID| xattr_blob_rid == *rid)
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.expect_range_delete()
+    ds1.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.expect_insert()
+    ds0.expect_insert()
+        .once()
+        .withf(move |key, value| {
+            key.is_inode() &&
+            key.object() == ino &&
+            value.as_inode().unwrap().nlink == 0 &&
+            value.as_inode().unwrap().ctime != old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
+    ds0.expect_insert()
         .once()
         .withf(move |key, value| {
             key.is_inode() &&
@@ -3210,11 +3299,17 @@ fn unlink_with_blob_extattr() {
 
     db.expect_fswrite_inner()
         .once()
-        .return_once(move |_| ds);
+        .in_sequence(&mut seq)
+        .return_once(move |_| ds0);
+    db.expect_fswrite_inner()
+        .once()
+        .in_sequence(&mut seq)
+        .return_once(move |_| ds1);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let fd = FileData::new(Some(parent_ino), ino);
     let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);
+    fs.inactive(fd);
 }
 
 // Unlink a file with two extended attributes that hashed to the same bucket.
@@ -3222,14 +3317,16 @@ fn unlink_with_blob_extattr() {
 #[test]
 fn unlink_with_extattr_hash_collision() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds0 = ReadWriteFilesystem::default();
+    let mut ds1 = ReadWriteFilesystem::default();
     let parent_ino = 1;
     let ino = 2;
     let xattr_blob_rid = RID(88888);
     let filename = OsString::from("x");
     let filename2 = filename.clone();
+    let mut seq = Sequence::new();
 
-    ds.expect_remove()
+    ds0.expect_remove()
         .once()
         .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
         .returning(move |_| {
@@ -3241,7 +3338,7 @@ fn unlink_with_extattr_hash_collision() {
             let v = Some(FSValue::DirEntry(dirent));
             Box::new(Ok(v).into_future())
         });
-    ds.expect_get()
+    ds0.expect_get()
         .once()
         .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
@@ -3262,7 +3359,7 @@ fn unlink_with_extattr_hash_collision() {
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
     let old_ts = time::Timespec::new(0, 0);
-    ds.expect_get()
+    ds0.expect_get()
         .once()
         .with(eq(FSKey::new(1, ObjKey::Inode)))
         .returning(move |_| {
@@ -3281,7 +3378,31 @@ fn unlink_with_extattr_hash_collision() {
             };
             Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
         });
-    ds.expect_range()
+    ds0.expect_insert()
+        .once()
+        .withf(move |key, value| {
+            key.is_inode() &&
+            value.as_inode().unwrap().file_type == FileType::Dir &&
+            value.as_inode().unwrap().atime == old_ts &&
+            value.as_inode().unwrap().mtime != old_ts &&
+            value.as_inode().unwrap().ctime != old_ts &&
+            value.as_inode().unwrap().birthtime == old_ts
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
+    ds0.expect_insert()
+        .once()
+        .withf(move |key, value| {
+            key.is_dying_inode() &&
+            value.as_dying_inode().unwrap().ino() == ino
+        }).returning(|_, _| Box::new(Ok(None).into_future()));
+
+    ds1.expect_get()
+        .once()
+        .withf(move |key| key.is_dying_inode())
+        .returning(move |_| {
+            let v = FSValue::DyingInode(DyingInode::from(ino));
+            Box::new(Ok(Some(v)).into_future())
+        });
+    ds1.expect_range()
         .once()
         .with(eq(FSKey::extent_range(ino, ..)))
         .returning(move |_| {
@@ -3289,7 +3410,7 @@ fn unlink_with_extattr_hash_collision() {
             let extents = vec![];
             mock_range_query(extents)
         });
-    ds.expect_range()
+    ds1.expect_range()
         .once()
         .with(eq(FSKey::extattr_range(ino)))
         .returning(move |_| {
@@ -3311,31 +3432,35 @@ fn unlink_with_extattr_hash_collision() {
             let extents = vec![(k0, v)];
             mock_range_query(extents)
         });
-    ds.expect_delete_blob()
+    ds1.expect_delete_blob()
         .once()
         .withf(move |rid: &RID| xattr_blob_rid == *rid)
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.expect_range_delete()
+    ds1.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
         .returning(|_| Box::new(Ok(()).into_future()));
-    ds.expect_insert()
+    ds0.expect_insert()
         .once()
         .withf(move |key, value| {
             key.is_inode() &&
-            value.as_inode().unwrap().file_type == FileType::Dir &&
-            value.as_inode().unwrap().atime == old_ts &&
-            value.as_inode().unwrap().mtime != old_ts &&
-            value.as_inode().unwrap().ctime != old_ts &&
-            value.as_inode().unwrap().birthtime == old_ts
+            key.object() == ino &&
+            value.as_inode().unwrap().nlink == 0 &&
+            value.as_inode().unwrap().ctime != old_ts
         }).returning(|_, _| Box::new(Ok(None).into_future()));
 
     db.expect_fswrite_inner()
         .once()
-        .return_once(move |_| ds);
+        .in_sequence(&mut seq)
+        .return_once(move |_| ds0);
+    db.expect_fswrite_inner()
+        .once()
+        .in_sequence(&mut seq)
+        .return_once(move |_| ds1);
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     let fd = FileData::new(Some(parent_ino), ino);
     let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);
+    fs.inactive(fd);
 }
 }
