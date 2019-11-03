@@ -2775,7 +2775,7 @@ test_suite! {
     }
 
     fixture!( mocks(seed: Option<[u8; 16]>, freqs: Option<Vec<(Op, f64)>>,
-                    zone_size: u64) -> (TortureTest)
+                    zone_size: u64) -> TortureTest
     {
         setup(&mut self) {
             static ENV_LOGGER: Once = Once::new();

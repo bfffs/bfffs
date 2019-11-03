@@ -394,9 +394,9 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     // Consuming and returning self prevents lifetime checker issues that
     // interfere with lock coupling.
     pub fn xlock<D>(mut self, dml: &Arc<D>, child_idx: usize, txg: TxgT)
-        -> (Box<dyn Future<Item=(TreeWriteGuard<A, K, V>,
-                                 TreeWriteGuard<A, K, V>),
-                           Error=Error> + Send>)
+        -> Box<dyn Future<Item=(TreeWriteGuard<A, K, V>,
+                                TreeWriteGuard<A, K, V>),
+                           Error=Error> + Send>
         where D: DML<Addr=A> + 'static
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
@@ -448,9 +448,9 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// leak!  `height` is the height of `self`, not the target.  Leaves are 0.
     pub fn xlock_nc<D>(&mut self, dml: &Arc<D>, child_idx: usize, height: u8,
                        txg: TxgT)
-        -> (Box<dyn Future<Item=(Option<IntElem<A, K, V>>,
-                                 TreeWriteGuard<A, K, V>),
-                           Error=Error> + Send>)
+        -> Box<dyn Future<Item=(Option<IntElem<A, K, V>>,
+                                TreeWriteGuard<A, K, V>),
+                           Error=Error> + Send>
         where D: DML<Addr=A> + 'static
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;

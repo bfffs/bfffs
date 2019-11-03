@@ -2010,8 +2010,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// memory, then COW it.
     fn xlock_root(dml: &Arc<D>, mut guard: RwLockWriteGuard<IntElem<A, K, V>>,
                   txg: TxgT)
-        -> (Box<dyn Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
-                                 TreeWriteGuard<A, K, V>), Error=Error> + Send>)
+        -> Box<dyn Future<Item=(RwLockWriteGuard<IntElem<A, K, V>>,
+                                TreeWriteGuard<A, K, V>), Error=Error> + Send>
     {
         guard.txgs.end = txg + 1;
         if guard.ptr.is_mem() {
