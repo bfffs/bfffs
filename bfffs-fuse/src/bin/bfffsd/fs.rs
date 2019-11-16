@@ -2060,7 +2060,7 @@ mod mknod {
                 nlink: 1,
                 uid,
                 gid,
-                rdev: rdev,
+                rdev,
                 flags: 0
             }));
 
@@ -2128,7 +2128,7 @@ mod mknod {
                 nlink: 1,
                 uid,
                 gid,
-                rdev: rdev,
+                rdev,
                 flags: 0
             }));
 
@@ -3151,7 +3151,7 @@ mod setattr {
             .in_sequence(&mut seq)
             .return_const(Ok(GetAttr {
                 ino,
-                size: size,
+                size,
                 blocks: 0,
                 atime: Timespec{sec: 0, nsec: 0},
                 mtime: Timespec{sec: 0, nsec: 0},
