@@ -5,7 +5,7 @@ set -e
 # Use --all-targets to include benchmarks (in debug mode)
 cargo +nightly test --all-features --all --all-targets
 
-# It should also work on stable >= 1.38.0
+# It should also work on stable >= 1.39.0
 cargo +stable test --all
 
 # bfffs-fio should stay in consistent style.  The other crates can't, because
