@@ -1982,7 +1982,7 @@ impl Fs {
                 Ok(r).into_future()
             }).map_err(Error::into)
             .then(|r| {
-                tx.send(r).ok().expect("Fs::statvfs: send failed");
+                tx.send(r).expect("Fs::statvfs: send failed");
                 Ok(())
             })
         ).unwrap();
