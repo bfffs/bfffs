@@ -646,7 +646,7 @@ impl VdevRaid {
             }
             dcols.push(col);
         }
-        debug_assert!(dcursor.next(usize::max_value()).is_none());
+        debug_assert_eq!(dcursor.peek_len(), 0);
 
         let mut pcols = Vec::<IoVecMut>::with_capacity(f);
         let mut prefs = Vec::<*mut u8>::with_capacity(f);
