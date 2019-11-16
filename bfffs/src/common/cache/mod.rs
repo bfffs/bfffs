@@ -1,4 +1,8 @@
 // vim: tw=80
+
+// https://github.com/fkoep/downcast-rs/issues/6
+#![allow(clippy::missing_safety_doc)]
+
 use cfg_if::cfg_if;
 use crate::common::*;
 use downcast::*;
