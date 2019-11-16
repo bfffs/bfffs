@@ -586,7 +586,6 @@ impl Filesystem for FuseFs {
             },
             Err(errno) => {
                 reply.error(errno);
-                return;
             }
         }
     }
