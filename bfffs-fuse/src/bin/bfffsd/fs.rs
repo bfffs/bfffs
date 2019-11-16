@@ -315,9 +315,8 @@ impl Filesystem for FuseFs {
             Some(ino) => match self.files.get(ino) {
                 Some(fd) => {
                     // Name and inode are cached
-                    match self.do_getattr(&fd) {
+                    match self.do_getattr(fd) {
                         Ok(file_attr) => {
-                            drop(fd);
                             self.files.get_mut(ino).unwrap().lookup_count += 1;
                             self.reply_entry(&file_attr, reply)
                         },
