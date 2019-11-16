@@ -997,7 +997,7 @@ impl Fs {
                                 _ => 0
                             };
                             let attr = GetAttr {
-                                ino: ino,
+                                ino,
                                 size: inode.size,
                                 blocks: 0,
                                 atime: inode.atime,
