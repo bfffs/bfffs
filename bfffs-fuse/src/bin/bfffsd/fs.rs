@@ -180,10 +180,11 @@ impl FuseFs {
 
     fn uncache_name(&mut self, parent_ino: u64, name: &OsStr) {
         let name_key = (parent_ino, name.to_owned());
-        match self.names.remove(&name_key) {
-            // TODO: handle multiply linked files
-            Some(_ino) => (),    /* FORGET will come separately */
-            None => (),   /* Removing uncached entries is OK */
+        // TODO: handle multiply linked files
+        if let Some(_ino) = self.names.remove(&name_key) {
+            /* FORGET will come separately */
+        } else {
+            /* Removing uncached entries is OK */
         };
     }
 }
