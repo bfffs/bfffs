@@ -122,6 +122,10 @@ lazy_static! {
     static ref FILES: Mutex<HashMap<libc::c_int, FileData>> = Mutex::default();
 }
 
+///
+/// # Safety
+///
+/// Caller must ensure validity of the pointer arguments
 #[no_mangle]
 pub unsafe extern "C" fn fio_bfffs_close(
     _td: *mut thread_data,
@@ -162,6 +166,10 @@ pub extern "C" fn fio_bfffs_getevents(
     0
 }
 
+///
+/// # Safety
+///
+/// Caller must ensure validity of the pointer arguments
 #[no_mangle]
 pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
 {
@@ -230,6 +238,10 @@ pub extern "C" fn fio_bfffs_invalidate(
     0
 }
 
+///
+/// # Safety
+///
+/// Caller must ensure validity of the pointer arguments
 #[no_mangle]
 pub unsafe extern "C" fn fio_bfffs_open(
     _td: *mut thread_data,
@@ -261,6 +273,10 @@ pub unsafe extern "C" fn fio_bfffs_open(
     }
 }
 
+///
+/// # Safety
+///
+/// Caller must ensure validity of the pointer arguments
 #[no_mangle]
 #[allow(non_upper_case_globals)]
 pub unsafe extern "C" fn fio_bfffs_queue(
