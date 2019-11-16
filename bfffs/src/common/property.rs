@@ -69,23 +69,17 @@ impl TryFrom<&str> for Property {
         let mut words = s.splitn(2, '=');
         let propname = words.next().ok_or(Error::EINVAL)?;
         let propval = words.next();
-        if propval.is_none() {
-            // Value may be omitted only for boolean options
-            match propname {
-                "atime" => Ok(Property::Atime(true)),
-                _ => Err(Error::EINVAL)
-            }
-        } else {
+        if let Some(v) = propval {
             match propname {
                 "atime" => {
-                    match propval.unwrap() {
+                    match v {
                         "true" | "on" => Ok(Property::Atime(true)),
                         "false" | "off" => Ok(Property::Atime(false)),
                         _ => Err(Error::EINVAL)
                     }
                 },
                 "record_size" => {
-                    if let Ok(rs) = propval.unwrap().parse::<usize>() {
+                    if let Ok(rs) = v.parse::<usize>() {
                         // We need the log base 2 of rs.  We could calculate it
                         // numerically, but there are so few valid values that
                         // it's easier to use a LUT.
@@ -105,6 +99,12 @@ impl TryFrom<&str> for Property {
                         Err(Error::EINVAL)
                     }
                 },
+                _ => Err(Error::EINVAL)
+            }
+        } else {
+            // Value may be omitted only for boolean options
+            match propname {
+                "atime" => Ok(Property::Atime(true)),
                 _ => Err(Error::EINVAL)
             }
         }
