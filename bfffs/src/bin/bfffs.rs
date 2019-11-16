@@ -73,7 +73,6 @@ fn dump_fsm<P: AsRef<Path>, S: AsRef<str>>(poolname: S, disks: &[P]) {
 }
 
 fn dump_tree<P: AsRef<Path>>(poolname: String, disks: &[P]) {
-    let poolname2 = poolname.to_owned();
     let dev_manager = DevManager::default();
     for disk in disks {
         dev_manager.taste(disk);
@@ -81,7 +80,7 @@ fn dump_tree<P: AsRef<Path>>(poolname: String, disks: &[P]) {
     let mut rt = tokio_io_pool::Runtime::new();
     let handle = rt.handle().clone();
     let db = Arc::new(rt.block_on(future::lazy(move || {
-        dev_manager.import_by_name(poolname2, handle)
+        dev_manager.import_by_name(poolname, handle)
         .unwrap_or_else(|_e| {
             eprintln!("Error: pool not found");
             exit(1);
