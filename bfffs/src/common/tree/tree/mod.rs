@@ -1016,27 +1016,29 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let (child_fut, next_fut) = match *guard {
             NodeData::Leaf(ref leaf) => {
                 let (v, more) = leaf.range(range.clone());
-                let ret = if v.is_empty() && more && next_guard.is_some() {
-                    // We must've started the query with a key that's not
-                    // present, and lies between two leaves.  Check the next
-                    // node
-                    Tree::get_range_r(dml2, next_guard.unwrap(), None, range)
-                } else if v.is_empty() {
-                    // The range is truly empty
-                    Box::new(Ok((v, None)).into_future())
-                } else {
-                    let bound = if more {
-                        Some(match next_guard {
-                            Some(g) => Bound::Included(g.key().borrow().clone()),
-                            None => {
-                                let t = leaf.last_key().unwrap().borrow().clone();
-                                Bound::Excluded(t)
-                            }
-                        })
-                    } else {
-                        None
-                    };
-                    Box::new(Ok((v, bound)).into_future())
+                let ret = match next_guard {
+                    Some(ng) if v.is_empty() && more => {
+                        // We must've started the query with a key that's not
+                        // present, and lies between two leaves.  Check the next
+                        // node
+                        Tree::get_range_r(dml2, ng, None, range)
+                    },
+                    _ if v.is_empty() => {
+                        // The range is truly empty
+                        Box::new(Ok((v, None)).into_future())
+                    },
+                    Some(ng) if more => {
+                        let bound = Bound::Included(ng.key().borrow().clone());
+                        Box::new(Ok((v, Some(bound))).into_future())
+                    },
+                    None if more => {
+                        let t = leaf.last_key().unwrap().borrow().clone();
+                        let bound = Bound::Excluded(t);
+                        Box::new(Ok((v, Some(bound))).into_future())
+                    },
+                    _ => {
+                        Box::new(Ok((v, None)).into_future())
+                    }
                 };
                 return ret;
             },
@@ -1583,6 +1585,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }).map(drop)
     }
 
+    #[allow(clippy::unnecessary_unwrap)]
     fn range_delete_pass2_r<R, T>(inner: Arc<Inner<A, D, K, V>>,
         guard: TreeWriteGuard<A, K, V>, mut map: HashSet<usize>, range: R,
         txg: TxgT)

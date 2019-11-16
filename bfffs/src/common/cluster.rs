@@ -175,8 +175,8 @@ impl<'a> FreeSpaceMap {
         let mut zid: ZoneT = 0;
         for (i, db) in buf.into_chunks(BYTES_PER_LBA).enumerate() {
             let sod = SpacemapOnDisk::deserialize(i as u64, &db).unwrap();
-            if sod.is_err() {
-                let fut = Err(sod.unwrap_err()).into_future();
+            if let Err(e) = sod {
+                let fut = Err(e).into_future();
                 return Ok(boxfut!(fut, _, _, 'static));
             }
             for zod in sod.unwrap().zones.into_iter() {

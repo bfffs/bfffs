@@ -677,10 +677,10 @@ impl VdevRaid {
 fn min_max<I>(iterable: I) -> Option<(I::Item, I::Item)>
     where I: Iterator, I::Item: Ord + Copy {
     iterable.fold(None, |acc, i| {
-        if acc.is_none() {
-            Some((i, i))
+        if let Some(accv) = acc {
+            Some((cmp::min(accv.0, i), cmp::max(accv.1, i)))
         } else {
-            Some((cmp::min(acc.unwrap().0, i), cmp::max(acc.unwrap().1, i)))
+            Some((i, i))
         }
     })
 }
@@ -899,44 +899,41 @@ impl VdevRaidApi for VdevRaid {
                 end_lba >= stripe_buffer.lba()
             }).nth(0);
 
-        let buf2 = if stripe_buffer.is_some() &&
-            !stripe_buffer.unwrap().is_empty() &&
-            end_lba >= stripe_buffer.unwrap().lba() {
-
-            // We need to service part of the read from the StripeBuffer
-            let mut cursor = SGCursor::from(stripe_buffer.unwrap().peek());
-            let direct_len = if stripe_buffer.unwrap().lba() > lba {
-                (stripe_buffer.unwrap().lba() - lba) as usize * BYTES_PER_LBA
-            } else {
-                // Seek to the LBA of interest
-                let mut skipped = 0;
-                let to_skip = (lba - stripe_buffer.unwrap().lba()) as usize *
-                    BYTES_PER_LBA;
-                while skipped < to_skip {
-                    let iovec = cursor.next(to_skip - skipped);
-                    skipped += iovec.unwrap().len();
+        let buf2 = match stripe_buffer {
+            Some(sb) if !sb.is_empty() && end_lba >= sb.lba() => {
+                // We need to service part of the read from the StripeBuffer
+                let mut cursor = SGCursor::from(sb.peek());
+                let direct_len = if sb.lba() > lba {
+                    (sb.lba() - lba) as usize * BYTES_PER_LBA
+                } else {
+                    // Seek to the LBA of interest
+                    let mut skipped = 0;
+                    let to_skip = (lba - sb.lba()) as usize * BYTES_PER_LBA;
+                    while skipped < to_skip {
+                        let iovec = cursor.next(to_skip - skipped);
+                        skipped += iovec.unwrap().len();
+                    }
+                    0
+                };
+                let mut sb_buf = buf.split_off(direct_len);
+                // Copy from StripeBuffer into sb_buf
+                while !sb_buf.is_empty() {
+                    let iovec = cursor.next(sb_buf.len()).expect(
+                        "Read beyond the stripe buffer into unallocated space");
+                    sb_buf.split_to(iovec.len())[..]
+                        .copy_from_slice(&iovec[..]);
                 }
-                0
-            };
-            let mut sb_buf = buf.split_off(direct_len);
-            // Copy from StripeBuffer into sb_buf
-            while !sb_buf.is_empty() {
-                let iovec = cursor.next(sb_buf.len()).expect(
-                    "Read beyond the stripe buffer into unallocated space");
-                sb_buf.split_to(iovec.len())[..].copy_from_slice(&iovec[..]);
-            }
-            if direct_len == 0 {
-                // Read was fully serviced by StripeBuffer.  No need to go to
-                // disks.
-                return Box::new(future::ok(()));
-            } else {
-                // Service the first part of the read from the disks
-                end_lba = stripe_buffer.unwrap().lba() - 1;
-            }
-            buf
-        } else {
-            // Don't involve the StripeBuffer
-            buf
+                if direct_len == 0 {
+                    // Read was fully serviced by StripeBuffer.  No need to go
+                    // to disks.
+                    return Box::new(future::ok(()));
+                } else {
+                    // Service the first part of the read from the disks
+                    end_lba = sb.lba() - 1;
+                }
+                buf
+            },
+            _ => buf        // Don't involve the StripeBuffer
         };
         let start_stripe = lba / (self.chunksize * m as LbaT);
         let end_stripe = end_lba / (self.chunksize * m);
