@@ -444,7 +444,7 @@ impl Future for Write
             Err(e) => {
                 self.stats.queue_depth[self.cidx]
                     .fetch_sub(1, Ordering::Relaxed);
-                Err(Error::from(e))
+                Err(e)
             }
         }
     }

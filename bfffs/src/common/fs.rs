@@ -963,7 +963,7 @@ impl Fs {
                 .then(move |r| {
                     match r {
                         Ok(_) => tx.send(Ok(())),
-                        Err(e) => tx.send(Err(e.into()))
+                        Err(e) => tx.send(Err(e))
                     }.expect("FS::unlink: send failed");
                     Ok(()).into_future()
                 })
