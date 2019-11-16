@@ -1,4 +1,8 @@
 // vim: tw=80
+
+// https://github.com/Gilnaa/memoffset/issues/34
+#![allow(clippy::unneeded_field_pattern)]
+
 use bfffs::common::{
     database::TreeID,
     device_manager::DevManager,
