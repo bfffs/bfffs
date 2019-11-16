@@ -1600,17 +1600,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
             // Descend into every affected child
             let mut to_fix = Vec::with_capacity(2);
             to_fix.extend((0..guard.len())
-            .filter_map(|i| {
-                if let TreePtr::Mem(p) = &guard.as_int().children[i].ptr {
+            .filter(|i| {
+                if let TreePtr::Mem(p) = &guard.as_int().children[*i].ptr {
                     let id = &**p as *const Node<A, K, V> as usize;
-                    if map.remove(&id) {
-                        Some(i)
-                    } else {
-                        None
-                    }
+                    map.remove(&id)
                 } else {
                     // This child obviously wasn't affected in pass1
-                    None
+                    false
                 }
             }).take(2));    // No more than two children can be in the cut
             if to_fix.is_empty() {
