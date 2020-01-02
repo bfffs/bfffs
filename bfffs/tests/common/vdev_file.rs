@@ -20,13 +20,14 @@ test_suite! {
         ops::Deref,
         path::PathBuf,
     };
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::runtime::current_thread;
 
     fixture!( vdev() -> (VdevFile, PathBuf, TempDir) {
         setup(&mut self) {
             let len = 1 << 26;  // 64MB
-            let tempdir = t!(TempDir::new("test_vdev_file_basic"));
+            let tempdir =
+                t!(Builder::new().prefix("test_vdev_file_basic").tempdir());
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
@@ -63,7 +64,9 @@ test_suite! {
     }
 
     test open_enoent() {
-        let dir = t!(TempDir::new("test_read_at"));
+        let dir = t!(
+            Builder::new().prefix("test_read_at").tempdir()
+        );
         let path = dir.path().join("vdev");
         let mut rt = current_thread::Runtime::new().unwrap();
         let e = rt.block_on(future::lazy(|| {
@@ -74,7 +77,7 @@ test_suite! {
 
     test read_at() {
         // Create the initial file
-        let dir = t!(TempDir::new("test_read_at"));
+        let dir = t!(Builder::new().prefix("test_read_at").tempdir());
         let path = dir.path().join("vdev");
         let wbuf = vec![42u8; 4096];
         {
@@ -96,7 +99,7 @@ test_suite! {
 
     test readv_at() {
         // Create the initial file
-        let dir = t!(TempDir::new("test_readv_at"));
+        let dir = t!(Builder::new().prefix("test_readv_at").tempdir());
         let path = dir.path().join("vdev");
         let wbuf = vec![42u8; 4096];
         {
@@ -204,7 +207,7 @@ test_suite! {
         path::PathBuf
     };
     use std;
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::runtime::current_thread;
 
     const GOLDEN: [u8; 72] = [
@@ -230,7 +233,9 @@ test_suite! {
     fixture!( fixture() -> (PathBuf, TempDir) {
         setup(&mut self) {
             let len = 1 << 26;  // 64MB
-            let tempdir = t!(TempDir::new("test_vdev_file_persistence"));
+            let tempdir = t!(
+                Builder::new().prefix("test_vdev_file_persistence").tempdir()
+            );
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));

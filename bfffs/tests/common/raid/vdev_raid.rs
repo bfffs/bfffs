@@ -2,7 +2,7 @@
 use bfffs::common::raid::VdevRaid;
 use galvanic_test::test_suite;
 use std::fs;
-use tempdir::TempDir;
+use tempfile::Builder;
 
 #[test]
 #[should_panic]
@@ -13,7 +13,8 @@ fn create_redundancy_too_big() {
     let num_disks = 5;
     let stripesize = 3;
     let redundancy = 3;
-    let tempdir = t!(TempDir::new("create_redundancy_too_big"));
+    let tempdir =
+        t!(Builder::new().prefix("create_redundancy_too_big").tempdir());
     let paths = (0..num_disks).map(|i| {
         let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
         let file = t!(fs::File::create(&fname));
@@ -32,7 +33,8 @@ fn create_stripesize_too_big() {
     let num_disks = 3;
     let stripesize = 4;
     let redundancy = 1;
-    let tempdir = t!(TempDir::new("create_stripesize_too_big"));
+    let tempdir =
+        t!(Builder::new().prefix("create_stripesize_too_big").tempdir());
     let paths = (0..num_disks).map(|i| {
         let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
         let file = t!(fs::File::create(&fname));
@@ -60,7 +62,7 @@ test_suite! {
         fs,
         num::NonZeroU64
     };
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::runtime::current_thread;
 
     fixture!( raid(n: i16, k: i16, f: i16, chunksize: LbaT) ->
@@ -79,7 +81,7 @@ test_suite! {
         setup(&mut self) {
 
             let len = 1 << 30;  // 1 GB
-            let tempdir = t!(TempDir::new("test_vdev_raid"));
+            let tempdir = t!(Builder::new().prefix("test_vdev_raid").tempdir());
             let paths = (0..*self.n).map(|i| {
                 let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
                 let file = t!(fs::File::create(&fname));
@@ -602,7 +604,7 @@ test_suite! {
         io::{Read, Seek, SeekFrom},
         num::NonZeroU64
     };
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::runtime::current_thread;
 
     const GOLDEN_VDEV_RAID_LABEL: [u8; 124] = [
@@ -642,7 +644,9 @@ test_suite! {
         setup(&mut self) {
             let num_disks = 5;
             let len = 1 << 26;  // 64 MB
-            let tempdir = t!(TempDir::new("test_vdev_raid_persistence"));
+            let tempdir = t!(
+                Builder::new().prefix("test_vdev_raid_persistence").tempdir()
+            );
             let paths = (0..num_disks).map(|i| {
                 let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
                 let file = t!(fs::File::create(&fname));

@@ -23,7 +23,7 @@ test_suite! {
         thread,
         time
     };
-    use tempdir::TempDir;
+    use tempfile::Builder;
     use tokio_io_pool::Runtime;
 
     fixture!( mocks(devsize: u64, zone_size: u64)
@@ -32,7 +32,7 @@ test_suite! {
         setup(&mut self) {
             let mut rt = Runtime::new();
             let handle = rt.handle().clone();
-            let tempdir = t!(TempDir::new("test_fs"));
+            let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(*self.devsize));

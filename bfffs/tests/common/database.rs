@@ -52,7 +52,7 @@ test_suite! {
         num::NonZeroU64,
     };
     use super::*;
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -82,7 +82,9 @@ test_suite! {
     fixture!( objects() -> (Runtime, Database, TempDir, PathBuf) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
-            let tempdir = t!(TempDir::new("test_database_persistence"));
+            let tempdir = t!(
+                Builder::new().prefix("test_database_persistence").tempdir()
+            );
             let filename = tempdir.path().join("vdev");
             {
                 let file = t!(fs::File::create(&filename));
@@ -170,14 +172,15 @@ test_suite! {
         num::NonZeroU64,
     };
     use super::*;
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
 
     const POOLNAME: &str = &"TestPool";
 
     fixture!( objects() -> (Runtime, Database, TempDir, TreeID) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
-            let tempdir = t!(TempDir::new("test_database_t"));
+            let tempdir =
+                t!(Builder::new().prefix("test_database_t").tempdir());
             let filename = tempdir.path().join("vdev");
             {
                 let file = t!(fs::File::create(&filename));
@@ -271,7 +274,8 @@ test_suite! {
         let mut rt = tokio_io_pool::Runtime::new();
         let handle = rt.handle().clone();
         let len = 1 << 30;  // 1GB
-        let tempdir = t!(TempDir::new("database::shutdown"));
+        let tempdir =
+            t!(Builder::new().prefix("database.tempdir()::shutdown").tempdir());
         let filename = tempdir.path().join("vdev");
         let file = t!(fs::File::create(&filename));
         t!(file.set_len(len));

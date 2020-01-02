@@ -23,7 +23,7 @@ test_suite! {
         path::PathBuf,
         sync::{Arc, Mutex}
     };
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::runtime::current_thread::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
@@ -110,7 +110,8 @@ test_suite! {
     fixture!( objects() -> (Runtime, Arc<IDML>, TempDir, PathBuf) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
-            let tempdir = t!(TempDir::new("test_idml_persistence"));
+            let tempdir =
+                t!(Builder::new().prefix("test_idml_persistence").tempdir());
             let filename = tempdir.path().join("vdev");
             {
                 let file = t!(fs::File::create(&filename));
@@ -220,7 +221,7 @@ test_suite! {
         num::NonZeroU64,
         sync::{Arc, Mutex}
     };
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::runtime::current_thread::Runtime;
 
     const LBA_PER_ZONE: LbaT = 256;
@@ -229,7 +230,8 @@ test_suite! {
     fixture!( objects() -> (Runtime, IDML, TempDir) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
-            let tempdir = t!(TempDir::new("test_idml_persistence"));
+            let tempdir =
+                t!(Builder::new().prefix("test_idml_persistence").tempdir());
             let filename = tempdir.path().join("vdev");
             {
                 let file = t!(fs::File::create(&filename));
