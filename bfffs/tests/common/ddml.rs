@@ -21,13 +21,13 @@ test_suite! {
         path::Path,
         sync::{Arc, Mutex}
     };
-    use tempdir::TempDir;
+    use tempfile::Builder;
     use tokio::runtime::current_thread::Runtime;
 
     fixture!( objects() -> (Runtime, DDML) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
-            let tempdir = t!(TempDir::new("ddml"));
+            let tempdir = t!(Builder::new().prefix("ddml").tempdir());
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));

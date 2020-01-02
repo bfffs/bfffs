@@ -18,7 +18,7 @@ test_suite! {
         fs,
         io::{Read, Seek, SeekFrom},
     };
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::runtime::current_thread;
 
     const GOLDEN_VDEV_ONEDISK_LABEL: [u8; 36] = [
@@ -38,7 +38,9 @@ test_suite! {
     fixture!( mocks() -> (VdevOneDisk, TempDir, String) {
         setup(&mut self) {
             let len = 1 << 26;  // 64 MB
-            let tempdir = t!(TempDir::new("test_vdev_onedisk_persistence"));
+            let tempdir = t!(
+                Builder::new().prefix("test_vdev_onedisk_persistence").tempdir()
+            );
             let path = format!("{}/vdev", tempdir.path().display());
             let file = t!(fs::File::create(&path));
             t!(file.set_len(len));

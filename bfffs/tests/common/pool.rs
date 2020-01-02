@@ -18,7 +18,7 @@ test_suite! {
         io::{Read, Seek, SeekFrom},
         num::NonZeroU64
     };
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::runtime::current_thread::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
@@ -44,7 +44,8 @@ test_suite! {
         setup(&mut self) {
             let num_disks = 2;
             let len = 1 << 26;  // 64 MB
-            let tempdir = t!(TempDir::new("test_pool_persistence"));
+            let tempdir =
+                t!(Builder::new().prefix("test_pool_persistence").tempdir());
             let paths = (0..num_disks).map(|i| {
                 let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
                 let file = t!(fs::File::create(&fname));

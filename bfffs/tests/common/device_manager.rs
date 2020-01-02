@@ -20,7 +20,7 @@ test_suite! {
         fs,
         sync::{Arc, Mutex}
     };
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::{
         executor::current_thread::TaskExecutor,
         runtime::current_thread::Runtime
@@ -41,7 +41,8 @@ test_suite! {
             let f = *self.f;
             let mut rt = Runtime::new().unwrap();
             let len = 1 << 30;  // 1GB
-            let tempdir = t!(TempDir::new("test_device_manager"));
+            let tempdir =
+                t!(Builder::new().prefix("test_device_manager").tempdir());
             let paths = (0..n).map(|i| {
                 let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
                 let file = t!(fs::File::create(&fname));

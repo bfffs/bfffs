@@ -30,7 +30,7 @@ test_suite! {
         slice,
         sync::{Arc, Mutex}
     };
-    use tempdir::TempDir;
+    use tempfile::Builder;
     use time::Timespec;
     use tokio_io_pool::Runtime;
 
@@ -43,7 +43,7 @@ test_suite! {
             let mut rt = Runtime::new();
             let handle = rt.handle().clone();
             let len = 1 << 30;  // 1GB
-            let tempdir = t!(TempDir::new("test_fs"));
+            let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
@@ -2574,7 +2574,7 @@ test_suite! {
         sync::{Arc, Mutex, Once},
         time::{Duration, Instant},
     };
-    use tempdir::TempDir;
+    use tempfile::Builder;
     use tokio_io_pool::Runtime;
 
     #[derive(Clone, Copy, Debug)]
@@ -2786,7 +2786,7 @@ test_suite! {
             let mut rt = Runtime::new();
             let handle = rt.handle().clone();
             let len = 1 << 30;  // 1GB
-            let tempdir = t!(TempDir::new("test_fs"));
+            let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));

@@ -16,7 +16,7 @@ test_suite! {
         io::{Read, Seek, SeekFrom, Write},
         num::NonZeroU64
     };
-    use tempdir::TempDir;
+    use tempfile::{Builder, TempDir};
     use tokio::runtime::current_thread::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
@@ -55,7 +55,8 @@ test_suite! {
     fixture!( objects() -> (Runtime, Cluster, TempDir, String) {
         setup(&mut self) {
             let len = 1 << 29;  // 512 MB
-            let tempdir = t!(TempDir::new("test_cluster_persistence"));
+            let tempdir =
+                t!(Builder::new().prefix("test_cluster_persistence").tempdir());
             let fname = format!("{}/vdev", tempdir.path().display());
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
