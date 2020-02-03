@@ -347,4 +347,5 @@ pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     list:               flist_head::zeroed(),
     option_struct_size: mem::size_of::<BfffsOptions>() as i32,
     options:            ptr::null_mut(),
+    post_init:          None
 };
