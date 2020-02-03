@@ -15,6 +15,6 @@ end_fsync=1
 create_on_open=1
 # Your pool info goes here:
 pool=foo
-vdev=/tmp/da0
+vdevs=/dev/da0
 
 [fio_test_file]
