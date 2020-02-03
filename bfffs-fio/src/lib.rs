@@ -73,9 +73,9 @@ struct BfffsOptions
     /// silly fio can't handle an offset of 0
     _pad: u32,
     pool_name: *const libc::c_char,
-    /// The name of the device that backs the pool.  If there are multiple
+    /// The name of the device(s) that backs the pool.  If there are multiple
     /// devices, then they should be space-separated
-    vdev: *const libc::c_char,
+    vdevs: *const libc::c_char,
 }
 
 static mut OPTIONS: Option<[fio_option; 3]> = None;
@@ -103,11 +103,11 @@ pub extern "C" fn rust_ctor()
                 opt_category_group_FIO_OPT_G_INVALID,
             ),
             fio_option::new(
-                b"vdev\0",
-                b"vdev\0",
+                b"vdevs\0",
+                b"vdevs\0",
                 fio_opt_type_FIO_OPT_STR_STORE,
-                offset_of!(BfffsOptions, vdev),
-                b"Name of BFFFS vdev\0",
+                offset_of!(BfffsOptions, vdevs),
+                b"Name of BFFFS vdev(s)\0",
                 b"\0",
                 opt_category___FIO_OPT_C_ENGINE,
                 opt_category_group_FIO_OPT_G_INVALID,
@@ -182,25 +182,26 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
         let mut rt = RUNTIME.lock().unwrap();
         let opts = (*td).eo as *mut BfffsOptions;
         if opts as isize != -1 {
-            let (pool, vdev) = {
+            let (pool, vdevs) = {
                 let pool = if (*opts).pool_name.is_null() {
                     eprintln!("Error: pool option is required");
                     return 1;
                 } else {
                     CStr::from_ptr((*opts).pool_name).to_string_lossy()
                 };
-                let vdev = if (*opts).vdev.is_null() {
-                    eprintln!("Error: vdev option is required");
+                let vdevs = if (*opts).vdevs.is_null() {
+                    eprintln!("Error: vdevs option is required");
                     return 1;
                 } else {
-                    CStr::from_ptr((*opts).vdev).to_string_lossy()
+                    CStr::from_ptr((*opts).vdevs).to_string_lossy()
                 };
-                (pool, vdev)
+                (pool, vdevs)
             };
             let dev_manager = DevManager::default();
-            // TODO: allow using multiple vdevs
-            let borrowed_vdev: &str = vdev.borrow();
-            dev_manager.taste(borrowed_vdev);
+            for vdev in vdevs.split_whitespace() {
+                let borrowed_vdev: &str = vdev.borrow();
+                dev_manager.taste(borrowed_vdev);
+            }
             let handle = rt.handle().clone();
             let r = rt.block_on(future::lazy(move || {
                 if let Ok(fut) = dev_manager.import_by_name(pool, handle) {
