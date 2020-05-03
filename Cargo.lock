@@ -70,7 +70,7 @@ dependencies = [
  "libc 0.2.64 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "metrohash 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "mockall 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mockall 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.1.43 (registry+https://github.com/rust-lang/crates.io-index)",
  "num_cpus 1.10.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -115,7 +115,7 @@ dependencies = [
  "fuse 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.64 (registry+https://github.com/rust-lang/crates.io-index)",
- "mockall 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mockall 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "time 0.1.42 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-io-pool 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -321,11 +321,6 @@ dependencies = [
 [[package]]
 name = "fnv"
 version = "1.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "fragile"
-version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -552,46 +547,21 @@ dependencies = [
 
 [[package]]
 name = "mockall"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "cfg-if 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)",
- "downcast 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "fragile 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "mockall_derive 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "predicates 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "predicates-tree 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "mockall"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "cfg-if 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "downcast 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "fragile 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "mockall_derive 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mockall_derive 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "predicates-tree 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "mockall_derive"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "cfg-if 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)",
- "proc-macro2 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "quote 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "syn 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "mockall_derive"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "cfg-if 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1491,7 +1461,6 @@ dependencies = [
 "checksum fixedbitset 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)" = "86d4de0081402f5e88cdac65c8dcdcc73118c1a7a465e2a05f0da05843a8ea33"
 "checksum float-cmp 0.5.3 (registry+https://github.com/rust-lang/crates.io-index)" = "75224bec9bfe1a65e2d34132933f2de7fe79900c96a0174307554244ece8150e"
 "checksum fnv 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)" = "2fad85553e09a6f881f739c29f0b00b0f01357c743266d478b68951ce23285f3"
-"checksum fragile 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "05f8140122fa0d5dcb9fc8627cfce2b37cc1500f752636d46ea28bc26785c2f9"
 "checksum fragile 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "69a039c3498dc930fe810151a34ba0c1c70b02b8625035592e74432f678591f2"
 "checksum fuchsia-cprng 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
 "checksum fuchsia-zircon 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "2e9763c69ebaae630ba35f74888db465e49e259ba1bc0eda7d06f4a067615d82"
@@ -1521,10 +1490,8 @@ dependencies = [
 "checksum mio-aio 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "379e6982065dcc2e184bd0b6d468c2185e03b039e76c5d9dc594b1d76d341f90"
 "checksum mio-uds 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)" = "966257a94e196b11bb43aca423754d87429960a768de9414f3691d6957abf125"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
-"checksum mockall 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7601dfc82314f4e4ad844055452f71c1d5d171e4b530f817b9353bb2e63a271d"
-"checksum mockall 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "48c9eefc7768ee7a28a09d64e40203d57ad20af8525b7428d5f2f55d8c621984"
-"checksum mockall_derive 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "a26211f315c132a546ed185f3a17f7617a8e58d8511025d5f8665017194cf8be"
-"checksum mockall_derive 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "447326d4e6d99ea272b6e5599cbbfc1e3407c23a856ccf1eb9427ad73267376f"
+"checksum mockall 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "256489d4d106cd2bc9e98ed0337402db0044de0621745d5d9eb70a14295ff77b"
+"checksum mockall_derive 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "826e14e8643cb12103b56efb963e5f9640b69b0f7bdcc460002092df4b0e959f"
 "checksum net2 0.2.33 (registry+https://github.com/rust-lang/crates.io-index)" = "42550d9fb7b6684a6d404d9fa7250c2eb2646df731d1c06afc06dcee9e1bcf88"
 "checksum nix 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)" = "3b2e0b4f3320ed72aaedb9a5ac838690a8047c7b275da22711fddff4f8a14229"
 "checksum nodrop 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)" = "72ef4a56884ca558e5ddb05a1d1e7e1bfd9a68d9ed024c21704cc98872dae1bb"
