@@ -1,5 +1,5 @@
 freebsd_instance:
-  image: freebsd-11-3-stable-amd64-v20190801
+  image_family: freebsd-11-3-snap
 
 task:
   env:
