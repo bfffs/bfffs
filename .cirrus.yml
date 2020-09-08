@@ -7,17 +7,18 @@ task:
   matrix:
     - name: cargo test (nightly)
       env:
-        VERSION: +nightly
+        # Pin nightly to 2020-08-28 to workaround Rust ICE
+        # https://github.com/rust-lang/rust/issues/67684
+        VERSION: nightly-2020-08-28-x86_64-unknown-freebsd
         CARGO_ARGS: --all-features
     - name: cargo test (stable)
       env:
-        VERSION: +1.42.0
+        VERSION: 1.42.0
   setup_script:
     - pkg install -y c-blosc isa-l fusefs-libs pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y --profile=minimal
-    - $HOME/.cargo/bin/rustup toolchain install 1.42.0
-    - $HOME/.cargo/bin/rustup toolchain install nightly
+    - $HOME/.cargo/bin/rustup toolchain install $VERSION
     # In 11.3, aio on ufs is considered unsafe
     - sysctl vfs.aio.enable_unsafe=1
   cargo_cache:
@@ -25,8 +26,8 @@ task:
     fingerprint_script: cat Cargo.lock || echo ""
   build_script:
     - . $HOME/.cargo/env
-    - cargo $VERSION build $CARGO_ARGS --all
+    - cargo +$VERSION build $CARGO_ARGS --all
   test_script:
     - . $HOME/.cargo/env
-    - cargo $VERSION test $CARGO_ARGS --all --all-targets
+    - cargo +$VERSION test $CARGO_ARGS --all --all-targets
   before_cache_script: rm -rf $HOME/.cargo/registry/index
