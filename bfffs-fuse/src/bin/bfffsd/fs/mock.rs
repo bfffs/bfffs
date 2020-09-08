@@ -3,7 +3,7 @@
 //! Mock objects for bfffsd::fs
 use bfffs::common::{
     database::{Database, TreeID},
-    fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr},
+    fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr, Uio},
     property::Property,
     SGList,
     RID,
@@ -43,14 +43,11 @@ mock! {
             -> Result<(), i32>;
         fn lookup<'a>(&self, grandparent: Option<&'a FileData>,
             parent: &'a FileData, name: &OsStr) -> Result<FileData, i32>;
-        // TODO: After upgrading mockall to 0.4.0 (which allows where clauses
-        // with closures), restore the definitions of listextattr and
-        // listextattrlen to the originals, which use where clauses
-        fn listextattr<F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static>(
-            &self, fd: &FileData, size: u32, f: F) -> Result<Vec<u8>, i32>;
-        fn listextattrlen<F: Fn(&ExtAttr<RID>)
-            -> u32 + Send + 'static>(&self, fd: &FileData, f: F)
-                -> Result<u32, i32>;
+        fn listextattr<F>(&self, fd: &FileData, size: u32, f: F)
+            -> Result<Vec<u8>, i32>
+            where F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static;
+        fn listextattrlen<F>(&self, fd: &FileData, f: F) -> Result<u32, i32>
+            where F: Fn(&ExtAttr<RID>) -> u32 + Send + 'static;
         fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                  gid: u32) -> Result<FileData, i32>;
         fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
