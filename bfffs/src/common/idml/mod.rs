@@ -14,18 +14,12 @@ use crate::common::{
     tree::tree::Tree,
     tree::Value
 };
-use cfg_if::cfg_if;
-#[cfg(test)] use mockall::mock;
+use mockall_double::*;
 
 mod idml;
 
-cfg_if! {
-    if #[cfg(test)]{
-        pub use self::idml::MockIDML as IDML;
-    } else {
-        pub use self::idml::IDML;
-    }
-}
+#[double]
+pub use self::idml::IDML;
 
 pub use crate::common::ddml::ClosedZone;
 

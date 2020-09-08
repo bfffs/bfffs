@@ -3,9 +3,9 @@
 // https://github.com/fkoep/downcast-rs/issues/6
 #![allow(clippy::missing_safety_doc)]
 
-use cfg_if::cfg_if;
 use crate::common::*;
 use downcast::*;
+use mockall_double::*;
 use std::{
     borrow::Borrow,
     fmt::Debug,
@@ -13,13 +13,8 @@ use std::{
 
 mod cache;
 
-cfg_if! {
-    if #[cfg(test)]{
-        pub use self::cache::MockCache as Cache;
-    } else {
-        pub use self::cache::Cache;
-    }
-}
+#[double]
+pub use self::cache::Cache;
 
 /// Key types used by `Cache`
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

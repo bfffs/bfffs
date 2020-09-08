@@ -5,21 +5,16 @@
 //! Clients use the Database to obtain references to the Datasets.  The Database
 //! also owns the Forest and manages Transactions.
 
-use cfg_if::cfg_if;
 use crate::common::{
     *,
     tree::MinValue
 };
+use mockall_double::*;
 
 mod database;
 
-cfg_if! {
-    if #[cfg(test)]{
-        pub use self::database::MockDatabase as Database;
-    } else {
-        pub use self::database::Database;
-    }
-}
+#[double]
+pub use self::database::Database;
 
 pub use self::database::ReadOnlyFilesystem;
 pub use self::database::ReadWriteFilesystem;

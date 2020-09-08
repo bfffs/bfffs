@@ -3,7 +3,7 @@
 //! Mock objects for bfffsd::fs
 use bfffs::common::{
     database::{Database, TreeID},
-    fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr, Uio},
+    fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr},
     property::Property,
     SGList,
     RID,

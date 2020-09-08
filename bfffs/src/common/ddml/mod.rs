@@ -5,22 +5,18 @@
 /// disk, and hash operations.  A Direct Record is a record that can never be
 /// duplicated, either through snapshots, clones, or deduplication.
 
-use cfg_if::cfg_if;
 use crate::common::*;
 #[cfg(test)] use rand::{self, Rng};
 
 pub use crate::common::dml::{Compression, DML};
 pub use crate::common::pool::ClosedZone;
 
+use mockall_double::*;
+
 mod ddml;
 
-cfg_if! {
-    if #[cfg(test)]{
-        pub use self::ddml::MockDDML as DDML;
-    } else {
-        pub use self::ddml::DDML;
-    }
-}
+#[double]
+pub use self::ddml::DDML;
 
 /// Direct Record Pointer.  A persistable pointer to a record on disk.
 ///

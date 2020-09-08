@@ -13,6 +13,7 @@ use crate::{
 };
 use futures::{Future, IntoFuture, Stream, future};
 use futures_locks::{RwLock, RwLockReadFut};
+#[cfg(test)] use mockall::mock;
 use std::{
     io,
     sync::{

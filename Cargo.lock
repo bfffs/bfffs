@@ -75,6 +75,7 @@ dependencies = [
  "log 0.4.11",
  "metrohash",
  "mockall",
+ "mockall_double",
  "nix",
  "num-traits 0.1.43",
  "num_cpus",
@@ -629,6 +630,18 @@ name = "mockall_derive"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b873f753808fe0c3827ce76edb3ace27804966dfde3043adfac1c24d0a2559df"
+dependencies = [
+ "cfg-if",
+ "proc-macro2",
+ "quote 1.0.7",
+ "syn 1.0.40",
+]
+
+[[package]]
+name = "mockall_double"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9eacc2558c7ab425550913e9ba69077513922396bc4a1338301e3a0d244d2555"
 dependencies = [
  "cfg-if",
  "proc-macro2",
