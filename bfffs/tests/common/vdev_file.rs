@@ -10,18 +10,16 @@ test_suite! {
         vdev_leaf::*,
         vdev_file::*
     };
-    use divbuf::DivBufShared;
-    use futures::{future, Future};
+    use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{Read, Seek, SeekFrom, Write},
-        ops::Deref,
         path::PathBuf,
     };
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::current_thread;
+    use tokio::runtime;
 
     fixture!( vdev() -> (VdevFile, PathBuf, TempDir) {
         setup(&mut self) {
@@ -68,10 +66,10 @@ test_suite! {
             Builder::new().prefix("test_read_at").tempdir()
         );
         let path = dir.path().join("vdev");
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let e = rt.block_on(future::lazy(|| {
-            VdevFile::open(path)
-        })).err().unwrap();
+        let mut rt = runtime::Runtime::new().unwrap();
+        let e = rt.block_on(VdevFile::open(path))
+            .err()
+            .unwrap();
         assert_eq!(e, Error::ENOENT);
     }
 
@@ -88,20 +86,20 @@ test_suite! {
         }
 
         // Run the test
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let rbuf = dbs.try_mut().unwrap();
+        let mut rbuf = vec![0u8; 4096];
         let vdev = VdevFile::create(path, None).unwrap();
-        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.read_at(rbuf, 10)
-        })));
-        assert_eq!(&dbs.try_const().unwrap()[..], &wbuf[..]);
+        let mut rt = runtime::Runtime::new().unwrap();
+        rt.block_on(vdev.read_at(&mut rbuf, 10)).unwrap();
+        assert_eq!(rbuf, wbuf);
     }
 
     test readv_at() {
         // Create the initial file
         let dir = t!(Builder::new().prefix("test_readv_at").tempdir());
         let path = dir.path().join("vdev");
-        let wbuf = vec![42u8; 4096];
+        let wbuf = (0..4096)
+            .map(|i| (i / 16) as u8)
+            .collect::<Vec<_>>();
         {
             let mut f = t!(fs::File::create(&path));
             f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the labels
@@ -110,79 +108,71 @@ test_suite! {
         }
 
         // Run the test
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let mut rbuf0 = dbs.try_mut().unwrap();
-        let rbuf1 = rbuf0.split_off(1024);
-        let rbufs = vec![rbuf0, rbuf1];
+        let mut rbuf0 = vec![0u8; 1024];
+        let mut rbuf1 = vec![0u8; 3072];
+        let mut rbufs = vec![&mut rbuf0[..], &mut rbuf1[..]];
         let vdev = VdevFile::create(path, None).unwrap();
-        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.readv_at(rbufs, 10)
-        })));
-        assert_eq!(&dbs.try_const().unwrap()[..], &wbuf[..]);
+        let mut rt = runtime::Runtime::new().unwrap();
+        rt.block_on(vdev.readv_at(&mut rbufs[..], 10)).unwrap();
+        assert_eq!(&rbuf0[..], &wbuf[..1024]);
+        assert_eq!(&rbuf1[..], &wbuf[1024..]);
     }
 
     test write_at(vdev) {
-        let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let wbuf = dbs.try_const().unwrap();
+        let wbuf = vec![42u8; 4096];
         let mut rbuf = vec![0u8; 4096];
-        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf.clone(), 10)
-        })));
+        let mut rt = runtime::Runtime::new().unwrap();
+        t!(rt.block_on(vdev.val.0.write_at(&wbuf, 10)));
         let mut f = t!(fs::File::open(vdev.val.1));
         f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(rbuf, wbuf.deref().deref());
+        assert_eq!(rbuf, wbuf);
     }
 
     #[should_panic]
     test write_at_overwrite_label(vdev) {
-        let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let wbuf = dbs.try_const().unwrap();
-        let _ = vdev.val.0.write_at(wbuf.clone(), 0);
+        let wbuf = vec![42u8; 4096];
+        let mut rt = runtime::Runtime::new().unwrap();
+        rt.block_on(vdev.val.0.write_at(&wbuf, 0)).unwrap();
     }
 
     test write_at_lba(vdev) {
-        let dbs = DivBufShared::from(vec![42u8; 4096]);
-        let wbuf = dbs.try_const().unwrap();
+        let wbuf = vec![42u8; 4096];
         let mut rbuf = vec![0u8; 4096];
-        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf.clone(), 11)
-        })));
+        let mut rt = runtime::Runtime::new().unwrap();
+        t!(rt.block_on(vdev.val.0.write_at(&wbuf, 11)));
         let mut f = t!(fs::File::open(vdev.val.1));
         t!(f.seek(SeekFrom::Start(11 * 4096)));
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(rbuf, wbuf.deref().deref());
+        assert_eq!(rbuf, wbuf);
     }
 
     test writev_at(vdev) {
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let mut wbuf0 = dbs.try_const().unwrap();
-        let wbuf1 = wbuf0.split_off(1024);
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let wbuf0 = vec![1u8; 1024];
+        let wbuf1 = vec![2u8; 3072];
+        let wbufs = vec![&wbuf0[..], &wbuf1[..]];
         let mut rbuf = vec![0u8; 4096];
-        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.writev_at(wbufs, 10)
-        })));
+        let mut rt = runtime::Runtime::new().unwrap();
+        t!(rt.block_on(vdev.val.0.writev_at(&wbufs[..], 10)));
         let mut f = t!(fs::File::open(vdev.val.1));
         t!(f.seek(SeekFrom::Start(10 * 4096)));
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(&rbuf[0..1024], wbuf0.deref().deref());
-        assert_eq!(&rbuf[1024..4096], wbuf1.deref().deref());
+        assert_eq!(&rbuf[0..1024], &wbuf0[..]);
+        assert_eq!(&rbuf[1024..4096], &wbuf1[..]);
     }
 
     test read_after_write(vdev) {
         let vd = vdev.val.0;
-        let dbsw = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = dbsw.try_const().unwrap();
-        let dbsr = DivBufShared::from(vec![0u8; 4096]);
-        let rbuf = dbsr.try_mut().unwrap();
-        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vd.write_at(wbuf.clone(), 10)
+        let wbuf = vec![1u8; 4096];
+        let mut rbuf = vec![0u8; 4096];
+        let mut rt = runtime::Runtime::new().unwrap();
+        rt.block_on(
+            vd.write_at(&wbuf, 10)
                 .and_then(|_| {
-                    vd.read_at(rbuf, 10)
+                    vd.read_at(&mut rbuf, 10)
                 })
-        })));
-        assert_eq!(wbuf, dbsr.try_const().unwrap());
+        ).unwrap();
+        assert_eq!(wbuf, rbuf);
     }
 }
 
@@ -196,7 +186,6 @@ test_suite! {
         vdev_leaf::*,
         vdev_file::*
     };
-    use futures::{future, Future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
@@ -208,7 +197,7 @@ test_suite! {
     };
     use std;
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::current_thread;
+    use tokio::runtime;
 
     const GOLDEN: [u8; 72] = [
         // First 16 bytes are file magic
@@ -257,14 +246,13 @@ test_suite! {
             let offset1 = 4 * BYTES_PER_LBA as u64;
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            VdevFile::open(fixture.val.0)
-                .and_then(|(vdev, _label_reader)| {
-                    assert_eq!(vdev.size(), 16_384);
-                    assert_eq!(vdev.uuid(), golden_uuid);
-                    Ok(())
-                })
-        })).unwrap();
+        let mut rt = runtime::Runtime::new().unwrap();
+        rt.block_on(VdevFile::open(fixture.val.0))
+        .and_then(|(vdev, _label_reader)| {
+            assert_eq!(vdev.size(), 16_384);
+            assert_eq!(vdev.uuid(), golden_uuid);
+            Ok(())
+        }).unwrap();
         let _ = fixture.val.1;
     }
 
@@ -283,10 +271,10 @@ test_suite! {
             f.write_all_at(&zeros, offset0 + 16).unwrap();
             f.write_all_at(&zeros, offset1 + 16).unwrap();
         }
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let e = rt.block_on(future::lazy(|| {
-            VdevFile::open(fixture.val.0)
-        })).err().expect("Opening the file should've failed");
+        let mut rt = runtime::Runtime::new().unwrap();
+        let e = rt.block_on(VdevFile::open(fixture.val.0))
+            .err()
+            .expect("Opening the file should've failed");
         assert_eq!(e, Error::ECKSUM);
     }
 
@@ -301,23 +289,22 @@ test_suite! {
             let offset0 = 0;
             f.write_all_at(&GOLDEN, offset0).unwrap();
         }
-        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            VdevFile::open(fixture.val.0)
-                .and_then(|(vdev, _label_reader)| {
-                    assert_eq!(vdev.size(), 16_384);
-                    assert_eq!(vdev.uuid(), golden_uuid);
-                    Ok(())
-                })
-        })));
+        let mut rt = runtime::Runtime::new().unwrap();
+        rt.block_on(VdevFile::open(fixture.val.0))
+        .and_then(|(vdev, _label_reader)| {
+            assert_eq!(vdev.size(), 16_384);
+            assert_eq!(vdev.uuid(), golden_uuid);
+            Ok(())
+        }).unwrap();
         let _ = fixture.val.1;
     }
 
     // Open a device without a valid label
     test open_invalid(fixture) {
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let e = rt.block_on(future::lazy(|| {
-            VdevFile::open(fixture.val.0)
-        })).err().expect("Opening the file should've failed");
+        let mut rt = runtime::Runtime::new().unwrap();
+        let e = rt.block_on(VdevFile::open(fixture.val.0))
+            .err()
+            .expect("Opening the file should've failed");
         assert_eq!(e, Error::EINVAL);
     }
 
@@ -332,14 +319,13 @@ test_suite! {
             let offset1 = 4 * BYTES_PER_LBA as u64;
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            VdevFile::open(fixture.val.0)
-                .and_then(|(vdev, _label_reader)| {
-                    assert_eq!(vdev.size(), 16_384);
-                    assert_eq!(vdev.uuid(), golden_uuid);
-                    Ok(())
-                })
-        })).unwrap();
+        let mut rt = runtime::Runtime::new().unwrap();
+        rt.block_on(VdevFile::open(fixture.val.0))
+        .and_then(|(vdev, _label_reader)| {
+            assert_eq!(vdev.size(), 16_384);
+            assert_eq!(vdev.uuid(), golden_uuid);
+            Ok(())
+        }).unwrap();
         let _ = fixture.val.1;
     }
 
@@ -348,10 +334,9 @@ test_suite! {
         let lbas_per_zone = NonZeroU64::new(0xdead_beef_1a7e_babe);
         let vdev = VdevFile::create(fixture.val.0.clone(), lbas_per_zone)
             .unwrap();
-        t!(current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            let label_writer = LabelWriter::new(0);
-            vdev.write_label(label_writer)
-        })));
+        let mut rt = runtime::Runtime::new().unwrap();
+        let label_writer = LabelWriter::new(0);
+        t!(rt.block_on(vdev.write_label(label_writer)));
 
         let mut f = std::fs::File::open(fixture.val.0).unwrap();
         let mut v = vec![0; 4096];

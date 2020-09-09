@@ -12,6 +12,7 @@ doctest = false
 nightly = [ "mockall/nightly" ]
 
 [dependencies]
+async-trait = "0.1.40"
 bincode = { version = "1.0.1", features = ["i128"] }
 bitfield = "0.13.1"
 blosc = "0.1.3"

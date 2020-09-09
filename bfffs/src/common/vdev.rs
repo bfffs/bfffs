@@ -1,5 +1,6 @@
 // vim: tw=80
 
+use async_trait::async_trait;
 use crate::common::*;
 use futures;
 
@@ -20,6 +21,7 @@ pub type BoxVdevFut = Box<dyn futures::Future<Output = Result<(), Error>>>;
 /// The main datapath interface to any `Vdev` is `read_at` and `write_at`.
 /// However, those methods are not technically part of the trait, because they
 /// have different return values at different levels.
+#[async_trait(?Send)]
 pub trait Vdev {
     /// Return the zone number at which the given LBA resides
     ///
@@ -42,7 +44,7 @@ pub trait Vdev {
 
     /// Sync the `Vdev`, ensuring that all data written so far reaches stable
     /// storage.
-    fn sync_all(&self) -> Box<VdevFut>;
+    async fn sync_all(&self) -> Result<(), Error>;
 
     /// Return the UUID for this vdev.  It is the persistent, unique identifier
     /// for each vdev.
