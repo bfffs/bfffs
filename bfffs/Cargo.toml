@@ -21,24 +21,24 @@ divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
 downcast = "0.10.0"
 enum-primitive-derive = "^0.1"
 fixedbitset = "0.1.8"
-futures = "0.1.14"
-futures-locks = "0.5"
+futures = "0.3.0"
+futures-locks = "0.6.0"
 itertools = "0.7"
 isa-l = { path = "../isa-l" }
 lazy_static = "1.0"
 libc = "0.2.44"
 metrohash = "1.0"
 mockall_double = "0.1.0"
-nix = "0.18.0"
+nix = { git = "https://github.com/asomers/nix", rev = "6d9f42fdc01d0b8cca5cdb21485d8bb433e4ad87" }
 num-traits = "^0.1"
 serde = "1.0.60"
 serde_derive = "1.0"
 serde_yaml = "0.8.6"
 time = "0.1"
-tokio = "0.1.8"
-tokio-current-thread = "0.1.1"
-tokio-file = "0.5.1"
-tokio-io-pool = "0.1.4"
+tokio = "0.2.7"
+#tokio-current-thread = "0.1.1"
+tokio-file = { git = "https://github.com/asomers/tokio-file", branch = "std_future" }
+#tokio-io-pool = "0.1.4"
 uuid = { version = "0.7", features = ["serde", "v4"]}
 
 [dependencies.clap]

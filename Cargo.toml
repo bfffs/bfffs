@@ -6,4 +6,5 @@ debug = true
 lto = true
 
 [workspace]
-members = ["bfffs", "bfffs-fio", "bfffs-fuse", "isa-l"]
+members = ["bfffs", "isa-l"]
+#members = ["bfffs", "bfffs-fio", "bfffs-fuse", "isa-l"]

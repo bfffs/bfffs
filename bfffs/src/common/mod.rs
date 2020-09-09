@@ -22,26 +22,26 @@ use std::{
 };
 use uuid;
 
-pub mod cache;
-pub mod cleaner;
-pub mod cluster;
-pub mod database;
-pub mod dataset;
-pub mod ddml;
-pub mod device_manager;
-pub mod dml;
-pub mod fs;
-pub mod fs_tree;
-pub mod idml;
+//pub mod cache;
+//pub mod cleaner;
+//pub mod cluster;
+//pub mod database;
+//pub mod dataset;
+//pub mod ddml;
+//pub mod device_manager;
+//pub mod dml;
+//pub mod fs;
+//pub mod fs_tree;
+//pub mod idml;
 pub mod label;
-pub mod pool;
-pub mod property;
-pub mod raid;
-pub mod tree;
-pub mod vdev;
-pub mod vdev_block;
-pub mod vdev_file;
-pub mod vdev_leaf;
+//pub mod pool;
+//pub mod property;
+//pub mod raid;
+//pub mod tree;
+//pub mod vdev;
+//pub mod vdev_block;
+//pub mod vdev_file;
+//pub mod vdev_leaf;
 
 /// LBAs always use 4K LBAs, even if the underlying device supports smaller.
 pub const BYTES_PER_LBA: usize = 4096;
@@ -188,9 +188,9 @@ impl Error {
     pub fn unhandled<E: fmt::Debug>(e: E) {
         panic!("Unhandled error {:?}", e)
     }
-    pub fn unhandled_canceled<E: fmt::Debug>(e: E) -> futures::Canceled {
-        panic!("Unhandled error {:?}", e)
-    }
+    //pub fn unhandled_canceled<E: fmt::Debug>(e: E) -> futures::Canceled {
+        //panic!("Unhandled error {:?}", e)
+    //}
     pub fn unhandled_error<E: fmt::Debug>(e: E) -> Error {
         panic!("Unhandled error {:?}", e)
     }
