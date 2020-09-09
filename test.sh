@@ -6,7 +6,7 @@ set -e
 cargo +nightly test --all-features --all --all-targets
 
 # It should also work on stable >= 1.42.0
-cargo +stable test --all
+cargo +1.42.0 test --all
 
 # bfffs-fio should stay in consistent style.  The other crates can't, because
 # rustfmt screws them up.
