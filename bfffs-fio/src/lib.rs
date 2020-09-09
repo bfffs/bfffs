@@ -71,11 +71,11 @@ impl flist_head
 struct BfffsOptions
 {
     /// silly fio can't handle an offset of 0
-    _pad: u32,
+    _pad:      u32,
     pool_name: *const libc::c_char,
     /// The name of the device(s) that backs the pool.  If there are multiple
     /// devices, then they should be space-separated
-    vdevs: *const libc::c_char,
+    vdevs:     *const libc::c_char,
 }
 
 static mut OPTIONS: Option<[fio_option; 3]> = None;
@@ -348,5 +348,5 @@ pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     list:               flist_head::zeroed(),
     option_struct_size: mem::size_of::<BfffsOptions>() as i32,
     options:            ptr::null_mut(),
-    post_init:          None
+    post_init:          None,
 };
