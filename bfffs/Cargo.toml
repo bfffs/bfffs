@@ -30,13 +30,13 @@ lazy_static = "1.0"
 libc = "0.2.44"
 metrohash = "1.0"
 mockall_double = "0.1.0"
-nix = { git = "https://github.com/asomers/nix", rev = "6d9f42fdc01d0b8cca5cdb21485d8bb433e4ad87" }
+nix = { git = "https://github.com/asomers/nix", rev = "a60f8edc13028648a1124c677f9dfa4ecac3caf7" }
 num-traits = "^0.1"
 serde = "1.0.60"
 serde_derive = "1.0"
 serde_yaml = "0.8.6"
 time = "0.1"
-tokio = "0.2.7"
+tokio = { version = "0.2.7", features = ["time"] }
 #tokio-current-thread = "0.1.1"
 tokio-file = { git = "https://github.com/asomers/tokio-file", branch = "std_future" }
 #tokio-io-pool = "0.1.4"

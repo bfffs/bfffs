@@ -542,7 +542,7 @@ dependencies = [
 [[package]]
 name = "mio-aio"
 version = "0.4.2-pre"
-source = "git+https://github.com/asomers/mio-aio?rev=baa0e97e990f844a7ce3caba9a552136ecb2b8a6#baa0e97e990f844a7ce3caba9a552136ecb2b8a6"
+source = "git+https://github.com/asomers/mio-aio?rev=a967efdd1cd7e980a8909ba178856ec75b620950#a967efdd1cd7e980a8909ba178856ec75b620950"
 dependencies = [
  "mio",
  "nix",
@@ -613,7 +613,7 @@ dependencies = [
 [[package]]
 name = "nix"
 version = "0.18.0"
-source = "git+https://github.com/asomers/nix?rev=6d9f42fdc01d0b8cca5cdb21485d8bb433e4ad87#6d9f42fdc01d0b8cca5cdb21485d8bb433e4ad87"
+source = "git+https://github.com/asomers/nix?rev=a60f8edc13028648a1124c677f9dfa4ecac3caf7#a60f8edc13028648a1124c677f9dfa4ecac3caf7"
 dependencies = [
  "bitflags",
  "cc",
@@ -1179,12 +1179,13 @@ dependencies = [
  "lazy_static",
  "mio",
  "pin-project-lite",
+ "slab",
 ]
 
 [[package]]
 name = "tokio-file"
 version = "0.5.3-pre"
-source = "git+https://github.com/asomers/tokio-file?branch=std_future#60183a6ca38939505790a33d944ce501c0053cf0"
+source = "git+https://github.com/asomers/tokio-file?branch=std_future#79780ab8d44fb70ad9803cf2cb81cb703a152023"
 dependencies = [
  "futures",
  "mio",

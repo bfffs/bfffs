@@ -39,7 +39,7 @@ pub mod label;
 //pub mod raid;
 //pub mod tree;
 pub mod vdev;
-//pub mod vdev_block;
+pub mod vdev_block;
 pub mod vdev_file;
 pub mod vdev_leaf;
 

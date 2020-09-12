@@ -1,11 +1,11 @@
 // vim: tw=80
 
-use async_trait::async_trait;
 use crate::common::{*, label::*, vdev::*, vdev_leaf::*};
 use divbuf::DivBufShared;
 use futures::{
     Future,
     TryFutureExt,
+    future,
     task::{Context, Poll}
 };
 #[cfg(test)] use mockall::mock;
@@ -119,7 +119,6 @@ impl BorrowMut<[u8]> for IoVecMutContainer {
     }
 }
 
-#[async_trait(?Send)]
 impl Vdev for VdevFile {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         if lba >= self.reserved_space() {
@@ -138,11 +137,11 @@ impl Vdev for VdevFile {
         self.size
     }
 
-    async fn sync_all(&self) -> Result<(), Error> {
+    fn sync_all(&self) -> BoxVdevFut {
         let fut = self.file.sync_all().unwrap()
             .map_ok(drop)
             .map_err(Error::from);
-        fut.await
+        Box::pin(fut)
     }
 
     fn uuid(&self) -> Uuid {
@@ -163,10 +162,9 @@ impl Vdev for VdevFile {
     }
 }
 
-#[async_trait(?Send)]
 impl VdevLeafApi for VdevFile {
-    async fn erase_zone(&self, lba: LbaT) -> Result<(), Error> {
-        if self.candelete {
+    fn erase_zone(&self, lba: LbaT) -> BoxVdevFut {
+        let r = if self.candelete {
             // There isn't (yet) a way to asynchronously trim, so use a
             // synchronous ioctl.
             let off = lba as off_t * (BYTES_PER_LBA as off_t);
@@ -178,52 +176,58 @@ impl VdevLeafApi for VdevFile {
             .map_err(Error::from)
         } else {
             Ok(())
-        }
+        };
+        Box::pin(future::ready(r))
     }
 
-    async fn finish_zone(&self, _lba: LbaT) -> Result<(), Error> {
+    fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut {
         // ordinary files don't have Zone operations
-        Ok(())
+        Box::pin(future::ok(()))
     }
 
-    async fn open_zone(&self, _lba: LbaT) -> Result<(), Error> {
+    fn open_zone(&self, _lba: LbaT) -> BoxVdevFut {
         // ordinary files don't have Zone operations
-        Ok(())
+        Box::pin(future::ok(()))
     }
 
-    async fn read_at(&self, buf: &mut [u8], lba: LbaT) -> Result<(), Error> {
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+        let container = Box::new(IoVecMutContainer(buf));
         let off = lba * (BYTES_PER_LBA as u64);
-        VdevFileFut(self.file.read_at(buf, off).unwrap()).await
+        let fut = VdevFileFut(self.file.read_at(container, off).unwrap());
+        Box::pin(fut)
     }
 
-    async fn read_spacemap(&self, buf: &mut [u8], idx: u32)
-        -> Result<(), Error>
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
     {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
+        let container = Box::new(IoVecMutContainer(buf));
         let off = lba * (BYTES_PER_LBA as u64);
-        VdevFileFut(self.file.read_at(buf, off).unwrap()).await
+        let fut = VdevFileFut(self.file.read_at(container, off).unwrap());
+        Box::pin(fut)
     }
 
-    async fn readv_at<'a>(&self, bufs: &'a mut [&'a mut [u8]], lba: LbaT)
-        -> Result<(), Error>
+    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut
     {
         let off = lba * (BYTES_PER_LBA as u64);
-        VdevFileLioFut(self.file.readv_at(bufs, off).unwrap()).await
+        let containers = bufs.into_iter().map(|iovec| {
+            Box::new(IoVecMutContainer(iovec)) as Box<dyn BorrowMut<[u8]>>
+        }).collect();
+        let fut = VdevFileLioFut(self.file.readv_at(containers, off).unwrap());
+        Box::pin(fut)
     }
 
     fn spacemap_space(&self) -> LbaT {
         self.spacemap_space
     }
 
-    async fn write_at(&self, buf: &[u8], lba: LbaT) -> Result<(), Error> {
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
-        self.write_at_unchecked(buf, lba).await
+        let container = Box::new(IoVecContainer(buf));
+        Box::pin(self.write_at_unchecked(container, lba))
     }
 
-    // TODO: refactor LabelWriter to remove the DivBufs
-    async fn write_label(&self, mut label_writer: LabelWriter)
-        -> Result<(), Error>
+    fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut
     {
         let label = Label {
             uuid: self.uuid,
@@ -234,32 +238,36 @@ impl VdevLeafApi for VdevFile {
         label_writer.serialize(&label).unwrap();
         let lba = label_writer.lba();
         let sglist = label_writer.into_sglist();
-        let bufs = sglist.iter()
-            .map(|db| db.as_ref())
-            .collect::<Vec<_>>();
-        self.writev_at(&bufs, lba).await
+        self.writev_at(sglist, lba)
     }
 
-    async fn write_spacemap<'a>(&self, buf: &'a [&'a [u8]], idx: u32,
-        block: LbaT) -> Result<(), Error>
+    fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
+        -> BoxVdevFut
     {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         let bytes: u64 = buf.iter()
-            .map(|sl| sl.len())
+            .map(DivBuf::len)
             .sum::<usize>() as u64;
         debug_assert_eq!(bytes % BYTES_PER_LBA as u64, 0);
         let lbas = bytes / BYTES_PER_LBA as LbaT;
         assert!(lba + lbas <= self.reserved_space());
+        let containers = buf.into_iter().map(|iovec| {
+            Box::new(IoVecContainer(iovec)) as Box<dyn Borrow<[u8]>>
+        }).collect();
         let off = lba * (BYTES_PER_LBA as u64);
-        VdevFileLioFut(self.file.writev_at(buf, off).unwrap()).await
+        let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
+        Box::pin(fut)
     }
 
-    async fn writev_at<'a>(&self, buf: &'a [&'a [u8]], lba: LbaT)
-        -> Result<(), Error>
+    fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut
     {
         let off = lba * (BYTES_PER_LBA as u64);
-        VdevFileLioFut(self.file.writev_at(buf, off).unwrap()).await
+        let containers = buf.into_iter().map(|iovec| {
+            Box::new(IoVecContainer(iovec)) as Box<dyn Borrow<[u8]>>
+        }).collect();
+        let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
+        Box::pin(fut)
     }
 }
 
@@ -379,8 +387,13 @@ impl VdevFile {
         let lba = LabelReader::lba(label);
         let offset = lba * BYTES_PER_LBA as u64;
         // TODO: figure out how to use mem::MaybeUninit with File::read_at
+        // TODO: Skip creating the container by using a
+        // tokio_file::File::read_at_from_mut_slice method
+        let dbs = DivBufShared::uninitialized(LABEL_SIZE);
+        let dbm = dbs.try_mut().unwrap();
+        let container = Box::new(IoVecMutContainer(dbm));
         let mut buf = vec![0u8; LABEL_SIZE];
-        match f.read_at(&mut buf, offset).unwrap().await {
+        match f.read_at(container, offset).unwrap().await {
             Ok(aio_result) => {
                 buf.truncate(aio_result.value.unwrap() as usize);
                 let dbs = DivBufShared::from(buf);
@@ -397,16 +410,15 @@ impl VdevFile {
         LABEL_COUNT * (LABEL_LBAS as u64 + self.spacemap_space)
     }
 
-    async fn write_at_unchecked(&self, buf: &[u8], lba: LbaT)
-        -> Result<(), Error>
+    fn write_at_unchecked(&self, buf: Box<dyn Borrow<[u8]>>, lba: LbaT)
+        -> impl Future<Output=Result<(), Error>>
     {
-        debug_assert!(buf.len() % BYTES_PER_LBA == 0);
+        {
+            let b: &[u8] = (*buf).borrow();
+            debug_assert!(b.len() % BYTES_PER_LBA == 0);
+        }
         let off = lba * (BYTES_PER_LBA as u64);
-        self.file.write_at(buf, off)
-            .unwrap()
-            .await
-            .map(drop)
-            .map_err(Error::from)
+        VdevFileFut(self.file.write_at(buf, off).unwrap())
     }
 }
 
@@ -463,7 +475,6 @@ mock!{
         async fn open<P>(path: P) -> Result<(Self, LabelReader), Error>
             where P: AsRef<Path> + 'static;
     }
-    #[async_trait(?Send)]
     trait Vdev {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
@@ -473,7 +484,6 @@ mock!{
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     }
-    #[async_trait(?Send)]
     trait VdevLeafApi  {
         async fn erase_zone(&self, lba: LbaT) -> Result<(), Error>;
         async fn finish_zone(&self, _lba: LbaT) -> Result<(), Error>;

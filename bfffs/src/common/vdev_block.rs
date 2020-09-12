@@ -1,6 +1,12 @@
 // vim: tw=80
 
-use futures::{Async, Future, Poll, unsync::oneshot};
+use futures::{
+    Future,
+    FutureExt,
+    TryFutureExt,
+    channel::oneshot,
+    task::{Context, Poll}
+};
 use std::{
     cell::RefCell,
     cmp::{Ord, Ordering, PartialOrd},
@@ -10,13 +16,13 @@ use std::{
     mem,
     num::NonZeroU64,
     path::Path,
+    pin::Pin,
     rc::{Rc, Weak},
     ops,
     time,
 };
 #[cfg(test)] use mockall::*;
-use tokio_current_thread;
-use tokio::timer;
+use tokio;
 
 use crate::common::{*, label::*, vdev::*, vdev_leaf::*, vdev_file::*};
 
@@ -202,7 +208,7 @@ impl BlockOp {
 struct Inner {
     /// A VdevLeaf future that got delayed by an EAGAIN error.  We hold the
     /// future around instead of spawning it into the reactor.
-    delayed: Option<(oneshot::Sender<()>, Box<VdevFut>)>,
+    delayed: Option<(oneshot::Sender<()>, Pin<Box<VdevFut>>)>,
 
     /// Max commands that will be simultaneously queued to the VdevLeaf
     optimum_queue_depth: u32,
@@ -245,7 +251,7 @@ impl Inner {
     /// Issue as many scheduled operations as possible
     // Use the C-LOOK scheduling algorithm.  It guarantees that writes scheduled
     // in LBA order will also be issued in LBA order.
-    fn issue_all(&mut self) {
+    fn issue_all(&mut self, cx: &mut Context) {
         while self.queue_depth < self.optimum_queue_depth {
             let delayed = self.delayed.take();
             let (sender, fut) = if let Some((sender, fut)) = delayed {
@@ -256,23 +262,18 @@ impl Inner {
                 // Ran out of pending operations
                 break;
             };
-            if let Some(d) = self.issue_fut(sender, fut) {
+            if let Some(d) = self.issue_fut(sender, fut, cx) {
                 self.delayed = Some(d);
                 if self.queue_depth == 1 {
                     // Can't issue any I/O at all!  This means that other
                     // processes outside of bfffs's control are using too many
                     // disk resources.  In this case, the only thing we can do
                     // is sleep and try again later.
-                    let weakself = self.weakself.clone();
                     let duration = time::Duration::from_millis(10);
-                    let wakeup_time = time::Instant::now() + duration;
-                    let delay_fut = timer::Delay::new(wakeup_time)
-                    .map(move |_| {
-                        let inner = weakself.upgrade().expect(
-                            "VdevBlock dropped with outstanding I/O");
-                        inner.borrow_mut().issue_all();
-                    }).map_err(Error::unhandled);
-                    tokio_current_thread::spawn(delay_fut);
+                    let schfut = self.reschedule();
+                    let delay_fut = tokio::time::delay_for(duration)
+                    .then(move |_| schfut);
+                    tokio::task::spawn_local(delay_fut);
                 }
                 break;
             }
@@ -284,10 +285,14 @@ impl Inner {
 
     /// Immediately issue one I/O future.
     ///
-    /// Returns a delayed operation, if there were insufficient resources to
+    /// Returns a delayed operation if there were insufficient resources to
     /// immediately issue the future.
-    fn issue_fut(&mut self, sender: oneshot::Sender<()>, mut fut: Box<VdevFut>)
-        -> Option<(oneshot::Sender<()>, Box<VdevFut>)> {
+    fn issue_fut(&mut self,
+                 sender: oneshot::Sender<()>,
+                 mut fut: Pin<Box<VdevFut>>,
+                 cx: &mut Context)
+        -> Option<(oneshot::Sender<()>, Pin<Box<VdevFut>>)>
+    {
 
         let inner = self.weakself.upgrade().expect(
             "VdevBlock dropped with outstanding I/O");
@@ -296,34 +301,28 @@ impl Inner {
         // going to fail synchronously, then we want to handle the error
         // synchronously.  So we will poll it once before spawning it into the
         // reactor.
-        match fut.poll() {
-            Err(Error::EAGAIN) => {
-                // Out of resources to issue this future.  Delay it
+        match fut.as_mut().poll(cx) {
+            Poll::Ready(Err(Error::EAGAIN)) => {
+                // Out of resources to issue this future.  Delay it.
                 return Some((sender, fut));
             },
-            Err(e) => panic!("Unhandled error {:?}", e),
-            Ok(r) => {
-                match r {
-                    Async::NotReady => {
-                        tokio_current_thread::spawn(
-                            fut.and_then(move |_| {
-                                sender.send(()).unwrap();
-                                inner.borrow_mut().queue_depth -= 1;
-                                inner.borrow_mut().issue_all();
-                                Ok(())
-                            })
-                            .map_err(|e| {
-                                panic!("Unhandled error {:?}", e);
-                            })
-                        );
-                    },
-                    Async::Ready(_) => {
-                        // This normally doesn't happen, but it can happen on a
-                        // heavily laden system or one with very fast storage.
+            Poll::Ready(Err(e)) => panic!("Unhandled error {:?}", e),
+            Poll::Pending => {
+                let schfut = self.reschedule();
+                tokio::task::spawn_local(
+                    fut.then(move |r| {
+                        r.expect("Unhandled error");
                         sender.send(()).unwrap();
-                        self.queue_depth -= 1;
-                    }
-                }
+                        inner.borrow_mut().queue_depth -= 1;
+                        schfut
+                    })
+                );
+            },
+            Poll::Ready(Ok(_)) => {
+                // This normally doesn't happen, but it can happen on a
+                // heavily laden system or one with very fast storage.
+                sender.send(()).unwrap();
+                self.queue_depth -= 1;
             }
         }
         None
@@ -331,19 +330,19 @@ impl Inner {
 
     /// Create a future from a BlockOp, but don't spawn it yet
     fn make_fut(&mut self, block_op: BlockOp)
-        -> (oneshot::Sender<()>, Box<VdevFut>) {
+        -> (oneshot::Sender<()>, Pin<Box<VdevFut>>) {
 
         self.queue_depth += 1;
         let lba = block_op.lba;
 
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
-        let fut = match block_op.cmd {
+        let fut: Pin<Box<VdevFut>> = match block_op.cmd {
             Cmd::WriteAt(iovec) => self.leaf.write_at(iovec, lba),
             Cmd::ReadAt(iovec_mut) => self.leaf.read_at(iovec_mut, lba),
             Cmd::WritevAt(sglist) => self.leaf.writev_at(sglist, lba),
             Cmd::ReadSpacemap(iovec_mut, idx) =>
-                self.leaf.read_spacemap(iovec_mut, idx),
+                    self.leaf.read_spacemap(iovec_mut, idx),
             Cmd::ReadvAt(sglist_mut) => self.leaf.readv_at(sglist_mut, lba),
             Cmd::EraseZone(start) => self.leaf.erase_zone(start),
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
@@ -395,6 +394,12 @@ impl Inner {
         }
     }
 
+    /// Create a future which, when polled, will advanced the scheduler,
+    /// issueing more disk ops if any are waiting.
+    fn reschedule(&self) -> ReschedFut {
+        ReschedFut(self.weakself.clone())
+    }
+
     /// Schedule the `block_op`
     fn sched(&mut self, block_op: BlockOp) {
         if block_op.cmd == Cmd::SyncAll || self.syncing {
@@ -408,9 +413,22 @@ impl Inner {
     }
 
     /// Schedule the `block_op`, and try to issue it
-    fn sched_and_issue(&mut self, block_op: BlockOp) {
+    fn sched_and_issue(&mut self, block_op: BlockOp, cx: &mut Context) {
         self.sched(block_op);
-        self.issue_all();
+        self.issue_all(cx);
+    }
+}
+
+struct ReschedFut(Weak<RefCell<Inner>>);
+
+impl Future for ReschedFut {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let inner = self.0.upgrade()
+            .expect("VdevBlock dropped with outstanding I/O");
+        inner.borrow_mut().issue_all(cx);
+        Poll::Ready(())
     }
 }
 
@@ -421,15 +439,15 @@ struct VdevBlockFut {
 }
 
 impl Future for VdevBlockFut {
-    type Item = ();
-    type Error = Error;
+    type Output = Result<(), Error>;
 
-    fn poll(&mut self) -> Poll<(), Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         if self.block_op.is_some() {
             let block_op = self.block_op.take().unwrap();
-            self.inner.borrow_mut().sched_and_issue(block_op);
+            self.inner.borrow_mut().sched_and_issue(block_op, cx);
         }
-        self.receiver.poll().or(Err(Error::EPIPE))
+        Pin::new(&mut self.receiver).poll(cx)
+            .map_err(|_| Error::EPIPE)
     }
 }
 
@@ -485,8 +503,7 @@ impl VdevBlock {
     /// # Parameters
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
-    pub fn erase_zone(&self, start: LbaT, end: LbaT)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn erase_zone(&self, start: LbaT, end: LbaT) -> Result<(), Error>
     {
         // The zone must already be closed, but VdevBlock doesn't keep enough
         // information to assert that
@@ -504,7 +521,7 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 
     /// Asynchronously finish a zone on a block device
@@ -512,8 +529,7 @@ impl VdevBlock {
     /// # Parameters
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
-    pub fn finish_zone(&self, start: LbaT, end: LbaT)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn finish_zone(&self, start: LbaT, end: LbaT) -> Result<(), Error>
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::finish_zone(start, end, sender);
@@ -530,7 +546,7 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 
     fn new_fut(&self, block_op: BlockOp,
@@ -546,8 +562,7 @@ impl VdevBlock {
     ///
     /// # Parameters
     /// - `start`:    The first LBA within the target zone
-    pub fn open_zone(&self, start: LbaT)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn open_zone(&self, start: LbaT) -> Result<(), Error>
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::open_zone(start, sender);
@@ -562,7 +577,7 @@ impl VdevBlock {
             debug_assert_eq!(start, limits.0);
         }
 
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 
     /// Instantiate a new VdevBlock from an existing VdevLeaf
@@ -598,36 +613,38 @@ impl VdevBlock {
     ///
     /// * `path`    Pathname for the backing file.  It may be a device node.
     #[cfg(test)]
-    pub fn open<P: AsRef<Path> + 'static>(path: P)
-        -> impl Future<Item=(Self, LabelReader), Error=Error> {
+    pub async fn open<P: AsRef<Path> + 'static>(path: P)
+        -> Result<(Self, LabelReader), Error>
+    {
         VdevLeaf::open(path).map(|(leaf, label_reader)| {
             (VdevBlock::new(leaf), label_reader)
         })
     }
     #[cfg(not(test))]
-    pub fn open<P: AsRef<Path>>(path: P)
-        -> impl Future<Item=(Self, LabelReader), Error=Error> {
-        VdevLeaf::open(path).map(|(leaf, label_reader)| {
+    pub async fn open<P: AsRef<Path>>(path: P)
+        -> Result<(Self, LabelReader), Error>
+    {
+        VdevLeaf::open(path)
+        .map_ok(|(leaf, label_reader)| {
             (VdevBlock::new(leaf), label_reader)
-        })
+        }).await
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub fn read_at(&self, buf: IoVecMut, lba: LbaT)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error>
     {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::read_at(buf, lba, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 
     /// Read the entire serialized spacemap.  `idx` selects which spacemap to
     /// read, and should match whichever label is being read concurrently.
-    pub fn read_spacemap(&self, buf: IoVecMut, idx: u32)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn read_spacemap(&self, buf: IoVecMut, idx: u32)
+        -> Result<(), Error>
     {
         let (sender, receiver) = oneshot::channel::<()>();
         // lba is for sorting purposes only.  It should sort before any other
@@ -635,7 +652,7 @@ impl VdevBlock {
         // in the same order as their true LBA order.
         let lba = 1 + self.spacemap_space * LbaT::from(idx);
         let block_op = BlockOp::read_spacemap(buf, lba, idx, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 
     /// The asynchronous scatter/gather read function.
@@ -646,39 +663,37 @@ impl VdevBlock {
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn readv_at(&self, bufs: SGListMut, lba: LbaT)
+        -> Result<(), Error>
     {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns nothing on success, and on error on failure
-    pub fn write_at(&self, buf: IoVec, lba: LbaT)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn write_at(&self, buf: IoVec, lba: LbaT) -> Result<(), Error>
     {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_at(buf, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 
-    pub fn write_label(&self, labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_label(labeller, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 
-    pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-        ->  impl Future<Item=(), Error=Error>
+    pub async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        ->  Result<(), Error>
     {
         let (sender, receiver) = oneshot::channel::<()>();
         // lba is for sorting purposes only.  It should sort after write_label,
@@ -686,7 +701,7 @@ impl VdevBlock {
         // operations should sort in the same order as their true LBA order.
         let lba = 1 + self.spacemap_space * LbaT::from(idx) + block;
         let block_op = BlockOp::write_spacemap(sglist, lba, idx, block, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 
     /// The asynchronous scatter/gather write function.
@@ -697,15 +712,15 @@ impl VdevBlock {
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA at which to write
-    pub fn writev_at(&self, bufs: SGList, lba: LbaT)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn writev_at(&self, bufs: SGList, lba: LbaT)
+        -> Result<(), Error>
     {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver).await
     }
 }
 
@@ -728,10 +743,10 @@ impl Vdev for VdevBlock {
 
     /// Asynchronously sync the underlying device, ensuring that all data
     /// reaches stable storage
-    fn sync_all(&self) -> Box<VdevFut> {
+    fn sync_all(&self) -> BoxVdevFut {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::sync_all(sender);
-        Box::new(self.new_fut(block_op, receiver))
+        Box::pin(self.new_fut(block_op, receiver))
     }
 
     fn uuid(&self) -> Uuid {
