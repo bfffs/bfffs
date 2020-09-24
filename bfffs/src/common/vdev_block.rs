@@ -18,7 +18,7 @@ use std::{
 use tokio_current_thread;
 use tokio::timer;
 
-use crate::common::{*, label::*, vdev::*, vdev_leaf::*, vdev_file::*};
+use crate::common::{*, label::*, vdev::*, vdev_file::*};
 
 #[cfg(test)]
 pub type VdevLeaf = MockVdevFile;
