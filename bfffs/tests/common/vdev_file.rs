@@ -7,7 +7,6 @@ test_suite! {
     use bfffs::common::{
         Error,
         vdev::*,
-        vdev_leaf::*,
         vdev_file::*
     };
     use divbuf::DivBufShared;
@@ -193,7 +192,6 @@ test_suite! {
         *,
         label::*,
         vdev::*,
-        vdev_leaf::*,
         vdev_file::*
     };
     use futures::{future, Future};

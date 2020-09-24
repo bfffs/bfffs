@@ -41,7 +41,6 @@ pub mod tree;
 pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_file;
-pub mod vdev_leaf;
 
 /// LBAs always use 4K LBAs, even if the underlying device supports smaller.
 pub const BYTES_PER_LBA: usize = 4096;
