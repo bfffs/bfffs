@@ -345,11 +345,9 @@ impl VdevFile {
         let dbs = DivBufShared::uninitialized(LABEL_SIZE);
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
-        let mut buf = vec![0u8; LABEL_SIZE];
         match f.read_at(container, offset).unwrap().await {
             Ok(aio_result) => {
-                buf.truncate(aio_result.value.unwrap() as usize);
-                let dbs = DivBufShared::from(buf);
+                drop(aio_result);   // release reference on dbs
                 match LabelReader::from_dbs(dbs) {
                     Ok(lr) => Ok((lr, f)),
                     Err(e) => Err((e, f))
@@ -390,7 +388,7 @@ impl VdevFile {
         Box::pin(fut)
     }
 
-    pub fn reserved_space(&self) -> LbaT {
+    fn reserved_space(&self) -> LbaT {
         LABEL_COUNT * (LABEL_LBAS as u64 + self.spacemap_space)
     }
 
@@ -551,7 +549,7 @@ mock!{
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
-        async fn sync_all(&self) -> Result<(), Error>;
+        fn sync_all(&self) -> BoxVdevFut;
         fn uuid(&self) -> Uuid;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;

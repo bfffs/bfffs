@@ -9,12 +9,14 @@ test_suite! {
         vdev::*,
         vdev_file::*
     };
+    use divbuf::DivBufShared;
     use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{Read, Seek, SeekFrom, Write},
+        ops::Deref,
         path::PathBuf,
     };
     use tempfile::{Builder, TempDir};
@@ -85,11 +87,14 @@ test_suite! {
         }
 
         // Run the test
-        let mut rbuf = vec![0u8; 4096];
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevFile::create(path, None).unwrap();
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(vdev.read_at(&mut rbuf, 10)).unwrap();
-        assert_eq!(rbuf, wbuf);
+        rt.block_on(async {
+            vdev.read_at(rbuf, 10).await
+        }).unwrap();
+        assert_eq!(&dbs.try_const().unwrap()[..], &wbuf[..]);
     }
 
     test readv_at() {
@@ -107,71 +112,90 @@ test_suite! {
         }
 
         // Run the test
-        let mut rbuf0 = vec![0u8; 1024];
-        let mut rbuf1 = vec![0u8; 3072];
-        let mut rbufs = vec![&mut rbuf0[..], &mut rbuf1[..]];
+        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+        let dbs1 = DivBufShared::from(vec![0u8; 3072]);
+        let rbuf0 = dbs0.try_mut().unwrap();
+        let rbuf1 = dbs1.try_mut().unwrap();
+        let rbufs = vec![rbuf0, rbuf1];
         let vdev = VdevFile::create(path, None).unwrap();
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(vdev.readv_at(&mut rbufs[..], 10)).unwrap();
-        assert_eq!(&rbuf0[..], &wbuf[..1024]);
-        assert_eq!(&rbuf1[..], &wbuf[1024..]);
+        rt.block_on(async {
+            vdev.readv_at(rbufs, 10).await
+        }).unwrap();
+        assert_eq!(&dbs0.try_const().unwrap()[..], &wbuf[..1024]);
+        assert_eq!(&dbs1.try_const().unwrap()[..], &wbuf[1024..]);
     }
 
     test write_at(vdev) {
-        let wbuf = vec![42u8; 4096];
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
         let mut rt = runtime::Runtime::new().unwrap();
-        t!(rt.block_on(vdev.val.0.write_at(&wbuf, 10)));
+        rt.block_on(async {
+            vdev.val.0.write_at(wbuf.clone(), 10).await
+        }).unwrap();
         let mut f = t!(fs::File::open(vdev.val.1));
         f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(rbuf, wbuf);
+        assert_eq!(rbuf, wbuf.deref().deref());
     }
 
     #[should_panic]
     test write_at_overwrite_label(vdev) {
-        let wbuf = vec![42u8; 4096];
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try_const().unwrap();
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(vdev.val.0.write_at(&wbuf, 0)).unwrap();
+        rt.block_on(async {
+            vdev.val.0.write_at(wbuf, 0).await
+        }).unwrap();
     }
 
     test write_at_lba(vdev) {
-        let wbuf = vec![42u8; 4096];
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
         let mut rt = runtime::Runtime::new().unwrap();
-        t!(rt.block_on(vdev.val.0.write_at(&wbuf, 11)));
+        rt.block_on(async {
+            vdev.val.0.write_at(wbuf.clone(), 11).await
+        }).unwrap();
         let mut f = t!(fs::File::open(vdev.val.1));
         t!(f.seek(SeekFrom::Start(11 * 4096)));
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(rbuf, wbuf);
+        assert_eq!(rbuf, wbuf.deref().deref());
     }
 
     test writev_at(vdev) {
-        let wbuf0 = vec![1u8; 1024];
-        let wbuf1 = vec![2u8; 3072];
-        let wbufs = vec![&wbuf0[..], &wbuf1[..]];
+        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let mut rbuf = vec![0u8; 4096];
         let mut rt = runtime::Runtime::new().unwrap();
-        t!(rt.block_on(vdev.val.0.writev_at(&wbufs[..], 10)));
+        rt.block_on(async {
+            vdev.val.0.writev_at(wbufs, 10).await
+        }).unwrap();
         let mut f = t!(fs::File::open(vdev.val.1));
         t!(f.seek(SeekFrom::Start(10 * 4096)));
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(&rbuf[0..1024], &wbuf0[..]);
-        assert_eq!(&rbuf[1024..4096], &wbuf1[..]);
+        assert_eq!(&rbuf[0..1024], wbuf0.deref().deref());
+        assert_eq!(&rbuf[1024..4096], wbuf1.deref().deref());
     }
 
     test read_after_write(vdev) {
         let vd = vdev.val.0;
-        let wbuf = vec![1u8; 4096];
-        let mut rbuf = vec![0u8; 4096];
+        let dbsw = DivBufShared::from(vec![1u8; 4096]);
+        let wbuf = dbsw.try_const().unwrap();
+        let dbsr = DivBufShared::from(vec![0u8; 4096]);
+        let rbuf = dbsr.try_mut().unwrap();
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(
-            vd.write_at(&wbuf, 10)
+        rt.block_on(async {
+            vd.write_at(wbuf.clone(), 10)
                 .and_then(|_| {
-                    vd.read_at(&mut rbuf, 10)
-                })
-        ).unwrap();
-        assert_eq!(wbuf, rbuf);
+                    vd.read_at(rbuf, 10)
+                }).await
+        }).unwrap();
+        assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 }
 
@@ -245,7 +269,7 @@ test_suite! {
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(VdevFile::open(fixture.val.0))
+        rt.block_on(async { VdevFile::open(fixture.val.0).await})
         .and_then(|(vdev, _label_reader)| {
             assert_eq!(vdev.size(), 16_384);
             assert_eq!(vdev.uuid(), golden_uuid);
@@ -270,7 +294,7 @@ test_suite! {
             f.write_all_at(&zeros, offset1 + 16).unwrap();
         }
         let mut rt = runtime::Runtime::new().unwrap();
-        let e = rt.block_on(VdevFile::open(fixture.val.0))
+        let e = rt.block_on(async { VdevFile::open(fixture.val.0).await})
             .err()
             .expect("Opening the file should've failed");
         assert_eq!(e, Error::ECKSUM);
@@ -288,7 +312,7 @@ test_suite! {
             f.write_all_at(&GOLDEN, offset0).unwrap();
         }
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(VdevFile::open(fixture.val.0))
+        rt.block_on(async{ VdevFile::open(fixture.val.0).await})
         .and_then(|(vdev, _label_reader)| {
             assert_eq!(vdev.size(), 16_384);
             assert_eq!(vdev.uuid(), golden_uuid);
@@ -300,7 +324,7 @@ test_suite! {
     // Open a device without a valid label
     test open_invalid(fixture) {
         let mut rt = runtime::Runtime::new().unwrap();
-        let e = rt.block_on(VdevFile::open(fixture.val.0))
+        let e = rt.block_on(async { VdevFile::open(fixture.val.0).await })
             .err()
             .expect("Opening the file should've failed");
         assert_eq!(e, Error::EINVAL);
@@ -318,7 +342,7 @@ test_suite! {
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(VdevFile::open(fixture.val.0))
+        rt.block_on(async { VdevFile::open(fixture.val.0).await })
         .and_then(|(vdev, _label_reader)| {
             assert_eq!(vdev.size(), 16_384);
             assert_eq!(vdev.uuid(), golden_uuid);
@@ -334,7 +358,8 @@ test_suite! {
             .unwrap();
         let mut rt = runtime::Runtime::new().unwrap();
         let label_writer = LabelWriter::new(0);
-        t!(rt.block_on(vdev.write_label(label_writer)));
+        rt.block_on(async { vdev.write_label(label_writer).await })
+            .unwrap();
 
         let mut f = std::fs::File::open(fixture.val.0).unwrap();
         let mut v = vec![0; 4096];
