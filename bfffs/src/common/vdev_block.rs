@@ -24,7 +24,7 @@ use std::{
 #[cfg(test)] use mockall::*;
 use tokio;
 
-use crate::common::{*, label::*, vdev::*, vdev_leaf::*, vdev_file::*};
+use crate::common::{*, label::*, vdev::*, vdev_file::*};
 
 #[cfg(test)]
 pub type VdevLeaf = MockVdevFile;
