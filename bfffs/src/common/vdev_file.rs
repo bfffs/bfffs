@@ -526,24 +526,20 @@ mock!{
         fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
             where P: AsRef<Path> + 'static;
-        async fn erase_zone(&self, lba: LbaT) -> Result<(), Error>;
-        async fn finish_zone(&self, _lba: LbaT) -> Result<(), Error>;
+        fn erase_zone(&self, lba: LbaT) -> BoxVdevFut;
+        fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
         async fn open<P>(path: P) -> Result<(Self, LabelReader), Error>
             where P: AsRef<Path> + 'static;
-        async fn open_zone(&self, _lba: LbaT) -> Result<(), Error>;
-        async fn read_at(&self, buf: &mut [u8], lba: LbaT) -> Result<(), Error>;
-        async fn read_spacemap(&self, buf: &mut [u8], idx: u32)
-            -> Result<(), Error>;
-        async fn readv_at<'a>(&self, bufs: &'a mut [&'a mut [u8]], lba: LbaT)
-            -> Result<(), Error>;
+        fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         fn spacemap_space(&self) -> LbaT;
-        async fn write_at(&self, buf: &[u8], lba: LbaT) -> Result<(), Error>;
-        async fn write_label(&self, mut label_writer: LabelWriter)
-            -> Result<(), Error>;
-        async fn write_spacemap<'a>(&self, buf: &'a [&'a [u8]], idx: u32,
-            block: LbaT) -> Result<(), Error>;
-        async fn writev_at<'a>(&self, buf: &'a [&'a [u8]], lba: LbaT)
-            -> Result<(), Error>;
+        fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
+        fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut;
+        fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
+            -> BoxVdevFut;
+        fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut;
     }
     trait Vdev {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;

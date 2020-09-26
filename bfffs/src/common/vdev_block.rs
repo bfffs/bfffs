@@ -309,14 +309,17 @@ impl Inner {
             Poll::Ready(Err(e)) => panic!("Unhandled error {:?}", e),
             Poll::Pending => {
                 let schfut = self.reschedule();
-                tokio::task::spawn_local(
-                    fut.then(move |r| {
-                        r.expect("Unhandled error");
-                        sender.send(()).unwrap();
-                        inner.borrow_mut().queue_depth -= 1;
-                        schfut
-                    })
-                );
+                let local = tokio::task::LocalSet::new();
+                // TODO: instead of using a oneshot; just use spawn_local's
+                // return value to notify the caller of the op's completion
+                local.spawn_local( async move {
+                    let r = fut.await;
+                    r.expect("Unhandled error");
+                    sender.send(()).unwrap();
+                    inner.borrow_mut().queue_depth -= 1;
+                    schfut.await
+                });
+                unimplemented!("With Tokio 0.2, one _must_ await the LocalSet.  BFFFS must be refactored to do that, and ditch the oneshots");
             },
             Poll::Ready(Ok(_)) => {
                 // This normally doesn't happen, but it can happen on a
@@ -616,10 +619,12 @@ impl VdevBlock {
     pub async fn open<P: AsRef<Path> + 'static>(path: P)
         -> Result<(Self, LabelReader), Error>
     {
-        VdevLeaf::open(path).map(|(leaf, label_reader)| {
+        VdevLeaf::open(path)
+        .map_ok(|(leaf, label_reader)| {
             (VdevBlock::new(leaf), label_reader)
-        })
+        }).await
     }
+
     #[cfg(not(test))]
     pub async fn open<P: AsRef<Path>>(path: P)
         -> Result<(Self, LabelReader), Error>
@@ -769,26 +774,30 @@ mock! {
         fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
             where P: AsRef<Path> + 'static;
-        fn erase_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut>;
-        fn finish_zone(&self, start: LbaT, end: LbaT) -> Box<VdevFut>;
+        async fn erase_zone(&self, start: LbaT, end: LbaT) -> Result<(), Error>;
+        async fn finish_zone(&self, start: LbaT, end: LbaT)
+            -> Result<(), Error>;
         fn new(leaf: VdevLeaf) -> Self;
-        fn open<P: AsRef<Path> + 'static>(path: P)
-            -> Box<dyn Future<Item=(Self, LabelReader), Error=Error>>;
-        fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
-        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
-        fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut>;
-        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-        fn write_label(&self, labeller: LabelWriter) -> Box<VdevFut>;
-        fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-            -> Box<VdevFut>;
-        fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut>;
+        async fn open<P: AsRef<Path> + 'static>(path: P)
+            -> Result<(Self, LabelReader), Error>;
+        async fn open_zone(&self, start: LbaT) -> Result<(), Error>;
+        async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error>;
+        async fn read_spacemap(&self, buf: IoVecMut, idx: u32)
+            -> Result<(), Error>;
+        async fn readv_at(&self, bufs: SGListMut, lba: LbaT)
+            -> Result<(), Error>;
+        async fn write_at(&self, buf: IoVec, lba: LbaT) -> Result<(), Error>;
+        async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>;
+        async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+            ->  Result<(), Error>;
+        async fn writev_at(&self, bufs: SGList, lba: LbaT)
+            -> Result<(), Error>;
     }
     trait Vdev {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
-        fn sync_all(&self) -> Box<VdevFut>;
+        fn sync_all(&self) -> BoxVdevFut;
         fn uuid(&self) -> Uuid;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
@@ -857,22 +866,30 @@ test_suite! {
     name t;
 
     use divbuf::DivBufShared;
-    use futures;
-    use futures::{Poll, future};
+    use futures::{
+        Future,
+        FutureExt,
+        TryFutureExt,
+        channel::oneshot,
+        future,
+        pin_mut,
+        task::{Context, Poll}
+    };
+    use futures_test::task::panic_context;
     use mockall::*;
     use mockall::predicate::*;
     use mockall::PredicateBooleanExt;
     use permutohedron;
     use pretty_assertions::assert_eq;
     use super::*;
-    use tokio::runtime::current_thread;
+    use tokio::runtime;
 
     mock!{
         VdevFut {}
         trait Future {
-            type Item = ();
-            type Error = Error;
-            fn poll(&mut self) -> Poll<(), Error>;
+            type Output = Result<(), Error>;
+            fn poll<'a>(self: Pin<&mut Self>, cx: &mut Context<'a>)
+                -> Poll<Result<(), Error>>;
         }
     }
 
@@ -920,12 +937,12 @@ test_suite! {
                 fut.expect_poll()
                     .once()
                     .in_sequence(&mut seq1)
-                    .return_const(Ok(Async::NotReady));
+                    .return_const(Poll::Pending);
                 fut.expect_poll()
                     .once()
                     .in_sequence(&mut seq1)
-                    .return_const(Ok(Async::Ready(())));
-                Box::new(fut)
+                    .return_const(Poll::Ready(Ok(())));
+                Box::pin(fut)
             });
 
         leaf.expect_read_at()
@@ -938,23 +955,25 @@ test_suite! {
                 fut.expect_poll()
                     .once()
                     .in_sequence(&mut seq1)
-                    .return_const(Err(Error::EAGAIN));
+                    .return_const(Poll::Ready(Err(Error::EAGAIN)));
                 fut.expect_poll()
                     .once()
                     .in_sequence(&mut seq1)
-                    .return_const(Ok(Async::Ready(())));
-                Box::new(fut)
+                    .return_const(Poll::Ready(Ok(())));
+                Box::pin(fut)
             });
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        let r = runtime::Runtime::new().unwrap().block_on(async {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
-            f0.join(f1)
-        })).expect("test eagain");
+            future::join(f0, f1).await
+        });
+        r.0.unwrap();
+        r.1.unwrap();
     }
 
     // Issueing an operation fails with EAGAIN, when the queue depth is 1.  This
@@ -974,55 +993,55 @@ test_suite! {
                 fut.expect_poll()
                     .once()
                     .in_sequence(&mut seq1)
-                    .return_once(|| Err(Error::EAGAIN));
+                    .return_const(Poll::Ready(Err(Error::EAGAIN)));
                 fut.expect_poll()
                     .once()
                     .in_sequence(&mut seq1)
-                    .return_once(|| Ok(Async::Ready(())));
-                Box::new(fut)
+                    .return_const(Poll::Ready(Ok(())));
+                Box::pin(fut)
             });
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.read_at(rbuf, 1)
-        })).expect("test eagain_queue_depth_1");
+        runtime::Runtime::new().unwrap().block_on(async {
+            vdev.read_at(rbuf, 1).await
+        }).expect("test eagain_queue_depth_1");
     }
 
     test basic_erase_zone(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_erase_zone()
             .with(eq(1))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.erase_zone(1, (1 << 16) - 1)
-        })).unwrap();
+        runtime::Runtime::new().unwrap().block_on(async {
+            vdev.erase_zone(1, (1 << 16) - 1).await
+        }).unwrap();
     }
 
     test basic_finish_zone(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_finish_zone()
             .with(eq(1))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.finish_zone(1, (1 << 16) - 1)
-        })).unwrap();
+        runtime::Runtime::new().unwrap().block_on(async {
+            vdev.finish_zone(1, (1 << 16) - 1).await
+        }).unwrap();
     }
 
     test basic_open_zone(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_open_zone()
             .with(eq(1))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.open_zone(1)
-        })).unwrap();
+        runtime::Runtime::new().unwrap().block_on(async {
+            vdev.open_zone(1).await
+        }).unwrap();
     }
 
     // basic reading works
@@ -1030,14 +1049,14 @@ test_suite! {
         let mut leaf = mocks.val;
         leaf.expect_read_at()
             .with(always(), eq(2))
-            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.read_at(rbuf0, 2)
-        })).unwrap();
+        runtime::Runtime::new().unwrap().block_on(async {
+            vdev.read_at(rbuf0, 2).await
+        }).unwrap();
     }
 
     // vectored reading works
@@ -1045,26 +1064,26 @@ test_suite! {
         let mut leaf = mocks.val;
         leaf.expect_readv_at()
             .with(always(), eq(2))
-            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = vec![dbs0.try_mut().unwrap()];
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.readv_at(rbuf0, 2)
-        })).unwrap();
+        runtime::Runtime::new().unwrap().block_on(async {
+            vdev.readv_at(rbuf0, 2).await
+        }).unwrap();
     }
 
     // sync_all works
     test basic_sync_all(mocks) {
         let mut leaf = mocks.val;
         leaf.expect_sync_all()
-            .returning(|| Box::new(future::ok::<(), Error>(())));
+            .returning(|| Box::pin(future::ok::<(), Error>(())));
 
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.sync_all()
-        })).unwrap();
+        runtime::Runtime::new().unwrap().block_on(async {
+            vdev.sync_all().await
+        }).unwrap();
     }
 
     // data operations will be issued in C-LOOK order (from lowest LBA to
@@ -1314,8 +1333,8 @@ test_suite! {
 
         let (sender, receiver) = oneshot::channel::<()>();
         let e = Error::EPIPE;
-        let fut0 = Box::new(receiver.map_err(move |_| e));
-        let fut1 = Box::new(future::ok::<(), Error>(()));
+        let fut0 = Box::pin(receiver.map_err(move |_| e));
+        let fut1 = Box::pin(future::ok::<(), Error>(()));
         leaf.expect_read_at()
             .with(always(), eq(1))
             .once()
@@ -1334,11 +1353,13 @@ test_suite! {
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        let r = runtime::Runtime::new().unwrap().block_on(async {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
-            f0.join(f1)
-        })).unwrap();
+            future::join(f0, f1).await
+        });
+        r.0.unwrap();
+        r.1.unwrap();
     }
 
     // Operations will be buffered after the max queue depth is reached
@@ -1361,7 +1382,7 @@ test_suite! {
                 .with(always(), eq(i as LbaT + 1))
                 .once()
                 .in_sequence(&mut seq)
-                .return_once_st(|_, _| Box::new(f));
+                .return_once_st(|_, _| Box::pin(f));
         }
         // Schedule the final two operations in reverse LBA order, but verify
         // that they get issued in actual LBA order
@@ -1370,34 +1391,46 @@ test_suite! {
             .with(always(), eq(LbaT::from(num_ops) - 1))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(|_, _| Box::new(final_fut));
+            .return_once_st(|_, _| Box::pin(final_fut));
         let penultimate_fut = future::ok::<(), Error>(());
         leaf.expect_write_at()
             .with(always(), eq(LbaT::from(num_ops)))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(|_, _| Box::new(penultimate_fut));
+            .return_once_st(|_, _| Box::pin(penultimate_fut));
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        let all_results = runtime::Runtime::new().unwrap().block_on(async {
+            let mut ctx = panic_context();
             // First schedule all operations.  There are too many to issue them
             // all immediately
-            let unbuf_fut = future::join_all((1..num_ops - 1).rev().map(|i| {
-                let mut fut = vdev.write_at(wbuf.clone(), LbaT::from(i));
+            let early_futs = (1..num_ops - 1).rev().map(|i| {
+                let fut = vdev.write_at(wbuf.clone(), LbaT::from(i));
                 // Manually poll so the VdevBlockFut will get scheduled
-                fut.poll().unwrap();
+                pin_mut!(fut);
+                let p = fut.poll_unpin(&mut ctx);
+                // TODO: add assertions for the poll results
+                dbg!(&p);
                 fut
-            }));
-            let mut penultimate_fut = vdev.write_at(wbuf.clone(),
-                                                    LbaT::from(num_ops));
+            }).collect::<Vec<_>>();
+            let unbuf_fut = future::join_all(early_futs.into_iter());
+            pin_mut!(unbuf_fut);
+            let p = unbuf_fut.poll_unpin(&mut ctx);
+            dbg!(&p);
+            let penultimate_fut = vdev.write_at(wbuf.clone(),
+                                                LbaT::from(num_ops));
             // Manually poll so the VdevBlockFut will get scheduled
-            penultimate_fut.poll().unwrap();
-            let mut final_fut = vdev.write_at(wbuf.clone(),
-                                              LbaT::from(num_ops - 1));
+            pin_mut!(penultimate_fut);
+            let p = penultimate_fut.poll_unpin(&mut ctx);
+            dbg!(&p);
+            let final_fut = vdev.write_at(wbuf.clone(),
+                                          LbaT::from(num_ops - 1));
             // Manually poll so the VdevBlockFut will get scheduled
-            final_fut.poll().unwrap();
-            let fut = unbuf_fut.join3(penultimate_fut, final_fut);
+            pin_mut!(final_fut);
+            let p = final_fut.poll_unpin(&mut ctx);
+            dbg!(&p);
+            let fut = future::join3(unbuf_fut, penultimate_fut, final_fut);
             // Verify that they weren't all issued
             let inner = vdev.inner.borrow_mut();
             assert_eq!(inner.ahead.len() + inner.behind.len(), 2);
@@ -1405,8 +1438,13 @@ test_suite! {
             for chan in senders {
                 chan.send(()).unwrap();
             }
-            fut
-        })).unwrap();
+            fut.await
+        });
+        for result in all_results.0.into_iter() {
+            result.unwrap();
+        }
+        all_results.1.unwrap();
+        all_results.2.unwrap();
     }
 
     // Basic writing works
@@ -1415,14 +1453,14 @@ test_suite! {
         leaf.expect_write_at()
             .with(always(), eq(1))
             .once()
-            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.write_at(wbuf, 1)
-        })).unwrap();
+        runtime::Runtime::new().unwrap().block_on(async {
+            vdev.write_at(wbuf, 1).await
+        }).unwrap();
     }
 
     // vectored writing works
@@ -1430,14 +1468,14 @@ test_suite! {
         let mut leaf = mocks.val;
         leaf.expect_writev_at()
             .with(always(), eq(1))
-            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = vec![dbs.try_const().unwrap()];
         let vdev = VdevBlock::new(leaf);
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.writev_at(wbuf, 1)
-        })).unwrap();
+        runtime::Runtime::new().unwrap().block_on(async {
+            vdev.writev_at(wbuf, 1).await
+        }).unwrap();
     }
 }
 }

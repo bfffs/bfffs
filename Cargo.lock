@@ -71,6 +71,7 @@ dependencies = [
  "fixedbitset",
  "futures",
  "futures-locks",
+ "futures-test",
  "galvanic-test",
  "glob",
  "histogram",
@@ -374,6 +375,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bdb66b5f09e22019b1ab0830f7785bcea8e7a42148683f99214f73f8ec21a626"
 dependencies = [
  "once_cell",
+]
+
+[[package]]
+name = "futures-test"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9199abfea0516450093091e3b9631ae4689d89fbb2b47b1fe9a0aef66a15396d"
+dependencies = [
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-task",
+ "futures-util",
+ "once_cell",
+ "pin-utils",
 ]
 
 [[package]]
