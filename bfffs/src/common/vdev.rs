@@ -5,10 +5,10 @@ use futures;
 use std::pin::Pin;
 
 /// Future representing an operation on a vdev.
-pub type VdevFut = dyn futures::Future<Output = Result<(), Error>>;
+pub type VdevFut = dyn futures::Future<Output = Result<(), Error>> + Send + Sync;
 
 /// Boxed `VdevFut`
-pub type BoxVdevFut = Pin<Box<dyn futures::Future<Output = Result<(), Error>>>>;
+pub type BoxVdevFut = Pin<Box<dyn futures::Future<Output = Result<(), Error>> + Send + Sync>>;
 
 /// Vdev: Virtual Device
 ///

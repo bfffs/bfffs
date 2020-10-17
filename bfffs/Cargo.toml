@@ -30,7 +30,7 @@ lazy_static = "1.0"
 libc = "0.2.44"
 metrohash = "1.0"
 mockall_double = "0.1.0"
-nix = { git = "https://github.com/asomers/nix", rev = "a60f8edc13028648a1124c677f9dfa4ecac3caf7" }
+nix = { git = "https://github.com/asomers/nix", rev = "5d2354517a643162bdc6608a5a30aba43f592069" }
 num-traits = "^0.1"
 serde = "1.0.60"
 serde_derive = "1.0"
@@ -38,7 +38,7 @@ serde_yaml = "0.8.6"
 time = "0.1"
 tokio = { version = "0.2.7", features = ["time"] }
 #tokio-current-thread = "0.1.1"
-tokio-file = { git = "https://github.com/asomers/tokio-file", branch = "std_future" }
+tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "7c4b0beed6ecb2ad8a411bb0d85b66513204eb7a" }
 #tokio-io-pool = "0.1.4"
 uuid = { version = "0.7", features = ["serde", "v4"]}
 
@@ -50,7 +50,7 @@ features=  [ "suggestions", "color", "wrap_help" ]
 [dev-dependencies]
 chashmap = "2"
 env_logger = "0.5"
-futures-test = "0.3.5"
+futures-test = "0.3.6"
 galvanic-test = "0.2"
 glob = "0.2"
 histogram = "0.6"

@@ -8,7 +8,6 @@ use futures::{
     task::{Context, Poll}
 };
 use std::{
-    cell::RefCell,
     cmp::{Ord, Ordering, PartialOrd},
     collections::BinaryHeap,
     collections::VecDeque,
@@ -17,7 +16,7 @@ use std::{
     num::NonZeroU64,
     path::Path,
     pin::Pin,
-    rc::{Rc, Weak},
+    sync::{Arc, RwLock, Weak},
     ops,
     time,
 };
@@ -244,7 +243,7 @@ struct Inner {
 
     /// A `Weak` pointer back to `self`.  Used for closures that require a
     /// reference to `self`, but also require `'static` lifetime.
-    weakself: Weak<RefCell<Inner>>
+    weakself: Weak<RwLock<Inner>>
 }
 
 impl Inner {
@@ -273,7 +272,7 @@ impl Inner {
                     let schfut = self.reschedule();
                     let delay_fut = tokio::time::delay_for(duration)
                     .then(move |_| schfut);
-                    tokio::task::spawn_local(delay_fut);
+                    tokio::spawn(delay_fut);
                 }
                 break;
             }
@@ -309,17 +308,13 @@ impl Inner {
             Poll::Ready(Err(e)) => panic!("Unhandled error {:?}", e),
             Poll::Pending => {
                 let schfut = self.reschedule();
-                let local = tokio::task::LocalSet::new();
-                // TODO: instead of using a oneshot; just use spawn_local's
-                // return value to notify the caller of the op's completion
-                local.spawn_local( async move {
+                tokio::spawn( async move {
                     let r = fut.await;
                     r.expect("Unhandled error");
                     sender.send(()).unwrap();
-                    inner.borrow_mut().queue_depth -= 1;
+                    inner.write().unwrap().queue_depth -= 1;
                     schfut.await
                 });
-                unimplemented!("With Tokio 0.2, one _must_ await the LocalSet.  BFFFS must be refactored to do that, and ditch the oneshots");
             },
             Poll::Ready(Ok(_)) => {
                 // This normally doesn't happen, but it can happen on a
@@ -422,7 +417,7 @@ impl Inner {
     }
 }
 
-struct ReschedFut(Weak<RefCell<Inner>>);
+struct ReschedFut(Weak<RwLock<Inner>>);
 
 impl Future for ReschedFut {
     type Output = ();
@@ -430,14 +425,14 @@ impl Future for ReschedFut {
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let inner = self.0.upgrade()
             .expect("VdevBlock dropped with outstanding I/O");
-        inner.borrow_mut().issue_all(cx);
+        inner.write().unwrap().issue_all(cx);
         Poll::Ready(())
     }
 }
 
 struct VdevBlockFut {
     block_op: Option<BlockOp>,
-    inner: Rc<RefCell<Inner>>,
+    inner: Arc<RwLock<Inner>>,
     receiver: oneshot::Receiver<()>,
 }
 
@@ -447,7 +442,7 @@ impl Future for VdevBlockFut {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         if self.block_op.is_some() {
             let block_op = self.block_op.take().unwrap();
-            self.inner.borrow_mut().sched_and_issue(block_op, cx);
+            self.inner.write().unwrap().sched_and_issue(block_op, cx);
         }
         Pin::new(&mut self.receiver).poll(cx)
             .map_err(|_| Error::EPIPE)
@@ -460,7 +455,7 @@ impl Future for VdevBlockFut {
 /// are scheduled.  They may not be issued in the order requested, and they may
 /// not be issued immediately.
 pub struct VdevBlock {
-    inner: Rc<RefCell<Inner>>,
+    inner: Arc<RwLock<Inner>>,
 
     /// Usable size of the vdev, in LBAs
     size:   LbaT,
@@ -516,7 +511,7 @@ impl VdevBlock {
         // Sanity check LBAs
         #[cfg(debug_assertions)]
         {
-            let inner = self.inner.borrow();
+            let inner = self.inner.read().unwrap();
             let limits = inner.leaf.zone_limits(
                 inner.leaf.lba2zone(start).unwrap());
             // The LBA must be the end of a zone
@@ -540,7 +535,7 @@ impl VdevBlock {
         // Sanity check LBAs
         #[cfg(debug_assertions)]
         {
-            let inner = self.inner.borrow();
+            let inner = self.inner.read().unwrap();
             let limits = inner.leaf.zone_limits(
                 inner.leaf.lba2zone(start).unwrap());
             // The LBA must be the end of a zone to ensure that the operation
@@ -573,7 +568,7 @@ impl VdevBlock {
         // Sanity check LBA
         #[cfg(debug_assertions)]
         {
-            let inner = self.inner.borrow();
+            let inner = self.inner.read().unwrap();
             let limits = inner.leaf.zone_limits(
                 inner.leaf.lba2zone(start).unwrap());
             // The LBA must be the begining of a zone
@@ -585,11 +580,11 @@ impl VdevBlock {
 
     /// Instantiate a new VdevBlock from an existing VdevLeaf
     ///
-    /// * `leaf`    An already-open underlying VdevLeaf 
+    /// * `leaf`    An already-open underlying VdevLeaf
     pub fn new(leaf: VdevLeaf) -> Self {
         let size = leaf.size();
         let spacemap_space = leaf.spacemap_space();
-        let inner = Rc::new(RefCell::new(Inner {
+        let inner = Arc::new(RwLock::new(Inner {
             delayed: None,
             optimum_queue_depth: leaf.optimum_queue_depth(),
             queue_depth: 0,
@@ -601,7 +596,7 @@ impl VdevBlock {
             behind: BinaryHeap::new(),
             weakself: Weak::new()
         }));    // LCOV_EXCL_LINE   kcov false negative
-        inner.borrow_mut().weakself = Rc::downgrade(&inner);
+        inner.write().unwrap().weakself = Arc::downgrade(&inner);
         VdevBlock {
             inner,
             size,
@@ -731,7 +726,7 @@ impl VdevBlock {
 
 impl Vdev for VdevBlock {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        self.inner.borrow().leaf.lba2zone(lba)
+        self.inner.read().unwrap().leaf.lba2zone(lba)
     }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Returns the "best" number of operations to queue to this `VdevBlock`.  A
@@ -739,7 +734,7 @@ impl Vdev for VdevBlock {
     /// starvation.  A larger number won't hurt, but won't accrue any economies
     /// of scale, either.
     fn optimum_queue_depth(&self) -> u32 {
-        self.inner.borrow().optimum_queue_depth
+        self.inner.read().unwrap().optimum_queue_depth
     }
 
     fn size(&self) -> LbaT {
@@ -755,15 +750,15 @@ impl Vdev for VdevBlock {
     }
 
     fn uuid(&self) -> Uuid {
-        self.inner.borrow().leaf.uuid()
+        self.inner.read().unwrap().leaf.uuid()
     }   // LCOV_EXCL_LINE   kcov false negative
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
-        self.inner.borrow().leaf.zone_limits(zone)
+        self.inner.read().unwrap().leaf.zone_limits(zone)
     }   // LCOV_EXCL_LINE   kcov false negative
 
     fn zones(&self) -> ZoneT {
-        self.inner.borrow().leaf.zones()
+        self.inner.read().unwrap().leaf.zones()
     }   // LCOV_EXCL_LINE   kcov false negative
 }
 
@@ -868,14 +863,12 @@ test_suite! {
     use divbuf::DivBufShared;
     use futures::{
         Future,
-        FutureExt,
         TryFutureExt,
         channel::oneshot,
         future,
-        pin_mut,
         task::{Context, Poll}
     };
-    use futures_test::task::panic_context;
+    use futures_test::task::noop_context;
     use mockall::*;
     use mockall::predicate::*;
     use mockall::PredicateBooleanExt;
@@ -1091,7 +1084,7 @@ test_suite! {
     test sched_data(mocks) {
         let leaf = mocks.val;
         let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.borrow_mut();
+        let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
         let dummy_buffer = dummy_dbs.try_const().unwrap();
 
@@ -1141,7 +1134,7 @@ test_suite! {
     test sched_erase_zone(mocks) {
         let leaf = mocks.val;
         let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.borrow_mut();
+        let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 12288]);
         let mut dummy = dummy_dbs.try_mut().unwrap();
 
@@ -1189,7 +1182,7 @@ test_suite! {
     test sched_finish_zone(mocks) {
         let leaf = mocks.val;
         let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.borrow_mut();
+        let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
         let dummy = dummy_dbs.try_const().unwrap();
 
@@ -1237,7 +1230,7 @@ test_suite! {
     test sched_open_zone(mocks) {
         let leaf = mocks.val;
         let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.borrow_mut();
+        let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
         let dummy = dummy_dbs.try_const().unwrap();
 
@@ -1288,7 +1281,7 @@ test_suite! {
     test sched_sync_all(mocks) {
         let leaf = mocks.val;
         let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.borrow_mut();
+        let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
         let dummy_buffer = dummy_dbs.try_const().unwrap();
 
@@ -1339,12 +1332,12 @@ test_suite! {
             .with(always(), eq(1))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(move |_, _| fut0);
+            .return_once(move |_, _| fut0);
         leaf.expect_read_at()
             .with(always(), eq(2))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(move |_, _| {
+            .return_once(move |_, _| {
                 sender.send(()).unwrap();
                 fut1
             });
@@ -1372,17 +1365,17 @@ test_suite! {
         let mut seq = Sequence::new();
 
         let channels = (0..num_ops - 2).map(|_| oneshot::channel::<()>());
-        let (futs, senders) : (Vec<_>, Vec<_>) = channels.map(|chan| {
+        let (receivers, senders) : (Vec<_>, Vec<_>) = channels.map(|chan| {
             let e = Error::EPIPE;
             (chan.1.map_err(move |_| e), chan.0)
         })
         .unzip();
-        for (i, f) in futs.into_iter().enumerate().rev() {
+        for (i, r) in receivers.into_iter().enumerate().rev() {
             leaf.expect_write_at()
                 .with(always(), eq(i as LbaT + 1))
                 .once()
                 .in_sequence(&mut seq)
-                .return_once_st(|_, _| Box::pin(f));
+                .return_once(|_, _| Box::pin(r));
         }
         // Schedule the final two operations in reverse LBA order, but verify
         // that they get issued in actual LBA order
@@ -1391,50 +1384,49 @@ test_suite! {
             .with(always(), eq(LbaT::from(num_ops) - 1))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(|_, _| Box::pin(final_fut));
+            .return_once(|_, _| Box::pin(final_fut));
         let penultimate_fut = future::ok::<(), Error>(());
         leaf.expect_write_at()
             .with(always(), eq(LbaT::from(num_ops)))
             .once()
             .in_sequence(&mut seq)
-            .return_once_st(|_, _| Box::pin(penultimate_fut));
+            .return_once(|_, _| Box::pin(penultimate_fut));
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let vdev = VdevBlock::new(leaf);
+
         let all_results = runtime::Runtime::new().unwrap().block_on(async {
-            let mut ctx = panic_context();
+            let mut ctx = noop_context();
             // First schedule all operations.  There are too many to issue them
             // all immediately
             let early_futs = (1..num_ops - 1).rev().map(|i| {
-                let fut = vdev.write_at(wbuf.clone(), LbaT::from(i));
+                let mut fut = Box::pin(
+                    vdev.write_at(wbuf.clone(), LbaT::from(i))
+                );
                 // Manually poll so the VdevBlockFut will get scheduled
-                pin_mut!(fut);
-                let p = fut.poll_unpin(&mut ctx);
-                // TODO: add assertions for the poll results
-                dbg!(&p);
+                assert!(fut.as_mut().poll(&mut ctx).is_pending());
                 fut
             }).collect::<Vec<_>>();
-            let unbuf_fut = future::join_all(early_futs.into_iter());
-            pin_mut!(unbuf_fut);
-            let p = unbuf_fut.poll_unpin(&mut ctx);
-            dbg!(&p);
-            let penultimate_fut = vdev.write_at(wbuf.clone(),
-                                                LbaT::from(num_ops));
+            let unbuf_fut = Box::pin(
+                future::join_all(early_futs.into_iter())
+            );
+            let mut penultimate_fut = Box::pin(
+                vdev.write_at(wbuf.clone(), LbaT::from(num_ops))
+            );
             // Manually poll so the VdevBlockFut will get scheduled
-            pin_mut!(penultimate_fut);
-            let p = penultimate_fut.poll_unpin(&mut ctx);
-            dbg!(&p);
-            let final_fut = vdev.write_at(wbuf.clone(),
-                                          LbaT::from(num_ops - 1));
+            assert!(penultimate_fut.as_mut().poll(&mut ctx).is_pending());
+            let mut final_fut = Box::pin(
+                vdev.write_at(wbuf.clone(), LbaT::from(num_ops - 1))
+            );
             // Manually poll so the VdevBlockFut will get scheduled
-            pin_mut!(final_fut);
-            let p = final_fut.poll_unpin(&mut ctx);
-            dbg!(&p);
+            assert!(final_fut.as_mut().poll(&mut ctx).is_pending());
             let fut = future::join3(unbuf_fut, penultimate_fut, final_fut);
-            // Verify that they weren't all issued
-            let inner = vdev.inner.borrow_mut();
-            assert_eq!(inner.ahead.len() + inner.behind.len(), 2);
-            // Finally, complete them.
+            {
+                // Verify that they weren't all issued
+                let inner = vdev.inner.write().unwrap();
+                assert_eq!(inner.ahead.len() + inner.behind.len(), 2);
+            }
+            // Finally, complete the blocked operations
             for chan in senders {
                 chan.send(()).unwrap();
             }

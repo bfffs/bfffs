@@ -382,7 +382,7 @@ impl VdevFile {
     {
         let off = lba * (BYTES_PER_LBA as u64);
         let containers = bufs.into_iter().map(|iovec| {
-            Box::new(IoVecMutContainer(iovec)) as Box<dyn BorrowMut<[u8]>>
+            Box::new(IoVecMutContainer(iovec)) as Box<_>
         }).collect();
         let fut = VdevFileLioFut(self.file.readv_at(containers, off).unwrap());
         Box::pin(fut)
@@ -404,7 +404,9 @@ impl VdevFile {
         Box::pin(self.write_at_unchecked(container, lba))
     }
 
-    fn write_at_unchecked(&self, buf: Box<dyn Borrow<[u8]>>, lba: LbaT)
+    fn write_at_unchecked(&self,
+                          buf: Box<dyn Borrow<[u8]> + Send + Sync>,
+                          lba: LbaT)
         -> impl Future<Output=Result<(), Error>>
     {
         {
@@ -454,7 +456,7 @@ impl VdevFile {
         let lbas = bytes / BYTES_PER_LBA as LbaT;
         assert!(lba + lbas <= self.reserved_space());
         let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecContainer(iovec)) as Box<dyn Borrow<[u8]>>
+            Box::new(IoVecContainer(iovec)) as Box<_>
         }).collect();
         let off = lba * (BYTES_PER_LBA as u64);
         let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
@@ -469,7 +471,7 @@ impl VdevFile {
     {
         let off = lba * (BYTES_PER_LBA as u64);
         let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecContainer(iovec)) as Box<dyn Borrow<[u8]>>
+            Box::new(IoVecContainer(iovec)) as Box<_>
         }).collect();
         let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
         Box::pin(fut)
