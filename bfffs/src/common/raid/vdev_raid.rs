@@ -608,7 +608,7 @@ impl VdevRaid {
     }
 
     /// Write exactly one stripe
-    async fn write_at_one(&self, buf: IoVec, lba: LbaT) -> Result<(), Error> {
+    fn write_at_one(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
@@ -641,10 +641,11 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        let (dr, pr) = future::join(data_fut, parity_fut).await;
-        dr.unwrap();
-        pr.unwrap();
-        Ok(())
+        Box::pin(future::join(data_fut, parity_fut).map(|(dr, pr)| {
+            dr.unwrap();
+            pr.unwrap();
+            Ok(())
+        }))
     }
 
     /// Write exactly one stripe, with SGLists.
@@ -866,7 +867,7 @@ impl VdevRaidApi for VdevRaid {
 
     // Zero-fill the current StripeBuffer and write it out.  Then drop the
     // StripeBuffer.
-    async fn finish_zone(&self, zone: ZoneT) -> Result<(), Error> {
+    fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let (start, end) = self.blockdevs[0].zone_limits(zone);
         let nfuts = self.blockdevs.len() + 1;
         let mut futs: Vec<_> = Vec::with_capacity(nfuts);
@@ -891,12 +892,13 @@ impl VdevRaidApi for VdevRaid {
             assert!(sbs.remove(&zone).is_some());
             sbfut
         };
-        let (sbr, bdr) = future::join(sbfut, future::join_all(futs)).await;
-        sbr.unwrap();
-        for r in bdr {
-            r.unwrap()
-        }
-        Ok(())
+        Box::pin(future::join(sbfut, future::join_all(futs)).map(|(sbr, bdr)| {
+            sbr.unwrap();
+            for r in bdr {
+                r.unwrap()
+            }
+            Ok(())
+        }))
     }
 
     fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut) {
@@ -924,8 +926,8 @@ impl VdevRaidApi for VdevRaid {
         }
     }
 
-    async fn open_zone(&self, zone: ZoneT) -> Result<(), Error> {
-        self.open_zone_priv(zone, 0).await
+    fn open_zone(&self, zone: ZoneT) -> BoxVdevFut {
+        self.open_zone_priv(zone, 0)
     }
 
     async fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Result<(), Error> {
@@ -999,19 +1001,17 @@ impl VdevRaidApi for VdevRaid {
         }
     }
 
-    async fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Result<(), Error>
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
     {
-        self.blockdevs[0].read_spacemap(buf, idx).await
+        Box::pin(self.blockdevs[0].read_spacemap(buf, idx))
     }
 
-    async fn reopen_zone(&self, zone: ZoneT, allocated: LbaT)
-        -> Result<(), Error>
+    fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut
     {
-        self.open_zone_priv(zone, allocated).await
+        self.open_zone_priv(zone, allocated)
     }
 
-    async fn write_at(&self, buf: IoVec, zone: ZoneT, mut lba: LbaT)
-        -> Result<(), Error>
+    fn write_at(&self, buf: IoVec, zone: ZoneT, mut lba: LbaT) -> BoxVdevFut
     {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
@@ -1068,11 +1068,13 @@ impl VdevRaidApi for VdevRaid {
                 });
             }
         }
-        let v = future::join_all(futs).await;
-        for r in v {
-            r.unwrap()
-        }
-        Ok(())
+        let fut = future::join_all(futs).map(|v| {
+            for r in v {
+                r.unwrap()
+            }
+            Ok(())
+        });
+        Box::pin(fut)
     }
 
     async fn write_label(&self, mut labeller: LabelWriter) -> Result<(), Error>
@@ -1101,7 +1103,7 @@ impl VdevRaidApi for VdevRaid {
 
     // Allow &Vec arguments so we can clone them.
     #[allow(clippy::ptr_arg)]
-    async fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
+    async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> Result<(), Error>
     {
         let futs = self.blockdevs.iter().map(|bd| {

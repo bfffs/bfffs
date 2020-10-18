@@ -528,7 +528,7 @@ impl VdevBlock {
     /// # Parameters
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
-    pub async fn finish_zone(&self, start: LbaT, end: LbaT) -> Result<(), Error>
+    pub fn finish_zone(&self, start: LbaT, end: LbaT) -> VdevBlockFut
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::finish_zone(start, end, sender);
@@ -545,7 +545,7 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 
     fn new_fut(&self, block_op: BlockOp,
@@ -644,8 +644,7 @@ impl VdevBlock {
 
     /// Read the entire serialized spacemap.  `idx` selects which spacemap to
     /// read, and should match whichever label is being read concurrently.
-    pub async fn read_spacemap(&self, buf: IoVecMut, idx: u32)
-        -> Result<(), Error>
+    pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> VdevBlockFut
     {
         let (sender, receiver) = oneshot::channel::<()>();
         // lba is for sorting purposes only.  It should sort before any other
@@ -653,7 +652,7 @@ impl VdevBlock {
         // in the same order as their true LBA order.
         let lba = 1 + self.spacemap_space * LbaT::from(idx);
         let block_op = BlockOp::read_spacemap(buf, lba, idx, sender);
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 
     /// The asynchronous scatter/gather read function.
@@ -769,14 +768,12 @@ mock! {
             -> io::Result<Self>
             where P: AsRef<Path> + 'static;
         async fn erase_zone(&self, start: LbaT, end: LbaT) -> Result<(), Error>;
-        async fn finish_zone(&self, start: LbaT, end: LbaT)
-            -> Result<(), Error>;
+        fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         fn new(leaf: VdevLeaf) -> Self;
         fn open<P: AsRef<Path> + 'static>(path: P) -> BoxVdevFut;
         fn open_zone(&self, start: LbaT) -> BoxVdevFut;
         fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
-        async fn read_spacemap(&self, buf: IoVecMut, idx: u32)
-            -> Result<(), Error>;
+        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>;

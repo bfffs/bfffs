@@ -2,16 +2,16 @@
 
 use bincode;
 use crate::{
-    boxfut,
     common::{
         *,
         label::*,
-        raid::VdevRaidApi
+        raid::VdevRaidApi,
+        vdev::BoxVdevFut
     }
 };
 #[cfg(test)] use crate::common::raid::MockVdevRaid;
 use fixedbitset::FixedBitSet;
-use futures::{ Future, IntoFuture, future};
+use futures::{Future, FutureExt, TryFutureExt, future};
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::automock;
 use std::{
@@ -24,10 +24,9 @@ use std::{
     num::NonZeroU64,
     ops::Range,
     path::Path,
+    pin::Pin,
     rc::Rc,
 };
-
-pub type ClusterFut = dyn Future<Item = (), Error = Error>;
 
 /// Minimal in-memory representation of a zone.
 ///
@@ -166,8 +165,8 @@ impl<'a> FreeSpaceMap {
 
     fn deserialize(vdev: Rc<dyn VdevRaidApi>, buf: DivBuf, zones: ZoneT)
         -> bincode::Result<
-            impl Future<Item=(Self, Rc<dyn VdevRaidApi + 'static>),
-            Error=Error>
+            Pin<Box<dyn Future<Output=Result<(Self, Rc<dyn VdevRaidApi + 'static>),
+                                          Error>>>>
         >
     {
         let mut fsm = FreeSpaceMap::new(zones);
@@ -176,8 +175,8 @@ impl<'a> FreeSpaceMap {
         for (i, db) in buf.into_chunks(BYTES_PER_LBA).enumerate() {
             let sod = SpacemapOnDisk::deserialize(i as u64, &db).unwrap();
             if let Err(e) = sod {
-                let fut = Err(e).into_future();
-                return Ok(boxfut!(fut, _, _, 'static));
+                let fut = future::err(e);
+                return Ok(Box::pin(fut));
             }
             for zod in sod.unwrap().zones.into_iter() {
                 if zod.allocated_blocks > 0 {
@@ -203,8 +202,13 @@ impl<'a> FreeSpaceMap {
         }
         assert_eq!(zid, zones);
         fsm.clear_dirty_zones();
-        let fut = future::join_all(oz_futs).map(|_| (fsm, vdev));
-        Ok(boxfut!(fut, _, _, 'static))
+        let fut = future::join_all(oz_futs).map(|v| {
+            for r in v {
+                r.unwrap();
+            }
+            Ok((fsm, vdev))
+        });
+        Ok(Box::pin(fut))
     }
 
     /// Mark zone `zone_id` as dirty
@@ -403,8 +407,8 @@ impl<'a> FreeSpaceMap {
     }
 
     /// Open a FreeSpaceMap from an already-formatted `VdevRaid`.
-    fn open(vdev: Rc<dyn VdevRaidApi>)
-        -> impl Future<Item=(Self, Rc<dyn VdevRaidApi + 'static>), Error=Error>
+    async fn open(vdev: Rc<dyn VdevRaidApi>)
+        -> Result<(Self, Rc<dyn VdevRaidApi + 'static>), Error>
     {
         let total_zones = vdev.zones();
         // NB: it would be slightly faster to created it with the correct
@@ -417,7 +421,7 @@ impl<'a> FreeSpaceMap {
             FreeSpaceMap::deserialize(vdev, dbs.try_const().unwrap(),
                                       total_zones)
             .unwrap()
-        })
+        }).await
     }
 
     /// Return an iterator over the zone IDs of all open zones
@@ -732,11 +736,10 @@ impl Cluster {
     }
 
     /// Delete the underlying storage for a Zone.
-    fn erase_zone(&self, zone: ZoneT)
-        -> impl Future<Item=(), Error=Error>
+    async fn erase_zone(&self, zone: ZoneT) -> Result<(), Error>
     {
         self.fsm.borrow_mut().erase_zone(zone);
-        self.vdev.erase_zone(zone)
+        self.vdev.erase_zone(zone).await
     }
 
     /// Find the first closed zone whose index is greater than or equal to `zid`
@@ -751,7 +754,7 @@ impl Cluster {
     /// Flush all data and metadata to disk, but don't sync yet.  This should
     /// normally be called just before [`sync_all`](#method.sync_all).  `idx` is
     /// the index of the label that is about to be written.
-    pub fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error>
+    pub async fn flush(&self, idx: u32) -> Result<(), Error>
     {
         let mut fsm = self.fsm.borrow_mut();
         let vdev2 = self.vdev.clone();
@@ -774,12 +777,20 @@ impl Cluster {
             } else {
                 vec![db]
             };
-            vdev2.write_spacemap(&sglist, idx, block)
+            vdev2.write_spacemap(sglist, idx, block)
         }).collect::<Vec<_>>();
-        let fut = future::join_all(flush_futs).join(future::join_all(sm_futs))
-        .map(drop);
+        let fut = future::join(future::join_all(flush_futs), future::join_all(sm_futs))
+        .map(|(fv, sv)| {
+            for r in fv {
+                r.unwrap();
+            }
+            for r in sv {
+                r.unwrap();
+            }
+            Ok(())
+        });
         fsm.clear_dirty_zones();
-        fut
+        fut.await
     }
 
     /// Mark `length` LBAs beginning at LBA `lba` as unused, and possibly delete
@@ -787,8 +798,7 @@ impl Cluster {
     ///
     /// Deleting data in increments other than it was written is unsupported.
     /// In particular, it is not allowed to delete across zone boundaries.
-    pub fn free(&self, lba: LbaT, length: LbaT)
-        -> Box<dyn Future<Item=(), Error=Error>>
+    pub async fn free(&self, lba: LbaT, length: LbaT) -> Result<(), Error>
     {
         let start_zone = self.vdev.lba2zone(lba).expect(
             "Can't free from inter-zone padding");
@@ -804,9 +814,9 @@ impl Cluster {
         // Erase the zone if it is fully freed
         if fsm.is_closed(start_zone) && fsm.in_use(start_zone) == 0 {
             drop(fsm);
-            Box::new(self.erase_zone(start_zone))
+            self.erase_zone(start_zone).await
         } else {
-            Box::new(Ok(()).into_future())
+            Ok(())
         }
     }
 
@@ -822,10 +832,9 @@ impl Cluster {
     ///
     /// Returns a new `Cluster` and a `LabelReader` that may be used to
     /// construct other vdevs stacked on top.
-    pub fn open(vdev_raid: Rc<dyn VdevRaidApi>)
-        -> impl Future<Item=Self, Error=Error>
+    pub async fn open(vdev_raid: Rc<dyn VdevRaidApi>) -> Result<Self, Error>
     {
-        FreeSpaceMap::open(vdev_raid)
+        FreeSpaceMap::open(vdev_raid).await
             .map(Cluster::new)
     }
 
@@ -838,10 +847,9 @@ impl Cluster {
     }
 
     /// Asynchronously read from the cluster
-    pub fn read(&self, buf: IoVecMut, lba: LbaT)
-        -> impl Future<Item=(), Error=Error>
+    pub async fn read(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error>
     {
-        self.vdev.read_at(buf, lba)
+        self.vdev.read_at(buf, lba).await
     }
 
     /// Return approximately the usable space of the Cluster in LBAs.
@@ -851,7 +859,7 @@ impl Cluster {
 
     /// Sync the `Cluster`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&self) -> impl Future<Item=(), Error=Error> {
+    pub fn sync_all(&self) -> BoxVdevFut {
         self.vdev.sync_all()
     }
 
@@ -867,56 +875,62 @@ impl Cluster {
     /// The LBA where the data will be written, and a
     /// `Future` for the operation in progress.
     pub fn write(&self, buf: IoVec, txg: TxgT)
-        -> Result<(LbaT, Box<ClusterFut>), Error> {
+        -> Result<(LbaT, BoxVdevFut), Error>
+    {
         // Outline:
         // 1) Try allocating in an open zone
         // 2) If that doesn't work, try opening a new one, and allocating from
-        //    that
+        //    that.
         // 3) If that doesn't work, return ENOSPC
         // 4) write to the vdev
         let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
         let (alloc_result, nearly_full_zones) =
             self.fsm.borrow_mut().try_allocate(space);
         let finish_futs = close_zones!(self, &nearly_full_zones, txg);
-        let vdev2 = self.vdev.clone();
+        let vdev2: Rc<dyn VdevRaidApi> = self.vdev.clone();
         let vdev3 = self.vdev.clone();
         alloc_result.map(|(zone_id, lba)| {
-            let oz_fut: Box<ClusterFut> = Box::new(future::ok::<(),
-                                                            Error>(()));
+            let oz_fut = Box::pin(future::ok(())) as BoxVdevFut;
             (zone_id, lba, oz_fut)
         }).or_else(|| {
             let empty_zone = self.fsm.borrow().find_empty();
-            empty_zone.and_then(|zone_id| {
+            empty_zone.and_then(move |zone_id| {
                 let zl = vdev2.zone_limits(zone_id);
                 let e = self.fsm.borrow_mut().open_zone(zone_id, zl.0, zl.1,
                                                         space, txg);
                 match e {
                     Ok(Some((zone_id, lba))) => {
-                        let fut = vdev2.open_zone(zone_id);
-                        Some((zone_id, lba, boxfut!(fut, _, _, 'static)))
+                        let fut = Box::pin(vdev2.open_zone(zone_id)) as BoxVdevFut;
+                        Some((zone_id, lba, fut))
                     },
                     Err(_) => None,
                     Ok(None) => panic!("Tried a 0-length write?"),
                 }
             })  // LCOV_EXCL_LINE   kcov false negative
         }).map(|(zone_id, lba, oz_fut)| {
-            let fut : Box<dyn Future<Item = (), Error = Error>>;
             let wfut = vdev3.write_at(buf, zone_id, lba);
             let owfut = oz_fut.and_then(move |_| {
                 wfut
-            }
-            );
-            fut = Box::new(future::join_all(finish_futs).join(owfut).map(drop));
+            });
+            let fut = Box::pin(
+                future::join(future::join_all(finish_futs), owfut)
+                .map(|(v, or)| {
+                    for r in v {
+                        r.unwrap();
+                    }
+                    or.unwrap();
+                    Ok(())
+                })
+            ) as BoxVdevFut;
             (lba, fut)
         }).ok_or(Error::ENOSPC)
     }
 
     /// Asynchronously write this cluster's label to all component devices
     /// All data and spacemap should be written and synced first!
-    pub fn write_label(&self, labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error>
-    {   // LCOV_EXCL_LINE   kcov false negative
-        self.vdev.write_label(labeller)
+    pub async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>
+    {
+        self.vdev.write_label(labeller).await
     }
 }
 

@@ -113,49 +113,47 @@ impl VdevRaidApi for VdevOneDisk {
         self.blockdev.erase_zone(limits.0, limits.1 - 1).await
     }
 
-    async fn finish_zone(&self, zone: ZoneT) -> Result<(), Error> {
+    fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let limits = self.blockdev.zone_limits(zone);
-        self.blockdev.finish_zone(limits.0, limits.1 - 1).await
+        Box::pin(self.blockdev.finish_zone(limits.0, limits.1 - 1))
     }
 
     fn flush_zone(&self, _zone: ZoneT) -> (LbaT, BoxVdevFut) {
         (0, Box::pin(future::ok(())))
     }
 
-    async fn open_zone(&self, zone: ZoneT) -> Result<(), Error> {
+    fn open_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let limits = self.blockdev.zone_limits(zone);
-        self.blockdev.open_zone(limits.0).await
+        Box::pin(self.blockdev.open_zone(limits.0))
     }
 
     async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error> {
         self.blockdev.read_at(buf, lba).await
     }
 
-    async fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Result<(), Error>
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
     {
-        self.blockdev.read_spacemap(buf, idx).await
+        Box::pin(self.blockdev.read_spacemap(buf, idx))
     }
 
-    async fn reopen_zone(&self, _zone: ZoneT, _allocated: LbaT)
-        -> Result<(), Error>
+    fn reopen_zone(&self, _zone: ZoneT, _allocated: LbaT) -> BoxVdevFut
     {
-        Ok(())
+        Box::pin(future::ok(()))
     }
 
-    async fn write_at(&self, buf: IoVec, _zone: ZoneT, lba: LbaT)
-        -> Result<(), Error>
+    fn write_at(&self, buf: IoVec, _zone: ZoneT, lba: LbaT) -> BoxVdevFut
     {
         // Pad up to a whole number of LBAs.  Upper layers don't do this because
         // VdevRaidApi doesn't have a writev_at method.  But VdevBlock does, so
         // the raid layer is the most efficient place to pad.
         let partial = buf.len() % BYTES_PER_LBA;
         if partial == 0 {
-            self.blockdev.write_at(buf, lba).await
+            Box::pin(self.blockdev.write_at(buf, lba))
         } else {
             let remainder = BYTES_PER_LBA - partial;
             let zbuf = ZERO_REGION.try_const().unwrap().slice_to(remainder);
             let sglist = vec![buf, zbuf];
-            self.blockdev.writev_at(sglist, lba).await
+            Box::pin(self.blockdev.writev_at(sglist, lba))
         }
     }
 
@@ -173,11 +171,10 @@ impl VdevRaidApi for VdevOneDisk {
     // Allow &Vec arguments so we can clone them.
     // TODO: pass by value instead of reference, to eliminate the clone
     #[allow(clippy::ptr_arg)]
-    async fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
+    async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> Result<(), Error>
-        //-> BoxVdevFut
     {
-        self.blockdev.write_spacemap(sglist.clone(), idx, block).await
+        self.blockdev.write_spacemap(sglist, idx, block).await
     }
 }
 

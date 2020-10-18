@@ -16,7 +16,7 @@ pub trait VdevRaidApi : Vdev + 'static {
     ///
     /// # Parameters
     /// - `zone`:    The target zone ID
-    async fn finish_zone(&self, zone: ZoneT) -> Result<(), Error>;
+    fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
 
     /// Asynchronously flush any data cached in the RAID device
     ///
@@ -30,7 +30,7 @@ pub trait VdevRaidApi : Vdev + 'static {
     ///
     /// # Parameters
     /// - `zone`:              The target zone ID
-    async fn open_zone(&self, zone: ZoneT) -> Result<(), Error>;
+    fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
 
     /// Asynchronously read a contiguous portion of the vdev.
     ///
@@ -44,7 +44,7 @@ pub trait VdevRaidApi : Vdev + 'static {
     ///                 resized as needed.
     /// - `idx`:        Index of the spacemap to read.  It should be the same as
     ///                 whichever label is being used.
-    async fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Result<(), Error>;
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
 
     /// Asynchronously reopen a zone on a RAID device
     ///
@@ -55,14 +55,12 @@ pub trait VdevRaidApi : Vdev + 'static {
     /// - `zone`:              The target zone ID
     /// - `already_allocated`: The amount of data that was previously allocated
     ///                        in this zone.
-    async fn reopen_zone(&self, zone: ZoneT, allocated: LbaT)
-        -> Result<(), Error>;
+    fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
 
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns `()` on success, or an error on failure
-    async fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT)
-        -> Result<(), Error>;
+    fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;
 
     /// Asynchronously write this Vdev's label.
     ///
@@ -81,6 +79,6 @@ pub trait VdevRaidApi : Vdev + 'static {
     /// - `block`:      LBA-based offset from the start of the spacemap area
     // Allow &Vec arguments so we can clone them.
     #[allow(clippy::ptr_arg)]
-    async fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
+    async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> Result<(), Error>;
 }
