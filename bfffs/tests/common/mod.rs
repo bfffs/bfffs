@@ -2,7 +2,7 @@
 mod cluster;
 //mod database;
 //mod device_manager;
-//mod ddml;
+mod ddml;
 //mod fs;
 //mod idml;
 mod pool;

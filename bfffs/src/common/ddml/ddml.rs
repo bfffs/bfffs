@@ -1,19 +1,19 @@
 // vim: tw=80
 use crate::{
-    boxfut,
     common::{
         *,
         cache::{Cache, Cacheable, CacheRef, Key},
         label::*,
+        vdev::*,
     }
 };
-use futures::{Future, Stream, future, stream};
+use futures::{Future, TryFutureExt, TryStream, TryStreamExt, future, stream};
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::mock;
 use std::{
     borrow,
-    convert::identity,
     hash::Hasher,
+    pin::Pin,
     sync::{Arc, Mutex}
 };
 use super::*;
@@ -48,14 +48,13 @@ impl DDML {
     }
 
     /// Free a record's storage, ignoring the Cache
-    pub fn delete_direct(&self, drp: &DRP, _txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + Send
+    pub fn delete_direct(&self, drp: &DRP, _txg: TxgT) -> BoxVdevFut
     {
-        self.pool.free(drp.pba, drp.asize())
+        Box::pin(self.pool.free(drp.pba, drp.asize()))
     }
 
-    pub fn flush(&self, idx: u32) -> Box<dyn Future<Item=(), Error=Error> + Send> {
-        Box::new(self.pool.flush(idx))
+    pub fn flush(&self, idx: u32) -> BoxVdevFut {
+        Box::pin(self.pool.flush(idx))
     }
 
     pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
@@ -64,16 +63,16 @@ impl DDML {
 
     /// Get directly from disk, bypassing cache
     pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
-        -> impl Future<Item=Box<T>, Error=Error> + Send
+        -> impl Future<Output=Result<Box<T>, Error>> + Send
     {
-        self.read(*drp).map(move |dbs| {
+        self.read(*drp).map_ok(move |dbs| {
             Box::new(T::deserialize(dbs))
         })
     }
 
     /// List all closed zones in the `DDML` in no particular order
     pub fn list_closed_zones(&self)
-        -> impl Stream<Item=ClosedZone, Error=Error> + Send
+        -> impl TryStream<Ok=ClosedZone, Error=Error> + Send
     {
         struct State {
             pool: Arc<Pool>,
@@ -82,33 +81,33 @@ impl DDML {
         };
 
         let initial = Some(State{pool: self.pool.clone(), cluster: 0, zid: 0});
-        stream::unfold(initial, |state| {
+        stream::try_unfold(initial, |state| async {
             if let Some(s) = state {
                 let fut = s.pool.find_closed_zone(s.cluster, s.zid)
-                .map(|r| {
+                .map_ok(|r| {
                     match r {
                         (Some(pclz), Some((c, z))) => {
                             let next = State{pool: s.pool, cluster: c, zid: z};
-                            (Some(pclz), Some(next))
+                            Some((Some(pclz), Some(next)))
                         },
                         (Some(_), None) => unreachable!(),  // LCOV_EXCL_LINE
                         (None, Some((c, z))) => {
                             let next = State{pool: s.pool, cluster: c, zid: z};
-                            (None, Some(next))
+                            Some((None, Some(next)))
                         },
-                        (None, None) => (None, None)
+                        (None, None) => Some((None, None))
                     }
                 }); // LCOV_EXCL_LINE   kcov false negative
-                Some(fut)
+                fut.await
             } else {
-                None
+                Ok(None)
             }
-        }).filter_map(identity)
+        }).try_filter_map(|o| future::ok(o))
     }
 
     /// Read a record from disk
     fn read(&self, drp: DRP)
-        -> impl Future<Item=DivBufShared, Error=Error> + Send
+        -> impl Future<Output=Result<DivBufShared, Error>> + Send
     {
         // Outline
         // 1) Read
@@ -119,7 +118,8 @@ impl DDML {
         let dbs = DivBufShared::uninitialized(len);
         Box::new(
             // Read
-            self.pool.read(dbs.try_mut().unwrap(), drp.pba).and_then(move |_| {
+            self.pool.read(dbs.try_mut().unwrap(), drp.pba)
+            .and_then(move |_| {
                 //Truncate
                 let mut dbm = dbs.try_mut().unwrap();
                 dbm.try_truncate(drp.csize as usize).unwrap();
@@ -133,12 +133,12 @@ impl DDML {
                     // Decompress
                     let db = dbs.try_const().unwrap();
                     if drp.is_compressed() {
-                        Ok(Compression::decompress(&db))
+                        future::ok(Compression::decompress(&db))
                     } else {
-                        Ok(dbs)
+                        future::ok(dbs)
                     }
                 } else {
-                    Err(Error::ECKSUM)
+                    future::err(Error::ECKSUM)
                 }
             })
         )
@@ -156,7 +156,7 @@ impl DDML {
 
     /// Read a record and return ownership of it, bypassing Cache
     pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
-        -> impl Future<Item=Box<T>, Error=Error> + Send
+        -> impl Future<Output=Result<Box<T>, Error>> + Send
     {
         let lbas = drp.asize();
         let pba = drp.pba;
@@ -164,14 +164,14 @@ impl DDML {
         self.read(*drp)
             .and_then(move |dbs|
                 pool2.free(pba, lbas)
-                .map(move |_| Box::new(T::deserialize(dbs)))
+                .map_ok(move |_| Box::new(T::deserialize(dbs)))
             )
     }
 
     /// Does most of the work of DDML::put
     fn put_common<T>(&self, cacheref: &T, compression: Compression,
                      txg: TxgT)
-        -> impl Future<Item=DRP, Error=Error> + Send
+        -> impl Future<Output=Result<DRP, Error>> + Send
         where T: borrow::Borrow<dyn CacheRef>
     {
         // Outline:
@@ -199,7 +199,7 @@ impl DDML {
 
         // Write
         self.pool.write(compressed_db, txg)
-        .map(move |pba| {
+        .map_ok(move |pba| {
             DRP { pba, compressed, lsize: lsize as u32, csize, checksum }
         })
     }
@@ -207,7 +207,7 @@ impl DDML {
     /// Write a buffer bypassing cache.  Return the same buffer
     pub fn put_direct<T>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
-        -> impl Future<Item=DRP, Error=Error> + Send
+        -> impl Future<Output=Result<DRP, Error>> + Send
         where T: borrow::Borrow<dyn CacheRef>
     {
         self.put_common(cacheref, compression, txg)
@@ -224,7 +224,7 @@ impl DDML {
     }
 
     pub fn write_label(&self, labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         self.pool.write_label(labeller)
     }
@@ -234,10 +234,10 @@ impl DML for DDML {
     type Addr = DRP;
 
     fn delete(&self, drp: &DRP, _txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
-        Box::new(self.pool.free(drp.pba, drp.asize()))
+        Box::pin(self.pool.free(drp.pba, drp.asize()))
     }
 
     fn evict(&self, drp: &DRP) {
@@ -245,59 +245,59 @@ impl DML for DDML {
     }
 
     fn get<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
-        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
     {
         // Outline:
         // 1) Fetch from cache, or
         // 2) Read from disk, then insert into cache
         let pba = drp.pba;
         self.cache.lock().unwrap().get::<R>(&Key::PBA(pba)).map(|t| {
-            boxfut!(future::ok::<Box<R>, Error>(t))
+            Box::pin(future::ok::<Box<R>, Error>(t)) as Pin<Box<_>>
         }).unwrap_or_else(|| {
             let cache2 = self.cache.clone();
-            Box::new(
-                self.get_direct(drp).map(move |cacheable: Box<T>| {
+            Box::pin(
+                self.get_direct(drp).map_ok(move |cacheable: Box<T>| {
                     let r = cacheable.make_ref();
                     cache2.lock().unwrap().insert(Key::PBA(pba), cacheable);
                     r.downcast::<R>().unwrap()
                 })
-            )
+            ) as Pin<Box<_>>
         })
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP, _txg: TxgT)
-        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>
     {
         let lbas = drp.asize();
         let pba = drp.pba;
         self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|cacheable| {
             let t = cacheable.downcast::<T>().unwrap();
-            boxfut!(self.pool.free(pba, lbas).map(|_| t))
+            Box::pin(self.pool.free(pba, lbas).map_ok(|_| t)) as Pin<Box<_>>
         }).unwrap_or_else(|| {
-            boxfut!( self.pop_direct::<T>(drp))
+            Box::pin( self.pop_direct::<T>(drp)) as Pin<Box<_>>
         })
     }
 
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<dyn Future<Item=DRP, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr, Error>> + Send>>
     {
         let cache2 = self.cache.clone();
         let db = cacheable.make_ref();
         let fut = self.put_common(&db, compression, txg)
-            .map(move |drp|{
+            .map_ok(move |drp|{
                 let pba = drp.pba();
                 cache2.lock().unwrap()
                     .insert(Key::PBA(pba), Box::new(cacheable));
                 drp
             });
-        Box::new(fut)
+        Box::pin(fut)
     }
 
     fn sync_all(&self, _txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
-        Box::new(self.pool.sync_all())
+        Box::pin(self.pool.sync_all())
     }
 }
 
@@ -449,7 +449,7 @@ mod ddml {
                 for x in dbm.iter_mut() {
                     *x = 0;
                 }
-                Box::new(future::ok::<(), Error>(()))
+                Box::pin(future::ok::<(), Error>(()))
             });
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
@@ -500,7 +500,7 @@ mod ddml {
                 for x in dbm.iter_mut() {
                     *x = 0;
                 }
-                Box::new(future::ok::<(), Error>(()))
+                Box::pin(future::ok::<(), Error>(()))
             });
         cache.expect_insert()
             .once()
@@ -527,7 +527,7 @@ mod ddml {
             .return_const(None);
         pool.expect_read()
             .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
-            .return_once(|_, _| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let err = ddml.get::<DivBufShared, DivBuf>(&drp).wait().unwrap_err();
@@ -630,7 +630,7 @@ mod ddml {
                 for x in dbm.iter_mut() {
                     *x = 0;
                 }
-                Box::new(future::ok::<(), Error>(()))
+                Box::pin(future::ok::<(), Error>(()))
             });
         pool.expect_free()
             .with(eq(pba), eq(1))
@@ -655,7 +655,7 @@ mod ddml {
             .return_once(|_| None);
         pool.expect_read()
             .with(always(), eq(pba))
-            .return_once(|_, _| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let err = ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0)).wait()
@@ -679,7 +679,7 @@ mod ddml {
                 for x in dbm.iter_mut() {
                     *x = 0;
                 }
-                Box::new(future::ok::<(), Error>(()))
+                Box::pin(future::ok::<(), Error>(()))
             });
         pool.expect_free()
             .with(eq(pba), eq(1))
@@ -702,7 +702,7 @@ mod ddml {
         let mut pool = Pool::default();
         pool.expect_write()
             .with(always(), eq(TxgT::from(42)))
-            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
+            .return_once(move |_, _| Box::pin(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
@@ -727,7 +727,7 @@ mod ddml {
         let mut pool = Pool::default();
         pool.expect_write()
             .with(always(), eq(TxgT::from(42)))
-            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
+            .return_once(move |_, _| Box::pin(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 8192]);
@@ -753,7 +753,7 @@ mod ddml {
         let mut pool = Pool::default();
         pool.expect_write()
             .with(always(), eq(TxgT::from(42)))
-            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
+            .return_once(move |_, _| Box::pin(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let mut rng = XorShiftRng::seed_from_u64(12345);
@@ -780,7 +780,7 @@ mod ddml {
         let mut pool = Pool::default();
         pool.expect_write()
             .with(always(), eq(TxgT::from(42)))
-            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
+            .return_once(move |_, _| Box::pin(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 1024]);
@@ -800,7 +800,7 @@ mod ddml {
         let txg = TxgT::from(42);
         pool.expect_write()
             .with(always(), eq(txg))
-            .return_once(move |_, _| Box::new(future::ok::<PBA, Error>(pba)));
+            .return_once(move |_, _| Box::pin(future::ok::<PBA, Error>(pba)));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let dbs = DivBufShared::from(vec![42u8; 4096]);
@@ -816,7 +816,7 @@ mod ddml {
         let cache = Cache::default();
         let mut pool = Pool::default();
         pool.expect_sync_all()
-            .return_once(|| Box::new(future::ok::<(), Error>(())));
+            .return_once(|| Box::pin(future::ok::<(), Error>(())));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         assert!(ddml.sync_all(TxgT::from(0)).wait().is_ok());
