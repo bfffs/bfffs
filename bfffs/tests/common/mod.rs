@@ -1,5 +1,5 @@
 //mod clean_zone;
-//mod cluster;
+mod cluster;
 //mod database;
 //mod device_manager;
 //mod ddml;
