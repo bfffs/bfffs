@@ -36,7 +36,7 @@ use uuid;
 pub mod label;
 //pub mod pool;
 //pub mod property;
-//pub mod raid;
+pub mod raid;
 //pub mod tree;
 pub mod vdev;
 pub mod vdev_block;

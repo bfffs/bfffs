@@ -430,7 +430,8 @@ impl Future for ReschedFut {
     }
 }
 
-struct VdevBlockFut {
+/// Return type for most `VdevBlock` asynchronous methods
+pub struct VdevBlockFut {
     block_op: Option<BlockOp>,
     inner: Arc<RwLock<Inner>>,
     receiver: oneshot::Receiver<()>,
@@ -560,7 +561,7 @@ impl VdevBlock {
     ///
     /// # Parameters
     /// - `start`:    The first LBA within the target zone
-    pub async fn open_zone(&self, start: LbaT) -> Result<(), Error>
+    pub fn open_zone(&self, start: LbaT) -> VdevBlockFut
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::open_zone(start, sender);
@@ -575,7 +576,7 @@ impl VdevBlock {
             debug_assert_eq!(start, limits.0);
         }
 
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 
     /// Instantiate a new VdevBlock from an existing VdevLeaf
@@ -633,12 +634,12 @@ impl VdevBlock {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error>
+    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> VdevBlockFut
     {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::read_at(buf, lba, sender);
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 
     /// Read the entire serialized spacemap.  `idx` selects which spacemap to
@@ -663,26 +664,25 @@ impl VdevBlock {
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    pub async fn readv_at(&self, bufs: SGListMut, lba: LbaT)
-        -> Result<(), Error>
+    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> VdevBlockFut
     {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns nothing on success, and on error on failure
-    pub async fn write_at(&self, buf: IoVec, lba: LbaT) -> Result<(), Error>
+    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevBlockFut
     {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_at(buf, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 
     pub async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>
@@ -712,15 +712,14 @@ impl VdevBlock {
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA at which to write
-    pub async fn writev_at(&self, bufs: SGList, lba: LbaT)
-        -> Result<(), Error>
+    pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevBlockFut
     {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
         assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
             "VdevBlock does not support fragmentary writes");
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 }
 

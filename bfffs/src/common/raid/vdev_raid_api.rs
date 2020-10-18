@@ -1,20 +1,22 @@
 // vim: tw=80
+use async_trait::async_trait;
 use crate::common::{*, label::*, vdev::*};
 
 /// The public interface for all RAID Vdevs.  All Vdevs that slot beneath a
 /// cluster must implement this API.
+#[async_trait]
 pub trait VdevRaidApi : Vdev + 'static {
     /// Asynchronously erase a zone on a RAID device
     ///
     /// # Parameters
     /// - `zone`:    The target zone ID
-    fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
+    async fn erase_zone(&self, zone: ZoneT) -> Result<(), Error>;
 
     /// Asynchronously finish a zone on a RAID device
     ///
     /// # Parameters
     /// - `zone`:    The target zone ID
-    fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
+    async fn finish_zone(&self, zone: ZoneT) -> Result<(), Error>;
 
     /// Asynchronously flush any data cached in the RAID device
     ///
@@ -28,12 +30,12 @@ pub trait VdevRaidApi : Vdev + 'static {
     ///
     /// # Parameters
     /// - `zone`:              The target zone ID
-    fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
+    async fn open_zone(&self, zone: ZoneT) -> Result<(), Error>;
 
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Returns `()` on success, or an error on failure
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+    async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error>;
 
     /// Read one of the spacemaps from disk.
     ///
@@ -42,7 +44,7 @@ pub trait VdevRaidApi : Vdev + 'static {
     ///                 resized as needed.
     /// - `idx`:        Index of the spacemap to read.  It should be the same as
     ///                 whichever label is being used.
-    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+    async fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Result<(), Error>;
 
     /// Asynchronously reopen a zone on a RAID device
     ///
@@ -53,18 +55,20 @@ pub trait VdevRaidApi : Vdev + 'static {
     /// - `zone`:              The target zone ID
     /// - `already_allocated`: The amount of data that was previously allocated
     ///                        in this zone.
-    fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
+    async fn reopen_zone(&self, zone: ZoneT, allocated: LbaT)
+        -> Result<(), Error>;
 
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns `()` on success, or an error on failure
-    fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;
+    async fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT)
+        -> Result<(), Error>;
 
     /// Asynchronously write this Vdev's label.
     ///
     /// `label_writer` should already contain the serialized labels of every
     /// vdev stacked on top of this one.
-    fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+    async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>;
 
     /// Asynchronously write to the Vdev's spacemap area.
     ///
@@ -77,6 +81,6 @@ pub trait VdevRaidApi : Vdev + 'static {
     /// - `block`:      LBA-based offset from the start of the spacemap area
     // Allow &Vec arguments so we can clone them.
     #[allow(clippy::ptr_arg)]
-    fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
-        -> Box<VdevFut>;
+    async fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
+        -> Result<(), Error>;
 }

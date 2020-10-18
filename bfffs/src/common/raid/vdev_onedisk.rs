@@ -1,14 +1,14 @@
 // vim: tw=80
 
+use async_trait::async_trait;
 use crate::{
-    boxfut,
     common::{
         *,
         label::*,
         vdev::*,
     }
 };
-use futures::{Future, IntoFuture};
+use futures::future;
 use std::{
     collections::BTreeMap,
     num::NonZeroU64,
@@ -89,7 +89,7 @@ impl Vdev for VdevOneDisk {
         self.blockdev.size()
     }
 
-    fn sync_all(&self) -> Box<VdevFut> {
+    fn sync_all(&self) -> BoxVdevFut {
         self.blockdev.sync_all()
     }
 
@@ -106,72 +106,78 @@ impl Vdev for VdevOneDisk {
     }
 }
 
+#[async_trait]
 impl VdevRaidApi for VdevOneDisk {
-    fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
+    async fn erase_zone(&self, zone: ZoneT) -> Result<(), Error> {
         let limits = self.blockdev.zone_limits(zone);
-        boxfut!(self.blockdev.erase_zone(limits.0, limits.1 - 1), _, _, 'static)
+        self.blockdev.erase_zone(limits.0, limits.1 - 1).await
     }
 
-    fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {
+    async fn finish_zone(&self, zone: ZoneT) -> Result<(), Error> {
         let limits = self.blockdev.zone_limits(zone);
-        let fut = self.blockdev.finish_zone(limits.0, limits.1 - 1);
-        boxfut!(fut, _, _, 'static)
+        self.blockdev.finish_zone(limits.0, limits.1 - 1).await
     }
 
     fn flush_zone(&self, _zone: ZoneT) -> (LbaT, BoxVdevFut) {
-        (0, boxfut!(Ok(()).into_future(), _, _, 'static))
+        (0, Box::pin(future::ok(())))
     }
 
-    fn open_zone(&self, zone: ZoneT) -> BoxVdevFut {
+    async fn open_zone(&self, zone: ZoneT) -> Result<(), Error> {
         let limits = self.blockdev.zone_limits(zone);
-        boxfut!(self.blockdev.open_zone(limits.0), _, _, 'static)
+        self.blockdev.open_zone(limits.0).await
     }
 
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
-        boxfut!(self.blockdev.read_at(buf, lba), _, _, 'static)
+    async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error> {
+        self.blockdev.read_at(buf, lba).await
     }
 
-    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut {
-        boxfut!(self.blockdev.read_spacemap(buf, idx), _, _, 'static)
+    async fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Result<(), Error>
+    {
+        self.blockdev.read_spacemap(buf, idx).await
     }
 
-    fn reopen_zone(&self, _zone: ZoneT, _allocated: LbaT) -> BoxVdevFut {
-        boxfut!(Ok(()).into_future(), _, _, 'static)
+    async fn reopen_zone(&self, _zone: ZoneT, _allocated: LbaT)
+        -> Result<(), Error>
+    {
+        Ok(())
     }
 
-    fn write_at(&self, buf: IoVec, _zone: ZoneT, lba: LbaT) -> BoxVdevFut {
+    async fn write_at(&self, buf: IoVec, _zone: ZoneT, lba: LbaT)
+        -> Result<(), Error>
+    {
         // Pad up to a whole number of LBAs.  Upper layers don't do this because
         // VdevRaidApi doesn't have a writev_at method.  But VdevBlock does, so
         // the raid layer is the most efficient place to pad.
         let partial = buf.len() % BYTES_PER_LBA;
         if partial == 0 {
-            boxfut!(self.blockdev.write_at(buf, lba), _, _, 'static)
+            self.blockdev.write_at(buf, lba).await
         } else {
             let remainder = BYTES_PER_LBA - partial;
             let zbuf = ZERO_REGION.try_const().unwrap().slice_to(remainder);
             let sglist = vec![buf, zbuf];
-            boxfut!(self.blockdev.writev_at(sglist, lba), _, _, 'static)
+            self.blockdev.writev_at(sglist, lba).await
         }
     }
 
-    fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut {
+    async fn write_label(&self, mut labeller: LabelWriter) -> Result<(), Error>
+    {
         let onedisk_label = Label {
             uuid: self.uuid,
             child: self.blockdev.uuid()
         };
         let label = super::Label::OneDisk(onedisk_label);
         labeller.serialize(&label).unwrap();
-        boxfut!(self.blockdev.write_label(labeller), _, _, 'static)
+        self.blockdev.write_label(labeller).await
     }
 
     // Allow &Vec arguments so we can clone them.
     // TODO: pass by value instead of reference, to eliminate the clone
     #[allow(clippy::ptr_arg)]
-    fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
-        -> Box<VdevFut>
+    async fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
+        -> Result<(), Error>
+        //-> BoxVdevFut
     {
-        let fut = self.blockdev.write_spacemap(sglist.clone(), idx, block);
-        boxfut!(fut, _, _, 'static)
+        self.blockdev.write_spacemap(sglist.clone(), idx, block).await
     }
 }
 
