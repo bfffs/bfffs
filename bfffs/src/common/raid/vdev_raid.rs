@@ -1456,7 +1456,7 @@ fn read_at_one_stripe() {
     m0.expect_open_zone()
         .once()
         .with(eq(65536))
-        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        .return_once(|_| Box::pin(future::ok::<(), Error>(())));
     m0.expect_optimum_queue_depth()
         .return_const(10u32);
     m0.expect_zone_limits()
@@ -1473,7 +1473,7 @@ fn read_at_one_stripe() {
     m1.expect_open_zone()
         .once()
         .with(eq(65536))
-        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        .return_once(|_| Box::pin(future::ok::<(), Error>(())));
     m1.expect_optimum_queue_depth()
         .return_const(10u32);
     m1.expect_zone_limits()
@@ -1487,7 +1487,7 @@ fn read_at_one_stripe() {
         .withf(|buf, lba| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                 && *lba == 65536
-        }).return_once(|_, _|  Box::new( future::ok::<(), Error>(())));
+        }).return_once(|_, _|  Box::pin(future::ok::<(), Error>(())));
     blockdevs.push(m1);
 
     let mut m2 = VdevBlock::default();
@@ -1496,7 +1496,7 @@ fn read_at_one_stripe() {
     m2.expect_open_zone()
         .once()
         .with(eq(65536))
-        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        .return_once(|_| Box::pin(future::ok::<(), Error>(())));
     m2.expect_optimum_queue_depth()
         .return_const(10u32);
     m2.expect_zone_limits()
@@ -1510,7 +1510,7 @@ fn read_at_one_stripe() {
         .withf(|buf, lba| {
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                 && *lba == 65536
-        }).return_once(|_, _|  Box::new( future::ok::<(), Error>(())));
+        }).return_once(|_, _|  Box::pin( future::ok::<(), Error>(())));
     blockdevs.push(m2);
 
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
@@ -1519,8 +1519,8 @@ fn read_at_one_stripe() {
                                   blockdevs.into_boxed_slice());
     let dbs = DivBufShared::from(vec![0u8; 16384]);
     let rbuf = dbs.try_mut().unwrap();
-    vdev_raid.open_zone(1).wait().unwrap();
-    vdev_raid.read_at(rbuf, 131_072).wait().unwrap();
+    vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+    vdev_raid.read_at(rbuf, 131_072).now_or_never().unwrap().unwrap();
 }
 
 #[test]
@@ -1539,7 +1539,7 @@ fn sync_all() {
             .with(eq(0))
             .return_const(zl0);
         bd.expect_sync_all()
-            .return_once(|| Box::new(future::ok::<(), Error>(())));
+            .return_once(|| Box::pin(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10u32);
         bd
@@ -1557,7 +1557,7 @@ fn sync_all() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.sync_all().wait().unwrap();
+    vdev_raid.sync_all().now_or_never().unwrap().unwrap();
 }
 
 // It's illegal to sync a VdevRaid without flushing its zones first
@@ -1589,10 +1589,10 @@ fn sync_all_unflushed() {
         bd.expect_open_zone()
             .with(eq(60_000))
             .once()
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok::<(), Error>(())));
         bd.expect_sync_all()
             .once()
-            .return_once(|| Box::new(future::ok::<(), Error>(())));
+            .return_once(|| Box::pin(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10u32);
         bd
@@ -1613,10 +1613,10 @@ fn sync_all_unflushed() {
 
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try_const().unwrap();
-    vdev_raid.open_zone(1).wait().unwrap();
-    vdev_raid.write_at(wbuf, 1, 120_000).wait().unwrap();
+    vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+    vdev_raid.write_at(wbuf, 1, 120_000).now_or_never().unwrap().unwrap();
     // Don't flush zone 1 before syncing.  Syncing should panic
-    vdev_raid.sync_all().wait().unwrap();
+    vdev_raid.sync_all().now_or_never().unwrap().unwrap();
 }
 
 // Use mock VdevBlock objects to test that RAID writes hit the right LBAs from
@@ -1638,7 +1638,7 @@ fn write_at_one_stripe() {
     m0.expect_open_zone()
         .with(eq(65536))
         .once()
-        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        .return_once(|_| Box::pin(future::ok::<(), Error>(())));
     m0.expect_optimum_queue_depth()
         .return_const(10u32);
     m0.expect_zone_limits()
@@ -1652,7 +1652,7 @@ fn write_at_one_stripe() {
         .withf(|buf, lba|
                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                && *lba == 65536
-        ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+        ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
 
     blockdevs.push(m0);
     let mut m1 = VdevBlock::default();
@@ -1664,7 +1664,7 @@ fn write_at_one_stripe() {
     m1.expect_open_zone()
         .with(eq(65536))
         .once()
-        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        .return_once(|_| Box::pin(future::ok::<(), Error>(())));
     m1.expect_optimum_queue_depth()
         .return_const(10u32);
     m1.expect_zone_limits()
@@ -1678,7 +1678,7 @@ fn write_at_one_stripe() {
         .withf(|buf, lba|
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
             && *lba == 65536
-        ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+        ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
 
     blockdevs.push(m1);
     let mut m2 = VdevBlock::default();
@@ -1690,7 +1690,7 @@ fn write_at_one_stripe() {
     m2.expect_open_zone()
         .with(eq(65536))
         .once()
-        .return_once(|_| Box::new(future::ok::<(), Error>(())));
+        .return_once(|_| Box::pin(future::ok::<(), Error>(())));
     m2.expect_optimum_queue_depth()
         .return_const(10u32);
     m2.expect_zone_limits()
@@ -1704,7 +1704,7 @@ fn write_at_one_stripe() {
         .withf(|buf, lba|
             buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
             && *lba == 65536
-        ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+        ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
     blockdevs.push(m2);
 
     let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
@@ -1713,8 +1713,8 @@ fn write_at_one_stripe() {
                                   blockdevs.into_boxed_slice());
     let dbs = DivBufShared::from(vec![0u8; 16384]);
     let wbuf = dbs.try_const().unwrap();
-    vdev_raid.open_zone(1).wait().unwrap();
-    vdev_raid.write_at(wbuf, 1, 131_072).wait().unwrap();
+    vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+    vdev_raid.write_at(wbuf, 1, 131_072).now_or_never().unwrap().unwrap();
 }
 
 // Partially written stripes should be flushed by flush_zone
@@ -1744,7 +1744,7 @@ fn write_at_and_flush_zone() {
         bd.expect_open_zone()
             .with(eq(60_000))
             .once()
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10u32);
         bd
@@ -1759,7 +1759,7 @@ fn write_at_and_flush_zone() {
             // Later segments are zero-fill from flush_zone
             buf[1][..] == vec![0u8; BYTES_PER_LBA][..] &&
             *lba == 60_000
-        ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+        ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
 
     let mut bd1 = bd();
     // This write is from the zero-fill
@@ -1769,7 +1769,7 @@ fn write_at_and_flush_zone() {
             buf.len() == 1 &&
             buf[0][..] == vec![0u8; 2 * BYTES_PER_LBA][..] &&
             *lba == 60_000
-    ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+    ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
 
     // This write is generated parity
     let mut bd2 = bd();
@@ -1780,7 +1780,7 @@ fn write_at_and_flush_zone() {
             buf[0..4096] == vec![1u8; BYTES_PER_LBA][..] &&
             buf[4096..8192] == vec![0u8; BYTES_PER_LBA][..] &&
             *lba == 60_000
-    ).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+    ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
 
     blockdevs.push(bd0);
     blockdevs.push(bd1);
@@ -1792,9 +1792,9 @@ fn write_at_and_flush_zone() {
                                   blockdevs.into_boxed_slice());
     let dbs = DivBufShared::from(vec![1u8; 4096]);
     let wbuf = dbs.try_const().unwrap();
-    vdev_raid.open_zone(1).wait().unwrap();
-    vdev_raid.write_at(wbuf, 1, 120_000).wait().unwrap();
-    vdev_raid.flush_zone(1).1.wait().unwrap();
+    vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+    vdev_raid.write_at(wbuf, 1, 120_000).now_or_never().unwrap().unwrap();
+    vdev_raid.flush_zone(1).1.now_or_never().unwrap().unwrap();
 }
 
 // Erase a zone.  VdevRaid doesn't care whether it still has allocated data;
@@ -1826,7 +1826,7 @@ fn erase_zone() {
         bd.expect_erase_zone()
             .with(eq(1), eq(59_999))
             .once()
-            .return_once(|_, _| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_, _| Ok(()));
         bd.expect_optimum_queue_depth()
             .return_const(10u32);
         bd
@@ -1843,7 +1843,7 @@ fn erase_zone() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.erase_zone(0).wait().unwrap();
+    vdev_raid.erase_zone(0).now_or_never().unwrap().unwrap();
 }
 
 // Flushing a closed zone is a no-op
@@ -1882,7 +1882,7 @@ fn flush_zone_closed() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.flush_zone(0).1.wait().unwrap();
+    vdev_raid.flush_zone(0).1.now_or_never().unwrap().unwrap();
 }
 
 // Flushing an open zone is a no-op if the stripe buffer is empty
@@ -1912,7 +1912,7 @@ fn flush_zone_empty_stripe_buffer() {
         bd.expect_open_zone()
             .once()
             .with(eq(60_000))
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10u32);
         bd
@@ -1929,8 +1929,8 @@ fn flush_zone_empty_stripe_buffer() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1).wait().unwrap();
-    vdev_raid.flush_zone(1).1.wait().unwrap();
+    vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+    vdev_raid.flush_zone(1).1.now_or_never().unwrap().unwrap();
 }
 
 // Reopen a zone that was previously used and unmounted without being closed.
@@ -1965,13 +1965,13 @@ fn open_zone_reopen() {
         bd.expect_open_zone()
             .once()
             .with(eq(4096))
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10u32);
         bd.expect_write_at()
             .with(always(), eq(4196))
             .once()
-            .return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
         bd
     };
     blockdevs.push(bd());    //disk 0
@@ -1983,8 +1983,8 @@ fn open_zone_reopen() {
                                   blockdevs.into_boxed_slice());
     let dbs = DivBufShared::from(vec![0u8; 4096]);
     let wbuf = dbs.try_const().unwrap();
-    vdev_raid.reopen_zone(1, 100).wait().unwrap();
-    vdev_raid.write_at(wbuf, 1, 4196).wait().unwrap();
+    vdev_raid.reopen_zone(1, 100).now_or_never().unwrap().unwrap();
+    vdev_raid.write_at(wbuf, 1, 4196).now_or_never().unwrap().unwrap();
 }
 
 // Open a zone that has wasted leading space due to a chunksize misaligned with
@@ -2016,7 +2016,7 @@ fn open_zone_zero_fill_wasted_chunks() {
         bd.expect_open_zone()
             .once()
             .with(eq(32))
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10u32);
         bd.expect_writev_at()
@@ -2024,7 +2024,7 @@ fn open_zone_zero_fill_wasted_chunks() {
             .withf(|sglist, lba| {
                 let len = sglist.iter().map(|b| b.len()).sum::<usize>();
                 len == 3 * BYTES_PER_LBA && *lba == 32
-            }).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+            }).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
         bd
     };
 
@@ -2038,7 +2038,7 @@ fn open_zone_zero_fill_wasted_chunks() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1).wait().unwrap();
+    vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
 }
 
 // Open a zone that has some leading wasted space.  Use mock VdevBlock objects
@@ -2070,7 +2070,7 @@ fn open_zone_zero_fill_wasted_stripes() {
         bd.expect_open_zone()
             .once()
             .with(eq(32))
-            .return_once(|_| Box::new(future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok::<(), Error>(())));
         bd.expect_optimum_queue_depth()
             .return_const(10u32);
         if gap_chunks > 0 {
@@ -2080,7 +2080,7 @@ fn open_zone_zero_fill_wasted_stripes() {
                     let gap_lbas = gap_chunks * CHUNKSIZE; 
                     let len = sglist.iter().map(|b| b.len()).sum::<usize>();
                     len == gap_lbas as usize * BYTES_PER_LBA && *lba == 32
-                }).return_once(|_, _| Box::new( future::ok::<(), Error>(())));
+                }).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
         }
         bd
     };
@@ -2100,7 +2100,7 @@ fn open_zone_zero_fill_wasted_stripes() {
                                   Uuid::new_v4(),
                                   LayoutAlgorithm::PrimeS,
                                   blockdevs.into_boxed_slice());
-    vdev_raid.open_zone(1).wait().unwrap();
+    vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
 }
 }
 // LCOV_EXCL_START

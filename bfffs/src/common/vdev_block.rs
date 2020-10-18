@@ -772,20 +772,17 @@ mock! {
         async fn finish_zone(&self, start: LbaT, end: LbaT)
             -> Result<(), Error>;
         fn new(leaf: VdevLeaf) -> Self;
-        async fn open<P: AsRef<Path> + 'static>(path: P)
-            -> Result<(Self, LabelReader), Error>;
-        async fn open_zone(&self, start: LbaT) -> Result<(), Error>;
-        async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error>;
+        fn open<P: AsRef<Path> + 'static>(path: P) -> BoxVdevFut;
+        fn open_zone(&self, start: LbaT) -> BoxVdevFut;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         async fn read_spacemap(&self, buf: IoVecMut, idx: u32)
             -> Result<(), Error>;
-        async fn readv_at(&self, bufs: SGListMut, lba: LbaT)
-            -> Result<(), Error>;
-        async fn write_at(&self, buf: IoVec, lba: LbaT) -> Result<(), Error>;
+        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
+        fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>;
         async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             ->  Result<(), Error>;
-        async fn writev_at(&self, bufs: SGList, lba: LbaT)
-            -> Result<(), Error>;
+        fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut;
     }
     trait Vdev {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;

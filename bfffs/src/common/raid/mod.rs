@@ -5,12 +5,12 @@
 //! This provides vdevs which slot between `cluster` and `vdev_block` and
 //! provide RAID-like functionality.
 
+#[cfg(test)] use async_trait::async_trait;
 use crate::common::{
     *,
     label::*,
     vdev::*,
 };
-#[cfg(test)] use futures::Future;
 #[cfg(test)] use mockall::*;
 use std::{
     collections::BTreeMap,
@@ -140,18 +140,21 @@ mock!{
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     }
+    #[async_trait]
     trait VdevRaidApi{
-        fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
-        fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
+        async fn erase_zone(&self, zone: ZoneT) -> Result<(), Error>;
+        async fn finish_zone(&self, zone: ZoneT) -> Result<(), Error>;
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
-        fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
-        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
-        fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
-        fn write_at(&self, buf: IoVec, zone: ZoneT,
-                    lba: LbaT) -> BoxVdevFut;
-        fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
-        fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
-            -> BoxVdevFut;
+        async fn open_zone(&self, zone: ZoneT) -> Result<(), Error>;
+        async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error>;
+        async fn read_spacemap(&self, buf: IoVecMut, idx: u32)
+            -> Result<(), Error>;
+        async fn reopen_zone(&self, zone: ZoneT, allocated: LbaT)
+            -> Result<(), Error>;
+        async fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT)
+            -> Result<(), Error>;
+        async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>;
+        async fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
+            -> Result<(), Error>;
     }
 }
