@@ -6,6 +6,6 @@
 //mod fs;
 //mod idml;
 //mod pool;
-//mod raid;
+mod raid;
 mod vdev_block;
 mod vdev_file;
