@@ -502,7 +502,7 @@ impl VdevBlock {
     /// # Parameters
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
-    pub async fn erase_zone(&self, start: LbaT, end: LbaT) -> Result<(), Error>
+    pub fn erase_zone(&self, start: LbaT, end: LbaT) -> VdevBlockFut
     {
         // The zone must already be closed, but VdevBlock doesn't keep enough
         // information to assert that
@@ -520,7 +520,7 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 
     /// Asynchronously finish a zone on a block device
@@ -767,7 +767,7 @@ mock! {
         fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
             where P: AsRef<Path> + 'static;
-        async fn erase_zone(&self, start: LbaT, end: LbaT) -> Result<(), Error>;
+        fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         fn new(leaf: VdevLeaf) -> Self;
         fn open<P: AsRef<Path> + 'static>(path: P) -> BoxVdevFut;

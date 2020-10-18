@@ -108,9 +108,9 @@ impl Vdev for VdevOneDisk {
 
 #[async_trait]
 impl VdevRaidApi for VdevOneDisk {
-    async fn erase_zone(&self, zone: ZoneT) -> Result<(), Error> {
+    fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let limits = self.blockdev.zone_limits(zone);
-        self.blockdev.erase_zone(limits.0, limits.1 - 1).await
+        Box::pin(self.blockdev.erase_zone(limits.0, limits.1 - 1))
     }
 
     fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {

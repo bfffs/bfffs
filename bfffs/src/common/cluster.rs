@@ -736,10 +736,10 @@ impl Cluster {
     }
 
     /// Delete the underlying storage for a Zone.
-    async fn erase_zone(&self, zone: ZoneT) -> Result<(), Error>
+    fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut
     {
         self.fsm.borrow_mut().erase_zone(zone);
-        self.vdev.erase_zone(zone).await
+        self.vdev.erase_zone(zone)
     }
 
     /// Find the first closed zone whose index is greater than or equal to `zid`
@@ -798,7 +798,7 @@ impl Cluster {
     ///
     /// Deleting data in increments other than it was written is unsupported.
     /// In particular, it is not allowed to delete across zone boundaries.
-    pub async fn free(&self, lba: LbaT, length: LbaT) -> Result<(), Error>
+    pub fn free(&self, lba: LbaT, length: LbaT) -> BoxVdevFut
     {
         let start_zone = self.vdev.lba2zone(lba).expect(
             "Can't free from inter-zone padding");
@@ -814,9 +814,9 @@ impl Cluster {
         // Erase the zone if it is fully freed
         if fsm.is_closed(start_zone) && fsm.in_use(start_zone) == 0 {
             drop(fsm);
-            self.erase_zone(start_zone).await
+            Box::pin(self.erase_zone(start_zone))
         } else {
-            Ok(())
+            Box::pin(future::ok(()))
         }
     }
 
@@ -957,7 +957,7 @@ mod cluster {
     use mockall::{Sequence, predicate::*};
     use pretty_assertions::assert_eq;
     use std::iter;
-    use tokio::runtime::current_thread;
+    use tokio::runtime::Runtime;
 
     #[test]
     fn free_and_erase_full_zone() {
@@ -976,27 +976,27 @@ mod cluster {
         vr.expect_open_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .with(always(), eq(0), always())
             .once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         vr.expect_finish_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_open_zone()
             .once()
             .with(eq(1))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .with(always(), eq(1), always())
             .once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         vr.expect_erase_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
 
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
@@ -1004,7 +1004,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
         let db1 = db0.clone();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let (lba, fut1) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
             // Write a 2nd time so the first zone will get closed
@@ -1012,11 +1012,11 @@ mod cluster {
                 let (_, fut2) = cluster.write(db1, TxgT::from(0))
                     .expect("write failed early");
                 fut2
-            }).map(move|_| lba)
+            }).map_ok(move|_| lba)
                 .and_then(|lba| {
                 cluster.free(lba, 1)
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 
     #[test]
@@ -1036,27 +1036,27 @@ mod cluster {
         vr.expect_open_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .with(always(), eq(0), always())
             .once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         vr.expect_finish_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_open_zone()
             .once()
             .with(eq(1))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .with(always(), eq(1), always())
             .once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         vr.expect_erase_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
 
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
@@ -1065,7 +1065,7 @@ mod cluster {
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs0.try_const().unwrap();
         let db1 = dbs1.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let (lba, fut1) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
             // Write a larger buffer so the first zone will get closed
@@ -1073,11 +1073,11 @@ mod cluster {
                 let (_, fut2) = cluster.write(db1, TxgT::from(0))
                     .expect("write failed early");
                 fut2
-            }).map(move|_| lba)
+            }).map_ok(move|_| lba)
                 .and_then(|lba| {
                 cluster.free(lba, 1)
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 
     #[test]
@@ -1097,28 +1097,28 @@ mod cluster {
         vr.expect_open_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .with(always(), eq(0), eq(1))
             .once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         vr.expect_write_at()
             .with(always(), eq(0), eq(2))
             .once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
 
         vr.expect_finish_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_open_zone()
             .once()
             .with(eq(1))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .with(always(), eq(1), always())
             .once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
 
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
@@ -1128,7 +1128,7 @@ mod cluster {
         let db0 = dbs0.try_const().unwrap();
         let db1 = dbs0.try_const().unwrap();
         let db2 = dbs1.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let (lba, fut1) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
             fut1.and_then(|_| {
@@ -1141,11 +1141,11 @@ mod cluster {
                 let (_, fut3) = cluster.write(db2, TxgT::from(0))
                     .expect("write failed early");
                 fut3
-            }).map(move|_| lba)
+            }).map_ok(move|_| lba)
                 .and_then(|lba| {
                 cluster.free(lba, 1)
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 
     #[test]
@@ -1223,13 +1223,13 @@ mod cluster {
                  assert_eq!(dbm.len(), BYTES_PER_LBA);
                  dbm[0..96].copy_from_slice(&SPACEMAP[..]);
                  dbm[96..4096].iter_mut().set_from(iter::repeat(0));
-                 Box::new(future::ok::<(), Error>(()))
+                 Box::pin(future::ok(()))
             });
 
         vr.expect_reopen_zone()
             .once()
             .with(eq(3), eq(77))
-            .return_once(|_, _| Box::new(Ok(()).into_future()));
+            .return_once(|_, _| Box::pin(future::ok(())));
         vr.expect_zone_limits()
             .with(eq(0))
             .return_const((4, 96));
@@ -1245,7 +1245,10 @@ mod cluster {
         vr.expect_zone_limits()
             .with(eq(4))
             .return_const((404, 496));
-        let (fsm, _mock_vr) = FreeSpaceMap::open(Rc::new(vr)).wait().unwrap();
+        let (fsm, _mock_vr) = FreeSpaceMap::open(Rc::new(vr))
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(fsm.zones.len(), 4);
         assert_eq!(fsm.zones[0].freed_blocks, 0);
         assert_eq!(fsm.zones[0].total_blocks, 92);
@@ -1296,7 +1299,7 @@ mod cluster {
                 dbm[32..4096].iter_mut().set_from(iter::repeat(0));
                 dbm[4096..4128].copy_from_slice(&SPACEMAP_B1[..]);
                 dbm[4192..8192].iter_mut().set_from(iter::repeat(0));
-                Box::new(future::ok::<(), Error>(()))
+                Box::pin(future::ok(()))
             });
 
         vr.expect_zone_limits()
@@ -1305,7 +1308,10 @@ mod cluster {
                  (100 * i + 4, 100 * i + 96)
              });
 
-        let (fsm, _mock_vr) = FreeSpaceMap::open(Rc::new(vr)).wait().unwrap();
+        let (fsm, _mock_vr) = FreeSpaceMap::open(Rc::new(vr))
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(fsm.zones.len(), 256);
         assert_eq!(fsm.zones[0].freed_blocks, 0);
         assert_eq!(fsm.zones[0].total_blocks, 92);
@@ -1335,10 +1341,10 @@ mod cluster {
             .returning(|mut dbm, _idx| {
                 dbm.try_truncate(0).unwrap();
                 dbm.extend(SPACEMAP.iter());
-                Box::new(future::ok::<(), Error>(()))
+                Box::pin(future::ok(()))
             });
 
-        let r = FreeSpaceMap::open(Rc::new(vr)).wait();
+        let r = FreeSpaceMap::open(Rc::new(vr)).now_or_never().unwrap();
         assert_eq!(Error::ECKSUM, r.err().unwrap());
     }
 
@@ -1391,14 +1397,14 @@ mod cluster {
         vr.expect_open_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .withf(|buf, zone, lba|
                 buf.len() == BYTES_PER_LBA &&
                 *zone == 0 &&
                 *lba == 0
             ).once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
@@ -1423,7 +1429,7 @@ mod cluster {
             .once()
             .in_sequence(&mut seq)
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .once()
             .in_sequence(&mut seq)
@@ -1431,12 +1437,12 @@ mod cluster {
                 buf.len() == BYTES_PER_LBA &&
                 *zone == 0 &&
                 *lba == 0
-            ).return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            ).return_once(|_, _, _| Box::pin(future::ok(())));
         vr.expect_flush_zone()
             .once()
             .in_sequence(&mut seq)
             .with(eq(0))
-            .return_once(|_| (5, Box::new(future::ok::<(), Error>(()))));
+            .return_once(|_| (5, Box::pin(future::ok(()))));
         vr.expect_write_spacemap()
             .once()
             .in_sequence(&mut seq)
@@ -1444,23 +1450,24 @@ mod cluster {
                 sglist.iter().map(DivBuf::len).sum::<usize>() == 4096 &&
                 *idx == 0 &&
                 *block == 0
-            ).return_once(|_, _, _| Box::new(future::ok::<(), Error>(())));
+            ).return_const(Ok(()));
         vr.expect_sync_all()
             .once()
             .in_sequence(&mut seq)
-            .return_once(|| Box::new(future::ok::<(), Error>(())));
+            .return_once(|| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
         cluster.fsm.borrow_mut().clear_dirty_zones();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let (_, fut) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
             fut.and_then(|_| cluster.flush(0))
             .and_then(|_| cluster.sync_all())
-        })).unwrap();
+            .await
+        }).unwrap();
         let fsm = cluster.fsm.borrow();
         assert_eq!(fsm.open_zones[&0].write_pointer(), 6);
         assert_eq!(fsm.zones[0].freed_blocks, 5);
@@ -1479,10 +1486,7 @@ mod cluster {
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let result = rt.block_on(future::lazy(|| {
-            cluster.write(dbs.try_const().unwrap(), TxgT::from(0))
-        }));
+        let result = cluster.write(dbs.try_const().unwrap(), TxgT::from(0));
         assert_eq!(result.err().unwrap(), Error::ENOSPC);
     }
 
@@ -1514,25 +1518,26 @@ mod cluster {
         vr.expect_open_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .withf(|buf, zone, lba|
                 buf.len() == BYTES_PER_LBA &&
                 *zone == 0 &&
                 *lba == 0
             ).once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let result = rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        let result = rt.block_on(async {
             let (lba, fut) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
-            fut.map(move |_| lba)
-        }));
+            fut.map_ok(move |_| lba)
+            .await
+        });
         assert_eq!(result.unwrap(), 0);
     }
 
@@ -1547,28 +1552,28 @@ mod cluster {
         vr.expect_open_zone()
             .once()
             .with(eq(0))
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .withf(|buf, zone, lba|
                 buf.len() == BYTES_PER_LBA &&
                 *zone == 0 &&
                 *lba == 0
             ).once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         vr.expect_write_at()
             .withf(|buf, zone, lba|
                 buf.len() == BYTES_PER_LBA &&
                 *zone == 0 &&
                 *lba == 1
             ).once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
         let db1 = dbs.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let cluster_ref = &cluster;
             let (_, fut0) = cluster.write(db0, TxgT::from(0))
                 .expect("Cluster::write");
@@ -1577,8 +1582,8 @@ mod cluster {
                     .expect("Cluster::write");
                 assert_eq!(lba1, 1);
                 fut1
-            })
-        })).expect("write failed");
+            }).await
+        }).expect("write failed");
     }
 
     // When one zone is too full to satisfy an allocation, it should be closed
@@ -1597,36 +1602,36 @@ mod cluster {
         vr.expect_open_zone()
             .with(eq(0))
             .once()
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .withf(|buf, zone, lba|
                 buf.len() == 2 * BYTES_PER_LBA &&
                 *zone == 0 &&
                 *lba == 0
             ).once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         vr.expect_finish_zone()
             .with(eq(0))
             .once()
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_open_zone()
             .with(eq(1))
             .once()
-            .return_once(|_| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_write_at()
             .withf(|buf, zone, lba|
                 buf.len() == 2 * BYTES_PER_LBA &&
                 *zone == 1 &&
                 *lba == 3
             ).once()
-            .return_once(|_, _, _| Box::new( future::ok::<(), Error>(())));
+            .return_once(|_, _, _| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Rc::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs.try_const().unwrap();
         let db1 = dbs.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let cluster_ref = &cluster;
             let (_, fut0) = cluster.write(db0, TxgT::from(0))
                 .expect("Cluster::write");
@@ -1635,8 +1640,8 @@ mod cluster {
                     .expect("Cluster::write");
                 assert_eq!(lba1, 3);
                 fut1
-            })
-        })).expect("write failed");
+            }).await
+        }).expect("write failed");
     }
 }
 

@@ -10,7 +10,7 @@ pub trait VdevRaidApi : Vdev + 'static {
     ///
     /// # Parameters
     /// - `zone`:    The target zone ID
-    async fn erase_zone(&self, zone: ZoneT) -> Result<(), Error>;
+    fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
 
     /// Asynchronously finish a zone on a RAID device
     ///

@@ -850,19 +850,21 @@ impl Vdev for VdevRaid {
 
 #[async_trait]
 impl VdevRaidApi for VdevRaid {
-    async fn erase_zone(&self, zone: ZoneT) -> Result<(), Error> {
+    fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
         assert!(!self.stripe_buffers.read().unwrap().contains_key(&zone),
             "Tried to erase an open zone");
         let (start, end) = self.blockdevs[0].zone_limits(zone);
         let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
             blockdev.erase_zone(start, end - 1)
         }).collect();
-        future::join_all(futs).map(|v| {
-            for r in v {
-                r.unwrap();
-            }
-            Ok(())
-        }).await
+        Box::pin(
+            future::join_all(futs).map(|v| {
+                for r in v {
+                    r.unwrap();
+                }
+                Ok(())
+            })
+        )
     }
 
     // Zero-fill the current StripeBuffer and write it out.  Then drop the
@@ -1828,7 +1830,7 @@ fn erase_zone() {
         bd.expect_erase_zone()
             .with(eq(1), eq(59_999))
             .once()
-            .return_once(|_, _| Ok(()));
+            .return_once(|_, _| Box::pin(future::ok(())));
         bd.expect_optimum_queue_depth()
             .return_const(10u32);
         bd

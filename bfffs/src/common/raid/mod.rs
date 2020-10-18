@@ -142,7 +142,7 @@ mock!{
     }
     #[async_trait]
     trait VdevRaidApi{
-        async fn erase_zone(&self, zone: ZoneT) -> Result<(), Error>;
+        fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
         fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
