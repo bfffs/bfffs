@@ -4,7 +4,10 @@ use blosc;
 use crate::common::*;
 use futures::Future;
 #[cfg(test)] use mockall::automock;
-use std::num::NonZeroU8;
+use std::{
+    num::NonZeroU8,
+    pin::Pin
+};
 
 pub use crate::common::cache::{Cacheable, CacheRef};
 
@@ -95,27 +98,27 @@ pub trait DML: Send + Sync {
 
     /// Delete the record from the cache, and free its storage space.
     fn delete(&self, addr: &Self::Addr, txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>;
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
 
     /// If the given record is present in the cache, evict it.
     fn evict(&self, addr: &Self::Addr);
 
     /// Read a record and return a shared reference
     fn get<T: Cacheable, R: CacheRef>(&self, addr: &Self::Addr)
-        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>;
+        -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>;
 
     /// Read a record and return ownership of it.
     fn pop<T: Cacheable, R: CacheRef>(&self, rid: &Self::Addr, txg: TxgT)
-        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>;
+        -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
 
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<dyn Future<Item=<Self as DML>::Addr, Error=Error> + Send>;
+        -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr, Error>> + Send>>;
 
     /// Sync all records written so far to stable storage.
     fn sync_all(&self, txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>;
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
 }
 
 #[cfg(test)]
