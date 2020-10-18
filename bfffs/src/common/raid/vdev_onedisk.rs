@@ -127,8 +127,8 @@ impl VdevRaidApi for VdevOneDisk {
         Box::pin(self.blockdev.open_zone(limits.0))
     }
 
-    async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error> {
-        self.blockdev.read_at(buf, lba).await
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+        Box::pin(self.blockdev.read_at(buf, lba))
     }
 
     fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
@@ -157,7 +157,7 @@ impl VdevRaidApi for VdevOneDisk {
         }
     }
 
-    async fn write_label(&self, mut labeller: LabelWriter) -> Result<(), Error>
+    fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
     {
         let onedisk_label = Label {
             uuid: self.uuid,
@@ -165,16 +165,13 @@ impl VdevRaidApi for VdevOneDisk {
         };
         let label = super::Label::OneDisk(onedisk_label);
         labeller.serialize(&label).unwrap();
-        self.blockdev.write_label(labeller).await
+        Box::pin(self.blockdev.write_label(labeller))
     }
 
-    // Allow &Vec arguments so we can clone them.
-    // TODO: pass by value instead of reference, to eliminate the clone
-    #[allow(clippy::ptr_arg)]
-    async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-        -> Result<(), Error>
+    fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        -> BoxVdevFut
     {
-        self.blockdev.write_spacemap(sglist, idx, block).await
+        Box::pin(self.blockdev.write_spacemap(sglist, idx, block))
     }
 }
 

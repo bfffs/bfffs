@@ -5,7 +5,7 @@ use crate::common::{*, label::*, vdev::*};
 /// The public interface for all RAID Vdevs.  All Vdevs that slot beneath a
 /// cluster must implement this API.
 #[async_trait]
-pub trait VdevRaidApi : Vdev + 'static {
+pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// Asynchronously erase a zone on a RAID device
     ///
     /// # Parameters
@@ -35,7 +35,7 @@ pub trait VdevRaidApi : Vdev + 'static {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Returns `()` on success, or an error on failure
-    async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error>;
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
 
     /// Read one of the spacemaps from disk.
     ///
@@ -66,7 +66,7 @@ pub trait VdevRaidApi : Vdev + 'static {
     ///
     /// `label_writer` should already contain the serialized labels of every
     /// vdev stacked on top of this one.
-    async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>;
+    fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
 
     /// Asynchronously write to the Vdev's spacemap area.
     ///
@@ -77,8 +77,6 @@ pub trait VdevRaidApi : Vdev + 'static {
     ///                 one.  It should be the same as whichever label is being
     ///                 written.
     /// - `block`:      LBA-based offset from the start of the spacemap area
-    // Allow &Vec arguments so we can clone them.
-    #[allow(clippy::ptr_arg)]
-    async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-        -> Result<(), Error>;
+    fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        -> BoxVdevFut;
 }

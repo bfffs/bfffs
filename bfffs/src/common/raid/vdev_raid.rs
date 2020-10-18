@@ -892,7 +892,7 @@ impl VdevRaidApi for VdevRaid {
         self.open_zone_priv(zone, 0)
     }
 
-    async fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> Result<(), Error> {
+    fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         assert_eq!(buf.len() % BYTES_PER_LBA, 0, "reads must be LBA-aligned");
@@ -952,14 +952,14 @@ impl VdevRaidApi for VdevRaid {
             }
         };
         if justreturn {
-            return Box::pin(future::ok(())).await;
+            return Box::pin(future::ok(()))
         }
         let start_stripe = lba / (self.chunksize * m as LbaT);
         let end_stripe = end_lba / (self.chunksize * m);
         if start_stripe == end_stripe {
-            self.read_at_one(buf2, lba).await
+            Box::pin(self.read_at_one(buf2, lba))
         } else {
-            self.read_at_multi(buf2, lba).await
+            Box::pin(self.read_at_multi(buf2, lba))
         }
     }
 
@@ -1034,7 +1034,7 @@ impl VdevRaidApi for VdevRaid {
         Box::pin(fut)
     }
 
-    async fn write_label(&self, mut labeller: LabelWriter) -> Result<(), Error>
+    fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
     {
         let children_uuids = self.blockdevs.iter().map(|bd| bd.uuid())
             .collect::<Vec<_>>();
@@ -1051,23 +1051,20 @@ impl VdevRaidApi for VdevRaid {
         let futs = self.blockdevs.iter().map(|bd| {
            bd.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        future::try_join_all(futs)
-        .map_ok(drop)
-        .await
-        //(Box::pin(fut) as BoxVdevFut).await
+        let fut = future::try_join_all(futs)
+        .map_ok(drop);
+        Box::pin(fut)
     }
 
-    // Allow &Vec arguments so we can clone them.
-    #[allow(clippy::ptr_arg)]
-    async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-        -> Result<(), Error>
+    fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        -> BoxVdevFut
     {
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_spacemap(sglist.clone(), idx, block)
         }).collect::<Vec<_>>();
-        future::try_join_all(futs)
-        .map_ok(drop)
-        .await
+        let fut = future::try_join_all(futs)
+        .map_ok(drop);
+        Box::pin(fut)
     }
 
 }

@@ -1,20 +1,25 @@
 // vim: tw=80
 
 use crate::{
-    boxfut,
     common::{*, label::*}
 };
 use futures::{
     Future,
-    IntoFuture,
-    Stream,
+    FutureExt,
+    TryFutureExt,
+    StreamExt,
+    TryStreamExt,
     future,
-    sync::{mpsc, oneshot}
+    channel::{
+        mpsc,
+        oneshot::{self, Canceled}
+    },
+    task::{Context, Poll}
 };
 #[cfg(test)] use mockall::automock;
 use std::{
     ops::Range,
-    rc::Rc,
+    pin::Pin,
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
         Arc
@@ -25,15 +30,11 @@ use std::{
     path::{Path, PathBuf},
 };
 use std::collections::BTreeMap;
-use tokio::executor;
-#[cfg(not(test))] use tokio::executor::{DefaultExecutor, Executor};
 
 #[cfg(test)]
 use crate::common::cluster::MockCluster as Cluster;
 #[cfg(not(test))]
 use crate::common::cluster::Cluster;
-
-pub type PoolFut = dyn Future<Item = (), Error = Error>;
 
 /// Communication type used between `ClusterProxy` and `ClusterServer`
 #[derive(Debug)]
@@ -59,6 +60,10 @@ enum Rpc {
 /// from other threads.  The `ClusterServer` fixes that.  Bound to a single
 /// thread, it owns a `Cluster` and serves RPC requests from its own and other
 /// threads.
+///
+/// TODO: Since the upgrade to Tokio 0.3, all Futures beneath Cluster are now
+/// Send + Sync.  So it would be possible to make Cluster Send + Sync, too.
+/// Consider eliminating ClusterServer.
 struct ClusterServer {
     cluster: Cluster
 }
@@ -69,103 +74,102 @@ impl ClusterServer {
     }
 
     /// Start the `ClusterServer` in the background, in the current thread
-    fn run(cs: Rc<ClusterServer>, rx: mpsc::UnboundedReceiver<Rpc>) {
-        let fut = future::lazy(move || {
-            // In Futures 0.2, use for_each_concurrent instead
-            rx.for_each(move |rpc| cs.dispatch(rpc))
+    fn run(cs: Arc<ClusterServer>, rx: mpsc::UnboundedReceiver<Rpc>) {
+        let fut = async move {
+            // In Futures 0.2, use try_for_each_concurrent instead
+            rx.map(|r| Ok(r)).try_for_each(move |rpc| cs.dispatch(rpc))
             // If we get here, the ClusterProxy was dropped
-        });
-        executor::current_thread::TaskExecutor::current().spawn_local(
-            Box::new(fut)
-        ).unwrap();
+        };
+        tokio::spawn(fut);
     }
 
-    fn dispatch(&self, rpc: Rpc) -> impl Future<Item=(), Error=()>
+    fn dispatch(&self, rpc: Rpc)
+        -> Pin<Box<dyn Future<Output=Result<(), ()>> + Send>>
     {
         match rpc {
             #[cfg(debug_assertions)]
             Rpc::AssertCleanZone(zone, txg) => {
                 self.cluster.assert_clean_zone(zone, txg);
-                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
+                Box::pin(future::ok(()))
             },
             Rpc::Allocated(tx) => {
                 tx.send(self.cluster.allocated()).unwrap();
-                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
+                Box::pin(future::ok(()))
             },
             Rpc::FindClosedZone(zid, tx) => {
                 tx.send(self.cluster.find_closed_zone(zid)).unwrap();
-                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
+                Box::pin(future::ok(()))
             },
             Rpc::Flush(idx, tx) => {
                 let fut = self.cluster.flush(idx)
-                .then(|r| {
+                .map(|r| {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                boxfut!(fut, _, _, 'static)
+                Box::pin(fut)
             },
             Rpc::Free(lba, length, tx) => {
                 let fut = self.cluster.free(lba, length)
-                .then(|r| {
+                .map(|r| {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                boxfut!(fut, _, _, 'static)
+                Box::pin(fut)
             }
             Rpc::OptimumQueueDepth(tx) => {
                 tx.send(self.cluster.optimum_queue_depth()).unwrap();
-                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
+                Box::pin(future::ok(()))
             },
             Rpc::Read(buf, lba, tx) => {
                 let fut = self.cluster.read(buf, lba)
-                .then(|r| {
+                .map(|r| {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                boxfut!(fut, _, _, 'static)
+                Box::pin(fut)
             },
             Rpc::Shutdown() => {
                 // Returning an error will cause the service loop to shut down
-                Box::new(future::err::<(), ()>(()))
+                Box::pin(future::err::<(), ()>(()))
             },
             Rpc::Size(tx) => {
                 tx.send(self.cluster.size()).unwrap();
-                boxfut!(future::ok::<(), ()>(()), _, _, 'static)
+                Box::pin(future::ok(()))
             },
             Rpc::SyncAll(tx) => {
                 let fut = self.cluster.sync_all()
-                .then(|r| {
+                .map(|r: Result<(), Error>| {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                boxfut!(fut, _, _, 'static)
+                Box::pin(fut)
             },
             Rpc::Write(buf, txg, tx) => {
                 match self.cluster.write(buf, txg) {
                     Ok((lba, wfut)) => {
                         let txfut = wfut
-                            .then(move |r| {
+                            .map(move |r| {
                                 match r {
                                     Ok(_) => tx.send(Ok(lba)),
                                     Err(e) => tx.send(Err(e))
                                 }.unwrap();
                                 Ok(())
                             });
-                        boxfut!(txfut, _, _, 'static)
+                        Box::pin(txfut)
                     },
                     Err(e) => {
                         tx.send(Err(e)).unwrap();
-                        boxfut!(Ok(()).into_future(), _, _, 'static)
+                        Box::pin(future::ok(()))
                     }
                 }
             },
             Rpc::WriteLabel(label_writer, tx) => {
                 let fut = self.cluster.write_label(label_writer)
-                .then(|r| {
+                .map(|r: Result<(), Error>| {
                     tx.send(r).unwrap();
                     Ok(())
                 });
-                boxfut!(fut, _, _, 'static)
+                Box::pin(fut)
             },
         }
     }
@@ -178,19 +182,19 @@ struct ClusterProxyWrite {
 
 impl Future for ClusterProxyWrite
 {
-    type Item = LbaT;
-    type Error= Error;
+    type Output = Result<LbaT, Error>;
 
-    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-        match self.rx.poll() {
-            Ok(futures::Async::Ready(r)) => {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        // TODO: can this be replaced by self.rx.poll(cx) ?
+        match Pin::new(&mut self.rx).poll(cx) {
+            Poll::Ready(Ok(r)) => {
                 match r {
-                    Ok(lba) => Ok(futures::Async::Ready(lba)),
-                    Err(e) => Err(e)
+                    Ok(lba) => Poll::Ready(Ok(lba)),
+                    Err(e) => Poll::Ready(Err(e))
                 }
             },
-            Ok(futures::Async::NotReady) => Ok(futures::Async::NotReady),
-            Err(_) => Err(Error::EPIPE)
+            Poll::Ready(Err(Canceled)) => Poll::Ready(Err(Error::EPIPE)),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -204,7 +208,7 @@ pub struct ClusterProxy {
 }
 
 impl ClusterProxy {
-    fn allocated(&self) -> impl Future<Item = LbaT, Error = Error> {
+    fn allocated(&self) -> impl Future<Output = Result<LbaT, Error>> {
         let (tx, rx) = oneshot::channel::<LbaT>();
         let rpc = Rpc::Allocated(tx);
         self.server.unbounded_send(rpc).unwrap();
@@ -217,7 +221,7 @@ impl ClusterProxy {
         self.server.unbounded_send(rpc).unwrap();
     }
 
-    fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error> + Send {
+    fn flush(&self, idx: u32) -> impl Future<Output=Result<(), Error>> + Send {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::Flush(idx, tx);
         self.server.unbounded_send(rpc).unwrap();
@@ -225,7 +229,7 @@ impl ClusterProxy {
     }
 
     fn free(&self, lba: LbaT, length: LbaT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Output=Result<(), Error>>
     {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::Free(lba, length, tx);
@@ -234,7 +238,7 @@ impl ClusterProxy {
     }
 
     fn find_closed_zone(&self, zid: ZoneT)
-        -> impl Future<Item=Option<cluster::ClosedZone>, Error=Error>
+        -> impl Future<Output=Result<Option<cluster::ClosedZone>, Error>>
     {
         let (tx, rx) = oneshot::channel::<Option<cluster::ClosedZone>>();
         let rpc = Rpc::FindClosedZone(zid, tx);
@@ -242,7 +246,7 @@ impl ClusterProxy {
         rx.map_err(|_| Error::EPIPE)
     }
 
-    fn optimum_queue_depth(&self) -> impl Future<Item=u32, Error=Error> {
+    fn optimum_queue_depth(&self) -> impl Future<Output=Result<u32, Error>> {
         let (tx, rx) = oneshot::channel::<u32>();
         let rpc = Rpc::OptimumQueueDepth(tx);
         self.server.unbounded_send(rpc).unwrap();
@@ -254,13 +258,13 @@ impl ClusterProxy {
     pub fn new(cluster: Cluster) -> Self {
         let (tx, rx) = mpsc::unbounded();
         let uuid = cluster.uuid();
-        let cs = Rc::new(ClusterServer::new(cluster));
+        let cs = Arc::new(ClusterServer::new(cluster));
         ClusterServer::run(cs, rx);
         ClusterProxy{server: tx, uuid}
     }
 
     fn read(&self, buf: IoVecMut, lba: LbaT)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Output=Result<(), Error>>
     {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::Read(buf, lba, tx);
@@ -268,12 +272,12 @@ impl ClusterProxy {
         ClusterProxy::rx_unit_result(rx)
     }
 
-    /// Helper that collapses a Future<Item=Result<_>, Error=_>.
+    /// Helper that collapses a Future<Output=Result<_, _>>.
     fn rx_unit_result(rx: oneshot::Receiver<Result<(), Error>>)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Output=Result<(), Error>>
     {
         rx.map_err(|_| Error::EPIPE)
-            .and_then(|result| result.into_future())
+            .and_then(|result| future::ready(result))
     }
 
     fn shutdown(&self) {
@@ -283,14 +287,14 @@ impl ClusterProxy {
         let _ = self.server.unbounded_send(rpc);
     }
 
-    fn size(&self) -> impl Future<Item = LbaT, Error = Error> {
+    fn size(&self) -> impl Future<Output=Result<LbaT, Error>> {
         let (tx, rx) = oneshot::channel::<LbaT>();
         let rpc = Rpc::Size(tx);
         self.server.unbounded_send(rpc).unwrap();
         rx.map_err(|_| Error::EPIPE)
     }
 
-    fn sync_all(&self) -> impl Future<Item = (), Error = Error> {
+    fn sync_all(&self) -> impl Future<Output=Result<(), Error>> {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::SyncAll(tx);
         self.server.unbounded_send(rpc).unwrap();
@@ -310,7 +314,7 @@ impl ClusterProxy {
     }
 
     fn write_label(&self, labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Output=Result<(), Error>>
     {
         let (tx, rx) = oneshot::channel::<Result<(), Error>>();
         let rpc = Rpc::WriteLabel(labeller, tx);
@@ -427,24 +431,23 @@ impl Write {
 
 impl Future for Write
 {
-    type Item = PBA;
-    type Error= Error;
+    type Output = Result<PBA, Error>;
 
-    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-        match self.cpfut.poll() {
-            Ok(futures::Async::NotReady) => Ok(futures::Async::NotReady),
-            Ok(futures::Async::Ready(lba)) => {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match Pin::new(&mut self.cpfut).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(lba)) => {
                 self.stats.queue_depth[self.cidx]
                     .fetch_sub(1, Ordering::Relaxed);
                 self.stats.allocated_space[self.cidx]
                     .fetch_add(self.space, Ordering::Relaxed);
                 let pba = PBA::new(self.cluster, lba);
-                Ok(futures::Async::Ready(pba))
+                Poll::Ready(Ok(pba))
             },
-            Err(e) => {
+            Poll::Ready(Err(e)) => {
                 self.stats.queue_depth[self.cidx]
                     .fetch_sub(1, Ordering::Relaxed);
-                Err(e)
+                Poll::Ready(Err(e))
             }
         }
     }
@@ -498,24 +501,24 @@ impl Pool {
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
     #[cfg(not(test))]
-    pub fn create_cluster<P: AsRef<Path> + Sync>(chunksize: Option<NonZeroU64>,
-                               disks_per_stripe: i16,
-                               lbas_per_zone: Option<NonZeroU64>,
-                               redundancy: i16,
-                               paths: &[P])
-        -> impl Future<Item=ClusterProxy, Error=()>
+    pub fn create_cluster<P>(chunksize: Option<NonZeroU64>,
+                             disks_per_stripe: i16,
+                             lbas_per_zone: Option<NonZeroU64>,
+                             redundancy: i16,
+                             paths: &[P])
+        -> impl Future<Output=Result<ClusterProxy, ()>>
+        where P: AsRef<Path> + Sync
     {
         let (tx, rx) = oneshot::channel();
-        // DefaultExecutor needs 'static futures; we must copy the Paths
+        // tokio::spawn needs 'static futures; we must copy the Paths
         let owned_paths = paths.iter()
             .map(|p| p.as_ref().to_owned())
             .collect::<Vec<PathBuf>>();
-        DefaultExecutor::current().spawn(Box::new(future::lazy(move || {
+        tokio::spawn(async move {
             let c = Cluster::create(chunksize, disks_per_stripe,
                     lbas_per_zone, redundancy, owned_paths);
             tx.send(ClusterProxy::new(c)).unwrap();
-            Ok(())
-        }))).unwrap();
+        });
         rx.map_err(|_| panic!("Closed Runtime while creating Cluster?"))
     }
 
@@ -523,17 +526,17 @@ impl Pool {
     ///
     /// Must be called from within the context of a Tokio Runtime.
     pub fn create(name: String, clusters: Vec<ClusterProxy>)
-        -> impl Future<Item=Self, Error=Error>
+        -> impl Future<Output=Result<Self, Error>>
     {
         Pool::new(name, Uuid::new_v4(), clusters)
     }
 
-    pub fn flush(&self, idx: u32) -> impl Future<Item=(), Error=Error> + Send {
-        future::join_all(
+    pub fn flush(&self, idx: u32) -> impl Future<Output=Result<(), Error>> + Send {
+        future::try_join_all(
             self.clusters.iter()
             .map(|cp| cp.flush(idx))
             .collect::<Vec<_>>()
-        ).map(drop)
+        ).map_ok(drop)
     }
 
     /// Mark `length` LBAs beginning at PBA `pba` as unused, but do not delete
@@ -545,7 +548,7 @@ impl Pool {
     // nothing is using it.  That requires using the AllocationTable, which is
     // above the layer of the Pool.
     pub fn free(&self, pba: PBA, length: LbaT)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         let idx = pba.cluster as usize;
         self.stats.allocated_space[idx].fetch_sub(length, Ordering::Relaxed);
@@ -558,27 +561,27 @@ impl Pool {
     /// Must be called from within the context of a Tokio Runtime.
     #[allow(clippy::new_ret_no_self)]
     fn new(name: String, uuid: Uuid, clusters: Vec<ClusterProxy>)
-        -> impl Future<Item=Self, Error=Error>
+        -> impl Future<Output=Result<Self, Error>>
     {
-        let size_fut = future::join_all(clusters.iter()
+        let size_fut = future::try_join_all(clusters.iter()
             .map(ClusterProxy::size)
             .collect::<Vec<_>>()
         );
-        let allocated_fut = future::join_all(clusters.iter()
+        let allocated_fut = future::try_join_all(clusters.iter()
             .map(|cluster| cluster.allocated()
-                .map(AtomicU64::new)
+                .map_ok(AtomicU64::new)
             ).collect::<Vec<_>>()
         );
-        let oqd_fut = future::join_all(clusters.iter()
+        let oqd_fut = future::try_join_all(clusters.iter()
             .map(|cluster| cluster.optimum_queue_depth()
-                .map(f64::from)
+                .map_ok(f64::from)
             ).collect::<Vec<_>>()
         );
         let queue_depth: Vec<_> = clusters.iter()
             .map(|_| AtomicU32::new(0))
             .collect();
-        size_fut.join3(allocated_fut, oqd_fut)
-        .map(move |(size, allocated_space, optimum_queue_depth)| {
+        future::try_join3(size_fut, allocated_fut, oqd_fut)
+        .map_ok(move |(size, allocated_space, optimum_queue_depth)| {
             let stats = Arc::new(Stats{
                 allocated_space,
                 optimum_queue_depth,
@@ -602,12 +605,13 @@ impl Pool {
     /// * `(None, None)`       - No more closed zones in this pool.
     #[allow(clippy::collapsible_if)]
     pub fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
-        -> impl Future<Item=(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
-                       Error=Error> + Send
+        -> impl Future<Output=Result<(Option<ClosedZone>,
+                                      Option<(ClusterT, ZoneT)>),
+                       Error>> + Send
     {
         let nclusters = self.clusters.len() as ClusterT;
         self.clusters[clust as usize].find_closed_zone(zid)
-            .map(move |r| {
+            .map_ok(move |r| {
                 if let Some(cclz) = r {
                     // convert cluster::ClosedZone to pool::ClosedZone
                     let pclz = ClosedZone {
@@ -646,7 +650,7 @@ impl Pool {
     /// * `combined`:   An array of pairs of `ClusterProxy`s and their
     ///                 associated `LabelReader`.  The labels of each will be verified.
     pub fn open(uuid: Option<Uuid>, combined: Vec<(ClusterProxy, LabelReader)>)
-        -> impl Future<Item = (Self, LabelReader), Error = Error>
+        -> impl Future<Output=Result<(Self, LabelReader), Error>>
     {
         let mut label_pair = None;
         let mut all_clusters = combined.into_iter()
@@ -667,18 +671,18 @@ impl Pool {
             all_clusters.remove(&uuid).unwrap()
         }).collect::<Vec<_>>();
         Pool::new(label.name, label.uuid, children)
-            .map(|pool| (pool, label_reader))
+            .map_ok(|pool| (pool, label_reader))
     }
 
     /// Asynchronously read from the pool
     pub fn read(&self, buf: IoVecMut, pba: PBA)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         let cidx = pba.cluster as usize;
         self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
         let stats2 = self.stats.clone();
         self.clusters[pba.cluster as usize].read(buf, pba.lba)
-            .then(move |r| {
+            .map(move |r| {
                 stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
                 r
             })
@@ -698,12 +702,12 @@ impl Pool {
 
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&self) -> impl Future<Item=(), Error=Error> + Send {
-        future::join_all(
+    pub fn sync_all(&self) -> impl Future<Output=Result<(), Error>> + Send {
+        future::try_join_all(
             self.clusters.iter()
             .map(ClusterProxy::sync_all)
             .collect::<Vec<_>>()
-        ).map(drop)
+        ).map_ok(drop)
     }
 
     /// Return the `Pool`'s UUID.
@@ -717,7 +721,7 @@ impl Pool {
     ///
     /// The `PBA` where the data was written
     pub fn write(&self, buf: IoVec, txg: TxgT)
-        -> impl Future<Item = PBA, Error=Error> + Send
+        -> impl Future<Output=Result<PBA, Error>> + Send
     {
         let cluster = self.stats.choose_cluster();
         let cidx = cluster as usize;
@@ -730,7 +734,7 @@ impl Pool {
 
     /// Asynchronously write this `Pool`'s label to all component devices
     pub fn write_label(&self, mut labeller: LabelWriter)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         let cluster_uuids = self.clusters.iter().map(ClusterProxy::uuid)
             .collect::<Vec<_>>();
@@ -743,7 +747,7 @@ impl Pool {
         let futs = self.clusters.iter().map(|cluster| {
             cluster.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        future::join_all(futs).map(drop)
+        future::try_join_all(futs).map_ok(drop)
     }
 }
 

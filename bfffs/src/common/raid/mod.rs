@@ -17,7 +17,7 @@ use std::{
     iter::once,
     num::NonZeroU64,
     path::Path,
-    rc::Rc
+    sync::Arc
 };
 
 #[cfg(test)]
@@ -79,15 +79,15 @@ impl<'a> Label {
 /// * `paths`:              Slice of pathnames of files and/or devices
 pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
     lbas_per_zone: Option<NonZeroU64>, redundancy: i16,
-    mut paths: Vec<P>) -> Rc<dyn VdevRaidApi>
+    mut paths: Vec<P>) -> Arc<dyn VdevRaidApi>
     where P: AsRef<Path> + 'static
 {
     if paths.len() == 1 {
         assert_eq!(disks_per_stripe, 1);
         assert_eq!(redundancy, 0);
-        Rc::new(VdevOneDisk::create(lbas_per_zone, paths.pop().unwrap()))
+        Arc::new(VdevOneDisk::create(lbas_per_zone, paths.pop().unwrap()))
     } else {
-        Rc::new(VdevRaid::create(chunksize, disks_per_stripe, lbas_per_zone,
+        Arc::new(VdevRaid::create(chunksize, disks_per_stripe, lbas_per_zone,
                                  redundancy, paths))
     }
 }
@@ -102,7 +102,7 @@ pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
 ///                 associated `LabelReader`.  The labels of each will be
 ///                 verified.
 pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
-    -> (Rc<dyn VdevRaidApi>, LabelReader)
+    -> (Arc<dyn VdevRaidApi>, LabelReader)
 {
     let mut label_pair = None;
     let all_blockdevs = combined.into_iter()
@@ -119,10 +119,10 @@ pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
     let (label, label_reader) = label_pair.unwrap();
     let vdev = match label {
         Label::Raid(l) => {
-            Rc::new(VdevRaid::open(l, all_blockdevs)) as Rc<dyn VdevRaidApi>
+            Arc::new(VdevRaid::open(l, all_blockdevs)) as Arc<dyn VdevRaidApi>
         },
         Label::OneDisk(l) => {
-            Rc::new(VdevOneDisk::open(l, all_blockdevs)) as Rc<dyn VdevRaidApi>
+            Arc::new(VdevOneDisk::open(l, all_blockdevs)) as Arc<dyn VdevRaidApi>
         },
     };
     (vdev, label_reader)
@@ -146,12 +146,12 @@ mock!{
         fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
         fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
-        async fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Result<(), Error>;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
         fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;
-        async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>;
-        async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-            -> Result<(), Error>;
+        fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+        fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+            -> BoxVdevFut;
     }
 }

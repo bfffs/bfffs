@@ -684,15 +684,15 @@ impl VdevBlock {
         self.new_fut(block_op, receiver)
     }
 
-    pub async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>
+    pub fn write_label(&self, labeller: LabelWriter) -> VdevBlockFut
     {
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_label(labeller, sender);
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 
-    pub async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-        ->  Result<(), Error>
+    pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        ->  VdevBlockFut
     {
         let (sender, receiver) = oneshot::channel::<()>();
         // lba is for sorting purposes only.  It should sort after write_label,
@@ -700,7 +700,7 @@ impl VdevBlock {
         // operations should sort in the same order as their true LBA order.
         let lba = 1 + self.spacemap_space * LbaT::from(idx) + block;
         let block_op = BlockOp::write_spacemap(sglist, lba, idx, block, sender);
-        self.new_fut(block_op, receiver).await
+        self.new_fut(block_op, receiver)
     }
 
     /// The asynchronous scatter/gather write function.
@@ -776,9 +776,9 @@ mock! {
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
-        async fn write_label(&self, labeller: LabelWriter) -> Result<(), Error>;
-        async fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-            ->  Result<(), Error>;
+        fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+        fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+            ->  BoxVdevFut;
         fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut;
     }
     trait Vdev {

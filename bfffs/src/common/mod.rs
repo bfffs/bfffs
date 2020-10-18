@@ -34,7 +34,7 @@ pub mod cluster;
 //pub mod fs_tree;
 //pub mod idml;
 pub mod label;
-//pub mod pool;
+pub mod pool;
 //pub mod property;
 pub mod raid;
 //pub mod tree;
