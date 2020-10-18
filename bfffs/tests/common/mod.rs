@@ -7,5 +7,5 @@
 //mod idml;
 //mod pool;
 //mod raid;
-//mod vdev_block;
+mod vdev_block;
 mod vdev_file;

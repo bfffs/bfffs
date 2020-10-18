@@ -7,12 +7,11 @@ test_suite! {
 
     use bfffs::common::{vdev::*, vdev_block::*};
     use divbuf::DivBufShared;
-    use futures::future;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::current_thread;
+    use tokio::runtime::Runtime;
 
     fixture!( vdev() -> (VdevBlock, TempDir) {
         setup(&mut self) {
@@ -49,27 +48,27 @@ test_suite! {
     test check_block_granularity_under(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4095]);
         let wbuf = dbs.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf, 10)
-        })).unwrap();
+        Runtime::new().unwrap().block_on(async {
+            vdev.val.0.write_at(wbuf, 10).await
+        }).unwrap();
     }
 
     #[should_panic]
     test check_block_granularity_over(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4097]);
         let wbuf = dbs.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf, 10)
-        })).unwrap();
+        Runtime::new().unwrap().block_on(async {
+            vdev.val.0.write_at(wbuf, 10).await
+        }).unwrap();
     }
 
     #[should_panic]
     test check_block_granularity_over_multiple_sectors(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 16_385]);
         let wbuf = dbs.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.write_at(wbuf, 10)
-        })).unwrap();
+        Runtime::new().unwrap().block_on(async {
+            vdev.val.0.write_at(wbuf, 10).await
+        }).unwrap();
     }
 
     #[should_panic]
@@ -79,29 +78,29 @@ test_suite! {
         let wbuf0 = wbuf.slice_to(1024);
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0, wbuf1];
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            vdev.val.0.writev_at(wbufs, 10)
-        })).unwrap();
+        Runtime::new().unwrap().block_on(async {
+            vdev.val.0.writev_at(wbufs, 10).await
+        }).unwrap();
     }
 
     #[should_panic]
     test check_iovec_bounds_over(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let size = vdev.val.0.size();
-            vdev.val.0.write_at(wbuf, size)
-        })).unwrap();
+            vdev.val.0.write_at(wbuf, size).await
+        }).unwrap();
     }
 
     #[should_panic]
     test check_iovec_bounds_spans(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 8192]);
         let wbuf = dbs.try_const().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let size = vdev.val.0.size() - 1;
-            vdev.val.0.write_at(wbuf, size)
-        })).unwrap();
+            vdev.val.0.write_at(wbuf, size).await
+        }).unwrap();
     }
 
     #[should_panic]
@@ -111,10 +110,10 @@ test_suite! {
         let wbuf0 = wbuf.slice_to(1024);
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let size = vdev.val.0.size();
-            vdev.val.0.writev_at(wbufs, size)
-        })).unwrap();
+            vdev.val.0.writev_at(wbufs, size).await
+        }).unwrap();
     }
 
     #[should_panic]
@@ -124,9 +123,9 @@ test_suite! {
         let wbuf0 = wbuf.slice_to(5120);
         let wbuf1 = wbuf.slice_from(5120);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        Runtime::new().unwrap().block_on(async {
             let size = vdev.val.0.size() - 1;
-            vdev.val.0.writev_at(wbufs, size)
-        })).unwrap();
+            vdev.val.0.writev_at(wbufs, size).await
+        }).unwrap();
     }
 }
