@@ -953,13 +953,11 @@ test_suite! {
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        let r = runtime::Runtime::new().unwrap().block_on(async {
+        runtime::Runtime::new().unwrap().block_on(async {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
-            future::join(f0, f1).await
-        });
-        r.0.unwrap();
-        r.1.unwrap();
+            future::try_join(f0, f1).await
+        }).unwrap();
     }
 
     // Issueing an operation fails with EAGAIN, when the queue depth is 1.  This
@@ -1339,13 +1337,11 @@ test_suite! {
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        let r = runtime::Runtime::new().unwrap().block_on(async {
+        runtime::Runtime::new().unwrap().block_on(async {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
-            future::join(f0, f1).await
-        });
-        r.0.unwrap();
-        r.1.unwrap();
+            future::try_join(f0, f1).await
+        }).unwrap();
     }
 
     // Operations will be buffered after the max queue depth is reached
@@ -1388,7 +1384,7 @@ test_suite! {
         let wbuf = dbs.try_const().unwrap();
         let vdev = VdevBlock::new(leaf);
 
-        let all_results = runtime::Runtime::new().unwrap().block_on(async {
+        runtime::Runtime::new().unwrap().block_on(async {
             let mut ctx = noop_context();
             // First schedule all operations.  There are too many to issue them
             // all immediately
@@ -1401,7 +1397,7 @@ test_suite! {
                 fut
             }).collect::<Vec<_>>();
             let unbuf_fut = Box::pin(
-                future::join_all(early_futs.into_iter())
+                future::try_join_all(early_futs.into_iter())
             );
             let mut penultimate_fut = Box::pin(
                 vdev.write_at(wbuf.clone(), LbaT::from(num_ops))
@@ -1413,7 +1409,7 @@ test_suite! {
             );
             // Manually poll so the VdevBlockFut will get scheduled
             assert!(final_fut.as_mut().poll(&mut ctx).is_pending());
-            let fut = future::join3(unbuf_fut, penultimate_fut, final_fut);
+            let fut = future::try_join3(unbuf_fut, penultimate_fut, final_fut);
             {
                 // Verify that they weren't all issued
                 let inner = vdev.inner.write().unwrap();
@@ -1424,12 +1420,7 @@ test_suite! {
                 chan.send(()).unwrap();
             }
             fut.await
-        });
-        for result in all_results.0.into_iter() {
-            result.unwrap();
-        }
-        all_results.1.unwrap();
-        all_results.2.unwrap();
+        }).unwrap();
     }
 
     // Basic writing works

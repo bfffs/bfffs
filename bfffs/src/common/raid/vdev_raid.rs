@@ -9,7 +9,7 @@ use crate::{
     }
 };
 use divbuf::DivBufShared;
-use futures::{FutureExt, future};
+use futures::{TryFutureExt, future};
 use itertools::multizip;
 use std::{
     collections::BTreeMap,
@@ -239,13 +239,8 @@ macro_rules! issue_1stripe_ops {
                 $self.blockdevs[loc.disk as usize].$func(d, disk_lba)
             })
             .collect();
-            future::join_all(futs)
-                .map(|v| {
-                    for r in v {
-                        r.unwrap()
-                    }
-                    Ok(()) as Result<(), Error>
-                })
+            future::try_join_all(futs)
+            .map_ok(drop)
         }
     }
 }
@@ -400,17 +395,11 @@ impl VdevRaid {
                     Box::pin(future::ok(())) as BoxVdevFut
                 };
 
-                future::join(blockdev.open_zone(first_disk_lba), zero_fut)
+                future::try_join(blockdev.open_zone(first_disk_lba), zero_fut)
             }).collect();
 
         Box::pin(
-            future::join_all(futs).map(|v| {
-                for (or, zr) in v {
-                    or.unwrap();
-                    zr.unwrap();
-                }
-                Ok(())
-            })
+            future::try_join_all(futs).map_ok(drop)
         )
     }
 
@@ -481,16 +470,11 @@ impl VdevRaid {
                 Box::pin(blockdev.readv_at(sglist, lba)) as BoxVdevFut
             )
         );
-        let fut = future::join_all(futs);
+        let fut = future::try_join_all(futs);
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::pin(fut.map(|v| {
-            for r in v {
-                r.unwrap()
-            }
-            Ok(())
-        }))
+        Box::pin(fut.map_ok(drop))
     }
 
     /// Read a (possibly improper) subset of one stripe
@@ -595,16 +579,11 @@ impl VdevRaid {
             .filter(|&(_, _, lba)| lba != SENTINEL)
             .map(|(blockdev, sglist, lba)| blockdev.writev_at(sglist, lba))
             .collect::<Vec<_>>();
-        let fut = future::join_all(futs);
+        let fut = future::try_join_all(futs);
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::pin(fut.map(|v| {
-            for r in v {
-                r.unwrap()
-            }
-            Ok(())
-        }))
+        Box::pin(fut.map_ok(drop))
     }
 
     /// Write exactly one stripe
@@ -641,11 +620,10 @@ impl VdevRaid {
         // TODO: on error, some futures get cancelled.  Figure out how to clean
         // them up.
         // TODO: on error, record error statistics, and possibly fault a drive.
-        Box::pin(future::join(data_fut, parity_fut).map(|(dr, pr)| {
-            dr.unwrap();
-            pr.unwrap();
-            Ok(())
-        }))
+        Box::pin(
+            future::try_join(data_fut, parity_fut)
+            .map_ok(drop)
+        )
     }
 
     /// Write exactly one stripe, with SGLists.
@@ -693,12 +671,8 @@ impl VdevRaid {
         let parity_fut = issue_1stripe_ops!(self, pw, lba, true, write_at);
         // TODO: on error, record error statistics, and possibly fault a drive.
         Box::pin(
-            future::join(data_fut, parity_fut)
-            .map(|(rd, rp)| {
-                rd.unwrap();
-                rp.unwrap();
-                Ok(())
-            })
+            future::try_join(data_fut, parity_fut)
+            .map_ok(drop)
         )
     }
 }
@@ -750,17 +724,12 @@ impl Vdev for VdevRaid {
                 assert!(sb.is_empty(), "Must call flush_zone before sync_all");
             }
         }
+        // TODO: handle errors on some devices
         Box::pin(
-            future::join_all(
+            future::try_join_all(
                 self.blockdevs.iter()
                 .map(|bd| bd.sync_all())
-            ).map(|v| {
-                // TODO: handle errors on some devices
-                for r in v {
-                    r.unwrap();
-                }
-                Ok(())
-            })
+            ).map_ok(drop)
         )
     }
 
@@ -858,12 +827,7 @@ impl VdevRaidApi for VdevRaid {
             blockdev.erase_zone(start, end - 1)
         }).collect();
         Box::pin(
-            future::join_all(futs).map(|v| {
-                for r in v {
-                    r.unwrap();
-                }
-                Ok(())
-            })
+            future::try_join_all(futs).map_ok(drop)
         )
     }
 
@@ -894,13 +858,9 @@ impl VdevRaidApi for VdevRaid {
             assert!(sbs.remove(&zone).is_some());
             sbfut
         };
-        Box::pin(future::join(sbfut, future::join_all(futs)).map(|(sbr, bdr)| {
-            sbr.unwrap();
-            for r in bdr {
-                r.unwrap()
-            }
-            Ok(())
-        }))
+        Box::pin(future::try_join(sbfut, future::try_join_all(futs))
+            .map_ok(drop)
+        )
     }
 
     fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut) {
@@ -1070,12 +1030,7 @@ impl VdevRaidApi for VdevRaid {
                 });
             }
         }
-        let fut = future::join_all(futs).map(|v| {
-            for r in v {
-                r.unwrap()
-            }
-            Ok(())
-        });
+        let fut = future::try_join_all(futs).map_ok(drop);
         Box::pin(fut)
     }
 
@@ -1094,13 +1049,12 @@ impl VdevRaidApi for VdevRaid {
         let label = super::Label::Raid(raid_label);
         labeller.serialize(&label).unwrap();
         let futs = self.blockdevs.iter().map(|bd| {
-            bd.write_label(labeller.clone())
+           bd.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        let v = future::join_all(futs).await;
-        for r in v {
-            r.unwrap()
-        }
-        Ok(())
+        future::try_join_all(futs)
+        .map_ok(drop)
+        .await
+        //(Box::pin(fut) as BoxVdevFut).await
     }
 
     // Allow &Vec arguments so we can clone them.
@@ -1111,11 +1065,9 @@ impl VdevRaidApi for VdevRaid {
         let futs = self.blockdevs.iter().map(|bd| {
             bd.write_spacemap(sglist.clone(), idx, block)
         }).collect::<Vec<_>>();
-        let v = future::join_all(futs).await;
-        for r in v {
-            r.unwrap();
-        }
-        Ok(())
+        future::try_join_all(futs)
+        .map_ok(drop)
+        .await
     }
 
 }
@@ -1284,7 +1236,7 @@ fn stripe_buffer_two_iovecs_overflow() {
 mod t {
 
 use super::*;
-use futures::future;
+use futures::{FutureExt, future};
 use galvanic_test::*;
 use mockall::predicate::*;
 

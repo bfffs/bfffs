@@ -202,12 +202,7 @@ impl<'a> FreeSpaceMap {
         }
         assert_eq!(zid, zones);
         fsm.clear_dirty_zones();
-        let fut = future::join_all(oz_futs).map(|v| {
-            for r in v {
-                r.unwrap();
-            }
-            Ok((fsm, vdev))
-        });
+        let fut = future::try_join_all(oz_futs).map(|_| Ok((fsm, vdev)));
         Ok(Box::pin(fut))
     }
 
@@ -779,16 +774,9 @@ impl Cluster {
             };
             vdev2.write_spacemap(sglist, idx, block)
         }).collect::<Vec<_>>();
-        let fut = future::join(future::join_all(flush_futs), future::join_all(sm_futs))
-        .map(|(fv, sv)| {
-            for r in fv {
-                r.unwrap();
-            }
-            for r in sv {
-                r.unwrap();
-            }
-            Ok(())
-        });
+        let fut = future::try_join(future::try_join_all(flush_futs),
+                                   future::try_join_all(sm_futs))
+        .map_ok(drop);
         fsm.clear_dirty_zones();
         fut.await
     }
@@ -913,14 +901,8 @@ impl Cluster {
                 wfut
             });
             let fut = Box::pin(
-                future::join(future::join_all(finish_futs), owfut)
-                .map(|(v, or)| {
-                    for r in v {
-                        r.unwrap();
-                    }
-                    or.unwrap();
-                    Ok(())
-                })
+                future::try_join(future::try_join_all(finish_futs), owfut)
+                .map(|_| Ok(()))
             ) as BoxVdevFut;
             (lba, fut)
         }).ok_or(Error::ENOSPC)
