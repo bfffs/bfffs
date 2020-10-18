@@ -22,7 +22,7 @@ use std::{
 };
 use uuid;
 
-//pub mod cache;
+pub mod cache;
 //pub mod cleaner;
 pub mod cluster;
 //pub mod database;
