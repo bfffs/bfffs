@@ -747,7 +747,7 @@ impl Cluster {
     /// Flush all data and metadata to disk, but don't sync yet.  This should
     /// normally be called just before [`sync_all`](#method.sync_all).  `idx` is
     /// the index of the label that is about to be written.
-    pub fn flush(&self, idx: u32) -> impl Future<Output=Result<(), Error>>
+    pub fn flush(&self, idx: u32) -> BoxVdevFut
     {
         let mut fsm = self.fsm.write().unwrap();
         let vdev2 = self.vdev.clone();
@@ -1431,7 +1431,7 @@ mod cluster {
                 sglist.iter().map(DivBuf::len).sum::<usize>() == 4096 &&
                 *idx == 0 &&
                 *block == 0
-            ).return_const(Ok(()));
+            ).return_once(|_, _, _| Box::pin(future::ok(())));
         vr.expect_sync_all()
             .once()
             .in_sequence(&mut seq)

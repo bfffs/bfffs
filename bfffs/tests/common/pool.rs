@@ -10,7 +10,7 @@ test_suite! {
     use bfffs::common::cluster;
     use bfffs::common::label::*;
     use bfffs::common::pool::*;
-    use futures::{Future, future};
+    use futures::{TryFutureExt, future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
@@ -19,7 +19,7 @@ test_suite! {
         num::NonZeroU64
     };
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::current_thread::Runtime;
+    use tokio::runtime::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -53,17 +53,17 @@ test_suite! {
                 fname
             }).collect::<Vec<_>>();
             let mut rt = Runtime::new().unwrap();
-            let pool = rt.block_on(future::lazy(|| {
+            let pool = rt.block_on(async {
                 let clusters = paths.iter().map(|p| {
                     let cs = NonZeroU64::new(1);
                     Pool::create_cluster(cs, 1, None, 0, &[p][..])
                 }).collect::<Vec<_>>();
-                future::join_all(clusters)
+                future::try_join_all(clusters)
                     .map_err(|_| unreachable!())
                     .and_then(|clusters|
                         Pool::create("TestPool".to_string(), clusters)
-                    )
-            })).unwrap();
+                    ).await
+            }).unwrap();
             (rt, pool, tempdir, paths)
         }
     });
@@ -73,44 +73,44 @@ test_suite! {
         let (mut rt, old_pool, _tempdir, paths) = objects.val;
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
-        rt.block_on(future::lazy(|| {
+        rt.block_on(async {
             let label_writer = LabelWriter::new(0);
-            old_pool.flush(0)
-            .join(old_pool.write_label(label_writer))
-        })).unwrap();
+            future::try_join(old_pool.flush(0),
+                             old_pool.write_label(label_writer)).await
+        }).unwrap();
         drop(old_pool);
-        let (pool, _label_reader) = rt.block_on(future::lazy(|| {
+        let (pool, _label_reader) = rt.block_on(async {
             let c0_fut = VdevFile::open(paths[0].clone())
                 .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
                     let (vr, lr) = raid::open(None, vec![(block, reader)]);
                     cluster::Cluster::open(vr)
-                    .map(move |cluster| (cluster, lr))
+                    .map_ok(move |cluster| (cluster, lr))
             });
             let c1_fut = VdevFile::open(paths[1].clone())
                 .and_then(|(leaf, reader)| {
                     let block = VdevBlock::new(leaf);
                     let (vr, lr) = raid::open(None, vec![(block, reader)]);
                     cluster::Cluster::open(vr)
-                    .map(move |cluster| (cluster, lr))
+                    .map_ok(move |cluster| (cluster, lr))
             });
-            c0_fut.join(c1_fut)
+            future::try_join(c0_fut, c1_fut)
                 .and_then(move |((c0, c0r), (c1,c1r))| {
                     let proxy0 = ClusterProxy::new(c0);
                     let proxy1 = ClusterProxy::new(c1);
                     Pool::open(Some(uuid), vec![(proxy0, c0r), (proxy1,c1r)])
-                })
-        })).unwrap();
+                }).await
+        }).unwrap();
         assert_eq!(name, pool.name());
         assert_eq!(uuid, pool.uuid());
     }
 
     test write_label(objects()) {
         let (mut rt, old_pool, _tempdir, paths) = objects.val;
-        rt.block_on(future::lazy(|| {
+        rt.block_on(async {
             let label_writer = LabelWriter::new(0);
-            old_pool.write_label(label_writer)
-        })).unwrap();
+            old_pool.write_label(label_writer).await
+        }).unwrap();
         for path in paths {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];

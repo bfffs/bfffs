@@ -77,7 +77,9 @@ impl ClusterServer {
     fn run(cs: Arc<ClusterServer>, rx: mpsc::UnboundedReceiver<Rpc>) {
         let fut = async move {
             // In Futures 0.2, use try_for_each_concurrent instead
-            rx.map(|r| Ok(r)).try_for_each(move |rpc| cs.dispatch(rpc))
+            rx.map(|r| Ok(r))
+                .try_for_each(move |rpc| cs.dispatch(rpc))
+                .await
             // If we get here, the ClusterProxy was dropped
         };
         tokio::spawn(fut);
@@ -772,22 +774,22 @@ mod label {
 mod pool {
     use super::super::*;
     use divbuf::DivBufShared;
-    use futures::{IntoFuture, future};
+    use futures::future;
     use mockall::predicate::*;
     use pretty_assertions::assert_eq;
-    use tokio::runtime::current_thread;
+    use tokio::runtime::Runtime;
 
     // pet kcov
     #[test]
     fn debug() {
         let mut c = Cluster::default();
         c.expect_uuid().return_const(Uuid::new_v4());
-        let mut rt = current_thread::Runtime::new().unwrap();
-        rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        rt.block_on(async {
             let cluster_proxy = ClusterProxy::new(c);
             format!("{:?}", cluster_proxy);
-            future::ok::<(), ()>(())
-        })).unwrap();
+            future::ready(()).await
+        });
     }
 
     #[test]
@@ -821,14 +823,14 @@ mod pool {
             c.expect_uuid().return_const(Uuid::new_v4());
             c
         };
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async {
             let clusters = vec![
                 ClusterProxy::new(cluster()),
                 ClusterProxy::new(cluster())
             ];
-            Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
-        })).unwrap();
+            Pool::new("foo".to_string(), Uuid::new_v4(), clusters).await
+        }).unwrap();
 
         let r0 = rt.block_on(pool.find_closed_zone(0, 0)).unwrap();
         assert_eq!(r0.0, Some(ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5,
@@ -873,16 +875,16 @@ mod pool {
         c1.expect_free()
             .with(eq(12345), eq(16))
             .once()
-            .return_once(|_, _| Box::new(Ok(()).into_future()));
+            .return_once(|_, _| Box::pin(future::ok(())));
 
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async {
             let clusters = vec![
                 ClusterProxy::new(c0),
                 ClusterProxy::new(c1)
             ];
-            Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
-        })).unwrap();
+            Pool::new("foo".to_string(), Uuid::new_v4(), clusters).await
+        }).unwrap();
 
         assert!(rt.block_on(pool.free(PBA::new(1, 12345), 16)).is_ok());
     }
@@ -901,14 +903,14 @@ mod pool {
             c
         };
 
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async {
             let clusters = vec![
                 ClusterProxy::new(cluster()),
                 ClusterProxy::new(cluster())
             ];
-            Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
-        })).unwrap();
+            Pool::new("foo".to_string(), Uuid::new_v4(), clusters).await
+        }).unwrap();
         assert_eq!(pool.stats.allocated_space[0].load(Ordering::Relaxed), 500);
         assert_eq!(pool.stats.allocated_space[1].load(Ordering::Relaxed), 500);
         assert_eq!(pool.stats.optimum_queue_depth[0], 10.0);
@@ -929,16 +931,16 @@ mod pool {
             .once()
             .returning(|mut iovec, _lba| {
                 iovec.copy_from_slice(&vec![99; 4096][..]);
-                Box::new( future::ok::<(), Error>(()))
+                Box::pin(future::ok(()))
             });
 
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(move || {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async move {
             let clusters = vec![
                 ClusterProxy::new(cluster),
             ];
-            Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
-        })).unwrap();
+            Pool::new("foo".to_string(), Uuid::new_v4(), clusters).await
+        }).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let dbm0 = dbs.try_mut().unwrap();
@@ -959,15 +961,15 @@ mod pool {
         cluster.expect_uuid().return_const(Uuid::new_v4());
         cluster.expect_read()
             .once()
-            .return_once(move |_, _| Box::new(Err(e).into_future()));
+            .return_once(move |_, _| Box::pin(future::err(e)));
 
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(move || {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async move {
             let clusters = vec![
                 ClusterProxy::new(cluster),
             ];
-            Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
-        })).unwrap();
+            Pool::new("foo".to_string(), Uuid::new_v4(), clusters).await
+        }).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let dbm0 = dbs.try_mut().unwrap();
@@ -986,18 +988,18 @@ mod pool {
             c.expect_uuid().return_const(Uuid::new_v4());
             c.expect_sync_all()
                 .once()
-                .return_once(|| Box::new(future::ok::<(), Error>(())));
+                .return_once(|| Box::pin(future::ok(())));
             c
         };
 
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async {
             let clusters = vec![
                 ClusterProxy::new(cluster()),
                 ClusterProxy::new(cluster())
             ];
-            Pool::new("foo".to_string(), Uuid::new_v4(), clusters)
-        })).unwrap();
+            Pool::new("foo".to_string(), Uuid::new_v4(), clusters).await
+        }).unwrap();
 
         assert!(rt.block_on(pool.sync_all()).is_ok());
     }
@@ -1013,13 +1015,13 @@ mod pool {
                 .withf(|buf, txg| {
                     buf.len() == BYTES_PER_LBA && *txg == TxgT::from(42)
                 }).once()
-                .return_once(|_, _| Ok((0, Box::new(future::ok::<(), Error>(())))));
+                .return_once(|_, _| Ok((0, Box::pin(future::ok(())))));
 
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async {
             Pool::new("foo".to_string(), Uuid::new_v4(),
-                      vec![ClusterProxy::new(cluster)])
-        })).unwrap();
+                      vec![ClusterProxy::new(cluster)]).await
+        }).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1037,13 +1039,13 @@ mod pool {
             cluster.expect_uuid().return_const(Uuid::new_v4());
             cluster.expect_write()
                 .once()
-                .return_once(move |_, _| Ok((0, Box::new(Err(e).into_future()))));
+                .return_once(move |_, _| Ok((0, Box::pin(future::err(e)))));
 
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async {
             Pool::new("foo".to_string(), Uuid::new_v4(),
-                      vec![ClusterProxy::new(cluster)])
-        })).unwrap();
+                      vec![ClusterProxy::new(cluster)]).await
+        }).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1063,11 +1065,11 @@ mod pool {
                 .once()
                 .return_once(move |_, _| Err(e));
 
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async {
             Pool::new("foo".to_string(), Uuid::new_v4(),
-                      vec![ClusterProxy::new(cluster)])
-        })).unwrap();
+                      vec![ClusterProxy::new(cluster)]).await
+        }).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1085,16 +1087,16 @@ mod pool {
         cluster.expect_uuid().return_const(Uuid::new_v4());
         cluster.expect_write()
             .once()
-            .return_once(|_, _| Ok((0, Box::new(future::ok::<(), Error>(())))));
+            .return_once(|_, _| Ok((0, Box::pin(future::ok(())))));
         cluster.expect_free()
             .once()
-            .return_once(|_, _| Box::new(Ok(()).into_future()));
+            .return_once(|_, _| Box::pin(future::ok(())));
 
-        let mut rt = current_thread::Runtime::new().unwrap();
-        let pool = rt.block_on(future::lazy(|| {
+        let mut rt = Runtime::new().unwrap();
+        let pool = rt.block_on(async {
             Pool::new("foo".to_string(), Uuid::new_v4(),
-                      vec![ClusterProxy::new(cluster)])
-        })).unwrap();
+                      vec![ClusterProxy::new(cluster)]).await
+        }).unwrap();
 
         let dbs = DivBufShared::from(vec![0u8; 1024]);
         let db0 = dbs.try_const().unwrap();

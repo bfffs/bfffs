@@ -5,7 +5,7 @@ mod cluster;
 //mod ddml;
 //mod fs;
 //mod idml;
-//mod pool;
+mod pool;
 mod raid;
 mod vdev_block;
 mod vdev_file;
