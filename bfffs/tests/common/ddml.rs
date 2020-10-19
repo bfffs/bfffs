@@ -11,7 +11,7 @@ test_suite! {
         TxgT
     };
     use divbuf::{DivBuf, DivBufShared};
-    use futures::{Future, future};
+    use futures::{TryFutureExt, future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
@@ -22,7 +22,7 @@ test_suite! {
         sync::{Arc, Mutex}
     };
     use tempfile::Builder;
-    use tokio::runtime::current_thread::Runtime;
+    use tokio::runtime::Runtime;
 
     fixture!( objects() -> (Runtime, DDML) {
         setup(&mut self) {
@@ -32,17 +32,17 @@ test_suite! {
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
             let mut rt = Runtime::new().unwrap();
-            let pool = rt.block_on(future::lazy(|| {
+            let pool = rt.block_on(async {
                 let cs = NonZeroU64::new(1);
                 let clusters = vec![
                     Pool::create_cluster(cs, 1, None, 0, &[filename][..])
                 ];
-                future::join_all(clusters)
+                future::try_join_all(clusters)
                     .map_err(|_| unreachable!())
                     .and_then(|clusters|
                         Pool::create("TestPool".to_string(), clusters)
-                    )
-            })).unwrap();
+                    ).await
+            }).unwrap();
             let cache = Cache::with_capacity(1_000_000_000);
             (rt, DDML::new(pool, Arc::new(Mutex::new(cache))))
         }
@@ -52,16 +52,16 @@ test_suite! {
         let (mut rt, ddml) = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let ddml2 = &ddml;
-        rt.block_on(future::lazy(|| {
+        rt.block_on(async {
             ddml.put(dbs, Compression::None, TxgT::from(0))
             .and_then(move |drp| {
                 let drp2 = &drp;
                 ddml2.get::<DivBufShared, DivBuf>(drp2)
-                .map(|db: Box<DivBuf>| {
+                .map_ok(|db: Box<DivBuf>| {
                     assert_eq!(&db[..], &vec![42u8; 4096][..]);
                 }).and_then(move |_| {
                     ddml2.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
-                }).map(|dbs: Box<DivBufShared>| {
+                }).map_ok(|dbs: Box<DivBufShared>| {
                     assert_eq!(&dbs.try_const().unwrap()[..],
                                &vec![42u8; 4096][..]);
                 }).and_then(move |_| {
@@ -69,10 +69,10 @@ test_suite! {
                     // should still be on disk
                     ddml2.get::<DivBufShared, DivBuf>(&drp)
                 })
-            }).map(|db: Box<DivBuf>| {
+            }).map_ok(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 4096][..]);
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 
     // Round trip some compressible data.  Use the contents of vdev_raid.rs, a
@@ -90,27 +90,27 @@ test_suite! {
         let mut vdev_raid_contents = Vec::new();
         file.read_to_end(&mut vdev_raid_contents).unwrap();
         let dbs = DivBufShared::from(vdev_raid_contents.clone());
-        rt.block_on(future::lazy(|| {
+        rt.block_on(async {
             ddml.put(dbs, Compression::Zstd(None), txg)
             .and_then(|drp| {
                 let drp2 = &drp;
                 ddml2.get::<DivBufShared, DivBuf>(drp2)
-                .map(|db: Box<DivBuf>| {
+                .map_ok(|db: Box<DivBuf>| {
                     assert_eq!(&db[..], &vdev_raid_contents[..]);
                 }).and_then(move |_| {
                     ddml2.pop::<DivBufShared, DivBuf>(&drp, txg)
-                }).map(|dbs: Box<DivBufShared>| {
+                }).map_ok(|dbs: Box<DivBufShared>| {
                     assert_eq!(&dbs.try_const().unwrap()[..],
                                &vdev_raid_contents[..]);
                 }).and_then(move |_| {
                     // Even though the record has been removed from cache, it
                     // should still be on disk
                     ddml2.get::<DivBufShared, DivBuf>(&drp)
-                }).map(|db: Box<DivBuf>| {
+                }).map_ok(|db: Box<DivBuf>| {
                     assert_eq!(&db[..], &vdev_raid_contents[..]);
                 })
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 
     // Records of less than an LBA should be padded up.
@@ -118,16 +118,16 @@ test_suite! {
         let (mut rt, ddml) = objects.val;
         let ddml2 = &ddml;
         let dbs = DivBufShared::from(vec![42u8; 1024]);
-        rt.block_on(future::lazy(|| {
+        rt.block_on(async {
             ddml.put(dbs, Compression::None, TxgT::from(0))
             .and_then(move |drp| {
                 let drp2 = &drp;
                 ddml2.get::<DivBufShared, DivBuf>(drp2)
-                .map(|db: Box<DivBuf>| {
+                .map_ok(|db: Box<DivBuf>| {
                     assert_eq!(&db[..], &vec![42u8; 1024][..]);
                 }).and_then(move |_| {
                     ddml2.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
-                }).map(|dbs: Box<DivBufShared>| {
+                }).map_ok(|dbs: Box<DivBufShared>| {
                     assert_eq!(&dbs.try_const().unwrap()[..],
                                &vec![42u8; 1024][..]);
                 }).and_then(move |_| {
@@ -135,9 +135,9 @@ test_suite! {
                     // should still be on disk
                     ddml2.get::<DivBufShared, DivBuf>(&drp)
                 })
-            }).map(|db: Box<DivBuf>| {
+            }).map_ok(|db: Box<DivBuf>| {
                 assert_eq!(&db[..], &vec![42u8; 1024][..]);
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 }

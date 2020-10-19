@@ -1,7 +1,7 @@
 // vim: tw=80
 
 use crate::{
-    common::{*, label::*}
+    common::{*, label::*, vdev::*}
 };
 use futures::{
     Future,
@@ -240,12 +240,12 @@ impl ClusterProxy {
     }
 
     fn find_closed_zone(&self, zid: ZoneT)
-        -> impl Future<Output=Result<Option<cluster::ClosedZone>, Error>>
+        -> Pin<Box<dyn Future<Output=Result<Option<cluster::ClosedZone>, Error>> + Send>>
     {
         let (tx, rx) = oneshot::channel::<Option<cluster::ClosedZone>>();
         let rpc = Rpc::FindClosedZone(zid, tx);
         self.server.unbounded_send(rpc).unwrap();
-        rx.map_err(|_| Error::EPIPE)
+        Box::pin(rx.map_err(|_| Error::EPIPE))
     }
 
     fn optimum_queue_depth(&self) -> impl Future<Output=Result<u32, Error>> {
@@ -533,12 +533,13 @@ impl Pool {
         Pool::new(name, Uuid::new_v4(), clusters)
     }
 
-    pub fn flush(&self, idx: u32) -> impl Future<Output=Result<(), Error>> + Send {
-        future::try_join_all(
+    pub fn flush(&self, idx: u32) -> BoxVdevFut {
+        let fut = future::try_join_all(
             self.clusters.iter()
             .map(|cp| cp.flush(idx))
             .collect::<Vec<_>>()
-        ).map_ok(drop)
+        ).map_ok(drop);
+        Box::pin(fut)
     }
 
     /// Mark `length` LBAs beginning at PBA `pba` as unused, but do not delete
@@ -549,12 +550,11 @@ impl Pool {
     // Before deleting the underlying storage, BFFFS should double-check that
     // nothing is using it.  That requires using the AllocationTable, which is
     // above the layer of the Pool.
-    pub fn free(&self, pba: PBA, length: LbaT)
-        -> impl Future<Output=Result<(), Error>> + Send
+    pub fn free(&self, pba: PBA, length: LbaT) -> BoxVdevFut
     {
         let idx = pba.cluster as usize;
         self.stats.allocated_space[idx].fetch_sub(length, Ordering::Relaxed);
-        self.clusters[pba.cluster as usize].free(pba.lba, length)
+        Box::pin(self.clusters[pba.cluster as usize].free(pba.lba, length))
     }
 
     /// Construct a new `Pool` from some already constructed
@@ -607,12 +607,15 @@ impl Pool {
     /// * `(None, None)`       - No more closed zones in this pool.
     #[allow(clippy::collapsible_if)]
     pub fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
-        -> impl Future<Output=Result<(Option<ClosedZone>,
-                                      Option<(ClusterT, ZoneT)>),
-                       Error>> + Send
+        -> Pin<Box<
+            dyn Future<
+                Output=Result<(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
+                              Error>
+            > + Send
+        >>
     {
         let nclusters = self.clusters.len() as ClusterT;
-        self.clusters[clust as usize].find_closed_zone(zid)
+        let fut = self.clusters[clust as usize].find_closed_zone(zid)
             .map_ok(move |r| {
                 if let Some(cclz) = r {
                     // convert cluster::ClosedZone to pool::ClosedZone
@@ -633,7 +636,8 @@ impl Pool {
                         (None, None)
                     }
                 }
-            })
+            });
+        Box::pin(fut)
     }
 
     /// Return the `Pool`'s name.
@@ -677,17 +681,17 @@ impl Pool {
     }
 
     /// Asynchronously read from the pool
-    pub fn read(&self, buf: IoVecMut, pba: PBA)
-        -> impl Future<Output=Result<(), Error>> + Send
+    pub fn read(&self, buf: IoVecMut, pba: PBA) -> BoxVdevFut
     {
         let cidx = pba.cluster as usize;
         self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
         let stats2 = self.stats.clone();
-        self.clusters[pba.cluster as usize].read(buf, pba.lba)
+        let fut = self.clusters[pba.cluster as usize].read(buf, pba.lba)
             .map(move |r| {
                 stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
                 r
-            })
+            });
+        Box::pin(fut)
     }
 
     /// Shutdown all background tasks.
@@ -704,12 +708,13 @@ impl Pool {
 
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&self) -> impl Future<Output=Result<(), Error>> + Send {
-        future::try_join_all(
+    pub fn sync_all(&self) -> BoxVdevFut {
+        let fut = future::try_join_all(
             self.clusters.iter()
             .map(ClusterProxy::sync_all)
             .collect::<Vec<_>>()
-        ).map_ok(drop)
+        ).map_ok(drop);
+        Box::pin(fut)
     }
 
     /// Return the `Pool`'s UUID.
@@ -723,7 +728,7 @@ impl Pool {
     ///
     /// The `PBA` where the data was written
     pub fn write(&self, buf: IoVec, txg: TxgT)
-        -> impl Future<Output=Result<PBA, Error>> + Send
+        -> Pin<Box<dyn Future<Output=Result<PBA, Error>> + Send>>
     {
         let cluster = self.stats.choose_cluster();
         let cidx = cluster as usize;
@@ -731,12 +736,11 @@ impl Pool {
         let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
         let stats2 = self.stats.clone();
         let cpfut = self.clusters[cidx].write(buf, txg);
-        Write::new(cpfut, stats2, cidx, space, cluster)
+        Box::pin(Write::new(cpfut, stats2, cidx, space, cluster))
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
-    pub fn write_label(&self, mut labeller: LabelWriter)
-        -> impl Future<Output=Result<(), Error>> + Send
+    pub fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
     {
         let cluster_uuids = self.clusters.iter().map(ClusterProxy::uuid)
             .collect::<Vec<_>>();
@@ -749,7 +753,7 @@ impl Pool {
         let futs = self.clusters.iter().map(|cluster| {
             cluster.write_label(labeller.clone())
         }).collect::<Vec<_>>();
-        future::try_join_all(futs).map_ok(drop)
+        Box::pin(future::try_join_all(futs).map_ok(drop))
     }
 }
 
