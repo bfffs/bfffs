@@ -16,18 +16,18 @@ pub(super) use self::node::Node;
 
 pub use self::node::{Addr, Key, MinValue, Value};
 
-pub(super) mod tree;
+//pub(super) mod tree;
 
-cfg_if! {
-    if #[cfg(test)]{
-        mod tree_mock;
-        pub use self::tree::MockRangeQuery as RangeQuery;
-        pub use self::tree_mock::MockTree as Tree;
-    } else {
-        pub use self::tree::RangeQuery;
-        pub use self::tree::Tree;
-    }
-}
+//cfg_if! {
+    //if #[cfg(test)]{
+        //mod tree_mock;
+        //pub use self::tree::MockRangeQuery as RangeQuery;
+        //pub use self::tree_mock::MockTree as Tree;
+    //} else {
+        //pub use self::tree::RangeQuery;
+        //pub use self::tree::Tree;
+    //}
+//}
 
 /// A version of `Inner` that is serializable
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -37,7 +37,7 @@ pub mod label;
 pub mod pool;
 //pub mod property;
 pub mod raid;
-//pub mod tree;
+pub mod tree;
 pub mod vdev;
 pub mod vdev_block;
 pub mod vdev_file;
