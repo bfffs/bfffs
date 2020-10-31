@@ -2,7 +2,7 @@
 // LCOV_EXCL_START
 
 use crate::common::ddml::*;
-use futures::{future::IntoFuture, future};
+use futures::future;
 use mockall::predicate::*;
 use pretty_assertions::assert_eq;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -65,26 +65,26 @@ fn basic() {
     type T = Arc<Node<DRP, u32, f32>>;
     mock.expect_get::<T, T>()
         .with(eq(drpi1))
-        .returning(move |_| Box::new(future::ok(Box::new(in1.clone()))));
+        .returning(move |_| Box::pin(future::ok(Box::new(in1.clone()))));
     mock.expect_get::<T, T>()
         .with(eq(drpi2))
-        .returning(move |_| Box::new(future::ok(Box::new(in2.clone()))));
+        .returning(move |_| Box::pin(future::ok(Box::new(in2.clone()))));
     mock.expect_pop::<T, T>()
         .once()
         .with(eq(drpl3), always())
-        .return_once(move |_, _| Box::new(future::ok(Box::new(ln3))));
+        .return_once(move |_, _| Box::pin(future::ok(Box::new(ln3))));
     mock.expect_pop::<T, T>()
         .once()
         .with(eq(drpi1), always())
-        .return_once(move |_, _| Box::new(future::ok(Box::new(in1_c))));
+        .return_once(move |_, _| Box::pin(future::ok(Box::new(in1_c))));
     mock.expect_pop::<T, T>()
         .once()
         .with(eq(drpi2), always())
-        .return_once(move |_, _| Box::new(future::ok(Box::new(in2_c))));
+        .return_once(move |_, _| Box::pin(future::ok(Box::new(in2_c))));
     mock.expect_pop::<T, T>()
         .once()
         .with(eq(drpl8), always())
-        .return_once(move |_, _| Box::new(future::ok(Box::new(ln8))));
+        .return_once(move |_, _| Box::pin(future::ok(Box::new(ln8))));
     let next_lba = AtomicU64::new(0);
     mock.expect_put::<Arc<Node<DRP, u32, f32>>>()
         .times(3)
@@ -92,7 +92,7 @@ fn basic() {
         .returning(move |_cacheable, compression, _txg| {
             let lba = next_lba.fetch_add(1, Ordering::Relaxed);
             let drp = DRP::new(PBA{cluster: 1, lba}, compression, 0, 0, 0);
-            Box::new(Ok(drp).into_future())
+            Box::pin(future::ok(drp))
         });
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDML, u32, f32> = Tree::from_str(ddml, false, r#"
@@ -201,7 +201,9 @@ root:
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
     let txgs = TxgT::from(20)..TxgT::from(30);
-    tree.clean_zone(start..end, txgs, TxgT::from(42)).wait().unwrap();
+    tree.clean_zone(start..end, txgs, TxgT::from(42))
+    .now_or_never().unwrap()
+    .unwrap();
     let clean_tree = format!("{}", tree);
     assert_eq!(clean_tree,
 r#"---
@@ -354,20 +356,20 @@ fn dirty_root() {
     mock.expect_get::<T, T>()
         .with(eq(drpir))
         .returning(move |_| {
-            Box::new(future::ok(Box::new(inr.clone())))
+            Box::pin(future::ok(Box::new(inr.clone())))
         });
     mock.expect_pop::<T, T>()
         .once()
         .with(eq(drpir), eq(TxgT::from(42)))
         .return_once(move |_, _| {
-            Box::new(future::ok(Box::new(inr_c)))
+            Box::pin(future::ok(Box::new(inr_c)))
         });
     mock.expect_put::<T>()
         .once()
         .with(always(), always(), eq(TxgT::from(42)))
         .returning(move |_cacheable, _compression, _txg| {
             let drp = DRP::random(Compression::None, 1024);
-            Box::new(Ok(drp).into_future())
+            Box::pin(future::ok(drp))
         });
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDML, u32, f32> = Tree::from_str(ddml, false, r#"
@@ -398,6 +400,8 @@ root:
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
     let txgs = TxgT::from(1000)..TxgT::from(1001);  // XXX placeholder
-    tree.clean_zone(start..end, txgs, TxgT::from(42)).wait().unwrap();
+    tree.clean_zone(start..end, txgs, TxgT::from(42))
+    .now_or_never().unwrap()
+    .unwrap();
 }
 // LCOV_EXCL_STOP
