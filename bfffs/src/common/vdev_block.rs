@@ -764,24 +764,24 @@ impl Vdev for VdevBlock {
 #[cfg(test)]
 mock! {
     pub VdevBlock {
-        fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
+        pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
             where P: AsRef<Path> + 'static;
-        fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
-        fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
-        fn new(leaf: VdevLeaf) -> Self;
-        fn open<P: AsRef<Path> + 'static>(path: P) -> BoxVdevFut;
-        fn open_zone(&self, start: LbaT) -> BoxVdevFut;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
-        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
-        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
-        fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
-        fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
-        fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
+        pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
+        pub fn new(leaf: VdevLeaf) -> Self;
+        pub fn open<P: AsRef<Path> + 'static>(path: P) -> BoxVdevFut;
+        pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
+        pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
+        pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
+        pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+        pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             ->  BoxVdevFut;
-        fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut;
+        pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut;
     }
-    trait Vdev {
+    impl Vdev for VdevBlock {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
@@ -872,7 +872,7 @@ test_suite! {
 
     mock!{
         VdevFut {}
-        trait Future {
+        impl Future for VdevFut {
             type Output = Result<(), Error>;
             fn poll<'a>(self: Pin<&mut Self>, cx: &mut Context<'a>)
                 -> Poll<Result<(), Error>>;

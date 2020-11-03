@@ -131,7 +131,7 @@ pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
 #[cfg(test)]
 mock!{
     pub VdevRaid {}
-    trait Vdev {
+    impl Vdev for VdevRaid {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
@@ -141,7 +141,7 @@ mock!{
         fn zones(&self) -> ZoneT;
     }
     #[async_trait]
-    trait VdevRaidApi{
+    impl VdevRaidApi for VdevRaid {
         fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);

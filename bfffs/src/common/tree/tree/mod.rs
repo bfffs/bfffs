@@ -15,7 +15,7 @@ use futures::{
     task::{Context, Poll}
 };
 use futures_locks::*;
-//#[cfg(test)] use mockall::automock;
+#[cfg(test)] use mockall::automock;
 use serde::Serializer;
 use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
@@ -168,7 +168,7 @@ impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
     }
 }
 
-//#[cfg_attr(test, automock)]
+#[cfg_attr(test, automock)]
 impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A> + 'static,
@@ -178,7 +178,7 @@ impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
 {
     type Item = Result<(K, V), Error>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context)
+    fn poll_next<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
         -> Poll<Option<Self::Item>>
     {
         self.as_mut()

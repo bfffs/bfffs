@@ -525,25 +525,25 @@ impl<'a> Future for VdevFileLioFut<'a> {
 #[cfg(test)]
 mock!{
     pub VdevFile {
-        fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
+        pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
             where P: AsRef<Path> + 'static;
-        fn erase_zone(&self, lba: LbaT) -> BoxVdevFut;
-        fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
-        async fn open<P>(path: P) -> Result<(Self, LabelReader), Error>
+        pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut;
+        pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
+        pub async fn open<P>(path: P) -> Result<(Self, LabelReader), Error>
             where P: AsRef<Path> + 'static;
-        fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
-        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
-        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
-        fn spacemap_space(&self) -> LbaT;
-        fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
-        fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut;
-        fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
+        pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
+        pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
+        pub fn spacemap_space(&self) -> LbaT;
+        pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
+        pub fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut;
+        pub fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
             -> BoxVdevFut;
-        fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut;
+        pub fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut;
     }
-    trait Vdev {
+    impl Vdev for VdevFile {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;

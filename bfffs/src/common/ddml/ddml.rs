@@ -305,28 +305,28 @@ impl DML for DDML {
 #[cfg(test)]
 mock! {
     pub DDML {
-        fn allocated(&self) -> LbaT;
-        fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT);
-        fn delete_direct(&self, drp: &DRP, txg: TxgT) -> BoxVdevFut;
-        fn flush(&self, idx: u32) -> BoxVdevFut;
-        fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
-        fn get_direct<T: Cacheable>(&self, drp: &DRP)
+        pub fn allocated(&self) -> LbaT;
+        pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT);
+        pub fn delete_direct(&self, drp: &DRP, txg: TxgT) -> BoxVdevFut;
+        pub fn flush(&self, idx: u32) -> BoxVdevFut;
+        pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
+        pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
             -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
-        fn list_closed_zones(&self)
+        pub fn list_closed_zones(&self)
             -> Pin<Box<dyn Stream<Item=Result<ClosedZone, Error>> + Send>>;
-        fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
-        fn pop_direct<T: Cacheable>(&self, drp: &DRP)
+        pub fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
+        pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
             -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
-        fn put_direct<T: 'static>(&self, cacheref: &T, compression: Compression,
+        pub fn put_direct<T: 'static>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<DRP, Error>> + Send>>
             where T: borrow::Borrow<dyn CacheRef>;
-        fn shutdown(&self);
-        fn size(&self) -> LbaT;
-        fn write_label(&self, labeller: LabelWriter)
+        pub fn shutdown(&self);
+        pub fn size(&self) -> LbaT;
+        pub fn write_label(&self, labeller: LabelWriter)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
     }
-    trait DML {
+    impl DML for DDML {
         type Addr = DRP;
 
         fn delete(&self, addr: &DRP, txg: TxgT)
