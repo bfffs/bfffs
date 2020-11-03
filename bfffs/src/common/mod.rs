@@ -32,7 +32,7 @@ pub mod ddml;
 pub mod dml;
 //pub mod fs;
 //pub mod fs_tree;
-//pub mod idml;
+pub mod idml;
 pub mod label;
 pub mod pool;
 //pub mod property;
