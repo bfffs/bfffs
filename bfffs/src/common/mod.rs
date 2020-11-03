@@ -26,7 +26,7 @@ pub mod cache;
 //pub mod cleaner;
 pub mod cluster;
 //pub mod database;
-//pub mod dataset;
+pub mod dataset;
 pub mod ddml;
 //pub mod device_manager;
 pub mod dml;
