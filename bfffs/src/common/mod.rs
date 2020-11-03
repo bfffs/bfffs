@@ -35,7 +35,7 @@ pub mod dml;
 pub mod idml;
 pub mod label;
 pub mod pool;
-//pub mod property;
+pub mod property;
 pub mod raid;
 pub mod tree;
 pub mod vdev;
