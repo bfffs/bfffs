@@ -19,12 +19,12 @@ use super::*;
 
 mock! {
     pub ReadOnlyDataset<K: Key, V: Value> {
-        fn allocated(&self) -> LbaT;
-        fn last_key(&self)
+        pub fn allocated(&self) -> LbaT;
+        pub fn last_key(&self)
             -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>;
-        fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>)
+        pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>)
             -> ReadOnlyDataset<K, V>;
-        fn size(&self) -> LbaT;
+        pub fn size(&self) -> LbaT;
     }
     impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
         fn get(&self, k: K)
@@ -43,29 +43,29 @@ mock! {
         where K: Key,
               V: Value
     {
-        fn allocated(&self) -> LbaT;
-        fn delete_blob(&self, rid: RID)
+        pub fn allocated(&self) -> LbaT;
+        pub fn delete_blob(&self, rid: RID)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
-        fn insert(&self, k: K, v: V)
+        pub fn insert(&self, k: K, v: V)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
-        fn last_key(&self)
+        pub fn last_key(&self)
             -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>;
-        fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT)
+        pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT)
             -> ReadWriteDataset<K, V>;
-        fn put_blob(&self, dbs: DivBufShared, compression: Compression)
+        pub fn put_blob(&self, dbs: DivBufShared, compression: Compression)
             -> Pin<Box<dyn Future<Output=Result<RID, Error>> + Send>>;
-        fn range_delete<R, T>(&self, range: R)
+        pub fn range_delete<R, T>(&self, range: R)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
             where K: Borrow<T>,
                   R: Debug + Clone + RangeBounds<T> + Send + 'static,
                   T: Debug + Ord + Clone + Send + 'static;
-        fn remove(&self, k: K)
+        pub fn remove(&self, k: K)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
-        fn remove_blob(&self, rid: RID)
+        pub fn remove_blob(&self, rid: RID)
             -> Pin<Box<dyn Future<Output=Result<Box<DivBufShared>, Error>>
                 + Send
             >>;
-        fn size(&self) -> LbaT;
+        pub fn size(&self) -> LbaT;
     }
     impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDataset<K, V> {
         fn get(&self, k: K)

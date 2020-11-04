@@ -695,10 +695,7 @@ mod database {
     use super::super::*;
     use futures::future;
     use mockall::{Sequence, predicate::*};
-    use tokio::{
-        executor::current_thread::TaskExecutor,
-        runtime::current_thread
-    };
+    use tokio::runtime::Runtime;
 
     // pet kcov
     #[test]
@@ -715,13 +712,13 @@ mod database {
             .return_const(());
         let forest = Tree::default();
 
-        let mut rt = current_thread::Runtime::new().unwrap();
+        let mut rt = Runtime::new().unwrap();
+        let handle = rt.handle().clone();
 
-        rt.block_on(future::lazy(|| {
-            let task_executor = TaskExecutor::current();
-            let mut db = Database::new(Arc::new(idml), forest, task_executor);
-            db.shutdown()
-        })).unwrap();
+        rt.block_on(async {
+            let mut db = Database::new(Arc::new(idml), forest, handle);
+            db.shutdown().await
+        }).unwrap();
     }
 
     /// shutdown should be idempotent
@@ -733,14 +730,15 @@ mod database {
             .return_const(());
         let forest = Tree::default();
 
-        let mut rt = current_thread::Runtime::new().unwrap();
+        let mut rt = Runtime::new().unwrap();
+        let handle = rt.handle().clone();
 
-        rt.block_on(future::lazy(|| {
-            let task_executor = TaskExecutor::current();
-            let mut db = Database::new(Arc::new(idml), forest, task_executor);
+        rt.block_on(async {
+            let mut db = Database::new(Arc::new(idml), forest, handle);
             db.shutdown()
             .and_then(move |_| db.shutdown())
-        })).unwrap();
+            .await
+        }).unwrap();
     }
 
     #[test]
@@ -749,7 +747,8 @@ mod database {
         let mut idml = IDML::default();
         let mut forest = Tree::default();
 
-        let mut rt = current_thread::Runtime::new().unwrap();
+        let mut rt = Runtime::new().unwrap();
+        let handle = rt.handle().clone();
 
         idml.expect_advance_transaction_inner()
             .once()
@@ -804,16 +803,15 @@ mod database {
             .with(eq(TxgT::from(0)))
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
-        rt.block_on(future::lazy(|| {
-            let task_executor = TaskExecutor::current();
-            let db = Database::new(Arc::new(idml), forest, task_executor);
+        rt.block_on(async {
+            let db = Database::new(Arc::new(idml), forest, handle);
             db.sync_transaction()
             .and_then(move |_| {
                 // Syncing a 2nd time should be a no-op, since the database
                 // isn't dirty.
                 db.sync_transaction()
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 
     /// Syncing a transaction that isn't dirty should be a no-op
@@ -822,14 +820,14 @@ mod database {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let mut rt = current_thread::Runtime::new().unwrap();
+        let mut rt = Runtime::new().unwrap();
+        let handle = rt.handle().clone();
 
-        rt.block_on(future::lazy(|| {
-            let task_executor = TaskExecutor::current();
-            let db = Database::new(Arc::new(idml), forest, task_executor);
+        rt.block_on(async {
+            let db = Database::new(Arc::new(idml), forest, handle);
             db.inner.dirty.store(false, Ordering::Relaxed);
-            db.sync_transaction()
-        })).unwrap();
+            db.sync_transaction().await
+        }).unwrap();
     }
 }
 

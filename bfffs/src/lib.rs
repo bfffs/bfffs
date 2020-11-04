@@ -13,6 +13,11 @@
 // builds.  Silence clippy's complaints.
 #![allow(clippy::module_inception)]
 
+// error: reached the type-length limit while instantiating std::pin::Pin...
+#![type_length_limit="1253184"]
+// error: trait bounds overflowed in Database::sync_transaction_priv
+#![recursion_limit="256"]
+
 #[cfg(all(feature = "nightly", test))]
 extern crate test;
 

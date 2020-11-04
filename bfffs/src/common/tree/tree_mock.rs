@@ -45,34 +45,36 @@ mock! {
               K: Key,
               V: Value
     {
-        fn check(&self) -> Pin<Box<dyn Future<Output=Result<bool, Error>> + Send>>;
-        fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
+        pub fn check(&self)
+            -> Pin<Box<dyn Future<Output=Result<bool, Error>> + Send>>;
+        pub fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
-        fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)
+        pub fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)
             -> MockTree<A, D, K, V>;
-        fn dump(&self, f: &mut (dyn io::Write + 'static)) -> Result<(), Error>;
-        fn flush(&self, txg: TxgT)
+        pub fn dump(&self, f: &mut (dyn io::Write + 'static))
+            -> Result<(), Error>;
+        pub fn flush(&self, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
-        fn get(&self, k: K)
+        pub fn get(&self, k: K)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
-        fn insert(&self, k: K, v: V, txg: TxgT)
+        pub fn insert(&self, k: K, v: V, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
-        fn last_key(&self)
+        pub fn last_key(&self)
             -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>;
-        fn open(dml: Arc<D>, seq: bool, on_disk: TreeOnDisk<A>)
+        pub fn open(dml: Arc<D>, seq: bool, on_disk: TreeOnDisk<A>)
             -> MockTree<A, D, K, V>;
-        fn range<R, T>(&self, range: R) -> RangeQuery<A, D, K, T, V>
+        pub fn range<R, T>(&self, range: R) -> RangeQuery<A, D, K, T, V>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Ord + Clone + Send + 'static;
-        fn range_delete<R, T>(&self, range: R, txg: TxgT)
+        pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Ord + Clone + Send + 'static;
-        fn remove(&self, k: K, txg: TxgT)
+        pub fn remove(&self, k: K, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
-        fn serialize(&self) -> Result<TreeOnDisk<A>, Error>;
+        pub fn serialize(&self) -> Result<TreeOnDisk<A>, Error>;
     }
 }
 // LCOV_EXCL_STOP
