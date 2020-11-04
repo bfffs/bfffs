@@ -1,6 +1,6 @@
 //mod clean_zone;
 mod cluster;
-//mod database;
+mod database;
 //mod device_manager;
 mod ddml;
 //mod fs;

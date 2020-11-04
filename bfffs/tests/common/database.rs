@@ -8,37 +8,34 @@ use bfffs::common::pool::*;
 use bfffs::common::vdev_block::*;
 use bfffs::common::vdev_file::*;
 use bfffs::common::raid;
-use futures::{Future, future};
+use futures::{TryFutureExt, future};
 use galvanic_test::test_suite;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex}
 };
-use tokio::{
-    executor::current_thread::TaskExecutor,
-    runtime::current_thread::Runtime,
-};
+use tokio::runtime::Runtime;
 
 fn open_db(rt: &mut Runtime, path: PathBuf) -> Database {
-    rt.block_on(future::lazy(|| {
+    let handle = rt.handle().clone();
+    rt.block_on(async move {
         VdevFile::open(path)
         .and_then(|(leaf, reader)| {
                 let block = VdevBlock::new(leaf);
                 let (vr, lr) = raid::open(None, vec![(block, reader)]);
                 cluster::Cluster::open(vr)
-                .map(move |cluster| (cluster, lr))
+                .map_ok(move |cluster| (cluster, lr))
         }).and_then(move |(cluster, reader)|{
             let proxy = ClusterProxy::new(cluster);
             Pool::open(None, vec![(proxy, reader)])
-        }).map(|(pool, reader)| {
+        }).map_ok(|(pool, reader)| {
             let cache = Cache::with_capacity(1_000_000);
             let arc_cache = Arc::new(Mutex::new(cache));
             let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
             let (idml, reader) = IDML::open(ddml, arc_cache, reader);
-            let te = TaskExecutor::current();
-            Database::open(Arc::new(idml), te, reader)
-        })
-    })).unwrap()
+            Database::open(Arc::new(idml), handle, reader)
+        }).await
+    }).unwrap()
 }
 
 test_suite! {
@@ -92,24 +89,25 @@ test_suite! {
             }
             let paths = [filename.clone()];
             let mut rt = Runtime::new().unwrap();
-            let pool = rt.block_on(future::lazy(|| {
+            let handle = rt.handle().clone();
+            let pool = rt.block_on(async {
                 let cs = NonZeroU64::new(1);
                 let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
                 let clusters = vec![cluster];
-                future::join_all(clusters)
-                    .map_err(|_| unreachable!())
-                    .and_then(|clusters|
-                        Pool::create(POOLNAME.to_string(), clusters)
-                    )
-            })).unwrap();
+                future::try_join_all(clusters)
+                .map_err(|_| unreachable!())
+                .and_then(|clusters|
+                    Pool::create(POOLNAME.to_string(), clusters)
+                ).await
+            }).unwrap();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
-            let db = rt.block_on(future::lazy(|| {
-                let te = TaskExecutor::current();
-                let db = Database::create(idml, te);
+            let db = rt.block_on(async move {
+                let db = Database::create(idml, handle);
                 future::ok::<Database, ()>(db)
-            })).unwrap();
+                .await
+            }).unwrap();
             // Due to bincode's variable-length encoding and the
             // unpredictability of the root filesystem's timestamp, writing the
             // label will have unpredictable results if we create a root
@@ -164,7 +162,6 @@ test_suite! {
         ddml::*,
         idml::*,
     };
-    use futures::IntoFuture;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
@@ -188,27 +185,29 @@ test_suite! {
             }
             let paths = [filename.clone()];
             let mut rt = Runtime::new().unwrap();
-            let pool = rt.block_on(future::lazy(|| {
+            let handle = rt.handle().clone();
+            let pool = rt.block_on(async {
                 let cs = NonZeroU64::new(1);
                 let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
                 let clusters = vec![cluster];
-                future::join_all(clusters)
-                    .map_err(|_| unreachable!())
-                    .and_then(|clusters|
-                        Pool::create(POOLNAME.to_string(), clusters)
-                    )
-            })).unwrap();
+                future::try_join_all(clusters)
+                .map_err(|_| unreachable!())
+                .and_then(|clusters|
+                    Pool::create(POOLNAME.to_string(), clusters)
+                ).await
+            }).unwrap();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
-            let db = rt.block_on(future::lazy(|| {
-                let te = TaskExecutor::current();
-                let db = Database::create(idml, te);
+            let db = rt.block_on(async move {
+                let db = Database::create(idml, handle);
                 future::ok::<Database, ()>(db)
-            })).unwrap();
-            let tree_id = rt.block_on(future::lazy(|| {
+                .await
+            }).unwrap();
+            let tree_id = rt.block_on(async {
                 db.new_fs(Vec::new())
-            })).unwrap();
+                .await
+            }).unwrap();
             (rt, db, tempdir, tree_id)
         }
     });
@@ -216,9 +215,10 @@ test_suite! {
     test get_prop_default(objects()) {
         let (mut rt, db, _tempdir, tree_id) = objects.val;
 
-        let (val, source) = rt.block_on(future::lazy(|| {
+        let (val, source) = rt.block_on(async {
             db.get_prop(tree_id, PropertyName::Atime)
-        })).unwrap();
+            .await
+        }).unwrap();
         assert_eq!(val, Property::default_value(PropertyName::Atime));
         assert_eq!(source, PropertySource::Default);
     }
@@ -233,20 +233,23 @@ test_suite! {
         drop(db);
         let filename = tempdir.path().join("vdev");
         let db = open_db(&mut rt, filename);
-        rt.block_on(future::lazy(move || {
-            db.fsread(tree_id, |_| Ok(()).into_future())
-        })).unwrap();
+        rt.block_on(async move {
+            db.fsread(tree_id, |_| future::ok(()))
+            .await
+        }).unwrap();
     }
 
     test new_fs_with_props(objects()) {
         let (mut rt, db, _tempdir, _first_tree_id) = objects.val;
         let props = vec![Property::RecordSize(5)];
-        let tree_id = rt.block_on(future::lazy(|| {
+        let tree_id = rt.block_on(async {
             db.new_fs(props)
-        })).unwrap();
-        let (val, source) = rt.block_on(future::lazy(|| {
+            .await
+        }).unwrap();
+        let (val, source) = rt.block_on(async {
             db.get_prop(tree_id, PropertyName::RecordSize)
-        })).unwrap();
+            .await
+        }).unwrap();
         assert_eq!(val, Property::RecordSize(5));
         assert_eq!(source, PropertySource::Local);
     }
@@ -254,12 +257,12 @@ test_suite! {
     test set_prop(objects()) {
         let (mut rt, db, _tempdir, tree_id) = objects.val;
 
-        let (val, source) = rt.block_on(future::lazy(|| {
+        let (val, source) = rt.block_on(async {
             db.set_prop(tree_id, Property::Atime(false))
             .and_then(move |_| {
                 db.get_prop(tree_id, PropertyName::Atime)
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
         assert_eq!(val, Property::Atime(false));
         assert_eq!(source, PropertySource::Local);
     }
@@ -271,7 +274,7 @@ test_suite! {
     // multiple datasets.
 
     test shutdown() {
-        let mut rt = tokio_io_pool::Runtime::new();
+        let mut rt = Runtime::new().unwrap();
         let handle = rt.handle().clone();
         let len = 1 << 30;  // 1GB
         let tempdir =
@@ -280,12 +283,12 @@ test_suite! {
         let file = t!(fs::File::create(&filename));
         t!(file.set_len(len));
         drop(file);
-        let mut db = rt.block_on(future::lazy(move || {
+        let mut db = rt.block_on(async move {
             Pool::create_cluster(None, 1, None, 0, &[filename])
             .map_err(|_| unreachable!())
             .and_then(|cluster| {
                 Pool::create(String::from("database::shutdown"), vec![cluster])
-                .map(|pool| {
+                .map_ok(|pool| {
                     let cache = Arc::new(
                         Mutex::new(
                             Cache::with_capacity(1_000_000)
@@ -295,9 +298,8 @@ test_suite! {
                     let idml = IDML::create(ddml, cache);
                     Database::create(Arc::new(idml), handle)
                 })
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
         rt.block_on(db.shutdown()).unwrap();
-        rt.shutdown_on_idle();
     }
 }
