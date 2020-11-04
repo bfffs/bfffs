@@ -155,8 +155,7 @@ mod t {
 use futures::future;
 use mockall::Sequence;
 use super::*;
-use tokio::runtime::current_thread;
-use tokio_current_thread::TaskExecutor;
+use tokio::runtime::Runtime;
 
 /// Clean in the background
 #[test]
@@ -169,19 +168,19 @@ fn background() {
                 ClosedZone{freed_blocks: 0, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::new(stream::iter_ok(czs.into_iter()))
+            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
         });
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    rt.spawn(future::lazy(|| {
-        let te = TaskExecutor::current();
-        let cleaner = Cleaner::new(te, Arc::new(idml), None);
+    let rt = Runtime::new().unwrap();
+    let handle = rt.handle().clone();
+    rt.spawn(async {
+        let cleaner = Cleaner::new(handle, Arc::new(idml), None);
         cleaner.clean()
             .map_err(Error::unhandled)
-    }));
-    rt.run().unwrap();
+    });
+    drop(rt);   // Implicitly waits for all tasks to complete
 }
 
 /// No zone is less dirty than the threshold
@@ -195,14 +194,14 @@ fn no_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 1, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::new(stream::iter_ok(czs.into_iter()))
+            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
         });
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-        cleaner.clean_now()
-    })).unwrap();
+    Runtime::new().unwrap().block_on(async {
+        cleaner.clean_now().await
+    }).unwrap();
 }
 
 #[test]
@@ -217,21 +216,21 @@ fn one_sufficiently_dirty_zone() {
                 ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::new(stream::iter_ok(czs.into_iter()))
+            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
         });
     idml.expect_txg()
         .once()
-        .returning(|| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
+        .returning(|| Box::pin(future::ready::<&'static TxgT>(&TXG)));
     idml.expect_clean_zone()
         .once()
         .withf(move |zone, txg| {
             zone.pba == PBA::new(0, 0) &&
             *txg == TXG
-        }).returning(|_, _| Box::new(future::ok::<(), Error>(())));
+        }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-        cleaner.clean_now()
-    })).unwrap();
+    Runtime::new().unwrap().block_on(async {
+        cleaner.clean_now().await
+    }).unwrap();
 }
 
 #[test]
@@ -251,32 +250,32 @@ fn two_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 75, total_blocks: 100, zid: 2,
                     pba: PBA::new(2, 0), txgs: TxgT::from(1)..TxgT::from(2)},
             ];
-            Box::new(stream::iter_ok(czs.into_iter()))
+            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
         });
     idml.expect_txg()
         .once()
         .in_sequence(&mut seq)
-        .returning(|| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
+        .returning(|| Box::pin(future::ready::<&'static TxgT>(&TXG)));
     idml.expect_clean_zone()
         .once()
         .withf(move |zone, txg| {
             zone.pba == PBA::new(2, 0) &&
             *txg == TXG
-        }).returning(|_, _| Box::new(future::ok::<(), Error>(())));
+        }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     idml.expect_txg()
         .once()
         .in_sequence(&mut seq)
-        .returning(|| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
+        .returning(|| Box::pin(future::ready::<&'static TxgT>(&TXG)));
     idml.expect_clean_zone()
         .once()
         .withf(move |zone, txg| {
             zone.pba == PBA::new(0, 0) &&
             *txg == TXG
-        }).returning(|_, _| Box::new(future::ok::<(), Error>(())));
+        }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-        cleaner.clean_now()
-    })).unwrap();
+    Runtime::new().unwrap().block_on(async {
+        cleaner.clean_now().await
+    }).unwrap();
 }
 
 }

@@ -572,7 +572,7 @@ mock!{
         // Return a static reference instead of a RwLockReadFut because it makes
         // the expectations easier to write
         pub fn txg(&self)
-            -> Pin<Box<dyn Future<Output=Result<&'static TxgT, Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=&'static TxgT> + Send>>;
         // advance_transaction is difficult to mock with Mockall, because f's
         // output is typically a chained future that is difficult to name.
         // Instead, we'll use special logic in advance_transaction and only mock
