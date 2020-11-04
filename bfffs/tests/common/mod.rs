@@ -4,7 +4,7 @@ mod cluster;
 //mod device_manager;
 mod ddml;
 //mod fs;
-//mod idml;
+mod idml;
 mod pool;
 mod raid;
 mod vdev_block;
