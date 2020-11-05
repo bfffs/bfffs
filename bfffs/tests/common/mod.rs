@@ -1,7 +1,7 @@
 //mod clean_zone;
 mod cluster;
 mod database;
-//mod device_manager;
+mod device_manager;
 mod ddml;
 //mod fs;
 mod idml;

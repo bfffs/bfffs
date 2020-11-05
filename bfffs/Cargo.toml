@@ -56,7 +56,7 @@ glob = "0.2"
 histogram = "0.6"
 itertools = "0.7.1"
 log = "0.4"
-mockall = { git = "https://github.com/asomers/mockall", rev = "340f2828c1aa9526a67846173b95fff744099aea" }
+mockall = { git = "https://github.com/asomers/mockall", rev = "1e6d98c735804092accbb74dc7380231cb4bd520" }
 num_cpus = "1"
 permutohedron = "0.2"
 pretty_assertions = "0.5"

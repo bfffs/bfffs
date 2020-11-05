@@ -656,7 +656,7 @@ impl Pool {
     /// * `combined`:   An array of pairs of `ClusterProxy`s and their
     ///                 associated `LabelReader`.  The labels of each will be verified.
     pub fn open(uuid: Option<Uuid>, combined: Vec<(ClusterProxy, LabelReader)>)
-        -> impl Future<Output=Result<(Self, LabelReader), Error>>
+        -> impl Future<Output=Result<(Self, LabelReader), Error>> + Send
     {
         let mut label_pair = None;
         let mut all_clusters = combined.into_iter()

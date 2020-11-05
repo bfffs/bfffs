@@ -165,6 +165,7 @@ impl<'a> FreeSpaceMap {
     fn deserialize(vdev: Arc<dyn VdevRaidApi>, buf: DivBuf, zones: ZoneT)
         -> bincode::Result<Pin<Box<
                 dyn Future<Output=Result<(Self, Arc<dyn VdevRaidApi>), Error>>
+                + Send
             >>>
     {
         let mut fsm = FreeSpaceMap::new(zones);

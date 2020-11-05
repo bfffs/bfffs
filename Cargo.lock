@@ -627,7 +627,7 @@ dependencies = [
 [[package]]
 name = "mockall"
 version = "0.8.0"
-source = "git+https://github.com/asomers/mockall?rev=340f2828c1aa9526a67846173b95fff744099aea#340f2828c1aa9526a67846173b95fff744099aea"
+source = "git+https://github.com/asomers/mockall?rev=1e6d98c735804092accbb74dc7380231cb4bd520#1e6d98c735804092accbb74dc7380231cb4bd520"
 dependencies = [
  "cfg-if",
  "downcast",
@@ -641,7 +641,7 @@ dependencies = [
 [[package]]
 name = "mockall_derive"
 version = "0.8.0"
-source = "git+https://github.com/asomers/mockall?rev=340f2828c1aa9526a67846173b95fff744099aea#340f2828c1aa9526a67846173b95fff744099aea"
+source = "git+https://github.com/asomers/mockall?rev=1e6d98c735804092accbb74dc7380231cb4bd520#1e6d98c735804092accbb74dc7380231cb4bd520"
 dependencies = [
  "cfg-if",
  "proc-macro2",
