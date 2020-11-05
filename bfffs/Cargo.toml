@@ -36,7 +36,7 @@ serde = "1.0.60"
 serde_derive = "1.0"
 serde_yaml = "0.8.6"
 time = "0.1"
-tokio = { version = "0.2.7", features = ["time"] }
+tokio = { version = "0.2.7", features = ["sync", "time"] }
 #tokio-current-thread = "0.1.1"
 tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "7c4b0beed6ecb2ad8a411bb0d85b66513204eb7a" }
 #tokio-io-pool = "0.1.4"

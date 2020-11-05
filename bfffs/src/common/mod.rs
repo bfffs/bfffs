@@ -30,7 +30,7 @@ pub mod dataset;
 pub mod ddml;
 pub mod device_manager;
 pub mod dml;
-//pub mod fs;
+pub mod fs;
 pub mod fs_tree;
 pub mod idml;
 pub mod label;

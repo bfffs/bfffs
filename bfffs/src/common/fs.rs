@@ -3,7 +3,6 @@
 
 use bitfield::*;
 use crate::{
-    *,
     common::{
         *,
         database::*,
@@ -15,15 +14,13 @@ use crate::{
 use divbuf::{DivBufShared, DivBuf};
 use futures::{
     Future,
-    IntoFuture,
-    Sink,
+    FutureExt,
     Stream,
+    StreamExt,
+    TryFutureExt,
+    TryStreamExt,
     future,
     stream,
-    sync::{
-        mpsc,
-        oneshot
-    }
 };
 use libc;
 use std::{
@@ -31,6 +28,7 @@ use std::{
     ffi::{OsStr, OsString},
     mem,
     os::unix::ffi::OsStrExt,
+    pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -38,7 +36,10 @@ use std::{
 };
 #[cfg(not(test))] use std::io;
 use time;
-use tokio_io_pool;
+use tokio::{
+    runtime::Handle,
+    sync::mpsc,
+};
 
 pub use self::fs_tree::ExtAttr;
 pub use self::fs_tree::ExtAttrNamespace;
@@ -58,11 +59,11 @@ mod htable {
 
     impl ReadFilesystem<'_> {
         fn get(&self, k: FSKey)
-            -> Box<dyn Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+            -> Pin<Box<dyn Future<Output=Result<Option<FSValue<RID>>, Error>> + Send>>
         {
             match self {
-                ReadFilesystem::ReadOnly(ds) => Box::new(ds.get(k)),
-                ReadFilesystem::ReadWrite(ds) => Box::new(ds.get(k))
+                ReadFilesystem::ReadOnly(ds) => Box::pin(ds.get(k)),
+                ReadFilesystem::ReadWrite(ds) => Box::pin(ds.get(k))
             }
         }
     }
@@ -70,10 +71,9 @@ mod htable {
     /// Get an item from an in-BTree hash table
     pub(super) fn get<T>(dataset: &ReadFilesystem, key: FSKey,
                          aux: T::Aux, name: OsString)
-        -> impl Future<Item=T, Error=Error> + Send
+        -> impl Future<Output=Result<T, Error>> + Send
         where T: HTItem
     {
-        type MyFut<T> = Box<dyn Future<Item=T, Error=Error> + Send>;
         dataset.get(key)
         .then(move |r| {
             match r {
@@ -82,11 +82,10 @@ mod htable {
                         HTValue::Single(old) => {
                             if old.same(aux, &name) {
                                 // Found the right item
-                                Box::new(Ok(old).into_future()) as MyFut<T>
+                                future::ok(old).boxed()
                             } else {
                                 // Hash collision
-                                Box::new(Err(T::ENOTFOUND).into_future())
-                                    as MyFut<T>
+                                future::err(T::ENOTFOUND).boxed()
                             }
                         },
                         HTValue::Bucket(old) => {
@@ -95,36 +94,31 @@ mod htable {
                                 x.same(aux, &name)
                             }) {
                                 // Found the right one
-                                Box::new(Ok(v).into_future()) as MyFut<T>
+                                future::ok(v).boxed()
                             } else {
                                 // A 3 (or more) way hash collision.  The
                                 // item we're looking up isn't found.
-                                Box::new(Err(T::ENOTFOUND).into_future())
-                                    as MyFut<T>
+                                future::err(T::ENOTFOUND).boxed()
                             }
                         },
                         HTValue::None => {
-                            Box::new(Err(T::ENOTFOUND).into_future())
-                                as MyFut<T>
+                            future::err(T::ENOTFOUND).boxed()
                         },
                         HTValue::Other(x) =>
                             panic!("Unexpected value {:?} for key {:?}", x, key)
                     }
                 },
-                Err(e) => {
-                    Box::new(Err(e).into_future()) as MyFut<T>
-                }
+                Err(e) => future::err(e).boxed()
             }
         })
     }
 
     /// Insert an item that is stored in a BTree hash table
     pub(super) fn insert<D, T>(dataset: D, key: FSKey, value: T, name: OsString)
-        -> impl Future<Item=Option<T>, Error=Error> + Send
+        -> impl Future<Output=Result<Option<T>, Error>> + Send
         where D: AsRef<ReadWriteFilesystem> + Send + 'static,
               T: HTItem
     {
-        type MyFut<T> = Box<dyn Future<Item=Option<T>, Error=Error> + Send>;
         let aux = value.aux();
         let fsvalue = value.into_fsvalue();
         dataset.as_ref().insert(key, fsvalue)
@@ -133,27 +127,25 @@ mod htable {
                 HTValue::Single(old) => {
                     if old.same(aux, &name) {
                         // We're overwriting an existing item
-                        Box::new(future::ok::<Option<T>, Error>(Some(old)))
-                            as MyFut<T>
+                        future::ok::<Option<T>, Error>(Some(old)).boxed()
                     } else {
                         // We had a hash collision setting an unrelated
                         // item. Get the old value back, and pack them together.
-                        let fut = dataset.as_ref().get(key)
+                        dataset.as_ref().get(key)
                         .and_then(move |r| {
                             let v = r.unwrap();
                             let new = T::try_from(v).unwrap();
                             let values = vec![old, new];
                             let fsvalue = T::into_bucket(values);
                             dataset.as_ref().insert(key, fsvalue)
-                            .map(|_| None)
-                        });
-                        Box::new(fut) as MyFut<T>
+                            .map_ok(|_| None)
+                        }).boxed()
                     }
                 },
                 HTValue::Bucket(mut old) => {
                     // There was previously a hash collision.  Get the new value
                     // back, then pack them together.
-                    let fut = dataset.as_ref().get(key)
+                    dataset.as_ref().get(key)
                     .and_then(move |r| {
                         let v = r.unwrap();
                         let new = T::try_from(v).unwrap();
@@ -170,15 +162,14 @@ mod htable {
                             None
                         };
                         dataset.as_ref().insert(key, T::into_bucket(old))
-                        .map(|_| r)
-                    });
-                    Box::new(fut) as MyFut<T>
+                        .map_ok(|_| r)
+                    }).boxed()
                 },
                 HTValue::Other(x) => {
                     panic!("Unexpected value {:?} for key {:?}", x, key)
                 },
                 HTValue::None => {
-                    Box::new(future::ok::<Option<T>, Error>(None)) as MyFut<T>
+                    future::ok::<Option<T>, Error>(None).boxed()
                 }
             }
         })
@@ -189,7 +180,7 @@ mod htable {
     /// Return the old item, if any.
     pub(super) fn remove<D, T>(dataset: D, key: FSKey, aux: T::Aux,
                                name: OsString)
-        -> impl Future<Item=T, Error=Error> + Send
+        -> impl Future<Output=Result<T, Error>> + Send
         where D: AsRef<ReadWriteFilesystem> + Send + 'static,
               T: HTItem
     {
@@ -200,13 +191,13 @@ mod htable {
                 {
                     if old.same(aux, name) {
                         // This is the item we're looking for
-                        boxfut!(Ok(old).into_future())
+                        future::ok(old).boxed()
                     } else {
                         // Hash collision.  Put it back, and return not found
                         let value = old.into_fsvalue();
                         let fut = dataset.as_ref().insert(key, value)
-                        .and_then(|_| Err(T::ENOTFOUND).into_future());
-                        boxfut!(fut)
+                        .and_then(|_| future::err(T::ENOTFOUND));
+                        fut.boxed()
                     }
                 },
                 HTValue::Bucket(mut old) => {
@@ -224,19 +215,19 @@ mod htable {
                             T::into_bucket(old)
                         };
                         let fut = dataset.as_ref().insert(key, v)
-                        .map(move |_| r);
-                        boxfut!(fut)
+                        .map_ok(move |_| r);
+                        fut.boxed()
                     } else {
                         // A 3 (or more) way hash collision between the
                         // accessed item and at least two different ones.
                         let v = T::into_bucket(old);
                         let fut = dataset.as_ref().insert(key, v)
-                        .and_then(|_| Err(T::ENOTFOUND).into_future());
-                        boxfut!(fut)
+                        .and_then(|_| future::err(T::ENOTFOUND));
+                        fut.boxed()
                     }
                 },
                 HTValue::None => {
-                    boxfut!(Err(T::ENOTFOUND).into_future())
+                    future::err(T::ENOTFOUND).boxed()
                 },
                 HTValue::Other(x) =>
                     panic!("Unexpected value {:?} for key {:?}", x, key)
@@ -347,7 +338,7 @@ impl FileData {
 pub struct Fs {
     db: Arc<Database>,
     next_object: AtomicU64,
-    handle: tokio_io_pool::Handle,
+    handle: Handle,
     tree: TreeID,
 
     // These options may only be changed when the filesystem is mounting or
@@ -429,7 +420,7 @@ pub struct SetAttr {
 /// Private trait bound for functions that can be used as callbacks for
 /// Fs::create
 type CreateCallback = fn(&Arc<ReadWriteFilesystem>, u64, u64)
-        -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>;
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'static>>;
 
 /// Arguments for Fs::do_create
 struct CreateArgs<'a>
@@ -480,28 +471,21 @@ impl Fs {
                          name: &OsStr)
         -> Result<(), i32>
     {
-        let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
         let name = name.to_owned();
         let key = FSKey::new(fd.ino, objkey);
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |dataset| {
                 htable::remove::<ReadWriteFilesystem, ExtAttr<RID>>(dataset,
                     key, ns, name)
-            }).map(drop)
+            }).map_ok(drop)
             .map_err(Error::into)
-            .then(|r| {
-                tx.send(r).unwrap();
-                Ok(()).into_future()
-            })
-        ).unwrap();
-        rx.wait().unwrap()
+        )
     }
 
     fn do_create(&self, args: CreateArgs)
         -> Result<FileData, i32>
     {
-        let (tx, rx) = oneshot::channel();
         let ino = self.next_object();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         let parent_dirent_objkey = ObjKey::dir_entry(&args.name);
@@ -539,44 +523,44 @@ impl Fs {
         };
         let inode_value = FSValue::Inode(inode);
 
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let extra_fut = cb(&ds, parent_ino, ino);
-                ds.insert(inode_key, inode_value).join3(
+                future::try_join3(
+                    ds.insert(inode_key, inode_value),
                     htable::insert(ds, parent_dirent_key, parent_dirent, name2),
                     extra_fut
-                ).map(move |(inode_r, dirent_r, _)| {
+                ).map_ok(move |(inode_r, dirent_r, _)| {
                     assert!(dirent_r.is_none(),
                     "Create of an existing file.  The VFS should prevent this");
                     assert!(inode_r.is_none(),
                     "Inode double-create detected, ino={}", ino);
                     let fd = FileData::new(fd_parent, ino);
-                    tx.send(Ok(fd)).unwrap()
+                    fd
                 })
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+            }).map_err(Error::into)
+        )
     }
 
     // Actually delete an inode, which must already be unlinked
     fn do_delete_inode(ds: Arc<ReadWriteFilesystem>, ino: u64)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Output=Result<(), Error>>
     {
         let ds2 = ds.clone();
         // delete its blob extents and blob extended attributes
         let extent_stream = ds.range(FSKey::extent_range(ino, ..))
-        .filter_map(move |(_k, v)| {
+        .try_filter_map(move |(_k, v)| {
             if let Extent::Blob(be) = v.as_extent().unwrap()
             {
-                Some(be.rid)
+                future::ok(Some(be.rid))
             } else {
-                None
+                future::ok(None)
             }
         });
         let extattr_stream = Fs::list_extattr_rids(&*ds, ino);
         extent_stream.chain(extattr_stream)
-        .for_each(move |rid| ds2.delete_blob(rid))
+        .try_for_each(move |rid| ds2.delete_blob(rid))
         .and_then(move |_| {
             // Finally, range_delete its key range, including inode,
             // inline extents, and inline extattrs
@@ -586,16 +570,16 @@ impl Fs {
 
     // Remove the inode if this was its last reference
     fn do_inactive(ds: Arc<ReadWriteFilesystem>, ino: u64)
-        -> impl Future<Item=(), Error=Error>
+        -> impl Future<Output=Result<(), Error>>
     {
         let dikey = FSKey::new(0, ObjKey::dying_inode(ino));
         ds.get(dikey)
         .and_then(move |di| {
             match di {
-                None => boxfut!(Ok(()).into_future()),
+                None => future::ok(()).boxed(),
                 Some(di2) => {
                     assert_eq!(ino, di2.as_dying_inode().unwrap().ino());
-                    boxfut!(Fs::do_delete_inode(ds, ino))
+                    Fs::do_delete_inode(ds, ino).boxed()
                 }
             }
         })
@@ -604,7 +588,7 @@ impl Fs {
     /// Asynchronously read from a file.
     fn do_read<DS>(dataset: DS, ino: u64, fsize: u64, rs: u64, offset: u64,
                    size: usize)
-        -> impl Future<Item=SGList, Error=Error>
+        -> impl Future<Output=Result<SGList, Error>>
         where DS: ReadDataset<FSKey, FSValue<RID>>
     {
         // Populate a hole region in an sglist.
@@ -622,22 +606,21 @@ impl Fs {
         let end = offset + size64;
         let erange = FSKey::extent_range(ino, baseoffset..end);
         let initial = (Vec::<IoVec>::new(), offset, 0usize);
-        type T = (u64, DivBuf);
         dataset.range(erange)
         .and_then(move |(k, v)| {
             let ofs = k.offset();
             match v.as_extent().unwrap() {
                 Extent::Inline(ile) => {
                     let buf = ile.buf.try_const().unwrap();
-                    boxfut!(Ok((ofs, buf)).into_future(), T, Error)
+                    future::ok((ofs, buf)).boxed()
                 },
                 Extent::Blob(be) => {
-                    let bfut = dataset.get_blob(be.rid)
-                    .map(move |bbuf| (ofs, *bbuf));
-                    boxfut!(bfut, T, Error)
+                    dataset.get_blob(be.rid)
+                    .map_ok(move |bbuf| (ofs, *bbuf))
+                    .boxed()
                 }
             }
-        }).fold(initial, move |acc, (ofs, mut db)| {
+        }).try_fold(initial, move |acc, (ofs, mut db)| {
             let (mut sglist, mut p, rec) = acc;
             if ofs < p {
                 // Trim the beginning of the buffer, if this is the first
@@ -664,7 +647,7 @@ impl Fs {
                 sglist.push(db);
             }
             future::ok::<(SGList, u64, usize), Error>((sglist, p, rec + 1))
-        }).map(move |(mut sglist, mut p, _rec)| {
+        }).map_ok(move |(mut sglist, mut p, _rec)| {
             // Fill in any hole at the end.
             while p - offset < size64 {
                 let l = (size64 - (p - offset)) as usize;
@@ -677,7 +660,7 @@ impl Fs {
     /// Actually remove a directory, after all checks have passed
     fn do_rmdir(dataset: Arc<ReadWriteFilesystem>, parent: u64, ino: u64,
                 dec_nlink: bool)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         // Outline:
         // 1) range_delete its key range
@@ -687,7 +670,7 @@ impl Fs {
         let dataset2 = dataset.clone();
         let dataset3 = dataset.clone();
         let ino_fut = Fs::list_extattr_rids(&*dataset, ino)
-        .for_each(move |rid| {
+        .try_for_each(move |rid| {
             dataset2.delete_blob(rid)
         }).and_then(move |_| dataset3.range_delete(FSKey::obj_range(ino)));
 
@@ -705,18 +688,18 @@ impl Fs {
                     inode.nlink -= 1;
                 }
                 dataset.insert(parent_ino_key, value)
-                .map(drop)
+                .map_ok(drop)
             });
-            boxfut!(fut)
+            fut.boxed()
         } else {
-            boxfut!(Ok(()).into_future())
+            future::ok(()).boxed()
         };
-        ino_fut.join(nlink_fut)
-        .map(drop)
+        future::try_join(ino_fut, nlink_fut)
+        .map_ok(drop)
     }
 
     fn do_setattr(dataset: Arc<ReadWriteFilesystem>, ino: u64, attr: SetAttr)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         dataset.get(inode_key)
@@ -744,15 +727,14 @@ impl Fs {
             let truncate_fut = if new_size < old_size {
                 assert!(iv.file_type.dtype() == libc::DT_REG);
                 let rs = iv.record_size() as u64;
-                boxfut!(Fs::do_truncate(dataset.clone(), ino, new_size, rs))
+                Fs::do_truncate(dataset.clone(), ino, new_size, rs).boxed()
             } else {
-                let fut = Ok(()).into_future();
-                boxfut!(fut)
+                future::ok(()).boxed()
             };
 
-            dataset.insert(inode_key, FSValue::Inode(iv))
-            .join(truncate_fut)
-            .map(drop)
+            future::try_join(dataset.insert(inode_key, FSValue::Inode(iv)),
+                             truncate_fut)
+            .map_ok(drop)
         })
     }
 
@@ -760,20 +742,20 @@ impl Fs {
     /// the Inode
     fn do_truncate(dataset: Arc<ReadWriteFilesystem>, ino: u64, size: u64,
                    rs: u64)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         // Delete data past the truncation point
         let dataset2 = dataset.clone();
         let dataset3 = dataset.clone();
         let full_fut = dataset.range(FSKey::extent_range(ino, size..))
-        .filter_map(move |(_k, v)| {
+        .try_filter_map(move |(_k, v)| {
             if let Extent::Blob(be) = v.as_extent().unwrap()
             {
-                Some(be.rid)
+                future::ok(Some(be.rid))
             } else {
-                None
+                future::ok(None)
             }
-        }).for_each(move |rid| dataset2.delete_blob(rid))
+        }).try_for_each(move |rid| dataset2.delete_blob(rid))
         .and_then(move |_| {
             dataset3.range_delete(FSKey::extent_range(ino, size..))
         });
@@ -786,14 +768,14 @@ impl Fs {
                 match v {
                     None => {
                         // It's a hole; nothing to do
-                        boxfut!(Ok(()).into_future())
+                        future::ok(()).boxed()
                     },
                     Some(FSValue::InlineExtent(ile)) => {
                         let mut b = ile.buf.try_mut().unwrap();
                         b.try_truncate(len).unwrap();
                         let extent = InlineExtent::new(ile.buf);
                         let v = FSValue::InlineExtent(extent);
-                        boxfut!(dataset.insert(k, v).map(drop))
+                        dataset.insert(k, v).map_ok(drop).boxed()
                     },
                     Some(FSValue::BlobExtent(be)) => {
                         let fut = dataset.remove_blob(be.rid)
@@ -806,20 +788,21 @@ impl Fs {
                             let extent = InlineExtent::new(adbs);
                             let v = FSValue::InlineExtent(extent);
                             dataset.insert(k, v)
-                            .map(drop)
+                            .map_ok(drop)
                         });
-                        boxfut!(fut)
+                        fut.boxed()
                     },
                     x => panic!("Unexpectec value {:?} for key {:?}",
                                 x, k)
                 }
             });
-            boxfut!(fut)
+            fut.boxed()
         } else {
-            let fut = Ok(()).into_future();
-            boxfut!(fut)
+            let fut = future::ok(());
+            fut.boxed()
         };
-        full_fut.join(partial_fut).map(drop)
+        future::try_join(full_fut, partial_fut)
+        .map_ok(drop)
     }
 
     /// Unlink a file whose inode number is known and whose directory entry is
@@ -827,12 +810,12 @@ impl Fs {
     fn do_unlink(dataset: Arc<ReadWriteFilesystem>,
                  lookup_count: u64,
                  ino: u64)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         // 1) Lookup the inode
         let key = FSKey::new(ino, ObjKey::Inode);
         dataset.get(key)
-        .map(move |r| {
+        .map_ok(move |r| {
             match r {
                 Some(v) => {
                     v.as_inode().unwrap().clone()
@@ -853,52 +836,50 @@ impl Fs {
                     let dikey = FSKey::new(0, ObjKey::dying_inode(ino));
                     let dival = FSValue::DyingInode(DyingInode::from(ino));
                     let fut = dataset.insert(dikey, dival)
-                    .map(|r|
+                    .map_ok(|r|
                         if r.is_some() {
                             panic!("Hash collisions on dying inodes are TODO!")
                         }
-                    ).map(drop);
-                    boxfut!(fut)
+                    ).map_ok(drop);
+                    fut.boxed()
                 } else {
-                    boxfut!(Ok(()).into_future())
-                }.join(dataset.insert(key, FSValue::Inode(iv))
-                    .map(drop)
-                ).map(drop);
-                boxfut!(fut)
+                    future::ok(()).boxed()
+                };
+                future::try_join(
+                    fut,
+                    dataset.insert(key, FSValue::Inode(iv)).map_ok(drop)
+                ).map_ok(drop).boxed()
             } else {
-                boxfut!(Fs::do_inactive(dataset, ino))
+                Fs::do_inactive(dataset, ino).boxed()
             }
         })
     }
 
-    pub fn new(database: Arc<Database>, handle: tokio_io_pool::Handle,
+    pub fn new(database: Arc<Database>, handle: Handle,
                tree: TreeID) -> Self
     {
-        let (tx, rx) = oneshot::channel();
         let db2 = database.clone();
-        handle.spawn(
+        let (last_key, (atimep, _), (recsizep, _)) = handle.block_on(
             database.fsread(tree, move |dataset| {
                 let last_key_fut = dataset.last_key();
 
-                last_key_fut
-                .join3(db2.get_prop(tree, PropertyName::Atime),
-                       db2.get_prop(tree, PropertyName::RecordSize))
-                .map(move |r| tx.send(r).unwrap())
+                future::try_join3(last_key_fut,
+                                  db2.get_prop(tree, PropertyName::Atime),
+                                  db2.get_prop(tree, PropertyName::RecordSize))
             }).map_err(Error::unhandled)
         ).unwrap();
-        let (last_key, (atimep, _), (recsizep, _)) = rx.wait().unwrap();
         let next_object = AtomicU64::new(last_key.unwrap().object() + 1);
         let atime = atimep.as_bool();
         let record_size = recsizep.as_u8();
 
         // In the background, delete all dying inodes.  If there are any, it
         // means that the previous mount was uncleanly dismounted.
-        handle.spawn(
+        handle.block_on(
             database.fswrite(tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
                 ds.range(FSKey::dying_inode_range())
-                .for_each(move |(_k, v)| {
+                .try_for_each(move |(_k, v)| {
                     let ino = v.as_dying_inode().unwrap().ino();
                     Fs::do_delete_inode(ds.clone(), ino)
                 }).and_then(move |_| {
@@ -933,13 +914,13 @@ impl Fs {
     /// Update the parent's ctime and mtime to the current time.
     fn create_ts_callback(dataset: &Arc<ReadWriteFilesystem>, parent: u64,
                           _ino: u64)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
         let now = time::get_time();
         let mut attr = SetAttr::default();
         attr.ctime = Some(now);
         attr.mtime = Some(now);
-        boxfut!(Fs::do_setattr(dataset.clone(), parent, attr))
+        Fs::do_setattr(dataset.clone(), parent, attr).boxed()
     }
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
@@ -956,20 +937,12 @@ impl Fs {
     pub fn inactive(&self, fd: FileData) {
         let ino = fd.ino();
 
-        let (tx, rx) = oneshot::channel::<Result<(), Error>>();
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |dataset| {
                 Fs::do_inactive(Arc::new(dataset), ino)
-                .then(move |r| {
-                    match r {
-                        Ok(_) => tx.send(Ok(())),
-                        Err(e) => tx.send(Err(e))
-                    }.expect("FS::unlink: send failed");
-                    Ok(()).into_future()
-                })
+                .map(|r| r.map(drop))
             }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap().expect("Fs::inactive should never fail");
+        ).expect("Fs::inactive should never fail");
     }
 
     /// Sync a file's data and metadata to disk so it can be recovered after a
@@ -983,12 +956,11 @@ impl Fs {
 
     pub fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32> {
         let ino = fd.ino;
-        let (tx, rx) = oneshot::channel();
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 let key = FSKey::new(ino, ObjKey::Inode);
                 dataset.get(key)
-                .then(move |r| {
+                .map(move |r| {
                     match r {
                         Ok(Some(v)) => {
                             let inode = v.as_inode().unwrap();
@@ -1011,20 +983,18 @@ impl Fs {
                                 rdev,
                                 flags: inode.flags,
                             };
-                            tx.send(Ok(attr))
+                            Ok(attr)
                         },
                         Ok(None) => {
-                            tx.send(Err(Error::ENOENT.into()))
+                            Err(Error::ENOENT.into())
                         },
                         Err(e) => {
-                            tx.send(Err(e.into()))
+                            Err(e.into())
                         }
-                    }.unwrap();
-                    future::ok::<(), Error>(())
+                    }
                 })
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+            }).map_err(Error::into)
+        )
     }
 
     /// Retrieve the value of an extended attribute
@@ -1032,11 +1002,9 @@ impl Fs {
         -> Result<DivBuf, i32>
     {
         let owned_name = name.to_owned();
-        let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(fd.ino, objkey);
-        type MyFut = Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>;
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 htable::get(&htable::ReadFilesystem::ReadOnly(&dataset), key,
                             ns, owned_name)
@@ -1045,23 +1013,20 @@ impl Fs {
                         ExtAttr::Inline(iea) => {
                             let buf = Box::new(iea.extent.buf.try_const()
                                                .unwrap());
-                            Box::new(Ok(buf).into_future()) as MyFut
+                            future::ok(buf).boxed()
                         },
                         ExtAttr::Blob(bea) => {
-                            let bfut = dataset.get_blob(bea.extent.rid);
-                            Box::new(bfut) as MyFut
+                            dataset.get_blob(bea.extent.rid).boxed()
                         }
                     }
                 })
-            }).then(|r| {
+            }).map(|r| {
                 match r {
-                    Ok(buf) => tx.send(Ok(*buf)),
-                    Err(e) => tx.send(Err(e.into()))
-                }.unwrap();
-                Ok(()).into_future()
+                    Ok(buf) => Ok(*buf),
+                    Err(e) => Err(e.into())
+                }
             })
-        ).unwrap();
-        rx.wait().unwrap()
+        )
     }
 
     /// Retrieve the length of the value of an extended attribute
@@ -1070,14 +1035,13 @@ impl Fs {
         -> Result<u32, i32>
     {
         let owned_name = name.to_owned();
-        let (tx, rx) = oneshot::channel();
         let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(fd.ino, objkey);
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 dataset.get(key)
-                .then(move |r| {
-                    let result = match r {
+                .map(move |r| {
+                    match r {
                         Ok(Some(FSValue::ExtAttr(ref xattr)))
                             if xattr.namespace() == ns &&
                                xattr.name() == owned_name =>
@@ -1119,13 +1083,10 @@ impl Fs {
                         _ => {
                             Err(Error::ENOATTR.into())
                         },
-                    };
-                    tx.send(result).unwrap();
-                    future::ok::<(), Error>(())
+                    }
                 })
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+            }).map_err(Error::into)
+        )
     }
 
     /// Create a hardlink from `fd` to `parent/name`.
@@ -1136,11 +1097,10 @@ impl Fs {
         // * Increase the target's link count
         // * Add the new directory entry
         // * Update the parent's mtime and ctime
-        let (tx, rx) = oneshot::channel();
         let ino = fd.ino;
         let parent_ino = parent.ino;
         let name = name.to_owned();
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
@@ -1172,39 +1132,38 @@ impl Fs {
                     ctime_attr.ctime = Some(now);
                     let ctime_fut = Fs::do_setattr(ds, ino, ctime_attr);
 
-                    ifut.join4(dfut, parent_fut, ctime_fut)
-                }).map(move |_| tx.send(Ok(())).unwrap())
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+                    future::try_join4(ifut, dfut, parent_fut, ctime_fut)
+                }).map_ok(drop)
+            }).map_err(Error::into)
+        )
     }
 
     /// List the RID of every blob extattr for a file
     fn list_extattr_rids(dataset: &ReadWriteFilesystem, ino: u64)
-        -> impl Stream<Item=RID, Error=Error>
+        -> impl Stream<Item=Result<RID, Error>>
     {
         dataset.range(FSKey::extattr_range(ino))
-        .filter_map(move |(k, v)| {
+        .try_filter_map(move |(k, v)| {
             match v {
-                FSValue::ExtAttr(ExtAttr::Inline(_)) => None,
+                FSValue::ExtAttr(ExtAttr::Inline(_)) => future::ok(None),
                 FSValue::ExtAttr(ExtAttr::Blob(be)) => {
-                    let s = boxstream!(stream::once(Ok(be.extent.rid)));
-                    Some(s)
+                    let s = stream::once(future::ok(be.extent.rid)).boxed();
+                    future::ok(Some(s))
                 },
                 FSValue::ExtAttrs(r) => {
                     let rids = r.iter().filter_map(|v| {
                         if let ExtAttr::Blob(be) = v {
-                            Some(be.extent.rid)
+                            Some(Ok(be.extent.rid))
                         } else {
                             None
                         }
                     }).collect::<Vec<_>>();
-                    let s = boxstream!(stream::iter_ok(rids));
-                    Some(s)
+                    let s = stream::iter(rids).boxed();
+                    future::ok(Some(s))
                 }
                 x => panic!("Unexpected value {:?} for key {:?}", x, k)
             }
-        }).flatten()
+        }).try_flatten()
     }
 
     /// Lookup a file by its file name.
@@ -1215,8 +1174,6 @@ impl Fs {
     pub fn lookup(&self, grandparent: Option<&FileData>, parent: &FileData,
         name: &OsStr) -> Result<FileData, i32>
     {
-        let (tx, rx) = oneshot::channel();
-
         let dot = name == OsStr::from_bytes(b".");
         let dotdot = name == OsStr::from_bytes(b"..");
         let parent_ino = if dot {
@@ -1230,11 +1187,11 @@ impl Fs {
         let objkey = ObjKey::dir_entry(name);
         let owned_name = name.to_owned();
         let key = FSKey::new(parent.ino, objkey);
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 let rfs = htable::ReadFilesystem::ReadOnly(&dataset);
                 htable::get::<Dirent>(&rfs, key, 0, owned_name)
-                .then(move |r| {
+                .map(move |r| {
                     match r {
                         Ok(de) => {
                             let fd_parent = if de.dtype == libc::DT_DIR {
@@ -1243,15 +1200,13 @@ impl Fs {
                                 None
                             };
                             let fd = FileData::new(fd_parent, de.ino);
-                            tx.send(Ok(fd))
+                            Ok(fd)
                         },
-                        Err(e) => tx.send(Err(e.into()))
-                    }.unwrap();
-                    future::ok::<(), Error>(())
+                        Err(e) => Err(e.into())
+                    }
                 })
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+            }).map_err(Error::into)
+        )
     }
 
     /// Retrieve a packed list of extended attribute names.
@@ -1269,13 +1224,12 @@ impl Fs {
         -> Result<Vec<u8>, i32>
         where F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static
     {
-        let (tx, rx) = oneshot::channel();
         let ino = fd.ino;
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 let buf = Vec::with_capacity(size as usize);
                 dataset.range(FSKey::extattr_range(ino))
-                .fold(buf, move |mut buf, (k, v)| {
+                .try_fold(buf, move |mut buf, (k, v)| {
                     match v {
                         FSValue::ExtAttr(xattr) => f(&mut buf, &xattr),
                         FSValue::ExtAttrs(v) => {
@@ -1286,10 +1240,9 @@ impl Fs {
                         _ => panic!("Unexpected value {:?} for key {:?}", v, k)
                     }
                     future::ok::<Vec<u8>, Error>(buf)
-                }).map(move |buf| tx.send(Ok(buf)).unwrap())
-            }).map_err(|e: Error| panic!("{:?}", e))
-        ).unwrap();
-        rx.wait().unwrap()
+                })
+            }).map_err(Error::into)
+        )
     }
 
     /// Like [`listextattr`](#method.listextattr), but it returns the length of
@@ -1307,12 +1260,11 @@ impl Fs {
     pub fn listextattrlen<F>(&self, fd: &FileData, f: F) -> Result<u32, i32>
         where F: Fn(&ExtAttr<RID>) -> u32 + Send + 'static
     {
-        let (tx, rx) = oneshot::channel();
         let ino = fd.ino;
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 dataset.range(FSKey::extattr_range(ino))
-                .fold(0u32, move |mut len, (k, v)| {
+                .try_fold(0u32, move |mut len, (k, v)| {
                     len += match v {
                         FSValue::ExtAttr(xattr) => f(&xattr),
                         FSValue::ExtAttrs(v) => {
@@ -1321,10 +1273,9 @@ impl Fs {
                         _ => panic!("Unexpected value {:?} for key {:?}", v, k)
                     };
                     future::ok::<u32, Error>(len)
-                }).map(move |l| tx.send(Ok(l)).unwrap())
-            }).map_err(|e: Error| panic!("{:?}", e))
-        ).unwrap();
-        rx.wait().unwrap()
+                })
+            }).map_err(Error::into)
+        )
     }
 
     pub fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
@@ -1333,7 +1284,7 @@ impl Fs {
         let nlink = 2;  // One for the parent dir, and one for "."
 
         fn f(dataset: &Arc<ReadWriteFilesystem>, parent_ino: u64, ino: u64)
-            -> Box<dyn Future<Item=(), Error=Error> + Send + 'static>
+            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'static>>
         {
             let dot_dirent = Dirent {
                 ino,
@@ -1374,9 +1325,9 @@ impl Fs {
                 dot_dirent, dot_filename);
             let dotdot_fut = htable::insert(dataset4, dotdot_dirent_key,
                 dotdot_dirent, dotdot_filename);
-            let fut = dot_fut.join3(dotdot_fut, nlink_fut)
-            .map(drop);
-            boxfut!(fut)
+            let fut = future::try_join3(dot_fut, dotdot_fut, nlink_fut)
+            .map_ok(drop);
+            fut.boxed()
         }
 
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
@@ -1424,17 +1375,17 @@ impl Fs {
     /// Check that a directory is safe to delete
     fn ok_to_rmdir(ds: &ReadWriteFilesystem, ino: u64, parent: u64,
                    name: OsString)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         ds.range(FSKey::obj_range(ino))
-        .fold(false, |found_inode, (_, v)| {
+        .try_fold(false, |found_inode, (_, v)| {
             match v {
                 FSValue::DirEntry(dirent) => {
                     if dirent.name != OsStr::new(".") &&
                        dirent.name != OsStr::new("..") {
-                        Err(Error::ENOTEMPTY).into_future()
+                        future::err(Error::ENOTEMPTY)
                     } else {
-                        Ok(found_inode).into_future()
+                        future::ok(found_inode)
                     }
                 },
                 FSValue::DirEntries(_) => {
@@ -1443,7 +1394,7 @@ impl Fs {
                     // anything).  So the mere presence of this value type
                     // indicates ENOTEMPTY.  We don't need to check the
                     // contents.
-                    Err(Error::ENOTEMPTY).into_future()
+                    future::err(Error::ENOTEMPTY)
                 },
                 FSValue::Inode(inode) => {
                     // TODO: check permissions, file flags, etc
@@ -1457,11 +1408,11 @@ impl Fs {
                     assert_eq!(inode.nlink, 2,
                         "Hard links to directories are forbidden.  nlink={}",
                         inode.nlink);
-                    Ok(true).into_future()
+                    future::ok(true)
                 },
                 FSValue::ExtAttr(_) | FSValue::ExtAttrs(_) => {
                     // It's fine to remove a directory with extended attributes.
-                    Ok(found_inode).into_future()
+                    future::ok(found_inode)
                 },
                 FSValue::DyingInode(_) => {
                     panic!("Directories should not have dying inodes")
@@ -1475,7 +1426,7 @@ impl Fs {
                 #[cfg(test)]
                 FSValue::Invalid => unimplemented!()
             }
-        }).map(move |found_inode| {
+        }).map_ok(move |found_inode| {
             assert!(found_inode,
                 concat!("Inode {} not found, but parent ",
                         "direntry {}:{:?} exists!"),
@@ -1486,14 +1437,13 @@ impl Fs {
     pub fn read(&self, fd: &FileData, offset: u64, size: usize)
         -> Result<SGList, i32>
     {
-        let (tx, rx) = oneshot::channel();
         let ino = fd.ino;
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         // We only need a writeable FS reference if we're going to update atime.
         // If not, then only get a read reference.  Read references are better
         // because they can be held during txg syncs.
         if self.atime {
-            self.handle.spawn(
+            self.handle.block_on(
                 self.db.fswrite(self.tree, move |ds| {
                     ds.get(inode_key)
                     .and_then(move |r| {
@@ -1506,14 +1456,12 @@ impl Fs {
                         let rs = inode.record_size() as u64;
                         let afut = ds.insert(inode_key, value);
                         let dfut = Fs::do_read(ds, ino, fsize, rs, offset, size);
-                        dfut.join(afut)
-                    }).map(|(sglist, _)| {
-                        tx.send(Ok(sglist)).unwrap();
-                    })
-                }).map_err(Error::unhandled)
-            ).unwrap();
+                        future::try_join(dfut, afut)
+                    }).map_ok(|(sglist, _)| sglist)
+                }).map_err(Error::into)
+            )
         } else {
-            self.handle.spawn(
+            self.handle.block_on(
                 self.db.fsread(self.tree, move |ds| {
                     ds.get(inode_key)
                     .and_then(move |r| {
@@ -1523,13 +1471,10 @@ impl Fs {
                         let fsize = inode.size;
                         let rs = inode.record_size() as u64;
                         Fs::do_read(ds, ino, fsize, rs, offset, size)
-                    }).map(|sglist| {
-                        tx.send(Ok(sglist)).unwrap();
                     })
-                }).map_err(Error::unhandled)
-            ).unwrap();
+                }).map_err(Error::into)
+            )
         }
-        rx.wait().unwrap()
     }
 
     // TODO: instead of the full size struct libc::dirent, use a variable size
@@ -1537,8 +1482,6 @@ impl Fs {
     pub fn readdir(&self, fd: &FileData, soffs: i64)
         -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>
     {
-        type T = Result<(libc::dirent, i64), i32>;
-        type LoopFut = Box<dyn Future<Item=mpsc::Sender<T>, Error=Error> + Send>;
 
         bitfield! {
             struct Cursor(u64);
@@ -1560,26 +1503,40 @@ impl Fs {
             }
         }
 
+        /// Adapt a tokio mpsc::Receiver to a synchronous Iterator.  Tokio ought
+        /// to have this built-in.
+        struct ReaddirIter{
+            handle: Handle,
+            rx: mpsc::Receiver<(Dirent, Cursor)>
+        };
+        impl Iterator for ReaddirIter {
+            type Item = Result<(libc::dirent, i64), i32>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                // TODO: in Tokio 0.3, use rx.blocking_recv() instead.
+                self.handle.block_on(self.rx.recv())
+                .map(|(bfffs_dirent, cursor)| {
+                    let namlen = bfffs_dirent.name.as_bytes().len();
+                    let mut fs_dirent = libc::dirent {
+                        d_fileno: bfffs_dirent.ino as u32,
+                        d_reclen: DIRENT_SIZE as u16,
+                        d_type: bfffs_dirent.dtype,
+                        d_namlen: namlen as u8,
+                        d_name: unsafe{mem::zeroed()}
+                    };
+                    // libc::dirent uses "char" when it should be using
+                    // "unsigned char", so we need an unsafe conversion
+                    let p = bfffs_dirent.name.as_bytes() as *const [u8]
+                        as *const [i8];
+                    fs_dirent.d_name[0..namlen].copy_from_slice(unsafe{&*p});
+                    Ok((fs_dirent, cursor.0 as i64))
+                })
+            }
+        }
+
         const DIRENT_SIZE: usize = mem::size_of::<libc::dirent>();
         // Big enough to fill a 4KB page with full-size dirents
         const CHANSIZE: usize = 4096 / DIRENT_SIZE;
-
-        let send = move |tx: mpsc::Sender<T>, offs: Cursor, dirent: &Dirent| {
-            let namlen = dirent.name.as_bytes().len();
-            let mut reply = libc::dirent {
-                d_fileno: dirent.ino as u32,
-                d_reclen: DIRENT_SIZE as u16,
-                d_type: dirent.dtype,
-                d_namlen: namlen as u8,
-                d_name: unsafe{mem::zeroed()}
-            };
-            // libc::dirent uses "char" when it should be using "unsigned char",
-            // so we need an unsafe conversion
-            let p = dirent.name.as_bytes() as *const [u8] as *const [i8];
-            reply.d_name[0..namlen].copy_from_slice(unsafe{&*p});
-            tx.send(Ok((reply, offs.0 as i64)))
-            .map_err(|_| Error::EPIPE)
-        };
 
         let (tx, rx) = mpsc::channel(CHANSIZE);
         let ino = fd.ino;
@@ -1588,36 +1545,40 @@ impl Fs {
                 let cursor = Cursor::from(soffs);
                 let offs = cursor.offset();
                 let bucket_idx = cursor.bucket_idx();
-                let fut = dataset.range(FSKey::dirent_range(ino, offs))
-                    .fold(tx, move |tx, (k, v)| {
+                dataset.range(FSKey::dirent_range(ino, offs))
+                .try_for_each(move |(k, v)| {
+                    let mut tx2 = tx.clone();
+                    async move {
                         match v {
                             FSValue::DirEntry(dirent) => {
                                 let curs = Cursor::new(k.offset() + 1, 0);
-                                Box::new(send(tx, curs, &dirent)) as LoopFut
+                                tx2.send((dirent, curs)).await
                             },
                             FSValue::DirEntries(bucket) => {
                                 let bucket_size = bucket.len();
-                                let fut = stream::iter_ok(
+                                stream::iter(
                                     bucket.into_iter()
                                     .skip(bucket_idx as usize)
                                     .enumerate()
-                                )
-                                .fold(tx, move |tx, (i, dirent)| {
-                                    let idx = i + bucket_idx as usize;
-                                    let curs = if idx < bucket_size - 1 {
-                                        Cursor::new(k.offset(), idx + 1)
-                                    } else {
-                                        Cursor::new(k.offset() + 1, 0)
-                                    };
-                                    send(tx, curs, &dirent)
-                                });
-                                Box::new(fut) as LoopFut
-                            }
+                                ).map(|x| Ok(x))
+                                .try_for_each(move |(i, dirent)| {
+                                    let mut tx3 = tx2.clone();
+                                    async move {
+                                        let idx = i + bucket_idx as usize;
+                                        let curs = if idx < bucket_size - 1 {
+                                            Cursor::new(k.offset(), idx + 1)
+                                        } else {
+                                            Cursor::new(k.offset() + 1, 0)
+                                        };
+                                        tx3.send((dirent, curs)).await
+                                    }
+                                }).await
+                            },
                             x => panic!("Unexpected value {:?} for key {:?}",
                                         x, k)
                         }
-                    }).map(drop);
-                boxfut!(fut)
+                    }.map_err(|_| Error::EPIPE )
+                })
             }).map_err(|e| {
                 // An EPIPE here means that the caller dropped the iterator
                 // without reading all entries, probably because it found the
@@ -1626,39 +1587,32 @@ impl Fs {
                     panic!("{:?}", e)
                 }
             })
-        ).unwrap();
-        rx.wait().map(Result::unwrap)
+        );
+        ReaddirIter{handle: self.handle.clone(), rx}
     }
 
     pub fn readlink(&self, fd: &FileData) -> Result<OsString, i32> {
-        let (tx, rx) = oneshot::channel();
         let ino = fd.ino;
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 let key = FSKey::new(ino, ObjKey::Inode);
                 dataset.get(key)
-                .then(move |r| {
+                .map(move |r| {
                     match r {
                         Ok(Some(v)) => {
                             let inode = v.as_inode().unwrap();
                             if let FileType::Link(ref path) = inode.file_type {
-                                tx.send(Ok(path.clone()))
+                                Ok(path.clone())
                             } else {
-                                tx.send(Err(Error::EINVAL.into()))
+                                Err(Error::EINVAL.into())
                             }
                         },
-                        Ok(None) => {
-                            tx.send(Err(Error::ENOENT.into()))
-                        },
-                        Err(e) => {
-                            tx.send(Err(e.into()))
-                        }
-                    }.unwrap();
-                    future::ok::<(), Error>(())
+                        Ok(None) => Err(Error::ENOENT.into()),
+                        Err(e) => Err(e.into())
+                    }
                 })
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+            }).map_err(Error::into)
+        )
     }
 
     /// Rename a file.  Return the inode number of the renamed file.
@@ -1696,7 +1650,6 @@ impl Fs {
         //     parent.
         // 3ci) If dst existed and is not a directory, decrement its link count
         // 3cii) If dst existed and is a directory, remove it
-        let (tx, rx) = oneshot::channel::<Result<u64, i32>>();
         let src_objkey = ObjKey::dir_entry(&name);
         let owned_name = name.to_owned();
         let dst_objkey = ObjKey::dir_entry(&newname);
@@ -1713,7 +1666,7 @@ impl Fs {
             return Err(libc::EINVAL);
         }
 
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let ds4 = ds.clone();
@@ -1731,21 +1684,22 @@ impl Fs {
                                 dirent.ino);
                             if dirent.dtype != libc::DT_DIR {
                                 // Overwriting non-directories is allowed
-                                boxfut!(Ok(()).into_future())
+                                future::ok(()).boxed()
                             } else {
                                 // Is it a nonempty directory?
-                                boxfut!(Fs::ok_to_rmdir(&ds4, dirent.ino,
-                                    newparent_ino, owned_newname3))
+                                Fs::ok_to_rmdir(&ds4, dirent.ino,
+                                    newparent_ino, owned_newname3)
+                                .boxed()
                             }
                         },
                         Err(Error::ENOENT) => {
                             // Destination doesn't exist.  No problem!
                             assert!(dst_ino.is_none());
-                            boxfut!(Ok(()).into_future())
+                            future::ok(()).boxed()
                         },
                         Err(e) => {
                             // Other errors should propagate upwards
-                            boxfut!(Err(e).into_future())
+                            future::err(e).boxed()
                         }
                     }
                 }).and_then(move |_| {
@@ -1760,7 +1714,7 @@ impl Fs {
                     dirent.name = owned_newname2.clone();
                     let ino = dirent.ino;
                     htable::insert(ds6, dst_de_key, dirent, owned_newname2)
-                    .map(move |r| {
+                    .map_ok(move |r| {
                         let old_dst_ino = r.map(|dirent| dirent.ino);
                         (ino, old_dst_ino, isdir)
                     })
@@ -1781,7 +1735,7 @@ impl Fs {
                             }
                         }
                         ds2.insert(parent_ino_key, value)
-                        .map(drop)
+                        .map_ok(drop)
                     });
                     let np_nlink_fut =
                     if !samedir {
@@ -1802,37 +1756,30 @@ impl Fs {
                                 }
                             }
                             ds3.insert(newparent_ino_key, value)
-                            .map(drop)
+                            .map_ok(drop)
                         });
-                        boxfut!(fut)
+                        fut.boxed()
                     } else {
-                        boxfut!(Ok(()).into_future())
+                        future::ok(()).boxed()
                     };
                     let unlink_fut = if let Some(v) = old_dst_ino {
                         // 3ci) Decrement old dst's link count
                         if isdir {
                             let fut = Fs::do_rmdir(ds, newparent_ino, v, false);
-                            boxfut!(fut)
+                            fut.boxed()
                         } else {
                             let fut = Fs::do_unlink(ds.clone(), 0, v)
-                            .map(drop);
-                            boxfut!(fut)
+                            .map_ok(drop);
+                            fut.boxed()
                         }
                     } else {
-                        boxfut!(Ok(()).into_future())
+                        future::ok(()).boxed()
                     };
-                    unlink_fut.join3(p_nlink_fut, np_nlink_fut)
-                    .map(move |_| ino)
-                }).then(move |r| {
-                    match r {
-                        Ok(ino) => tx.send(Ok(ino)),
-                        Err(e) => tx.send(Err(e.into()))
-                    }.expect("FS::rename: send failed");
-                    Ok(()).into_future()
+                    future::try_join3(unlink_fut, p_nlink_fut, np_nlink_fut)
+                    .map_ok(move |_| ino)
                 })
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+            }).map_err(Error::into)
+        )
     }
 
     /// Remove a directory entry for a directory
@@ -1848,13 +1795,12 @@ impl Fs {
         // 2) Check that the directory is empty
         // 3) Remove its parent's directory entry
         // 4) Actually remove it
-        let (tx, rx) = oneshot::channel();
         let parent_ino = parent.ino;
         let owned_name = name.to_os_string();
         let owned_name2 = owned_name.clone();
         let owned_name3 = owned_name.clone();
         let objkey = ObjKey::dir_entry(&owned_name);
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
@@ -1866,7 +1812,7 @@ impl Fs {
                     let ino = de.ino;
                     // 2) Check that the directory is empty
                     Fs::ok_to_rmdir(&ds, ino, parent_ino, owned_name2)
-                    .map(move |_| ino)
+                    .map_ok(move |_| ino)
                 }).and_then(move |ino| {
                     // 3) Remove the parent dir's dir_entry
                     let de_key = FSKey::new(parent_ino, objkey);
@@ -1877,17 +1823,10 @@ impl Fs {
                     // 4) Actually remove the directory
                     let dfut = Fs::do_rmdir(ds2, parent_ino, ino, true);
 
-                    dirent_fut.join(dfut)
-                }).then(move |r| {
-                    match r {
-                        Ok(_) => tx.send(Ok(())),
-                        Err(e) => tx.send(Err(e.into()))
-                    }.expect("FS::rmdir: send failed");
-                    Ok(()).into_future()
-                })
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+                    future::try_join(dirent_fut, dfut)
+                }).map_ok(drop)
+            }).map_err(Error::into)
+        )
     }
 
     /// Lookup the root directory
@@ -1896,25 +1835,22 @@ impl Fs {
     }
 
     pub fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32> {
-        let (tx, rx) = oneshot::channel();
         let ino = fd.ino;
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 if attr.ctime.is_none() {
                     attr.ctime = Some(time::get_time());
                 }
                 Fs::do_setattr(ds, ino, attr)
-                .map(move |_| tx.send(Ok(())).unwrap())
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+                .map_ok(drop)
+            }).map_err(Error::into)
+        )
     }
 
     pub fn setextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                       name: &OsStr, data: &[u8]) -> Result<(), i32>
     {
-        let (tx, rx) = oneshot::channel();
         let ino = fd.ino;
         let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(ino, objkey);
@@ -1927,13 +1863,12 @@ impl Fs {
             name: owned_name.clone(),
             extent
         });
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |dataset| {
                 htable::insert(dataset, key, extattr, owned_name)
-                .map(move |_| tx.send(Ok(())).unwrap())
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+                .map_ok(drop)
+            }).map_err(Error::into)
+        )
     }
 
     /// Change filesystem properties
@@ -1948,21 +1883,20 @@ impl Fs {
         // Update on-disk properties in the background
         let db2 = self.db.clone();
         let tree_id = self.tree;
-        self.handle.spawn(future::lazy(move || {
-            future::join_all(
+        self.handle.block_on(async move {
+            future::try_join_all(
                 props.into_iter()
                 .map(move |prop| {
                     db2.set_prop(tree_id, prop)
                 }).collect::<Vec<_>>()
-            ).map_err(Error::unhandled)
-            .map(drop)
-        })).unwrap();
+            ).map_ok(drop)
+            .await
+        }).expect("Fs::set_props failed");
     }
 
     pub fn statvfs(&self) -> Result<libc::statvfs, i32> {
-        let (tx, rx) = oneshot::channel::<Result<libc::statvfs, i32>>();
         let rs = 1 << self.record_size;
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 let blocks = dataset.size();
                 let allocated = dataset.allocated();
@@ -1979,14 +1913,9 @@ impl Fs {
                     f_fsid: 0,
                     f_namemax: 255,
                 };
-                Ok(r).into_future()
+                future::ok(r)
             }).map_err(Error::into)
-            .then(|r| {
-                tx.send(r).expect("Fs::statvfs: send failed");
-                Ok(())
-            })
-        ).unwrap();
-        rx.wait().unwrap()
+        )
     }
 
     /// Create a symlink from `name` to `link`.  Returns the link's inode on
@@ -2001,13 +1930,9 @@ impl Fs {
     }
 
     pub fn sync(&self) {
-        let (tx, rx) = oneshot::channel::<()>();
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.sync_transaction()
-            .map_err(Error::unhandled)
-            .map(|_| tx.send(()).unwrap())
-        ).unwrap();
-        rx.wait().unwrap()
+        ).expect("Fs::sync failed");
     }
 
     /// Remove a directory entry for a non-directory
@@ -2024,13 +1949,12 @@ impl Fs {
         // 1) Lookup and remove the directory entry
         // 2a) Unlink the Inode
         // 2b) Update parent's mtime and ctime
-        let (tx, rx) = oneshot::channel();
         let ino = fd.map(|fd| fd.ino);
         let lookup_count = fd.map_or(0, |fd_| fd_.lookup_count);
         let parent_ino = parent_fd.ino;
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |ds| {
                 let dataset = Arc::new(ds);
                 // 1) Lookup and remove the directory entry
@@ -2050,17 +1974,10 @@ impl Fs {
                     attr.ctime = Some(now);
                     attr.mtime = Some(now);
                     let ts_fut = Fs::do_setattr(dataset, parent_ino, attr);
-                    unlink_fut.join(ts_fut)
-                }).then(move |r| {
-                    match r {
-                        Ok(_) => tx.send(Ok(())),
-                        Err(e) => tx.send(Err(e.into()))
-                    }.expect("FS::unlink: send failed");
-                    Ok(()).into_future()
-                })
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+                    future::try_join(unlink_fut, ts_fut)
+                }).map_ok(drop)
+            }).map_err(Error::into)
+        )
     }
 
     pub fn write<IU>(&self, fd: &FileData, offset: u64, data: IU, _flags: u32)
@@ -2077,11 +1994,10 @@ impl Fs {
         //         end if the Inode indicates that the file size requires it.
         //         Then write it as an InlineExtent
         //  3) Set file length
-        let (tx, rx) = oneshot::channel();
         let ino = fd.ino;
         let uio = data.into();
 
-        self.handle.spawn(
+        self.handle.block_on(
             self.db.fswrite(self.tree, move |ds| {
                 let dataset = Arc::new(ds);
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
@@ -2116,19 +2032,18 @@ impl Fs {
                         inode.ctime = now;
                     }
                     let ino_fut = dataset.insert(inode_key, value);
-                    future::join_all(data_futs).join(ino_fut)
-                    .map(move |_| tx.send(Ok(datalen as u32)).unwrap())
+                    future::try_join(future::try_join_all(data_futs), ino_fut)
+                    .map_ok(move |_| datalen as u32)
                 })
-            }).map_err(Error::unhandled)
-        ).unwrap();
-        rx.wait().unwrap()
+            }).map_err(Error::into)
+        )
     }
 
     // Subroutine of write
     #[inline]
     fn write_record(ino: u64, rs: u64, offset: u64, i: usize,
                     data: Arc<DivBufShared>, dataset: Arc<ReadWriteFilesystem>)
-        -> Box<dyn Future<Item=Option<FSValue<RID>>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Option<FSValue<RID>>, Error>> + Send>>
     {
         let baseoffset = offset - (offset % rs);
         let offs = baseoffset + i as u64 * rs;
@@ -2155,15 +2070,15 @@ impl Fs {
                                 *x = 0;
                             }
                         }
-                        boxfut!(Ok(r).into_future())
+                        future::ok(r).boxed()
                     },
                     Some(FSValue::InlineExtent(ile)) => {
-                        boxfut!(Ok(ile.buf).into_future())
+                        future::ok(ile.buf).boxed()
                     },
                     Some(FSValue::BlobExtent(be)) => {
                         let fut = dataset4.remove_blob(be.rid)
-                            .map(Arc::from);
-                        boxfut!(fut)
+                            .map_ok(Arc::from);
+                        fut.boxed()
                     },
                     x => panic!("Unexpected value {:?} for key {:?}",
                                 x, k)
@@ -2184,10 +2099,10 @@ impl Fs {
                     dataset.insert(k, new_v)
                 })
             });
-            boxfut!(fut)
+            fut.boxed()
         } else {
             let v = FSValue::InlineExtent(InlineExtent::new(data));
-            boxfut!(dataset.insert(k, v))
+            dataset.insert(k, v).boxed()
         }
     }
 }
@@ -2545,7 +2460,7 @@ fn deleteextattr_3way_collision() {
         let iea2 = InlineExtAttr{namespace, name, extent: extent2};
         let extattr2 = ExtAttr::Inline(iea2);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1, extattr2]);
-        boxfut!(Ok(Some(v)).into_future())
+        Ok(Some(v)).into_future().boxed()
     });
     ds.expect_insert()
     .once()
@@ -2601,7 +2516,7 @@ fn deleteextattr_3way_collision_enoattr() {
         let iea1 = InlineExtAttr{namespace, name, extent: extent1};
         let extattr1 = ExtAttr::Inline(iea1);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
-        boxfut!(Ok(Some(v)).into_future())
+        Ok(Some(v)).into_future().boxed()
     });
     ds.expect_insert()
     .once()
@@ -2938,7 +2853,7 @@ fn setextattr_3way_collision() {
         let iea1 = InlineExtAttr{namespace, name, extent: extent1};
         let extattr1 = ExtAttr::Inline(iea1);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
-        boxfut!(Ok(Some(v)).into_future())
+        Ok(Some(v)).into_future().boxed()
     });
     ds.expect_get()
     .once()
@@ -2954,7 +2869,7 @@ fn setextattr_3way_collision() {
         let iea2 = InlineExtAttr{namespace, name, extent: extent2};
         let extattr2 = ExtAttr::Inline(iea2);
         let v = FSValue::ExtAttr(extattr2);
-        boxfut!(Ok(Some(v)).into_future())
+        Ok(Some(v)).into_future().boxed()
     });
     ds.expect_insert()
     .once()
@@ -2972,7 +2887,7 @@ fn setextattr_3way_collision() {
         let iea2 = InlineExtAttr{namespace, name, extent: extent2};
         let extattr2 = ExtAttr::Inline(iea2);
         let v = FSValue::ExtAttr(extattr2);
-        boxfut!(Ok(Some(v)).into_future())
+        Ok(Some(v)).into_future().boxed()
     });
 
     db.expect_fswrite_inner()
@@ -2989,11 +2904,11 @@ fn set_props() {
     db.expect_set_prop()
         .once()
         .with(eq(tree_id), eq(Property::Atime(false)))
-        .returning(|_, _| boxfut!(Ok(()).into_future()));
+        .returning(|_, _| future::ok(()).boxed());
     db.expect_set_prop()
         .once()
         .with(eq(tree_id), eq(Property::RecordSize(13)))
-        .returning(|_, _| boxfut!(Ok(()).into_future()));
+        .returning(|_, _| future::ok(()).boxed());
     let mut fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     fs.set_props(vec![Property::Atime(false), Property::RecordSize(13)]);
     rt.shutdown_on_idle();
