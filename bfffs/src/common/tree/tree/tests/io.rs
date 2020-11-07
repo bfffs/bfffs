@@ -8,7 +8,11 @@ use crate::common::{
     idml::IDML,
     fs_tree::{FSKey, FSValue},
 };
-use futures::future;
+use futures::{
+    future,
+    stream::{StreamExt, TryStreamExt},
+    task::{Context, Poll}
+};
 use mockall::{
     Sequence,
     mock,
@@ -18,15 +22,14 @@ use pretty_assertions::assert_eq;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use super::*;
-use tokio::prelude::task::current;
-use tokio::runtime::current_thread;
+use tokio::runtime::Runtime;
 
 mock! {
     Future {}
-    trait Future {
-        type Item = Box<NodeT>;
-        type Error = Error;
-        fn poll(&mut self) -> Poll<Box<NodeT>, Error>;
+    impl Future for Future {
+        type Output = Result<Box<NodeT>, Error>;
+        fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
+            -> Poll<Result<Box<NodeT>, Error>>;
     }
 }
 
@@ -37,7 +40,7 @@ fn expect_get(mock: &mut MockDML, addr: u32, node: NodeT)
     mock.expect_get::<NodeT, NodeT>()
         .once()
         .with(eq(addr))
-        .return_once(move |_| Box::new(future::ok(Box::new(node))));
+        .return_once(move |_| future::ok(Box::new(node)).boxed());
 }
 
 /// Helper method for setting MockDML::delete expectations
@@ -45,7 +48,7 @@ fn expect_delete(mock: &mut MockDML, addr: u32) {
     mock.expect_delete()
         .once()
         .with(eq(addr), always())
-        .returning(move |_, _| Box::new(future::ok(())));
+        .returning(move |_, _| future::ok(()).boxed());
 }
 
 /// Helper method for setting MockDML::pop expectations
@@ -54,7 +57,7 @@ fn expect_pop(mock: &mut MockDML, addr: u32, node: NodeT)
     mock.expect_pop::<NodeT, NodeT>()
         .once()
         .with(eq(addr), always())
-        .return_once(move |_, _| Box::new(future::ok(Box::new(node))));
+        .return_once(move |_, _| future::ok(Box::new(node)).boxed());
 }
 
 #[test]
@@ -130,10 +133,12 @@ root:
             ptr:
               Addr: 4
 "#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let addrs = rt.block_on(future::lazy(|| {
-        tree.addresses(TxgT::from(5)..).collect()
-    })).unwrap();
+    let mut rt = Runtime::new().unwrap();
+    let addrs = rt.block_on(async {
+        tree.addresses(TxgT::from(5)..)
+        .collect::<Vec<_>>()
+        .await
+    });
     assert_eq!(vec![addri0, addrl0, addrl1, addrl2], addrs);
 }
 
@@ -159,10 +164,12 @@ root:
     end: 42
   ptr:
     Addr: 0"#);
-    let mut rt = current_thread::Runtime::new().unwrap();
-    let addrs = rt.block_on(future::lazy(|| {
-        tree.addresses(..).collect()
-    })).unwrap();
+    let mut rt = Runtime::new().unwrap();
+    let addrs = rt.block_on(async {
+        tree.addresses(..)
+        .collect::<Vec<_>>()
+        .await
+    });
     assert_eq!(vec![addrl], addrs);
 }
 
@@ -410,7 +417,7 @@ fn insert_below_root() {
         .once()
         .with(eq(addrl), eq(TxgT::from(42)))
         .return_once(move |_, _| {
-            Box::new(future::ok(Box::new(node)))
+            future::ok(Box::new(node)).boxed()
         });
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
@@ -445,7 +452,7 @@ root:
               Addr: 256
 "#);
 
-    let r = tree.insert(0, 0, TxgT::from(42)).wait();
+    let r = tree.insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -492,7 +499,7 @@ fn insert_root() {
         .once()
         .with(eq(addrl), eq(TxgT::from(42)))
         .return_once(move |_, _| {
-            Box::new(future::ok(Box::new(node)))
+            future::ok(Box::new(node)).boxed()
         });
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
@@ -513,7 +520,7 @@ root:
     Addr: 0
 "#);
 
-    let r = tree.insert(0, 0, TxgT::from(42)).wait();
+    let r = tree.insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -545,7 +552,7 @@ fn is_dirty() {
         .once()
         .with(eq(addrl), eq(TxgT::from(42)))
         .return_once(move |_, _| {
-            Box::new(future::ok(Box::new(node)))
+            future::ok(Box::new(node)).boxed()
         });
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
@@ -567,7 +574,7 @@ root:
 "#);
 
     assert!(!tree.is_dirty());
-    tree.insert(0, 0, TxgT::from(42)).wait().unwrap();
+    tree.insert(0, 0, TxgT::from(42)).now_or_never().unwrap().unwrap();
     assert!(tree.is_dirty());
 }
 
@@ -704,7 +711,7 @@ root:
             ptr:
               Addr: 2
 "#);
-    tree.range_delete(5..25, TxgT::from(42)).wait().unwrap();
+    tree.range_delete(5..25, TxgT::from(42)).now_or_never().unwrap().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
@@ -912,7 +919,7 @@ root:
                       ptr:
                         Addr: 175
 "#);
-    tree.range_delete(4..32, TxgT::from(42)).wait().unwrap();
+    tree.range_delete(4..32, TxgT::from(42)).now_or_never().unwrap().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 3
@@ -1012,7 +1019,7 @@ fn range_leaf() {
     ld1.insert(2, 2.0);
     ld1.insert(3, 3.0);
     ld1.insert(4, 4.0);
-    let node1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
+    let node1 = Arc::new(Node::<u32, u32, f32>::new(NodeData::Leaf(ld1)));
     mock.expect_get::<NodeT, NodeT>()
         .once()
         .returning(move |_| {
@@ -1022,15 +1029,16 @@ fn range_leaf() {
             fut.expect_poll()
                 .once()
                 .in_sequence(&mut seq)
-                .returning(|| {
-                    current().notify();
-                    Ok(Async::NotReady)
+                .returning(|cx| {
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
                 });
             fut.expect_poll()
                 .once()
                 .in_sequence(&mut seq)
-                .return_once(move || Ok(Async::Ready(Box::new(node2))));
-            Box::new(fut)
+                .return_once(move |_| {
+                    Poll::Ready(Ok(Box::new(node2)))});
+            fut.boxed()
         });
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
@@ -1050,7 +1058,12 @@ root:
   ptr:
     Addr: 0
 "#);
-    let r = tree.range(1..3).collect().wait();
+    let mut rt = Runtime::new().unwrap();
+    let r = rt.block_on(async {
+        tree.range(1..3)
+        .try_collect()
+        .await
+    });
     assert_eq!(r, Ok(vec![(1, 1.0), (2, 2.0)]));
 }
 
@@ -1071,7 +1084,7 @@ fn read_int() {
     mock.expect_get::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
         .once()
         .with(eq(addrl))
-        .return_once(move |_| Box::new(future::ok(Box::new(node))));
+        .return_once(move |_| future::ok(Box::new(node)).boxed());
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, u32> =
         Tree::from_str(dml.clone(), false, r#"
@@ -1093,7 +1106,7 @@ root:
 "#);
 
     let root_guard = tree.i.root.try_read().unwrap();
-    let r = root_guard.rlock(&dml).map(|node| {
+    let r = root_guard.rlock(&dml).map_ok(|node| {
         let int_data = (*node).as_int();
         assert_eq!(int_data.nchildren(), 2);
         // Validate IntElems as well as possible using their public API
@@ -1101,8 +1114,8 @@ root:
         assert!(!int_data.children[0].ptr.is_mem());
         assert_eq!(int_data.children[1].key, 256);
         assert!(!int_data.children[1].ptr.is_mem());
-    }).wait();
-    assert!(r.is_ok());
+    }).now_or_never();
+    assert!(r.is_some());
 }
 
 #[test]
@@ -1115,7 +1128,7 @@ fn read_leaf() {
     let node = Arc::new(Node::new(NodeData::Leaf(ld)));
     mock.expect_get::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
         .once()
-        .return_once(move |_| Box::new(future::ok(Box::new(node))));
+        .return_once(move |_| future::ok(Box::new(node)).boxed());
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
@@ -1135,7 +1148,7 @@ root:
     Addr: 0
 "#);
 
-    let r = tree.get(1).wait();
+    let r = tree.get(1).now_or_never().unwrap();
     assert_eq!(Ok(Some(200)), r);
 }
 
@@ -1152,7 +1165,7 @@ fn remove_and_merge_down() {
     mock.expect_pop::<NodeT, NodeT>()
         .once()
         .with(eq(addrl), always())
-        .return_once(move |_, _| Box::new(future::ok(Box::new(leafnode))));
+        .return_once(move |_, _| future::ok(Box::new(leafnode)).boxed());
 
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
@@ -1180,7 +1193,7 @@ root:
             ptr:
               Addr: 0
 "#);
-    let r2 = tree.remove(1, TxgT::from(42)).wait();
+    let r2 = tree.remove(1, TxgT::from(42)).now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -1338,7 +1351,7 @@ root:
     Addr: 0
 "#);
 
-    let r = tree.flush(TxgT::from(42)).wait();
+    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
 }
 
@@ -1361,7 +1374,7 @@ fn write_deep() {
                 },
                 _ => false
             }
-        }).return_once(move |_, _, _| Box::new(Ok(addr).into_future()));
+        }).return_once(move |_, _, _| future::ok(addr).boxed());
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .once()
         .in_sequence(&mut seq)
@@ -1373,7 +1386,7 @@ fn write_deep() {
             int_data.children[1].key == 256 &&
             int_data.children[1].ptr.is_addr() &&
             *txg == TxgT::from(42)
-        }).return_once(move |_, _, _| Box::new(Ok(addr).into_future()));
+        }).return_once(move |_, _, _| future::ok(addr).boxed());
     let dml = Arc::new(mock);
     let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
@@ -1411,7 +1424,7 @@ root:
               Addr: 256
 "#);
 
-    let r = tree.flush(TxgT::from(42)).wait();
+    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
     let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap()
@@ -1433,7 +1446,7 @@ fn write_int() {
             int_data.children[1].key == 256 &&
             !int_data.children[1].ptr.is_mem() &&
             *txg == TxgT::from(42)
-        }).returning(move |_, _, _| Box::new(Ok(addr).into_future()));
+        }).returning(move |_, _, _| future::ok(addr).boxed());
     let dml = Arc::new(mock);
     let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
@@ -1467,7 +1480,7 @@ root:
               Addr: 256
 "#);
 
-    let r = tree.flush(TxgT::from(42)).wait();
+    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
     let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap()
@@ -1487,7 +1500,7 @@ fn write_leaf() {
             leaf_data.get(&0) == Some(100) &&
             leaf_data.get(&1) == Some(200) &&
             *txg == TxgT::from(42)
-        }).returning(move |_, _, _| Box::new(Ok(addr).into_future()));
+        }).returning(move |_, _, _| future::ok(addr).boxed());
     let dml = Arc::new(mock);
     let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
@@ -1511,7 +1524,7 @@ root:
           1: 200
 "#);
 
-    let r = tree.flush(TxgT::from(42)).wait();
+    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
     let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap()
