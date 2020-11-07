@@ -2116,14 +2116,14 @@ use crate::common::{
     dataset::RangeQuery,
     tree::{Key, Value}
 };
-use futures::Async;
+use futures::task::Poll;
 use mockall::{Sequence, predicate::*};
 use pretty_assertions::assert_eq;
 use std::borrow::Borrow;
 
-fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
-    let mut rt = tokio_io_pool::Builder::default()
-        .pool_size(1)
+fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
+    let mut rt = tokio::runtime::Builder::default()
+        .basic_scheduler()
         .build()
         .unwrap();
     let mut rods = ReadOnlyFilesystem::default();
@@ -2132,7 +2132,7 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .once()
         .returning(|| {
             let root_inode_key = FSKey::new(1, ObjKey::Inode);
-            Box::new(Ok(Some(root_inode_key)).into_future())
+            future::ok(Some(root_inode_key)).boxed()
         });
     rwds.expect_range()
         .once()
@@ -2144,12 +2144,12 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .once()
         .with(eq(FSKey::dying_inode_range()))
         .returning(|_| {
-            Box::new(Ok(()).into_future())
+            future::ok(()).boxed()
         });
     let mut db = Database::default();
     db.expect_new_fs()
         .once()
-        .returning(|_| Box::new(Ok(TreeID::Fs(0)).into_future()));
+        .returning(|_| future::ok(TreeID::Fs(0)).boxed());
     db.expect_fsread_inner()
         .once()
         .return_once(move |_| rods);
@@ -2161,7 +2161,7 @@ fn setup() -> (tokio_io_pool::Runtime, Database, TreeID) {
         .returning(|_tree_id, propname| {
             let prop = Property::default_value(propname);
             let source = PropertySource::Default;
-            Box::new(Ok((prop, source)).into_future())
+            future::ok((prop, source)).boxed()
         });
     let tree_id = rt.block_on(db.new_fs(Vec::new())).unwrap();
     (rt, db, tree_id)
@@ -2177,15 +2177,15 @@ fn mock_range_query<K, T, V>(items: Vec<(K, V)>) -> RangeQuery<K, T, V>
     let mut rq = RangeQuery::new();
     let mut seq = Sequence::new();
     for item in items.into_iter() {
-        rq.expect_poll()
+        rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_once(|| Ok(Async::Ready(Some(item))));
+            .return_once(|_| Poll::Ready(Some(Ok(item))));
     }
-    rq.expect_poll()
+    rq.expect_poll_next()
         .once()
         .in_sequence(&mut seq)
-        .return_once(|| Ok(Async::Ready(None)));
+        .return_once(|_| Poll::Ready(None));
     rq
 }
 
@@ -2215,7 +2215,7 @@ fn create() {
                 file_type: FileType::Dir,
                 perm: 0o755,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
     ds.expect_insert()
         .once()
@@ -2227,7 +2227,7 @@ fn create() {
             value.as_inode().unwrap().perm == 0o644 &&
             value.as_inode().unwrap().uid == 123 &&
             value.as_inode().unwrap().gid == 456
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
     ds.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -2235,7 +2235,7 @@ fn create() {
             value.as_direntry().unwrap().dtype == libc::DT_REG &&
             value.as_direntry().unwrap().name == filename2 &&
             value.as_direntry().unwrap().ino == ino
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
     ds.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -2245,7 +2245,7 @@ fn create() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
@@ -2287,13 +2287,13 @@ fn create_hash_collision() {
                 file_type: FileType::Dir,
                 perm: 0o755,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
     ds.expect_insert()
         .once()
         .withf(|key, _value| {
             key.is_inode()
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
     ds.expect_insert()
         .once()
         .withf(|key, _value| {
@@ -2303,7 +2303,7 @@ fn create_hash_collision() {
             let name = other_filename2.clone();
             let dirent = Dirent{ino: other_ino, dtype: libc::DT_REG, name};
             let v = FSValue::DirEntry(dirent);
-            Box::new(Ok(Some(v)).into_future())
+            future::ok(Some(v)).boxed()
         });
     ds.expect_get()
         .once()
@@ -2314,7 +2314,7 @@ fn create_hash_collision() {
             let name = filename2.clone();
             let dirent = Dirent{ino, dtype: libc::DT_REG, name};
             let v = FSValue::DirEntry(dirent);
-            Box::new(Ok(Some(v)).into_future())
+            future::ok(Some(v)).boxed()
         });
     ds.expect_insert()
         .once()
@@ -2337,7 +2337,7 @@ fn create_hash_collision() {
             let name = filename4.clone();
             let dirent = Dirent{ino, dtype: libc::DT_REG, name};
             let v = FSValue::DirEntry(dirent);
-            Box::new(Ok(Some(v)).into_future())
+            future::ok(Some(v)).boxed()
         });
     ds.expect_insert()
         .once()
@@ -2348,7 +2348,7 @@ fn create_hash_collision() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
 
     db.expect_fswrite_inner()
         .once()
@@ -2460,7 +2460,7 @@ fn deleteextattr_3way_collision() {
         let iea2 = InlineExtAttr{namespace, name, extent: extent2};
         let extattr2 = ExtAttr::Inline(iea2);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1, extattr2]);
-        Ok(Some(v)).into_future().boxed()
+        future::ok(Some(v)).boxed()
     });
     ds.expect_insert()
     .once()
@@ -2471,7 +2471,7 @@ fn deleteextattr_3way_collision() {
         let ie1 = extattrs[1].as_inline().unwrap();
         ie0.name == name0 && ie1.name == name1 && extattrs.len() == 2
     }).returning(|_, _| {
-        Box::new(Ok(None).into_future())
+        future::ok(None).boxed()
     });
 
     db.expect_fswrite_inner()
@@ -2516,7 +2516,7 @@ fn deleteextattr_3way_collision_enoattr() {
         let iea1 = InlineExtAttr{namespace, name, extent: extent1};
         let extattr1 = ExtAttr::Inline(iea1);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
-        Ok(Some(v)).into_future().boxed()
+        future::ok(Some(v)).boxed()
     });
     ds.expect_insert()
     .once()
@@ -2527,7 +2527,7 @@ fn deleteextattr_3way_collision_enoattr() {
         let ie1 = extattrs[1].as_inline().unwrap();
         ie0.name == name0 && ie1.name == name1 && extattrs.len() == 2
     }).returning(|_, _| {
-        Box::new(Ok(None).into_future())
+        future::ok(None).boxed()
     });
 
     db.expect_fswrite_inner()
@@ -2546,7 +2546,7 @@ fn fsync() {
     let (rt, mut db, tree_id) = setup();
     db.expect_sync_transaction()
         .once()
-        .returning(|| Box::new(Ok(()).into_future()));
+        .returning(|| future::ok(()).boxed());
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
     let fd = FileData::new(Some(1), ino);
@@ -2572,13 +2572,13 @@ fn rename_eio() {
         .with(eq(FSKey::new(1, ObjKey::dir_entry(&dstname))))
         .returning(move |_| {
             let v = FSValue::DirEntry(dst_dirent.clone());
-            Box::new(Ok(Some(v)).into_future())
+            future::ok(Some(v)).boxed()
         });
     ds.expect_remove()
         .once()
         .with(eq(FSKey::new(1, ObjKey::dir_entry(&srcname))))
         .returning(move |_| {
-            Box::new(Err(Error::EIO).into_future())
+            future::err(Error::EIO).boxed()
         });
 
     db.expect_fswrite_inner()
@@ -2616,7 +2616,7 @@ fn rmdir_with_blob_extattr() {
                 name: filename2.clone()
             };
             let v = Some(FSValue::DirEntry(dirent));
-            Box::new(Ok(v).into_future())
+            future::ok(v).boxed()
         });
     // This part comes from ok_to_rmdir
     ds.expect_range()
@@ -2686,13 +2686,13 @@ fn rmdir_with_blob_extattr() {
                 name: filename3.clone()
             };
             let v = Some(FSValue::DirEntry(dirent));
-            Box::new(Ok(v).into_future())
+            future::ok(v).boxed()
         });
     ds.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
         .returning(|_| {
-            Box::new(Ok(()).into_future())
+            future::ok(()).boxed()
         });
     ds.expect_range()
         .once()
@@ -2719,7 +2719,7 @@ fn rmdir_with_blob_extattr() {
         .once()
         .withf(move |rid: &RID| xattr_blob_rid == *rid)
         .returning(|_| {
-            Box::new(Ok(()).into_future())
+            future::ok(()).boxed()
          });
     ds.expect_get()
         .once()
@@ -2739,7 +2739,7 @@ fn rmdir_with_blob_extattr() {
                 file_type: FileType::Dir,
                 perm: 0o755,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
     ds.expect_insert()
         .once()
@@ -2761,7 +2761,7 @@ fn rmdir_with_blob_extattr() {
                 file_type: FileType::Dir,
                 perm: 0o755,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
 
     db.expect_fswrite_inner()
@@ -2796,7 +2796,7 @@ fn setextattr() {
         ie.namespace == namespace &&
         ie.name == name2 &&
         &ie.extent.buf.try_const().unwrap()[..] == value2.as_bytes()
-    }).returning(|_, _| Box::new(Ok(None).into_future()));
+    }).returning(|_, _| future::ok(None).boxed());
 
     db.expect_fswrite_inner()
         .once()
@@ -2853,7 +2853,7 @@ fn setextattr_3way_collision() {
         let iea1 = InlineExtAttr{namespace, name, extent: extent1};
         let extattr1 = ExtAttr::Inline(iea1);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
-        Ok(Some(v)).into_future().boxed()
+        future::ok(Some(v)).boxed()
     });
     ds.expect_get()
     .once()
@@ -2869,7 +2869,7 @@ fn setextattr_3way_collision() {
         let iea2 = InlineExtAttr{namespace, name, extent: extent2};
         let extattr2 = ExtAttr::Inline(iea2);
         let v = FSValue::ExtAttr(extattr2);
-        Ok(Some(v)).into_future().boxed()
+        future::ok(Some(v)).boxed()
     });
     ds.expect_insert()
     .once()
@@ -2887,7 +2887,7 @@ fn setextattr_3way_collision() {
         let iea2 = InlineExtAttr{namespace, name, extent: extent2};
         let extattr2 = ExtAttr::Inline(iea2);
         let v = FSValue::ExtAttr(extattr2);
-        Ok(Some(v)).into_future().boxed()
+        future::ok(Some(v)).boxed()
     });
 
     db.expect_fswrite_inner()
@@ -2911,7 +2911,6 @@ fn set_props() {
         .returning(|_, _| future::ok(()).boxed());
     let mut fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
     fs.set_props(vec![Property::Atime(false), Property::RecordSize(13)]);
-    rt.shutdown_on_idle();
 }
 
 #[test]
@@ -2919,7 +2918,7 @@ fn sync() {
     let (rt, mut db, tree_id) = setup();
     db.expect_sync_transaction()
         .once()
-        .returning(|| Box::new(Ok(()).into_future()));
+        .returning(|| future::ok(()).boxed());
     let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
 
     fs.sync();
@@ -2949,7 +2948,7 @@ fn unlink() {
                 name: filename2.clone()
             };
             let v = Some(FSValue::DirEntry(dirent));
-            Box::new(Ok(v).into_future())
+            future::ok(v).boxed()
         });
     ds0.expect_get()
         .once()
@@ -2968,7 +2967,7 @@ fn unlink() {
                 file_type: FileType::Reg(12),
                 perm: 0o644,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
 
     ds0.expect_get()
@@ -2988,7 +2987,7 @@ fn unlink() {
                 file_type: FileType::Dir,
                 perm: 0o755,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
     ds0.expect_insert()
         .once()
@@ -2997,7 +2996,7 @@ fn unlink() {
             key.object() == ino &&
             value.as_inode().unwrap().nlink == 0 &&
             value.as_inode().unwrap().ctime != old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -3007,20 +3006,20 @@ fn unlink() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
             key.is_dying_inode() &&
             value.as_dying_inode().unwrap().ino() == ino
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
 
     ds1.expect_get()
         .once()
         .withf(move |key| key.is_dying_inode())
         .returning(move |_| {
             let v = FSValue::DyingInode(DyingInode::from(ino));
-            Box::new(Ok(Some(v)).into_future())
+            future::ok(Some(v)).boxed()
         });
     ds1.expect_range()
         .once()
@@ -3045,11 +3044,11 @@ fn unlink() {
     ds1.expect_delete_blob()
         .once()
         .withf(move |rid: &RID| blob_rid == *rid)
-        .returning(|_| Box::new(Ok(()).into_future()));
+        .returning(|_| future::ok(()).boxed());
     ds1.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
-        .returning(|_| Box::new(Ok(()).into_future()));
+        .returning(|_| future::ok(()).boxed());
 
     db.expect_fswrite_inner()
         .once()
@@ -3090,7 +3089,7 @@ fn unlink_with_blob_extattr() {
                 name: filename2.clone()
             };
             let v = Some(FSValue::DirEntry(dirent));
-            Box::new(Ok(v).into_future())
+            future::ok(v).boxed()
         });
     ds0.expect_get()
         .once()
@@ -3110,7 +3109,7 @@ fn unlink_with_blob_extattr() {
                 file_type: FileType::Reg(12),
                 perm: 0o644,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
     let old_ts = time::Timespec::new(0, 0);
     ds0.expect_get()
@@ -3130,21 +3129,21 @@ fn unlink_with_blob_extattr() {
                 file_type: FileType::Dir,
                 perm: 0o755,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
             key.is_dying_inode() &&
             value.as_dying_inode().unwrap().ino() == ino
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
 
     ds1.expect_get()
         .once()
         .withf(move |key| key.is_dying_inode())
         .returning(move |_| {
             let v = FSValue::DyingInode(DyingInode::from(ino));
-            Box::new(Ok(Some(v)).into_future())
+            future::ok(Some(v)).boxed()
         });
     ds1.expect_range()
         .once()
@@ -3184,15 +3183,15 @@ fn unlink_with_blob_extattr() {
     ds1.expect_delete_blob()
         .once()
         .withf(move |rid: &RID| blob_rid == *rid)
-        .returning(|_| Box::new(Ok(()).into_future()));
+        .returning(|_| future::ok(()).boxed());
     ds1.expect_delete_blob()
         .once()
         .withf(move |rid: &RID| xattr_blob_rid == *rid)
-        .returning(|_| Box::new(Ok(()).into_future()));
+        .returning(|_| future::ok(()).boxed());
     ds1.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
-        .returning(|_| Box::new(Ok(()).into_future()));
+        .returning(|_| future::ok(()).boxed());
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -3200,7 +3199,7 @@ fn unlink_with_blob_extattr() {
             key.object() == ino &&
             value.as_inode().unwrap().nlink == 0 &&
             value.as_inode().unwrap().ctime != old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -3210,7 +3209,7 @@ fn unlink_with_blob_extattr() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
 
     db.expect_fswrite_inner()
         .once()
@@ -3251,7 +3250,7 @@ fn unlink_with_extattr_hash_collision() {
                 name: filename2.clone()
             };
             let v = Some(FSValue::DirEntry(dirent));
-            Box::new(Ok(v).into_future())
+            future::ok(v).boxed()
         });
     ds0.expect_get()
         .once()
@@ -3271,7 +3270,7 @@ fn unlink_with_extattr_hash_collision() {
                 file_type: FileType::Reg(12),
                 perm: 0o644,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
     let old_ts = time::Timespec::new(0, 0);
     ds0.expect_get()
@@ -3291,7 +3290,7 @@ fn unlink_with_extattr_hash_collision() {
                 file_type: FileType::Dir,
                 perm: 0o755,
             };
-            Box::new(Ok(Some(FSValue::Inode(inode))).into_future())
+            future::ok(Some(FSValue::Inode(inode))).boxed()
         });
     ds0.expect_insert()
         .once()
@@ -3302,20 +3301,20 @@ fn unlink_with_extattr_hash_collision() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
             key.is_dying_inode() &&
             value.as_dying_inode().unwrap().ino() == ino
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
 
     ds1.expect_get()
         .once()
         .withf(move |key| key.is_dying_inode())
         .returning(move |_| {
             let v = FSValue::DyingInode(DyingInode::from(ino));
-            Box::new(Ok(Some(v)).into_future())
+            future::ok(Some(v)).boxed()
         });
     ds1.expect_range()
         .once()
@@ -3350,11 +3349,11 @@ fn unlink_with_extattr_hash_collision() {
     ds1.expect_delete_blob()
         .once()
         .withf(move |rid: &RID| xattr_blob_rid == *rid)
-        .returning(|_| Box::new(Ok(()).into_future()));
+        .returning(|_| future::ok(()).boxed());
     ds1.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
-        .returning(|_| Box::new(Ok(()).into_future()));
+        .returning(|_| future::ok(()).boxed());
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -3362,7 +3361,7 @@ fn unlink_with_extattr_hash_collision() {
             key.object() == ino &&
             value.as_inode().unwrap().nlink == 0 &&
             value.as_inode().unwrap().ctime != old_ts
-        }).returning(|_, _| Box::new(Ok(None).into_future()));
+        }).returning(|_, _| future::ok(None).boxed());
 
     db.expect_fswrite_inner()
         .once()
