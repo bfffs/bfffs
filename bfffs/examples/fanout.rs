@@ -6,7 +6,6 @@
 //! computes the Tree's padding fraction (lower is better) and the overall
 //! metadata fraction of the file system.
 use bfffs::{
-    boxfut,
     common::{
         *,
         ddml::DRP,
@@ -17,13 +16,22 @@ use bfffs::{
     }
 };
 use divbuf::DivBufShared;
-use futures::{Future, Stream, future, stream};
+use futures::{
+    Future,
+    FutureExt,
+    TryFutureExt,
+    StreamExt,
+    TryStreamExt,
+    future,
+    stream
+};
 use rand::{Rng, RngCore, SeedableRng, thread_rng};
 use rand_xorshift::XorShiftRng;
 use std::{
     collections::BTreeMap,
     io::{ErrorKind, Write},
     num::NonZeroU8,
+    pin::Pin,
     str::FromStr,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -31,7 +39,7 @@ use std::{
         Mutex
     }
 };
-use tokio_io_pool::Runtime;
+use tokio::runtime::Builder;
 
 const RECSIZE: u32 = 131_072;
 
@@ -104,14 +112,14 @@ impl FakeDDML {
     /// Just like `put`, but separate for record-keeping purposes
     fn put_data(&self, cacheref: Box<dyn CacheRef>, compression: Compression,
                              _txg: TxgT)
-        -> Box<dyn Future<Item=DRP, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<DRP, Error>> + Send>>
     {
         let db = cacheref.serialize();
         let lsize = db.len() as u32;
         let (zdb, compression) = compression.compress(db);
         let csize = zdb.len() as u32;
         let drp = self.next_drp(compression, lsize, csize);
-        boxfut!(future::ok(drp))
+        future::ok(drp).boxed()
     }
 }
 
@@ -119,7 +127,7 @@ impl DML for FakeDDML {
     type Addr = DRP;
 
     fn delete(&self, _addr: &Self::Addr, _txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
         unimplemented!()
     }
@@ -131,14 +139,14 @@ impl DML for FakeDDML {
 
     /// Read a record and return a shared reference
     fn get<T: Cacheable, R: CacheRef>(&self, _addr: &Self::Addr)
-        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
     {
         unimplemented!()
     }
 
     /// Read a record and return ownership of it.
     fn pop<T: Cacheable, R: CacheRef>(&self, _rid: &Self::Addr, _txg: TxgT)
-        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>
     {
         unimplemented!()
     }
@@ -146,7 +154,7 @@ impl DML for FakeDDML {
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              _txg: TxgT)
-        -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Self::Addr, Error>> + Send>>
     {
         let db = cacheable.make_ref().serialize();
         if self.save {
@@ -163,12 +171,12 @@ impl DML for FakeDDML {
         let csize = zdb.len() as u32;
         self.stats.put(csize);
         let drp = self.next_drp(compression, lsize, csize);
-        boxfut!(future::ok(drp))
+        future::ok(drp).boxed()
     }
 
     /// Sync all records written so far to stable storage.
     fn sync_all(&self, _txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
         unimplemented!()
     }
@@ -212,7 +220,7 @@ impl FakeIDML {
     /// Just like `put`, but separate for record-keeping purposes
     fn put_data<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<dyn Future<Item=RID, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<RID, Error>> + Send>>
     {
         self.data_size.fetch_add(cacheable.len() as u64, Ordering::Relaxed);
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
@@ -223,11 +231,11 @@ impl FakeIDML {
         .and_then(move |drp| {
             let pba = drp.pba();
             let ridt_entry = RidtEntry::new(drp);
-            ridt2.insert(rid, ridt_entry, txg)
-            .join(alloct2.insert(pba, rid, txg))
-            .map(move |_| rid)
+            future::try_join(ridt2.insert(rid, ridt_entry, txg),
+                             alloct2.insert(pba, rid, txg))
+            .map_ok(move |_| rid)
         });
-        boxfut!(fut)
+        fut.boxed()
     }
 }
 
@@ -235,7 +243,7 @@ impl DML for FakeIDML {
     type Addr = RID;
 
     fn delete(&self, _addr: &Self::Addr, _txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
         unimplemented!()
     }
@@ -247,14 +255,14 @@ impl DML for FakeIDML {
 
     /// Read a record and return a shared reference
     fn get<T: Cacheable, R: CacheRef>(&self, _addr: &Self::Addr)
-        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
     {
         unimplemented!()
     }
 
     /// Read a record and return ownership of it.
     fn pop<T: Cacheable, R: CacheRef>(&self, _rid: &Self::Addr, _txg: TxgT)
-        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>
     {
         unimplemented!()
     }
@@ -262,7 +270,7 @@ impl DML for FakeIDML {
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Self::Addr, Error>> + Send>>
     {
         let db = cacheable.make_ref().serialize();
         if self.save {
@@ -284,16 +292,16 @@ impl DML for FakeIDML {
         .and_then(move |drp| {
             let pba = drp.pba();
             let ridt_entry = RidtEntry::new(drp);
-            ridt2.insert(rid, ridt_entry, txg)
-            .join(alloct2.insert(pba, rid, txg))
-            .map(move |_| rid)
+            future::try_join(ridt2.insert(rid, ridt_entry, txg),
+                             alloct2.insert(pba, rid, txg))
+            .map_ok(move |_| rid)
         });
-        boxfut!(fut)
+        fut.boxed()
     }
 
     /// Sync all records written so far to stable storage.
     fn sync_all(&self, _txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
         unimplemented!()
     }
@@ -304,7 +312,10 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
 {
     const INODE: u64 = 2;
 
-    let mut rt = Runtime::new();
+    let mut rt = Builder::new()
+        .basic_scheduler()
+        .build()
+        .unwrap();
     let next_lba = Arc::new(AtomicU64::default());
     let alloct_ddml = Arc::new(FakeDDML::new(&"alloct", next_lba.clone(),
                                              save));
@@ -324,8 +335,9 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     let data = vec![0u8; RECSIZE as usize];
 
     let (alloct_entries, ridt_entries) = rt.block_on(
-        stream::iter_ok(0..nelems)
-        .for_each(move |i| {
+        stream::iter(0..nelems)
+        .map(|x| Ok(x))
+        .try_for_each(move |i| {
             let dbs = DivBufShared::from(data.clone());
             let offset = f(i);
             let tree3 = tree.clone();
@@ -335,19 +347,19 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
                 let be = BlobExtent { lsize: RECSIZE, rid};
                 let value = FSValue::BlobExtent(be);
                 tree3.insert(key, value, txg)
-            }).map(drop)
+            }).map_ok(drop)
         }).and_then(move |_| {
             tree2.flush(txg)
         }).and_then(move |_| {
             let ridt_fut = idml4.ridt.range(..)
-            .fold(0, |count, _| future::ok::<_, Error>(count + 1));
+            .try_fold(0, |count, _| future::ok::<_, Error>(count + 1));
             let alloct_fut = idml4.alloct.range(..)
-            .fold(0, |count, _| future::ok::<_, Error>(count + 1));
-            ridt_fut.join(alloct_fut)
+            .try_fold(0, |count, _| future::ok::<_, Error>(count + 1));
+            future::try_join(ridt_fut, alloct_fut)
             .and_then(move |entries| {
-                idml4.ridt.flush(txg)
-                .join(idml4.alloct.flush(txg))
-                .map(move |_| entries)
+                future::try_join(idml4.ridt.flush(txg),
+                                 idml4.alloct.flush(txg))
+                .map_ok(move |_| entries)
             })
         })
     ).unwrap();
