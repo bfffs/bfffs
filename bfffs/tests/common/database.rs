@@ -14,6 +14,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex}
 };
+use super::super::*;
 use tokio::runtime::Runtime;
 
 fn open_db(rt: &mut Runtime, path: PathBuf) -> Database {
@@ -88,7 +89,7 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename.clone()];
-            let mut rt = Runtime::new().unwrap();
+            let mut rt = basic_runtime();
             let handle = rt.handle().clone();
             let pool = rt.block_on(async {
                 let cs = NonZeroU64::new(1);
@@ -184,7 +185,7 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename.clone()];
-            let mut rt = Runtime::new().unwrap();
+            let mut rt = basic_runtime();
             let handle = rt.handle().clone();
             let pool = rt.block_on(async {
                 let cs = NonZeroU64::new(1);
@@ -274,7 +275,7 @@ test_suite! {
     // multiple datasets.
 
     test shutdown() {
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let handle = rt.handle().clone();
         let len = 1 << 30;  // 1GB
         let tempdir =

@@ -939,7 +939,6 @@ mod cluster {
     use mockall::{Sequence, predicate::*};
     use pretty_assertions::assert_eq;
     use std::iter;
-    use tokio::runtime::Runtime;
 
     #[test]
     fn free_and_erase_full_zone() {
@@ -986,7 +985,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
         let db1 = db0.clone();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let (lba, fut1) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
             // Write a 2nd time so the first zone will get closed
@@ -1047,7 +1046,7 @@ mod cluster {
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs0.try_const().unwrap();
         let db1 = dbs1.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let (lba, fut1) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
             // Write a larger buffer so the first zone will get closed
@@ -1110,7 +1109,7 @@ mod cluster {
         let db0 = dbs0.try_const().unwrap();
         let db1 = dbs0.try_const().unwrap();
         let db2 = dbs1.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let (lba, fut1) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
             fut1.and_then(|_| {
@@ -1443,7 +1442,7 @@ mod cluster {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let (_, fut) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
             fut.and_then(|_| cluster.flush(0))
@@ -1513,7 +1512,7 @@ mod cluster {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let result = rt.block_on(async {
             let (lba, fut) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");
@@ -1555,7 +1554,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
         let db1 = dbs.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let cluster_ref = &cluster;
             let (_, fut0) = cluster.write(db0, TxgT::from(0))
                 .expect("Cluster::write");
@@ -1613,7 +1612,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs.try_const().unwrap();
         let db1 = dbs.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let cluster_ref = &cluster;
             let (_, fut0) = cluster.write(db0, TxgT::from(0))
                 .expect("Cluster::write");

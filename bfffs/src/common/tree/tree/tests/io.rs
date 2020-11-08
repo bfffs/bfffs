@@ -22,7 +22,6 @@ use pretty_assertions::assert_eq;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use super::*;
-use tokio::runtime::Runtime;
 
 mock! {
     Future {}
@@ -133,7 +132,7 @@ root:
             ptr:
               Addr: 4
 "#);
-    let mut rt = Runtime::new().unwrap();
+    let mut rt = basic_runtime();
     let addrs = rt.block_on(async {
         tree.addresses(TxgT::from(5)..)
         .collect::<Vec<_>>()
@@ -164,7 +163,7 @@ root:
     end: 42
   ptr:
     Addr: 0"#);
-    let mut rt = Runtime::new().unwrap();
+    let mut rt = basic_runtime();
     let addrs = rt.block_on(async {
         tree.addresses(..)
         .collect::<Vec<_>>()
@@ -1058,7 +1057,7 @@ root:
   ptr:
     Addr: 0
 "#);
-    let mut rt = Runtime::new().unwrap();
+    let mut rt = basic_runtime();
     let r = rt.block_on(async {
         tree.range(1..3)
         .try_collect()

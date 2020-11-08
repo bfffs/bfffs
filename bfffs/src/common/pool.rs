@@ -781,14 +781,13 @@ mod pool {
     use futures::future;
     use mockall::predicate::*;
     use pretty_assertions::assert_eq;
-    use tokio::runtime::Runtime;
 
     // pet kcov
     #[test]
     fn debug() {
         let mut c = Cluster::default();
         c.expect_uuid().return_const(Uuid::new_v4());
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         rt.block_on(async {
             let cluster_proxy = ClusterProxy::new(c);
             format!("{:?}", cluster_proxy);
@@ -827,7 +826,7 @@ mod pool {
             c.expect_uuid().return_const(Uuid::new_v4());
             c
         };
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async {
             let clusters = vec![
                 ClusterProxy::new(cluster()),
@@ -881,7 +880,7 @@ mod pool {
             .once()
             .return_once(|_, _| Box::pin(future::ok(())));
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async {
             let clusters = vec![
                 ClusterProxy::new(c0),
@@ -907,7 +906,7 @@ mod pool {
             c
         };
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async {
             let clusters = vec![
                 ClusterProxy::new(cluster()),
@@ -938,7 +937,7 @@ mod pool {
                 Box::pin(future::ok(()))
             });
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async move {
             let clusters = vec![
                 ClusterProxy::new(cluster),
@@ -967,7 +966,7 @@ mod pool {
             .once()
             .return_once(move |_, _| Box::pin(future::err(e)));
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async move {
             let clusters = vec![
                 ClusterProxy::new(cluster),
@@ -996,7 +995,7 @@ mod pool {
             c
         };
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async {
             let clusters = vec![
                 ClusterProxy::new(cluster()),
@@ -1021,7 +1020,7 @@ mod pool {
                 }).once()
                 .return_once(|_, _| Ok((0, Box::pin(future::ok(())))));
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async {
             Pool::new("foo".to_string(), Uuid::new_v4(),
                       vec![ClusterProxy::new(cluster)]).await
@@ -1045,7 +1044,7 @@ mod pool {
                 .once()
                 .return_once(move |_, _| Ok((0, Box::pin(future::err(e)))));
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async {
             Pool::new("foo".to_string(), Uuid::new_v4(),
                       vec![ClusterProxy::new(cluster)]).await
@@ -1069,7 +1068,7 @@ mod pool {
                 .once()
                 .return_once(move |_, _| Err(e));
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async {
             Pool::new("foo".to_string(), Uuid::new_v4(),
                       vec![ClusterProxy::new(cluster)]).await
@@ -1096,7 +1095,7 @@ mod pool {
             .once()
             .return_once(|_, _| Box::pin(future::ok(())));
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let pool = rt.block_on(async {
             Pool::new("foo".to_string(), Uuid::new_v4(),
                       vec![ClusterProxy::new(cluster)]).await

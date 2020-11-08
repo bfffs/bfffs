@@ -37,7 +37,7 @@ use std::{
     }
 };
 use super::*;
-use tokio::runtime::Runtime;
+use tokio::runtime;
 
 #[cfg(test)] mod tests;
 
@@ -730,7 +730,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// on-disk Nodes.  All the Nodes can be combined into a single YAML map by
     /// simply removing the `---` separators.
     // `&mut Formatter` isn't `Send`, so these Futures can only be used with the
-    // current_thread Runtime.  Given that limitation, we may as well
+    // single-threaded Runtime.  Given that limitation, we may as well
     // instantiate our own Runtime
     pub fn dump(&self, f: &mut dyn io::Write) -> Result<(), Error> {
         // Outline:
@@ -744,7 +744,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let rrf = Rc::new(RefCell::new(f));
         let rrf2 = rrf.clone();
         let rrf3 = rrf.clone();
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = runtime::Builder::new()
+            .basic_scheduler()
+            .build()
+            .unwrap();
         let fut = self.read()
             .and_then(move |tree_guard| {
                 tree_guard.rlock(&inner.dml)

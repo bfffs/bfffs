@@ -18,8 +18,8 @@ test_suite! {
         fs,
         io::{Read, Seek, SeekFrom},
     };
+    use super::super::super::super::*;
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::Runtime;
 
     const GOLDEN_VDEV_ONEDISK_LABEL: [u8; 36] = [
         // Past the VdevFile::Label, we have a raid::Label
@@ -52,7 +52,7 @@ test_suite! {
     test open_after_write(mocks()) {
         let (old_vdev, _tempdir, path) = mocks.val;
         let uuid = old_vdev.uuid();
-        Runtime::new().unwrap().block_on(async move {
+        basic_runtime().block_on(async move {
             let label_writer = LabelWriter::new(0);
             old_vdev.write_label(label_writer).and_then(move |_| {
                 VdevFile::open(path)
@@ -67,7 +67,7 @@ test_suite! {
     }
 
     test write_label(mocks()) {
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let label_writer = LabelWriter::new(0);
             mocks.val.0.write_label(label_writer).await
         }).unwrap();

@@ -2122,10 +2122,7 @@ use pretty_assertions::assert_eq;
 use std::borrow::Borrow;
 
 fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
-    let mut rt = tokio::runtime::Builder::default()
-        .basic_scheduler()
-        .build()
-        .unwrap();
+    let mut rt = basic_runtime();
     let mut rods = ReadOnlyFilesystem::default();
     let mut rwds = ReadWriteFilesystem::default();
     rods.expect_last_key()

@@ -10,3 +10,13 @@ macro_rules! t {
 }
 
 mod common;
+
+/// Helper to generate the runtime used by most tests
+fn basic_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new()
+        .basic_scheduler()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap()
+}

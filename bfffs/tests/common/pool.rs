@@ -18,6 +18,7 @@ test_suite! {
         io::{Read, Seek, SeekFrom},
         num::NonZeroU64
     };
+    use super::super::super::*;
     use tempfile::{Builder, TempDir};
     use tokio::runtime::Runtime;
 
@@ -52,7 +53,7 @@ test_suite! {
                 t!(file.set_len(len));
                 fname
             }).collect::<Vec<_>>();
-            let mut rt = Runtime::new().unwrap();
+            let mut rt = basic_runtime();
             let pool = rt.block_on(async {
                 let clusters = paths.iter().map(|p| {
                     let cs = NonZeroU64::new(1);

@@ -16,6 +16,7 @@ test_suite! {
         io::{Read, Seek, SeekFrom, Write},
         num::NonZeroU64
     };
+    use super::super::super::*;
     use tempfile::{Builder, TempDir};
     use tokio::runtime::Runtime;
 
@@ -60,7 +61,7 @@ test_suite! {
             let fname = format!("{}/vdev", tempdir.path().display());
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
-            let rt = Runtime::new().unwrap();
+            let rt = basic_runtime();
             let lpz = NonZeroU64::new(65536);
             let paths = vec![fname.clone()];
             let cluster = Cluster::create(None, 1, lpz, 0, paths);
@@ -78,7 +79,7 @@ test_suite! {
             f.seek(SeekFrom::Start(32768)).unwrap();
             f.write_all(&GOLDEN_SPACEMAP).unwrap();
         }
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             VdevFile::open(objects.val.3.clone())
             .map_ok(|(leaf, reader)| {
                 (VdevBlock::new(leaf), reader)

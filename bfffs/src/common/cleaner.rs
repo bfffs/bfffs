@@ -155,7 +155,7 @@ mod t {
 use futures::future;
 use mockall::Sequence;
 use super::*;
-use tokio::runtime::Runtime;
+use tokio::runtime;
 
 /// Clean in the background
 #[test]
@@ -173,7 +173,10 @@ fn background() {
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
 
-    let rt = Runtime::new().unwrap();
+    let rt = runtime::Builder::new()
+        .threaded_scheduler()
+        .build()
+        .unwrap();
     let handle = rt.handle().clone();
     rt.spawn(async {
         let cleaner = Cleaner::new(handle, Arc::new(idml), None);
@@ -199,7 +202,7 @@ fn no_sufficiently_dirty_zones() {
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    Runtime::new().unwrap().block_on(async {
+    basic_runtime().block_on(async {
         cleaner.clean_now().await
     }).unwrap();
 }
@@ -228,7 +231,7 @@ fn one_sufficiently_dirty_zone() {
             *txg == TXG
         }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    Runtime::new().unwrap().block_on(async {
+    basic_runtime().block_on(async {
         cleaner.clean_now().await
     }).unwrap();
 }
@@ -273,7 +276,7 @@ fn two_sufficiently_dirty_zones() {
             *txg == TXG
         }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    Runtime::new().unwrap().block_on(async {
+    basic_runtime().block_on(async {
         cleaner.clean_now().await
     }).unwrap();
 }

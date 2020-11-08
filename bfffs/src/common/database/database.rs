@@ -40,7 +40,7 @@ use std::{
 use super::*;
 #[cfg(not(test))] use time;
 use tokio::runtime::Handle;
-#[cfg(not(test))] use tokio::runtime::Runtime;
+#[cfg(not(test))] use tokio::runtime;
 use tokio::time::{Duration, Instant, delay_until};
 
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
@@ -310,7 +310,10 @@ impl Database {
     #[cfg(not(test))]
     pub fn dump(&self, f: &mut dyn io::Write, tree: TreeID) -> Result<(), Error>
     {
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = runtime::Builder::new()
+            .basic_scheduler()
+            .build()
+            .unwrap();
         rt.block_on(async {
             Inner::open_filesystem(&self.inner, tree).await
         }).unwrap();
@@ -695,7 +698,6 @@ mod database {
     use super::super::*;
     use futures::future;
     use mockall::{Sequence, predicate::*};
-    use tokio::runtime::Runtime;
 
     // pet kcov
     #[test]
@@ -712,7 +714,7 @@ mod database {
             .return_const(());
         let forest = Tree::default();
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let handle = rt.handle().clone();
 
         rt.block_on(async {
@@ -730,7 +732,7 @@ mod database {
             .return_const(());
         let forest = Tree::default();
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let handle = rt.handle().clone();
 
         rt.block_on(async {
@@ -747,7 +749,7 @@ mod database {
         let mut idml = IDML::default();
         let mut forest = Tree::default();
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let handle = rt.handle().clone();
 
         idml.expect_advance_transaction_inner()
@@ -820,7 +822,7 @@ mod database {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = basic_runtime();
         let handle = rt.handle().clone();
 
         rt.block_on(async {

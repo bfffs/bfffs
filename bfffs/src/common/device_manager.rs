@@ -24,7 +24,7 @@ use std::{
     path::Path
 };
 #[cfg(not(test))]
-use tokio::runtime::Runtime;
+use tokio::runtime;
 use tokio::runtime::Handle;
 
 #[cfg(not(test))] use crate::common::pool::Pool;
@@ -190,11 +190,16 @@ impl DevManager {
     /// If present, retain the device in the `DevManager` for use as a spare or
     /// for building Pools.
     // Disable in test mode because MockVdevFile::Open requires P: 'static
+    // TODO: add a method for tasting disks in parallel.
     #[cfg(not(test))]
     pub fn taste<P: AsRef<Path>>(&self, p: P) {
         // taste should be called from the synchronous domain, so it needs to
         // create its own temporary Runtime
-        let mut rt = Runtime::new().unwrap();
+        let mut rt = runtime::Builder::new()
+            .basic_scheduler()
+            .enable_io()
+            .build()
+            .unwrap();
         rt.block_on(async move {
             let pathbuf = p.as_ref().to_owned();
             VdevFile::open(p)

@@ -10,8 +10,8 @@ test_suite! {
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::fs;
+    use super::super::super::*;
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::Runtime;
 
     fixture!( vdev() -> (VdevBlock, TempDir) {
         setup(&mut self) {
@@ -48,7 +48,7 @@ test_suite! {
     test check_block_granularity_under(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4095]);
         let wbuf = dbs.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.val.0.write_at(wbuf, 10).await
         }).unwrap();
     }
@@ -57,7 +57,7 @@ test_suite! {
     test check_block_granularity_over(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4097]);
         let wbuf = dbs.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.val.0.write_at(wbuf, 10).await
         }).unwrap();
     }
@@ -66,7 +66,7 @@ test_suite! {
     test check_block_granularity_over_multiple_sectors(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 16_385]);
         let wbuf = dbs.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.val.0.write_at(wbuf, 10).await
         }).unwrap();
     }
@@ -78,7 +78,7 @@ test_suite! {
         let wbuf0 = wbuf.slice_to(1024);
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0, wbuf1];
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.val.0.writev_at(wbufs, 10).await
         }).unwrap();
     }
@@ -87,7 +87,7 @@ test_suite! {
     test check_iovec_bounds_over(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let size = vdev.val.0.size();
             vdev.val.0.write_at(wbuf, size).await
         }).unwrap();
@@ -97,7 +97,7 @@ test_suite! {
     test check_iovec_bounds_spans(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 8192]);
         let wbuf = dbs.try_const().unwrap();
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let size = vdev.val.0.size() - 1;
             vdev.val.0.write_at(wbuf, size).await
         }).unwrap();
@@ -110,7 +110,7 @@ test_suite! {
         let wbuf0 = wbuf.slice_to(1024);
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let size = vdev.val.0.size();
             vdev.val.0.writev_at(wbufs, size).await
         }).unwrap();
@@ -123,7 +123,7 @@ test_suite! {
         let wbuf0 = wbuf.slice_to(5120);
         let wbuf1 = wbuf.slice_from(5120);
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-        Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let size = vdev.val.0.size() - 1;
             vdev.val.0.writev_at(wbufs, size).await
         }).unwrap();

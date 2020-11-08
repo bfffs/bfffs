@@ -22,6 +22,7 @@ test_suite! {
         sync::{Arc, Mutex}
     };
     use tempfile::Builder;
+    use super::super::super::*;
     use tokio::runtime::Runtime;
 
     fixture!( objects() -> (Runtime, DDML) {
@@ -31,7 +32,7 @@ test_suite! {
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
-            let mut rt = Runtime::new().unwrap();
+            let mut rt = basic_runtime();
             let pool = rt.block_on(async {
                 let cs = NonZeroU64::new(1);
                 let clusters = vec![

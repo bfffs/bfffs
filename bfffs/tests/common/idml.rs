@@ -23,6 +23,7 @@ test_suite! {
         path::PathBuf,
         sync::{Arc, Mutex}
     };
+    use super::super::super::*;
     use tempfile::{Builder, TempDir};
     use tokio::runtime::Runtime;
 
@@ -118,7 +119,7 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename.clone()];
-            let mut rt = Runtime::new().unwrap();
+            let mut rt = basic_runtime();
             let pool = rt.block_on(async {
                 let cs = NonZeroU64::new(1);
                 let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
@@ -227,6 +228,7 @@ test_suite! {
         num::NonZeroU64,
         sync::{Arc, Mutex}
     };
+    use super::super::super::*;
     use tempfile::{Builder, TempDir};
     use tokio::runtime::Runtime;
 
@@ -244,7 +246,7 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename.clone()];
-            let mut rt = Runtime::new().unwrap();
+            let mut rt = basic_runtime();
             let pool = rt.block_on(async {
                 let cs = NonZeroU64::new(1);
                 let lpz = NonZeroU64::new(LBA_PER_ZONE);

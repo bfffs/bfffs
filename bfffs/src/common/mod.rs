@@ -433,6 +433,16 @@ fn zero_sglist(len: usize) -> SGList {
 
 // LCOV_EXCL_START
 #[cfg(test)]
+/// Helper to generate the runtime used by most unit tests
+fn basic_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new()
+        .basic_scheduler()
+        .enable_time()
+        .build()
+        .unwrap()
+}
+
+#[cfg(test)]
 mod t {
 use bincode;
 use pretty_assertions::assert_eq;

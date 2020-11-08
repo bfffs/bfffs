@@ -868,7 +868,6 @@ test_suite! {
     use permutohedron;
     use pretty_assertions::assert_eq;
     use super::*;
-    use tokio::runtime;
 
     mock!{
         VdevFut {}
@@ -953,7 +952,7 @@ test_suite! {
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
             future::try_join(f0, f1).await
@@ -987,7 +986,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.read_at(rbuf, 1).await
         }).expect("test eagain_queue_depth_1");
     }
@@ -999,7 +998,7 @@ test_suite! {
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.erase_zone(1, (1 << 16) - 1).await
         }).unwrap();
     }
@@ -1011,7 +1010,7 @@ test_suite! {
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.finish_zone(1, (1 << 16) - 1).await
         }).unwrap();
     }
@@ -1023,7 +1022,7 @@ test_suite! {
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.open_zone(1).await
         }).unwrap();
     }
@@ -1038,7 +1037,7 @@ test_suite! {
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.read_at(rbuf0, 2).await
         }).unwrap();
     }
@@ -1053,7 +1052,7 @@ test_suite! {
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = vec![dbs0.try_mut().unwrap()];
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.readv_at(rbuf0, 2).await
         }).unwrap();
     }
@@ -1065,7 +1064,7 @@ test_suite! {
             .returning(|| Box::pin(future::ok::<(), Error>(())));
 
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.sync_all().await
         }).unwrap();
     }
@@ -1337,7 +1336,7 @@ test_suite! {
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let f0 = vdev.read_at(rbuf0, 1);
             let f1 = vdev.read_at(rbuf1, 2);
             future::try_join(f0, f1).await
@@ -1384,7 +1383,7 @@ test_suite! {
         let wbuf = dbs.try_const().unwrap();
         let vdev = VdevBlock::new(leaf);
 
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             let mut ctx = noop_context();
             // First schedule all operations.  There are too many to issue them
             // all immediately
@@ -1434,7 +1433,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.write_at(wbuf, 1).await
         }).unwrap();
     }
@@ -1449,7 +1448,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let wbuf = vec![dbs.try_const().unwrap()];
         let vdev = VdevBlock::new(leaf);
-        runtime::Runtime::new().unwrap().block_on(async {
+        basic_runtime().block_on(async {
             vdev.writev_at(wbuf, 1).await
         }).unwrap();
     }

@@ -20,6 +20,7 @@ test_suite! {
         fs,
         sync::{Arc, Mutex}
     };
+    use super::super::super::*;
     use tempfile::{Builder, TempDir};
     use tokio::runtime::Runtime;
 
@@ -36,7 +37,7 @@ test_suite! {
             let n = *self.n;
             let k = *self.k;
             let f = *self.f;
-            let mut rt = Runtime::new().unwrap();
+            let mut rt = basic_runtime();
             let len = 1 << 30;  // 1GB
             let tempdir =
                 t!(Builder::new().prefix("test_device_manager").tempdir());
