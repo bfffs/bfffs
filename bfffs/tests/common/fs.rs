@@ -2232,7 +2232,6 @@ root:
         let name1 = OsString::from("name1");
         let name2 = OsString::from("name2");
         let fd = mocks.val.0.create(&root, &name1, 0o644, 0, 0).unwrap();
-        dbg!(&fd);
         mocks.val.0.link(&root, &fd, &name2).unwrap();
         clear_timestamps(&mocks.val.0, &fd);
 
