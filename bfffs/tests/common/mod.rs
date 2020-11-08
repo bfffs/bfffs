@@ -3,7 +3,7 @@ mod cluster;
 mod database;
 mod device_manager;
 mod ddml;
-//mod fs;
+mod fs;
 mod idml;
 mod pool;
 mod raid;

@@ -1,3 +1,4 @@
+#![type_length_limit="1640349"]
 #![recursion_limit="256"]   // galvanic_test hits the recursion limit
 // https://github.com/mindsbackyard/galvanic-test/pull/13
 #![allow(clippy::unnecessary_mut_passed)]

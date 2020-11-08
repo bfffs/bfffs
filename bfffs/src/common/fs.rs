@@ -855,27 +855,42 @@ impl Fs {
         })
     }
 
-    pub fn new(database: Arc<Database>, handle: Handle,
-               tree: TreeID) -> Self
+    /// Create a new Fs object (in memory, not on disk).
+    ///
+    /// Must be called from the synchronous domain.
+    ///
+    /// # Arguments
+    ///
+    /// - `handle`  -       Handle to a Tokio Runtime.  It must be running
+    ///                     already, and must remaining running until after this
+    ///                     object drops.  It must have the spawn and time
+    ///                     featutes enabled.
+    pub fn new(database: Arc<Database>, handle: Handle, tree: TreeID) -> Self
     {
         let db2 = database.clone();
-        let (last_key, (atimep, _), (recsizep, _)) = handle.block_on(
-            database.fsread(tree, move |dataset| {
+        let db3 = database.clone();
+        let db4 = database.clone();
+        let (last_key, (atimep, _), (recsizep, _)) =
+        handle.block_on(async move {
+            db4.fsread(tree, move |dataset| {
                 let last_key_fut = dataset.last_key();
 
                 future::try_join3(last_key_fut,
                                   db2.get_prop(tree, PropertyName::Atime),
                                   db2.get_prop(tree, PropertyName::RecordSize))
             }).map_err(Error::unhandled)
-        ).unwrap();
+            .await
+        }).unwrap();
         let next_object = AtomicU64::new(last_key.unwrap().object() + 1);
         let atime = atimep.as_bool();
         let record_size = recsizep.as_u8();
 
         // In the background, delete all dying inodes.  If there are any, it
         // means that the previous mount was uncleanly dismounted.
-        handle.block_on(
-            database.fswrite(tree, move |dataset| {
+        // TODO: consider doing this in the background with spawn rather than in
+        // the foreground with block_on
+        handle.block_on( async move {
+            db3.fswrite(tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
                 ds.range(FSKey::dying_inode_range())
@@ -887,7 +902,8 @@ impl Fs {
                     ds2.range_delete(FSKey::dying_inode_range())
                 })
             }).map_err(Error::unhandled)
-        ).unwrap();
+            .await
+        }).unwrap();
 
         Fs {
             db: database,

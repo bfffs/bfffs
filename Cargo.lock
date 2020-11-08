@@ -1267,6 +1267,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "mio",
+ "num_cpus",
  "pin-project-lite",
  "slab",
 ]
