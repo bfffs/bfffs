@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
 };
 use time::Timespec;
+use tokio::runtime::Handle;
 
 /*
  * Mock BFFFS structs
@@ -58,8 +59,7 @@ mock! {
                   gid: u32) -> Result<FileData, i32>;
         fn mksock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                   gid: u32) -> Result<FileData, i32>;
-        fn new(database: Arc<Database>, handle: tokio_io_pool::Handle,
-               tree: TreeID) -> Self;
+        fn new(database: Arc<Database>, handle: Handle, tree: TreeID) -> Self;
         fn read(&self, fd: &FileData, offset: u64, size: usize)
             -> Result<SGList, i32>;
         fn readdir(&self, fd: &FileData, soffs: i64)
@@ -88,9 +88,9 @@ mock! {
         // bfffs-fuse uses it anyway.
         fn write(&self, fd: &FileData, offset: u64, data: &[u8], _flags: u32)
             -> Result<u32, i32>;
-        //fn write<IU>(&self, ino: u64, offset: u64, data: IU, _flags: u32)
+        //fn write<IU>(&self, fd: &FileData, offset: u64, data: IU, _flags: u32)
             //-> Result<u32, i32>
-            //where IU: Into<Uio>;
+            //where IU: Into<bfffs::common::fs::Uio>;
     }
 }
 

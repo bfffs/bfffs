@@ -6,7 +6,7 @@ debug = true
 lto = true
 
 [workspace]
-members = ["bfffs", "isa-l"]
+members = ["bfffs", "bfffs-fuse", "isa-l"]
 #members = ["bfffs", "bfffs-fio", "bfffs-fuse", "isa-l"]
 
 [patch.crates-io]

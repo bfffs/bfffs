@@ -2,19 +2,21 @@
 
 use bfffs::{
     common::{
-        Error,
         database::*,
         device_manager::DevManager,
     },
 };
 use clap::crate_version;
-use futures::{Future, Stream, future};
+use futures::StreamExt;
 use std::{
     ffi::OsString,
     sync::Arc,
     thread
 };
-use tokio_signal::unix::{Signal, SIGUSR1};
+use tokio::{
+    runtime::Builder,
+    signal::unix::{signal, SignalKind},
+};
 
 mod fs;
 
@@ -65,12 +67,17 @@ fn main() {
             **name == poolname
         }).nth(0).unwrap().1;
 
-    let mut rt = tokio_io_pool::Runtime::new();
+    let mut rt = Builder::new()
+        .threaded_scheduler()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
     let handle = rt.handle().clone();
     let handle2 = rt.handle().clone();
-    let db = Arc::new(rt.block_on(future::lazy(move || {
-        dev_manager.import_by_uuid(uuid, handle)
-    })).unwrap());
+    let db = Arc::new(rt.block_on(async move {
+        dev_manager.import_by_uuid(uuid, handle).await
+    }).unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
     let db2 = db.clone();
@@ -84,13 +91,16 @@ fn main() {
 
     // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term, this
     // is very handy for debugging the cleaner.
-    let sigusr1 = Signal::new(SIGUSR1).flatten_stream();
+    let sigusr1 = signal(SignalKind::user_defined1()).unwrap();
     rt.spawn(
-        sigusr1.map_err(Error::unhandled_canceled)
+        sigusr1
         .for_each(move |_| {
-            db2.clean()
-        }).map_err(Error::unhandled)
-    ).unwrap();
+            let db3 = db2.clone();
+            async move {
+                db3.clean().await.unwrap()
+            }
+        })
+    );
 
     thr_handle.join().unwrap()
 }
