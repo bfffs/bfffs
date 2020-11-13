@@ -91,16 +91,16 @@ fn main() {
 
     // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term, this
     // is very handy for debugging the cleaner.
-    let sigusr1 = signal(SignalKind::user_defined1()).unwrap();
-    rt.spawn(
-        sigusr1
+    rt.spawn( async {
+        signal(SignalKind::user_defined1())
+        .unwrap()
         .for_each(move |_| {
             let db3 = db2.clone();
             async move {
                 db3.clean().await.unwrap()
             }
         })
-    );
+    });
 
     thr_handle.join().unwrap()
 }
