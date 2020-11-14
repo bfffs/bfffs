@@ -2,7 +2,7 @@
 
 # fio doesn't install the necessary headers, so we have to reference its source
 # directory
-FIOPATH="/usr/home/somers/freebsd/ports/head/benchmarks/fio/work/fio-3.16"
+FIOPATH="/usr/home/somers/freebsd/ports/head/benchmarks/fio/work/fio-3.23"
 
 cat > src/ffi.rs << HERE
 #![allow(non_camel_case_types)]
@@ -31,4 +31,4 @@ bindgen --no-rustfmt-bindings \
 	--ctypes-prefix libc \
 	--rust-target 1.27 \
 	src/ffi.h -- -I$FIOPATH >> src/ffi.rs
-rustup run nightly rustfmt --edition 2018 src/ffi.rs
+rustup run 1.45.0 rustfmt --edition 2018 src/ffi.rs
