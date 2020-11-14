@@ -284,7 +284,7 @@ test_suite! {
         let file = t!(fs::File::create(&filename));
         t!(file.set_len(len));
         drop(file);
-        let mut db = rt.block_on(async move {
+        let db = rt.block_on(async move {
             Pool::create_cluster(None, 1, None, 0, &[filename])
             .map_err(|_| unreachable!())
             .and_then(|cluster| {
@@ -301,6 +301,6 @@ test_suite! {
                 })
             }).await
         }).unwrap();
-        rt.block_on(db.shutdown()).unwrap();
+        rt.block_on(db.shutdown());
     }
 }

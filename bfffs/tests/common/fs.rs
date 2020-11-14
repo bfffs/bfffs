@@ -2718,10 +2718,10 @@ test_suite! {
         fn shutdown(mut self) {
             self.fs.inactive(self.root);
             drop(self.fs);
-            let mut db = Arc::try_unwrap(self.db.take().unwrap())
+            let db = Arc::try_unwrap(self.db.take().unwrap())
                 .ok().expect("Arc::try_unwrap");
             let mut rt = self.rt.take().unwrap();
-            rt.block_on(db.shutdown()).unwrap();
+            rt.block_on(db.shutdown());
         }
 
         fn step(&mut self) {

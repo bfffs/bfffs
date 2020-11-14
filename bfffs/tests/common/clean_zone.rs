@@ -130,9 +130,9 @@ test_suite! {
                  statvfs.f_bfree, statvfs.f_blocks);
         assert!(rt.block_on(db.check()).unwrap());
         drop(fs);
-        let mut owned_db = Arc::try_unwrap(db)
+        let owned_db = Arc::try_unwrap(db)
         .ok().expect("Unwrapping Database failed");
-        rt.block_on(owned_db.shutdown()).unwrap();
+        rt.block_on(owned_db.shutdown());
     }
 
     /// A regression test for bug d5b4dab35d9be12ff1505e886ed5ca8ad4b6a526
