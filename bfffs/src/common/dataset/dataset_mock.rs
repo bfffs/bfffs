@@ -12,24 +12,25 @@ use std::{
     borrow::Borrow,
     fmt::Debug,
     ops::RangeBounds,
+    pin::Pin,
     sync::Arc
 };
 use super::*;
 
 mock! {
     pub ReadOnlyDataset<K: Key, V: Value> {
-        fn allocated(&self) -> LbaT;
-        fn last_key(&self)
-            -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
-        fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>)
+        pub fn allocated(&self) -> LbaT;
+        pub fn last_key(&self)
+            -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>;
+        pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>)
             -> ReadOnlyDataset<K, V>;
-        fn size(&self) -> LbaT;
+        pub fn size(&self) -> LbaT;
     }
-    trait ReadDataset<K: Key, V: Value> {
+    impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
         fn get(&self, k: K)
-            -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
+            -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
         fn get_blob(&self, rid: RID)
-            -> Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>;
+            -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>, Error>> + Send>>;
         fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
@@ -42,33 +43,35 @@ mock! {
         where K: Key,
               V: Value
     {
-        fn allocated(&self) -> LbaT;
-        fn delete_blob(&self, rid: RID)
-            -> Box<dyn Future<Item=(), Error=Error> + Send>;
-        fn insert(&self, k: K, v: V)
-            -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
-        fn last_key(&self)
-            -> Box<dyn Future<Item=Option<K>, Error=Error> + Send>;
-        fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT)
+        pub fn allocated(&self) -> LbaT;
+        pub fn delete_blob(&self, rid: RID)
+            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+        pub fn insert(&self, k: K, v: V)
+            -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
+        pub fn last_key(&self)
+            -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>;
+        pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT)
             -> ReadWriteDataset<K, V>;
-        fn put_blob(&self, dbs: DivBufShared, compression: Compression)
-            -> Box<dyn Future<Item=RID, Error=Error> + Send>;
-        fn range_delete<R, T>(&self, range: R)
-            -> Box<dyn Future<Item=(), Error=Error> + Send>
+        pub fn put_blob(&self, dbs: DivBufShared, compression: Compression)
+            -> Pin<Box<dyn Future<Output=Result<RID, Error>> + Send>>;
+        pub fn range_delete<R, T>(&self, range: R)
+            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
             where K: Borrow<T>,
                   R: Debug + Clone + RangeBounds<T> + Send + 'static,
                   T: Debug + Ord + Clone + Send + 'static;
-        fn remove(&self, k: K)
-            -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
-        fn remove_blob(&self, rid: RID)
-            -> Box<dyn Future<Item=Box<DivBufShared>, Error=Error> + Send>;
-        fn size(&self) -> LbaT;
+        pub fn remove(&self, k: K)
+            -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
+        pub fn remove_blob(&self, rid: RID)
+            -> Pin<Box<dyn Future<Output=Result<Box<DivBufShared>, Error>>
+                + Send
+            >>;
+        pub fn size(&self) -> LbaT;
     }
-    trait ReadDataset<K: Key, V: Value> {
+    impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDataset<K, V> {
         fn get(&self, k: K)
-            -> Box<dyn Future<Item=Option<V>, Error=Error> + Send>;
+            -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
         fn get_blob(&self, rid: RID)
-            -> Box<dyn Future<Item=Box<DivBuf>, Error=Error> + Send>;
+            -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>, Error>> + Send>>;
         fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,

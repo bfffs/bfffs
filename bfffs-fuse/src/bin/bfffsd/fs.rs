@@ -19,7 +19,7 @@ use std::{
     sync::Arc
 };
 use time::Timespec;
-use tokio_io_pool;
+use tokio::runtime::Handle;
 
 cfg_if! {
     if #[cfg(test)] {
@@ -120,7 +120,7 @@ impl FuseFs {
         }
     }
 
-    pub fn new(database: Arc<Database>, handle: tokio_io_pool::Handle,
+    pub fn new(database: Arc<Database>, handle: Handle,
                tree: TreeID) -> Self
     {
         let fs = Fs::new(database, handle, tree);

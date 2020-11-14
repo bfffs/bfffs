@@ -2,12 +2,13 @@
 
 use crate::common::*;
 use futures;
+use std::pin::Pin;
 
 /// Future representing an operation on a vdev.
-pub type VdevFut = dyn futures::Future<Item = (), Error = Error>;
+pub type VdevFut = dyn futures::Future<Output = Result<(), Error>> + Send + Sync;
 
 /// Boxed `VdevFut`
-pub type BoxVdevFut = Box<dyn futures::Future<Item = (), Error = Error>>;
+pub type BoxVdevFut = Pin<Box<dyn futures::Future<Output = Result<(), Error>> + Send + Sync>>;
 
 /// Vdev: Virtual Device
 ///
@@ -42,7 +43,7 @@ pub trait Vdev {
 
     /// Sync the `Vdev`, ensuring that all data written so far reaches stable
     /// storage.
-    fn sync_all(&self) -> Box<VdevFut>;
+    fn sync_all(&self) -> BoxVdevFut;
 
     /// Return the UUID for this vdev.  It is the persistent, unique identifier
     /// for each vdev.

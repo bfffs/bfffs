@@ -8,7 +8,7 @@ test_suite! {
     use bfffs::common::raid;
     use bfffs::common::cluster::*;
     use bfffs::common::vdev_file::*;
-    use futures::{Future, future};
+    use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
@@ -16,8 +16,9 @@ test_suite! {
         io::{Read, Seek, SeekFrom, Write},
         num::NonZeroU64
     };
+    use super::super::super::*;
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::current_thread::Runtime;
+    use tokio::runtime::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -60,7 +61,7 @@ test_suite! {
             let fname = format!("{}/vdev", tempdir.path().display());
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
-            let rt = Runtime::new().unwrap();
+            let rt = basic_runtime();
             let lpz = NonZeroU64::new(65536);
             let paths = vec![fname.clone()];
             let cluster = Cluster::create(None, 1, lpz, 0, paths);
@@ -78,24 +79,24 @@ test_suite! {
             f.seek(SeekFrom::Start(32768)).unwrap();
             f.write_all(&GOLDEN_SPACEMAP).unwrap();
         }
-        Runtime::new().unwrap().block_on(future::lazy(|| {
+        basic_runtime().block_on(async {
             VdevFile::open(objects.val.3.clone())
-            .map(|(leaf, reader)| {
+            .map_ok(|(leaf, reader)| {
                 (VdevBlock::new(leaf), reader)
             }).and_then(move |combined| {
                 let (vdev_raid, _reader) = raid::open(None, vec![combined]);
                  Cluster::open(vdev_raid)
-            }).map(|cluster| {
+            }).map_ok(|cluster| {
                 assert_eq!(cluster.allocated(), 0);
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 
     test flush(objects()) {
         let (mut rt, old_cluster, _tempdir, path) = objects.val;
-        rt.block_on(future::lazy(|| {
-            old_cluster.flush(0)
-        })).unwrap();
+        rt.block_on(async {
+            old_cluster.flush(0).await
+        }).unwrap();
 
         let mut f = fs::File::open(path).unwrap();
         let mut v = vec![0; 4096];

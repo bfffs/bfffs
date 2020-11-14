@@ -11,15 +11,15 @@ test_suite! {
         common::vdev_file::*,
         common::raid::{self, VdevOneDisk, VdevRaidApi},
     };
-    use futures::{Future, future};
+    use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
     };
+    use super::super::super::super::*;
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::current_thread;
 
     const GOLDEN_VDEV_ONEDISK_LABEL: [u8; 36] = [
         // Past the VdevFile::Label, we have a raid::Label
@@ -52,25 +52,25 @@ test_suite! {
     test open_after_write(mocks()) {
         let (old_vdev, _tempdir, path) = mocks.val;
         let uuid = old_vdev.uuid();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(move || {
+        basic_runtime().block_on(async move {
             let label_writer = LabelWriter::new(0);
             old_vdev.write_label(label_writer).and_then(move |_| {
                 VdevFile::open(path)
-                .map(|(leaf, reader)| {
+                .map_ok(|(leaf, reader)| {
                     (VdevBlock::new(leaf), reader)
                 })
-            }).map(move |vb| {
+            }).map_ok(move |vb| {
                 let (vdev, _) = raid::open(Some(uuid), vec![vb]);
                 assert_eq!(uuid, vdev.uuid());
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 
     test write_label(mocks()) {
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        basic_runtime().block_on(async {
             let label_writer = LabelWriter::new(0);
-            mocks.val.0.write_label(label_writer)
-        })).unwrap();
+            mocks.val.0.write_label(label_writer).await
+        }).unwrap();
         let mut f = fs::File::open(mocks.val.2).unwrap();
         let mut v = vec![0; 8192];
         f.seek(SeekFrom::Start(72)).unwrap();   // Skip the VdevLeaf label

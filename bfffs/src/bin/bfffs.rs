@@ -4,16 +4,22 @@ use bfffs::common::{
     property::Property
 };
 use clap::crate_version;
-use futures::future;
+use futures::TryFutureExt;
 use std::{
     path::Path,
     process::exit,
     sync::Arc
 };
-use tokio::{
-    executor::current_thread::TaskExecutor,
-    runtime::current_thread::Runtime
-};
+use tokio::runtime::{Builder, Runtime};
+
+fn runtime() -> Runtime {
+    Builder::new()
+        .threaded_scheduler()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap()
+}
 
 mod check {
 use super::*;
@@ -33,18 +39,18 @@ pub fn main(args: &clap::ArgMatches) {
         dev_manager.taste(dev);
     }
 
-    let mut rt = tokio_io_pool::Runtime::new();
+    let mut rt = runtime();
     let handle = rt.handle().clone();
-    let db = Arc::new(rt.block_on(future::lazy(move || {
+    let db = Arc::new(rt.block_on(async move {
         dev_manager.import_by_name(poolname, handle)
         .unwrap_or_else(|_e| {
             eprintln!("Error: pool not found");
             exit(1);
-        })
-    })).unwrap());
-    rt.block_on(future::lazy(move || {
-        db.check()
-    })).unwrap();
+        }).await
+    }).unwrap());
+    rt.block_on(async {
+        db.check().await
+    }).unwrap();
     // TODO: the other checks
 }
 
@@ -52,7 +58,6 @@ pub fn main(args: &clap::ArgMatches) {
 
 mod debug {
 use super::*;
-use tokio::runtime::current_thread::Runtime;
 
 fn dump_fsm<P: AsRef<Path>, S: AsRef<str>>(poolname: S, disks: &[P]) {
     let dev_manager = DevManager::default();
@@ -63,10 +68,10 @@ fn dump_fsm<P: AsRef<Path>, S: AsRef<str>>(poolname: S, disks: &[P]) {
         .filter(|(name, _uuid)| {
             *name == poolname.as_ref()
         }).nth(0).unwrap().1;
-    let mut rt = Runtime::new().unwrap();
-    let clusters = rt.block_on(future::lazy(move || {
-        dev_manager.import_clusters(uuid)
-    })).unwrap();
+    let mut rt = runtime();
+    let clusters = rt.block_on(async move {
+        dev_manager.import_clusters(uuid).await
+    }).unwrap();
     for c in clusters {
         println!("{}", c.dump_fsm());
     }
@@ -77,15 +82,15 @@ fn dump_tree<P: AsRef<Path>>(poolname: String, disks: &[P]) {
     for disk in disks {
         dev_manager.taste(disk);
     }
-    let mut rt = tokio_io_pool::Runtime::new();
+    let mut rt = runtime();
     let handle = rt.handle().clone();
-    let db = Arc::new(rt.block_on(future::lazy(move || {
+    let db = Arc::new(rt.block_on(async move {
         dev_manager.import_by_name(poolname, handle)
         .unwrap_or_else(|_e| {
             eprintln!("Error: pool not found");
             exit(1);
-        })
-    })).unwrap());
+        }).await
+    }).unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
     db.dump(&mut std::io::stdout(), tree_id).unwrap()
@@ -119,7 +124,6 @@ use bfffs::common::database::*;
 use bfffs::common::ddml::DDML;
 use bfffs::common::idml::IDML;
 use bfffs::common::pool::{ClusterProxy, Pool};
-use futures::Future;
 use std::{
     convert::TryFrom,
     num::NonZeroU64,
@@ -129,7 +133,7 @@ use std::{
 use super::*;
 
 fn create(args: &clap::ArgMatches) {
-    let rt = Runtime::new().unwrap();
+    let rt = runtime();
     let name = args.value_of("name").unwrap().to_owned();
      let zone_size = args.value_of("zone_size")
         .map(|s| {
@@ -246,9 +250,9 @@ impl Builder {
     fn do_create_cluster(&mut self, k: i16, f: i16, devs: &[&str])
     {
         let zone_size = self.zone_size;
-        let c = self.rt.block_on(future::lazy(move || {
-            Pool::create_cluster(None, k, zone_size, f, devs)
-        })).unwrap();
+        let c = self.rt.block_on(async move {
+            Pool::create_cluster(None, k, zone_size, f, devs).await
+        }).unwrap();
         self.clusters.push(c);
     }
 
@@ -256,21 +260,22 @@ impl Builder {
     pub fn format(&mut self) {
         let name = self.name.clone();
         let clusters = self.clusters.drain(..).collect();
-        let db = self.rt.block_on(future::lazy(|| {
+        let handle = self.rt.handle().clone();
+        let db = self.rt.block_on(async move {
             Pool::create(name, clusters)
-            .map(|pool| {
+            .map_ok(|pool| {
                 let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
                 let ddml = Arc::new(DDML::new(pool, cache.clone()));
                 let idml = Arc::new(IDML::create(ddml, cache));
-                let task_executor = TaskExecutor::current();
-                Database::create(idml, task_executor)
-            })
-        })).unwrap();
+                Database::create(idml, handle)
+            }).await
+        }).unwrap();
         let props = self.properties.clone();
-        self.rt.block_on(future::lazy(|| {
+        self.rt.block_on(async move {
             db.new_fs(props)
             .and_then(|_tree_id| db.sync_transaction())
-        })).unwrap();
+            .await
+        }).unwrap();
     }
 }
 

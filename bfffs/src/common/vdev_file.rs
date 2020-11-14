@@ -1,8 +1,13 @@
 // vim: tw=80
 
 use crate::common::{*, label::*, vdev::*};
-use divbuf::{DivBufShared, DivBuf};
-use futures::{Async, IntoFuture, Future, Poll, future};
+use divbuf::DivBufShared;
+use futures::{
+    Future,
+    TryFutureExt,
+    future,
+    task::{Context, Poll}
+};
 #[cfg(test)] use mockall::mock;
 use nix::libc::{c_int, off_t};
 use num_traits::FromPrimitive;
@@ -16,7 +21,8 @@ use std::{
         fs::OpenOptionsExt,
         io::{AsRawFd, RawFd}
     },
-    path::Path
+    path::Path,
+    pin::Pin
 };
 use tokio_file::{AioFut, File, LioFut};
 
@@ -133,11 +139,11 @@ impl Vdev for VdevFile {
         self.size
     }
 
-    fn sync_all(&self) -> Box<dyn Future<Item = (), Error = Error>> {
+    fn sync_all(&self) -> BoxVdevFut {
         let fut = self.file.sync_all().unwrap()
-            .map(drop)
+            .map_ok(drop)
             .map_err(Error::from);
-        Box::new(fut)
+        Box::pin(fut)
     }
 
     fn uuid(&self) -> Uuid {
@@ -224,8 +230,8 @@ impl VdevFile {
     /// # Parameters
     ///
     /// -`lba`: The first LBA of the zone to erase
-    pub fn erase_zone(&self, lba: LbaT) -> Box<VdevFut> {
-        let fut = if self.candelete {
+    pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut {
+        let r = if self.candelete {
             // There isn't (yet) a way to asynchronously trim, so use a
             // synchronous ioctl.
             let off = lba as off_t * (BYTES_PER_LBA as off_t);
@@ -237,9 +243,8 @@ impl VdevFile {
             .map_err(Error::from)
         } else {
             Ok(())
-        }
-        .into_future();
-        Box::new(fut)
+        };
+        Box::pin(future::ready(r))
     }
 
     /// Asynchronously finish the given zone.
@@ -250,9 +255,9 @@ impl VdevFile {
     /// # Parameters
     ///
     /// -`lba`: The first LBA of the zone to finish
-    pub fn finish_zone(&self, _lba: LbaT) -> Box<VdevFut> {
+    pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut {
         // ordinary files don't have Zone operations
-        Box::new(future::ok::<(), Error>(()))
+        Box::pin(future::ok(()))
     }
 
     /// Open an existing `VdevFile`
@@ -261,38 +266,48 @@ impl VdevFile {
     /// used to construct other vdevs stacked on top of this one.
     ///
     /// * `path`    Pathname for the file.  It may be a device node.
-    pub fn open<P: AsRef<Path>>(path: P)
-        -> impl Future<Item=(Self, LabelReader), Error=Error>
+    pub async fn open<P: AsRef<Path>>(path: P)
+        -> Result<(Self, LabelReader), Error>
     {
-        OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(libc::O_DIRECT)
-        .open(path)
-        .map(File::new)
-        .into_future()
-        .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap())
-        .and_then(|f| {
-            VdevFile::read_label(f, 0)
-            .or_else(move |(_e, f)| {
-                // Try the second label
-                VdevFile::read_label(f, 1)
-            }).and_then(move |(mut label_reader, f)| {
-                let candelete = VdevFile::candelete(f.as_raw_fd()).unwrap();
-                let size = f.len().unwrap() / BYTES_PER_LBA as u64;
-                let label: Label = label_reader.deserialize().unwrap();
-                assert!(size >= label.lbas, "Vdev has shrunk since creation");
-                let vdev = VdevFile {
-                    file: f,
-                    spacemap_space: label.spacemap_space,
-                    lbas_per_zone: label.lbas_per_zone,
-                    size: label.lbas,
-                    uuid: label.uuid,
-                    candelete
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_DIRECT)
+            .open(path)
+            .map(File::new)
+            .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap());
+        match file {
+            Ok(f) => {
+                let r = match VdevFile::read_label(f, 0).await {
+                    Err((_e, f)) => {
+                        // Try the second label
+                        VdevFile::read_label(f, 1).await
+                    },
+                    Ok(r) => Ok(r)
                 };
-                Ok((vdev, label_reader))
-            }).map_err(|(e, _f)| e)
-        })
+                match r {
+                    Err((e, _f)) => Err(e),
+                    Ok((mut label_reader, f)) => {
+                        let candelete = VdevFile::candelete(f.as_raw_fd())
+                            .unwrap();
+                        let size = f.len().unwrap() / BYTES_PER_LBA as u64;
+                        let label: Label = label_reader.deserialize().unwrap();
+                        assert!(size >= label.lbas,
+                                "Vdev has shrunk since creation");
+                        let vdev = VdevFile {
+                            file: f,
+                            spacemap_space: label.spacemap_space,
+                            lbas_per_zone: label.lbas_per_zone,
+                            size: label.lbas,
+                            uuid: label.uuid,
+                            candelete
+                        };
+                        Ok((vdev, label_reader))
+                    }
+                }
+            },
+            Err(e) => Err(e)
+        }
     }
 
     /// Asynchronously open the given zone.
@@ -302,44 +317,44 @@ impl VdevFile {
     /// # Parameters
     ///
     /// -`lba`: The first LBA of the zone to open
-    pub fn open_zone(&self, _lba: LbaT) -> Box<VdevFut> {
+    pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut {
         // ordinary files don't have Zone operations
-        Box::new(future::ok::<(), Error>(()))
+        Box::pin(future::ok(()))
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut> {
+    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
         let container = Box::new(IoVecMutContainer(buf));
         let off = lba * (BYTES_PER_LBA as u64);
         let fut = VdevFileFut(self.file.read_at(container, off).unwrap());
-        Box::new(fut)
+        Box::pin(fut)
     }
 
     /// Read just one of a vdev's labels
-    fn read_label(f: File, label: u32)
-        -> impl Future<Item=(LabelReader, File), Error=(Error, File)>
+    // TODO: make this an async fn that takes a reference to File
+    async fn read_label(f: File, label: u32)
+        -> Result<(LabelReader, File), (Error, File)>
     {
         let lba = LabelReader::lba(label);
         let offset = lba * BYTES_PER_LBA as u64;
-        // TODO: figure out how to use mem::MaybeUninit with divbuf
+        // TODO: figure out how to use mem::MaybeUninit with File::read_at
+        // TODO: Skip creating the container by using a
+        // tokio_file::File::read_at_from_mut_slice method
         let dbs = DivBufShared::uninitialized(LABEL_SIZE);
         let dbm = dbs.try_mut().unwrap();
         let container = Box::new(IoVecMutContainer(dbm));
-        f.read_at(container, offset).unwrap()
-        .then(move |r| {
-            match r {
-                Ok(aio_result) => {
-                    drop(aio_result);   // release reference on dbs
-                    match LabelReader::from_dbs(dbs) {
-                        Ok(lr) => Ok((lr, f)),
-                        Err(e) => Err((e, f))
-                    }
-                },
-                Err(e) => Err((Error::from(e), f))
-            }
-        })
+        match f.read_at(container, offset).unwrap().await {
+            Ok(aio_result) => {
+                drop(aio_result);   // release reference on dbs
+                match LabelReader::from_dbs(dbs) {
+                    Ok(lr) => Ok((lr, f)),
+                    Err(e) => Err((e, f))
+                }
+            },
+            Err(e) => Err((Error::from(e), f))
+        }
     }
 
     /// Read one of the spacemaps from disk.
@@ -349,26 +364,28 @@ impl VdevFile {
     ///                 resized as needed.
     /// - `idx`:        Index of the spacemap to read.  It should be the same as
     ///                 whichever label is being used.
-    pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut> {
+    pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
+    {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         let container = Box::new(IoVecMutContainer(buf));
         let off = lba * (BYTES_PER_LBA as u64);
         let fut = VdevFileFut(self.file.read_at(container, off).unwrap());
-        Box::new(fut)
+        Box::pin(fut)
     }
 
     /// The asynchronous scatter/gather read function.
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`         LBA from which to read
-    pub fn readv_at(&self, buf: SGListMut, lba: LbaT) -> Box<VdevFut> {
+    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut
+    {
         let off = lba * (BYTES_PER_LBA as u64);
-        let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecMutContainer(iovec)) as Box<dyn BorrowMut<[u8]>>
+        let containers = bufs.into_iter().map(|iovec| {
+            Box::new(IoVecMutContainer(iovec)) as Box<_>
         }).collect();
         let fut = VdevFileLioFut(self.file.readv_at(containers, off).unwrap());
-        Box::new(fut)
+        Box::pin(fut)
     }
 
     fn reserved_space(&self) -> LbaT {
@@ -381,14 +398,16 @@ impl VdevFile {
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
-    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut> {
+    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
         let container = Box::new(IoVecContainer(buf));
-        Box::new(self.write_at_unchecked(container, lba))
+        Box::pin(self.write_at_unchecked(container, lba))
     }
 
-    fn write_at_unchecked(&self, buf: Box<dyn Borrow<[u8]>>, lba: LbaT)
-        -> impl Future<Item = (), Error = Error>
+    fn write_at_unchecked(&self,
+                          buf: Box<dyn Borrow<[u8]> + Send + Sync>,
+                          lba: LbaT)
+        -> impl Future<Output=Result<(), Error>>
     {
         {
             let b: &[u8] = (*buf).borrow();
@@ -402,7 +421,8 @@ impl VdevFile {
     ///
     /// `label_writer` should already contain the serialized labels of every
     /// vdev stacked on top of this one.
-    pub fn write_label(&self, mut label_writer: LabelWriter) -> Box<VdevFut> {
+    pub fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut
+    {
         let label = Label {
             uuid: self.uuid,
             spacemap_space: self.spacemap_space,
@@ -412,7 +432,7 @@ impl VdevFile {
         label_writer.serialize(&label).unwrap();
         let lba = label_writer.lba();
         let sglist = label_writer.into_sglist();
-        Box::new(self.writev_at(sglist, lba))
+        self.writev_at(sglist, lba)
     }
 
     /// Asynchronously write to the Vdev's spacemap area.
@@ -425,7 +445,7 @@ impl VdevFile {
     ///                 written.
     /// - `block`:      LBA-based offset from the start of the spacemap area
     pub fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
-        -> Box<VdevFut>
+        -> BoxVdevFut
     {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
@@ -436,32 +456,32 @@ impl VdevFile {
         let lbas = bytes / BYTES_PER_LBA as LbaT;
         assert!(lba + lbas <= self.reserved_space());
         let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecContainer(iovec)) as Box<dyn Borrow<[u8]>>
+            Box::new(IoVecContainer(iovec)) as Box<_>
         }).collect();
         let off = lba * (BYTES_PER_LBA as u64);
         let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
-        Box::new(fut)
+        Box::pin(fut)
     }
 
     /// The asynchronous scatter/gather write function.
     ///
     /// * `bufs`	Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
-    pub fn writev_at(&self, buf: SGList, lba: LbaT) -> Box<VdevFut> {
+    pub fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut
+    {
         let off = lba * (BYTES_PER_LBA as u64);
         let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecContainer(iovec)) as Box<dyn Borrow<[u8]>>
+            Box::new(IoVecContainer(iovec)) as Box<_>
         }).collect();
         let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
-        Box::new(fut)
+        Box::pin(fut)
     }
 }
 
-struct VdevFileFut(AioFut);
+struct VdevFileFut<'a>(AioFut<'a>);
 
-impl Future for VdevFileFut {
-    type Item = ();
-    type Error = Error;
+impl<'a> Future for VdevFileFut<'a> {
+    type Output = Result<(), Error>;
 
     // aio_write and friends will sometimes return an error synchronously (like
     // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
@@ -469,32 +489,34 @@ impl Future for VdevFileFut {
     // calling poll again after it returns an error, which is incompatible with
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
-    fn poll(&mut self) -> Poll<(), Error> {
-        match self.0.poll() {
-            Ok(Async::Ready(_aio_result)) => Ok(Async::Ready(())),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(e) => Err(Error::from(e))
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match Pin::new(&mut self.0).poll(cx) {
+            Poll::Ready(Ok(_aio_result)) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
+            Poll::Pending => Poll::Pending
         }
     }
 }
 
-struct VdevFileLioFut(LioFut);
+struct VdevFileLioFut<'a>(LioFut<'a>);
 
-impl Future for VdevFileLioFut {
-    type Item = ();
-    type Error = Error;
+impl<'a> Future for VdevFileLioFut<'a> {
+    type Output = Result<(), Error>;
 
     // See comments for VdevFileFut::poll
-    fn poll(&mut self) -> Poll<(), Error>{
-        match self.0.poll() {
-            Ok(Async::Ready(mut lio_result_iter)) => {
-                // We must drain the iterator to free the AioCb resources
-                lio_result_iter.find(|ref r| r.value.is_err())
-                .map(|r| Err(Error::from(r.value.unwrap_err())))
-                .unwrap_or(Ok(Async::Ready(())))
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match Pin::new(&mut self.0).poll(cx) {
+            Poll::Ready(Ok(mut lio_result_iter)) => {
+                 // We must drain the iterator to free the AioCb resources
+                Poll::Ready(
+                    match lio_result_iter.find(|ref r| r.value.is_err()) {
+                        Some(r) => Err(Error::from(r.value.unwrap_err())),
+                        None => Ok(())
+                    }
+                )
             },
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(e) => Err(Error::from(e))
+            Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
+            Poll::Pending => Poll::Pending
         }
     }
 }
@@ -503,31 +525,29 @@ impl Future for VdevFileLioFut {
 #[cfg(test)]
 mock!{
     pub VdevFile {
-        fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
+        pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
             where P: AsRef<Path> + 'static;
-        fn erase_zone(&self, lba: LbaT) -> Box<VdevFut>;
-        fn finish_zone(&self, lba: LbaT) -> Box<VdevFut>;
-        fn open<P>(path: P) -> Box<dyn Future<Item=(Self, LabelReader),
-                                              Error=Error>>
+        pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut;
+        pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
+        pub async fn open<P>(path: P) -> Result<(Self, LabelReader), Error>
             where P: AsRef<Path> + 'static;
-        fn open_zone(&self, lba: LbaT) -> Box<VdevFut>;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> Box<VdevFut>;
-        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> Box<VdevFut>;
-        fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> Box<VdevFut>;
-        fn spacemap_space(&self) -> LbaT;
-        fn write_at(&self, buf: IoVec, lba: LbaT) -> Box<VdevFut>;
-        fn write_label(&self, label_writer: LabelWriter) -> Box<VdevFut>;
-        fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
-            -> Box<VdevFut>;
-        fn writev_at(&self, bufs: SGList, lba: LbaT) -> Box<VdevFut>;
+        pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
+        pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
+        pub fn spacemap_space(&self) -> LbaT;
+        pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
+        pub fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut;
+        pub fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
+            -> BoxVdevFut;
+        pub fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut;
     }
-    trait Vdev {
+    impl Vdev for VdevFile {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
-        fn sync_all(&self) -> Box<dyn futures::Future<Item = (),
-                                  Error = Error>>;
+        fn sync_all(&self) -> BoxVdevFut;
         fn uuid(&self) -> Uuid;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;

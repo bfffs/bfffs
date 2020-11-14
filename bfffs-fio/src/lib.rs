@@ -9,7 +9,7 @@ use bfffs::common::{
     fs::{FileData, Fs},
     Error,
 };
-use futures::{future, Future, IntoFuture};
+use futures::{future, FutureExt};
 use lazy_static::lazy_static;
 use memoffset::offset_of;
 use std::{
@@ -22,7 +22,7 @@ use std::{
     slice,
     sync::{Arc, Mutex},
 };
-use tokio_io_pool::Runtime;
+use tokio::runtime::{Builder, Runtime};
 
 mod ffi;
 
@@ -68,6 +68,7 @@ impl flist_head
 }
 
 #[repr(C)]
+#[derive(Debug)]
 struct BfffsOptions
 {
     /// silly fio can't handle an offset of 0
@@ -119,7 +120,14 @@ pub extern "C" fn rust_ctor()
 }
 
 lazy_static! {
-    static ref RUNTIME: Mutex<Runtime> = Mutex::new(Runtime::new());
+    static ref RUNTIME: Mutex<Runtime> = Mutex::new(
+        Builder::new()
+        .threaded_scheduler()
+        .enable_time()
+        .enable_io()
+        .build()
+        .unwrap()
+    );
     // TODO: remove the Mutex once there is a fs::Handle that is Sync
     static ref FS: Mutex<Option<Fs>> = Mutex::default();
     static ref ROOT: Mutex<Option<FileData>> = Mutex::default();
@@ -203,14 +211,13 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
                 dev_manager.taste(borrowed_vdev);
             }
             let handle = rt.handle().clone();
-            let r = rt.block_on(future::lazy(move || {
+            let r = rt.block_on(async move {
                 if let Ok(fut) = dev_manager.import_by_name(pool, handle) {
-                    Box::new(fut) as Box<dyn Future<Item = _, Error = _> + Send>
+                    fut.boxed()
                 } else {
-                    Box::new(Err(Error::ENOENT).into_future())
-                        as Box<dyn Future<Item = _, Error = _> + Send>
-                }
-            }));
+                    future::err(Error::ENOENT).boxed()
+                }.await
+            });
             if let Ok(db) = r {
                 let adb = Arc::new(db);
                 // For now, hardcode tree_id to 0
@@ -322,31 +329,34 @@ pub unsafe extern "C" fn fio_bfffs_queue(
 
 #[export_name = "ioengine"]
 pub static mut IOENGINE: ioengine_ops = ioengine_ops {
-    name:               b"bfffs\0" as *const _ as *const libc::c_char,
-    version:            FIO_IOOPS_VERSION as i32,
-    init:               Some(fio_bfffs_init),
-    flags:              fio_ioengine_flags_FIO_SYNCIO as i32,
-    setup:              None,
-    prep:               None,
-    queue:              Some(fio_bfffs_queue),
-    commit:             Some(fio_bfffs_commit),
-    getevents:          Some(fio_bfffs_getevents),
-    event:              Some(fio_bfffs_event),
-    errdetails:         None,
     cancel:             None,
     cleanup:            None,
-    open_file:          Some(fio_bfffs_open),
     close_file:         Some(fio_bfffs_close),
-    invalidate:         Some(fio_bfffs_invalidate),
-    unlink_file:        None,
+    commit:             Some(fio_bfffs_commit),
+    errdetails:         None,
+    event:              Some(fio_bfffs_event),
+    flags:              fio_ioengine_flags_FIO_SYNCIO as i32,
     get_file_size:      None,
-    terminate:          None,
+    getevents:          Some(fio_bfffs_getevents),
+    get_zoned_model:    None,
+    init:               Some(fio_bfffs_init),
+    invalidate:         Some(fio_bfffs_invalidate),
+    io_u_free:          None,
+    io_u_init:          None,
     iomem_alloc:        None,
     iomem_free:         None,
-    io_u_init:          None,
-    io_u_free:          None,
     list:               flist_head::zeroed(),
+    name:               b"bfffs\0" as *const _ as *const libc::c_char,
+    open_file:          Some(fio_bfffs_open),
     option_struct_size: mem::size_of::<BfffsOptions>() as i32,
     options:            ptr::null_mut(),
     post_init:          None,
+    prep:               None,
+    report_zones:       None,
+    reset_wp:           None,
+    queue:              Some(fio_bfffs_queue),
+    setup:              None,
+    terminate:          None,
+    unlink_file:        None,
+    version:            FIO_IOOPS_VERSION as i32,
 };

@@ -3,10 +3,9 @@
 //! Nodes for Trees (private module)
 use bincode;
 use crate::{
-    boxfut,
     common::{*, dml::*}
 };
-use futures::{Future, IntoFuture, future};
+use futures::{Future, FutureExt, TryFutureExt, future};
 use futures_locks::*;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
@@ -17,6 +16,7 @@ use std::{
     iter::FromIterator,
     mem,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
+    pin::Pin,
     sync::{
         Arc,
     }
@@ -53,26 +53,27 @@ impl MinValue for TxgT {
 }
 
 pub trait Addr: Copy + Debug + DeserializeOwned + Eq + Ord + PartialEq + Send +
-    Serialize + TypicalSize + 'static {}
+    Sync + Serialize + TypicalSize + 'static {}
 
 impl<T> Addr for T
 where T: Copy + Debug + DeserializeOwned + Eq + Ord + PartialEq + Send +
-    Serialize + TypicalSize + 'static {}
+    Sync + Serialize + TypicalSize + 'static {}
 
 pub trait Key: Copy + Debug + DeserializeOwned + Ord + PartialEq + MinValue +
-    Send + Serialize + TypicalSize + 'static {}
+    Send + Sync + Serialize + TypicalSize + 'static {}
 
 impl<T> Key for T
 where T: Copy + Debug + DeserializeOwned + Ord + MinValue + PartialEq + Send +
-    Serialize + TypicalSize + 'static {}
+    Sync + Serialize + TypicalSize + 'static {}
 
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     Serialize + TypicalSize + 'static
 {
     /// Prepare this `Value` to be written to disk
+    // TODO: return an infalliable Future instead of a TryFuture
     // LCOV_EXCL_START   unreachable code
     fn flush<D>(self, _dml: &D, _txg: TxgT)
-        -> Box<dyn Future<Item=Self, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Self, Error>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
         // should never be called since needs_flush is false.  Ideally, this
@@ -212,21 +213,21 @@ impl<K: Key, V: Value> LeafData<K, V> {
     ///
     /// For most items, this is a nop.
     pub fn flush<A, D>(self, d: &D, txg: TxgT)
-        -> Box<dyn Future<Item=Self, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Self, Error>> + Send>>
         where D: DML<Addr=A> + 'static, A: 'static
     {
         if V::needs_flush() {
             let flush_futs = self.items.into_iter().map(|(k, v)| {
                 v.flush(d, txg)
-                    .map(move |v| (k, v))
+                    .map_ok(move |v| (k, v))
             }).collect::<Vec<_>>();
-            let fut = future::join_all(flush_futs)
-                .map(|items| {
+            let fut = future::try_join_all(flush_futs)
+                .map_ok(|items| {
                     LeafData{items: BTreeMap::from_iter(items.into_iter())}
                 });
-            boxfut!(fut)
+            fut.boxed()
         } else {
-            boxfut!(Ok(self).into_future())
+            future::ok(self).boxed()
         }
     }
 
@@ -394,48 +395,47 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     // Consuming and returning self prevents lifetime checker issues that
     // interfere with lock coupling.
     pub fn xlock<D>(mut self, dml: &Arc<D>, child_idx: usize, txg: TxgT)
-        -> Box<dyn Future<Item=(TreeWriteGuard<A, K, V>,
-                                TreeWriteGuard<A, K, V>),
-                           Error=Error> + Send>
+        -> Pin<Box<dyn Future<
+            Output=Result<
+                (TreeWriteGuard<A, K, V>, TreeWriteGuard<A, K, V>),
+                Error>
+            > + Send
+        >>
         where D: DML<Addr=A> + 'static
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
         if self.as_int().children[child_idx].ptr.is_mem() {
-            Box::new(
-                self.as_int().children[child_idx].ptr.as_mem().xlock()
-                    .map(move |child_guard| {
-                          (self, child_guard)
-                     })
-            )
+            self.as_int().children[child_idx].ptr.as_mem().xlock()
+                .map_ok(move |child_guard| {
+                      (self, child_guard)
+                 }).boxed()
         } else {
             let addr = *self.as_int()
                             .children[child_idx]
                             .ptr
                             .as_addr();
-                Box::new(
-                    dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr,
-                                                                      txg)
-                       .map(move |arc|
-                    {
-                        let child_node = Box::new(Arc::try_unwrap(*arc)
-                            .expect("We should be the Node's only owner"));
-                        let child_guard = {
-                            let elem = &mut self.as_int_mut()
-                                                .children[child_idx];
-                            elem.ptr = TreePtr::Mem(child_node);
-                            let guard = TreeWriteGuard(
-                                elem.ptr.as_mem()
-                                    .0.try_write().unwrap()
-                            );
-                            elem.txgs.start = match *guard {
-                                NodeData::Int(ref id) => id.start_txg(),
-                                NodeData::Leaf(_) => txg
-                            };
-                            guard
-                        };  // LCOV_EXCL_LINE   kcov false negative
-                        (self, child_guard)
-                    })
-                )
+                dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr,
+                                                                  txg)
+                   .map_ok(move |arc|
+                {
+                    let child_node = Box::new(Arc::try_unwrap(*arc)
+                        .expect("We should be the Node's only owner"));
+                    let child_guard = {
+                        let elem = &mut self.as_int_mut()
+                                            .children[child_idx];
+                        elem.ptr = TreePtr::Mem(child_node);
+                        let guard = TreeWriteGuard(
+                            elem.ptr.as_mem()
+                                .0.try_write().unwrap()
+                        );
+                        elem.txgs.start = match *guard {
+                            NodeData::Int(ref id) => id.start_txg(),
+                            NodeData::Leaf(_) => txg
+                        };
+                        guard
+                    };  // LCOV_EXCL_LINE   kcov false negative
+                    (self, child_guard)
+                }).boxed()
         }
     }
 
@@ -448,9 +448,11 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// leak!  `height` is the height of `self`, not the target.  Leaves are 0.
     pub fn xlock_nc<D>(&mut self, dml: &Arc<D>, child_idx: usize, height: u8,
                        txg: TxgT)
-        -> Box<dyn Future<Item=(Option<IntElem<A, K, V>>,
-                                TreeWriteGuard<A, K, V>),
-                           Error=Error> + Send>
+        -> Pin<Box<dyn Future<
+            Output=Result<(Option<IntElem<A, K, V>>, TreeWriteGuard<A, K, V>),
+                          Error>
+            > + Send
+        >>
         where D: DML<Addr=A> + 'static
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
@@ -458,33 +460,29 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
             if height == 1 {
                 self.as_int_mut().children[child_idx].txgs.start = txg;
             }
-            Box::new(
-                self.as_int().children[child_idx].ptr.as_mem().xlock()
-                .map(move |child_guard| {
-                    debug_assert!((height > 1) ^ child_guard.is_leaf());
-                    (None, child_guard)
-                })
-            )
+            self.as_int().children[child_idx].ptr.as_mem().xlock()
+            .map_ok(move |child_guard| {
+                debug_assert!((height > 1) ^ child_guard.is_leaf());
+                (None, child_guard)
+            }).boxed()
         } else {
             let addr = *self.as_int().children[child_idx].ptr.as_addr();
-            Box::new(
-                dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr, txg)
-               .map(move |arc| {
-                    let child_node = Box::new(Arc::try_unwrap(*arc)
-                        .expect("We should be the Node's only owner"));
-                    let guard = TreeWriteGuard(
-                        child_node.0.try_write().unwrap()
-                    );
-                    let ptr = TreePtr::Mem(child_node);
-                    let start = match *guard {
-                        NodeData::Int(ref id) => id.start_txg(),
-                        NodeData::Leaf(_) => txg
-                    };
-                    let end = txg + 1;
-                    let elem = IntElem::new(*guard.key(), start..end, ptr);
-                    (Some(elem), guard)
-                })
-            )
+            dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr, txg)
+           .map_ok(move |arc| {
+                let child_node = Box::new(Arc::try_unwrap(*arc)
+                    .expect("We should be the Node's only owner"));
+                let guard = TreeWriteGuard(
+                    child_node.0.try_write().unwrap()
+                );
+                let ptr = TreePtr::Mem(child_node);
+                let start = match *guard {
+                    NodeData::Int(ref id) => id.start_txg(),
+                    NodeData::Leaf(_) => txg
+                };
+                let end = txg + 1;
+                let elem = IntElem::new(*guard.key(), start..end, ptr);
+                (Some(elem), guard)
+            }).boxed()
         }
     }
 
@@ -500,37 +498,38 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// lock-coupling.
     pub fn drain_xlock<B, D, F, R>(mut self, dml: Arc<D>, range: Range<usize>,
                                    txg: TxgT, f: F)
-        -> impl Future<Item=(TreeWriteGuard<A, K, V>, Vec<R>), Error=Error>
+        -> impl Future<Output=Result<(TreeWriteGuard<A, K, V>, Vec<R>),
+                                     Error>>
         where D: DML<Addr=A> + 'static,
               F: Fn(TreeWriteGuard<A, K, V>, &Arc<D>) -> B + Clone + Send
                   + 'static,
-              B: Future<Item = R, Error = Error> + Send + 'static,
+              B: Future<Output = Result<R, Error>> + Send + 'static,
               R: Send + 'static
     {
         let child_futs = self.as_int_mut().children.drain(range)
         .map(move |elem| {
             let dml2 = dml.clone();
             let lock_fut = if elem.ptr.is_mem() {
-                boxfut!(elem.ptr.as_mem().xlock())
+                elem.ptr.as_mem().xlock().boxed()
             } else {
                 let addr = *elem.ptr.as_addr();
                 let fut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
                     &addr, txg)
-                .map(move |arc| {
+                .map_ok(move |arc| {
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
                     TreeWriteGuard(
                         child_node.0.try_write().unwrap()
                     )
                 });
-                boxfut!(fut)
+                fut.boxed()
             };
             let f2 = f.clone();
             lock_fut.and_then(move |guard| {
                 f2(guard, &dml2)
             })  // LCOV_EXCL_LINE kcov false negative
         }).collect::<Vec<_>>();
-        future::join_all(child_futs).map(move |r| (self, r))
+        future::try_join_all(child_futs).map_ok(move |r| (self, r))
     }
 }
 
@@ -588,27 +587,24 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
 
     /// Lock nonexclusively
     pub fn rlock<D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: &Arc<D>)
-        -> Box<dyn Future<Item=TreeReadGuard<A, K, V>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<
+            Output=Result<TreeReadGuard<A, K, V>, Error>> + Send
+        >>
     {
         match self.ptr {
             TreePtr::Mem(ref node) => {
-                Box::new(
-                    node.0.read()
-                        .map(TreeReadGuard::Mem)
-                        .map_err(|_| Error::EPIPE)
-                )
+                node.0.read()
+                    .map(|g| Ok(TreeReadGuard::Mem(g)))
+                    .boxed()
             },
             TreePtr::Addr(ref addr) => {
-                Box::new(
-                    dml.get::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(addr)
-                    .and_then(|node| {
-                        node.0.read()
-                            .map(move |guard| {
-                                TreeReadGuard::Addr(guard, node)
-                            })
-                            .map_err(|_| Error::EPIPE)
-                    })
-                )
+                dml.get::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(addr)
+                .and_then(|node| {
+                    node.0.read()
+                        .map(move |guard|
+                             Ok(TreeReadGuard::Addr(guard, node))
+                        )
+                }).boxed()
             },
             // LCOV_EXCL_START
             TreePtr::None => unreachable!("None is just a temporary value")
@@ -1031,14 +1027,13 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     }
 
     /// Lock the indicated `Node` exclusively.
+    // TODO: return an infalliable Future instead of a TryFuture
     pub(super) fn xlock(&self)
-        -> impl Future<Item=TreeWriteGuard<A, K, V>, Error=Error>
+        -> impl Future<Output=Result<TreeWriteGuard<A, K, V>, Error>>
     {
-        Box::new(
-            self.0.write()
-                .map(TreeWriteGuard)
-                .map_err(|_| Error::EPIPE)
-        )
+        self.0.write()
+            .map(|g| Ok(TreeWriteGuard(g)))
+            .boxed()
     }
 
 }

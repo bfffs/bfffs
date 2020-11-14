@@ -51,7 +51,9 @@ root:
                     257: 257.0
 "#);
 
-    assert!(!tree.check().wait().unwrap());
+    assert!(!tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 #[test]
@@ -134,7 +136,9 @@ root:
                               13: 13.0
 "#);
 
-    assert!(!tree.check().wait().unwrap());
+    assert!(!tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 #[test]
@@ -181,7 +185,9 @@ root:
                     14: 14.0
 "#);
 
-    assert!(!tree.check().wait().unwrap());
+    assert!(!tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 #[test]
@@ -267,7 +273,9 @@ root:
                               13: 13.0
 "#);
 
-    assert!(tree.check().wait().unwrap());
+    assert!(tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 #[test]
@@ -276,7 +284,9 @@ fn check_empty() {
     let dml = Arc::new(mock);
     let tree = Tree::<u32, MockDML, u32, f32>::create(dml, false, 1.0, 1.0);
 
-    assert!(tree.check().wait().unwrap());
+    assert!(tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 #[test]
@@ -322,7 +332,9 @@ root:
                     14: 14.0
 "#);
 
-    assert!(!tree.check().wait().unwrap());
+    assert!(!tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 // The root Node is always allowed to underflow
@@ -374,7 +386,9 @@ root:
                     23: 23.0
 "#);
 
-    assert!(tree.check().wait().unwrap());
+    assert!(tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 // The root node is allowed to underflow if it's a leaf
@@ -403,7 +417,9 @@ root:
           0: 0.0
 "#);
 
-    assert!(tree.check().wait().unwrap());
+    assert!(tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 #[test]
@@ -436,7 +452,9 @@ root:
           5: 5.0
 "#);
 
-    assert!(!tree.check().wait().unwrap());
+    assert!(!tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 // The tree is unsorted overall, even though each Node is correctly sorted
@@ -485,7 +503,9 @@ root:
                     11: 11.0
 "#);
 
-    assert!(!tree.check().wait().unwrap());
+    assert!(!tree.check()
+            .now_or_never().unwrap()
+            .unwrap());
 }
 
 /// Recompute start TXGs on Tree flush
@@ -499,7 +519,7 @@ fn flush() {
             let node_data = cacheable.0.try_read().unwrap();
             node_data.is_leaf() || *txg == TxgT::from(42)
         })
-        .return_once(move |_, _, _| Box::new(Ok(addr).into_future()));
+        .return_once(move |_, _, _| Box::pin(future::ok(addr)));
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .once()
         .withf(move |cacheable, _compression, txg| {
@@ -511,7 +531,7 @@ fn flush() {
             int_data.children[1].txgs == (TxgT::from(41)..TxgT::from(42)) &&
             *txg == TxgT::from(42)
         })
-        .returning(move |_, _, _| Box::new(Ok(addr).into_future()));
+        .returning(move |_, _, _| Box::pin(future::ok(addr)));
     let dml = Arc::new(mock);
     let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
@@ -549,7 +569,8 @@ root:
               Addr: 256
 "#);
 
-    let r = tree.flush(TxgT::from(42)).wait();
+    let r = tree.flush(TxgT::from(42))
+        .now_or_never().unwrap();
     assert!(r.is_ok());
     let root_elem = Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap();
@@ -569,9 +590,7 @@ fn merge() {
     mock.expect_pop::<Arc<Node<u32, u32, f32>>, Arc<Node<u32, u32, f32>>>()
         .once()
         .with(eq(addrl1), eq(TxgT::from(42)))
-        .return_once(move |_, _| {
-            Box::new(future::ok(Box::new(ln1)))
-        });
+        .return_once(move |_, _| Box::pin(future::ok(Box::new(ln1))));
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
@@ -643,7 +662,8 @@ root:
               end: 16
             ptr:
               Addr: 6"#);
-    let r2 = tree.remove(4, TxgT::from(42)).wait();
+    let r2 = tree.remove(4, TxgT::from(42))
+        .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -726,9 +746,7 @@ fn split() {
     mock.expect_pop::<Arc<Node<u32, u32, f32>>, Arc<Node<u32, u32, f32>>>()
         .once()
         .with(eq(addrl), eq(TxgT::from(42)))
-        .return_once(move |_, _| {
-            Box::new(future::ok(Box::new(node)))
-        });
+        .return_once(move |_, _| Box::pin(future::ok(Box::new(node))));
     let dml = Arc::new(mock);
     let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -779,7 +797,8 @@ root:
             ptr:
               Addr: 1280
 "#);
-    let r2 = tree.insert(15, 15.0, TxgT::from(42)).wait();
+    let r2 = tree.insert(15, 15.0, TxgT::from(42))
+        .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -945,7 +964,8 @@ root:
                               24: 24.0
                               25: 25.0
                               26: 26.0"#);
-    let r2 = tree.remove(26, TxgT::from(42)).wait();
+    let r2 = tree.remove(26, TxgT::from(42))
+        .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---

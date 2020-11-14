@@ -16,7 +16,7 @@ test_suite! {
         common::pool::*,
         common::property::*
     };
-    use futures::{Future, future};
+    use futures::TryFutureExt;
     use galvanic_test::*;
     use libc;
     use pretty_assertions::assert_eq;
@@ -32,7 +32,7 @@ test_suite! {
     };
     use tempfile::Builder;
     use time::Timespec;
-    use tokio_io_pool::Runtime;
+    use tokio::runtime::Runtime;
 
     fixture!( mocks(props: Vec<Property>)
               -> (Fs, Runtime, Arc<Mutex<Cache>>, Arc<Database>, TreeID)
@@ -40,7 +40,14 @@ test_suite! {
         params { vec![Vec::new()].into_iter() }
 
         setup(&mut self) {
-            let mut rt = Runtime::new();
+            // Fs::new requires the threaded scheduler, so background threads
+            // will always be available.
+            let mut rt = tokio::runtime::Builder::new()
+                .threaded_scheduler()
+                .enable_io()
+                .enable_time()
+                .build()
+                .unwrap();
             let handle = rt.handle().clone();
             let len = 1 << 30;  // 1GB
             let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
@@ -50,27 +57,25 @@ test_suite! {
             drop(file);
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
             let cache2 = cache.clone();
-            let db = rt.block_on(future::lazy(move || {
+            let db = rt.block_on(async move {
                 Pool::create_cluster(None, 1, None, 0, &[filename])
                 .map_err(|_| unreachable!())
                 .and_then(|cluster| {
                     Pool::create(String::from("test_fs"), vec![cluster])
-                    .map(|pool| {
+                    .map_ok(|pool| {
                         let ddml = Arc::new(DDML::new(pool, cache2.clone()));
                         let idml = IDML::create(ddml, cache2);
                         Arc::new(Database::create(Arc::new(idml), handle))
                     })
-                })
-            })).unwrap();
+                }).await
+            }).unwrap();
             let handle = rt.handle().clone();
             let props = self.props.clone();
-            let db2 = db.clone();
-            let (fs, tree_id) = rt.block_on(future::lazy(move || {
-                db2.new_fs(props)
-                .map(move |tree_id| {
-                    (Fs::new(db2, handle, tree_id), tree_id)
-                })
-            })).unwrap();
+            let (db, tree_id) = rt.block_on(async move {
+                let tree_id = db.new_fs(props).await.unwrap();
+                (db, tree_id)
+            });
+            let fs = Fs::new(db.clone(), handle, tree_id);
             (fs, rt, cache, db, tree_id)
         }
     });
@@ -2227,7 +2232,6 @@ root:
         let name1 = OsString::from("name1");
         let name2 = OsString::from("name2");
         let fd = mocks.val.0.create(&root, &name1, 0o644, 0, 0).unwrap();
-        dbg!(&fd);
         mocks.val.0.link(&root, &fd, &name2).unwrap();
         clear_timestamps(&mocks.val.0, &fd);
 
@@ -2555,7 +2559,7 @@ test_suite! {
         common::pool::*,
     };
     use env_logger;
-    use futures::{Future, future};
+    use futures::TryFutureExt;
     use galvanic_test::*;
     use log::*;
     use pretty_assertions::assert_eq;
@@ -2575,7 +2579,7 @@ test_suite! {
         time::{Duration, Instant},
     };
     use tempfile::Builder;
-    use tokio_io_pool::Runtime;
+    use tokio::runtime::Runtime;
 
     #[derive(Clone, Copy, Debug)]
     pub enum Op {
@@ -2613,7 +2617,12 @@ test_suite! {
 
         fn clean(&mut self) {
             info!("clean");
-            self.db.as_ref().unwrap().clean().wait().unwrap();
+            let db = self.db.as_ref().unwrap();
+            let rt = self.rt.as_mut().unwrap();
+            rt.block_on( async {
+                db.clean()
+                .await
+            }).unwrap();
             self.check();
         }
 
@@ -2713,7 +2722,6 @@ test_suite! {
                 .ok().expect("Arc::try_unwrap");
             let mut rt = self.rt.take().unwrap();
             rt.block_on(db.shutdown()).unwrap();
-            rt.shutdown_on_idle();
         }
 
         fn step(&mut self) {
@@ -2783,7 +2791,7 @@ test_suite! {
                 env_logger::init();
             });
 
-            let mut rt = Runtime::new();
+            let mut rt = Runtime::new().unwrap();
             let handle = rt.handle().clone();
             let len = 1 << 30;  // 1GB
             let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
@@ -2792,12 +2800,12 @@ test_suite! {
             t!(file.set_len(len));
             drop(file);
             let zone_size = NonZeroU64::new(*self.zone_size);
-            let db = rt.block_on(future::lazy(move || {
+            let db = rt.block_on(async move {
                 Pool::create_cluster(None, 1, zone_size, 0, &[filename])
                 .map_err(|_| unreachable!())
                 .and_then(|cluster| {
                     Pool::create(String::from("test_fs"), vec![cluster])
-                    .map(|pool| {
+                    .map_ok(|pool| {
                         let cache = Arc::new(
                             Mutex::new(
                                 Cache::with_capacity(32_000_000)
@@ -2807,16 +2815,14 @@ test_suite! {
                         let idml = IDML::create(ddml, cache);
                         Arc::new(Database::create(Arc::new(idml), handle))
                     })
-                })
-            })).unwrap();
+                }).await
+            }).unwrap();
             let handle = rt.handle().clone();
-            let (db, fs) = rt.block_on(future::lazy(move || {
-                db.new_fs(Vec::new())
-                .map(move |tree_id| {
-                    let fs = Fs::new(db.clone(), handle, tree_id);
-                    (db, fs)
-                })
-            })).unwrap();
+            let (db, tree_id) = rt.block_on(async move {
+                let tree_id = db.new_fs(Vec::new()).await.unwrap();
+                (db, tree_id)
+            });
+            let fs = Fs::new(db.clone(), handle, tree_id);
             let seed = self.seed.unwrap_or_else(|| {
                 let mut seed = [0u8; 16];
                 let mut seeder = thread_rng();

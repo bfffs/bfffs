@@ -187,9 +187,9 @@ impl Error {
     pub fn unhandled<E: fmt::Debug>(e: E) {
         panic!("Unhandled error {:?}", e)
     }
-    pub fn unhandled_canceled<E: fmt::Debug>(e: E) -> futures::Canceled {
-        panic!("Unhandled error {:?}", e)
-    }
+    //pub fn unhandled_canceled<E: fmt::Debug>(e: E) -> futures::Canceled {
+        //panic!("Unhandled error {:?}", e)
+    //}
     pub fn unhandled_error<E: fmt::Debug>(e: E) -> Error {
         panic!("Unhandled error {:?}", e)
     }
@@ -432,6 +432,16 @@ fn zero_sglist(len: usize) -> SGList {
 }
 
 // LCOV_EXCL_START
+#[cfg(test)]
+/// Helper to generate the runtime used by most unit tests
+fn basic_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new()
+        .basic_scheduler()
+        .enable_time()
+        .build()
+        .unwrap()
+}
+
 #[cfg(test)]
 mod t {
 use bincode;

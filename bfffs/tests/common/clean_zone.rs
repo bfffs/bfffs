@@ -13,7 +13,6 @@ test_suite! {
         common::idml::*,
         common::pool::*,
     };
-    use futures::{Future, future};
     use galvanic_test::*;
     use std::{
         ffi::OsString,
@@ -24,13 +23,19 @@ test_suite! {
         time
     };
     use tempfile::Builder;
-    use tokio_io_pool::Runtime;
+    use tokio::runtime::Runtime;
 
     fixture!( mocks(devsize: u64, zone_size: u64)
               -> (Arc<Database>, Fs, Runtime)
     {
         setup(&mut self) {
-            let mut rt = Runtime::new();
+            // Fs::new() requires the threaded scheduler
+            let mut rt = tokio::runtime::Builder::new()
+                .threaded_scheduler()
+                .enable_io()
+                .enable_time()
+                .build()
+                .unwrap();
             let handle = rt.handle().clone();
             let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
             let filename = tempdir.path().join("vdev");
@@ -38,31 +43,28 @@ test_suite! {
             t!(file.set_len(*self.devsize));
             drop(file);
             let zone_size = NonZeroU64::new(*self.zone_size);
-            let db = rt.block_on(future::lazy(move || {
-                Pool::create_cluster(None, 1, zone_size, 0, &[filename])
-                .map_err(|_| unreachable!())
-                .and_then(|cluster| {
-                    Pool::create(String::from("test_fs"), vec![cluster])
-                    .map(|pool| {
-                        let cache = Arc::new(
-                            Mutex::new(
-                                Cache::with_capacity(32_000_000)
-                            )
-                        );
-                        let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                        let idml = IDML::create(ddml, cache);
-                        Arc::new(Database::create(Arc::new(idml), handle))
-                    })
-                })
-            })).unwrap();
+            let db = rt.block_on(async move {
+                let cluster = Pool::create_cluster(None, 1, zone_size, 0,
+                                                   &[filename])
+                    .await.unwrap();
+                let pool = Pool::create(String::from("test_fs"), vec![cluster])
+                    .await.unwrap();
+                let cache = Arc::new(
+                    Mutex::new(
+                        Cache::with_capacity(32_000_000)
+                    )
+                );
+                let ddml = Arc::new(DDML::new(pool, cache.clone()));
+                let idml = IDML::create(ddml, cache);
+                Arc::new(Database::create(Arc::new(idml), handle))
+            });
             let handle = rt.handle().clone();
-            let (db, fs) = rt.block_on(future::lazy(move || {
-                db.new_fs(Vec::new())
-                .map(move |tree_id| {
-                    let fs = Fs::new(db.clone(), handle, tree_id);
-                    (db, fs)
-                })
-            })).unwrap();
+            let (db, tree_id) = rt.block_on(async move {
+                let tree_id = db.new_fs(Vec::new())
+                    .await.unwrap();
+                (db, tree_id)
+            });
+            let fs = Fs::new(db.clone(), handle, tree_id);
             (db, fs, rt)
         }
     });
@@ -83,7 +85,7 @@ test_suite! {
     // it, and does not reopen it.  We just have to sort-of take it on faith
     // that zone 0 is clean, because the public API doesn't expose zones.
     test clean_zone(mocks(1 << 20, 32)) {
-        let (db, fs, _rt) = mocks.val;
+        let (db, fs, mut rt) = mocks.val;
         let root = fs.root();
         let small_filename = OsString::from("small");
         let small_fd = fs.create(&root, &small_filename, 0o644, 0, 0).unwrap();
@@ -100,7 +102,7 @@ test_suite! {
         fs.unlink(&root, Some(&big_fd), &big_filename).unwrap();
         fs.sync();
 
-        db.clean().wait().unwrap();
+        rt.block_on(db.clean()).unwrap();
         fs.sync();
     }
 
@@ -122,7 +124,7 @@ test_suite! {
         println!("Before cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
         assert!(rt.block_on(db.check()).unwrap());
-        db.clean().wait().unwrap();
+        rt.block_on(db.clean()).unwrap();
         statvfs = fs.statvfs().unwrap();
         println!("After cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
@@ -131,7 +133,6 @@ test_suite! {
         let mut owned_db = Arc::try_unwrap(db)
         .ok().expect("Unwrapping Database failed");
         rt.block_on(owned_db.shutdown()).unwrap();
-        rt.shutdown_on_idle();
     }
 
     /// A regression test for bug d5b4dab35d9be12ff1505e886ed5ca8ad4b6a526
@@ -140,7 +141,7 @@ test_suite! {
     /// time.
     #[ignore = "Test is slow and intermittent" ]
     test get_mut(mocks(1 << 30, 512)) {
-        let (db, fs, _rt) = mocks.val;
+        let (db, fs, mut rt) = mocks.val;
         let root = fs.root();
         for i in 0..16384 {
             let fname = format!("f.{}", i);
@@ -155,7 +156,7 @@ test_suite! {
         let mut statvfs = fs.statvfs().unwrap();
         println!("Before cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);
-        db.clean().wait().unwrap();
+        rt.block_on(db.clean()).unwrap();
         statvfs = fs.statvfs().unwrap();
         println!("After cleaning: {:?} free out of {:?}",
                  statvfs.f_bfree, statvfs.f_blocks);

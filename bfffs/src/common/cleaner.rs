@@ -6,12 +6,16 @@ use crate::common::{
 };
 use futures::{
     Future,
+    FutureExt,
+    StreamExt,
+    TryFutureExt,
+    TryStreamExt,
     future,
-    stream::{self, Stream},
-    sync::{mpsc, oneshot}
+    channel::{oneshot, mpsc},
+    stream::self,
 };
 use std::sync::Arc;
-use tokio::executor::Executor;
+use tokio::runtime::Handle;
 
 struct SyncCleaner {
     /// Handle to the DML.
@@ -24,7 +28,7 @@ struct SyncCleaner {
 
 impl SyncCleaner {
     /// Clean zones in the foreground, blocking the task
-    pub fn clean_now(&self) -> impl Future<Item=(), Error=Error> + Send {
+    pub fn clean_now(&self) -> impl Future<Output=Result<(), Error>> + Send {
         // Outline:
         // 1) Get a list of mostly-free zones
         // 2) For each zone:
@@ -36,14 +40,14 @@ impl SyncCleaner {
         let idml2 = self.idml.clone();
         self.select_zones()
         .and_then(move |zones| {
-            stream::iter_ok(zones.into_iter())
-            .for_each(move |zone| {
+            stream::iter(zones.into_iter())
+            .map(|zone| Ok(zone))
+            .try_for_each(move |zone| {
                 let idml3 = idml2.clone();
                 idml2.txg()
-                    .map_err(|_| Error::EPIPE)
-                    .and_then(move |txg_guard| {
-                        idml3.clean_zone(zone, *txg_guard)
-                    })
+                .then(move |txg_guard| 
+                    idml3.clean_zone(zone, *txg_guard)
+                )
             })
         })
     }
@@ -55,15 +59,15 @@ impl SyncCleaner {
     /// Select which zones to clean and return them sorted by cleanliness:
     /// dirtiest zones first.
     fn select_zones(&self)
-        -> impl Future<Item=Vec<ClosedZone>, Error=Error> + Send
+        -> impl Future<Output=Result<Vec<ClosedZone>, Error>> + Send
     {
         let threshold = self.threshold;
         self.idml.list_closed_zones()
-        .filter(move |z| {
+        .try_filter(move |z| {
             let dirtiness = z.freed_blocks as f32 / z.total_blocks as f32;
-            dirtiness >= threshold
-        }).collect()
-        .map(|mut zones: Vec<ClosedZone>| {
+            future::ready(dirtiness >= threshold)
+        }).try_collect()
+        .map_ok(|mut zones: Vec<ClosedZone>| {
             // Sort by highest percentage of free space to least
             // TODO: optimize for the case where all zones have equal size,
             // removing the division.
@@ -94,6 +98,7 @@ impl Cleaner {
     /// The returned `Receiver` will deliver notification when cleaning is
     /// complete.  However, there is no requirement to poll it.  The client may
     /// drop it, and cleaning will continue in the background.
+    // TODO: return the Tokio JoinHandle instead of using a oneshot
     pub fn clean(&self) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
         if let Err(e) = self.tx.as_ref().unwrap().clone().try_send(tx) {
@@ -106,8 +111,7 @@ impl Cleaner {
         rx
     }
 
-    pub fn new<E>(handle: E, idml: Arc<IDML>, thresh: Option<f32>) -> Self
-        where E: Executor + 'static
+    pub fn new(handle: Handle, idml: Arc<IDML>, thresh: Option<f32>) -> Self
     {
         let (tx, rx) = mpsc::channel(1);
         Cleaner::run(handle, idml, thresh.unwrap_or(Cleaner::DEFAULT_THRESHOLD),
@@ -117,26 +121,26 @@ impl Cleaner {
 
     // Start a task that will clean the system in the background, whenever
     // requested.
-    fn run<E>(mut handle: E, idml: Arc<IDML>, thresh: f32,
-              rx: mpsc::Receiver<oneshot::Sender<()>>)
-        where E: Executor + 'static
+    fn run(handle: Handle, idml: Arc<IDML>, thresh: f32,
+           rx: mpsc::Receiver<oneshot::Sender<()>>)
     {
-        handle.spawn(Box::new(future::lazy(move || {
+        handle.spawn(async move {
             let sync_cleaner = SyncCleaner::new(idml, thresh);
-            rx.for_each(move |tx| {
+            rx.map(|tx| Ok(tx))
+            .try_for_each(move |tx| {
                 sync_cleaner.clean_now()
                     .map_err(Error::unhandled)
-                    .map(move |_| {
+                    .map_ok(move |_| {
                         // Ignore errors.  An error here indicates that the
                         // client doesn't want to be notified.
                         let _result = tx.send(());
                     })
-            })
-        }))).unwrap()
+            }).await
+        });
     }
 
     // Shutdown the Cleaner's background task
-    pub fn shutdown(&mut self) -> impl Future<Item=(), Error=()> + Send {
+    pub fn shutdown(&mut self) -> impl Future<Output=Result<(), ()>> + Send {
         // Ignore return value.  An error indicates that the Cleaner is already
         // shut down.
         let _ = self.tx.take();
@@ -151,8 +155,7 @@ mod t {
 use futures::future;
 use mockall::Sequence;
 use super::*;
-use tokio::runtime::current_thread;
-use tokio_current_thread::TaskExecutor;
+use tokio::runtime;
 
 /// Clean in the background
 #[test]
@@ -165,19 +168,22 @@ fn background() {
                 ClosedZone{freed_blocks: 0, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::new(stream::iter_ok(czs.into_iter()))
+            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
         });
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
 
-    let mut rt = current_thread::Runtime::new().unwrap();
-    rt.spawn(future::lazy(|| {
-        let te = TaskExecutor::current();
-        let cleaner = Cleaner::new(te, Arc::new(idml), None);
+    let rt = runtime::Builder::new()
+        .threaded_scheduler()
+        .build()
+        .unwrap();
+    let handle = rt.handle().clone();
+    rt.spawn(async {
+        let cleaner = Cleaner::new(handle, Arc::new(idml), None);
         cleaner.clean()
             .map_err(Error::unhandled)
-    }));
-    rt.run().unwrap();
+    });
+    drop(rt);   // Implicitly waits for all tasks to complete
 }
 
 /// No zone is less dirty than the threshold
@@ -191,14 +197,14 @@ fn no_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 1, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::new(stream::iter_ok(czs.into_iter()))
+            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
         });
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-        cleaner.clean_now()
-    })).unwrap();
+    basic_runtime().block_on(async {
+        cleaner.clean_now().await
+    }).unwrap();
 }
 
 #[test]
@@ -213,21 +219,21 @@ fn one_sufficiently_dirty_zone() {
                 ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::new(stream::iter_ok(czs.into_iter()))
+            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
         });
     idml.expect_txg()
         .once()
-        .returning(|| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
+        .returning(|| Box::pin(future::ready::<&'static TxgT>(&TXG)));
     idml.expect_clean_zone()
         .once()
         .withf(move |zone, txg| {
             zone.pba == PBA::new(0, 0) &&
             *txg == TXG
-        }).returning(|_, _| Box::new(future::ok::<(), Error>(())));
+        }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-        cleaner.clean_now()
-    })).unwrap();
+    basic_runtime().block_on(async {
+        cleaner.clean_now().await
+    }).unwrap();
 }
 
 #[test]
@@ -247,32 +253,32 @@ fn two_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 75, total_blocks: 100, zid: 2,
                     pba: PBA::new(2, 0), txgs: TxgT::from(1)..TxgT::from(2)},
             ];
-            Box::new(stream::iter_ok(czs.into_iter()))
+            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
         });
     idml.expect_txg()
         .once()
         .in_sequence(&mut seq)
-        .returning(|| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
+        .returning(|| Box::pin(future::ready::<&'static TxgT>(&TXG)));
     idml.expect_clean_zone()
         .once()
         .withf(move |zone, txg| {
             zone.pba == PBA::new(2, 0) &&
             *txg == TXG
-        }).returning(|_, _| Box::new(future::ok::<(), Error>(())));
+        }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     idml.expect_txg()
         .once()
         .in_sequence(&mut seq)
-        .returning(|| Box::new(future::ok::<&'static TxgT, Error>(&TXG)));
+        .returning(|| Box::pin(future::ready::<&'static TxgT>(&TXG)));
     idml.expect_clean_zone()
         .once()
         .withf(move |zone, txg| {
             zone.pba == PBA::new(0, 0) &&
             *txg == TXG
-        }).returning(|_, _| Box::new(future::ok::<(), Error>(())));
+        }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-        cleaner.clean_now()
-    })).unwrap();
+    basic_runtime().block_on(async {
+        cleaner.clean_now().await
+    }).unwrap();
 }
 
 }

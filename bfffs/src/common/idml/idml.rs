@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use crate::{
-    boxfut,
     common::{
         *,
         dml::*,
@@ -11,11 +10,12 @@ use crate::{
         tree::TreeOnDisk
     }
 };
-use futures::{Future, IntoFuture, Stream, future};
+use futures::{Future, FutureExt, Stream, TryFutureExt, TryStreamExt, future};
 use futures_locks::{RwLock, RwLockReadFut};
 #[cfg(test)] use mockall::mock;
 use std::{
     io,
+    pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex
@@ -71,19 +71,18 @@ impl<'a> IDML {
     /// # Returns
     ///
     /// `true` on success, `false` on failure
-    fn check_ridt(&self) -> impl Future<Item=bool, Error=Error> {
+    fn check_ridt(&self) -> impl Future<Output=Result<bool, Error>> {
         let trees2 = self.trees.clone();
         let trees3 = self.trees.clone();
         // Grab the TXG lock exclusively, just so other users can't modify the
         // RIDT or AllocT while we're checking them.  NB: it might be
         // preferable to use a dedicated lock for this instead.
         self.transaction.write()
-        .map_err(|_| unreachable!())
-        .and_then(move |txg_guard| {
+        .then(move |txg_guard| {
             let alloct_fut = trees2.alloct.range(..)
-            .fold(true, move |passes, (pba, rid)| {
+            .try_fold(true, move |passes, (pba, rid)| {
                 trees2.ridt.get(rid)
-                .map(move |v| {
+                .map_ok(move |v| {
                     passes & match v {
                         Some(ridt_entry) => {
                             if ridt_entry.drp.pba() != pba {
@@ -104,9 +103,9 @@ impl<'a> IDML {
                 })
             });
             let ridt_fut = trees3.ridt.range(..)
-            .fold(true, move |passes, (rid, entry)| {
+            .try_fold(true, move |passes, (rid, entry)| {
                 trees3.alloct.get(entry.drp.pba())
-                .map(move |v| {
+                .map_ok(move |v| {
                     passes & match v {
                         Some(_) => true,
                         None => {
@@ -119,8 +118,8 @@ impl<'a> IDML {
                     }
                 })
             });
-            alloct_fut.join(ridt_fut)
-            .map(move |(x, y)| {
+            future::try_join(alloct_fut, ridt_fut)
+            .map_ok(move |(x, y)| {
                 drop(txg_guard);
                 x & y
             })
@@ -134,16 +133,16 @@ impl<'a> IDML {
     /// # Returns
     ///
     /// `true` on success, `false` on failure
-    pub fn check(&self) -> impl Future<Item=bool, Error=Error> {
-        self.trees.alloct.check()
-        .join3(self.trees.ridt.check(),
-               self.check_ridt())
-        .map(|(x, y, z)| x && y && z)
+    pub fn check(&self) -> impl Future<Output=Result<bool, Error>> {
+        future::try_join3(self.trees.alloct.check(),
+                          self.trees.ridt.check(),
+                          self.check_ridt())
+        .map_ok(|(x, y, z)| x && y && z)
     }
 
     /// Clean `zone` by moving all of its records to other zones.
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         // Outline:
         // 1) Lookup the Zone's PBA range in the Allocation Table.  Rewrite each
@@ -162,9 +161,9 @@ impl<'a> IDML {
         let zid = zone.zid;
         let pba = zone.pba;
         let total_blocks = zone.total_blocks;
-        self.list_indirect_records(&zone).for_each(move |record| {
+        self.list_indirect_records(&zone).try_for_each(move |record| {
             IDML::move_record(&cache2, &trees2, &ddml2, record, txg)
-            .map(move |drp| {
+            .map_ok(move |drp| {
                 // We shouldn't have moved the record into the same zone
                 debug_assert!(drp.pba().cluster != pba.cluster ||
                               drp.pba().lba < pba.lba ||
@@ -181,8 +180,8 @@ impl<'a> IDML {
                 .and_then(move |_| {
                     trees3.alloct.clean_zone(pba_range, zone.txgs, txg)
                 });
-            czfut.join(atfut).map(drop)
-        }).map(move |_| {
+            future::try_join(czfut, atfut).map_ok(drop)
+        }).map_ok(move |_| {
             #[cfg(debug_assertions)]
             ddml3.assert_clean_zone(pba.cluster, zid, txg)
         })  // LCOV_EXCL_LINE   kcov false negative
@@ -205,16 +204,16 @@ impl<'a> IDML {
     }
 
     pub fn flush(&self, idx: u32, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         let ddml2 = self.ddml.clone();
-        self.trees.alloct.flush(txg)
-        .join(self.trees.ridt.flush(txg))
+        future::try_join(self.trees.alloct.flush(txg),
+                         self.trees.ridt.flush(txg))
         .and_then(move |_| ddml2.flush(idx))
     }
 
     pub fn list_closed_zones(&self)
-        -> impl Stream<Item=ClosedZone, Error=Error> + Send
+        -> impl Stream<Item=Result<ClosedZone, Error>> + Send
     {
         self.ddml.list_closed_zones()
     }
@@ -224,13 +223,13 @@ impl<'a> IDML {
     ///
     /// This list should be persistent across reboots.
     fn list_indirect_records(&self, zone: &ClosedZone)
-        -> impl Stream<Item=RID, Error=Error> + Send
+        -> impl Stream<Item=Result<RID, Error>> + Send
     {
         // Iterate through the AllocT to get indirect records from the target
         // zone.
         let end = PBA::new(zone.pba.cluster, zone.pba.lba + zone.total_blocks);
         self.trees.alloct.range(zone.pba..end)
-            .map(|(_pba, rid)| rid)
+            .map_ok(|(_pba, rid)| rid)
     }
 
     /// Open an existing `IDML`
@@ -257,10 +256,8 @@ impl<'a> IDML {
     /// Rewrite the given direct Record and update its metadata.
     fn move_record(cache: &Arc<Mutex<Cache>>, trees: &Arc<Trees>,
                    ddml: &Arc<DDML>, rid: RID, txg: TxgT)
-        -> impl Future<Item=DRP, Error=Error> + Send
+        -> impl Future<Output=Result<DRP, Error>> + Send
     {
-        type MyFut = Box<dyn Future<Item=DRP, Error=Error> + Send>;
-
         // Even if the cache contains the target record, we must also do an RIDT
         // lookup because we're going to rewrite the RIDT
         let cache2 = cache.clone();
@@ -292,10 +289,10 @@ impl<'a> IDML {
                         ddml4.put_direct(&db, Compression::None, txg)
                         .and_then(move |drp| {
                             ddml4.delete_direct(&entry.drp, txg)
-                            .map(move |_| drp.into_compressed(&entry.drp))
+                            .map_ok(move |_| drp.into_compressed(&entry.drp))
                         })
                     });
-                    Box::new(fut) as MyFut
+                    fut.boxed()
                 };
 
                 // Bypass the cache for compressed records, since we don't know
@@ -312,9 +309,9 @@ impl<'a> IDML {
                         let fut = ddml2.put_direct(&db, Compression::None, txg)
                         .and_then(move |drp| {
                             ddml3.delete_direct(&entry.drp, txg)
-                            .map(move |_| drp)
+                            .map_ok(move |_| drp)
                         });
-                        Box::new(fut) as MyFut
+                        fut.boxed()
                     } else {
                         cache_miss()
                     }
@@ -325,8 +322,8 @@ impl<'a> IDML {
                     entry.drp = drp;
                     let ridt_fut = trees2.ridt.insert(rid, entry, txg);
                     let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
-                    ridt_fut.join(alloct_fut)
-                    .map(move |_| drp)
+                    future::try_join(ridt_fut, alloct_fut)
+                    .map_ok(move |_| drp)
                 })
             })  // LCOV_EXCL_LINE   kcov false negative
     }
@@ -351,23 +348,21 @@ impl<'a> IDML {
 
     /// Finish the current transaction group and start a new one.
     pub fn advance_transaction<B, F>(&self, f: F)
-        -> impl Future<Item=(), Error=Error> + Send + 'a
+        -> impl Future<Output=Result<(), Error>> + Send + 'a
         where F: FnOnce(TxgT) -> B + Send + 'a,
-              B: IntoFuture<Item = (), Error = Error> + Send + 'a,
-              <B as IntoFuture>::Future: Send
+              B: Future<Output=Result<(), Error>> + Send + 'a,
     {
         self.transaction.write()
-            .map_err(|_| Error::EPIPE)
-            .and_then(move |mut txg_guard| {
-                let txg = *txg_guard;
-                f(txg).into_future()
-                .map(move |_| *txg_guard += 1)
-            })
+        .then(move |mut txg_guard| {
+            let txg = *txg_guard;
+            f(txg)
+            .map_ok(move |_| *txg_guard += 1)
+        })
     }
 
     /// Asynchronously write this `IDML`'s label to its `Pool`
     pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
-        -> impl Future<Item=(), Error=Error> + Send
+        -> impl Future<Output=Result<(), Error>> + Send
     {
         // The txg lock must be held when calling write_label.  Otherwise,
         // next_rid may be out-of-date by the time we serialize the label.
@@ -389,11 +384,11 @@ impl<'a> IDML {
 
 /// Private helper function for several IDML methods
 fn unwrap_or_enoent(r: Option<RidtEntry>)
-    -> impl Future<Item=RidtEntry, Error=Error>
+    -> impl Future<Output=Result<RidtEntry, Error>>
 {
     match r {   // LCOV_EXCL_LINE   kcov false negative
-        None => Err(Error::ENOENT).into_future(),
-        Some(entry) => Ok(entry).into_future()
+        None => future::err(Error::ENOENT),
+        Some(entry) => future::ok(entry)
     }
 }
 
@@ -401,7 +396,7 @@ impl DML for IDML {
     type Addr = RID;
 
     fn delete(&self, ridp: &Self::Addr, txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
@@ -416,19 +411,19 @@ impl DML for IDML {
                     let ddml_fut = ddml2.delete_direct(&entry.drp, txg);
                     let alloct_fut = trees2.alloct.remove(entry.drp.pba(), txg);
                     let ridt_fut = trees2.ridt.remove(rid, txg);
-                    Box::new(
-                        ddml_fut.join3(alloct_fut, ridt_fut)
-                             .map(|(_, old_rid, _old_ridt_entry)| {
-                                 assert!(old_rid.is_some());
-                             })
+                    Box::pin(
+                        future::try_join3(ddml_fut, alloct_fut, ridt_fut)
+                         .map_ok(|(_, old_rid, _old_ridt_entry)| {
+                             assert!(old_rid.is_some());
+                         })
                      )
                 } else {
                     let ridt_fut = trees2.ridt.insert(rid, entry, txg)
-                        .map(drop);
-                    boxfut!(ridt_fut)
+                        .map_ok(drop);
+                    ridt_fut.boxed()
                 }
             });
-        Box::new(fut)
+        Box::pin(fut)
     }
 
     fn evict(&self, rid: &Self::Addr) {
@@ -436,11 +431,11 @@ impl DML for IDML {
     }
 
     fn get<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr)
-        -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
     {
         let rid = *ridp;
         self.cache.lock().unwrap().get::<R>(&Key::Rid(rid)).map(|t| {
-            boxfut!(future::ok::<Box<R>, Error>(t))
+            future::ok::<Box<R>, Error>(t).boxed()
         }).unwrap_or_else(|| {
             let cache2 = self.cache.clone();
             let ddml2 = self.ddml.clone();
@@ -448,18 +443,18 @@ impl DML for IDML {
                 .and_then(unwrap_or_enoent)
                 .and_then(move |entry| {
                     ddml2.get_direct(&entry.drp)
-                }).map(move |cacheable: Box<T>| {
+                }).map_ok(move |cacheable: Box<T>| {
                     let r = cacheable.make_ref();
                     let key = Key::Rid(rid);
                     cache2.lock().unwrap().insert(key, cacheable);
                     r.downcast::<R>().unwrap()
                 });
-            Box::new(fut)
+            Box::pin(fut)
         })
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr, txg: TxgT)
-        -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>
     {
         let rid = *ridp;
         let cache2 = self.cache.clone();
@@ -476,44 +471,38 @@ impl DML for IDML {
                     let bfut = cacheval
                         .map(move |cacheable| {
                             let t = cacheable.downcast::<T>().unwrap();
-                            boxfut!(ddml2.delete(&entry.drp, txg)
-                                              .map(move |_| t)
-                            )
+                            ddml2.delete(&entry.drp, txg)
+                            .map_ok(move |_| t)
+                            .boxed()
                         }).unwrap_or_else(||{
-                            boxfut!(ddml3.pop_direct::<T>(&entry.drp))
+                            ddml3.pop_direct::<T>(&entry.drp).boxed()
                         });
                     let alloct_fut = trees2.alloct.remove(entry.drp.pba(), txg);
                     let ridt_fut = trees2.ridt.remove(rid, txg);
-                    boxfut!(
-                        bfut.join3(alloct_fut, ridt_fut)
-                             .map(|(cacheable, old_rid, _old_ridt_entry)| {
-                                 assert!(old_rid.is_some());
-                                 cacheable
-                             })
-                     )
+                        future::try_join3(bfut, alloct_fut, ridt_fut)
+                        .map_ok(|(cacheable, old_rid, _old_ridt_entry)| {
+                            assert!(old_rid.is_some());
+                            cacheable
+                        }).boxed()
                 } else {
                     let cacheval = cache2.lock().unwrap()
                         .get::<R>(&Key::Rid(rid));
                     let bfut = cacheval.map(|cacheref: Box<R>|{
                         let t = cacheref.to_owned().downcast::<T>().unwrap();
-                        boxfut!(future::ok(t))
+                        future::ok(t).boxed()
                     }).unwrap_or_else(|| {
-                        Box::new(ddml2.get_direct::<T>(&entry.drp))
+                        Box::pin(ddml2.get_direct::<T>(&entry.drp))
                     });
                     let ridt_fut = trees2.ridt.insert(rid, entry, txg);
-                    boxfut!(
-                        bfut.join(ridt_fut)
-                            .map(|(cacheable, _)| {
-                                cacheable
-                            })
-                    )
+                    future::try_join(bfut, ridt_fut)
+                    .map_ok(|(cacheable, _)| cacheable).boxed()
                 }
             });
-        Box::new(fut)
+        Box::pin(fut)
     }
 
     fn put<T>(&self, cacheable: T, compression: Compression, txg: TxgT)
-        -> Box<dyn Future<Item=Self::Addr, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<Self::Addr, Error>> + Send>>
         where T: Cacheable
     {
         // TODO: spawn a separate task, for better parallelism.
@@ -531,22 +520,22 @@ impl DML for IDML {
             let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
             let rid_entry = RidtEntry::new(drp);
             let ridt_fut = trees2.ridt.insert(rid, rid_entry, txg);
-            ridt_fut.join(alloct_fut)
-            .map(move |(old_rid_entry, old_alloc_entry)| {
+            future::try_join(ridt_fut, alloct_fut)
+            .map_ok(move |(old_rid_entry, old_alloc_entry)| {
                 assert!(old_rid_entry.is_none(), "RID was not unique");
                 assert!(old_alloc_entry.is_none(), concat!(
                     "Double allocate without free.  ",
                     "DDML allocator leak detected!"));
-                cache2.lock().unwrap().insert(Key::Rid(rid),
-                    Box::new(cacheable));
+                cache2.lock().unwrap()
+                    .insert(Key::Rid(rid), Box::new(cacheable));
                 rid
             })
         });
-        Box::new(fut)
+        Box::pin(fut)
     }
 
     fn sync_all(&self, txg: TxgT)
-        -> Box<dyn Future<Item=(), Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
         self.ddml.sync_all(txg)
     }
@@ -565,59 +554,58 @@ struct Label {
 #[cfg(test)]
 mock!{
     pub IDML {
-        fn allocated(&self) -> LbaT;
-        fn check(&self) -> Box<dyn Future<Item=bool, Error=Error>>;
-        fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
-            -> Box<dyn Future<Item=(), Error=Error> + Send>;
-        fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self;
-        fn dump_trees(&self, f: &mut (dyn io::Write + 'static))
+        pub fn allocated(&self) -> LbaT;
+        pub fn check(&self) -> Pin<Box<dyn Future<Output=Result<bool, Error>>>>;
+        pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
+            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+        pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self;
+        pub fn dump_trees(&self, f: &mut (dyn io::Write + 'static))
             -> Result<(), Error>;
-        fn flush(&self, idx: u32, txg: TxgT)
-            -> Box<dyn Future<Item=(), Error=Error> + Send>;
-        fn list_closed_zones(&self)
-            -> Box<dyn Stream<Item=ClosedZone, Error=Error> + Send>;
-        fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
+        pub fn flush(&self, idx: u32, txg: TxgT)
+            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+        pub fn list_closed_zones(&self)
+            -> Pin<Box<dyn Stream<Item=Result<ClosedZone, Error>> + Send>>;
+        pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
                      mut label_reader: LabelReader) -> (Self, LabelReader);
-        fn shutdown(&self);
-        fn size(&self) -> LbaT;
+        pub fn shutdown(&self);
+        pub fn size(&self) -> LbaT;
         // Return a static reference instead of a RwLockReadFut because it makes
         // the expectations easier to write
-        fn txg(&self)
-            -> Box<dyn Future<Item=&'static TxgT, Error=Error> + Send>;
+        pub fn txg(&self)
+            -> Pin<Box<dyn Future<Output=&'static TxgT> + Send>>;
         // advance_transaction is difficult to mock with Mockall, because f's
         // output is typically a chained future that is difficult to name.
         // Instead, we'll use special logic in advance_transaction and only mock
         // the txg used.
-        fn advance_transaction_inner(&self) -> TxgT;
-        fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
-            -> Box<dyn Future<Item=(), Error=Error> + Send>;
+        pub fn advance_transaction_inner(&self) -> TxgT;
+        pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
+            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
     }
-    trait DML {
+    impl DML for IDML {
         type Addr = RID;
         fn delete(&self, addr: &RID, txg: TxgT)
-            -> Box<dyn Future<Item=(), Error=Error> + Send>;
+            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
         fn evict(&self, addr: &RID);
         fn get<T: Cacheable, R: CacheRef>(&self, addr: &RID)
-            -> Box<dyn Future<Item=Box<R>, Error=Error> + Send>;
+            -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>;
         fn pop<T: Cacheable, R: CacheRef>(&self, rid: &RID, txg: TxgT)
-            -> Box<dyn Future<Item=Box<T>, Error=Error> + Send>;
+            -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
         fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                                  txg: TxgT)
-            -> Box<dyn Future<Item=RID, Error=Error> + Send>;
+            -> Pin<Box<dyn Future<Output=Result<RID, Error>> + Send>>;
         fn sync_all(&self, txg: TxgT)
-            -> Box<dyn Future<Item=(), Error=Error> + Send>;
+            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
     }
 }
 #[cfg(test)]
-impl MockIDML {
+impl<'a> MockIDML {
     pub fn advance_transaction<B, F>(&self, f: F)
-        -> impl Future<Item=(), Error=Error> + Send
-        where F: FnOnce(TxgT) -> B + Send + 'static,
-              B: IntoFuture<Item = (), Error = Error> + 'static,
-              <B as futures::future::IntoFuture>::Future: Send
+        -> impl Future<Output=Result<(), Error>> + Send + 'a
+        where F: FnOnce(TxgT) -> B + Send + 'a,
+              B: Future<Output=Result<(), Error>> + Send + 'a,
     {
         let txg = self.advance_transaction_inner();
-        f(txg).into_future()
+        f(txg)
     }
 }
 
@@ -636,8 +624,12 @@ mod t {
     {
         let entry = RidtEntry{drp: *drp, refcount};
         let txg = TxgT::from(0);
-        idml.trees.ridt.insert(rid, entry, txg).wait().unwrap();
-        idml.trees.alloct.insert(drp.pba(), rid, txg).wait().unwrap();
+        idml.trees.ridt.insert(rid, entry, txg)
+            .now_or_never().unwrap()
+            .unwrap();
+        idml.trees.alloct.insert(drp.pba(), rid, txg)
+            .now_or_never().unwrap()
+            .unwrap();
     }
 
     // pet kcov
@@ -673,7 +665,9 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 2);
 
-        assert!(idml.check_ridt().wait().unwrap());
+        assert!(idml.check_ridt()
+                .now_or_never().unwrap()
+                .unwrap());
     }
 
     #[test]
@@ -686,9 +680,13 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         // Inject a record into the AllocT but not the RIDT
         let txg = TxgT::from(0);
-        idml.trees.alloct.insert(drp.pba(), rid, txg).wait().unwrap();
+        idml.trees.alloct.insert(drp.pba(), rid, txg)
+            .now_or_never().unwrap()
+            .unwrap();
 
-        assert!(!idml.check_ridt().wait().unwrap());
+        assert!(!idml.check_ridt()
+                .now_or_never().unwrap()
+                .unwrap());
     }
 
     #[test]
@@ -702,9 +700,13 @@ mod t {
         // Inject a record into the RIDT but not the AllocT
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        idml.trees.ridt.insert(rid, entry, txg).wait().unwrap();
+        idml.trees.ridt.insert(rid, entry, txg)
+            .now_or_never().unwrap()
+            .unwrap();
 
-        assert!(!idml.check_ridt().wait().unwrap());
+        assert!(!idml.check_ridt()
+                .now_or_never().unwrap()
+                .unwrap());
     }
 
     #[test]
@@ -719,10 +721,16 @@ mod t {
         // Inject a mismatched pair of records
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        idml.trees.ridt.insert(rid, entry, txg).wait().unwrap();
-        idml.trees.alloct.insert(drp2.pba(), rid, txg).wait().unwrap();
+        idml.trees.ridt.insert(rid, entry, txg)
+            .now_or_never().unwrap()
+            .unwrap();
+        idml.trees.alloct.insert(drp2.pba(), rid, txg)
+            .now_or_never().unwrap()
+            .unwrap();
 
-        assert!(!idml.check_ridt().wait().unwrap());
+        assert!(!idml.check_ridt()
+                .now_or_never().unwrap()
+                .unwrap());
     }
 
     #[test]
@@ -740,15 +748,21 @@ mod t {
         ddml.expect_delete_direct()
             .once()
             .with(eq(drp), eq(TxgT::from(42)))
-            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 1);
 
-        idml.delete(&rid, TxgT::from(42)).wait().unwrap();
+        idml.delete(&rid, TxgT::from(42))
+            .now_or_never().unwrap()
+            .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        assert!(idml.trees.ridt.get(rid).wait().unwrap().is_none());
-        let alloc_rec = idml.trees.alloct.get(drp.pba()).wait().unwrap();
+        assert!(idml.trees.ridt.get(rid)
+                .now_or_never().unwrap()
+                .unwrap().is_none());
+        let alloc_rec = idml.trees.alloct.get(drp.pba())
+            .now_or_never().unwrap()
+            .unwrap();
         assert!(alloc_rec.is_none());
     }
 
@@ -762,12 +776,18 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 2);
 
-        idml.delete(&rid, TxgT::from(42)).wait().unwrap();
+        idml.delete(&rid, TxgT::from(42))
+            .now_or_never().unwrap().unwrap();
         // Now verify the contents of the RIDT and AllocT
-        let entry2 = idml.trees.ridt.get(rid).wait().unwrap().unwrap();
+        let entry2 = idml.trees.ridt.get(rid)
+            .now_or_never().unwrap()
+            .unwrap()
+            .unwrap();
         assert_eq!(entry2.drp, drp);
         assert_eq!(entry2.refcount, 1);
-        let alloc_rec = idml.trees.alloct.get(drp.pba()).wait().unwrap();
+        let alloc_rec = idml.trees.alloct.get(drp.pba())
+            .now_or_never().unwrap()
+            .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
 
@@ -803,7 +823,9 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
-        idml.get::<DivBufShared, DivBuf>(&rid).wait().unwrap();
+        idml.get::<DivBufShared, DivBuf>(&rid)
+            .now_or_never().unwrap()
+            .unwrap();
     }
 
     #[test]
@@ -834,13 +856,15 @@ mod t {
             .with(eq(drp))
             .returning(move |_| {
                 let dbs = Box::new(DivBufShared::from(vec![0u8; 4096]));
-                Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
+                Box::pin(future::ok::<Box<DivBufShared>, Error>(dbs))
             });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 1);
 
-        idml.get::<DivBufShared, DivBuf>(&rid).wait().unwrap();
+        idml.get::<DivBufShared, DivBuf>(&rid)
+            .now_or_never().unwrap()
+            .unwrap();
     }
 
     #[test]
@@ -875,8 +899,11 @@ mod t {
         let drp4 = DRP::new(PBA::new(1, 150), Compression::None, 4096, 4096, 0);
         inject_record(&idml, rid4, &drp4, 1);
 
-        let r = idml.list_indirect_records(&cz).collect().wait();
-        assert_eq!(r.unwrap(), vec![rid1, rid2]);
+        let r: Vec<RID> = idml.list_indirect_records(&cz)
+            .try_collect()
+            .now_or_never().unwrap()
+            .unwrap();
+        assert_eq!(r, vec![rid1, rid2]);
     }
 
     /// When moving a record not resident in cache, get it from disk
@@ -902,21 +929,21 @@ mod t {
                    !key.is_compressed())
             .returning(move |_| {
                 let r = DivBufShared::from(&dbs.try_const().unwrap()[..]);
-                Box::new(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
+                Box::pin(future::ok::<Box<DivBufShared>, Error>(Box::new(r)))
             });
         ddml.expect_put_direct::<DivBuf>()
             .once()
             .in_sequence(&mut seq)
             .with(always(), eq(Compression::None), always())
             .returning(move |_, _, _|
-                Box::new(Ok(drp1).into_future())
+                Box::pin(future::ok(drp1))
             );
         ddml.expect_delete_direct()
             .once()
             .in_sequence(&mut seq)
             .with(eq(drp0), always())
             .returning(move |_, _| {
-                Box::new(future::ok::<(), Error>(()))
+                Box::pin(future::ok::<(), Error>(()))
             });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -924,14 +951,17 @@ mod t {
 
         IDML::move_record(&idml.cache, &idml.trees, &idml.ddml, rid,
             TxgT::from(0))
-        .wait().unwrap();
+        .now_or_never().unwrap().unwrap();
 
         // Now verify the RIDT and alloct entries
-        let entry = idml.trees.ridt.get(rid).wait().unwrap().unwrap();
+        let entry = idml.trees.ridt.get(rid)
+            .now_or_never().unwrap()
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp1_c);
         let alloc_rec = idml.trees.alloct.get(drp1_c.pba())
-            .wait().unwrap();
+            .now_or_never().unwrap().unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
 
@@ -954,31 +984,36 @@ mod t {
                    !key.is_compressed())
             .returning(move |_| {
                 let r = DivBufShared::from(&dbs.try_const().unwrap()[..]);
-                Box::new(future::ok(Box::new(r)))
+                Box::pin(future::ok(Box::new(r)))
             });
         ddml.expect_put_direct::<DivBuf>()
             .once()
             .in_sequence(&mut seq)
             .with(always(), eq(Compression::None), always())
-            .returning(move |_, _, _| Box::new(Ok(drp1).into_future()));
+            .returning(move |_, _, _| Box::pin(future::ok(drp1)));
         ddml.expect_delete_direct()
             .once()
             .in_sequence(&mut seq)
             .with(eq(drp0), always())
-            .returning(move |_, _| Box::new(future::ok::<(), Error>(())));
+            .returning(move |_, _| Box::pin(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp0, 1);
 
         IDML::move_record(&idml.cache, &idml.trees, &idml.ddml, rid,
             TxgT::from(0))
-            .wait().unwrap();
+            .now_or_never().unwrap().unwrap();
 
         // Now verify the RIDT and alloct entries
-        let entry = idml.trees.ridt.get(rid).wait().unwrap().unwrap();
+        let entry = idml.trees.ridt.get(rid)
+            .now_or_never().unwrap()
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp1_c);
-        let alloc_rec = idml.trees.alloct.get(drp1_c.pba()).wait().unwrap();
+        let alloc_rec = idml.trees.alloct.get(drp1_c.pba())
+            .now_or_never().unwrap()
+            .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
 
@@ -1004,26 +1039,30 @@ mod t {
             .once()
             .in_sequence(&mut seq)
             .returning(move |_, _, _|
-                       Box::new(Ok(drp1).into_future())
+                       Box::pin(future::ok(drp1))
             );
         ddml.expect_delete_direct()
             .once()
             .in_sequence(&mut seq)
             .with(eq(drp0), always())
-            .returning(move |_, _| Box::new(future::ok::<(), Error>(())));
+            .returning(move |_, _| Box::pin(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp0, 1);
 
         IDML::move_record(&idml.cache, &idml.trees, &idml.ddml, rid,
             TxgT::from(0))
-            .wait().unwrap();
+            .now_or_never().unwrap().unwrap();
 
         // Now verify the RIDT and alloct entries
-        let entry = idml.trees.ridt.get(rid).wait().unwrap().unwrap();
+        let entry = idml.trees.ridt.get(rid)
+            .now_or_never().unwrap()
+            .unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp1);
-        let alloc_rec = idml.trees.alloct.get(drp1.pba()).wait().unwrap();
+        let alloc_rec = idml.trees.alloct.get(drp1.pba())
+            .now_or_never().unwrap()
+            .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
 
@@ -1042,15 +1081,21 @@ mod t {
         ddml.expect_delete()
             .once()
             .with(eq(drp), eq(TxgT::from(42)))
-            .returning(|_, _| Box::new(future::ok::<(), Error>(())));
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 1);
 
-        idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(42)).wait().unwrap();
+        idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(42))
+            .now_or_never().unwrap()
+            .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        assert!(idml.trees.ridt.get(rid).wait().unwrap().is_none());
-        let alloc_rec = idml.trees.alloct.get(drp.pba()).wait().unwrap();
+        assert!(idml.trees.ridt.get(rid)
+                .now_or_never().unwrap()
+                .unwrap().is_none());
+        let alloc_rec = idml.trees.alloct.get(drp.pba())
+            .now_or_never().unwrap()
+            .unwrap();
         assert!(alloc_rec.is_none());
     }
 
@@ -1071,12 +1116,18 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 2);
 
-        idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0)).wait().unwrap();
+        idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0))
+            .now_or_never().unwrap()
+            .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        let entry2 = idml.trees.ridt.get(rid).wait().unwrap().unwrap();
+        let entry2 = idml.trees.ridt.get(rid)
+            .now_or_never().unwrap()
+            .unwrap().unwrap();
         assert_eq!(entry2.drp, drp);
         assert_eq!(entry2.refcount, 1);
-        let alloc_rec = idml.trees.alloct.get(drp.pba()).wait().unwrap();
+        let alloc_rec = idml.trees.alloct.get(drp.pba())
+            .now_or_never().unwrap()
+            .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
 
@@ -1095,7 +1146,7 @@ mod t {
             .with(eq(drp))
             .returning(|_| {
                 let dbs = DivBufShared::from(vec![42u8; 4096]);
-                Box::new(future::ok::<Box<DivBufShared>, Error>(
+                Box::pin(future::ok::<Box<DivBufShared>, Error>(
                         Box::new(dbs))
                 )
             });
@@ -1103,10 +1154,16 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 1);
 
-        idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0)).wait().unwrap();
+        idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0))
+            .now_or_never().unwrap()
+            .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        assert!(idml.trees.ridt.get(rid).wait().unwrap().is_none());
-        let alloc_rec = idml.trees.alloct.get(drp.pba()).wait().unwrap();
+        assert!(idml.trees.ridt.get(rid)
+                .now_or_never().unwrap()
+                .unwrap().is_none());
+        let alloc_rec = idml.trees.alloct.get(drp.pba())
+            .now_or_never().unwrap()
+            .unwrap();
         assert!(alloc_rec.is_none());
     }
 
@@ -1125,18 +1182,24 @@ mod t {
             .with(eq(drp))
             .returning(move |_| {
                 let dbs = Box::new(DivBufShared::from(vec![42u8; 4096]));
-                Box::new(future::ok::<Box<DivBufShared>, Error>(dbs))
+                Box::pin(future::ok::<Box<DivBufShared>, Error>(dbs))
             });
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 2);
 
-        idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0)).wait().unwrap();
+        idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(0))
+            .now_or_never().unwrap()
+            .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        let entry2 = idml.trees.ridt.get(rid).wait().unwrap().unwrap();
+        let entry2 = idml.trees.ridt.get(rid)
+            .now_or_never().unwrap()
+            .unwrap().unwrap();
         assert_eq!(entry2.drp, drp);
         assert_eq!(entry2.refcount, 1);
-        let alloc_rec = idml.trees.alloct.get(drp.pba()).wait().unwrap();
+        let alloc_rec = idml.trees.alloct.get(drp.pba())
+            .now_or_never().unwrap()
+            .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
 
@@ -1154,22 +1217,26 @@ mod t {
         ddml.expect_put_direct::<Box<dyn CacheRef>>()
             .once()
             .returning(move |_, _, _|
-                       Box::new(Ok(drp).into_future())
+                       Box::pin(future::ok(drp))
             );
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let actual_rid = idml.put(dbs, Compression::None, TxgT::from(0))
-            .wait().unwrap();
+            .now_or_never().unwrap().unwrap();
         assert_eq!(rid, actual_rid);
 
         // Now verify the contents of the RIDT and AllocT
         let ridt_fut = idml.trees.ridt.get(actual_rid);
-        let entry = ridt_fut.wait().unwrap().unwrap();
+        let entry = ridt_fut
+            .now_or_never().unwrap()
+            .unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp);
-        let alloc_rec = idml.trees.alloct.get(drp.pba()).wait().unwrap();
+        let alloc_rec = idml.trees.alloct.get(drp.pba())
+            .now_or_never().unwrap()
+            .unwrap();
         assert_eq!(alloc_rec.unwrap(), actual_rid);
     }
 
@@ -1184,23 +1251,25 @@ mod t {
             .with(always(), always(), eq(TxgT::from(42)))
             .returning(move |_, _, _| {
                 let drp = DRP::random(Compression::None, 4096);
-                 Box::new(Ok(drp).into_future())
+                 Box::pin(future::ok(drp))
             });
         ddml.expect_put::<Arc<tree::Node<DRP, PBA, RID>>>()
             .with(always(), always(), eq(TxgT::from(42)))
             .returning(move |_, _, _| {
                 let drp = DRP::random(Compression::None, 4096);
-                 Box::new(Ok(drp).into_future())
+                 Box::pin(future::ok(drp))
             });
         ddml.expect_sync_all()
             .once()
             .with(eq(TxgT::from(42)))
-            .returning(|_| Box::new(future::ok::<(), Error>(())));
+            .returning(|_| Box::pin(future::ok::<(), Error>(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 2);
 
-        idml.sync_all(TxgT::from(42)).wait().unwrap();
+        idml.sync_all(TxgT::from(42))
+            .now_or_never().unwrap()
+            .unwrap();
     }
 
     #[test]
@@ -1210,7 +1279,9 @@ mod t {
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
-        idml.advance_transaction(|_txg| Ok(())).wait().unwrap();
+        idml.advance_transaction(|_txg| future::ok(()))
+            .now_or_never().unwrap()
+            .unwrap();
         assert_eq!(*idml.transaction.try_read().unwrap(), TxgT::from(1));
     }
 }

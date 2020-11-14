@@ -4,7 +4,6 @@
 
 use bitfield::*;
 use crate::{
-    *,
     common::{
         *,
         dml::*,
@@ -13,7 +12,7 @@ use crate::{
     }
 };
 use divbuf::DivBufShared;
-use futures::{Future, IntoFuture, future};
+use futures::{Future, FutureExt, TryFutureExt, future};
 use libc;
 use metrohash::MetroHash64;
 use serde::de::DeserializeOwned;
@@ -24,6 +23,7 @@ use std::{
     mem,
     ops::{Bound, Range, RangeBounds},
     os::unix::ffi::OsStrExt,
+    pin::Pin,
     sync::Arc
 };
 use time::Timespec;
@@ -373,7 +373,7 @@ pub struct InlineExtAttr {
 
 impl InlineExtAttr {
     fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
-        -> Box<dyn Future<Item=ExtAttr<A>, Error=Error> + Send>
+        -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>, Error>> + Send>>
         where D: DML, D::Addr: 'static
     {
         let lsize = self.len();
@@ -382,7 +382,7 @@ impl InlineExtAttr {
             let name = self.name;
             let dbs = Arc::try_unwrap(self.extent.buf).unwrap();
             let fut = dml.put(dbs, Compression::None, txg)
-            .map(move |rid: D::Addr| {
+            .map_ok(move |rid: D::Addr| {
                 debug_assert_eq!(mem::size_of::<D::Addr>(),
                                  mem::size_of::<A>());
                 // Safe because D::Addr should always equal A.  If you ever
@@ -393,9 +393,9 @@ impl InlineExtAttr {
                 let bea = BlobExtAttr { namespace, name, extent };
                 ExtAttr::Blob(bea)
             });
-            boxfut!(fut)
+            fut.boxed()
         } else {
-            boxfut!(Ok(ExtAttr::Inline(self)).into_future())
+            future::ok(ExtAttr::Inline(self)).boxed()
         }
     }
 
@@ -414,9 +414,10 @@ pub struct BlobExtAttr<A: Addr> {
 }
 
 impl<A: Addr> BlobExtAttr<A> {
-    fn flush(self) -> Box<dyn Future<Item=ExtAttr<A>, Error=Error> + Send>
+    fn flush(self) -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>, Error>>
+        + Send>>
     {
-        boxfut!(Ok(ExtAttr::Blob(self)).into_future())
+        future::ok(ExtAttr::Blob(self)).boxed()
     }
 }
 
@@ -437,7 +438,8 @@ impl<'a, A: Addr> ExtAttr<A> {
     }
 
     fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Box<dyn Future<Item=ExtAttr<A>, Error=Error> + Send + 'static>
+        -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>, Error>>
+            + Send + 'static>>
         where D: DML + 'static, D::Addr: 'static
     {
         match self {
@@ -627,14 +629,15 @@ pub struct InlineExtent {
 
 impl InlineExtent {
     fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
-        -> Box<dyn Future<Item=FSValue<A>, Error=Error> + Send + 'static>
+        -> Pin<Box<dyn Future<Output=Result<FSValue<A>, Error>>
+            + Send + 'static>>
         where D: DML, D::Addr: 'static
     {
         let lsize = self.len();
         if lsize > BLOB_THRESHOLD {
             let dbs = Arc::try_unwrap(self.buf).unwrap();
             let fut = dml.put(dbs, Compression::None, txg)
-            .map(move |rid: D::Addr| {
+            .map_ok(move |rid: D::Addr| {
                 debug_assert_eq!(mem::size_of::<D::Addr>(),
                                  mem::size_of::<A>());
                 // Safe because D::Addr should always equal A.  If you ever
@@ -644,9 +647,9 @@ impl InlineExtent {
                 let be = BlobExtent{lsize: lsize as u32, rid: rid_a};
                 FSValue::BlobExtent(be)
             });
-            boxfut!(fut)
+            fut.boxed()
         } else {
-            boxfut!(Ok(FSValue::InlineExtent(self)).into_future())
+            future::ok(FSValue::InlineExtent(self)).boxed()
         }
     }
 
@@ -801,25 +804,25 @@ impl<A: Addr> TypicalSize for FSValue<A> {
 
 impl<A: Addr> Value for FSValue<A> {
     fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Box<dyn Future<Item=Self, Error=Error> + Send + 'static>
+        -> Pin<Box<dyn Future<Output=Result<Self, Error>> + Send + 'static>>
         where D: DML + 'static, D::Addr: 'static
     {
         match self {
             FSValue::InlineExtent(ie) => ie.flush(dml, txg),
             FSValue::ExtAttr(extattr) => {
                 let fut = extattr.flush(dml, txg)
-                .map(FSValue::ExtAttr);
-                Box::new(fut)
+                .map_ok(FSValue::ExtAttr);
+                Box::pin(fut)
             }
             FSValue::ExtAttrs(v) => {
-                let fut = future::join_all(
+                let fut = future::try_join_all(
                     v.into_iter().map(|extattr| {
                         extattr.flush(dml, txg)
                     }).collect::<Vec<_>>()
-                ).map(FSValue::ExtAttrs);
-                boxfut!(fut)
+                ).map_ok(FSValue::ExtAttrs);
+                fut.boxed()
             },
-            _ => boxfut!(Ok(self).into_future())
+            _ => future::ok(self).boxed()
         }
     }
 
@@ -873,7 +876,7 @@ fn fsvalue_flush_inline_extattr_long() {
         .once()
         .withf(|cacheable: &DivBufShared, _compression, _txg| {
             cacheable.len() == BYTES_PER_LBA
-        }).returning(move |_, _, _| boxfut!(Ok(rid).into_future()));
+        }).returning(move |_, _, _| future::ok(rid).boxed());
     let txg = TxgT(0);
 
     let namespace = ExtAttrNamespace::User;
@@ -883,7 +886,9 @@ fn fsvalue_flush_inline_extattr_long() {
     let iea = InlineExtAttr{namespace, name, extent};
     let unflushed: FSValue<RID> = FSValue::ExtAttr(ExtAttr::Inline(iea));
 
-    let flushed = unflushed.flush(&idml, txg).wait().unwrap();
+    let flushed = unflushed.flush(&idml, txg)
+        .now_or_never().unwrap()
+        .unwrap();
 
     if let ExtAttr::Inline(_) = flushed.as_extattr().unwrap() {
         panic!("Long extattr should've become a BlobExtattr");
@@ -903,7 +908,9 @@ fn fsvalue_flush_inline_extattr_short() {
     let iea = InlineExtAttr{namespace, name, extent};
     let unflushed: FSValue<RID> = FSValue::ExtAttr(ExtAttr::Inline(iea));
 
-    let flushed = unflushed.flush(&idml, txg).wait().unwrap();
+    let flushed = unflushed.flush(&idml, txg)
+        .now_or_never().unwrap()
+        .unwrap();
 
     if let ExtAttr::Blob(_) = flushed.as_extattr().unwrap() {
         panic!("Short extattr should remain inline");
@@ -919,13 +926,15 @@ fn fsvalue_flush_inline_extent_long() {
         .once()
         .withf(|cacheable: &DivBufShared, _compression, _txg| {
             cacheable.len() == BYTES_PER_LBA
-        }).returning(move |_, _, _| boxfut!(Ok(rid).into_future()));
+        }).returning(move |_, _, _| future::ok(rid).boxed());
     let txg = TxgT(0);
 
     let data = Arc::new(DivBufShared::from(vec![42u8; BYTES_PER_LBA]));
     let ile = InlineExtent::new(data);
     let unflushed: FSValue<RID> = FSValue::InlineExtent(ile);
-    let flushed = unflushed.flush(&idml, txg).wait().unwrap();
+    let flushed = unflushed.flush(&idml, txg)
+        .now_or_never().unwrap()
+        .unwrap();
 
     if let Extent::Inline(_) = flushed.as_extent().unwrap() {
         panic!("Long extent should've become a BlobExtent");
@@ -941,7 +950,9 @@ fn fsvalue_flush_inline_extent_short() {
     let data = Arc::new(DivBufShared::from(vec![0, 1, 2, 3, 4, 5]));
     let ile = InlineExtent::new(data);
     let unflushed: FSValue<RID> = FSValue::InlineExtent(ile);
-    let flushed = unflushed.flush(&idml, txg).wait().unwrap();
+    let flushed = unflushed.flush(&idml, txg)
+        .now_or_never().unwrap()
+        .unwrap();
 
     if let Extent::Blob(_) = flushed.as_extent().unwrap() {
         panic!("Short extent should remain inline");

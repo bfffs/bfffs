@@ -54,7 +54,7 @@ test_suite! {
         common::vdev::Vdev,
     };
     use divbuf::DivBufShared;
-    use futures::{Future, future};
+    use futures::{FutureExt, TryFutureExt, future};
     use galvanic_test::*;
     use rand::{Rng, thread_rng};
     use pretty_assertions::assert_eq;
@@ -62,8 +62,8 @@ test_suite! {
         fs,
         num::NonZeroU64
     };
+    use super::super::super::super::*;
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::current_thread;
 
     fixture!( raid(n: i16, k: i16, f: i16, chunksize: LbaT) ->
               (VdevRaid, TempDir, Vec<String>) {
@@ -91,7 +91,7 @@ test_suite! {
             let cs = NonZeroU64::new(*self.chunksize);
             let vdev_raid = VdevRaid::create(cs, *self.k, None, *self.f,
                                              paths.clone());
-            current_thread::Runtime::new().unwrap().block_on(
+            basic_runtime().block_on(
                 vdev_raid.open_zone(0)
             ).expect("open_zone");
             (vdev_raid, tempdir, paths)
@@ -118,8 +118,8 @@ test_suite! {
                   zone: ZoneT, start_lba: LbaT) {
         let mut write_lba = start_lba;
         let mut read_lba = start_lba;
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
-            future::join_all( {
+        basic_runtime().block_on(async {
+            future::try_join_all( {
                 wbufs.into_iter()
                 .map(|wb| {
                     let lbas = (wb.len() / BYTES_PER_LBA) as LbaT;
@@ -128,7 +128,7 @@ test_suite! {
                     fut
                 })
             }).and_then(|_| {
-                future::join_all({
+                future::try_join_all({
                     rbufs.into_iter()
                     .map(|rb| {
                         let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
@@ -137,8 +137,8 @@ test_suite! {
                         fut
                     })
                 })
-            })
-        })).expect("current_thread::Runtime::block_on");
+            }).await
+        }).unwrap();
     }
 
     fn write_read0(vr: &VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>) {
@@ -163,13 +163,13 @@ test_suite! {
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(wbuf.len() / 2);
         let sglist = vec![wbuf_l, wbuf_r];
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        basic_runtime().block_on(async {
             vr.writev_at_one(&sglist, zl.0)
-                .then(|write_result| {
-                    write_result.expect("writev_at_one");
-                    vr.read_at(dbsr.try_mut().unwrap(), zl.0)
-                })
-        })).expect("read_at");
+            .then(|write_result| {
+                write_result.expect("writev_at_one");
+                vr.read_at(dbsr.try_mut().unwrap(), zl.0)
+            }).await
+        }).expect("read_at");
         assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
@@ -474,10 +474,10 @@ test_suite! {
     #[should_panic]
     test zone_erase_open(raid((3, 3, 1, 2))) {
         let zone = 1;
-        current_thread::Runtime::new().unwrap().block_on( future::lazy(|| {
+        basic_runtime().block_on( async {
             raid.val.0.open_zone(zone)
-            .and_then(|_| raid.val.0.erase_zone(0))
-        })).expect("zone_erase_open");
+            .and_then(|_| raid.val.0.erase_zone(0)).await
+        }).expect("zone_erase_open");
     }
 
     test zone_read_closed(raid((3, 3, 1, 2))) {
@@ -488,14 +488,14 @@ test_suite! {
         let wbuf0 = dbsw.try_const().unwrap();
         let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        basic_runtime().block_on(async {
             raid.val.0.write_at(wbuf0, zone, zl.0)
                 .and_then(|_| {
                     raid.val.0.finish_zone(zone)
                 }).and_then(|_| {
                     raid.val.0.read_at(rbuf, zl.0)
-                })
-        })).expect("current_thread::Runtime::block_on");
+                }).await
+        }).expect("Runtime::block_on");
         assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
@@ -510,14 +510,14 @@ test_suite! {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
-            current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+            basic_runtime().block_on(async {
                 raid.val.0.write_at(wbuf_short, zone, zl.0)
                     .and_then(|_| {
                         raid.val.0.finish_zone(zone)
                     }).and_then(|_| {
                         raid.val.0.read_at(rbuf_short, zl.0)
-                    })
-            })).expect("current_thread::Runtime::block_on");
+                    }).await
+            }).expect("Runtime::block_on");
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try_const().unwrap()[0..BYTES_PER_LBA]);
@@ -533,10 +533,10 @@ test_suite! {
         let wbuf0 = dbsw.try_const().unwrap();
         let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(
+        basic_runtime().block_on(async {
             raid.val.0.open_zone(zone)
-            .and_then(|_| raid.val.0.finish_zone(zone))
-        ).expect("open and finish");
+            .and_then(|_| raid.val.0.finish_zone(zone)).await
+        }).expect("open and finish");
         write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
         assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
@@ -560,7 +560,7 @@ test_suite! {
         let wbuf0 = dbsw.try_const().unwrap();
         let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        current_thread::Runtime::new().unwrap().block_on(
+        basic_runtime().block_on(
             raid.val.0.open_zone(zone)
         ).expect("open_zone");
         write_read(&raid.val.0, vec![wbuf0], vec![rbuf], zone, start);
@@ -577,7 +577,7 @@ test_suite! {
             let wbuf0 = dbsw.try_const().unwrap();
             let wbuf1 = dbsw.try_const().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
-            current_thread::Runtime::new().unwrap().block_on(
+            basic_runtime().block_on(
                 vdev_raid.open_zone(zone)
             ).expect("open_zone");
             write_read(&vdev_raid, vec![wbuf0], vec![rbuf], zone, start);
@@ -596,7 +596,7 @@ test_suite! {
         common::vdev_file::*,
         common::raid::{self, VdevRaid, VdevRaidApi},
     };
-    use futures::{Future, future};
+    use futures::{TryFutureExt, future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
@@ -605,7 +605,7 @@ test_suite! {
         num::NonZeroU64
     };
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::current_thread;
+    use super::super::super::super::*;
 
     const GOLDEN_VDEV_RAID_LABEL: [u8; 124] = [
         // Past the VdevFile::Label, we have a raid::Label
@@ -665,26 +665,26 @@ test_suite! {
     test open(mocks()) {
         let (old_raid, _tempdir, paths) = mocks.val;
         let uuid = old_raid.uuid();
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(move || {
+        basic_runtime().block_on(async move {
             let label_writer = LabelWriter::new(0);
             old_raid.write_label(label_writer).and_then(move |_| {
-                future::join_all(paths.into_iter().map(|path| {
-                    VdevFile::open(path).map(|(leaf, reader)| {
+                future::try_join_all(paths.into_iter().map(|path| {
+                    VdevFile::open(path).map_ok(|(leaf, reader)| {
                         (VdevBlock::new(leaf), reader)
                     })
                 }))
-            }).map(move |combined| {
+            }).map_ok(move |combined| {
                 let (vdev_raid, _) = raid::open(Some(uuid), combined);
                 assert_eq!(uuid, vdev_raid.uuid());
-            })
-        })).unwrap();
+            }).await
+        }).unwrap();
     }
 
     test write_label(mocks()) {
-        current_thread::Runtime::new().unwrap().block_on(future::lazy(|| {
+        basic_runtime().block_on(async {
             let label_writer = LabelWriter::new(0);
-            mocks.val.0.write_label(label_writer)
-        })).unwrap();
+            mocks.val.0.write_label(label_writer).await
+        }).unwrap();
         for path in mocks.val.2 {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];

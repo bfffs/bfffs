@@ -7,3 +7,6 @@ lto = true
 
 [workspace]
 members = ["bfffs", "bfffs-fio", "bfffs-fuse", "isa-l"]
+
+[patch.crates-io]
+futures-test = { git = "http://github.com/rust-lang/futures-rs.git", rev = "66949b88821543878ed18cf3f5d26ad5ab13cdb2" }

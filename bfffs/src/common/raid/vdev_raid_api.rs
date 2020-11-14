@@ -1,9 +1,11 @@
 // vim: tw=80
+use async_trait::async_trait;
 use crate::common::{*, label::*, vdev::*};
 
 /// The public interface for all RAID Vdevs.  All Vdevs that slot beneath a
 /// cluster must implement this API.
-pub trait VdevRaidApi : Vdev + 'static {
+#[async_trait]
+pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// Asynchronously erase a zone on a RAID device
     ///
     /// # Parameters
@@ -75,8 +77,6 @@ pub trait VdevRaidApi : Vdev + 'static {
     ///                 one.  It should be the same as whichever label is being
     ///                 written.
     /// - `block`:      LBA-based offset from the start of the spacemap area
-    // Allow &Vec arguments so we can clone them.
-    #[allow(clippy::ptr_arg)]
-    fn write_spacemap(&self, sglist: &SGList, idx: u32, block: LbaT)
-        -> Box<VdevFut>;
+    fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        -> BoxVdevFut;
 }
