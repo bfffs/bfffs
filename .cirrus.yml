@@ -1,5 +1,5 @@
 freebsd_instance:
-  image_family: freebsd-11-3-snap
+  image_family: freebsd-11-4-snap
 
 task:
   env:
@@ -19,7 +19,7 @@ task:
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y --profile=minimal
     - $HOME/.cargo/bin/rustup toolchain install $VERSION
-    # In 11.3, aio on ufs is considered unsafe
+    # In 11.4, aio on ufs is considered unsafe
     - sysctl vfs.aio.enable_unsafe=1
   cargo_cache:
     folder: $HOME/.cargo/registry
