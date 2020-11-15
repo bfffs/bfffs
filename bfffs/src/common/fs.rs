@@ -2,6 +2,7 @@
 //! Common VFS implementation
 
 use bitfield::*;
+use cfg_if::cfg_if;
 use crate::{
     common::{
         *,
@@ -887,9 +888,7 @@ impl Fs {
 
         // In the background, delete all dying inodes.  If there are any, it
         // means that the previous mount was uncleanly dismounted.
-        // TODO: consider doing this in the background with spawn rather than in
-        // the foreground with block_on
-        handle.block_on( async move {
+        let ditask = async move {
             db3.fswrite(tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
@@ -903,7 +902,16 @@ impl Fs {
                 })
             }).map_err(Error::unhandled)
             .await
-        }).unwrap();
+        };
+        cfg_if! {
+            if #[cfg(test)] {
+                // For the unit tests, do it synchronously.  This makes it
+                // easier to write mock expectations.
+                handle.block_on(ditask).unwrap();
+            } else {
+                handle.spawn(ditask);
+            }
+        }
 
         Fs {
             db: database,
