@@ -65,9 +65,9 @@ fn dump_fsm<P: AsRef<Path>, S: AsRef<str>>(poolname: S, disks: &[P]) {
         dev_manager.taste(disk);
     }
     let uuid = dev_manager.importable_pools().iter()
-        .filter(|(name, _uuid)| {
+        .find(|(name, _uuid)| {
             *name == poolname.as_ref()
-        }).nth(0).unwrap().1;
+        }).unwrap().1;
     let mut rt = runtime();
     let clusters = rt.block_on(async move {
         dev_manager.import_clusters(uuid).await

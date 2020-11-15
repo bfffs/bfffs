@@ -910,7 +910,7 @@ mod t {
     #[test]
     fn move_indirect_record_cold() {
         let v = vec![42u8; 4096];
-        let dbs = DivBufShared::from(v.clone());
+        let dbs = DivBufShared::from(v);
         let rid = RID(1);
         let drp0 = DRP::random(Compression::None, 4096);
         let drp1 = DRP::random(Compression::None, 4096);
@@ -969,7 +969,7 @@ mod t {
     #[test]
     fn move_indirect_record_compressed() {
         let v = vec![42u8; 4096];
-        let dbs = DivBufShared::from(v.clone());
+        let dbs = DivBufShared::from(v);
         let rid = RID(1);
         let drp0 = DRP::random(Compression::Zstd(None), 4096);
         let drp1 = DRP::random(Compression::Zstd(None), 4096);
@@ -1021,7 +1021,7 @@ mod t {
     #[test]
     fn move_indirect_record_hot() {
         let v = vec![42u8; 4096];
-        let dbs = DivBufShared::from(v.clone());
+        let dbs = DivBufShared::from(v);
         let rid = RID(1);
         let drp0 = DRP::random(Compression::None, 4096);
         let drp1 = DRP::random(Compression::None, 4096);

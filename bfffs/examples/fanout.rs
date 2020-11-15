@@ -202,9 +202,9 @@ impl FakeIDML {
            data_ddml: Arc<FakeDDML>,
            ridt_ddml: Arc<FakeDDML>, save: bool) -> Self
     {
-        let alloct = Arc::new(Tree::create(alloct_ddml.clone(), true, 16.5,
+        let alloct = Arc::new(Tree::create(alloct_ddml, true, 16.5,
             2.809));
-        let ridt = Arc::new(Tree::create(ridt_ddml.clone(), true, 4.22, 3.73));
+        let ridt = Arc::new(Tree::create(ridt_ddml, true, 4.22, 3.73));
         FakeIDML {
             alloct,
             data_size: AtomicU64::default(),
@@ -336,7 +336,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
 
     let (alloct_entries, ridt_entries) = rt.block_on(
         stream::iter(0..nelems)
-        .map(|x| Ok(x))
+        .map(Ok)
         .try_for_each(move |i| {
             let dbs = DivBufShared::from(data.clone());
             let offset = f(i);

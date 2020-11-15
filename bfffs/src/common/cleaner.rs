@@ -44,7 +44,7 @@ impl SyncCleaner {
         self.select_zones()
         .and_then(move |zones| {
             stream::iter(zones.into_iter())
-            .map(|zone| Ok(zone))
+            .map(Ok)
             .try_for_each(move |zone| {
                 let idml3 = idml2.clone();
                 idml2.txg()
@@ -161,6 +161,7 @@ use super::*;
 use tokio::runtime;
 
 /// Clean in the background
+#[allow(clippy::async_yields_async)]
 #[test]
 fn background() {
     let mut idml = IDML::default();
@@ -171,7 +172,7 @@ fn background() {
                 ClosedZone{freed_blocks: 0, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
+            Box::pin(stream::iter(czs.into_iter()).map(Ok))
         });
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
@@ -200,7 +201,7 @@ fn no_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 1, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
+            Box::pin(stream::iter(czs.into_iter()).map(Ok))
         });
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
@@ -222,7 +223,7 @@ fn one_sufficiently_dirty_zone() {
                 ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
+            Box::pin(stream::iter(czs.into_iter()).map(Ok))
         });
     idml.expect_txg()
         .once()
@@ -256,7 +257,7 @@ fn two_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 75, total_blocks: 100, zid: 2,
                     pba: PBA::new(2, 0), txgs: TxgT::from(1)..TxgT::from(2)},
             ];
-            Box::pin(stream::iter(czs.into_iter()).map(|cz| Ok(cz)))
+            Box::pin(stream::iter(czs.into_iter()).map(Ok))
         });
     idml.expect_txg()
         .once()

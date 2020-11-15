@@ -23,7 +23,6 @@ use futures::{
     future,
     stream,
 };
-use libc;
 use std::{
     cmp,
     ffi::{OsStr, OsString},
@@ -36,7 +35,6 @@ use std::{
     }
 };
 #[cfg(not(test))] use std::io;
-use time;
 use tokio::{
     runtime::Handle,
     sync::mpsc,
@@ -537,8 +535,7 @@ impl Fs {
                     "Create of an existing file.  The VFS should prevent this");
                     assert!(inode_r.is_none(),
                     "Inode double-create detected, ino={}", ino);
-                    let fd = FileData::new(fd_parent, ino);
-                    fd
+                    FileData::new(fd_parent, ino)
                 })
             }).map_err(Error::into)
         )
@@ -941,9 +938,11 @@ impl Fs {
         -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
         let now = time::get_time();
-        let mut attr = SetAttr::default();
-        attr.ctime = Some(now);
-        attr.mtime = Some(now);
+        let attr = SetAttr {
+            ctime: Some(now),
+            mtime: Some(now),
+            .. Default::default()
+        };
         Fs::do_setattr(dataset.clone(), parent, attr).boxed()
     }
 
@@ -1010,10 +1009,10 @@ impl Fs {
                             Ok(attr)
                         },
                         Ok(None) => {
-                            Err(Error::ENOENT.into())
+                            Err(Error::ENOENT)
                         },
                         Err(e) => {
-                            Err(e.into())
+                            Err(e)
                         }
                     }
                 })
@@ -1098,14 +1097,14 @@ impl Fs {
                                 };
                                 Ok(len)
                             } else {
-                                Err(Error::ENOATTR.into())
+                                Err(Error::ENOATTR)
                             }
                         }
                         Err(e) => {
-                            Err(e.into())
+                            Err(e)
                         }
                         _ => {
-                            Err(Error::ENOATTR.into())
+                            Err(Error::ENOATTR)
                         },
                     }
                 })
@@ -1146,14 +1145,18 @@ impl Fs {
                     let dfut = ds.insert(dirent_key, dirent_value);
 
                     let now = time::get_time();
-                    let mut parent_attr = SetAttr::default();
-                    parent_attr.ctime = Some(now);
-                    parent_attr.mtime = Some(now);
+                    let parent_attr = SetAttr {
+                        ctime: Some(now),
+                        mtime: Some(now),
+                        .. Default::default()
+                    };
                     let parent_fut = Fs::do_setattr(ds.clone(), parent_ino,
                         parent_attr);
 
-                    let mut ctime_attr = SetAttr::default();
-                    ctime_attr.ctime = Some(now);
+                    let ctime_attr = SetAttr {
+                        ctime: Some(now),
+                        .. Default::default()
+                    };
                     let ctime_fut = Fs::do_setattr(ds, ino, ctime_attr);
 
                     future::try_join4(ifut, dfut, parent_fut, ctime_fut)
@@ -1226,7 +1229,7 @@ impl Fs {
                             let fd = FileData::new(fd_parent, de.ino);
                             Ok(fd)
                         },
-                        Err(e) => Err(e.into())
+                        Err(e) => Err(e)
                     }
                 })
             }).map_err(Error::into)
@@ -1584,7 +1587,7 @@ impl Fs {
                                     bucket.into_iter()
                                     .skip(bucket_idx as usize)
                                     .enumerate()
-                                ).map(|x| Ok(x))
+                                ).map(Ok)
                                 .try_for_each(move |(i, dirent)| {
                                     let mut tx3 = tx2.clone();
                                     async move {
@@ -1628,11 +1631,11 @@ impl Fs {
                             if let FileType::Link(ref path) = inode.file_type {
                                 Ok(path.clone())
                             } else {
-                                Err(Error::EINVAL.into())
+                                Err(Error::EINVAL)
                             }
                         },
-                        Ok(None) => Err(Error::ENOENT.into()),
-                        Err(e) => Err(e.into())
+                        Ok(None) => Err(Error::ENOENT),
+                        Err(e) => Err(e)
                     }
                 })
             }).map_err(Error::into)
@@ -1994,9 +1997,11 @@ impl Fs {
                         lookup_count, dirent.ino);
                     // 2b) Update parent's timestamps
                     let now = time::get_time();
-                    let mut attr = SetAttr::default();
-                    attr.ctime = Some(now);
-                    attr.mtime = Some(now);
+                    let attr = SetAttr {
+                        ctime: Some(now),
+                        mtime: Some(now),
+                        .. Default::default()
+                    };
                     let ts_fut = Fs::do_setattr(dataset, parent_ino, attr);
                     future::try_join(unlink_fut, ts_fut)
                 }).map_ok(drop)

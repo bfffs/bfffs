@@ -66,7 +66,7 @@ impl DevManager {
             } else {
                 None
             }
-        }).nth(0);
+        }).next();
         match r {
             Some(uuid) => self.import(uuid, handle, inner).boxed(),
             None => future::err(Error::ENOENT).boxed()
@@ -173,7 +173,7 @@ impl DevManager {
                        Error>>
     {
         stream::iter(leaf_paths.into_iter())
-        .map(|path| Ok(path))
+        .map(Ok)
         .and_then(VdevFile::open)
         .map_ok(|(leaf, reader)| {
             (VdevBlock::new(leaf), reader)

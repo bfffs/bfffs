@@ -2,10 +2,7 @@
 
 use divbuf::{DivBuf, DivBufMut, DivBufShared};
 use enum_primitive_derive::Primitive;
-use futures;
 use lazy_static::lazy_static;
-use libc;
-use nix;
 use num_traits::{FromPrimitive, ToPrimitive};
 use serde::{
     Deserialize,
@@ -20,7 +17,6 @@ use std::{
     hash::Hasher,
     ops::{Add, AddAssign, Div, Sub},
 };
-use uuid;
 
 pub mod cache;
 pub mod cleaner;
@@ -444,7 +440,6 @@ fn basic_runtime() -> tokio::runtime::Runtime {
 
 #[cfg(test)]
 mod t {
-use bincode;
 use pretty_assertions::assert_eq;
 use super::*;
 

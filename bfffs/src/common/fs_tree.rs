@@ -13,7 +13,6 @@ use crate::{
 };
 use divbuf::DivBufShared;
 use futures::{Future, FutureExt, TryFutureExt, future};
-use libc;
 use metrohash::MetroHash64;
 use serde::de::DeserializeOwned;
 use std::{
@@ -669,7 +668,7 @@ impl Default for InlineExtent {
 }
 
 impl PartialEq for InlineExtent {
-    fn eq(self: &Self, other: &Self) -> bool {
+    fn eq(&self, other: &Self) -> bool {
         self.buf.try_const().unwrap() == other.buf.try_const().unwrap()
     }
 }

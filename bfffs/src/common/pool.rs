@@ -77,7 +77,7 @@ impl ClusterServer {
     fn run(cs: Arc<ClusterServer>, rx: mpsc::UnboundedReceiver<Rpc>) {
         let fut = async move {
             // In Futures 0.2, use try_for_each_concurrent instead
-            rx.map(|r| Ok(r))
+            rx.map(Ok)
                 .try_for_each(move |rpc| cs.dispatch(rpc))
                 .await
             // If we get here, the ClusterProxy was dropped
@@ -278,7 +278,7 @@ impl ClusterProxy {
         -> impl Future<Output=Result<(), Error>>
     {
         rx.map_err(|_| Error::EPIPE)
-            .and_then(|result| future::ready(result))
+            .and_then(future::ready)
     }
 
     fn shutdown(&self) {

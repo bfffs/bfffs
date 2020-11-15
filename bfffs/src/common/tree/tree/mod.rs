@@ -17,7 +17,6 @@ use futures::{
 use futures_locks::*;
 #[cfg(test)] use mockall::automock;
 use serde::Serializer;
-use serde_yaml;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
 use std::{
     borrow::Borrow,
@@ -2092,7 +2091,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
         let tree_height = self.i.height.load(Ordering::Relaxed) as u8;
         let inner2 = self.i.clone();
         stream::iter(0..tree_height)
-        .map(|echelon| Ok(echelon))
+        .map(Ok)
         .try_for_each(move |echelon| {
             let inner3 = inner2.clone();
             CleanZonePass1::new(inner2.clone(), pbas.clone(),
@@ -2100,7 +2099,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
             .try_collect::<Vec<_>>()
             .and_then(move |nodes| {
                 stream::iter(nodes.into_iter())
-                .map(|node| Ok(node))
+                .map(Ok)
                 .try_for_each(move |node| {
                     // TODO: consider attempting to rewrite multiple nodes
                     // at once, so as not to spend so much time traversing
@@ -2177,9 +2176,10 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
         }
         // Find the first child >= key whose txg range overlaps with txgs
         let idx0 = guard.as_int().position(&params.key);
-        let idx_in_range = (idx0..guard.as_int().nchildren()).filter(|idx| {
+        let idx_in_range = (idx0..guard.as_int().nchildren())
+        .find(|idx| {
             ranges_overlap(&guard.as_int().children[*idx].txgs, &params.txgs)
-        }).nth(0);
+        });
         if let Some(idx) = idx_in_range {
             let next_key = if idx < guard.as_int().nchildren() - 1 {
                 Some(guard.as_int().children[idx + 1].key)
