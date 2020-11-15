@@ -61,7 +61,7 @@ enum Rpc {
 /// thread, it owns a `Cluster` and serves RPC requests from its own and other
 /// threads.
 ///
-/// TODO: Since the upgrade to Tokio 0.3, all Futures beneath Cluster are now
+/// TODO: Since the upgrade to Tokio 0.2, all Futures beneath Cluster are now
 /// Send + Sync.  So it would be possible to make Cluster Send + Sync, too.
 /// Consider eliminating ClusterServer.
 struct ClusterServer {
@@ -187,7 +187,6 @@ impl Future for ClusterProxyWrite
     type Output = Result<LbaT, Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        // TODO: can this be replaced by self.rx.poll(cx) ?
         match Pin::new(&mut self.rx).poll(cx) {
             Poll::Ready(Ok(r)) => {
                 match r {

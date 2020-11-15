@@ -98,7 +98,6 @@ impl Cleaner {
     /// The returned `Receiver` will deliver notification when cleaning is
     /// complete.  However, there is no requirement to poll it.  The client may
     /// drop it, and cleaning will continue in the background.
-    // TODO: return the Tokio JoinHandle instead of using a oneshot
     pub fn clean(&self) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
         if let Err(e) = self.tx.as_ref().unwrap().clone().try_send(tx) {

@@ -2,6 +2,7 @@
 //! Common VFS implementation
 
 use bitfield::*;
+use cfg_if::cfg_if;
 use crate::{
     common::{
         *,
@@ -75,17 +76,17 @@ mod htable {
         where T: HTItem
     {
         dataset.get(key)
-        .then(move |r| {
+        .map(move |r| {
             match r {
                 Ok(fsvalue) => {
                     match T::from_table(fsvalue) {
                         HTValue::Single(old) => {
                             if old.same(aux, &name) {
                                 // Found the right item
-                                future::ok(old).boxed()
+                                Ok(old)
                             } else {
                                 // Hash collision
-                                future::err(T::ENOTFOUND).boxed()
+                                Err(T::ENOTFOUND)
                             }
                         },
                         HTValue::Bucket(old) => {
@@ -94,21 +95,21 @@ mod htable {
                                 x.same(aux, &name)
                             }) {
                                 // Found the right one
-                                future::ok(v).boxed()
+                                Ok(v)
                             } else {
                                 // A 3 (or more) way hash collision.  The
                                 // item we're looking up isn't found.
-                                future::err(T::ENOTFOUND).boxed()
+                                Err(T::ENOTFOUND)
                             }
                         },
                         HTValue::None => {
-                            future::err(T::ENOTFOUND).boxed()
+                            Err(T::ENOTFOUND)
                         },
                         HTValue::Other(x) =>
                             panic!("Unexpected value {:?} for key {:?}", x, key)
                     }
                 },
-                Err(e) => future::err(e).boxed()
+                Err(e) => Err(e)
             }
         })
     }
@@ -887,9 +888,7 @@ impl Fs {
 
         // In the background, delete all dying inodes.  If there are any, it
         // means that the previous mount was uncleanly dismounted.
-        // TODO: consider doing this in the background with spawn rather than in
-        // the foreground with block_on
-        handle.block_on( async move {
+        let ditask = async move {
             db3.fswrite(tree, move |dataset| {
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
@@ -903,7 +902,16 @@ impl Fs {
                 })
             }).map_err(Error::unhandled)
             .await
-        }).unwrap();
+        };
+        cfg_if! {
+            if #[cfg(test)] {
+                // For the unit tests, do it synchronously.  This makes it
+                // easier to write mock expectations.
+                handle.block_on(ditask).unwrap();
+            } else {
+                handle.spawn(ditask);
+            }
+        }
 
         Fs {
             db: database,

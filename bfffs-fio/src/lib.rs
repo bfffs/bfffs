@@ -7,9 +7,7 @@ use bfffs::common::{
     database::TreeID,
     device_manager::DevManager,
     fs::{FileData, Fs},
-    Error,
 };
-use futures::{future, FutureExt};
 use lazy_static::lazy_static;
 use memoffset::offset_of;
 use std::{
@@ -212,11 +210,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
             }
             let handle = rt.handle().clone();
             let r = rt.block_on(async move {
-                if let Ok(fut) = dev_manager.import_by_name(pool, handle) {
-                    fut.boxed()
-                } else {
-                    future::err(Error::ENOENT).boxed()
-                }.await
+                dev_manager.import_by_name(pool, handle).await
             });
             if let Ok(db) = r {
                 let adb = Arc::new(db);
