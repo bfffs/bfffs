@@ -405,8 +405,8 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
         if self.as_int().children[child_idx].ptr.is_mem() {
             self.as_int().children[child_idx].ptr.as_mem().xlock()
-                .map_ok(move |child_guard| {
-                      (self, child_guard)
+                .map(move |child_guard| {
+                      Ok((self, child_guard))
                  }).boxed()
         } else {
             let addr = *self.as_int()
@@ -460,9 +460,9 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                 self.as_int_mut().children[child_idx].txgs.start = txg;
             }
             self.as_int().children[child_idx].ptr.as_mem().xlock()
-            .map_ok(move |child_guard| {
+            .map(move |child_guard| {
                 debug_assert!((height > 1) ^ child_guard.is_leaf());
-                (None, child_guard)
+                Ok((None, child_guard))
             }).boxed()
         } else {
             let addr = *self.as_int().children[child_idx].ptr.as_addr();
@@ -509,7 +509,10 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
         .map(move |elem| {
             let dml2 = dml.clone();
             let lock_fut = if elem.ptr.is_mem() {
-                elem.ptr.as_mem().xlock().boxed()
+                elem.ptr.as_mem()
+                    .xlock()
+                    .map(|guard| Ok(guard))
+                    .boxed()
             } else {
                 let addr = *elem.ptr.as_addr();
                 let fut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
@@ -1026,13 +1029,10 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     }
 
     /// Lock the indicated `Node` exclusively.
-    // TODO: return an infalliable Future instead of a TryFuture
-    pub(super) fn xlock(&self)
-        -> impl Future<Output=Result<TreeWriteGuard<A, K, V>, Error>>
+    pub(super) fn xlock(&self) -> impl Future<Output=TreeWriteGuard<A, K, V>>
     {
         self.0.write()
-            .map(|g| Ok(TreeWriteGuard(g)))
-            .boxed()
+            .map(|g| TreeWriteGuard(g))
     }
 
 }

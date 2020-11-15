@@ -1924,8 +1924,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 // Cache.
                 let key = elem.key;
                 let dml3 = dml.clone();
-                let fut = elem.ptr.as_mem().xlock().and_then(move |guard|
-                {
+                let fut = elem.ptr.as_mem().xlock()
+                .then(move |guard| {
                     drop(guard);
                     Tree::flush_r(dml3, int_compressor, leaf_compressor,
                                   *elem.ptr.into_node(), txg)
