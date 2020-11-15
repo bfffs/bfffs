@@ -5,6 +5,7 @@
 
 use super::*;
 
+#[allow(clippy::reversed_empty_ranges)]
 #[test]
 fn ranges_overlap_test() {
     // x is empty

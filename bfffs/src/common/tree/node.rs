@@ -1,7 +1,6 @@
 // vim: tw=80
 
 //! Nodes for Trees (private module)
-use bincode;
 use crate::{
     common::{*, dml::*}
 };
@@ -13,7 +12,6 @@ use std::{
     cmp::max,
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
-    iter::FromIterator,
     mem,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
     pin::Pin,
@@ -152,19 +150,11 @@ impl<A: Addr, K: Key, V: Value> TreePtr<A, K, V> {
     }
 
     pub fn is_addr(&self) -> bool {
-        if let TreePtr::Addr(_) = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, TreePtr::Addr(_))
     }
 
     pub fn is_mem(&self) -> bool {
-        if let TreePtr::Mem(_) = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, TreePtr::Mem(_))
     }
 }
 
@@ -222,7 +212,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
             }).collect::<Vec<_>>();
             let fut = future::try_join_all(flush_futs)
                 .map_ok(|items| {
-                    LeafData{items: BTreeMap::from_iter(items.into_iter())}
+                    LeafData{items: items.into_iter().collect()}
                 });
             fut.boxed()
         } else {
@@ -257,11 +247,8 @@ impl<K: Key, V: Value> LeafData<K, V> {
               T: Ord + Clone
     {
         if let Some(l) = self.items.keys().next_back() {
-            let more = match range.end_bound() {
-                Bound::Included(i) | Bound::Excluded(i) if i <= l.borrow() =>
-                    false,
-                _ => true
-            };
+            let more = !matches!(range.end_bound(),
+                Bound::Included(i) | Bound::Excluded(i) if i <= l.borrow());
             let items = self.items.range(range)
                 .map(|(k, v)| (*k, v.clone()))
                 .collect::<VecDeque<(K, V)>>();
@@ -363,11 +350,7 @@ pub(super) enum TreeReadGuard<A: Addr, K: Key, V: Value> {
 
 impl<A: Addr, K: Key, V: Value> TreeReadGuard<A, K, V> {
     pub(super) fn is_mem(&self) -> bool {
-        if let TreeReadGuard::Mem(_) = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, TreeReadGuard::Mem(_))
     }
 }
 
@@ -511,7 +494,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
             let lock_fut = if elem.ptr.is_mem() {
                 elem.ptr.as_mem()
                     .xlock()
-                    .map(|guard| Ok(guard))
+                    .map(Ok)
                     .boxed()
             } else {
                 let addr = *elem.ptr.as_addr();
@@ -770,11 +753,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     pub fn is_leaf(&self) -> bool {
-        if let NodeData::Leaf(_) = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, NodeData::Leaf(_))
     }
 
     /// Can this child be merged with `rhs` without violating constraints?
@@ -786,7 +765,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     /// parent's `children` array.
     pub fn key(&self) -> &K {
         match self {
-            NodeData::Leaf(ref leaf) => leaf.items.keys().nth(0).unwrap(),
+            NodeData::Leaf(ref leaf) => leaf.items.keys().next().unwrap(),
             NodeData::Int(ref int) => &int.children[0].key,
         }
     }
@@ -1031,8 +1010,7 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     /// Lock the indicated `Node` exclusively.
     pub(super) fn xlock(&self) -> impl Future<Output=TreeWriteGuard<A, K, V>>
     {
-        self.0.write()
-            .map(|g| TreeWriteGuard(g))
+        self.0.write().map(TreeWriteGuard)
     }
 
 }
@@ -1071,6 +1049,7 @@ fn arc_node_eq() {
     assert!(!node.eq(&dbs));
 }
 
+#[allow(clippy::eq_op)]
 #[test]
 fn treeptr_eq() {
     assert_eq!(TreePtr::Addr::<u32, u32, u32>(0),

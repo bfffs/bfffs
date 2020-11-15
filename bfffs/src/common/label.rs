@@ -1,6 +1,5 @@
 // vim: tw=80
 
-use bincode;
 use byteorder::{BigEndian, ByteOrder};
 use crate::common::*;
 use divbuf::DivBufShared;

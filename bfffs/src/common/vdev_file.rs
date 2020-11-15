@@ -376,8 +376,8 @@ impl VdevFile {
 
     /// The asynchronous scatter/gather read function.
     ///
-    /// * `bufs`	Scatter-gather list of buffers to receive data
-    /// * `lba`         LBA from which to read
+    /// * `bufs`    Scatter-gather list of buffers to receive data
+    /// * `lba`     LBA from which to read
     pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut
     {
         let off = lba * (BYTES_PER_LBA as u64);
@@ -465,7 +465,7 @@ impl VdevFile {
 
     /// The asynchronous scatter/gather write function.
     ///
-    /// * `bufs`	Scatter-gather list of buffers to receive data
+    /// * `bufs`    Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
     pub fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut
     {

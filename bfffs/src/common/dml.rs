@@ -1,6 +1,5 @@
 // vim: tw=80
 
-use blosc;
 use crate::common::*;
 use futures::Future;
 #[cfg(test)] use mockall::automock;

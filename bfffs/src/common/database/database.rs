@@ -119,7 +119,6 @@ impl Syncer {
                         match sm {
                             SyncerMsg::Kick => {
                                 // We got kicked.  Restart the wait
-                                ()
                             },
                             SyncerMsg::Shutdown => {
                                 // Error out of the loop
@@ -206,10 +205,7 @@ impl Inner {
         .then(move |txg| {
             Inner::rw_filesystem(&inner, tree_id, *txg)
                 .and_then(|ds| f(ds))
-                .map_ok(move |r| {
-                    drop(txg);
-                    r
-                })
+            // NB: txg must outlive f(ds).  Don't reorder!
         })
     }
 
@@ -385,9 +381,9 @@ impl Database {
         let idml2 = self.inner.idml.clone();
         let inner2 = self.inner.clone();
         self.inner.fs_trees.with(move |mut guard| {
-            let k = (0..=u32::max_value()).filter(|i| {
+            let k = (0..=u32::max_value()).find(|i| {
                 !guard.contains_key(&TreeID::Fs(*i))
-            }).nth(0).expect("Maximum number of filesystems reached");
+            }).expect("Maximum number of filesystems reached");
             let tree_id: TreeID = TreeID::Fs(k);
             // The FS tree's compressibility varies greatly, especially based on
             // whether the write pattern is sequential or random.  5.98x is the
@@ -511,6 +507,8 @@ impl Database {
 
     // TODO: Make prop an Option.  A None value will signify that the property
     // should be inherited.
+    // Silence clippy: the borrow checker frowns upon its suggestion
+    #[allow(clippy::needless_collect)]
     pub fn set_prop(&self, tree_id: TreeID, prop: Property)
         -> impl Future<Output=Result<(), Error>> + Send
     {

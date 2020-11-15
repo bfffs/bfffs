@@ -4,7 +4,6 @@
 #![allow(unused)]
 
 use crate::common::*;
-use isa_l;
 use fixedbitset::FixedBitSet;
 use std::borrow::BorrowMut;
 use super::sgcursor::*;

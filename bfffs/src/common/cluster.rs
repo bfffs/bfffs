@@ -1,6 +1,5 @@
 // vim: tw=80
 
-use bincode;
 use crate::{
     common::{
         *,
@@ -239,7 +238,7 @@ impl<'a> FreeSpaceMap {
 
     /// Find the first Empty zone
     fn find_empty(&self) -> Option<ZoneT> {
-        self.empty_zones.iter().nth(0).cloned()
+        self.empty_zones.iter().next().cloned()
             .or_else(|| {
                 if (self.zones.len() as ZoneT) < self.total_zones {
                     Some(self.zones.len() as ZoneT)
@@ -330,8 +329,7 @@ impl<'a> FreeSpaceMap {
                         txgs: z.txgs.clone()
                     })
                 }
-            })
-            .nth(0)
+            }).next()
     }
 
     fn new(total_zones: ZoneT) -> Self {
@@ -486,10 +484,10 @@ impl<'a> FreeSpaceMap {
                     true
                 }
             })
-        }.and_then(|(zone_id, oz)| {
+        }.map(|(zone_id, oz)| {
             let lba = oz.write_pointer();
             oz.allocated_blocks += space as u32;
-            Some((*zone_id, lba))
+            (*zone_id, lba)
         });
         if let Some((zid, _)) = result {
             self.dirty_zone(zid);

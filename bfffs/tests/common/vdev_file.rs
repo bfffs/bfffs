@@ -217,7 +217,6 @@ test_suite! {
         os::unix::fs::FileExt,
         path::PathBuf
     };
-    use std;
     use tempfile::{Builder, TempDir};
     use tokio::runtime;
 
@@ -250,8 +249,7 @@ test_suite! {
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
-            let pb = filename.to_path_buf();
-            (pb, tempdir)
+            (filename, tempdir)
         }
     });
 
@@ -269,12 +267,11 @@ test_suite! {
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(async { VdevFile::open(fixture.val.0).await})
-        .and_then(|(vdev, _label_reader)| {
-            assert_eq!(vdev.size(), 16_384);
-            assert_eq!(vdev.uuid(), golden_uuid);
-            Ok(())
+        let (vdev, _label_reader) = rt.block_on(async {
+            VdevFile::open(fixture.val.0).await
         }).unwrap();
+        assert_eq!(vdev.size(), 16_384);
+        assert_eq!(vdev.uuid(), golden_uuid);
         let _ = fixture.val.1;
     }
 
@@ -312,12 +309,11 @@ test_suite! {
             f.write_all_at(&GOLDEN, offset0).unwrap();
         }
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(async{ VdevFile::open(fixture.val.0).await})
-        .and_then(|(vdev, _label_reader)| {
-            assert_eq!(vdev.size(), 16_384);
-            assert_eq!(vdev.uuid(), golden_uuid);
-            Ok(())
+        let (vdev, _label_reader) = rt.block_on(async{
+            VdevFile::open(fixture.val.0).await
         }).unwrap();
+        assert_eq!(vdev.size(), 16_384);
+        assert_eq!(vdev.uuid(), golden_uuid);
         let _ = fixture.val.1;
     }
 
@@ -342,12 +338,11 @@ test_suite! {
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
         let mut rt = runtime::Runtime::new().unwrap();
-        rt.block_on(async { VdevFile::open(fixture.val.0).await })
-        .and_then(|(vdev, _label_reader)| {
-            assert_eq!(vdev.size(), 16_384);
-            assert_eq!(vdev.uuid(), golden_uuid);
-            Ok(())
+        let (vdev, _label_reader) = rt.block_on(async {
+            VdevFile::open(fixture.val.0).await
         }).unwrap();
+        assert_eq!(vdev.size(), 16_384);
+        assert_eq!(vdev.uuid(), golden_uuid);
         let _ = fixture.val.1;
     }
 

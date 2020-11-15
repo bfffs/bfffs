@@ -54,7 +54,7 @@ impl ChunkId {
 
     /// Is this a Data chunk?
     pub fn is_data(&self) -> bool {
-        if let ChunkId::Data(_) = *self { true } else { false }
+        matches!(self, ChunkId::Data(_))
     }
 }
 
@@ -124,10 +124,10 @@ pub trait Locator : Send + Sync {
     fn loc2id(&self, loc: Chunkloc) -> ChunkId;
 
     /// Return the location of a data chunk, given its ID
-	///
+    ///
     /// # Parameters
     ///
-	/// - `a`:	ID of the data chunk
+    /// - `a`:  ID of the data chunk
     fn id2loc(&self, id: ChunkId) -> Chunkloc;
 
     /// Parallel Read Count, as defined by Alvarez et al.[^RELPR_]

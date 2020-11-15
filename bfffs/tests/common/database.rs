@@ -184,7 +184,7 @@ test_suite! {
                 let file = t!(fs::File::create(&filename));
                 t!(file.set_len(len));
             }
-            let paths = [filename.clone()];
+            let paths = [filename];
             let mut rt = basic_runtime();
             let handle = rt.handle().clone();
             let pool = rt.block_on(async {

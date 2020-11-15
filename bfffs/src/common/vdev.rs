@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use crate::common::*;
-use futures;
 use std::pin::Pin;
 
 /// Future representing an operation on a vdev.

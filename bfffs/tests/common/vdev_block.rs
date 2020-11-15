@@ -109,7 +109,7 @@ test_suite! {
         let wbuf = dbs.try_const().unwrap();
         let wbuf0 = wbuf.slice_to(1024);
         let wbuf1 = wbuf.slice_from(1024);
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let wbufs = vec![wbuf0, wbuf1];
         basic_runtime().block_on(async {
             let size = vdev.val.0.size();
             vdev.val.0.writev_at(wbufs, size).await
@@ -122,7 +122,7 @@ test_suite! {
         let wbuf = dbs.try_const().unwrap();
         let wbuf0 = wbuf.slice_to(5120);
         let wbuf1 = wbuf.slice_from(5120);
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let wbufs = vec![wbuf0, wbuf1];
         basic_runtime().block_on(async {
             let size = vdev.val.0.size() - 1;
             vdev.val.0.writev_at(wbufs, size).await

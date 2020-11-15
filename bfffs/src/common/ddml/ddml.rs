@@ -102,7 +102,7 @@ impl DDML {
             } else {
                 Ok(None)
             }
-        }).try_filter_map(|o| future::ok(o))
+        }).try_filter_map(future::ok)
     }
 
     /// Read a record from disk

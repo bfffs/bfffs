@@ -18,7 +18,6 @@ test_suite! {
     };
     use futures::TryFutureExt;
     use galvanic_test::*;
-    use libc;
     use pretty_assertions::assert_eq;
     use rand::{Rng, thread_rng};
     use std::{
@@ -143,10 +142,9 @@ test_suite! {
         let entries = mocks.val.0.readdir(&root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
-        .filter(|(dirent, _ofs)| {
+        .find(|(dirent, _ofs)| {
             dirent.d_name[0] == 'x' as i8
-        }).nth(0)
-        .expect("'x' directory entry not found");
+        }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_REG);
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
@@ -766,10 +764,9 @@ root:
         let entries = mocks.val.0.readdir(&root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
-        .filter(|(dirent, _ofs)| {
+        .find(|(dirent, _ofs)| {
             dirent.d_name[0] == 'x' as i8
-        }).nth(0)
-        .expect("'x' directory entry not found");
+        }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_DIR);
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
@@ -820,10 +817,9 @@ root:
         let entries = mocks.val.0.readdir(&root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
-        .filter(|(dirent, _ofs)| {
+        .find(|(dirent, _ofs)| {
             dirent.d_name[0] == 'x' as i8
-        }).nth(0)
-        .expect("'x' directory entry not found");
+        }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_CHR);
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
@@ -853,10 +849,9 @@ root:
         let entries = mocks.val.0.readdir(&root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
-        .filter(|(dirent, _ofs)| {
+        .find(|(dirent, _ofs)| {
             dirent.d_name[0] == 'x' as i8
-        }).nth(0)
-        .expect("'x' directory entry not found");
+        }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_BLK);
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
@@ -885,10 +880,9 @@ root:
         let entries = mocks.val.0.readdir(&root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
-        .filter(|(dirent, _ofs)| {
+        .find(|(dirent, _ofs)| {
             dirent.d_name[0] == 'x' as i8
-        }).nth(0)
-        .expect("'x' directory entry not found");
+        }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_FIFO);
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
@@ -917,10 +911,9 @@ root:
         let entries = mocks.val.0.readdir(&root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
-        .filter(|(dirent, _ofs)| {
+        .find(|(dirent, _ofs)| {
             dirent.d_name[0] == 'x' as i8
-        }).nth(0)
-        .expect("'x' directory entry not found");
+        }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_SOCK);
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
@@ -1245,8 +1238,8 @@ root:
         let mut expected = HashSet::new();
         expected.insert(OsString::from("."));
         expected.insert(OsString::from(".."));
-        expected.insert(filename0.clone());
-        expected.insert(filename1.clone());
+        expected.insert(filename0);
+        expected.insert(filename1);
         for result in mocks.val.0.readdir(&root, 0) {
             let entry = result.unwrap().0;
             let nameptr = entry.d_name.as_ptr() as *const u8;
@@ -1281,7 +1274,7 @@ root:
         let mut expected = HashSet::new();
         expected.insert(OsString::from("."));
         expected.insert(OsString::from(".."));
-        expected.insert(filename1.clone());
+        expected.insert(filename1);
         drop(stream0);
         let stream1 = mocks.val.0.readdir(&root, offset0);
         for result in stream1 {
@@ -1676,10 +1669,10 @@ root:
         let dstdir_inode = mocks.val.0.getattr(&dstdir_fd).unwrap();
         assert_eq!(dstdir_inode.nlink, 2);
         let (de, _) = mocks.val.0.readdir(&dstdir_fd, 0)
-            .filter(|r| {
+            .find(|r| {
                 let dirent = r.unwrap().0;
                 u64::from(dirent.d_fileno) == src_ino
-            }).nth(0).unwrap().unwrap();
+            }).unwrap().unwrap();
         assert_eq!(de.d_type, libc::DT_REG);
     }
 
@@ -1746,10 +1739,10 @@ root:
         // Make sure it's gone
         assert_eq!(mocks.val.0.getattr(&fd).unwrap_err(), libc::ENOENT);
         assert!(mocks.val.0.readdir(&root, 0)
-            .filter(|r| {
+            .find(|r| {
                 let dirent = r.unwrap().0;
                 dirent.d_name[0] == 'x' as i8
-            }).nth(0).is_none());
+            }).is_none());
 
         // Make sure the parent dir's refcount dropped
         let inode = mocks.val.0.getattr(&root).unwrap();
@@ -1942,8 +1935,10 @@ root:
         assert_eq!(Ok(8192), r);
 
         // Then truncate one of them.
-        let mut attr = SetAttr::default();
-        attr.size = Some(4096);
+        let mut attr = SetAttr {
+            size: Some(4096),
+            .. Default::default()
+        };
         mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Now extend the file past the truncated record
@@ -1968,8 +1963,10 @@ root:
         assert_eq!(Ok(4096), r);
 
         // Then truncate it.
-        let mut attr = SetAttr::default();
-        attr.size = Some(1000);
+        let mut attr = SetAttr {
+            size: Some(1000),
+            .. Default::default()
+        };
         mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Now extend the file past the truncated record
@@ -1995,8 +1992,10 @@ root:
         mocks.val.0.sync(); // Create a blob record
 
         // Then truncate it.
-        let mut attr = SetAttr::default();
-        attr.size = Some(1000);
+        let mut attr = SetAttr {
+            size: Some(1000),
+            .. Default::default()
+        };
         mocks.val.0.setattr(&fd, attr).unwrap();
 
         // Now extend the file past the truncated record
@@ -2019,8 +2018,10 @@ root:
         clear_timestamps(&mocks.val.0, &fd);
 
         // Then truncate the file
-        let mut attr = SetAttr::default();
-        attr.size = Some(4096);
+        let attr = SetAttr {
+            size: Some(4096),
+            .. Default::default()
+        };
         mocks.val.0.setattr(&fd, attr).unwrap();
 
         // mtime should've changed
@@ -2128,10 +2129,9 @@ root:
         let entries = mocks.val.0.readdir(&root, 0);
         let (dirent, _ofs) = entries
         .map(|r| r.unwrap())
-        .filter(|(dirent, _ofs)| {
+        .find(|(dirent, _ofs)| {
             dirent.d_name[0] == 's' as i8
-        }).nth(0)
-        .expect("'s' directory entry not found");
+        }).expect("'s' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_LNK);
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
@@ -2171,9 +2171,9 @@ root:
         let entries = mocks.val.0.readdir(&root, 0);
         let x_de = entries
         .map(|r| r.unwrap())
-        .filter(|(dirent, _ofs)| {
+        .find(|(dirent, _ofs)| {
             dirent.d_name[0] == 'x' as i8
-        }).nth(0);
+        });
         assert!(x_de.is_none(), "Directory entry was not removed");
     }
 
@@ -2299,9 +2299,9 @@ root:
         let entries = mocks.val.0.readdir(&root, 0);
         let x_de = entries
         .map(|r| r.unwrap())
-        .filter(|(dirent, _ofs)| {
+        .find(|(dirent, _ofs)| {
             dirent.d_name[0] == 'x' as i8
-        }).nth(0);
+        });
         assert!(x_de.is_none(), "Directory entry was not removed");
     }
 
@@ -2412,8 +2412,10 @@ root:
         let root = mocks.val.0.root();
         let fd = mocks.val.0.create(&root, &OsString::from("x"), 0o644, 0, 0)
         .unwrap();
-        let mut attr = SetAttr::default();
-        attr.size = Some(4096 * 4);
+        let attr = SetAttr {
+            size: Some(4096 * 4),
+            .. Default::default()
+        };
         mocks.val.0.setattr(&fd, attr).unwrap();
 
         let mut buf0 = vec![0u8; 2048];
@@ -2558,7 +2560,6 @@ test_suite! {
         common::idml::*,
         common::pool::*,
     };
-    use env_logger;
     use futures::TryFutureExt;
     use galvanic_test::*;
     use log::*;
@@ -2849,7 +2850,7 @@ test_suite! {
         // *) List a directory
         // *) Write to a regular file
         // *) Read from a regular file
-        let duration = duration.unwrap_or(Duration::from_secs(60));
+        let duration = duration.unwrap_or_else(|| Duration::from_secs(60));
         let start = Instant::now();
         while start.elapsed() < duration {
             torture_test.step()

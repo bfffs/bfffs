@@ -908,11 +908,11 @@ impl VdevRaidApi for VdevRaid {
             // it's ok to search through them all.
             let stripe_buffer = sb_ref.iter()
                 .map(|(_, sb)| sb)
-                .filter(|&stripe_buffer| {
+                .find(|&stripe_buffer| {
                     !stripe_buffer.is_empty() &&
                     lba < stripe_buffer.next_lba() &&
                     end_lba >= stripe_buffer.lba()
-                }).nth(0);
+                });
 
             match stripe_buffer {
                 Some(sb) if !sb.is_empty() && end_lba >= sb.lba() => {

@@ -245,7 +245,7 @@ test_suite! {
                 let file = t!(fs::File::create(&filename));
                 t!(file.set_len(len));
             }
-            let paths = [filename.clone()];
+            let paths = [filename];
             let mut rt = basic_runtime();
             let pool = rt.block_on(async {
                 let cs = NonZeroU64::new(1);
@@ -279,7 +279,7 @@ test_suite! {
             let idml3 = idml.clone();
             let idml4 = idml.clone();
             stream::iter(0..=LBA_PER_ZONE)
-            .map(|lba| Ok(lba))
+            .map(Ok)
             .try_for_each(move |_| {
                 let idml2 = idml.clone();
                 idml.txg()

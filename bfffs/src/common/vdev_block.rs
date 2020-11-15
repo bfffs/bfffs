@@ -21,7 +21,6 @@ use std::{
     time,
 };
 #[cfg(test)] use mockall::*;
-use tokio;
 
 use crate::common::{*, label::*, vdev::*, vdev_file::*};
 
@@ -661,7 +660,7 @@ impl VdevBlock {
     ///
     /// # Parameters
     ///
-    /// * `bufs`	Scatter-gather list of buffers to receive data
+    /// * `bufs`    Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
     pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> VdevBlockFut
     {
@@ -709,7 +708,7 @@ impl VdevBlock {
     ///
     /// # Parameters
     ///
-    /// * `bufs`	Scatter-gather list of buffers to receive data
+    /// * `bufs`    Scatter-gather list of buffers to receive data
     /// * `lba`     LBA at which to write
     pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevBlockFut
     {
@@ -865,7 +864,6 @@ test_suite! {
     use mockall::*;
     use mockall::predicate::*;
     use mockall::PredicateBooleanExt;
-    use permutohedron;
     use pretty_assertions::assert_eq;
     use super::*;
 
@@ -1244,7 +1242,7 @@ test_suite! {
                     oneshot::channel::<()>().0));
         inner.sched(BlockOp::write_at(dummy.clone(), 2 << 16,
                     oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy.clone(), (3 << 16) - 1,
+        inner.sched(BlockOp::write_at(dummy, (3 << 16) - 1,
                     oneshot::channel::<()>().0));
 
         let first = inner.pop_op().unwrap();
@@ -1294,7 +1292,7 @@ test_suite! {
         inner.sched(BlockOp::sync_all(oneshot::channel::<()>().0));
         inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1003,
             oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 997,
+        inner.sched(BlockOp::write_at(dummy_buffer, 997,
             oneshot::channel::<()>().0));
 
         // All pre-sync operations should be issued, then the sync, then the
@@ -1394,9 +1392,9 @@ test_suite! {
                 // Manually poll so the VdevBlockFut will get scheduled
                 assert!(fut.as_mut().poll(&mut ctx).is_pending());
                 fut
-            }).collect::<Vec<_>>();
+            });
             let unbuf_fut = Box::pin(
-                future::try_join_all(early_futs.into_iter())
+                future::try_join_all(early_futs)
             );
             let mut penultimate_fut = Box::pin(
                 vdev.write_at(wbuf.clone(), LbaT::from(num_ops))
