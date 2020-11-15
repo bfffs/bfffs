@@ -195,6 +195,8 @@ impl Inner {
             .map_ok(move |fs| ReadWriteFilesystem::new(idml2, fs, txg))
     }
 
+    // The txg is a ref in test mode, but a RwlockWriteGuard in normal mode
+    #[cfg_attr(test, allow(clippy::drop_ref))]
     fn fswrite<F, B, R>(inner: Arc<Self>, tree_id: TreeID, f: F)
         -> impl Future<Output=Result<R, Error>>
         where F: FnOnce(ReadWriteFilesystem) -> B,
@@ -205,7 +207,10 @@ impl Inner {
         .then(move |txg| {
             Inner::rw_filesystem(&inner, tree_id, *txg)
                 .and_then(|ds| f(ds))
-            // NB: txg must outlive f(ds).  Don't reorder!
+                .map_ok(move |r| {
+                    drop(txg);
+                    r
+                })
         })
     }
 
