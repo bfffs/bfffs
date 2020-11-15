@@ -6,6 +6,7 @@ use crate::common::{Error, Uuid, cache, database, ddml, idml, label, pool,
                     raid};
 use futures::{
     Future,
+    FutureExt,
     StreamExt,
     TryFutureExt,
     TryStreamExt,
@@ -53,29 +54,23 @@ pub struct DevManager {
 
 impl DevManager {
     /// Import a pool by its pool name
-    // It would be nice to return a Future instead of a Result<Future>.  But if
-    // we do that, then we can't automatically infer whether the result should
-    // be Send (it's based on whether E: Send).  So until specialization is
-    // available, we must do it like this.
-    // TODO: return a Future, now that Tokio 0.2 Handles are always Send
     pub fn import_by_name<S>(&self, name: S, handle: Handle)
-        -> Result<impl Future<Output=Result<database::Database, Error>>, Error>
+        -> impl Future<Output=Result<database::Database, Error>>
         where S: AsRef<str>
     {
         let inner = self.inner.lock().unwrap();
-        inner.pools.iter()
+        let r = inner.pools.iter()
         .filter_map(|(uuid, label)| {
             if label.name == name.as_ref() {
                 Some(*uuid)
             } else {
                 None
             }
-        })
-        .nth(0)
-        .ok_or(Error::ENOENT)
-        .map(move |uuid| {
-            self.import(uuid, handle, inner)
-        })
+        }).nth(0);
+        match r {
+            Some(uuid) => self.import(uuid, handle, inner).boxed(),
+            None => future::err(Error::ENOENT).boxed()
+       }
     }
 
     /// Import a pool by its UUID

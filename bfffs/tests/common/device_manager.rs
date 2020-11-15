@@ -83,7 +83,7 @@ test_suite! {
         }
         let handle = rt.handle().clone();
         let _db = rt.block_on(async move {
-            dm.import_by_name("test_device_manager", handle).unwrap()
+            dm.import_by_name("test_device_manager", handle)
             .await
         }).unwrap();
     }

@@ -47,7 +47,7 @@ pub fn main(args: &clap::ArgMatches) {
             eprintln!("Error: pool not found");
             exit(1);
         }).await
-    }).unwrap());
+    }));
     rt.block_on(async {
         db.check().await
     }).unwrap();
@@ -86,11 +86,12 @@ fn dump_tree<P: AsRef<Path>>(poolname: String, disks: &[P]) {
     let handle = rt.handle().clone();
     let db = Arc::new(rt.block_on(async move {
         dev_manager.import_by_name(poolname, handle)
+        .await
         .unwrap_or_else(|_e| {
             eprintln!("Error: pool not found");
             exit(1);
-        }).await
-    }).unwrap());
+        })
+    }));
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
     db.dump(&mut std::io::stdout(), tree_id).unwrap()
