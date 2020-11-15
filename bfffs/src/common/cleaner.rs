@@ -15,7 +15,10 @@ use futures::{
     stream::self,
 };
 use std::sync::Arc;
-use tokio::runtime::Handle;
+use tokio::{
+    runtime::Handle,
+    task::JoinHandle
+};
 
 struct SyncCleaner {
     /// Handle to the DML.
@@ -87,6 +90,7 @@ impl SyncCleaner {
 ///
 /// Cleans old Zones by moving their data to empty zones and erasing them.
 pub struct Cleaner {
+    jh: JoinHandle<()>,
     tx: Option<mpsc::Sender<oneshot::Sender<()>>>
 }
 
@@ -113,37 +117,37 @@ impl Cleaner {
     pub fn new(handle: Handle, idml: Arc<IDML>, thresh: Option<f32>) -> Self
     {
         let (tx, rx) = mpsc::channel(1);
-        Cleaner::run(handle, idml, thresh.unwrap_or(Cleaner::DEFAULT_THRESHOLD),
-                     rx);
-        Cleaner{tx: Some(tx)}
+        let jh = Cleaner::run(handle, idml,
+                              thresh.unwrap_or(Cleaner::DEFAULT_THRESHOLD), rx);
+        Cleaner{jh, tx: Some(tx)}
     }
 
     // Start a task that will clean the system in the background, whenever
     // requested.
     fn run(handle: Handle, idml: Arc<IDML>, thresh: f32,
            rx: mpsc::Receiver<oneshot::Sender<()>>)
+        -> JoinHandle<()>
     {
         handle.spawn(async move {
             let sync_cleaner = SyncCleaner::new(idml, thresh);
-            rx.map(|tx| Ok(tx))
-            .try_for_each(move |tx| {
+            rx.for_each(move |tx| {
                 sync_cleaner.clean_now()
                     .map_err(Error::unhandled)
                     .map_ok(move |_| {
                         // Ignore errors.  An error here indicates that the
                         // client doesn't want to be notified.
                         let _result = tx.send(());
-                    })
+                    }).map(drop)
             }).await
-        });
+        })
     }
 
     // Shutdown the Cleaner's background task
-    pub fn shutdown(&mut self) -> impl Future<Output=Result<(), ()>> + Send {
+    pub async fn shutdown(mut self) {
         // Ignore return value.  An error indicates that the Cleaner is already
         // shut down.
-        let _ = self.tx.take();
-        future::ok::<(), ()>(())
+        drop(self.tx.take());
+        self.jh.await.unwrap();
     }
 }
 

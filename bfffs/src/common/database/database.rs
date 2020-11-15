@@ -39,9 +39,12 @@ use std::{
 #[cfg(not(test))] use std::io;
 use super::*;
 #[cfg(not(test))] use time;
-use tokio::runtime::Handle;
 #[cfg(not(test))] use tokio::runtime;
-use tokio::time::{Duration, Instant, delay_until};
+use tokio::{
+    runtime::Handle,
+    task::JoinHandle,
+    time::{Duration, Instant, delay_until},
+};
 
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
@@ -67,11 +70,14 @@ impl PropCacheKey {
 
 #[derive(Debug)]
 enum SyncerMsg {
+    /// Tell the Syncer that we manually synced, and it can reset its timer
     Kick,
-    Shutdown(oneshot::Sender<()>),
+    /// Tell the Syncer to shut down, and wait for it to do so
+    Shutdown,
 }
 
 struct Syncer {
+    jh: JoinHandle<()>,
     tx: mpsc::Sender<SyncerMsg>
 }
 
@@ -87,13 +93,14 @@ impl Syncer {
 
     fn new(handle: Handle, inner: Arc<Inner>) -> Self {
         let (tx, rx) = mpsc::channel(1);
-        Syncer::run(handle, inner, rx);
-        Syncer{tx}
+        let jh = Syncer::run(handle, inner, rx);
+        Syncer{jh, tx}
     }
 
     // Start a task that will sync the database at a fixed interval, but will
     // reset the timer if it gets a message on a channel.
     fn run(handle: Handle, inner: Arc<Inner>, mut rx: mpsc::Receiver<SyncerMsg>)
+        -> JoinHandle<()>
     {
         // Fixed 5-second duration
         let duration = Duration::new(5, 0);
@@ -114,33 +121,22 @@ impl Syncer {
                                 // We got kicked.  Restart the wait
                                 ()
                             },
-                            SyncerMsg::Shutdown(tx) => {
+                            SyncerMsg::Shutdown => {
                                 // Error out of the loop
-                                tx.send(()).unwrap();
                                 break;
                             }
                         }
                     },
-                    // TODO: replace the Shutdown message with a HUP on the
-                    // mpsc::Receiver, and catch that here
                     complete => break,
                 };
             }
         };
-        handle.spawn(taskfut);
+        handle.spawn(taskfut)
     }
 
-    fn shutdown(&self) -> impl Future<Output=Result<(), ()>> + Send {
-        let (tx, rx) = oneshot::channel();
-        let mut tx2 = self.tx.clone();
-        async move {
-            let r = tx2.send(SyncerMsg::Shutdown(tx)).await;
-            if r.is_ok() {
-                rx.map_err(Error::unhandled).await
-            } else {
-                Ok(())
-            }
-        }
+    async fn shutdown(mut self) {
+        self.tx.send(SyncerMsg::Shutdown).await.unwrap();
+        self.jh.await.unwrap();
     }
 }
 
@@ -547,13 +543,12 @@ impl Database {
         })
     }
 
-    /// Shutdown all background tasks
-    pub fn shutdown(&mut self) -> impl Future<Output=Result<(), ()>> + Send
-    {
-        let idml2 = self.inner.idml.clone();
-        future::try_join(self.syncer.shutdown(),
-                         self.cleaner.shutdown())
-        .map_ok(move |_| idml2.shutdown())
+    /// Shutdown all background tasks and close the Database
+    pub async fn shutdown(self) {
+        future::join(self.syncer.shutdown(),
+                     self.cleaner.shutdown())
+        .await;
+        self.inner.idml.shutdown();
     }
 
     /// Finish the current transaction group and start a new one.
@@ -718,29 +713,9 @@ mod database {
         let handle = rt.handle().clone();
 
         rt.block_on(async {
-            let mut db = Database::new(Arc::new(idml), forest, handle);
+            let db = Database::new(Arc::new(idml), forest, handle);
             db.shutdown().await
-        }).unwrap();
-    }
-
-    /// shutdown should be idempotent
-    #[test]
-    fn shutdown_twice() {
-        let mut idml = IDML::default();
-        idml.expect_shutdown()
-            .times(2)
-            .return_const(());
-        let forest = Tree::default();
-
-        let mut rt = basic_runtime();
-        let handle = rt.handle().clone();
-
-        rt.block_on(async {
-            let mut db = Database::new(Arc::new(idml), forest, handle);
-            db.shutdown()
-            .and_then(move |_| db.shutdown())
-            .await
-        }).unwrap();
+        });
     }
 
     #[test]
@@ -839,8 +814,7 @@ mod syncer_msg {
     //pet kcov
     #[test]
     fn debug() {
-        let (tx, _rx) = oneshot::channel();
-        let sm = SyncerMsg::Shutdown(tx);
+        let sm = SyncerMsg::Shutdown;
         format!("{:?}", sm);
     }
 }
