@@ -70,7 +70,6 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     Serialize + TypicalSize + 'static
 {
     /// Prepare this `Value` to be written to disk
-    // TODO: return an infalliable Future instead of a TryFuture
     // LCOV_EXCL_START   unreachable code
     fn flush<D>(self, _dml: &D, _txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<Self, Error>> + Send>>

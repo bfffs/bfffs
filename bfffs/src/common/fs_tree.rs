@@ -414,10 +414,9 @@ pub struct BlobExtAttr<A: Addr> {
 }
 
 impl<A: Addr> BlobExtAttr<A> {
-    fn flush(self) -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>, Error>>
-        + Send>>
+    fn flush(self) -> ExtAttr<A>
     {
-        future::ok(ExtAttr::Blob(self)).boxed()
+        ExtAttr::Blob(self)
     }
 }
 
@@ -444,7 +443,7 @@ impl<'a, A: Addr> ExtAttr<A> {
     {
         match self {
             ExtAttr::Inline(iea) => iea.flush(dml, txg),
-            ExtAttr::Blob(bea) => bea.flush(),
+            ExtAttr::Blob(bea) => future::ok(bea.flush()).boxed()
         }
     }
 
