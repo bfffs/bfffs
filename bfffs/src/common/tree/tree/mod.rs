@@ -888,7 +888,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         let inner2 = self.i.clone();
         self.write()
-            .and_then(move |guard| {
+            .then(move |guard| {
                 Tree::xlock_root(&inner2.dml, guard, txg)
                      .and_then(move |(root_guard, child_guard)| {
                          Tree::insert_locked(inner2, root_guard,
@@ -1214,7 +1214,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let limits = self.i.limits;
         let height = self.i.height.load(Ordering::Relaxed) as u8;
         self.write()
-            .and_then(move |guard| {
+            .then(move |guard| {
                 Tree::xlock_root(&dml2, guard, txg)
                     .and_then(move |(tree_guard, root_guard)| {
                         // ptr is guaranteed to be a TreePtr::Mem because we
@@ -1760,7 +1760,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         let i2 = self.i.clone();
         self.write()
-            .and_then(move |tree_guard| {
+            .then(move |tree_guard| {
                 Tree::remove_locked(i2, tree_guard, k, txg)
             })
     }
@@ -1841,7 +1841,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let int_compressor = self.i.int_compressor;
         let leaf_compressor = self.i.leaf_compressor;
         self.write()
-            .and_then(move |root_guard| {
+            .then(move |root_guard| {
             if root_guard.ptr.is_dirty() {
                 // If the root is dirty, then we have ownership over it.  But
                 // another task may still have a lock on it.  We must acquire
@@ -1965,17 +1965,15 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Lock the Tree for writing
-    fn write(&self) -> impl Future<Output=Result<RwLockWriteGuard<IntElem<A, K, V>>,
-                                      Error>>
+    fn write(&self) -> impl Future<Output=RwLockWriteGuard<IntElem<A, K, V>>>
     {
         Tree::<A, D, K, V>::write_root(&self.i)
     }
 
-    // TODO: make it an infalliable future instead of a TryFuture
     fn write_root(inner: &Inner<A, D, K, V>)
-        -> impl Future<Output=Result<RwLockWriteGuard<IntElem<A, K, V>>, Error>>
+        -> impl Future<Output=RwLockWriteGuard<IntElem<A, K, V>>>
     {
-        inner.root.write().map(|g| Ok(g))
+        inner.root.write()
     }
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
@@ -2205,7 +2203,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
         -> impl Future<Output=Result<(), Error>> + Send
     {
         Tree::<ddml::DRP, D, K, V>::write_root(&*inner)
-        .and_then(move |mut guard| {
+        .then(move |mut guard| {
             let h = inner.height.load(Ordering::Relaxed) as u8;
             let dml2 = inner.dml.clone();
             if h == node.height + 1 {
