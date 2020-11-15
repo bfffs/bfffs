@@ -75,17 +75,17 @@ mod htable {
         where T: HTItem
     {
         dataset.get(key)
-        .then(move |r| {
+        .map(move |r| {
             match r {
                 Ok(fsvalue) => {
                     match T::from_table(fsvalue) {
                         HTValue::Single(old) => {
                             if old.same(aux, &name) {
                                 // Found the right item
-                                future::ok(old).boxed()
+                                Ok(old)
                             } else {
                                 // Hash collision
-                                future::err(T::ENOTFOUND).boxed()
+                                Err(T::ENOTFOUND)
                             }
                         },
                         HTValue::Bucket(old) => {
@@ -94,21 +94,21 @@ mod htable {
                                 x.same(aux, &name)
                             }) {
                                 // Found the right one
-                                future::ok(v).boxed()
+                                Ok(v)
                             } else {
                                 // A 3 (or more) way hash collision.  The
                                 // item we're looking up isn't found.
-                                future::err(T::ENOTFOUND).boxed()
+                                Err(T::ENOTFOUND)
                             }
                         },
                         HTValue::None => {
-                            future::err(T::ENOTFOUND).boxed()
+                            Err(T::ENOTFOUND)
                         },
                         HTValue::Other(x) =>
                             panic!("Unexpected value {:?} for key {:?}", x, key)
                     }
                 },
-                Err(e) => future::err(e).boxed()
+                Err(e) => Err(e)
             }
         })
     }
