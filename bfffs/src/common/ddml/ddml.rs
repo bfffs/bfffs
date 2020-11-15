@@ -116,7 +116,7 @@ impl DDML {
         // 4) Decompress
         let len = drp.asize() as usize * BYTES_PER_LBA;
         let dbs = DivBufShared::uninitialized(len);
-        Box::new(
+        Box::pin(
             // Read
             self.pool.read(dbs.try_mut().unwrap(), drp.pba)
             .and_then(move |_| {
