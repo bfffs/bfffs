@@ -665,7 +665,7 @@ dependencies = [
 [[package]]
 name = "mio-aio"
 version = "0.4.2-pre"
-source = "git+https://github.com/asomers/mio-aio?rev=73cb6dc27c5caf53c90b92f0f67cb67a0d0f69f5#73cb6dc27c5caf53c90b92f0f67cb67a0d0f69f5"
+source = "git+https://github.com/asomers/mio-aio?rev=2a907c0278aa150a96266e5d86c168879eb0d07b#2a907c0278aa150a96266e5d86c168879eb0d07b"
 dependencies = [
  "mio",
  "nix",
@@ -1438,7 +1438,7 @@ dependencies = [
 [[package]]
 name = "tokio-file"
 version = "0.5.3-pre"
-source = "git+https://github.com/asomers/tokio-file?rev=7c4b0beed6ecb2ad8a411bb0d85b66513204eb7a#7c4b0beed6ecb2ad8a411bb0d85b66513204eb7a"
+source = "git+https://github.com/asomers/tokio-file?rev=04959b0574f9b274f56ab592cf98b5893c14ea07#04959b0574f9b274f56ab592cf98b5893c14ea07"
 dependencies = [
  "futures 0.3.5",
  "mio",
