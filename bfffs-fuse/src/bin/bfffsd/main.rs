@@ -67,7 +67,7 @@ fn main() {
             **name == poolname
         }).nth(0).unwrap().1;
 
-    let mut rt = Builder::new()
+    let rt = Builder::new()
         .threaded_scheduler()
         .enable_io()
         .enable_time()
@@ -75,9 +75,7 @@ fn main() {
         .unwrap();
     let handle = rt.handle().clone();
     let handle2 = rt.handle().clone();
-    let db = Arc::new(rt.block_on(async move {
-        dev_manager.import_by_uuid(uuid, handle).await
-    }).unwrap());
+    let db = Arc::new(dev_manager.import_by_uuid(uuid, handle).unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
     let db2 = db.clone();

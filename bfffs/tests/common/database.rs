@@ -22,14 +22,12 @@ fn open_db(rt: &mut Runtime, path: PathBuf) -> Database {
     rt.block_on(async move {
         VdevFile::open(path)
         .and_then(|(leaf, reader)| {
-                let block = VdevBlock::new(leaf);
-                let (vr, lr) = raid::open(None, vec![(block, reader)]);
-                cluster::Cluster::open(vr)
-                .map_ok(move |cluster| (cluster, lr))
-        }).and_then(move |(cluster, reader)|{
-            let proxy = ClusterProxy::new(cluster);
-            Pool::open(None, vec![(proxy, reader)])
-        }).map_ok(|(pool, reader)| {
+            let block = VdevBlock::new(leaf);
+            let (vr, lr) = raid::open(None, vec![(block, reader)]);
+            cluster::Cluster::open(vr)
+            .map_ok(move |cluster| (cluster, lr))
+        }).map_ok(move |(cluster, reader)|{
+            let (pool, reader) = Pool::open(None, vec![(cluster, reader)]);
             let cache = Cache::with_capacity(1_000_000);
             let arc_cache = Arc::new(Mutex::new(cache));
             let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
@@ -91,16 +89,10 @@ test_suite! {
             let paths = [filename.clone()];
             let mut rt = basic_runtime();
             let handle = rt.handle().clone();
-            let pool = rt.block_on(async {
-                let cs = NonZeroU64::new(1);
-                let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
-                let clusters = vec![cluster];
-                future::try_join_all(clusters)
-                .map_err(|_| unreachable!())
-                .and_then(|clusters|
-                    Pool::create(POOLNAME.to_string(), clusters)
-                ).await
-            }).unwrap();
+            let cs = NonZeroU64::new(1);
+            let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
+            let clusters = vec![cluster];
+            let pool = Pool::create(POOLNAME.to_string(), clusters);
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
@@ -187,16 +179,10 @@ test_suite! {
             let paths = [filename];
             let mut rt = basic_runtime();
             let handle = rt.handle().clone();
-            let pool = rt.block_on(async {
-                let cs = NonZeroU64::new(1);
-                let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
-                let clusters = vec![cluster];
-                future::try_join_all(clusters)
-                .map_err(|_| unreachable!())
-                .and_then(|clusters|
-                    Pool::create(POOLNAME.to_string(), clusters)
-                ).await
-            }).unwrap();
+            let cs = NonZeroU64::new(1);
+            let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
+            let clusters = vec![cluster];
+            let pool = Pool::create(POOLNAME.to_string(), clusters);
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
@@ -284,23 +270,17 @@ test_suite! {
         let file = t!(fs::File::create(&filename));
         t!(file.set_len(len));
         drop(file);
-        let db = rt.block_on(async move {
-            Pool::create_cluster(None, 1, None, 0, &[filename])
-            .map_err(|_| unreachable!())
-            .and_then(|cluster| {
-                Pool::create(String::from("database::shutdown"), vec![cluster])
-                .map_ok(|pool| {
-                    let cache = Arc::new(
-                        Mutex::new(
-                            Cache::with_capacity(1_000_000)
-                        )
-                    );
-                    let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                    let idml = IDML::create(ddml, cache);
-                    Database::create(Arc::new(idml), handle)
-                })
-            }).await
-        }).unwrap();
+        let cluster = Pool::create_cluster(None, 1, None, 0, &[filename]);
+        let pool = Pool::create(String::from("database::shutdown"),
+            vec![cluster]);
+        let cache = Arc::new(
+            Mutex::new(
+                Cache::with_capacity(1_000_000)
+            )
+        );
+        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let idml = IDML::create(ddml, cache);
+        let db = Database::create(Arc::new(idml), handle);
         rt.block_on(db.shutdown());
     }
 }

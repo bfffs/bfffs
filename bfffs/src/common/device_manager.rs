@@ -6,12 +6,10 @@ use crate::common::{Error, Uuid, cache, database, ddml, idml, label, pool,
                     raid};
 use futures::{
     Future,
-    FutureExt,
     StreamExt,
     TryFutureExt,
     TryStreamExt,
     future,
-    channel::oneshot,
     stream,
 };
 use std::{
@@ -55,7 +53,7 @@ pub struct DevManager {
 impl DevManager {
     /// Import a pool by its pool name
     pub fn import_by_name<S>(&self, name: S, handle: Handle)
-        -> impl Future<Output=Result<database::Database, Error>>
+        -> Result<database::Database, Error>
         where S: AsRef<str>
     {
         let inner = self.inner.lock().unwrap();
@@ -68,15 +66,15 @@ impl DevManager {
             }
         }).next();
         match r {
-            Some(uuid) => self.import(uuid, handle, inner).boxed(),
-            None => future::err(Error::ENOENT).boxed()
+            Some(uuid) => self.import(uuid, handle, inner),
+            None => Err(Error::ENOENT)
        }
     }
 
     /// Import a pool by its UUID
     // TODO: handle the ENOENT case
     pub fn import_by_uuid(&self, uuid: Uuid, handle: Handle)
-        -> impl Future<Output=Result<database::Database, Error>>
+        -> Result<database::Database, Error>
     {
         let inner = self.inner.lock().unwrap();
         self.import(uuid, handle, inner)
@@ -84,36 +82,24 @@ impl DevManager {
 
     /// Import a pool that is already known to exist
     fn import(&self, uuid: Uuid, handle: Handle, inner: MutexGuard<Inner>)
-        -> impl Future<Output=Result<database::Database, Error>>
+        -> Result<database::Database, Error>
     {
         let h2 = handle.clone();
         let (_pool, raids, mut leaves) = self.open_labels(uuid, inner);
-        let proxies = raids.into_iter().map(move |raid| {
+        let clusters = raids.into_iter().map(move |raid| {
             let leaf_paths: Vec<PathBuf> = leaves.remove(&raid.uuid()).unwrap();
-            let (tx, rx) = oneshot::channel();
-            handle.spawn(async move {
-                let fut = DevManager::open_cluster(leaf_paths, raid.uuid())
-                .map_ok(move |(cluster, reader)| {
-                    let proxy = pool::ClusterProxy::new(cluster);
-                    tx.send((proxy, reader))
-                        .ok().expect("channel dropped too soon");
-                }).map_err(Error::unhandled);
-                fut
+            handle.block_on(async move {
+                DevManager::open_cluster(leaf_paths, raid.uuid())
                 .await
-            });
-            rx
-        });
-        future::try_join_all(proxies).map_err(|_| Error::EPIPE)
-            .and_then(move |proxies| {
-                Pool::open(Some(uuid), proxies)
-            }).map_ok(|(pool, label_reader)| {
-                let cache = cache::Cache::with_capacity(1_000_000_000);
-                let arc_cache = Arc::new(Mutex::new(cache));
-                let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
-                let (idml, label_reader) = idml::IDML::open(ddml, arc_cache,
-                                                            label_reader);
-                database::Database::open(Arc::new(idml), h2, label_reader)
             })
+        }).collect::<Result<Vec<_>, Error>>()?;
+        let (pool, label_reader) = Pool::open(Some(uuid), clusters);
+        let cache = cache::Cache::with_capacity(1_000_000_000);
+        let arc_cache = Arc::new(Mutex::new(cache));
+        let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
+        let (idml, label_reader) = idml::IDML::open(ddml, arc_cache,
+                                                    label_reader);
+        Ok(database::Database::open(Arc::new(idml), h2, label_reader))
     }
 
     /// Import all of the clusters from a Pool.  For debugging purposes only.

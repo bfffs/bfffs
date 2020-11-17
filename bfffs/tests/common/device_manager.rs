@@ -13,14 +13,12 @@ test_suite! {
         common::idml::*,
         common::pool::*,
     };
-    use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
         fs,
         sync::{Arc, Mutex}
     };
-    use super::super::super::*;
     use tempfile::{Builder, TempDir};
     use tokio::runtime::Runtime;
 
@@ -37,7 +35,12 @@ test_suite! {
             let n = *self.n;
             let k = *self.k;
             let f = *self.f;
-            let mut rt = basic_runtime();
+            let mut rt = tokio::runtime::Builder::new()
+                .threaded_scheduler()
+                .enable_io()
+                .enable_time()
+                .build()
+                .unwrap();
             let len = 1 << 30;  // 1GB
             let tempdir =
                 t!(Builder::new().prefix("test_device_manager").tempdir());
@@ -49,19 +52,13 @@ test_suite! {
             }).collect::<Vec<_>>();
             let pathsclone = paths.clone();
             let handle = rt.handle().clone();
-            let db = rt.block_on(async move {
-                Pool::create_cluster(None, k, None, f, &paths)
-                .map_err(|_| unreachable!())
-                .and_then(|cluster| {
-                    Pool::create(String::from("test_device_manager"),
-                                 vec![cluster])
-                }).map_ok(|pool| {
-                    let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
-                    let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                    let idml = Arc::new(IDML::create(ddml, cache));
-                    Database::create(idml, handle)
-                }).await
-            }).unwrap();
+            let cluster = Pool::create_cluster(None, k, None, f, &paths);
+            let pool = Pool::create(String::from("test_device_manager"),
+                vec![cluster]);
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let idml = Arc::new(IDML::create(ddml, cache));
+            let db = Database::create(idml, handle);
             rt.block_on(
                 db.sync_transaction()
             ).unwrap();
@@ -77,29 +74,24 @@ test_suite! {
 
     // Import a single pool by its name.  Try both single-disk and raid pools
     test import_by_name(mocks) {
-        let (mut rt, dm, paths, _tempdir) = mocks.val;
+        let (rt, dm, paths, _tempdir) = mocks.val;
         for path in paths.iter() {
             dm.taste(path);
         }
         let handle = rt.handle().clone();
-        let _db = rt.block_on(async move {
-            dm.import_by_name("test_device_manager", handle)
-            .await
-        }).unwrap();
+        let _db = dm.import_by_name("test_device_manager", handle).unwrap();
     }
 
     // Import a single pool by its UUID
     test import_by_uuid(mocks) {
-        let (mut rt, dm, paths, _tempdir) = mocks.val;
+        let (rt, dm, paths, _tempdir) = mocks.val;
         for path in paths.iter() {
             dm.taste(path);
         }
         let (name, uuid) = dm.importable_pools().pop().unwrap();
         assert_eq!(name, "test_device_manager");
         let handle = rt.handle().clone();
-        let _db = rt.block_on(async move {
-            dm.import_by_uuid(uuid, handle).await
-        }).unwrap();
+        let _db = dm.import_by_uuid(uuid, handle).unwrap();
     }
 
     /// DeviceManager::import_clusters on a single pool

@@ -41,13 +41,13 @@ pub fn main(args: &clap::ArgMatches) {
 
     let mut rt = runtime();
     let handle = rt.handle().clone();
-    let db = Arc::new(rt.block_on(async move {
+    let db = Arc::new(
         dev_manager.import_by_name(poolname, handle)
         .unwrap_or_else(|_e| {
             eprintln!("Error: pool not found");
             exit(1);
-        }).await
-    }));
+        })
+    );
     rt.block_on(async {
         db.check().await
     }).unwrap();
@@ -82,16 +82,15 @@ fn dump_tree<P: AsRef<Path>>(poolname: String, disks: &[P]) {
     for disk in disks {
         dev_manager.taste(disk);
     }
-    let mut rt = runtime();
+    let rt = runtime();
     let handle = rt.handle().clone();
-    let db = Arc::new(rt.block_on(async move {
+    let db = Arc::new(
         dev_manager.import_by_name(poolname, handle)
-        .await
         .unwrap_or_else(|_e| {
             eprintln!("Error: pool not found");
             exit(1);
         })
-    }));
+    );
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
     db.dump(&mut std::io::stdout(), tree_id).unwrap()
@@ -121,10 +120,11 @@ pub fn main(args: &clap::ArgMatches) {
 mod pool {
 use bfffs::common::BYTES_PER_LBA;
 use bfffs::common::cache::Cache;
+use bfffs::common::cluster::Cluster;
 use bfffs::common::database::*;
 use bfffs::common::ddml::DDML;
 use bfffs::common::idml::IDML;
-use bfffs::common::pool::{ClusterProxy, Pool};
+use bfffs::common::pool::Pool;
 use std::{
     convert::TryFrom,
     num::NonZeroU64,
@@ -197,7 +197,7 @@ fn create(args: &clap::ArgMatches) {
 }
 
 struct Builder {
-    clusters: Vec<ClusterProxy>,
+    clusters: Vec<Cluster>,
     name: String,
     properties: Vec<Property>,
     rt: Runtime,
@@ -251,9 +251,7 @@ impl Builder {
     fn do_create_cluster(&mut self, k: i16, f: i16, devs: &[&str])
     {
         let zone_size = self.zone_size;
-        let c = self.rt.block_on(async move {
-            Pool::create_cluster(None, k, zone_size, f, devs).await
-        }).unwrap();
+        let c = Pool::create_cluster(None, k, zone_size, f, devs);
         self.clusters.push(c);
     }
 
@@ -262,15 +260,13 @@ impl Builder {
         let name = self.name.clone();
         let clusters = self.clusters.drain(..).collect();
         let handle = self.rt.handle().clone();
-        let db = self.rt.block_on(async move {
-            Pool::create(name, clusters)
-            .map_ok(|pool| {
-                let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
-                let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                let idml = Arc::new(IDML::create(ddml, cache));
-                Database::create(idml, handle)
-            }).await
-        }).unwrap();
+        let db = {
+            let pool = Pool::create(name, clusters);
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let idml = Arc::new(IDML::create(ddml, cache));
+            Database::create(idml, handle)
+        };
         let props = self.properties.clone();
         self.rt.block_on(async move {
             db.new_fs(props)

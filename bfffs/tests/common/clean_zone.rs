@@ -43,21 +43,17 @@ test_suite! {
             t!(file.set_len(*self.devsize));
             drop(file);
             let zone_size = NonZeroU64::new(*self.zone_size);
-            let db = rt.block_on(async move {
-                let cluster = Pool::create_cluster(None, 1, zone_size, 0,
-                                                   &[filename])
-                    .await.unwrap();
-                let pool = Pool::create(String::from("test_fs"), vec![cluster])
-                    .await.unwrap();
-                let cache = Arc::new(
-                    Mutex::new(
-                        Cache::with_capacity(32_000_000)
-                    )
-                );
-                let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                let idml = IDML::create(ddml, cache);
-                Arc::new(Database::create(Arc::new(idml), handle))
-            });
+            let cluster = Pool::create_cluster(None, 1, zone_size, 0,
+                                               &[filename]);
+            let pool = Pool::create(String::from("test_fs"), vec![cluster]);
+            let cache = Arc::new(
+                Mutex::new(
+                    Cache::with_capacity(32_000_000)
+                )
+            );
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let idml = IDML::create(ddml, cache);
+            let db = Arc::new(Database::create(Arc::new(idml), handle));
             let handle = rt.handle().clone();
             let (db, tree_id) = rt.block_on(async move {
                 let tree_id = db.new_fs(Vec::new())
