@@ -213,11 +213,6 @@ impl DDML {
         self.put_common(cacheref, compression, txg)
     }
 
-    /// Shutdown all background tasks.
-    pub fn shutdown(&self) {
-        self.pool.shutdown()
-    }
-
     /// Return approximately the usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
         self.pool.size()
@@ -321,7 +316,6 @@ mock! {
                          txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<DRP, Error>> + Send>>
             where T: borrow::Borrow<dyn CacheRef>;
-        pub fn shutdown(&self);
         pub fn size(&self) -> LbaT;
         pub fn write_label(&self, labeller: LabelWriter)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;

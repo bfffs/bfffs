@@ -332,10 +332,6 @@ impl Pool {
         Box::pin(fut)
     }
 
-    /// Shutdown all background tasks.
-    // TODO: remove this function, since it no longer does anything
-    pub fn shutdown(&self) {}
-
     /// Return approximately the Pool's usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
         self.stats.size()

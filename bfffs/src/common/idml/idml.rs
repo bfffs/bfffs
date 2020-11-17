@@ -328,11 +328,6 @@ impl<'a> IDML {
             })  // LCOV_EXCL_LINE   kcov false negative
     }
 
-    /// Shutdown all background tasks.
-    pub fn shutdown(&self) {
-        self.ddml.shutdown()
-    }
-
     /// Return approximately the usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
         self.ddml.size()
@@ -567,7 +562,6 @@ mock!{
             -> Pin<Box<dyn Stream<Item=Result<ClosedZone, Error>> + Send>>;
         pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
                      mut label_reader: LabelReader) -> (Self, LabelReader);
-        pub fn shutdown(&self);
         pub fn size(&self) -> LbaT;
         // Return a static reference instead of a RwLockReadFut because it makes
         // the expectations easier to write
