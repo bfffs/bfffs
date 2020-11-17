@@ -7,7 +7,7 @@ use crate::{
         vdev::*,
     }
 };
-use futures::{Future, Stream, TryFutureExt, TryStreamExt, future, stream};
+use futures::{Future, TryFutureExt, future};
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::mock;
 use std::{
@@ -72,13 +72,12 @@ impl DDML {
     }
 
     /// List all closed zones in the `DDML` in no particular order
-    // TODO: convert from a Stream to an Iterator
     pub fn list_closed_zones(&self)
-        -> impl Stream<Item=Result<ClosedZone, Error>> + Send
+        -> impl Iterator<Item=ClosedZone> + Send
     {
         let mut next = (0, 0);
         let pool = self.pool.clone();
-        let iter = iter::from_fn(move || {
+        iter::from_fn(move || {
             loop {
                 match pool.find_closed_zone(next.0, next.1) {
                     (Some(pclz), Some((c, z))) => {
@@ -93,8 +92,7 @@ impl DDML {
                     (None, None) => {break None;}
                 }
             }
-        }).map(Ok);
-        stream::iter(iter)
+        })
     }
 
     /// Read a record from disk
@@ -300,7 +298,7 @@ mock! {
         pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
             -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
         pub fn list_closed_zones(&self)
-            -> Pin<Box<dyn Stream<Item=Result<ClosedZone, Error>> + Send>>;
+            -> Box<dyn Iterator<Item=ClosedZone> + Send>;
         pub fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
         pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
             -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
@@ -572,9 +570,7 @@ mod ddml {
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
 
         let closed_zones: Vec<ClosedZone> = ddml.list_closed_zones()
-            .try_collect()
-            .now_or_never().unwrap()
-            .unwrap();
+            .collect();
         let expected = vec![clz0, clz1, clz2];
         assert_eq!(closed_zones, expected);
     }

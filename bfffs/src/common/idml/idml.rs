@@ -215,7 +215,7 @@ impl<'a> IDML {
     pub fn list_closed_zones(&self)
         -> impl Stream<Item=Result<ClosedZone, Error>> + Send
     {
-        self.ddml.list_closed_zones()
+        futures::stream::iter(self.ddml.list_closed_zones().map(Ok))
     }
 
     /// Return a list of all active (not deleted) indirect Records that have
