@@ -276,11 +276,8 @@ test_suite! {
                 idml3.txg()
                 .then(move |txg| {
                     let idml5 = idml3.clone();
-                    idml3.list_closed_zones()
-                    .take(1)
-                    .try_for_each(move  |cz| {
-                        idml5.clean_zone(cz, *txg).boxed()
-                    })
+                    let cz = idml3.list_closed_zones().next().unwrap();
+                    idml5.clean_zone(cz, *txg)
                 })
             }).and_then(move |_| {
                 idml4.check()

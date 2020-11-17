@@ -213,9 +213,9 @@ impl<'a> IDML {
     }
 
     pub fn list_closed_zones(&self)
-        -> impl Stream<Item=Result<ClosedZone, Error>> + Send
+        -> impl Iterator<Item=ClosedZone> + Send
     {
-        futures::stream::iter(self.ddml.list_closed_zones().map(Ok))
+        self.ddml.list_closed_zones()
     }
 
     /// Return a list of all active (not deleted) indirect Records that have
@@ -559,7 +559,7 @@ mock!{
         pub fn flush(&self, idx: u32, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
         pub fn list_closed_zones(&self)
-            -> Pin<Box<dyn Stream<Item=Result<ClosedZone, Error>> + Send>>;
+            -> impl Iterator<Item=ClosedZone> + Send;
         pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
                      mut label_reader: LabelReader) -> (Self, LabelReader);
         pub fn size(&self) -> LbaT;
