@@ -245,18 +245,12 @@ impl Pool {
     ///                          supplying `x`
     /// * `(None, None)`       - No more closed zones in this pool.
     #[allow(clippy::collapsible_if)]
-    // TODO: return an immediate value, not a future
     pub fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
-        -> Pin<Box<
-            dyn Future<
-                Output=Result<(Option<ClosedZone>, Option<(ClusterT, ZoneT)>),
-                              Error>
-            > + Send
-        >>
+        -> (Option<ClosedZone>, Option<(ClusterT, ZoneT)>)
     {
         let nclusters = self.clusters.len() as ClusterT;
         let r = self.clusters[clust as usize].find_closed_zone(zid);
-        let result = if let Some(cclz) = r {
+        if let Some(cclz) = r {
             // convert cluster::ClosedZone to pool::ClosedZone
             let pclz = ClosedZone {
                 freed_blocks: cclz.freed_blocks,
@@ -274,8 +268,7 @@ impl Pool {
                 // No more clusters
                 (None, None)
             }
-        };
-        future::ok(result).boxed()
+        }
     }
 
     /// Return the `Pool`'s name.
@@ -455,35 +448,34 @@ mod pool {
             c.expect_uuid().return_const(Uuid::new_v4());
             c
         };
-        let mut rt = basic_runtime();
         let clusters = vec![ cluster(), cluster() ];
         let pool =  Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
-        let r0 = rt.block_on(pool.find_closed_zone(0, 0)).unwrap();
+        let r0 = pool.find_closed_zone(0, 0);
         assert_eq!(r0.0, Some(ClosedZone{pba: PBA::new(0, 10), freed_blocks: 5,
             total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1), zid: 1}));
 
         let (clust, zid) = r0.1.unwrap();
-        let r1 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();
+        let r1 = pool.find_closed_zone(clust, zid);
         assert_eq!(r1.0, Some(ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6,
             total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3), zid: 3}));
 
         let (clust, zid) = r1.1.unwrap();
-        let r2 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();
+        let r2 = pool.find_closed_zone(clust, zid);
         assert!(r2.0.is_none());
 
         let (clust, zid) = r2.1.unwrap();
-        let r3 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();
+        let r3 = pool.find_closed_zone(clust, zid);
         assert_eq!(r3.0, Some(ClosedZone{pba: PBA::new(1, 10), freed_blocks: 5,
             total_blocks: 10, txgs: TxgT::from(0)..TxgT::from(1), zid: 1}));
 
         let (clust, zid) = r3.1.unwrap();
-        let r4 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();
+        let r4 = pool.find_closed_zone(clust, zid);
         assert_eq!(r4.0, Some(ClosedZone{pba: PBA::new(1, 30), freed_blocks: 6,
             total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3), zid: 3}));
 
         let (clust, zid) = r4.1.unwrap();
-        let r5 = rt.block_on(pool.find_closed_zone(clust, zid)).unwrap();
+        let r5 = pool.find_closed_zone(clust, zid);
         assert_eq!(r5, (None, None));
     }
 

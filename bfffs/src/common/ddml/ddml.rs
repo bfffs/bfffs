@@ -13,6 +13,7 @@ use metrohash::MetroHash64;
 use std::{
     borrow,
     hash::Hasher,
+    iter,
     pin::Pin,
     sync::{Arc, Mutex}
 };
@@ -71,38 +72,29 @@ impl DDML {
     }
 
     /// List all closed zones in the `DDML` in no particular order
+    // TODO: convert from a Stream to an Iterator
     pub fn list_closed_zones(&self)
         -> impl Stream<Item=Result<ClosedZone, Error>> + Send
     {
-        struct State {
-            pool: Arc<Pool>,
-            cluster: ClusterT,
-            zid: ZoneT
-        };
-
-        let initial = Some(State{pool: self.pool.clone(), cluster: 0, zid: 0});
-        stream::try_unfold(initial, |state| async {
-            if let Some(s) = state {
-                let fut = s.pool.find_closed_zone(s.cluster, s.zid)
-                .map_ok(|r| {
-                    match r {
-                        (Some(pclz), Some((c, z))) => {
-                            let next = State{pool: s.pool, cluster: c, zid: z};
-                            Some((Some(pclz), Some(next)))
-                        },
-                        (Some(_), None) => unreachable!(),  // LCOV_EXCL_LINE
-                        (None, Some((c, z))) => {
-                            let next = State{pool: s.pool, cluster: c, zid: z};
-                            Some((None, Some(next)))
-                        },
-                        (None, None) => Some((None, None))
-                    }
-                }); // LCOV_EXCL_LINE   kcov false negative
-                fut.await
-            } else {
-                Ok(None)
+        let mut next = (0, 0);
+        let pool = self.pool.clone();
+        let iter = iter::from_fn(move || {
+            loop {
+                match pool.find_closed_zone(next.0, next.1) {
+                    (Some(pclz), Some((c, z))) => {
+                        next = (c, z);
+                        break Some(pclz);
+                    },
+                    (Some(_), None) => unreachable!(),  // LCOV_EXCL_LINE
+                    (None, Some((c, z))) => {
+                        next = (c, z);
+                        continue;
+                    },
+                    (None, None) => {break None;}
+                }
             }
-        }).try_filter_map(future::ok)
+        }).map(Ok);
+        stream::iter(iter)
     }
 
     /// Read a record from disk
@@ -547,29 +539,23 @@ mod ddml {
         let clz0_1 = clz0.clone();
         pool.expect_find_closed_zone()
             .with(eq(0), eq(0))
-            .return_once(move |_, _| {
-                let next = Some((0, 11));
-                Box::pin(future::ok((Some(clz0_1), next)))
-            });
+            .return_once(move |_, _| (Some(clz0_1), Some((0, 11))));
 
         let clz1 = ClosedZone{pba: PBA::new(0, 30), freed_blocks: 6, zid: 1,
             total_blocks: 10, txgs: TxgT::from(2)..TxgT::from(3)};
         let clz1_1 = clz1.clone();
         pool.expect_find_closed_zone()
             .with(eq(0), eq(11))
-            .return_once(move |_, _| {
-                let next = Some((0, 31));
-                Box::pin(future::ok((Some(clz1_1), next)))
-            });
+            .return_once(move |_, _| (Some(clz1_1), Some((0, 31))));
 
         pool.expect_find_closed_zone()
             .with(eq(0), eq(31))
-            .return_once(|_, _| Box::pin(future::ok((None, Some((1, 0))))));
+            .return_once(|_, _| (None, Some((1, 0))));
 
         // The second cluster has no closed zones
         pool.expect_find_closed_zone()
             .with(eq(1), eq(0))
-            .return_once(|_, _| Box::pin(future::ok((None, Some((2, 0))))));
+            .return_once(|_, _| (None, Some((2, 0))));
 
         // The third cluster has one closed zone
         let clz2 = ClosedZone{pba: PBA::new(2, 10), freed_blocks: 5, zid: 2,
@@ -577,12 +563,11 @@ mod ddml {
         let clz2_1 = clz2.clone();
         pool.expect_find_closed_zone()
             .with(eq(2), eq(0))
-            .return_once(move |_, _|
-            Box::pin(future::ok((Some(clz2_1), Some((2, 11))))));
+            .return_once(move |_, _| (Some(clz2_1), Some((2, 11))));
 
         pool.expect_find_closed_zone()
             .with(eq(2), eq(11))
-            .return_once(|_, _| Box::pin(future::ok((None, None))));
+            .return_once(|_, _| (None, None));
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
 
