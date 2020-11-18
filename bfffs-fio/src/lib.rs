@@ -185,7 +185,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
 {
     let mut fs = FS.lock().unwrap();
     if fs.is_none() {
-        let mut rt = RUNTIME.lock().unwrap();
+        let rt = RUNTIME.lock().unwrap();
         let opts = (*td).eo as *mut BfffsOptions;
         if opts as isize != -1 {
             let (pool, vdevs) = {
@@ -209,9 +209,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
                 dev_manager.taste(borrowed_vdev);
             }
             let handle = rt.handle().clone();
-            let r = rt.block_on(async move {
-                dev_manager.import_by_name(pool, handle).await
-            });
+            let r = dev_manager.import_by_name(pool, handle);
             if let Ok(db) = r {
                 let adb = Arc::new(db);
                 // For now, hardcode tree_id to 0

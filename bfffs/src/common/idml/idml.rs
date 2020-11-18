@@ -213,7 +213,7 @@ impl<'a> IDML {
     }
 
     pub fn list_closed_zones(&self)
-        -> impl Stream<Item=Result<ClosedZone, Error>> + Send
+        -> impl Iterator<Item=ClosedZone> + Send
     {
         self.ddml.list_closed_zones()
     }
@@ -326,11 +326,6 @@ impl<'a> IDML {
                     .map_ok(move |_| drp)
                 })
             })  // LCOV_EXCL_LINE   kcov false negative
-    }
-
-    /// Shutdown all background tasks.
-    pub fn shutdown(&self) {
-        self.ddml.shutdown()
     }
 
     /// Return approximately the usable storage space in LBAs.
@@ -564,10 +559,9 @@ mock!{
         pub fn flush(&self, idx: u32, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
         pub fn list_closed_zones(&self)
-            -> Pin<Box<dyn Stream<Item=Result<ClosedZone, Error>> + Send>>;
+            -> impl Iterator<Item=ClosedZone> + Send;
         pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
                      mut label_reader: LabelReader) -> (Self, LabelReader);
-        pub fn shutdown(&self);
         pub fn size(&self) -> LbaT;
         // Return a static reference instead of a RwLockReadFut because it makes
         // the expectations easier to write

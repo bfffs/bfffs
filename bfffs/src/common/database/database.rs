@@ -551,7 +551,6 @@ impl Database {
         future::join(self.syncer.shutdown(),
                      self.cleaner.shutdown())
         .await;
-        self.inner.idml.shutdown();
     }
 
     /// Finish the current transaction group and start a new one.
@@ -706,10 +705,7 @@ mod database {
 
     #[test]
     fn shutdown() {
-        let mut idml = IDML::default();
-        idml.expect_shutdown()
-            .once()
-            .return_const(());
+        let idml = IDML::default();
         let forest = Tree::default();
 
         let mut rt = basic_runtime();

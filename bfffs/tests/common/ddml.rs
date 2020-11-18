@@ -11,7 +11,7 @@ test_suite! {
         TxgT
     };
     use divbuf::{DivBuf, DivBufShared};
-    use futures::{TryFutureExt, future};
+    use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
@@ -32,18 +32,12 @@ test_suite! {
             let filename = tempdir.path().join("vdev");
             let file = t!(fs::File::create(&filename));
             t!(file.set_len(len));
-            let mut rt = basic_runtime();
-            let pool = rt.block_on(async {
-                let cs = NonZeroU64::new(1);
-                let clusters = vec![
-                    Pool::create_cluster(cs, 1, None, 0, &[filename][..])
-                ];
-                future::try_join_all(clusters)
-                    .map_err(|_| unreachable!())
-                    .and_then(|clusters|
-                        Pool::create("TestPool".to_string(), clusters)
-                    ).await
-            }).unwrap();
+            let rt = basic_runtime();
+            let cs = NonZeroU64::new(1);
+            let clusters = vec![
+                Pool::create_cluster(cs, 1, None, 0, &[filename][..])
+            ];
+            let pool = Pool::create("TestPool".to_string(), clusters);
             let cache = Cache::with_capacity(1_000_000_000);
             (rt, DDML::new(pool, Arc::new(Mutex::new(cache))))
         }

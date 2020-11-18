@@ -16,7 +16,6 @@ test_suite! {
         common::pool::*,
         common::property::*
     };
-    use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use rand::{Rng, thread_rng};
@@ -56,18 +55,11 @@ test_suite! {
             drop(file);
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
             let cache2 = cache.clone();
-            let db = rt.block_on(async move {
-                Pool::create_cluster(None, 1, None, 0, &[filename])
-                .map_err(|_| unreachable!())
-                .and_then(|cluster| {
-                    Pool::create(String::from("test_fs"), vec![cluster])
-                    .map_ok(|pool| {
-                        let ddml = Arc::new(DDML::new(pool, cache2.clone()));
-                        let idml = IDML::create(ddml, cache2);
-                        Arc::new(Database::create(Arc::new(idml), handle))
-                    })
-                }).await
-            }).unwrap();
+            let cluster = Pool::create_cluster(None, 1, None, 0, &[filename]);
+            let pool = Pool::create(String::from("test_fs"), vec![cluster]);
+            let ddml = Arc::new(DDML::new(pool, cache2.clone()));
+            let idml = IDML::create(ddml, cache2);
+            let db = Arc::new(Database::create(Arc::new(idml), handle));
             let handle = rt.handle().clone();
             let props = self.props.clone();
             let (db, tree_id) = rt.block_on(async move {
@@ -2560,7 +2552,6 @@ test_suite! {
         common::idml::*,
         common::pool::*,
     };
-    use futures::TryFutureExt;
     use galvanic_test::*;
     use log::*;
     use pretty_assertions::assert_eq;
@@ -2801,23 +2792,17 @@ test_suite! {
             t!(file.set_len(len));
             drop(file);
             let zone_size = NonZeroU64::new(*self.zone_size);
-            let db = rt.block_on(async move {
-                Pool::create_cluster(None, 1, zone_size, 0, &[filename])
-                .map_err(|_| unreachable!())
-                .and_then(|cluster| {
-                    Pool::create(String::from("test_fs"), vec![cluster])
-                    .map_ok(|pool| {
-                        let cache = Arc::new(
-                            Mutex::new(
-                                Cache::with_capacity(32_000_000)
-                            )
-                        );
-                        let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                        let idml = IDML::create(ddml, cache);
-                        Arc::new(Database::create(Arc::new(idml), handle))
-                    })
-                }).await
-            }).unwrap();
+            let cluster = Pool::create_cluster(None, 1, zone_size, 0,
+                                               &[filename]);
+            let pool = Pool::create(String::from("test_fs"), vec![cluster]);
+            let cache = Arc::new(
+                Mutex::new(
+                    Cache::with_capacity(32_000_000)
+                )
+            );
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let idml = IDML::create(ddml, cache);
+            let db = Arc::new(Database::create(Arc::new(idml), handle));
             let handle = rt.handle().clone();
             let (db, tree_id) = rt.block_on(async move {
                 let tree_id = db.new_fs(Vec::new()).await.unwrap();

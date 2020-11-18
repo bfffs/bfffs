@@ -65,24 +65,22 @@ impl SyncCleaner {
         -> impl Future<Output=Result<Vec<ClosedZone>, Error>> + Send
     {
         let threshold = self.threshold;
-        self.idml.list_closed_zones()
-        .try_filter(move |z| {
+        let mut zones = self.idml.list_closed_zones()
+        .filter(move |z| {
             let dirtiness = z.freed_blocks as f32 / z.total_blocks as f32;
-            future::ready(dirtiness >= threshold)
-        }).try_collect()
-        .map_ok(|mut zones: Vec<ClosedZone>| {
-            // Sort by highest percentage of free space to least
-            // TODO: optimize for the case where all zones have equal size,
-            // removing the division.
-            zones.sort_unstable_by(|a, b| {
-                // Annoyingly, f32 only implements PartialOrd, not Ord.  So we
-                // have to define a comparator function.
-                let afrac = -(a.freed_blocks as f32 / a.total_blocks as f32);
-                let bfrac = -(b.freed_blocks as f32 / b.total_blocks as f32);
-                afrac.partial_cmp(&bfrac).unwrap()
-            });
-            zones
-        })
+            dirtiness >= threshold
+        }).collect::<Vec<ClosedZone>>();
+        // Sort by highest percentage of free space to least
+        // TODO: optimize for the case where all zones have equal size,
+        // removing the division.
+        zones.sort_unstable_by(|a, b| {
+            // Annoyingly, f32 only implements PartialOrd, not Ord.  So we
+            // have to define a comparator function.
+            let afrac = -(a.freed_blocks as f32 / a.total_blocks as f32);
+            let bfrac = -(b.freed_blocks as f32 / b.total_blocks as f32);
+            afrac.partial_cmp(&bfrac).unwrap()
+        });
+        future::ok(zones)
     }
 }
 
@@ -172,7 +170,7 @@ fn background() {
                 ClosedZone{freed_blocks: 0, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::pin(stream::iter(czs.into_iter()).map(Ok))
+            Box::new(czs.into_iter())
         });
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
@@ -201,7 +199,7 @@ fn no_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 1, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::pin(stream::iter(czs.into_iter()).map(Ok))
+            Box::new(czs.into_iter())
         });
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
@@ -223,7 +221,7 @@ fn one_sufficiently_dirty_zone() {
                 ClosedZone{freed_blocks: 55, total_blocks: 100, zid: 0,
                     pba: PBA::new(0, 0), txgs: TxgT::from(0)..TxgT::from(1)}
             ];
-            Box::pin(stream::iter(czs.into_iter()).map(Ok))
+            Box::new(czs.into_iter())
         });
     idml.expect_txg()
         .once()
@@ -257,7 +255,7 @@ fn two_sufficiently_dirty_zones() {
                 ClosedZone{freed_blocks: 75, total_blocks: 100, zid: 2,
                     pba: PBA::new(2, 0), txgs: TxgT::from(1)..TxgT::from(2)},
             ];
-            Box::pin(stream::iter(czs.into_iter()).map(Ok))
+            Box::new(czs.into_iter())
         });
     idml.expect_txg()
         .once()

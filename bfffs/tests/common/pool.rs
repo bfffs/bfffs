@@ -53,18 +53,12 @@ test_suite! {
                 t!(file.set_len(len));
                 fname
             }).collect::<Vec<_>>();
-            let mut rt = basic_runtime();
-            let pool = rt.block_on(async {
-                let clusters = paths.iter().map(|p| {
-                    let cs = NonZeroU64::new(1);
-                    Pool::create_cluster(cs, 1, None, 0, &[p][..])
-                }).collect::<Vec<_>>();
-                future::try_join_all(clusters)
-                    .map_err(|_| unreachable!())
-                    .and_then(|clusters|
-                        Pool::create("TestPool".to_string(), clusters)
-                    ).await
-            }).unwrap();
+            let rt = basic_runtime();
+            let clusters = paths.iter().map(|p| {
+                let cs = NonZeroU64::new(1);
+                Pool::create_cluster(cs, 1, None, 0, &[p][..])
+            }).collect::<Vec<_>>();
+            let pool = Pool::create("TestPool".to_string(), clusters);
             (rt, pool, tempdir, paths)
         }
     });
@@ -96,11 +90,9 @@ test_suite! {
                     .map_ok(move |cluster| (cluster, lr))
             });
             future::try_join(c0_fut, c1_fut)
-                .and_then(move |((c0, c0r), (c1,c1r))| {
-                    let proxy0 = ClusterProxy::new(c0);
-                    let proxy1 = ClusterProxy::new(c1);
-                    Pool::open(Some(uuid), vec![(proxy0, c0r), (proxy1,c1r)])
-                }).await
+            .map_ok(move |((c0, c0r), (c1,c1r))| {
+                Pool::open(Some(uuid), vec![(c0, c0r), (c1,c1r)])
+            }).await
         }).unwrap();
         assert_eq!(name, pool.name());
         assert_eq!(uuid, pool.uuid());

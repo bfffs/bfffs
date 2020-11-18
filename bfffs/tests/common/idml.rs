@@ -13,7 +13,7 @@ test_suite! {
     use bfffs::common::idml::*;
     use bfffs::common::label::*;
     use bfffs::common::vdev_file::*;
-    use futures::{TryFutureExt, future};
+    use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
@@ -119,17 +119,11 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename.clone()];
-            let mut rt = basic_runtime();
-            let pool = rt.block_on(async {
-                let cs = NonZeroU64::new(1);
-                let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
-                let clusters = vec![cluster];
-                future::try_join_all(clusters)
-                .map_err(|_| unreachable!())
-                .and_then(|clusters|
-                    Pool::create(POOLNAME.to_string(), clusters)
-                ).await
-            }).unwrap();
+            let rt = basic_runtime();
+            let cs = NonZeroU64::new(1);
+            let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
+            let clusters = vec![cluster];
+            let pool = Pool::create(POOLNAME.to_string(), clusters);
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
@@ -157,14 +151,12 @@ test_suite! {
         let _idml = rt.block_on(async {
             VdevFile::open(path)
             .and_then(|(leaf, reader)| {
-                    let block = VdevBlock::new(leaf);
-                    let (vr, lr) = raid::open(None, vec![(block, reader)]);
-                    cluster::Cluster::open(vr)
-                    .map_ok(move |cluster| (cluster, lr))
-            }).and_then(move |(cluster, reader)|{
-                let proxy = ClusterProxy::new(cluster);
-                Pool::open(None, vec![(proxy, reader)])
-            }).map_ok(|(pool, reader)| {
+                let block = VdevBlock::new(leaf);
+                let (vr, lr) = raid::open(None, vec![(block, reader)]);
+                cluster::Cluster::open(vr)
+                .map_ok(move |cluster| (cluster, lr))
+            }).map_ok(move |(cluster, reader)|{
+                let (pool, reader) = Pool::open(None, vec![(cluster, reader)]);
                 let cache = cache::Cache::with_capacity(1_000_000);
                 let arc_cache = Arc::new(Mutex::new(cache));
                 let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
@@ -219,7 +211,6 @@ test_suite! {
         StreamExt,
         TryFutureExt,
         TryStreamExt,
-        future,
         stream
     };
     use galvanic_test::*;
@@ -246,18 +237,12 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename];
-            let mut rt = basic_runtime();
-            let pool = rt.block_on(async {
-                let cs = NonZeroU64::new(1);
-                let lpz = NonZeroU64::new(LBA_PER_ZONE);
-                let cluster = Pool::create_cluster(cs, 1, lpz, 0, &paths);
-                let clusters = vec![cluster];
-                future::try_join_all(clusters)
-                .map_err(|_| unreachable!())
-                .and_then(|clusters|
-                    Pool::create(POOLNAME.to_string(), clusters)
-                ).await
-            }).unwrap();
+            let rt = basic_runtime();
+            let cs = NonZeroU64::new(1);
+            let lpz = NonZeroU64::new(LBA_PER_ZONE);
+            let cluster = Pool::create_cluster(cs, 1, lpz, 0, &paths);
+            let clusters = vec![cluster];
+            let pool = Pool::create(POOLNAME.to_string(), clusters);
             let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = IDML::create(ddml, cache);
@@ -291,11 +276,8 @@ test_suite! {
                 idml3.txg()
                 .then(move |txg| {
                     let idml5 = idml3.clone();
-                    idml3.list_closed_zones()
-                    .take(1)
-                    .try_for_each(move  |cz| {
-                        idml5.clean_zone(cz, *txg).boxed()
-                    })
+                    let cz = idml3.list_closed_zones().next().unwrap();
+                    idml5.clean_zone(cz, *txg)
                 })
             }).and_then(move |_| {
                 idml4.check()
