@@ -745,6 +745,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let rrf3 = rrf.clone();
         let mut rt = runtime::Builder::new()
             .basic_scheduler()
+            .enable_io()
             .build()
             .unwrap();
         let fut = self.read()
