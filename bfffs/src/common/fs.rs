@@ -2189,7 +2189,10 @@ fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
             let source = PropertySource::Default;
             future::ok((prop, source)).boxed()
         });
-    let tree_id = rt.block_on(db.new_fs(Vec::new())).unwrap();
+    // Use a small recordsize for most tests, because it's faster to test
+    // conditions that require multiple records.
+    let props = vec![Property::RecordSize(12)];
+    let tree_id = rt.block_on(db.new_fs(props)).unwrap();
     (rt, db, tree_id)
 }
 
@@ -2249,7 +2252,7 @@ fn create() {
             key.is_inode() &&
             value.as_inode().unwrap().size == 0 &&
             value.as_inode().unwrap().nlink == 1 &&
-            value.as_inode().unwrap().file_type == FileType::Reg(12) &&
+            value.as_inode().unwrap().file_type == FileType::Reg(17) &&
             value.as_inode().unwrap().perm == 0o644 &&
             value.as_inode().unwrap().uid == 123 &&
             value.as_inode().unwrap().gid == 456

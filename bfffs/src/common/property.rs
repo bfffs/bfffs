@@ -27,7 +27,7 @@ pub enum Property {
     ///
     /// Units are in bytes, log base 2.  So `RecordSize(16)` means 16KB records.
     /// BFFFS will usually divide files into blocks of this many bytes.  But the
-    /// record size is only advisory.  The default is 4KB.
+    /// record size is only advisory.  The default is 128KB.
     RecordSize(u8),
 }
 
@@ -35,7 +35,7 @@ impl Property {
     pub fn default_value(name: PropertyName) -> Self {
         match name {
             PropertyName::Atime => Property::Atime(true),
-            PropertyName::RecordSize => Property::RecordSize(12), // 4KB
+            PropertyName::RecordSize => Property::RecordSize(17), // 128KB
             PropertyName::Invalid => panic!("Invalid props have no values")
         }
     }
