@@ -35,7 +35,9 @@ test_suite! {
     fixture!( mocks(props: Vec<Property>)
               -> (Fs, Runtime, Arc<Mutex<Cache>>, Arc<Database>, TreeID)
     {
-        params { vec![Vec::new()].into_iter() }
+        // Use a small recordsize for most tests, because it's faster to test
+        // conditions that require multiple records.
+        params { vec![vec![Property::RecordSize(12)]].into_iter() }
 
         setup(&mut self) {
             // Fs::new requires the threaded scheduler, so background threads
@@ -263,9 +265,9 @@ test_suite! {
         assert_ts_changed(&mocks.val.0, &fd, false, false, false, false);
     }
 
-    // Dumps a nearly FS tree.  All of the real work is done in Tree::dump, so
-    // the bulk of testing is in the tree tests.
-    test dump(mocks) {
+    // Dumps a nearly empty FS tree.  All of the real work is done in
+    // Tree::dump, so the bulk of testing is in the tree tests.
+    test dump(mocks(vec![])) {
         let root = mocks.val.0.root();
         clear_timestamps(&mocks.val.0, &root);
         mocks.val.0.sync();
@@ -1175,6 +1177,7 @@ root:
         assert_eq!(Ok(4096), r);
 
         let sglist = mocks.val.0.read(&fd, 0, 8192).unwrap();
+        assert_eq!(2, sglist.len(), "Read didn't span multiple records");
         let db0 = &sglist[0];
         assert_eq!(&db0[..], &buf[0..4096]);
         let db1 = &sglist[1];
