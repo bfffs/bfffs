@@ -54,7 +54,12 @@ test_suite! {
         common::vdev::Vdev,
     };
     use divbuf::DivBufShared;
-    use futures::{FutureExt, TryFutureExt, future};
+    use futures::{
+        FutureExt,
+        TryFutureExt,
+        TryStreamExt,
+        stream::FuturesUnordered
+    };
     use galvanic_test::*;
     use rand::{Rng, thread_rng};
     use pretty_assertions::assert_eq;
@@ -119,24 +124,23 @@ test_suite! {
         let mut write_lba = start_lba;
         let mut read_lba = start_lba;
         basic_runtime().block_on(async {
-            future::try_join_all( {
-                wbufs.into_iter()
-                .map(|wb| {
-                    let lbas = (wb.len() / BYTES_PER_LBA) as LbaT;
-                    let fut = vr.write_at(wb, zone, write_lba);
-                    write_lba += lbas;
+            wbufs.into_iter()
+            .map(|wb| {
+                let lbas = (wb.len() / BYTES_PER_LBA) as LbaT;
+                let fut = vr.write_at(wb, zone, write_lba);
+                write_lba += lbas;
+                fut
+            }).collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>()
+            .and_then(|_| {
+                rbufs.into_iter()
+                .map(|rb| {
+                    let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
+                    let fut = vr.read_at(rb, read_lba);
+                    read_lba += lbas;
                     fut
-                })
-            }).and_then(|_| {
-                future::try_join_all({
-                    rbufs.into_iter()
-                    .map(|rb| {
-                        let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
-                        let fut = vr.read_at(rb, read_lba);
-                        read_lba += lbas;
-                        fut
-                    })
-                })
+                }).collect::<FuturesUnordered<_>>()
+                .try_collect::<Vec<_>>()
             }).await
         }).unwrap();
     }
@@ -596,7 +600,11 @@ test_suite! {
         common::vdev_file::*,
         common::raid::{self, VdevRaid, VdevRaidApi},
     };
-    use futures::{TryFutureExt, future};
+    use futures::{
+        TryFutureExt,
+        TryStreamExt,
+        stream::FuturesOrdered
+    };
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
     use std::{
@@ -668,11 +676,13 @@ test_suite! {
         basic_runtime().block_on(async move {
             let label_writer = LabelWriter::new(0);
             old_raid.write_label(label_writer).and_then(move |_| {
-                future::try_join_all(paths.into_iter().map(|path| {
+                paths.into_iter()
+                .map(|path| {
                     VdevFile::open(path).map_ok(|(leaf, reader)| {
                         (VdevBlock::new(leaf), reader)
                     })
-                }))
+                }).collect::<FuturesOrdered<_>>()
+                .try_collect::<Vec<_>>()
             }).map_ok(move |combined| {
                 let (vdev_raid, _) = raid::open(Some(uuid), combined);
                 assert_eq!(uuid, vdev_raid.uuid());

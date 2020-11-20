@@ -4,7 +4,14 @@
 use crate::{
     common::{*, dml::*}
 };
-use futures::{Future, FutureExt, TryFutureExt, future};
+use futures::{
+    Future,
+    FutureExt,
+    TryFutureExt,
+    TryStreamExt,
+    future,
+    stream::FuturesOrdered
+};
 use futures_locks::*;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
@@ -206,15 +213,13 @@ impl<K: Key, V: Value> LeafData<K, V> {
         where D: DML<Addr=A> + 'static, A: 'static
     {
         if V::needs_flush() {
-            let flush_futs = self.items.into_iter().map(|(k, v)| {
+            self.items.into_iter().map(|(k, v)| {
                 v.flush(d, txg)
-                    .map_ok(move |v| (k, v))
-            }).collect::<Vec<_>>();
-            let fut = future::try_join_all(flush_futs)
-                .map_ok(|items| {
-                    LeafData{items: items.into_iter().collect()}
-                });
-            fut.boxed()
+                .map_ok(move |v| (k, v))
+            }).collect::<FuturesOrdered<_>>()
+            .try_collect::<Vec<_>>()
+            .map_ok(|items| LeafData{items: items.into_iter().collect()})
+            .boxed()
         } else {
             future::ok(self).boxed()
         }
@@ -478,6 +483,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// release the parent guard while still holding the childrens' guards.
     /// OTOH, the children are evaluated in parallel, which cannot be done with
     /// lock-coupling.
+    // TODO: consider not returning the Vec<R>, if callers don't need it.
     pub fn drain_xlock<B, D, F, R>(mut self, dml: Arc<D>, range: Range<usize>,
                                    txg: TxgT, f: F)
         -> impl Future<Output=Result<(TreeWriteGuard<A, K, V>, Vec<R>),
@@ -488,7 +494,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
               B: Future<Output = Result<R, Error>> + Send + 'static,
               R: Send + 'static
     {
-        let child_futs = self.as_int_mut().children.drain(range)
+        self.as_int_mut().children.drain(range)
         .map(move |elem| {
             let dml2 = dml.clone();
             let lock_fut = if elem.ptr.is_mem() {
@@ -513,8 +519,9 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
             lock_fut.and_then(move |guard| {
                 f2(guard, &dml2)
             })  // LCOV_EXCL_LINE kcov false negative
-        }).collect::<Vec<_>>();
-        future::try_join_all(child_futs).map_ok(move |r| (self, r))
+        }).collect::<FuturesOrdered<_>>()
+        .try_collect::<Vec<_>>()
+        .map_ok(move |r| (self, r))
     }
 }
 

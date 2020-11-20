@@ -7,7 +7,9 @@ use futures::{
     Future,
     FutureExt,
     TryFutureExt,
+    TryStreamExt,
     future,
+    stream::FuturesUnordered
 };
 #[cfg(test)] use mockall::automock;
 use std::{
@@ -185,11 +187,11 @@ impl Pool {
     pub fn flush(&self, idx: u32)
         -> impl Future<Output=Result<(), Error>> + Send + Sync
     {
-        future::try_join_all(
-            self.clusters.iter()
-            .map(|cl| cl.flush(idx))
-            .collect::<Vec<_>>()
-        ).map_ok(drop)
+        self.clusters.iter()
+        .map(|cl| cl.flush(idx))
+        .collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .map_ok(drop)
     }
 
     /// Mark `length` LBAs beginning at PBA `pba` as unused, but do not delete
@@ -333,11 +335,11 @@ impl Pool {
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
     /// storage.
     pub fn sync_all(&self) -> BoxVdevFut {
-        let fut = future::try_join_all(
-            self.clusters.iter()
-            .map(Cluster::sync_all)
-            .collect::<Vec<_>>()
-        ).map_ok(drop);
+        let fut = self.clusters.iter()
+        .map(Cluster::sync_all)
+        .collect::<FuturesUnordered<BoxVdevFut>>()
+        .try_collect::<Vec<()>>()
+        .map_ok(drop);
         Box::pin(fut)
     }
 
@@ -385,10 +387,12 @@ impl Pool {
             children: cluster_uuids,
         };
         labeller.serialize(&label).unwrap();
-        let futs = self.clusters.iter().map(|cluster| {
-            cluster.write_label(labeller.clone())
-        }).collect::<Vec<_>>();
-        Box::pin(future::try_join_all(futs).map_ok(drop))
+        let fut = self.clusters.iter()
+        .map(|cluster| cluster.write_label(labeller.clone()))
+        .collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .map_ok(drop);
+        Box::pin(fut)
     }
 }
 

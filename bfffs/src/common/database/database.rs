@@ -23,6 +23,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future,
     select,
+    stream::FuturesUnordered,
 };
 use futures_locks::Mutex;
 #[cfg(not(test))] use libc;
@@ -439,17 +440,26 @@ impl Database {
                 let dotdot_value = FSValue::DirEntry(dotdot_dirent);
 
                 // Set initial properties
-                let props_fut = future::try_join_all(
-                    props.iter().map(|prop| {
-                        Database::insert_prop(&dataset, prop.clone())
-                    }).collect::<Vec<_>>()
+                let futs = props.iter()
+                .map(|prop| Database::insert_prop(&dataset, prop.clone())
+                     .boxed()
+                ).collect::<FuturesUnordered<_>>();
+                futs.push(
+                    dataset.insert(inode_key, inode_value)
+                    .map_ok(drop)
+                    .boxed()
                 );
-
-                future::try_join4(
-                    dataset.insert(inode_key, inode_value),
-                    dataset.insert(dot_key, dot_value),
-                    dataset.insert(dotdot_key, dotdot_value),
-                    props_fut)
+                futs.push(
+                    dataset.insert(dot_key, dot_value)
+                    .map_ok(drop)
+                    .boxed()
+                );
+                futs.push(
+                    dataset.insert(dotdot_key, dotdot_value)
+                    .map_ok(drop)
+                    .boxed()
+                );
+                futs.try_collect::<Vec<_>>()
             }).map_ok(move |_| tree_id)
         })
     }
@@ -584,19 +594,19 @@ impl Database {
             let idml2 = inner2.idml.clone();
             inner2.fs_trees.lock()
             .then(move |guard| {
-                let fsfuts = guard.iter()
+                guard.iter()
                 .map(move |(_, itree)| {
                     itree.flush(txg)
-                }).collect::<Vec<_>>();
-                future::try_join_all(fsfuts)
+                }).collect::<FuturesUnordered<_>>()
+                .try_collect::<Vec<_>>()
                 .and_then(move |_| {
                     let forest_futs = guard.iter()
                     .map(|(tree_id, itree)| {
                         let tod = itree.serialize().unwrap();
                         inner3.forest.insert(*tree_id, tod, txg)
-                    }).collect::<Vec<_>>();
+                    }).collect::<FuturesUnordered<_>>();
                     drop(guard);
-                    future::try_join_all(forest_futs)
+                    forest_futs.try_collect::<Vec<_>>()
                     .map_ok(move |_| inner3)
                 })
             }).and_then(move |inner3| {

@@ -856,8 +856,10 @@ test_suite! {
     use futures::{
         Future,
         TryFutureExt,
+        TryStreamExt,
         channel::oneshot,
         future,
+        stream::FuturesUnordered,
         task::{Context, Poll}
     };
     use futures_test::task::noop_context;
@@ -1385,28 +1387,26 @@ test_suite! {
             let mut ctx = noop_context();
             // First schedule all operations.  There are too many to issue them
             // all immediately
-            let early_futs = (1..num_ops - 1).rev().map(|i| {
+            let futs = (1..num_ops - 1).rev().map(|i| {
                 let mut fut = Box::pin(
                     vdev.write_at(wbuf.clone(), LbaT::from(i))
                 );
                 // Manually poll so the VdevBlockFut will get scheduled
                 assert!(fut.as_mut().poll(&mut ctx).is_pending());
                 fut
-            });
-            let unbuf_fut = Box::pin(
-                future::try_join_all(early_futs)
-            );
+            }).collect::<FuturesUnordered<_>>();
             let mut penultimate_fut = Box::pin(
                 vdev.write_at(wbuf.clone(), LbaT::from(num_ops))
             );
             // Manually poll so the VdevBlockFut will get scheduled
             assert!(penultimate_fut.as_mut().poll(&mut ctx).is_pending());
+            futs.push(penultimate_fut);
             let mut final_fut = Box::pin(
                 vdev.write_at(wbuf.clone(), LbaT::from(num_ops - 1))
             );
             // Manually poll so the VdevBlockFut will get scheduled
             assert!(final_fut.as_mut().poll(&mut ctx).is_pending());
-            let fut = future::try_join3(unbuf_fut, penultimate_fut, final_fut);
+            futs.push(final_fut);
             {
                 // Verify that they weren't all issued
                 let inner = vdev.inner.write().unwrap();
@@ -1416,7 +1416,7 @@ test_suite! {
             for chan in senders {
                 chan.send(()).unwrap();
             }
-            fut.await
+            futs.try_collect::<Vec<_>>().await
         }).unwrap();
     }
 

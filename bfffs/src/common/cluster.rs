@@ -10,7 +10,14 @@ use crate::{
 };
 #[cfg(test)] use crate::common::raid::MockVdevRaid;
 use fixedbitset::FixedBitSet;
-use futures::{Future, FutureExt, TryFutureExt, future};
+use futures::{
+    Future,
+    FutureExt,
+    TryFutureExt,
+    TryStreamExt,
+    future,
+    stream::FuturesUnordered
+};
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::automock;
 use std::{
@@ -168,7 +175,7 @@ impl<'a> FreeSpaceMap {
             >>>
     {
         let mut fsm = FreeSpaceMap::new(zones);
-        let mut oz_futs = Vec::new();
+        let oz_futs = FuturesUnordered::new();
         let mut zid: ZoneT = 0;
         for (i, db) in buf.into_chunks(BYTES_PER_LBA).enumerate() {
             let sod = SpacemapOnDisk::deserialize(i as u64, &db).unwrap();
@@ -200,7 +207,7 @@ impl<'a> FreeSpaceMap {
         }
         assert_eq!(zid, zones);
         fsm.clear_dirty_zones();
-        let fut = future::try_join_all(oz_futs).map(|_| Ok((fsm, vdev)));
+        let fut = oz_futs.try_collect::<Vec<_>>().map(|_| Ok((fsm, vdev)));
         Ok(Box::pin(fut))
     }
 
@@ -666,20 +673,6 @@ pub struct Cluster {
     vdev: Arc<dyn VdevRaidApi>
 }
 
-/// Finish any zones that are too full for new allocations.
-///
-/// This defines the policy of when to close nearly full zones.
-// Logically, it's a method of Cluster.  But it needs to be implemented as a
-// macro, because it returns a Vec of an anonymous type
-macro_rules! close_zones{
-    ( $self:ident, $nearly_full_zones:expr, $txg:expr) => {
-        $nearly_full_zones.iter().map(|&zone_id| {
-            $self.fsm.write().unwrap().finish_zone(zone_id, $txg);
-            $self.vdev.finish_zone(zone_id)
-        }).collect::<Vec<_>>()
-    }
-}
-
 #[cfg_attr(test, automock)]
 impl Cluster {
     /// How many blocks have been allocated, including blocks that have been
@@ -692,6 +685,19 @@ impl Cluster {
     pub fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT) {
         self.fsm.read().unwrap().assert_clean_zone(zone, txg)
     }   // LCOV_EXCL_LINE   kcov false negative
+
+    /// Finish any zones that are too full for new allocations.
+    ///
+    /// This defines the policy of when to close nearly full zones.
+    fn close_zones(&self, nearly_full_zones: &[ZoneT], txg: TxgT)
+        -> FuturesUnordered<BoxVdevFut>
+    {
+        nearly_full_zones.iter().map(|&zone_id| {
+            self.fsm.write().unwrap().finish_zone(zone_id, txg);
+            let fut = self.vdev.finish_zone(zone_id);
+            Box::pin(fut) as BoxVdevFut
+        }).collect::<FuturesUnordered<BoxVdevFut>>()
+    }
 
     /// Create a new `Cluster` from unused files or devices
     ///
@@ -751,18 +757,18 @@ impl Cluster {
         let mut fsm = self.fsm.write().unwrap();
         let vdev2 = self.vdev.clone();
         let zone_ids = fsm.open_zone_ids().cloned().collect::<Vec<_>>();
-        let flush_futs = zone_ids.iter().map(|&zone_id| {
+        let mut futs = zone_ids.iter().map(|&zone_id| {
             let (gap, fut) = self.vdev.flush_zone(zone_id);
             fsm.waste_space(zone_id, gap);
             fut
-        }).collect::<Vec<_>>();
+        }).collect::<FuturesUnordered<BoxVdevFut>>();
         // Since FreeSpaceMap::waste_space is synchronous, we can serialize the
         // FSM here; we don't need to copy it into a Future's continuation.
         let sm_futs = fsm.serialize()
         .map(|(block, dbs)| {
             let db = dbs.try_const().unwrap();
             let sglist = if db.len() % BYTES_PER_LBA != 0 {
-                // This can happen in the last blockof the spacemap.  Pad out.
+                // This can happen in the last block of the spacemap.  Pad out.
                 let padlen = BYTES_PER_LBA - db.len() % BYTES_PER_LBA;
                 let pad = ZERO_REGION.try_const().unwrap().slice_to(padlen);
                 vec![db, pad]
@@ -770,9 +776,9 @@ impl Cluster {
                 vec![db]
             };
             vdev2.write_spacemap(sglist, idx, block)
-        }).collect::<Vec<_>>();
-        let fut = future::try_join(future::try_join_all(flush_futs),
-                                   future::try_join_all(sm_futs))
+        });
+        futs.extend(sm_futs);
+        let fut = futs.try_collect::<Vec<_>>()
         .map_ok(drop);
         fsm.clear_dirty_zones();
         drop(fsm);
@@ -872,7 +878,7 @@ impl Cluster {
         let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
         let (alloc_result, nearly_full_zones) =
             self.fsm.write().unwrap().try_allocate(space);
-        let finish_futs = close_zones!(self, &nearly_full_zones, txg);
+        let futs = self.close_zones(&nearly_full_zones, txg);
         let vdev2: Arc<dyn VdevRaidApi> = self.vdev.clone();
         let vdev3 = self.vdev.clone();
         alloc_result.map(|(zone_id, lba)| {
@@ -898,9 +904,11 @@ impl Cluster {
             let owfut = oz_fut.and_then(move |_| {
                 wfut
             });
+            futs.push(Box::pin(owfut));
             let fut = Box::pin(
-                future::try_join(future::try_join_all(finish_futs), owfut)
-                .map(|_| Ok(()))
+                futs
+                .try_collect::<Vec<_>>()
+                .map_ok(drop)
             ) as BoxVdevFut;
             (lba, fut)
         }).ok_or(Error::ENOSPC)

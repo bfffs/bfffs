@@ -12,7 +12,14 @@ use crate::{
     }
 };
 use divbuf::DivBufShared;
-use futures::{Future, FutureExt, TryFutureExt, future};
+use futures::{
+    Future,
+    FutureExt,
+    TryFutureExt,
+    TryStreamExt,
+    future,
+    stream::FuturesOrdered
+};
 use metrohash::MetroHash64;
 use serde::de::DeserializeOwned;
 use std::{
@@ -870,12 +877,12 @@ impl<A: Addr> Value for FSValue<A> {
                 Box::pin(fut)
             }
             FSValue::ExtAttrs(v) => {
-                let fut = future::try_join_all(
-                    v.into_iter().map(|extattr| {
-                        extattr.flush(dml, txg)
-                    }).collect::<Vec<_>>()
-                ).map_ok(FSValue::ExtAttrs);
-                fut.boxed()
+                v.into_iter()
+                .map(|extattr| extattr.flush(dml, txg))
+                .collect::<FuturesOrdered<_>>()
+                .try_collect::<Vec<_>>()
+                .map_ok(FSValue::ExtAttrs)
+                .boxed()
             },
             _ => future::ok(self).boxed()
         }
