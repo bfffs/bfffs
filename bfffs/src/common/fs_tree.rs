@@ -295,11 +295,24 @@ pub enum HTValue<T: HTItem> {
     None
 }
 
+fn serialize_dirent_name<S>(name: &OsString, s: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+{
+    if s.is_human_readable() {
+        // When dumping to YAML, print the name as a legible string
+        name.to_string_lossy().serialize(s)
+    } else {
+        // but for Bincode, use the default representation as bytes
+        name.serialize(s)
+    }
+}
+
 /// In-memory representation of a directory entry
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Dirent {
     pub ino:    u64,
     pub dtype:  u8,
+    #[serde(serialize_with = "serialize_dirent_name")]
     pub name:   OsString
 }
 

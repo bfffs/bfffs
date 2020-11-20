@@ -298,17 +298,12 @@ root:
         DirEntry:
           ino: 1
           dtype: 4
-          name:
-            Unix:
-              - 46
-              - 46
+          name: ".."
       18490468108375165510:
         DirEntry:
           ino: 1
           dtype: 4
-          name:
-            Unix:
-              - 46
+          name: "."
       18518801667747479552:
         Inode:
           size: 0
