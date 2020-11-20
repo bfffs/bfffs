@@ -31,15 +31,6 @@ use time::Timespec;
 /// buffers will be stored directly in the tree.
 const BLOB_THRESHOLD: usize = BYTES_PER_LBA / 4;
 
-// time::Timespec doesn't derive Serde support.  Do it here.
-#[allow(unused)]
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "Timespec")]
-struct TimespecDef {
-    sec: i64,
-    nsec: i32
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, PartialOrd, Ord,
          Serialize)]
 pub enum ExtAttrNamespace {
@@ -568,6 +559,42 @@ impl FileType {
     }   // LCOV_EXCL_LINE kcov false negative
 }
 
+mod timespec_serializer {
+    use super::*;
+    use serde::{de::Deserializer, Serializer};
+    use time::*;
+
+    // time::Timespec doesn't derive Serde support.  Do it here.
+    #[derive(Serialize, Deserialize)]
+    struct TimespecDef {
+        sec: i64,
+        nsec: i32
+    }
+
+    pub(super) fn deserialize<'de, DE>(deserializer: DE)
+        -> Result<Timespec, DE::Error>
+        where DE: Deserializer<'de>
+    {
+        TimespecDef::deserialize(deserializer)
+            .map(|tsd| Timespec{sec: tsd.sec, nsec: tsd.nsec})
+    }
+
+    pub(super) fn serialize<S>(ts: &Timespec, serializer: S)
+        -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        if serializer.is_human_readable() {
+            // When dumping to YAML, print the timestamp as a legible string
+            let tm = at_utc(*ts);
+            strftime("%F %T %Z", &tm).unwrap().serialize(serializer)
+        } else {
+            // But for bincode, encode it compactly
+            let tsd = TimespecDef{ sec: ts.sec, nsec: ts.nsec};
+            tsd.serialize(serializer)
+        }
+    }
+}
+
 /// In-memory representation of an Inode
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Inode {
@@ -578,16 +605,16 @@ pub struct Inode {
     /// File flags
     pub flags:      u64,
     /// access time
-    #[serde(with = "TimespecDef")]
+    #[serde(with = "timespec_serializer")]
     pub atime:      Timespec,
     /// modification time
-    #[serde(with = "TimespecDef")]
+    #[serde(with = "timespec_serializer")]
     pub mtime:      Timespec,
     /// change time
-    #[serde(with = "TimespecDef")]
+    #[serde(with = "timespec_serializer")]
     pub ctime:      Timespec,
     /// birth time
-    #[serde(with = "TimespecDef")]
+    #[serde(with = "timespec_serializer")]
     pub birthtime:  Timespec,
     /// user id
     pub uid:        u32,

@@ -309,18 +309,10 @@ root:
           size: 0
           nlink: 1
           flags: 0
-          atime:
-            sec: 0
-            nsec: 0
-          mtime:
-            sec: 0
-            nsec: 0
-          ctime:
-            sec: 0
-            nsec: 0
-          birthtime:
-            sec: 0
-            nsec: 0
+          atime: "1970-01-01 00:00:00 UTC"
+          mtime: "1970-01-01 00:00:00 UTC"
+          ctime: "1970-01-01 00:00:00 UTC"
+          birthtime: "1970-01-01 00:00:00 UTC"
           uid: 0
           gid: 0
           perm: 493
