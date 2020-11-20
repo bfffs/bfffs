@@ -31,15 +31,6 @@ use time::Timespec;
 /// buffers will be stored directly in the tree.
 const BLOB_THRESHOLD: usize = BYTES_PER_LBA / 4;
 
-// time::Timespec doesn't derive Serde support.  Do it here.
-#[allow(unused)]
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "Timespec")]
-struct TimespecDef {
-    sec: i64,
-    nsec: i32
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, PartialOrd, Ord,
          Serialize)]
 pub enum ExtAttrNamespace {
@@ -148,8 +139,7 @@ impl ObjKey {
 
 bitfield! {
     /// B-Tree keys for a Filesystem tree
-    #[derive(Clone, Copy, Deserialize, Eq, PartialEq, PartialOrd, Ord,
-             Serialize)]
+    #[derive(Clone, Copy, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
     pub struct FSKey(u128);
     impl Debug;
     u64; pub object, _: 127, 64;
@@ -259,6 +249,22 @@ impl MinValue for FSKey {
     }
 }
 
+impl Serialize for FSKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        if serializer.is_human_readable() {
+            let object = self.0 >> 64;
+            let objtype = (self.0 >> 56) & 0xFF;
+            let offset = self.0 & 0x00FFFFFFFFFFFFFF;
+            format!("{:x}-{}-{:014x}", object, objtype, offset)
+                .serialize(serializer)
+        } else {
+            self.0.serialize(serializer)
+        }
+    }
+}
+
 /// `FSValue`s that are stored as in in-BTree hash tables
 pub trait HTItem: TryFrom<FSValue<RID>, Error=()> + Clone + Send + Sized + 'static {
     /// Some other type that may be used by the `same` method
@@ -295,11 +301,25 @@ pub enum HTValue<T: HTItem> {
     None
 }
 
+fn serialize_dirent_name<S>(name: &OsString, s: S) -> Result<S::Ok, S::Error>
+    where S: Serializer
+{
+    if s.is_human_readable() {
+        // When dumping to YAML, print the name as a legible string
+        name.to_string_lossy().serialize(s)
+    } else {
+        // but for Bincode, use the default representation as bytes
+        name.serialize(s)
+    }
+}
+
 /// In-memory representation of a directory entry
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Dirent {
     pub ino:    u64,
+    // TODO: serialize as a string when dumping to YAML
     pub dtype:  u8,
+    #[serde(serialize_with = "serialize_dirent_name")]
     pub name:   OsString
 }
 
@@ -555,6 +575,42 @@ impl FileType {
     }   // LCOV_EXCL_LINE kcov false negative
 }
 
+mod timespec_serializer {
+    use super::*;
+    use serde::{de::Deserializer, Serializer};
+    use time::*;
+
+    // time::Timespec doesn't derive Serde support.  Do it here.
+    #[derive(Serialize, Deserialize)]
+    struct TimespecDef {
+        sec: i64,
+        nsec: i32
+    }
+
+    pub(super) fn deserialize<'de, DE>(deserializer: DE)
+        -> Result<Timespec, DE::Error>
+        where DE: Deserializer<'de>
+    {
+        TimespecDef::deserialize(deserializer)
+            .map(|tsd| Timespec{sec: tsd.sec, nsec: tsd.nsec})
+    }
+
+    pub(super) fn serialize<S>(ts: &Timespec, serializer: S)
+        -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        if serializer.is_human_readable() {
+            // When dumping to YAML, print the timestamp as a legible string
+            let tm = at_utc(*ts);
+            strftime("%F %T %Z", &tm).unwrap().serialize(serializer)
+        } else {
+            // But for bincode, encode it compactly
+            let tsd = TimespecDef{ sec: ts.sec, nsec: ts.nsec};
+            tsd.serialize(serializer)
+        }
+    }
+}
+
 /// In-memory representation of an Inode
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Inode {
@@ -565,22 +621,23 @@ pub struct Inode {
     /// File flags
     pub flags:      u64,
     /// access time
-    #[serde(with = "TimespecDef")]
+    #[serde(with = "timespec_serializer")]
     pub atime:      Timespec,
     /// modification time
-    #[serde(with = "TimespecDef")]
+    #[serde(with = "timespec_serializer")]
     pub mtime:      Timespec,
     /// change time
-    #[serde(with = "TimespecDef")]
+    #[serde(with = "timespec_serializer")]
     pub ctime:      Timespec,
     /// birth time
-    #[serde(with = "TimespecDef")]
+    #[serde(with = "timespec_serializer")]
     pub birthtime:  Timespec,
     /// user id
     pub uid:        u32,
     /// Group id
     pub gid:        u32,
     /// File permissions, the low twelve bits of mode
+    // TODO: serialize as octal when dumping to YAML
     pub perm:       u16,
     /// File type.  Regular, directory, etc
     pub file_type:   FileType

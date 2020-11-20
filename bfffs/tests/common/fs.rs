@@ -284,7 +284,7 @@ limits:
   max_leaf_fanout: 2302
   _max_size: 4194304
 root:
-  key: 0
+  key: 0-0-00000000000000
   txgs:
     start: 0
     end: 1
@@ -294,38 +294,25 @@ root:
 0:
   Leaf:
     items:
-      18478388752068107043:
+      1-0-706caad497db23:
         DirEntry:
           ino: 1
           dtype: 4
-          name:
-            Unix:
-              - 46
-              - 46
-      18490468108375165510:
+          name: ".."
+      1-0-9b56c722640a46:
         DirEntry:
           ino: 1
           dtype: 4
-          name:
-            Unix:
-              - 46
-      18518801667747479552:
+          name: "."
+      1-1-00000000000000:
         Inode:
           size: 0
           nlink: 1
           flags: 0
-          atime:
-            sec: 0
-            nsec: 0
-          mtime:
-            sec: 0
-            nsec: 0
-          ctime:
-            sec: 0
-            nsec: 0
-          birthtime:
-            sec: 0
-            nsec: 0
+          atime: "1970-01-01 00:00:00 UTC"
+          mtime: "1970-01-01 00:00:00 UTC"
+          ctime: "1970-01-01 00:00:00 UTC"
+          birthtime: "1970-01-01 00:00:00 UTC"
           uid: 0
           gid: 0
           perm: 493
