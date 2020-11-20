@@ -309,6 +309,7 @@ impl Database {
     {
         let mut rt = runtime::Builder::new()
             .basic_scheduler()
+            .enable_io()
             .build()
             .unwrap();
         rt.block_on(async {
