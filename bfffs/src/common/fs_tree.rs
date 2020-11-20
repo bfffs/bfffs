@@ -139,8 +139,7 @@ impl ObjKey {
 
 bitfield! {
     /// B-Tree keys for a Filesystem tree
-    #[derive(Clone, Copy, Deserialize, Eq, PartialEq, PartialOrd, Ord,
-             Serialize)]
+    #[derive(Clone, Copy, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
     pub struct FSKey(u128);
     impl Debug;
     u64; pub object, _: 127, 64;
@@ -250,6 +249,22 @@ impl MinValue for FSKey {
     }
 }
 
+impl Serialize for FSKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        if serializer.is_human_readable() {
+            let object = self.0 >> 64;
+            let objtype = (self.0 >> 56) & 0xFF;
+            let offset = self.0 & 0x00FFFFFFFFFFFFFF;
+            format!("{:x}-{}-{:014x}", object, objtype, offset)
+                .serialize(serializer)
+        } else {
+            self.0.serialize(serializer)
+        }
+    }
+}
+
 /// `FSValue`s that are stored as in in-BTree hash tables
 pub trait HTItem: TryFrom<FSValue<RID>, Error=()> + Clone + Send + Sized + 'static {
     /// Some other type that may be used by the `same` method
@@ -302,6 +317,7 @@ fn serialize_dirent_name<S>(name: &OsString, s: S) -> Result<S::Ok, S::Error>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Dirent {
     pub ino:    u64,
+    // TODO: serialize as a string when dumping to YAML
     pub dtype:  u8,
     #[serde(serialize_with = "serialize_dirent_name")]
     pub name:   OsString
@@ -621,6 +637,7 @@ pub struct Inode {
     /// Group id
     pub gid:        u32,
     /// File permissions, the low twelve bits of mode
+    // TODO: serialize as octal when dumping to YAML
     pub perm:       u16,
     /// File type.  Regular, directory, etc
     pub file_type:   FileType
