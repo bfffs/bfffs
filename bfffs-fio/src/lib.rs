@@ -18,7 +18,7 @@ use std::{
     os::unix::ffi::OsStrExt,
     ptr,
     slice,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
 use tokio::runtime::{Builder, Runtime};
 
@@ -126,10 +126,9 @@ lazy_static! {
         .build()
         .unwrap()
     );
-    // TODO: remove the Mutex once there is a fs::Handle that is Sync
-    static ref FS: Mutex<Option<Fs>> = Mutex::default();
-    static ref ROOT: Mutex<Option<FileData>> = Mutex::default();
-    static ref FILES: Mutex<HashMap<libc::c_int, FileData>> = Mutex::default();
+    static ref FS: RwLock<Option<Fs>> = RwLock::default();
+    static ref ROOT: RwLock<Option<FileData>> = RwLock::default();
+    static ref FILES: RwLock<HashMap<libc::c_int, FileData>> = RwLock::default();
 }
 
 ///
@@ -142,9 +141,9 @@ pub unsafe extern "C" fn fio_bfffs_close(
     f: *mut fio_file,
 ) -> libc::c_int
 {
-    let fs_opt = FS.lock().unwrap();
+    let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();
-    let fd = FILES.lock().unwrap().remove(&(*f).fd).unwrap();
+    let fd = FILES.write().unwrap().remove(&(*f).fd).unwrap();
     fs.inactive(fd);
     (*f).fd = -1;
     0
@@ -183,7 +182,7 @@ pub extern "C" fn fio_bfffs_getevents(
 #[no_mangle]
 pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
 {
-    let mut fs = FS.lock().unwrap();
+    let mut fs = FS.write().unwrap();
     if fs.is_none() {
         let rt = RUNTIME.lock().unwrap();
         let opts = (*td).eo as *mut BfffsOptions;
@@ -217,7 +216,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
                 let root_fs = Fs::new(adb, rt.handle().clone(), tree_id);
                 let root = root_fs.root();
                 *fs = Some(root_fs);
-                *ROOT.lock().unwrap() = Some(root);
+                *ROOT.write().unwrap() = Some(root);
                 0
             } else {
                 eprintln!("Pool not found");
@@ -254,9 +253,9 @@ pub unsafe extern "C" fn fio_bfffs_open(
 {
     let file_name =
         OsStr::from_bytes(CStr::from_ptr((*f).file_name).to_bytes());
-    let mut fs_opt = FS.lock().unwrap();
-    let fs = fs_opt.as_mut().unwrap();
-    let root_opt = ROOT.lock().unwrap();
+    let fs_opt = FS.read().unwrap();
+    let fs = fs_opt.as_ref().unwrap();
+    let root_opt = ROOT.read().unwrap();
     let root = root_opt.as_ref().unwrap();
     let r = fs
         .lookup(None, &root, file_name)
@@ -267,7 +266,7 @@ pub unsafe extern "C" fn fio_bfffs_open(
             // descriptor
             let filedesc = fd.ino() as i32;
             (*f).fd = filedesc;
-            FILES.lock().unwrap().insert(filedesc, fd);
+            FILES.write().unwrap().insert(filedesc, fd);
             0
         }
         Err(e) => {
@@ -288,9 +287,9 @@ pub unsafe extern "C" fn fio_bfffs_queue(
     io_u: *mut io_u,
 ) -> fio_q_status
 {
-    let fs_opt = FS.lock().unwrap();
+    let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();
-    let files = FILES.lock().unwrap();
+    let files = FILES.read().unwrap();
 
     let (ddir, fd, offset, data) = {
         let data: &[u8] = slice::from_raw_parts(
