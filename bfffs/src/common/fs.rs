@@ -558,7 +558,7 @@ impl Fs {
         });
         let extattr_stream = Fs::list_extattr_rids(&*ds, ino);
         extent_stream.chain(extattr_stream)
-        .try_for_each(move |rid| ds2.delete_blob(rid))
+        .try_for_each_concurrent(None, move |rid| ds2.delete_blob(rid))
         .and_then(move |_| {
             // Finally, range_delete its key range, including inode,
             // inline extents, and inline extattrs
@@ -668,7 +668,7 @@ impl Fs {
         let dataset2 = dataset.clone();
         let dataset3 = dataset.clone();
         let ino_fut = Fs::list_extattr_rids(&*dataset, ino)
-        .try_for_each(move |rid| {
+        .try_for_each_concurrent(None, move |rid| {
             dataset2.delete_blob(rid)
         }).and_then(move |_| dataset3.range_delete(FSKey::obj_range(ino)));
 
@@ -753,7 +753,7 @@ impl Fs {
             } else {
                 future::ok(None)
             }
-        }).try_for_each(move |rid| dataset2.delete_blob(rid))
+        }).try_for_each_concurrent(None, move |rid| dataset2.delete_blob(rid))
         .and_then(move |_| {
             dataset3.range_delete(FSKey::extent_range(ino, size..))
         });
@@ -890,7 +890,7 @@ impl Fs {
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
                 ds.range(FSKey::dying_inode_range())
-                .try_for_each(move |(_k, v)| {
+                .try_for_each_concurrent(None, move |(_k, v)| {
                     let ino = v.as_dying_inode().unwrap().ino();
                     Fs::do_delete_inode(ds.clone(), ino)
                 }).and_then(move |_| {

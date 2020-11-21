@@ -2102,7 +2102,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
             .and_then(move |nodes| {
                 stream::iter(nodes.into_iter())
                 .map(Ok)
-                .try_for_each(move |node| {
+                .try_for_each_concurrent(None, move |node| {
                     // TODO: consider attempting to rewrite multiple nodes
                     // at once, so as not to spend so much time traversing
                     // the tree
