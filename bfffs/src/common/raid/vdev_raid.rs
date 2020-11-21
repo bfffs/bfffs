@@ -9,7 +9,12 @@ use crate::{
     }
 };
 use divbuf::DivBufShared;
-use futures::{TryFutureExt, future};
+use futures::{
+    TryFutureExt,
+    TryStreamExt,
+    future,
+    stream::FuturesUnordered
+};
 use itertools::multizip;
 use std::{
     collections::BTreeMap,
@@ -224,8 +229,7 @@ macro_rules! issue_1stripe_ops {
             };
             let mut iter = $self.locator.iter(start, end);
             let mut first = true;
-            let futs : Vec<_> = $buf
-            .into_iter()
+            $buf.into_iter()
             .map(|d| {
                 let (_, loc) = iter.next().unwrap();
                 let disk_lba = if first {
@@ -237,9 +241,8 @@ macro_rules! issue_1stripe_ops {
                     loc.offset * $self.chunksize
                 };
                 $self.blockdevs[loc.disk as usize].$func(d, disk_lba)
-            })
-            .collect();
-            future::try_join_all(futs)
+            }).collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>()
             .map_ok(drop)
         }
     }
@@ -370,36 +373,34 @@ impl VdevRaid {
 
         let (first_disk_lba, _) = self.blockdevs[0].zone_limits(zone);
         let start_disk_chunk = div_roundup(first_disk_lba, self.chunksize);
-        let futs: Vec<_> = self.blockdevs.iter()
-            .enumerate()
-            .map(|(idx, blockdev)| {
-                // Find the first LBA of this disk that's within our zone
-                let mut first_usable_disk_lba = 0;
-                for chunk in start_disk_chunk.. {
-                    let loc = Chunkloc::new(idx as i16, chunk);
-                    let chunk_id = self.locator.loc2id(loc);
-                    let chunk_lba = chunk_id.address() * self.chunksize;
-                    if chunk_lba >= start_lba {
-                        first_usable_disk_lba = chunk * self.chunksize;
-                        break;
-                    }
+        let futs = FuturesUnordered::<BoxVdevFut>::new();
+        for (idx, blockdev) in self.blockdevs.iter().enumerate() {
+            // Find the first LBA of this disk that's within our zone
+            let mut first_usable_disk_lba = 0;
+            for chunk in start_disk_chunk.. {
+                let loc = Chunkloc::new(idx as i16, chunk);
+                let chunk_id = self.locator.loc2id(loc);
+                let chunk_lba = chunk_id.address() * self.chunksize;
+                if chunk_lba >= start_lba {
+                    first_usable_disk_lba = chunk * self.chunksize;
+                    break;
                 }
-                let zero_fut = if first_usable_disk_lba > first_disk_lba {
-                    // Zero-fill leading wasted space so as not to cause a
-                    // write pointer violation on SMR disks.
-                    let zero_lbas = first_usable_disk_lba - first_disk_lba;
-                    let zero_len = zero_lbas as usize * BYTES_PER_LBA;
-                    let sglist = zero_sglist(zero_len);
-                    Box::pin(blockdev.writev_at(sglist, first_disk_lba)) as BoxVdevFut
-                } else {
-                    Box::pin(future::ok(())) as BoxVdevFut
-                };
-
-                future::try_join(blockdev.open_zone(first_disk_lba), zero_fut)
-            }).collect();
+            }
+            futs.push(Box::pin(blockdev.open_zone(first_disk_lba)));
+            if first_usable_disk_lba > first_disk_lba {
+                // Zero-fill leading wasted space so as not to cause a
+                // write pointer violation on SMR disks.
+                let zero_lbas = first_usable_disk_lba - first_disk_lba;
+                let zero_len = zero_lbas as usize * BYTES_PER_LBA;
+                let sglist = zero_sglist(zero_len);
+                futs.push(Box::pin(
+                    blockdev.writev_at(sglist, first_disk_lba)) as BoxVdevFut
+                );
+            }
+        }
 
         Box::pin(
-            future::try_join_all(futs).map_ok(drop)
+            futs.try_collect::<Vec<_>>().map_ok(drop)
         )
     }
 
@@ -422,8 +423,7 @@ impl VdevRaid {
             sglists.push(SGListMut::with_capacity(max_chunks_per_disk));
         }
         // Build the SGLists, one chunk at a time
-        let max_futs = n * max_chunks_per_disk;
-        let mut futs: Vec<BoxVdevFut> = Vec::with_capacity(max_futs);
+        let mut futs = FuturesUnordered::<BoxVdevFut>::new();
         let start = ChunkId::Data(lba / self.chunksize);
         let end = ChunkId::Data(div_roundup(lba + lbas, self.chunksize));
         let mut starting = true;
@@ -470,11 +470,10 @@ impl VdevRaid {
                 Box::pin(blockdev.readv_at(sglist, lba)) as BoxVdevFut
             )
         );
-        let fut = future::try_join_all(futs);
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::pin(fut.map_ok(drop))
+        Box::pin(futs.try_collect::<Vec<_>>().map_ok(drop))
     }
 
     /// Read a (possibly improper) subset of one stripe
@@ -575,15 +574,16 @@ impl VdevRaid {
         let bi = self.blockdevs.iter();
         let sgi = sglists.into_iter();
         let li = start_lbas.into_iter();
-        let futs = multizip((bi, sgi, li))
-            .filter(|&(_, _, lba)| lba != SENTINEL)
-            .map(|(blockdev, sglist, lba)| blockdev.writev_at(sglist, lba))
-            .collect::<Vec<_>>();
-        let fut = future::try_join_all(futs);
+        let fut = multizip((bi, sgi, li))
+        .filter(|&(_, _, lba)| lba != SENTINEL)
+        .map(|(blockdev, sglist, lba)| blockdev.writev_at(sglist, lba))
+        .collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .map_ok(drop);
+        Box::pin(fut)
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::pin(fut.map_ok(drop))
     }
 
     /// Write exactly one stripe
@@ -725,12 +725,12 @@ impl Vdev for VdevRaid {
             }
         }
         // TODO: handle errors on some devices
-        Box::pin(
-            future::try_join_all(
-                self.blockdevs.iter()
-                .map(|bd| bd.sync_all())
-            ).map_ok(drop)
-        )
+        let fut = self.blockdevs.iter()
+        .map(|bd| bd.sync_all())
+        .collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .map_ok(drop);
+        Box::pin(fut)
     }
 
     fn uuid(&self) -> Uuid {
@@ -823,42 +823,37 @@ impl VdevRaidApi for VdevRaid {
         assert!(!self.stripe_buffers.read().unwrap().contains_key(&zone),
             "Tried to erase an open zone");
         let (start, end) = self.blockdevs[0].zone_limits(zone);
-        let futs : Vec<_> = self.blockdevs.iter().map(|blockdev| {
+        let fut = self.blockdevs.iter().map(|blockdev| {
             blockdev.erase_zone(start, end - 1)
-        }).collect();
-        Box::pin(
-            future::try_join_all(futs).map_ok(drop)
-        )
+        }).collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .map_ok(drop);
+        Box::pin(fut)
     }
 
     // Zero-fill the current StripeBuffer and write it out.  Then drop the
     // StripeBuffer.
     fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let (start, end) = self.blockdevs[0].zone_limits(zone);
-        let nfuts = self.blockdevs.len() + 1;
-        let mut futs: Vec<_> = Vec::with_capacity(nfuts);
-        let sbfut = {
-            let mut sbs = self.stripe_buffers.write().unwrap();
-            let sbfut = {
-                let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
-                if ! sb.is_empty() {
-                    sb.pad();
-                    let lba = sb.lba();
-                    let sgl = sb.pop();
-                    self.writev_at_one(&sgl, lba)
-                } else {    // LCOV_EXCL_LINE kcov false negative
-                    Box::pin(future::ok(()))
-                }
-            };
-            futs.extend(
-                self.blockdevs.iter()
-                .map(|blockdev| blockdev.finish_zone(start, end - 1))
-            );
+        let mut futs = FuturesUnordered::new();
+        let mut sbs = self.stripe_buffers.write().unwrap();
+        let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
+        if ! sb.is_empty() {
+            sb.pad();
+            let lba = sb.lba();
+            let sgl = sb.pop();
+            futs.push(self.writev_at_one(&sgl, lba))
+        }
+        futs.extend(
+            self.blockdevs.iter()
+            .map(|blockdev|
+                 Box::pin(blockdev.finish_zone(start, end - 1)) as BoxVdevFut
+            )
+        );
 
-            assert!(sbs.remove(&zone).is_some());
-            sbfut
-        };
-        Box::pin(future::try_join(sbfut, future::try_join_all(futs))
+        assert!(sbs.remove(&zone).is_some());
+        Box::pin(
+            futs.try_collect::<Vec<_>>()
             .map_ok(drop)
         )
     }
@@ -984,7 +979,7 @@ impl VdevRaidApi for VdevRaid {
         debug_assert_eq!(zone, self.lba2zone(lba +
                 ((buf.len() - 1) / BYTES_PER_LBA) as LbaT).unwrap(),
             "Write spanned a zone boundary");
-        let mut futs = Vec::<BoxVdevFut>::new();
+        let futs = FuturesUnordered::<BoxVdevFut>::new();
         {
             let mut sb_ref = self.stripe_buffers.write().unwrap();
             let stripe_buffer = sb_ref.get_mut(&zone)
@@ -1030,8 +1025,7 @@ impl VdevRaidApi for VdevRaid {
                 });
             }
         }
-        let fut = future::try_join_all(futs).map_ok(drop);
-        Box::pin(fut)
+        Box::pin(futs.try_collect::<Vec<_>>().map_ok(drop))
     }
 
     fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
@@ -1048,10 +1042,10 @@ impl VdevRaidApi for VdevRaid {
         };
         let label = super::Label::Raid(raid_label);
         labeller.serialize(&label).unwrap();
-        let futs = self.blockdevs.iter().map(|bd| {
+        let fut = self.blockdevs.iter().map(|bd| {
            bd.write_label(labeller.clone())
-        }).collect::<Vec<_>>();
-        let fut = future::try_join_all(futs)
+        }).collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
         .map_ok(drop);
         Box::pin(fut)
     }
@@ -1059,10 +1053,10 @@ impl VdevRaidApi for VdevRaid {
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> BoxVdevFut
     {
-        let futs = self.blockdevs.iter().map(|bd| {
+        let fut = self.blockdevs.iter().map(|bd| {
             bd.write_spacemap(sglist.clone(), idx, block)
-        }).collect::<Vec<_>>();
-        let fut = future::try_join_all(futs)
+        }).collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
         .map_ok(drop);
         Box::pin(fut)
     }

@@ -2,7 +2,11 @@
 // LCOV_EXCL_START
 
 use crate::common::dml::MockDML;
-use futures::future;
+use futures::{
+    future,
+    TryStreamExt,
+    stream::FuturesUnordered
+};
 use pretty_assertions::assert_eq;
 use super::*;
 
@@ -6906,12 +6910,11 @@ fn range_delete_at_end() {
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
-    {
-        let insert_futs = (0..23).map(|k| {
-            tree.insert(k, k as f32, TxgT::from(2))
-        }).collect::<Vec<_>>();
-        future::try_join_all(insert_futs)
-    }.now_or_never().unwrap()
+    (0..23).map(|k| {
+        tree.insert(k, k as f32, TxgT::from(2))
+    }).collect::<FuturesUnordered<_>>()
+    .try_collect::<Vec<_>>()
+    .now_or_never().unwrap()
     .unwrap();
     let r = tree.range_delete(22..23, TxgT::from(2))
         .now_or_never().unwrap();
@@ -7262,12 +7265,11 @@ fn range_delete_to_end_deep() {
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
-    {
-        let insert_futs = (0..23).map(|k| {
-            tree.insert(k, k as f32, TxgT::from(2))
-        }).collect::<Vec<_>>();
-        future::try_join_all(insert_futs)
-    }.now_or_never().unwrap()
+    (0..23).map(|k| {
+        tree.insert(k, k as f32, TxgT::from(2))
+    }).collect::<FuturesUnordered<_>>()
+    .try_collect::<Vec<_>>()
+    .now_or_never().unwrap()
     .unwrap();
     let r = tree.range_delete(5..24, TxgT::from(2))
         .now_or_never().unwrap();

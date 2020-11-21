@@ -21,7 +21,7 @@ use futures::{
     TryFutureExt,
     TryStreamExt,
     future,
-    stream,
+    stream::{self, FuturesUnordered},
 };
 use std::{
     cmp,
@@ -1911,12 +1911,11 @@ impl Fs {
         let db2 = self.db.clone();
         let tree_id = self.tree;
         self.handle.block_on(async move {
-            future::try_join_all(
-                props.into_iter()
-                .map(move |prop| {
-                    db2.set_prop(tree_id, prop)
-                }).collect::<Vec<_>>()
-            ).map_ok(drop)
+            props.into_iter()
+            .map(move |prop| db2.set_prop(tree_id, prop))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>()
+            .map_ok(drop)
             .await
         }).expect("Fs::set_props failed");
     }
@@ -2051,7 +2050,7 @@ impl Fs {
                         .map(|(i, dbs)| {
                         let ds3 = dataset.clone();
                         Fs::write_record(ino, rs, offset, i, dbs, ds3)
-                    }).collect::<Vec<_>>();
+                    }).collect::<FuturesUnordered<_>>();
                     let new_size = cmp::max(filesize, offset + datalen as u64);
                     {
                         let inode = value.as_mut_inode().unwrap();
@@ -2060,8 +2059,9 @@ impl Fs {
                         inode.mtime = now;
                         inode.ctime = now;
                     }
-                    let ino_fut = dataset.insert(inode_key, value);
-                    future::try_join(future::try_join_all(data_futs), ino_fut)
+                    let ino_fut = dataset.insert(inode_key, value).boxed();
+                    data_futs.push(ino_fut);
+                    data_futs.try_collect::<Vec<_>>()
                     .map_ok(move |_| datalen as u32)
                 })
             }).map_err(Error::into)

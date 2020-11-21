@@ -11,7 +11,7 @@ use futures::{
     TryStreamExt,
     channel::mpsc,
     future,
-    stream::{self, Stream},
+    stream::{self, FuturesOrdered, FuturesUnordered, Stream},
     task::{Context, Poll}
 };
 use futures_locks::*;
@@ -594,7 +594,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let children = &node.as_int().children;
         let start = children.iter().map(|c| c.txgs.start).min().unwrap();
         let end = children.iter().map(|c| c.txgs.end).max().unwrap();
-        let futs = node.as_int().children.iter().map(|c| {
+        node.as_int().children.iter().map(|c| {
             let range = c.txgs.clone();
             let range2 = range.clone();
             let dml2 = dml.clone();
@@ -630,8 +630,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     (passed, keys)
                 }
             })
-        }).collect::<Vec<_>>();
-        future::try_join_all(futs)
+        }).collect::<FuturesOrdered<_>>()
+        .try_collect::<Vec<_>>()
         .map_ok(move |r| {
             let children_passed = r.iter().all(|x| (*x).0);
             let first_key = *r[0].1.start();
@@ -786,8 +786,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 .and_then(move |child_node| {
                     Tree::dump_r(dml2, child_node, f3)
                 })
-            }).collect::<Vec<_>>();
-            Box::pin(future::try_join_all(futs)) as Pin<Box<_>>
+            }).collect::<FuturesOrdered<_>>()
+            .try_collect::<Vec<_>>();
+            Box::pin(futs) as Pin<Box<_>>
         } else {
             Box::pin(future::ok(Vec::new()))
                 as Pin<Box<dyn Future<
@@ -1519,7 +1520,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         } else if height == 1 {
             debug_assert!(!guard.is_leaf());
             // If the child elements point to leaves, just delete them.
-            let futs = guard.as_int_mut().children.drain(range)
+            guard.as_int_mut().children.drain(range)
             .map(move |elem| {
                 if let TreePtr::Addr(addr) = elem.ptr {
                     // Delete on-disk leaves
@@ -1528,9 +1529,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // Simply drop in-memory leaves
                     future::ok(()).boxed()
                 }
-            }).collect::<Vec<_>>();
-            let fut = future::try_join_all(futs).map_ok(|_| guard);
-            fut.boxed()
+            }).collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>()
+            .map_ok(|_| guard)
+            .boxed()
         } else {
             debug_assert!(!guard.is_leaf());
             // If the IntElems point to IntNodes, we must recurse
@@ -1912,9 +1914,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // the Node's txg range.  Satisfying the borrow checker requires that
         // xlock's continuation have ownership over the child IntElem.  So we
         // need to deconstruct the entire NodeData.children vector and
-        // reassemble it after the join_all
+        // reassemble it after the collect::<FuturesOrdered>
         let dml2 = dml.clone();
-        let children_fut = ndata.as_int_mut().children.drain(..)
+        ndata.as_int_mut().children.drain(..)
         .map(move |elem| {
             if elem.is_dirty()
             {
@@ -1936,9 +1938,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
             } else { // LCOV_EXCL_LINE kcov false negative
                 future::ok(elem).boxed()
             }
-        })
-        .collect::<Vec<_>>();
-        future::try_join_all(children_fut)
+        }).collect::<FuturesOrdered<_>>()
+        .try_collect::<Vec<_>>()
         .and_then(move |elems| {
             let start_txg = elems.iter()
                 .map(|e| e.txgs.start)

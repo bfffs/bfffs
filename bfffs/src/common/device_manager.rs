@@ -9,8 +9,7 @@ use futures::{
     StreamExt,
     TryFutureExt,
     TryStreamExt,
-    future,
-    stream,
+    stream::{self, FuturesOrdered},
 };
 use std::{
     collections::BTreeMap,
@@ -109,12 +108,12 @@ impl DevManager {
     {
         let inner = self.inner.lock().unwrap();
         let (_pool, raids, mut leaves) = self.open_labels(uuid, inner);
-        let cfuts = raids.into_iter().map(move |raid| {
+        raids.into_iter().map(move |raid| {
             let leaf_paths = leaves.remove(&raid.uuid()).unwrap();
             DevManager::open_cluster(leaf_paths, raid.uuid())
             .map_ok(|(cluster, _reader)| cluster)
-        });
-        future::try_join_all(cfuts)
+        }).collect::<FuturesOrdered<_>>()
+        .try_collect::<Vec<_>>()
     }
 
     /// List every pool that hasn't been imported, but can be
