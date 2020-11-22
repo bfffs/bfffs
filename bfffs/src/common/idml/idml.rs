@@ -161,7 +161,10 @@ impl<'a> IDML {
         let zid = zone.zid;
         let pba = zone.pba;
         let total_blocks = zone.total_blocks;
-        self.list_indirect_records(&zone).try_for_each(move |record| {
+        // Cleaning normally happens in the background, so limit concurrency to
+        // 1, so as not to interfere too much with foreground tasks
+        self.list_indirect_records(&zone)
+        .try_for_each(move |record| {
             IDML::move_record(&cache2, &trees2, &ddml2, record, txg)
             .map_ok(move |drp| {
                 // We shouldn't have moved the record into the same zone
@@ -174,7 +177,7 @@ impl<'a> IDML {
             let pba_range = pba..end;
             let czfut = trees3.ridt.clean_zone(pba_range.clone(), txgs2, txg);
             // Finish alloct.range_delete before alloct.clean_zone, because the
-            // range delete is likely to eliminate most of not all nodes that
+            // range delete is likely to eliminate most if not all nodes that
             // need to be moved by clean_zone
             let atfut = trees3.alloct.range_delete(pba_range.clone(), txg)
                 .and_then(move |_| {
