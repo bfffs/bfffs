@@ -61,7 +61,7 @@ dependencies = [
  "bitfield",
  "blosc",
  "byteorder",
- "cfg-if 0.1.10",
+ "cfg-if 1.0.0",
  "chashmap",
  "clap",
  "divbuf",
@@ -118,7 +118,7 @@ name = "bfffs-fuse"
 version = "0.1.0"
 dependencies = [
  "bfffs",
- "cfg-if 0.1.10",
+ "cfg-if 1.0.0",
  "clap",
  "divbuf",
  "env_logger",
