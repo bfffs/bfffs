@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use crate::common::{*, label::*, vdev::*};
-use divbuf::DivBufShared;
 use futures::{
     Future,
     TryFutureExt,
@@ -350,16 +349,14 @@ impl VdevFile {
         let lba = LabelReader::lba(label);
         let offset = lba * BYTES_PER_LBA as u64;
         // TODO: figure out how to use mem::MaybeUninit with File::read_at
-        // TODO: Read into a vec instead of a DBS
-        let dbs = DivBufShared::uninitialized(LABEL_SIZE);
+        let mut rbuf = vec![0; LABEL_SIZE];
         let r = {
-            let mut dbm = dbs.try_mut().unwrap();
-            f.read_at(&mut dbm[..], offset).unwrap().await
+            f.read_at(&mut rbuf[..], offset).unwrap().await
         };
         match r {
             Ok(aio_result) => {
                 drop(aio_result);   // release reference on dbs
-                match LabelReader::from_dbs(dbs) {
+                match LabelReader::new(rbuf) {
                     Ok(lr) => Ok((lr, f)),
                     Err(e) => Err((e, f))
                 }
