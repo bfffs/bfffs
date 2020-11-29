@@ -61,7 +61,7 @@ dependencies = [
  "bitfield",
  "blosc",
  "byteorder",
- "cfg-if",
+ "cfg-if 0.1.10",
  "chashmap",
  "clap",
  "divbuf",
@@ -118,7 +118,7 @@ name = "bfffs-fuse"
 version = "0.1.0"
 dependencies = [
  "bfffs",
- "cfg-if",
+ "cfg-if 0.1.10",
  "clap",
  "divbuf",
  "env_logger",
@@ -205,6 +205,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
 
 [[package]]
+name = "cfg-if"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+
+[[package]]
 name = "chashmap"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -245,7 +251,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3c7c73a2d1e9fc0886a08b93e98eb643461230d5f1925e4036204d5f2e261a8"
 dependencies = [
  "autocfg 1.0.1",
- "cfg-if",
+ "cfg-if 0.1.10",
  "lazy_static",
 ]
 
@@ -504,7 +510,7 @@ version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7abc8dd8451921606d809ba32e95b6111925cd2906060d2dcc29c070220503eb"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "libc",
  "wasi 0.9.0+wasi-snapshot-preview1",
 ]
@@ -613,7 +619,7 @@ version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fabed175da42fed1fa0746b0ea71f412aa9d35e76e95e59b192c64b9dc2bf8b"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
 ]
 
 [[package]]
@@ -649,7 +655,7 @@ version = "0.6.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fce347092656428bc8eaf6201042cb551b8d67855af7374542a92a0fbfcac430"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "fuchsia-zircon",
  "fuchsia-zircon-sys",
  "iovec",
@@ -665,7 +671,7 @@ dependencies = [
 [[package]]
 name = "mio-aio"
 version = "0.4.2-pre"
-source = "git+https://github.com/asomers/mio-aio?rev=2a907c0278aa150a96266e5d86c168879eb0d07b#2a907c0278aa150a96266e5d86c168879eb0d07b"
+source = "git+https://github.com/asomers/mio-aio?rev=7096fa18b8400ba014a43be9fdc6f913263e70fa#7096fa18b8400ba014a43be9fdc6f913263e70fa"
 dependencies = [
  "mio",
  "nix",
@@ -699,7 +705,7 @@ name = "mockall"
 version = "0.8.0"
 source = "git+https://github.com/asomers/mockall?rev=1e6d98c735804092accbb74dc7380231cb4bd520#1e6d98c735804092accbb74dc7380231cb4bd520"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "downcast",
  "fragile",
  "lazy_static",
@@ -714,7 +720,7 @@ version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41cabea45a7fc0e37093f4f30a5e2b62602253f91791c057d5f0470c63260c3d"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "downcast",
  "fragile",
  "lazy_static",
@@ -728,7 +734,7 @@ name = "mockall_derive"
 version = "0.8.0"
 source = "git+https://github.com/asomers/mockall?rev=1e6d98c735804092accbb74dc7380231cb4bd520#1e6d98c735804092accbb74dc7380231cb4bd520"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "proc-macro2",
  "quote 1.0.7",
  "syn 1.0.45",
@@ -740,7 +746,7 @@ version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c461918bf7f59eefb1459252756bf2351a995d6bd510d0b2061bd86bcdabfa6"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "proc-macro2",
  "quote 1.0.7",
  "syn 1.0.45",
@@ -752,7 +758,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eacc2558c7ab425550913e9ba69077513922396bc4a1338301e3a0d244d2555"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "proc-macro2",
  "quote 1.0.7",
  "syn 1.0.45",
@@ -764,19 +770,19 @@ version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ebc3ec692ed7c9a255596c67808dee269f64655d8baf7b4f0638e51ba1d6853"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "libc",
  "winapi 0.3.9",
 ]
 
 [[package]]
 name = "nix"
-version = "0.18.0"
-source = "git+https://github.com/asomers/nix?rev=5d2354517a643162bdc6608a5a30aba43f592069#5d2354517a643162bdc6608a5a30aba43f592069"
+version = "0.19.0"
+source = "git+https://github.com/asomers/nix?rev=7912d9cfb10ea3a8118f00eb5a40790cdea33c8d#7912d9cfb10ea3a8118f00eb5a40790cdea33c8d"
 dependencies = [
  "bitflags",
  "cc",
- "cfg-if",
+ "cfg-if 1.0.0",
  "libc",
 ]
 
@@ -868,7 +874,7 @@ version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b876b1b9e7ac6e1a74a6da34d25c42e17e8862aa409cbbbdcfc8d86c6f3bc62b"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "cloudabi",
  "libc",
  "redox_syscall",
@@ -1342,7 +1348,7 @@ version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a6e24d9338a0a5be79593e2fa15a648add6138caa803e2d5bc782c371732ca9"
 dependencies = [
- "cfg-if",
+ "cfg-if 0.1.10",
  "libc",
  "rand 0.7.3",
  "redox_syscall",
@@ -1438,7 +1444,7 @@ dependencies = [
 [[package]]
 name = "tokio-file"
 version = "0.5.3-pre"
-source = "git+https://github.com/asomers/tokio-file?rev=04959b0574f9b274f56ab592cf98b5893c14ea07#04959b0574f9b274f56ab592cf98b5893c14ea07"
+source = "git+https://github.com/asomers/tokio-file?rev=5dbb35cb4cbb5ff55faa6063426af1a04c363ad6#5dbb35cb4cbb5ff55faa6063426af1a04c363ad6"
 dependencies = [
  "futures 0.3.5",
  "mio",

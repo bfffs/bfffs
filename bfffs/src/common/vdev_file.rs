@@ -24,7 +24,7 @@ use std::{
     path::Path,
     pin::Pin
 };
-use tokio_file::{AioFut, File, LioFut};
+use tokio_file::{AioFut, File};
 
 /// FFI definitions that don't belong in libc.  The ioctls can't go in libc
 /// because they use Nix's macros.  The structs probably shouldn't go in libc,
@@ -326,26 +326,37 @@ impl VdevFile {
     ///
     /// Return the number of bytes actually read.
     pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
-        let container = Box::new(IoVecMutContainer(buf));
         let off = lba * (BYTES_PER_LBA as u64);
-        let fut = VdevFileFut(self.file.read_at(container, off).unwrap());
-        Box::pin(fut)
+        let mut ra = Box::pin(ReadAt {
+            buf,
+            fut: None
+        });
+        unsafe {
+            // Safe because fut's lifetime is equal to buf's (or rather, it will
+            // be once we move it into the ReadAt struct
+            let buf: &'static mut [u8] =
+                mem::transmute::<&mut[u8], &'static mut [u8]>(ra.buf.as_mut());
+            let fut = self.file.read_at(&mut buf[..], off).unwrap();
+            Pin::get_unchecked_mut(ra.as_mut()).fut = Some(fut);
+        }
+        ra
     }
 
     /// Read just one of a vdev's labels
-    // TODO: make this an async fn that takes a reference to File
+    // TODO: Take File by reference`
     async fn read_label(f: File, label: u32)
         -> Result<(LabelReader, File), (Error, File)>
     {
         let lba = LabelReader::lba(label);
         let offset = lba * BYTES_PER_LBA as u64;
         // TODO: figure out how to use mem::MaybeUninit with File::read_at
-        // TODO: Skip creating the container by using a
-        // tokio_file::File::read_at_from_mut_slice method
+        // TODO: Read into a vec instead of a DBS
         let dbs = DivBufShared::uninitialized(LABEL_SIZE);
-        let dbm = dbs.try_mut().unwrap();
-        let container = Box::new(IoVecMutContainer(dbm));
-        match f.read_at(container, offset).unwrap().await {
+        let r = {
+            let mut dbm = dbs.try_mut().unwrap();
+            f.read_at(&mut dbm[..], offset).unwrap().await
+        };
+        match r {
             Ok(aio_result) => {
                 drop(aio_result);   // release reference on dbs
                 match LabelReader::from_dbs(dbs) {
@@ -368,24 +379,40 @@ impl VdevFile {
     {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
-        let container = Box::new(IoVecMutContainer(buf));
-        let off = lba * (BYTES_PER_LBA as u64);
-        let fut = VdevFileFut(self.file.read_at(container, off).unwrap());
-        Box::pin(fut)
+        self.read_at(buf, lba)
     }
 
     /// The asynchronous scatter/gather read function.
     ///
-    /// * `bufs`    Scatter-gather list of buffers to receive data
-    /// * `lba`     LBA from which to read
-    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut
+    /// * `sglist   Scatter-gather list of buffers to receive data
+    /// * `lba`     LBA to read from
+    pub fn readv_at(&self, sglist: SGListMut, lba: LbaT) -> BoxVdevFut
     {
         let off = lba * (BYTES_PER_LBA as u64);
-        let containers = bufs.into_iter().map(|iovec| {
-            Box::new(IoVecMutContainer(iovec)) as Box<_>
-        }).collect();
-        let fut = VdevFileLioFut(self.file.readv_at(containers, off).unwrap());
-        Box::pin(fut)
+        let mut rva = Box::pin(ReadvAt {
+            sglist,
+            slices: None,
+            fut: None
+        });
+        unsafe {
+            // Safe because fut's lifetime is equal to slices' (or rather, it
+            // will be once we move it into the WriteAt struct
+            let slices: Box<[&'static mut [u8]]> =
+                rva.sglist.iter_mut()
+                .map(|b| {
+                    mem::transmute::<&mut [u8], &'static mut[u8]>(&mut b[..])
+                }).collect::<Vec<_>>()
+                .into_boxed_slice();
+            Pin::get_unchecked_mut(rva.as_mut()).slices = Some(slices);
+            let bufs: &'static mut [&'static mut [u8]] =
+                mem::transmute::<&mut[&'static mut[u8]],
+                                 &'static mut [&'static mut [u8]]>(
+                    rva.slices.as_mut().unwrap()
+                );
+            let fut = self.file.readv_at(bufs, off).unwrap();
+            Pin::get_unchecked_mut(rva.as_mut()).fut = Some(fut);
+        }
+        rva
     }
 
     fn reserved_space(&self) -> LbaT {
@@ -398,23 +425,29 @@ impl VdevFile {
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
-    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
-        assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
-        let container = Box::new(IoVecContainer(buf));
-        Box::pin(self.write_at_unchecked(container, lba))
-    }
-
-    fn write_at_unchecked(&self,
-                          buf: Box<dyn Borrow<[u8]> + Send + Sync>,
-                          lba: LbaT)
-        -> impl Future<Output=Result<(), Error>>
+    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
     {
+        assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
+        let off = lba * (BYTES_PER_LBA as u64);
         {
             let b: &[u8] = (*buf).borrow();
             debug_assert!(b.len() % BYTES_PER_LBA == 0);
         }
-        let off = lba * (BYTES_PER_LBA as u64);
-        VdevFileFut(self.file.write_at(buf, off).unwrap())
+
+        let mut wa = Box::pin(WriteAt {
+            buf,
+            fut: None
+        });
+        unsafe {
+            // Safe because fut's lifetime is equal to buf's (or rather, it will
+            // be once we move it into the WriteAt struct
+            let buf: &'static [u8] = mem::transmute::<&[u8], &'static [u8]>(
+                wa.buf.as_ref()
+            );
+            let fut = self.file.write_at(&buf[..], off).unwrap();
+            Pin::get_unchecked_mut(wa.as_mut()).fut = Some(fut);
+        }
+        wa
     }
 
     /// Asynchronously write this Vdev's label.
@@ -444,43 +477,57 @@ impl VdevFile {
     ///                 one.  It should be the same as whichever label is being
     ///                 written.
     /// - `block`:      LBA-based offset from the start of the spacemap area
-    pub fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
+    pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> BoxVdevFut
     {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
-        let bytes: u64 = buf.iter()
+        let bytes: u64 = sglist.iter()
             .map(DivBuf::len)
             .sum::<usize>() as u64;
         debug_assert_eq!(bytes % BYTES_PER_LBA as u64, 0);
         let lbas = bytes / BYTES_PER_LBA as LbaT;
         assert!(lba + lbas <= self.reserved_space());
-        let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecContainer(iovec)) as Box<_>
-        }).collect();
-        let off = lba * (BYTES_PER_LBA as u64);
-        let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
-        Box::pin(fut)
+        self.writev_at(sglist, lba)
     }
 
     /// The asynchronous scatter/gather write function.
     ///
-    /// * `bufs`    Scatter-gather list of buffers to receive data
-    /// * `lba`     LBA from which to read
-    pub fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut
+    /// * `sglist`  Scatter-gather list of buffers to write
+    /// * `lba`     LBA to write to
+    pub fn writev_at(&self, sglist: SGList, lba: LbaT) -> BoxVdevFut
     {
         let off = lba * (BYTES_PER_LBA as u64);
-        let containers = buf.into_iter().map(|iovec| {
-            Box::new(IoVecContainer(iovec)) as Box<_>
-        }).collect();
-        let fut = VdevFileLioFut(self.file.writev_at(containers, off).unwrap());
-        Box::pin(fut)
+
+        let mut wva = Box::pin(WritevAt {
+            sglist,
+            slices: None,
+            fut: None
+        });
+        unsafe {
+            // Safe because fut's lifetime is equal to slices' (or rather, it
+            // will be once we move it into the WriteAt struct
+            let slices: Box<[&'static [u8]]> =
+                wva.sglist.iter()
+                    .map(|b| {
+                        mem::transmute::<&[u8], &'static [u8]>(&b[..])
+                    }).collect::<Vec<_>>()
+                    .into_boxed_slice();
+            Pin::get_unchecked_mut(wva.as_mut()).slices = Some(slices);
+            let fut = self.file.writev_at(&wva.slices.as_ref().unwrap(), off)
+                .unwrap();
+            Pin::get_unchecked_mut(wva.as_mut()).fut = Some(fut);
+        }
+        wva
     }
 }
 
-struct VdevFileFut<'a>(AioFut<'a>);
+struct ReadAt {
+    buf: IoVecMut,
+    fut: Option<AioFut<'static>>
+}
 
-impl<'a> Future for VdevFileFut<'a> {
+impl Future for ReadAt {
     type Output = Result<(), Error>;
 
     // aio_write and friends will sometimes return an error synchronously (like
@@ -489,8 +536,9 @@ impl<'a> Future for VdevFileFut<'a> {
     // calling poll again after it returns an error, which is incompatible with
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        match Pin::new(&mut self.0).poll(cx) {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        match f.poll(cx) {
             Poll::Ready(Ok(_aio_result)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
             Poll::Pending => Poll::Pending
@@ -498,23 +546,74 @@ impl<'a> Future for VdevFileFut<'a> {
     }
 }
 
-struct VdevFileLioFut<'a>(LioFut<'a>);
+struct WriteAt{
+    fut: Option<AioFut<'static>>,
+    buf: IoVec,
+}
 
-impl<'a> Future for VdevFileLioFut<'a> {
+impl Future for WriteAt {
     type Output = Result<(), Error>;
 
-    // See comments for VdevFileFut::poll
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        match Pin::new(&mut self.0).poll(cx) {
-            Poll::Ready(Ok(mut lio_result_iter)) => {
-                 // We must drain the iterator to free the AioCb resources
-                Poll::Ready(
-                    match lio_result_iter.find(|ref r| r.value.is_err()) {
-                        Some(r) => Err(Error::from(r.value.unwrap_err())),
-                        None => Ok(())
-                    }
-                )
-            },
+    // aio_write and friends will sometimes return an error synchronously (like
+    // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
+    // once before spawning the future into the event loop.  But that results in
+    // calling poll again after it returns an error, which is incompatible with
+    // FuturesExt::{map, map_err}'s implementations.  So we have to define a
+    // custom poll method here, with map's and map_err's functionality inlined.
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        match f.poll(cx) {
+            Poll::Ready(Ok(_aio_result)) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
+            Poll::Pending => Poll::Pending
+        }
+    }
+}
+
+struct ReadvAt{
+    fut: Option<tokio_file::ReadvAt<'static>>,
+    slices: Option<Box<[&'static mut [u8]]>>,
+    sglist: SGListMut,
+}
+
+impl Future for ReadvAt {
+    type Output = Result<(), Error>;
+
+    // aio_write and friends will sometimes return an error synchronously (like
+    // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
+    // once before spawning the future into the event loop.  But that results in
+    // calling poll again after it returns an error, which is incompatible with
+    // FuturesExt::{map, map_err}'s implementations.  So we have to define a
+    // custom poll method here, with map's and map_err's functionality inlined.
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        match f.poll(cx) {
+            Poll::Ready(Ok(_l)) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
+            Poll::Pending => Poll::Pending
+        }
+    }
+}
+
+struct WritevAt{
+    fut: Option<tokio_file::WritevAt<'static>>,
+    slices: Option<Box<[&'static [u8]]>>,
+    sglist: SGList,
+}
+
+impl Future for WritevAt {
+    type Output = Result<(), Error>;
+
+    // aio_write and friends will sometimes return an error synchronously (like
+    // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
+    // once before spawning the future into the event loop.  But that results in
+    // calling poll again after it returns an error, which is incompatible with
+    // FuturesExt::{map, map_err}'s implementations.  So we have to define a
+    // custom poll method here, with map's and map_err's functionality inlined.
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        match f.poll(cx) {
+            Poll::Ready(Ok(_l)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
             Poll::Pending => Poll::Pending
         }
