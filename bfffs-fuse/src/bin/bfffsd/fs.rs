@@ -9,7 +9,6 @@ use bfffs::common::{
 };
 use cfg_if::cfg_if;
 use fuse::{FileAttr, FileType };
-use libc;
 use std::{
     collections::hash_map::HashMap,
     ffi::{OsString, OsStr},

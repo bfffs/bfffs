@@ -26,7 +26,6 @@ use futures::{
     stream::FuturesUnordered,
 };
 use futures_locks::Mutex;
-#[cfg(not(test))] use libc;
 #[cfg(test)] use mockall::automock;
 use std::collections::BTreeMap;
 use std::{
@@ -39,7 +38,6 @@ use std::{
 };
 #[cfg(not(test))] use std::io;
 use super::*;
-#[cfg(not(test))] use time;
 #[cfg(not(test))] use tokio::runtime;
 use tokio::{
     runtime::Handle,
