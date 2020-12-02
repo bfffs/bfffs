@@ -97,7 +97,7 @@ fn main() {
             async move {
                 db3.clean().await.unwrap()
             }
-        })
+        }).await
     });
 
     thr_handle.join().unwrap()
