@@ -49,10 +49,10 @@ pub fn spacemap_space(nzones: u64) -> LbaT {
 
 /// Used to read successive structs out of the label
 pub struct LabelReader {
-    cursor: io::Cursor<DivBuf>
+    cursor: io::Cursor<Vec<u8>>
 }
 
-impl<'de> LabelReader {
+impl LabelReader {
     /// Attempt to read a `T` out of the label
     pub fn deserialize<T>(&mut self) -> bincode::Result<T>
         where T: DeserializeOwned
@@ -61,24 +61,23 @@ impl<'de> LabelReader {
     }
 
     /// Construct a `LabelReader` using the raw buffer read from disk
-    pub fn from_dbs(buffer: DivBufShared) -> Result<Self, Error> {
-        let db = buffer.try_const().unwrap();
-        if db.len() < MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN {
+    pub fn new(buffer: Vec<u8>) -> Result<Self, Error> {
+        if buffer.len() < MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN {
             return Err(Error::EINVAL);
         }
-        if MAGIC[..] != db[0..MAGIC_LEN] {
+        if MAGIC[..] != buffer[0..MAGIC_LEN] {
             return Err(Error::EINVAL);
         }
 
         let checksum = BigEndian::read_u64(
-            &db[MAGIC_LEN..MAGIC_LEN + CHECKSUM_LEN]);
+            &buffer[MAGIC_LEN..MAGIC_LEN + CHECKSUM_LEN]);
         let length_start = MAGIC_LEN + CHECKSUM_LEN;
         let contents_start = length_start + LENGTH_LEN;
         let contents_len = BigEndian::read_u64(
-            &db[length_start .. contents_start]);
+            &buffer[length_start .. contents_start]);
         let mut hasher = MetroHash64::new();
         {
-            let contents = &db[contents_start ..
+            let contents = &buffer[contents_start ..
                                contents_start + contents_len as usize];
             contents_len.to_be().hash(&mut hasher);
             hasher.write(contents);
@@ -87,7 +86,7 @@ impl<'de> LabelReader {
             return Err(Error::ECKSUM);
         }
 
-        let mut cursor = io::Cursor::new(db);
+        let mut cursor = io::Cursor::new(buffer);
         // Seek past header
         cursor.seek(SeekFrom::Start(contents_start as u64))
             .expect("IoVec too short");
