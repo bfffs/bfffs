@@ -65,7 +65,8 @@ fn main() {
     let uuid = dev_manager.importable_pools().iter()
         .filter(|(name, _uuid)| {
             **name == poolname
-        }).nth(0).unwrap().1;
+        }).next()
+        .unwrap().1;
 
     let rt = Builder::new()
         .threaded_scheduler()
