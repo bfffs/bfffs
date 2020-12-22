@@ -29,67 +29,70 @@ use tokio::runtime::Handle;
  */
 mock! {
     pub Fs {
-        fn create(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<FileData, i32>;
-        fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
+        pub fn create(&self, parent: &FileData, name: &OsStr, perm: u16,
+            uid: u32, gid: u32) -> Result<FileData, i32>;
+        pub fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
             name: &OsStr) -> Result<(), i32>;
-        fn inactive(&self, fd: FileData);
-        fn fsync(&self, fd: &FileData) -> Result<(), i32>;
-        fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32>;
-        fn getextattr(&self, fd: &FileData, ns: ExtAttrNamespace, name: &OsStr)
+        pub fn inactive(&self, fd: FileData);
+        pub fn fsync(&self, fd: &FileData) -> Result<(), i32>;
+        pub fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32>;
+        pub fn getextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
+            name: &OsStr)
             -> Result<DivBuf, i32>;
-        fn getextattrlen(&self, fd: &FileData, ns: ExtAttrNamespace,
+        pub fn getextattrlen(&self, fd: &FileData, ns: ExtAttrNamespace,
             name: &OsStr) -> Result<u32, i32>;
-        fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
+        pub fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
             -> Result<(), i32>;
-        fn lookup<'a>(&self, grandparent: Option<&'a FileData>,
+        pub fn lookup<'a>(&self, grandparent: Option<&'a FileData>,
             parent: &'a FileData, name: &OsStr) -> Result<FileData, i32>;
-        fn listextattr<F>(&self, fd: &FileData, size: u32, f: F)
+        pub fn listextattr<F>(&self, fd: &FileData, size: u32, f: F)
             -> Result<Vec<u8>, i32>
             where F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static;
-        fn listextattrlen<F>(&self, fd: &FileData, f: F) -> Result<u32, i32>
+        pub fn listextattrlen<F>(&self, fd: &FileData, f: F) -> Result<u32, i32>
             where F: Fn(&ExtAttr<RID>) -> u32 + Send + 'static;
-        fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                 gid: u32) -> Result<FileData, i32>;
-        fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, rdev: u32) -> Result<FileData, i32>;
-        fn mkchar(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32, rdev: u32) -> Result<FileData, i32>;
-        fn mkfifo(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<FileData, i32>;
-        fn mksock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<FileData, i32>;
-        fn new(database: Arc<Database>, handle: Handle, tree: TreeID) -> Self;
-        fn read(&self, fd: &FileData, offset: u64, size: usize)
+        pub fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, 
+            id: u32, gid: u32) -> Result<FileData, i32>;
+        pub fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16,
+            uid: u32, gid: u32, rdev: u32) -> Result<FileData, i32>;
+        pub fn mkchar(&self, parent: &FileData, name: &OsStr, perm: u16,
+            uid: u32, gid: u32, rdev: u32) -> Result<FileData, i32>;
+        pub fn mkfifo(&self, parent: &FileData, name: &OsStr, perm: u16,
+            uid: u32, gid: u32) -> Result<FileData, i32>;
+        pub fn mksock(&self, parent: &FileData, name: &OsStr, perm: u16,
+            uid: u32, gid: u32) -> Result<FileData, i32>;
+        pub fn new(database: Arc<Database>, handle: Handle, tree: TreeID)
+            -> Self;
+        pub fn read(&self, fd: &FileData, offset: u64, size: usize)
             -> Result<SGList, i32>;
-        fn readdir(&self, fd: &FileData, soffs: i64)
+        pub fn readdir(&self, fd: &FileData, soffs: i64)
             -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>;
-        fn readlink(&self, fd: &FileData) -> Result<OsString, i32>;
-        fn rename<'a>(&self, parent: &'a FileData, fd: &'a FileData,
+        pub fn readlink(&self, fd: &FileData) -> Result<OsString, i32>;
+        pub fn rename<'a>(&self, parent: &'a FileData, fd: &'a FileData,
             name: &'a OsStr, newparent: &'a FileData, newino: Option<u64>,
             newname: &'a OsStr)
             -> Result<u64, i32>;
-        fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32>;
-        fn root(&self) -> FileData;
-        fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32>;
-        fn setextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
+        pub fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32>;
+        pub fn root(&self) -> FileData;
+        pub fn setattr(&self, fd: &FileData, mut attr: SetAttr)
+            -> Result<(), i32>;
+        pub fn setextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                       name: &OsStr, data: &[u8]) -> Result<(), i32>;
-        fn set_props(&mut self, props: Vec<Property>);
-        fn statvfs(&self) -> Result<libc::statvfs, i32>;
-        fn symlink(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, link: &OsStr) -> Result<FileData, i32>;
-        fn sync(&self);
-        fn unlink<'a>(&self, parent: &'a FileData, fd: Option<&'a FileData>,
+        pub fn set_props(&mut self, props: Vec<Property>);
+        pub fn statvfs(&self) -> Result<libc::statvfs, i32>;
+        pub fn symlink(&self, parent: &FileData, name: &OsStr, perm: u16,
+            uid: u32, gid: u32, link: &OsStr) -> Result<FileData, i32>;
+        pub fn sync(&self);
+        pub fn unlink<'a>(&self, parent: &'a FileData, fd: Option<&'a FileData>,
             name: &'a OsStr)
             -> Result<(), i32>;
         // Change write's signature slightly.  The real write takes a IU:
         // Into<UIO>, but Mockall can't mock non-'static, non-reference
         // arguments.  So we change the argument to &[u8], which is how
         // bfffs-fuse uses it anyway.
-        fn write(&self, fd: &FileData, offset: u64, data: &[u8], _flags: u32)
-            -> Result<u32, i32>;
-        //fn write<IU>(&self, fd: &FileData, offset: u64, data: IU, _flags: u32)
-            //-> Result<u32, i32>
+        pub fn write(&self, fd: &FileData, offset: u64, data: &[u8],
+            _flags: u32) -> Result<u32, i32>;
+        //pub fn write<IU>(&self, fd: &FileData, offset: u64, data: IU,
+            //_flags: u32) -> Result<u32, i32>
             //where IU: Into<bfffs::common::fs::Uio>;
     }
 }
@@ -101,100 +104,100 @@ mock! {
  */
 mock! {
     pub ReplyAttr {
-        fn attr(self, ttl: &Timespec, attr: &FileAttr);
-        fn error(self, err: c_int);
+        pub fn attr(self, ttl: &Timespec, attr: &FileAttr);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyBmap{
-        fn bmap(self, block: u64);
-        fn error(self, err: c_int);
+        pub fn bmap(self, block: u64);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyCreate {
-        fn created(self, ttl: &Timespec, attr: &FileAttr, generation: u64,
+        pub fn created(self, ttl: &Timespec, attr: &FileAttr, generation: u64,
                    fh: u64, flags: u32);
-        fn error(self, err: c_int);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyData {
-        fn data(self, data: &[u8]);
-        fn error(self, err: c_int);
+        pub fn data(self, data: &[u8]);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyDirectory {
-        fn add<T>(&mut self, ino: u64, offset: i64, kind: FileType, name: T)
+        pub fn add<T>(&mut self, ino: u64, offset: i64, kind: FileType, name: T)
             -> bool
             where T: AsRef<OsStr> + 'static;
-        fn ok(self);
-        fn error(self, err: c_int);
+        pub fn ok(self);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyEmpty {
-        fn ok(self);
-        fn error(self, err: c_int);
+        pub fn ok(self);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyEntry {
-        fn entry(self, ttl: &Timespec, attr: &FileAttr, generation: u64);
-        fn error(self, err: c_int);
+        pub fn entry(self, ttl: &Timespec, attr: &FileAttr, generation: u64);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyLock{
-        fn locked(self, start: u64, end: u64, typ: u32, pid: u32);
-        fn error(self, err: c_int);
+        pub fn locked(self, start: u64, end: u64, typ: u32, pid: u32);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyOpen{
-        fn opened(self, fh: u64, flags: u32);
-        fn error(self, err: c_int);
+        pub fn opened(self, fh: u64, flags: u32);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyStatfs{
-        fn statfs(self, blocks: u64, bfree: u64, bavail: u64, files: u64,
+        pub fn statfs(self, blocks: u64, bfree: u64, bavail: u64, files: u64,
                   ffree: u64, bsize: u32, namelen: u32, frsize: u32);
-        fn error(self, err: c_int);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyWrite{
-        fn written(self, size: u32);
-        fn error(self, err: c_int);
+        pub fn written(self, size: u32);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub ReplyXattr {
-        fn size(self, size: u32);
-        fn data(self, data: &[u8]);
-        fn error(self, err: c_int);
+        pub fn size(self, size: u32);
+        pub fn data(self, data: &[u8]);
+        pub fn error(self, err: c_int);
     }
 }
 
 mock! {
     pub Request {
-        fn unique(&self) -> u64;
-        fn uid(&self) -> u32;
-        fn gid(&self) -> u32;
-        fn pid(&self) -> u32;
+        pub fn unique(&self) -> u64;
+        pub fn uid(&self) -> u32;
+        pub fn gid(&self) -> u32;
+        pub fn pid(&self) -> u32;
     }
 }
 
