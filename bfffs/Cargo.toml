@@ -20,7 +20,7 @@ byteorder = "1.2.3"
 cfg-if = "1.0"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
 downcast = "0.10.0"
-enum-primitive-derive = "^0.1"
+enum-primitive-derive = "0.2.0"
 fixedbitset = "0.1.8"
 futures = "0.3.0"
 futures-locks = "0.6.0"
