@@ -7,7 +7,6 @@ use chashmap::CHashMap;
 use lazy_static::lazy_static;
 use rand_xorshift::XorShiftRng;
 use rand::{
-    FromEntropy,
     Rng,
     SeedableRng,
     distributions::Alphanumeric,
@@ -51,7 +50,7 @@ impl Collidable for CDirent {
     }
 
     fn new(seed: &[u8; 16]) -> Self {
-        let mut this_rng = XorShiftRng::from_seed(*seed);
+        let this_rng = XorShiftRng::from_seed(*seed);
         let v: Vec<u8> = this_rng.sample_iter(&Alphanumeric)
             .map(|c| c as u8)
             .take(10)
@@ -77,7 +76,7 @@ impl Collidable for CExtattr {
 
     fn new(seed: &[u8; 16]) -> Self {
         let mut this_rng = XorShiftRng::from_seed(*seed);
-        let v: Vec<u8> = this_rng.sample_iter(&Alphanumeric)
+        let v: Vec<u8> = (&mut this_rng).sample_iter(&Alphanumeric)
             .map(|c| c as u8)
             .take(10)
             .collect();
