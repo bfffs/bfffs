@@ -81,7 +81,7 @@ dependencies = [
  "libc",
  "log 0.4.11",
  "metrohash",
- "mockall 0.8.0",
+ "mockall",
  "mockall_double",
  "nix",
  "num-traits 0.1.43",
@@ -125,7 +125,7 @@ dependencies = [
  "fuse",
  "futures 0.3.5",
  "libc",
- "mockall 0.8.3",
+ "mockall",
  "predicates",
  "time",
  "tokio",
@@ -702,51 +702,26 @@ dependencies = [
 
 [[package]]
 name = "mockall"
-version = "0.8.0"
-source = "git+https://github.com/asomers/mockall?rev=1e6d98c735804092accbb74dc7380231cb4bd520#1e6d98c735804092accbb74dc7380231cb4bd520"
-dependencies = [
- "cfg-if 0.1.10",
- "downcast",
- "fragile",
- "lazy_static",
- "mockall_derive 0.8.0",
- "predicates",
- "predicates-tree",
-]
-
-[[package]]
-name = "mockall"
-version = "0.8.3"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41cabea45a7fc0e37093f4f30a5e2b62602253f91791c057d5f0470c63260c3d"
+checksum = "619634fd9149c4a06e66d8fd9256e85326d8eeee75abee4565ff76c92e4edfe0"
 dependencies = [
- "cfg-if 0.1.10",
+ "cfg-if 1.0.0",
  "downcast",
  "fragile",
  "lazy_static",
- "mockall_derive 0.8.3",
+ "mockall_derive",
  "predicates",
  "predicates-tree",
 ]
 
 [[package]]
 name = "mockall_derive"
-version = "0.8.0"
-source = "git+https://github.com/asomers/mockall?rev=1e6d98c735804092accbb74dc7380231cb4bd520#1e6d98c735804092accbb74dc7380231cb4bd520"
-dependencies = [
- "cfg-if 0.1.10",
- "proc-macro2",
- "quote 1.0.7",
- "syn 1.0.45",
-]
-
-[[package]]
-name = "mockall_derive"
-version = "0.8.3"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c461918bf7f59eefb1459252756bf2351a995d6bd510d0b2061bd86bcdabfa6"
+checksum = "83714c95dbf4c24202f0f1b208f0f248e6bd65abfa8989303611a71c0f781548"
 dependencies = [
- "cfg-if 0.1.10",
+ "cfg-if 1.0.0",
  "proc-macro2",
  "quote 1.0.7",
  "syn 1.0.45",
@@ -754,11 +729,11 @@ dependencies = [
 
 [[package]]
 name = "mockall_double"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eacc2558c7ab425550913e9ba69077513922396bc4a1338301e3a0d244d2555"
+checksum = "3e25b78d34b2b713b1d000d629079755cfc166e6a65f9f4c1c012a94305467c5"
 dependencies = [
- "cfg-if 0.1.10",
+ "cfg-if 1.0.0",
  "proc-macro2",
  "quote 1.0.7",
  "syn 1.0.45",

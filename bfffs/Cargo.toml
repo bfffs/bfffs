@@ -29,7 +29,7 @@ isa-l = { path = "../isa-l" }
 lazy_static = "1.0"
 libc = "0.2.44"
 metrohash = "1.0"
-mockall_double = "0.1.0"
+mockall_double = "0.2.0"
 nix = { git = "https://github.com/asomers/nix", rev = "7912d9cfb10ea3a8118f00eb5a40790cdea33c8d" }
 num-traits = "^0.1"
 serde = "1.0.60"
@@ -54,7 +54,7 @@ glob = "0.2"
 histogram = "0.6"
 itertools = "0.7.1"
 log = "0.4"
-mockall = { git = "https://github.com/asomers/mockall", rev = "1e6d98c735804092accbb74dc7380231cb4bd520" }
+mockall = "0.9.0"
 num_cpus = "1"
 permutohedron = "0.2"
 pretty_assertions = "0.5"
