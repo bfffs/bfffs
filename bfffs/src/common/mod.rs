@@ -11,7 +11,6 @@ use serde::{
     de::Deserializer,
     ser::SerializeTuple
 };
-use serde_derive::*;
 use std::{
     fmt::{self, Display, Formatter},
     hash::Hasher,
@@ -304,7 +303,7 @@ impl Uuid {
         Uuid(uuid::Uuid::new_v4())
     }
 
-    pub fn parse_str(input: &str) -> Result<Uuid, uuid::parser::ParseError> {
+    pub fn parse_str(input: &str) -> Result<Uuid, uuid::Error> {
         uuid::Uuid::parse_str(input).map(Uuid)
     }
 }
