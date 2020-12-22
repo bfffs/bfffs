@@ -31,7 +31,7 @@ libc = "0.2.44"
 metrohash = "1.0"
 mockall_double = "0.2.0"
 nix = { git = "https://github.com/asomers/nix", rev = "7912d9cfb10ea3a8118f00eb5a40790cdea33c8d" }
-num-traits = "^0.1"
+num-traits = "0.2.0"
 serde = "1.0.60"
 serde_derive = "1.0"
 serde_yaml = "0.8.6"
