@@ -45,7 +45,7 @@ impl SyncCleaner {
         .and_then(move |zones| {
             // Limit concurrency to 1.  To minimize HDD seeks, it's better to
             // clean one at a time.  Any in-zone concurrency can be managed by
-            // IDM:::clean_zone.
+            // IDML:::clean_zone.
             stream::iter(zones.into_iter())
             .map(Ok)
             .try_for_each(move |zone| {

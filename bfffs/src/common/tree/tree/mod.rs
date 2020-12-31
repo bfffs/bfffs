@@ -1831,7 +1831,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     // because we need to write child nodes before we have valid addresses for
     // their parents' child pointers.  It's also the only way to guarantee that
     // the Tree will be completely clean by the time that flush returns.  Flush
-    // will probably only happen during TXG flush, which is once every few
+    // will probably only happen during TXG sync, which is once every few
     // seconds.
     //
     // Alternatively, it would be possible to create a streaming flusher like
