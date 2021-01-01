@@ -1004,10 +1004,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }).boxed()
     }
 
-    /// Private helper for `Range::poll`.  Returns a subset of the total
-    /// results, consisting of all matching (K,V) pairs within a single Leaf
-    /// Node, plus an optional Bound for the next iteration of the search.  If
-    /// the Bound is `None`, then the search is complete.
+    /// Private helper for `RangeQuery::poll_next`.  Returns a subset of the
+    /// total results, consisting of all matching (K,V) pairs within a single
+    /// Leaf Node, plus an optional Bound for the next iteration of the search.
+    /// If the Bound is `None`, then the search is complete.
     fn get_range<R, T>(inner: &Inner<A, D, K, V>, range: R)
         -> impl Future<Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>),
                        Error>> + Send
