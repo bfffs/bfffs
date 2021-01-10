@@ -149,6 +149,7 @@ struct Inner {
     // NB: This is likely to be highly contended and very slow.  Better to
     // replace it with a per-cpu counter.
     dirty: AtomicBool,
+    // TODO: replace the Mutex with a structure that allows concurrent access.
     fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
     forest: ITree<TreeID, TreeOnDisk<RID>>,
     idml: Arc<IDML>,

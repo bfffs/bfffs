@@ -213,6 +213,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
         where D: DML<Addr=A> + 'static, A: 'static
     {
         if V::needs_flush() {
+            // TODO: concurrency
             self.items.into_iter().map(|(k, v)| {
                 v.flush(d, txg)
                 .map_ok(move |v| (k, v))
@@ -636,6 +637,15 @@ pub(super) struct IntData<A: Addr, K: Key, V: Value> {
 }
 
 impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
+    /// Are any of this node's children dirty?
+    ///
+    /// Note that the node itself could still be dirty, even if its children
+    /// aren't.
+    pub fn has_dirty_children(&self) -> bool {
+        self.children.iter()
+            .any(IntElem::is_dirty)
+    }
+
     /// How many children does this node have?
     pub fn nchildren(&self) -> usize {
         self.children.len()
@@ -743,6 +753,17 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
             true
         };
         len_ok && key_ok
+    }
+
+    /// Are any of this node's children dirty?
+    ///
+    /// Note that the node itself could still be dirty, even if its children
+    /// aren't.
+    pub fn has_dirty_children(&self) -> bool {
+        match self {
+            NodeData::Leaf(_) => false,
+            NodeData::Int(ni) => ni.has_dirty_children()
+        }
     }
 
     /// Is this node in danger of underflowing if one child gets merged?
@@ -1087,6 +1108,38 @@ fn treeptr_eq_mem() {
 #[test]
 fn txgt_min_value() {
     assert_eq!(TxgT(0), TxgT::min_value());
+}
+}
+
+/// Tests for NodeData.has_dirty_children
+#[cfg(test)]
+mod has_dirty_children {
+use super::*;
+
+#[test]
+fn nothing_dirty() {
+    let children = vec![
+        IntElem::new(0u32, TxgT::from(1)..TxgT::from(9), TreePtr::Addr(0)),
+        IntElem::new(256u32, TxgT::from(2)..TxgT::from(8), TreePtr::Addr(4u32)),
+    ];
+    let node_data = NodeData::<u32, u32, u32>::Int(IntData::new(children));
+    assert!(!node_data.has_dirty_children());
+}
+
+#[test]
+fn yes() {
+    let mut items: BTreeMap<u32, u32> = BTreeMap::new();
+    items.insert(0, 100);
+    items.insert(1, 200);
+    items.insert(99, 50_000);
+    let leaf: Box<Node<u32, u32, u32>> =
+        Box::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let children = vec![
+        IntElem::new(0u32, TxgT::from(1)..TxgT::from(9), TreePtr::Mem(leaf)),
+        IntElem::new(256u32, TxgT::from(2)..TxgT::from(8), TreePtr::Addr(4u32)),
+    ];
+    let node_data = NodeData::Int(IntData::new(children));
+    assert!(node_data.has_dirty_children());
 }
 }
 
