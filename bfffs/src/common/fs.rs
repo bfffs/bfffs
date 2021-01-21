@@ -1535,7 +1535,7 @@ impl Fs {
         struct ReaddirIter{
             handle: Handle,
             rx: mpsc::Receiver<(Dirent, Cursor)>
-        };
+        }
         impl Iterator for ReaddirIter {
             type Item = Result<(libc::dirent, i64), i32>;
 
