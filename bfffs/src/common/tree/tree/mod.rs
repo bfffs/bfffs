@@ -2065,7 +2065,17 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
           K: Key,
           V: Value
 {
-    /// Clean `zone` by moving all of its records to other zones.
+    /// Clean the zone by moving all of its records to other zones.
+    ///
+    /// # Arguments
+    ///
+    /// `pbas` -    All nodes stored in this range of PBAs will be rewritten.
+    ///             Normally this will be the whole PBA range of an allocation
+    ///             zone, but it technically could be more or less.
+    /// `txgs` -    The range of transactions in which `pbas` were written.
+    ///             It is an error if any block in `pbas` was written outside of
+    ///             this transaction range.
+    /// `txg` -     The current transaction number
     pub fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
         -> impl Future<Output=Result<(), Error>> + Send
     {
