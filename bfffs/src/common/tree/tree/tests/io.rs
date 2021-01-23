@@ -1382,8 +1382,10 @@ fn write_deep() {
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
             int_data.children[0].ptr.is_addr() &&
+            int_data.children[0].txgs == (TxgT::from(42) .. TxgT::from(43)) &&
             int_data.children[1].key == 256 &&
             int_data.children[1].ptr.is_addr() &&
+            int_data.children[1].txgs == (TxgT::from(41) .. TxgT::from(42)) &&
             *txg == TxgT::from(42)
         }).return_once(move |_, _, _| future::ok(addr).boxed());
     let dml = Arc::new(mock);
@@ -1399,7 +1401,7 @@ limits:
 root:
   key: 0
   txgs:
-    start: 41
+    start: 30
     end: 42
   ptr:
     Mem:
@@ -1408,7 +1410,7 @@ root:
           - key: 0
             txgs:
               start: 41
-              end: 42
+              end: 43
             ptr:
               Mem:
                 Leaf:
@@ -1425,10 +1427,11 @@ root:
 
     let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
-    let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
-        .root.get_mut().unwrap()
-        .ptr.as_addr();
-    assert_eq!(root_addr, addr);
+    let root = Arc::get_mut(&mut tree.i).unwrap()
+        .root.get_mut().unwrap();
+    assert_eq!(*root.ptr.as_addr(), addr);
+    assert_eq!(root.txgs.start, TxgT::from(41));
+    assert_eq!(root.txgs.end, TxgT::from(43));
 }
 
 #[test]
@@ -1481,10 +1484,11 @@ root:
 
     let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
-    let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
-        .root.get_mut().unwrap()
-        .ptr.as_addr();
-    assert_eq!(root_addr, addr);
+    let root = Arc::get_mut(&mut tree.i).unwrap()
+        .root.get_mut().unwrap();
+    assert_eq!(*root.ptr.as_addr(), addr);
+    assert_eq!(root.txgs.start, TxgT::from(5));
+    assert_eq!(root.txgs.end, TxgT::from(43));
 }
 
 #[test]
@@ -1525,9 +1529,10 @@ root:
 
     let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
-    let root_addr = *Arc::get_mut(&mut tree.i).unwrap()
-        .root.get_mut().unwrap()
-        .ptr.as_addr();
-    assert_eq!(root_addr, addr);
+    let root = Arc::get_mut(&mut tree.i).unwrap()
+        .root.get_mut().unwrap();
+    assert_eq!(*root.ptr.as_addr(), addr);
+    assert_eq!(root.txgs.start, TxgT::from(42));
+    assert_eq!(root.txgs.end, TxgT::from(43));
 }
 // LCOV_EXCL_STOP
