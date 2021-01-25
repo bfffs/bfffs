@@ -40,10 +40,6 @@ use tokio::runtime;
 
 #[cfg(test)] mod tests;
 
-lazy_static::lazy_static! {
-    static ref ATOMIC_CLUE: AtomicU64 = AtomicU64::new(0);
-}
-
 /// Are there any elements in common between the two Ranges?
 #[allow(clippy::if_same_then_else)]
 #[allow(clippy::needless_bool)]
@@ -893,7 +889,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     ///
     /// # Returns
     ///
-    /// `false` is the Tree is no longer dirty, `true` otherwise.  Of course,
+    /// `false` if the Tree is no longer dirty, `true` otherwise.  Of course,
     /// absent locking it may immediately become dirtied again.
     // flush_once scans through the Tree in Key order, flushing as it goes.
     // That means that it can only flush the lowest dirty echelon of any given
@@ -932,8 +928,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             // rg.  The height may only ever change at the root
                             // node.  If the root node grows, the tree height
                             // will grow but the height of guard will not.
-                            Tree::flush_r(dml2, guard, lcomp, icomp, height, txg,
-                                          lowest).await
+                            Tree::flush_r(dml2, guard, lcomp, icomp, height,
+                                          txg, lowest).await
                             .map(|kopt| kopt.map(|k| (true, (true, k))))
                         } else {
                             let height = i3.height.load(Ordering::Relaxed);
@@ -955,11 +951,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                     .min()
                                     .unwrap();
                                 drop(guard);
-                                let rptr = mem::replace(&mut rg.ptr, TreePtr::None);
+                                let rptr = mem::replace(&mut rg.ptr,
+                                                        TreePtr::None);
                                 let rnode = *rptr.into_node();
                                 let a = dml2.put(Arc::new(rnode), icomp, txg)
                                     .await?;
-                                let _ = mem::replace(&mut rg.ptr, TreePtr::Addr(a));
+                                let _ = mem::replace(&mut rg.ptr,
+                                                     TreePtr::Addr(a));
                                 let txgs = start_txg .. txg + 1;
                                 rg.txgs = txgs;
                                 Ok(Some((false, (false, lowest))))
@@ -982,25 +980,29 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Result<Option<K>, Error>
     {
         let int = node.as_int_mut();
-        // TODO: write leaves concurrently
-        for elem in int.children.iter_mut() {
-            if elem.is_dirty() {
-                // If the child is dirty, then we have ownership over it.  We
-                // need to lock it, then release the lock.  Then we'll know that
-                // we have exclusive access to it, and we can move it into the
-                // Cache.
+        int.children.iter_mut()
+            .filter(|elem| elem.is_dirty())
+            .map(move |elem| {
                 let dml3 = dml.clone();
-                let guard = elem.ptr.as_mem().xlock().await;
-                drop(guard);
-                let old_ptr = mem::replace(&mut elem.ptr, TreePtr::None);
-                let addr = Tree::write_leaf(dml3, leaf_compressor,
-                    *old_ptr.into_node(), txg)
-                    .await?;
-                let txgs = txg .. txg + 1;
-                let _ = mem::replace(&mut elem.ptr, TreePtr::Addr(addr));
-                elem.txgs = txgs;
-            }
-        }
+                async move {
+                    // If the child is dirty, then we have ownership over it.
+                    // We need to lock it, then release the lock.  Then we'll
+                    // know that we have exclusive access to it, and we can move
+                    // it into the Cache.
+                    let guard = elem.ptr.as_mem().xlock().await;
+                    drop(guard);
+                    let old_ptr = mem::replace(&mut elem.ptr, TreePtr::None);
+                    let addr = Tree::write_leaf(dml3, leaf_compressor,
+                        *old_ptr.into_node(), txg)
+                        .await?;
+                    let txgs = txg .. txg + 1;
+                    let _ = mem::replace(&mut elem.ptr, TreePtr::Addr(addr));
+                    elem.txgs = txgs;
+                    let r: Result<(), Error> = Ok(());
+                    r
+                }
+            }).collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>().await?;
         debug_assert_eq!(int.children.iter()
             .map(|child| child.txgs.end)
             .max()
@@ -1046,7 +1048,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         async move {
             let int = guard.as_int_mut();
             let next_key = int.children.get(idx + 1).map(|c| c.key);
-            let elem = &mut int.children[idx].ptr; 
+            let elem = &mut int.children[idx].ptr;
             let child = elem.as_mem().xlock().await;
             if !child.has_dirty_children() {
                 let start_txg = child.as_int().children.iter()
@@ -2100,7 +2102,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // If it's not a leaf and has no children:
         //     Make it a leaf
         //     Fix the tree's height
-        // Sometimes crashes here when removing from the AllocT
         Tree::xlock_root(&inner.dml, tree_guard, txg)
             .and_then(move |(mut tree_guard, mut root_guard)| {
                 let nchildren = root_guard.len();

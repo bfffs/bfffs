@@ -23,7 +23,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future,
     select,
-    stream::FuturesUnordered,
+    stream::{self, FuturesUnordered},
 };
 use futures_locks::Mutex;
 #[cfg(test)] use mockall::automock;
@@ -102,22 +102,33 @@ impl Syncer {
         -> JoinHandle<()>
     {
         // Fixed 5-second duration
-        let duration = Duration::new(5, 0);
+        let sync_duration = Duration::new(5, 0);
+        let flush_duration = Duration::new(0, 100_000_000);
         let taskfut = async move {
+            let mut sync_time = Instant::now() + sync_duration;
             loop {
-                let wakeup_time = Instant::now() + duration;
+                let wakeup_time = Instant::now() + flush_duration;
                 let mut delay_fut = delay_until(wakeup_time).fuse();
                 select! {
                     _ = delay_fut => {
-                        //Time's up.  Sync the database
-                        Database::sync_transaction_priv(&inner)
-                        .await
-                        .unwrap();
+                        let now = Instant::now();
+                        if now > sync_time {
+                            //Time's up.  Sync the database
+                            Database::sync_transaction_priv(&inner)
+                            .await
+                            .unwrap();
+                            sync_time = Instant::now() + sync_duration;
+                        } else {
+                            // Time's up.  Flush the database
+                            Database::flush(&inner).await
+                            .unwrap();
+                        }
                     },
                     sm = rx.select_next_some() => {
                         match sm {
                             SyncerMsg::Kick => {
                                 // We got kicked.  Restart the wait
+                                sync_time = Instant::now() + sync_duration;
                             },
                             SyncerMsg::Shutdown => {
                                 // Error out of the loop
@@ -321,6 +332,29 @@ impl Database {
             guard.get(&tree).unwrap()
             .dump(f).unwrap();
         })
+    }
+
+    /// Flush the database's dirty data to disk.
+    ///
+    /// Does not sync a transaction.  Does not rewrite the labels.
+    fn flush(inner: &Arc<Inner>)
+        -> impl Future<Output=Result<(), Error>> + Send
+    {
+        if !inner.dirty.load(Ordering::Relaxed) {
+            return future::ok(()).boxed();
+        }
+        let inner2 = inner.clone();
+        let idml2 = inner.idml.clone();
+        async move {
+            let txg_guard = inner2.idml.txg().await;
+            let txg = *txg_guard;
+            let guard = inner2.fs_trees.lock().await;
+            stream::iter(guard.iter().map(|g| Ok(g)))
+                .try_fold((), move |_acc, (_tree_id, itree)|
+                          itree.flush(txg)
+                ).await?;
+            idml2.flush(None, txg).await
+        }.boxed()
     }
 
     /// Get the value of the `name` property for the dataset identified by
@@ -602,12 +636,12 @@ impl Database {
             drop(guard);
             forest_futs.try_collect::<Vec<_>>().await?;
             Tree::flush(&inner2.forest, txg).await?;
-            inner2.idml.flush(0, txg).await?;
+            inner2.idml.flush(Some(0), txg).await?;
             inner2.idml.sync_all(txg).await?;
             let forest = inner2.forest.serialize().unwrap();
             let label = Label {forest};
             inner2.write_label(&label, 0, txg).await?;
-            inner2.idml.flush(1, txg).await?;
+            inner2.idml.flush(Some(1), txg).await?;
             // The only time we need to read the second label is if we lose
             // power while writing the first.  The fact that we reached this
             // point means that that won't happen, at least not until the
@@ -736,7 +770,7 @@ mod database {
         idml.expect_flush()
             .once()
             .in_sequence(&mut seq)
-            .with(eq(0), eq(TxgT::from(0)))
+            .with(eq(Some(0)), eq(TxgT::from(0)))
             .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
         idml.expect_sync_all()
             .once()
@@ -757,7 +791,7 @@ mod database {
         idml.expect_flush()
             .once()
             .in_sequence(&mut seq)
-            .with(eq(1), eq(TxgT::from(0)))
+            .with(eq(Some(1)), eq(TxgT::from(0)))
             .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
         idml.expect_sync_all()
             .once()

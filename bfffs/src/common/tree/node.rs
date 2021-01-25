@@ -213,7 +213,6 @@ impl<K: Key, V: Value> LeafData<K, V> {
         where D: DML<Addr=A> + 'static, A: 'static
     {
         if V::needs_flush() {
-            // TODO: concurrency
             self.items.into_iter().map(|(k, v)| {
                 v.flush(d, txg)
                 .map_ok(move |v| (k, v))

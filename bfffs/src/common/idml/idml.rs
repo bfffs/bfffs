@@ -206,13 +206,22 @@ impl<'a> IDML {
         self.trees.alloct.dump(f)
     }
 
-    pub fn flush(&self, idx: u32, txg: TxgT)
+    /// Flush the IDML's data to disk
+    ///
+    /// `idx`, if provided, is the index of the label to sync to disk.  If not
+    /// provided, no label will be synced.
+    pub fn flush(&self, idx: Option<u32>, txg: TxgT)
         -> impl Future<Output=Result<(), Error>> + Send
     {
-        let ddml2 = self.ddml.clone();
-        future::try_join(self.trees.alloct.flush(txg),
-                         self.trees.ridt.flush(txg))
-        .and_then(move |_| ddml2.flush(idx))
+        let tfut = future::try_join(self.trees.alloct.flush(txg),
+                                    self.trees.ridt.flush(txg))
+            .map_ok(drop);
+        if let Some(idx) = idx {
+            let ddml2 = self.ddml.clone();
+            tfut.and_then(move |_| ddml2.flush(idx)).boxed()
+        } else {
+            tfut.boxed()
+        }
     }
 
     pub fn list_closed_zones(&self)
@@ -559,7 +568,7 @@ mock!{
         pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self;
         pub fn dump_trees(&self, f: &mut (dyn io::Write + 'static))
             -> Result<(), Error>;
-        pub fn flush(&self, idx: u32, txg: TxgT)
+        pub fn flush(&self, idx: Option<u32>, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
         pub fn list_closed_zones(&self)
             -> impl Iterator<Item=ClosedZone> + Send;
