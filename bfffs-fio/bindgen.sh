@@ -2,7 +2,7 @@
 
 # fio doesn't install the necessary headers, so we have to reference its source
 # directory
-FIOPATH="/usr/home/somers/freebsd/ports/head/benchmarks/fio/work/fio-3.23"
+FIOPATH="/usr/home/somers/freebsd/ports/head/benchmarks/fio/work/fio-3.25"
 
 cat > src/ffi.rs << HERE
 #![allow(non_camel_case_types)]
