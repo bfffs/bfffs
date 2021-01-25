@@ -66,7 +66,10 @@ fn main() {
         .filter(|(name, _uuid)| {
             **name == poolname
         }).next()
-        .unwrap().1;
+        .unwrap_or_else(|| {
+            eprintln!("error: pool {} not found", poolname);
+            std::process::exit(1);
+        }).1;
 
     let rt = Builder::new()
         .threaded_scheduler()
