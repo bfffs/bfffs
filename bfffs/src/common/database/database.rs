@@ -582,54 +582,40 @@ impl Database {
         // 5) Write the second label
         // 6) Sync the pool again, in case we're about to physically pull the
         //    disk or power off.
-        let inner2 = inner.clone();
         if !inner.dirty.swap(false, Ordering::Relaxed) {
             return future::ok(()).boxed();
         }
-        let fut = inner.idml.advance_transaction(move |txg| {
-            let inner3 = inner2.clone();
-            let inner5 = inner2.clone();
-            let idml2 = inner2.idml.clone();
-            inner2.fs_trees.lock()
-            .then(move |guard| {
-                guard.iter()
+        let inner2 = inner.clone();
+        let fut = inner.idml.advance_transaction(move |txg| async move {
+            let guard = inner2.fs_trees.lock().await;
+            guard.iter()
                 .map(move |(_, itree)| {
                     itree.flush(txg)
                 }).collect::<FuturesUnordered<_>>()
-                .try_collect::<Vec<_>>()
-                .and_then(move |_| {
-                    let forest_futs = guard.iter()
-                    .map(|(tree_id, itree)| {
-                        let tod = itree.serialize().unwrap();
-                        inner3.forest.insert(*tree_id, tod, txg)
-                    }).collect::<FuturesUnordered<_>>();
-                    drop(guard);
-                    forest_futs.try_collect::<Vec<_>>()
-                    .map_ok(move |_| inner3)
-                })
-            }).and_then(move |inner3| {
-                Tree::flush(&inner3.forest, txg)
-            }).and_then(move |_| idml2.flush(0, txg).map_ok(move |_| idml2))
-            .and_then(move |idml2| idml2.sync_all(txg).map_ok(move |_| idml2))
-            .and_then(move |idml2| {
-                let forest = inner2.forest.serialize().unwrap();
-                let label = Label {forest};
-                inner2.write_label(&label, 0, txg)
-                .map_ok(|_| (idml2, label))
-            }).and_then(move |(idml2, label)| {
-                idml2.flush(1, txg).map_ok(move |_| (idml2, label))
-            }).and_then(move |(idml2, label)| {
-                // The only time we need to read the second label is if we lose
-                // power while writing the first.  The fact that we reached this
-                // point means that that won't happen, at least not until the
-                // _next_ transaction sync.  So we don't need an additional
-                // sync_all between idml2.flush(1, ...) and idml2.sync_all(...).
-                idml2.sync_all(txg)
-                .map_ok(move |_| (idml2, label))
-            }).and_then(move |(idml2, label)| {
-                inner5.write_label(&label, 1, txg)
-                .map_ok(move |_| idml2)
-            }).and_then(move |idml2| idml2.sync_all(txg))
+                .try_collect::<Vec<_>>().await?;
+            let forest_futs = guard.iter()
+                .map(|(tree_id, itree)| {
+                    let tod = itree.serialize().unwrap();
+                    inner2.forest.insert(*tree_id, tod, txg)
+                }).collect::<FuturesUnordered<_>>();
+            drop(guard);
+            forest_futs.try_collect::<Vec<_>>().await?;
+            Tree::flush(&inner2.forest, txg).await?;
+            inner2.idml.flush(0, txg).await?;
+            inner2.idml.sync_all(txg).await?;
+            let forest = inner2.forest.serialize().unwrap();
+            let label = Label {forest};
+            inner2.write_label(&label, 0, txg).await?;
+            inner2.idml.flush(1, txg).await?;
+            // The only time we need to read the second label is if we lose
+            // power while writing the first.  The fact that we reached this
+            // point means that that won't happen, at least not until the
+            // _next_ transaction sync.  So we don't need an additional
+            // sync_all between inner2.idml.flush(1, ...) and
+            // inner2.idml.sync_all(...).
+            inner2.idml.sync_all(txg).await?;
+            inner2.write_label(&label, 1, txg).await?;
+            inner2.idml.sync_all(txg).await
         });
         fut.boxed()
     }
