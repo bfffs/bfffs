@@ -1318,12 +1318,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let rangeclone = range.clone();
         let dml2 = self.i.dml.clone();
         let inner2 = self.i.clone();
+        let inner3 = self.i.clone();
         let limits = self.i.limits;
-        let height = self.i.height.load(Ordering::Relaxed) as u8;
         self.write()
             .then(move |guard| {
                 Tree::xlock_root(&dml2, guard, txg)
                     .and_then(move |(tree_guard, root_guard)| {
+                        let height = inner2.height.load(Ordering::Relaxed) as u8;
                         // ptr is guaranteed to be a TreePtr::Mem because we
                         // just xlock()ed it.
                         let id = tree_guard.ptr.as_mem()
@@ -1339,7 +1340,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             })
                     })
             }).and_then(move |(tree_guard, m)| {
-                Tree::range_delete_pass2(inner2, tree_guard, m, rangeclone, txg)
+                Tree::range_delete_pass2(inner3, tree_guard, m, rangeclone, txg)
             })
     }
 
