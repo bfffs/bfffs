@@ -401,28 +401,28 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                             .children[child_idx]
                             .ptr
                             .as_addr();
-                dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr,
-                                                                  txg)
-                   .map_ok(move |arc|
-                {
-                    let child_node = Box::new(Arc::try_unwrap(*arc)
-                        .expect("We should be the Node's only owner"));
-                    let child_guard = {
-                        let elem = &mut self.as_int_mut()
-                                            .children[child_idx];
-                        elem.ptr = TreePtr::Mem(child_node);
-                        let guard = TreeWriteGuard(
-                            elem.ptr.as_mem()
-                                .0.try_write().unwrap()
-                        );
-                        elem.txgs.start = match *guard {
-                            NodeData::Int(ref id) => id.start_txg(),
-                            NodeData::Leaf(_) => txg
-                        };
-                        guard
-                    };  // LCOV_EXCL_LINE   kcov false negative
-                    (self, child_guard)
-                }).boxed()
+            let afut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr,
+                                                                  txg);
+            async move {
+                let arc = afut.await?;
+                let child_guard = arc.xlock().await;
+                drop(child_guard);
+                let child_node = Arc::try_unwrap(*arc)
+                    .expect("We should be the Node's only owner");
+                let child_guard = {
+                    let elem = &mut self.as_int_mut().children[child_idx];
+                    elem.ptr = TreePtr::Mem(Box::new(child_node));
+                    let guard = TreeWriteGuard(
+                        elem.ptr.as_mem().0.try_write().unwrap()
+                    );
+                    elem.txgs.start = match *guard {
+                        NodeData::Int(ref id) => id.start_txg(),
+                        NodeData::Leaf(_) => txg
+                    };
+                    guard
+                };  // LCOV_EXCL_LINE   kcov false negative
+                Ok((self, child_guard))
+            }.boxed()
         }
     }
 
@@ -454,8 +454,12 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
             }).boxed()
         } else {
             let addr = *self.as_int().children[child_idx].ptr.as_addr();
-            dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr, txg)
-           .map_ok(move |arc| {
+            let afut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr,
+                                                                         txg);
+            async move {
+                let arc = afut.await?;
+                let child_guard = arc.xlock().await;
+                drop(child_guard);
                 let child_node = Box::new(Arc::try_unwrap(*arc)
                     .expect("We should be the Node's only owner"));
                 let guard = TreeWriteGuard(
@@ -468,8 +472,8 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                 };
                 let end = txg + 1;
                 let elem = IntElem::new(*guard.key(), start..end, ptr);
-                (Some(elem), guard)
-            }).boxed()
+                Ok((Some(elem), guard))
+            }.boxed()
         }
     }
 
@@ -504,16 +508,16 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                     .boxed()
             } else {
                 let addr = *elem.ptr.as_addr();
-                let fut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
-                    &addr, txg)
-                .map_ok(move |arc| {
+                let afut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
+                    &addr, txg);
+                async move {
+                    let arc = afut.await?;
+                    let child_guard = arc.xlock().await;
+                    drop(child_guard);
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
-                    TreeWriteGuard(
-                        child_node.0.try_write().unwrap()
-                    )
-                });
-                fut.boxed()
+                    Ok(TreeWriteGuard(child_node.0.try_write().unwrap()))
+                }.boxed()
             };
             let f2 = f.clone();
             lock_fut.and_then(move |guard| {

@@ -2037,17 +2037,20 @@ impl<A, D, K, V> Tree<A, D, K, V>
              }).boxed()
         } else {
             let addr = *guard.ptr.as_addr();
-            dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
-                &addr, txg)
-            .map_ok(move |arc| {
-                let child_node = Box::new(Arc::try_unwrap(*arc)
-                    .expect("We should be the Node's only owner"));
-                guard.ptr = TreePtr::Mem(child_node);
+            let afut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
+                &addr, txg);
+            async move {
+                let arc = afut.await?;
+                let child_guard = arc.xlock().await;
+                drop(child_guard);
+                let child_node = Arc::try_unwrap(*arc)
+                    .expect("We should be the only owner");
+                guard.ptr = TreePtr::Mem(Box::new(child_node));
                 let child_guard = TreeWriteGuard(
                     guard.ptr.as_mem().0.try_write().unwrap()
                 );
-                (guard, child_guard)
-            }).boxed()
+                Ok((guard, child_guard))
+            }.boxed()
         }
     }
 }
