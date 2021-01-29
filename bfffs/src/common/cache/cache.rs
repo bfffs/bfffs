@@ -56,7 +56,10 @@ impl Cache {
 
     fn expire(&mut self) {
         let key = self.lru;
-        assert!(key.is_some(), "Can't find an entry to expire");
+        assert!(key.is_some(),
+            "Can't find an entry to expire. \
+            capacity={:?} size={:?} entries={:?}",
+            self.capacity, self.size, self.store.len());
         self.remove(&key.unwrap());
     }
 
@@ -108,15 +111,20 @@ impl Cache {
     ///
     /// The block will be marked as the most recently used.
     pub fn insert(&mut self, key: Key, buf: Box<dyn Cacheable>) {
+        assert!(buf.len() <= self.capacity);
         while self.size + buf.len() > self.capacity {
             self.expire();
         }
-        self.size += buf.len();
+        let len = buf.len();
         let entry = LruEntry { buf, mru: None, lru: self.mru};
         if let Some(old_entry) = self.store.insert(key, entry) {
             // Inserting two different values with the same key is a bug, but
             // inserting two identical values is merely bad timing.  We must
             // compare the buffers to verify.
+            //
+            // TODO: provide some kind of indication that we've reached this
+            // point.  Perhaps a tracepoint, or maybe a counter, because getting
+            // here often implies a bug somewhere.
             {
                 let new_entry = &self.store[&key];
                 assert!(old_entry.buf.eq(&*new_entry.buf),
@@ -125,6 +133,8 @@ impl Cache {
             // Just put the old entry back so we don't have to fix the linkages
             self.store.insert(key, old_entry);
             return;
+        } else {
+            self.size += len;
         }
         if self.mru.is_some() {
             if let Some(v) = self.store.get_mut(&self.mru.unwrap()) {
@@ -410,8 +420,9 @@ fn test_insert_dup_key() {
 #[test]
 fn test_insert_dup_value() {
     let mut cache = Cache::with_capacity(100);
-    let dbs1 = Box::new(DivBufShared::from(vec![0u8; 6]));
-    let dbs2 = Box::new(DivBufShared::from(vec![0u8; 6]));
+    let len = 6;
+    let dbs1 = Box::new(DivBufShared::from(vec![0u8; len]));
+    let dbs2 = Box::new(DivBufShared::from(vec![0u8; len]));
     let db1 = dbs1.try_const().unwrap();
     let key = Key::Rid(RID(0));
     cache.insert(key, dbs1);
@@ -425,6 +436,8 @@ fn test_insert_dup_value() {
     let entry = &cache.store[&key];
     assert_eq!(entry.mru, None);
     assert_eq!(entry.lru, None);
+    // Check that the size isn't double-accounted
+    assert_eq!(cache.size(), len);
 }
 
 /// Insert the first value into an empty cache
