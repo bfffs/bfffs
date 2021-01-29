@@ -25,7 +25,7 @@ use futures::{
     select,
     stream::{self, FuturesUnordered},
 };
-use futures_locks::Mutex;
+use futures_locks::{Mutex, RwLock};
 #[cfg(test)] use mockall::automock;
 use std::collections::BTreeMap;
 use std::{
@@ -162,8 +162,7 @@ struct Inner {
     // NB: This is likely to be highly contended and very slow.  Better to
     // replace it with a per-cpu counter.
     dirty: AtomicBool,
-    // TODO: replace the Mutex with a structure that allows concurrent access.
-    fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
+    fs_trees: RwLock<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
     forest: ITree<TreeID, TreeOnDisk<RID>>,
     idml: Arc<IDML>,
     propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>,
@@ -173,7 +172,7 @@ impl Inner {
     fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>) -> Self
     {
         let dirty = AtomicBool::new(true);
-        let fs_trees = Mutex::new(BTreeMap::new());
+        let fs_trees = RwLock::new(BTreeMap::new());
         let propcache = Mutex::new(BTreeMap::new());
         Inner{dirty, fs_trees, idml, forest, propcache}
     }
@@ -183,21 +182,24 @@ impl Inner {
         -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue<RID>>>, Error>> + Send
     {
         let inner2 = inner.clone();
-        inner.fs_trees.with(move |mut guard| {
-            if let Some(fs) = guard.get(&tree_id) {
-                future::ok(fs.clone()).boxed()
-            } else {
-                let fut = inner2.forest.get(tree_id)
-                .map_ok(move |tod| {
+        async move {
+            let rguard = inner2.fs_trees.read().await;
+            match rguard.get(&tree_id) {
+                Some(fs) => Ok(fs.clone()),
+                None => {
+                    drop(rguard);
+                    let tod = inner2.forest.get(tree_id).await?;
                     let idml2 = inner2.idml.clone();
                     let tree = ITree::open(idml2, false, tod.unwrap());
                     let atree = Arc::new(tree);
-                    guard.insert(tree_id, atree.clone());
-                    atree
-                });
-                fut.boxed()
+                    let atree2 = atree.clone();
+                    inner2.fs_trees.with_write(move |mut wguard| {
+                        future::ready(wguard.insert(tree_id, atree2))
+                    }).await;
+                    Ok(atree)
+                }
             }
-        })
+        }
     }
 
     fn rw_filesystem(inner: &Arc<Inner>, tree_id: TreeID, txg: TxgT)
@@ -328,7 +330,7 @@ impl Database {
         rt.block_on(async {
             Inner::open_filesystem(&self.inner, tree).await
         }).unwrap();
-        self.inner.fs_trees.try_lock()
+        self.inner.fs_trees.try_read()
         .map_err(|_| Error::EDEADLK)
         .map(|guard| {
             guard.get(&tree).unwrap()
@@ -350,7 +352,7 @@ impl Database {
         async move {
             let txg_guard = inner2.idml.txg().await;
             let txg = *txg_guard;
-            let guard = inner2.fs_trees.lock().await;
+            let guard = inner2.fs_trees.read().await;
             stream::iter(guard.iter().map(|g| Ok(g)))
                 .try_fold((), move |_acc, (_tree_id, itree)|
                           itree.flush(txg)
@@ -425,7 +427,7 @@ impl Database {
         self.inner.dirty.store(true, Ordering::Relaxed);
         let idml2 = self.inner.idml.clone();
         let inner2 = self.inner.clone();
-        self.inner.fs_trees.with(move |mut guard| {
+        self.inner.fs_trees.with_write(move |mut guard| {
             let k = (0..=u32::max_value()).find(|i| {
                 !guard.contains_key(&TreeID::Fs(*i))
             }).expect("Maximum number of filesystems reached");
@@ -627,7 +629,7 @@ impl Database {
         }
         let inner2 = inner.clone();
         let fut = inner.idml.advance_transaction(move |txg| async move {
-            let guard = inner2.fs_trees.lock().await;
+            let guard = inner2.fs_trees.read().await;
             guard.iter()
                 .map(move |(_, itree)| {
                     itree.flush(txg)
