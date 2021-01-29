@@ -23,7 +23,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future,
     select,
-    stream::FuturesUnordered,
+    stream::{self, FuturesUnordered},
 };
 use futures_locks::Mutex;
 #[cfg(test)] use mockall::automock;
@@ -102,22 +102,33 @@ impl Syncer {
         -> JoinHandle<()>
     {
         // Fixed 5-second duration
-        let duration = Duration::new(5, 0);
+        let sync_duration = Duration::new(5, 0);
+        let flush_duration = Duration::new(0, 100_000_000);
         let taskfut = async move {
+            let mut sync_time = Instant::now() + sync_duration;
             loop {
-                let wakeup_time = Instant::now() + duration;
+                let wakeup_time = Instant::now() + flush_duration;
                 let mut delay_fut = delay_until(wakeup_time).fuse();
                 select! {
                     _ = delay_fut => {
-                        //Time's up.  Sync the database
-                        Database::sync_transaction_priv(&inner)
-                        .await
-                        .unwrap();
+                        let now = Instant::now();
+                        if now > sync_time {
+                            //Time's up.  Sync the database
+                            Database::sync_transaction_priv(&inner)
+                            .await
+                            .unwrap();
+                            sync_time = Instant::now() + sync_duration;
+                        } else {
+                            // Time's up.  Flush the database
+                            Database::flush(&inner).await
+                            .unwrap();
+                        }
                     },
                     sm = rx.select_next_some() => {
                         match sm {
                             SyncerMsg::Kick => {
                                 // We got kicked.  Restart the wait
+                                sync_time = Instant::now() + sync_duration;
                             },
                             SyncerMsg::Shutdown => {
                                 // Error out of the loop
@@ -149,6 +160,7 @@ struct Inner {
     // NB: This is likely to be highly contended and very slow.  Better to
     // replace it with a per-cpu counter.
     dirty: AtomicBool,
+    // TODO: replace the Mutex with a structure that allows concurrent access.
     fs_trees: Mutex<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
     forest: ITree<TreeID, TreeOnDisk<RID>>,
     idml: Arc<IDML>,
@@ -320,6 +332,29 @@ impl Database {
             guard.get(&tree).unwrap()
             .dump(f).unwrap();
         })
+    }
+
+    /// Flush the database's dirty data to disk.
+    ///
+    /// Does not sync a transaction.  Does not rewrite the labels.
+    fn flush(inner: &Arc<Inner>)
+        -> impl Future<Output=Result<(), Error>> + Send
+    {
+        if !inner.dirty.load(Ordering::Relaxed) {
+            return future::ok(()).boxed();
+        }
+        let inner2 = inner.clone();
+        let idml2 = inner.idml.clone();
+        async move {
+            let txg_guard = inner2.idml.txg().await;
+            let txg = *txg_guard;
+            let guard = inner2.fs_trees.lock().await;
+            stream::iter(guard.iter().map(|g| Ok(g)))
+                .try_fold((), move |_acc, (_tree_id, itree)|
+                          itree.flush(txg)
+                ).await?;
+            idml2.flush(None, txg).await
+        }.boxed()
     }
 
     /// Get the value of the `name` property for the dataset identified by
@@ -582,54 +617,40 @@ impl Database {
         // 5) Write the second label
         // 6) Sync the pool again, in case we're about to physically pull the
         //    disk or power off.
-        let inner2 = inner.clone();
         if !inner.dirty.swap(false, Ordering::Relaxed) {
             return future::ok(()).boxed();
         }
-        let fut = inner.idml.advance_transaction(move |txg| {
-            let inner3 = inner2.clone();
-            let inner5 = inner2.clone();
-            let idml2 = inner2.idml.clone();
-            inner2.fs_trees.lock()
-            .then(move |guard| {
-                guard.iter()
+        let inner2 = inner.clone();
+        let fut = inner.idml.advance_transaction(move |txg| async move {
+            let guard = inner2.fs_trees.lock().await;
+            guard.iter()
                 .map(move |(_, itree)| {
                     itree.flush(txg)
                 }).collect::<FuturesUnordered<_>>()
-                .try_collect::<Vec<_>>()
-                .and_then(move |_| {
-                    let forest_futs = guard.iter()
-                    .map(|(tree_id, itree)| {
-                        let tod = itree.serialize().unwrap();
-                        inner3.forest.insert(*tree_id, tod, txg)
-                    }).collect::<FuturesUnordered<_>>();
-                    drop(guard);
-                    forest_futs.try_collect::<Vec<_>>()
-                    .map_ok(move |_| inner3)
-                })
-            }).and_then(move |inner3| {
-                Tree::flush(&inner3.forest, txg)
-            }).and_then(move |_| idml2.flush(0, txg).map_ok(move |_| idml2))
-            .and_then(move |idml2| idml2.sync_all(txg).map_ok(move |_| idml2))
-            .and_then(move |idml2| {
-                let forest = inner2.forest.serialize().unwrap();
-                let label = Label {forest};
-                inner2.write_label(&label, 0, txg)
-                .map_ok(|_| (idml2, label))
-            }).and_then(move |(idml2, label)| {
-                idml2.flush(1, txg).map_ok(move |_| (idml2, label))
-            }).and_then(move |(idml2, label)| {
-                // The only time we need to read the second label is if we lose
-                // power while writing the first.  The fact that we reached this
-                // point means that that won't happen, at least not until the
-                // _next_ transaction sync.  So we don't need an additional
-                // sync_all between idml2.flush(1, ...) and idml2.sync_all(...).
-                idml2.sync_all(txg)
-                .map_ok(move |_| (idml2, label))
-            }).and_then(move |(idml2, label)| {
-                inner5.write_label(&label, 1, txg)
-                .map_ok(move |_| idml2)
-            }).and_then(move |idml2| idml2.sync_all(txg))
+                .try_collect::<Vec<_>>().await?;
+            let forest_futs = guard.iter()
+                .map(|(tree_id, itree)| {
+                    let tod = itree.serialize().unwrap();
+                    inner2.forest.insert(*tree_id, tod, txg)
+                }).collect::<FuturesUnordered<_>>();
+            drop(guard);
+            forest_futs.try_collect::<Vec<_>>().await?;
+            Tree::flush(&inner2.forest, txg).await?;
+            inner2.idml.flush(Some(0), txg).await?;
+            inner2.idml.sync_all(txg).await?;
+            let forest = inner2.forest.serialize().unwrap();
+            let label = Label {forest};
+            inner2.write_label(&label, 0, txg).await?;
+            inner2.idml.flush(Some(1), txg).await?;
+            // The only time we need to read the second label is if we lose
+            // power while writing the first.  The fact that we reached this
+            // point means that that won't happen, at least not until the
+            // _next_ transaction sync.  So we don't need an additional
+            // sync_all between inner2.idml.flush(1, ...) and
+            // inner2.idml.sync_all(...).
+            inner2.idml.sync_all(txg).await?;
+            inner2.write_label(&label, 1, txg).await?;
+            inner2.idml.sync_all(txg).await
         });
         fut.boxed()
     }
@@ -749,7 +770,7 @@ mod database {
         idml.expect_flush()
             .once()
             .in_sequence(&mut seq)
-            .with(eq(0), eq(TxgT::from(0)))
+            .with(eq(Some(0)), eq(TxgT::from(0)))
             .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
         idml.expect_sync_all()
             .once()
@@ -770,7 +791,7 @@ mod database {
         idml.expect_flush()
             .once()
             .in_sequence(&mut seq)
-            .with(eq(1), eq(TxgT::from(0)))
+            .with(eq(Some(1)), eq(TxgT::from(0)))
             .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
         idml.expect_sync_all()
             .once()

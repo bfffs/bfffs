@@ -401,28 +401,28 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                             .children[child_idx]
                             .ptr
                             .as_addr();
-                dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr,
-                                                                  txg)
-                   .map_ok(move |arc|
-                {
-                    let child_node = Box::new(Arc::try_unwrap(*arc)
-                        .expect("We should be the Node's only owner"));
-                    let child_guard = {
-                        let elem = &mut self.as_int_mut()
-                                            .children[child_idx];
-                        elem.ptr = TreePtr::Mem(child_node);
-                        let guard = TreeWriteGuard(
-                            elem.ptr.as_mem()
-                                .0.try_write().unwrap()
-                        );
-                        elem.txgs.start = match *guard {
-                            NodeData::Int(ref id) => id.start_txg(),
-                            NodeData::Leaf(_) => txg
-                        };
-                        guard
-                    };  // LCOV_EXCL_LINE   kcov false negative
-                    (self, child_guard)
-                }).boxed()
+            let afut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr,
+                                                                  txg);
+            async move {
+                let arc = afut.await?;
+                let child_guard = arc.xlock().await;
+                drop(child_guard);
+                let child_node = Arc::try_unwrap(*arc)
+                    .expect("We should be the Node's only owner");
+                let child_guard = {
+                    let elem = &mut self.as_int_mut().children[child_idx];
+                    elem.ptr = TreePtr::Mem(Box::new(child_node));
+                    let guard = TreeWriteGuard(
+                        elem.ptr.as_mem().0.try_write().unwrap()
+                    );
+                    elem.txgs.start = match *guard {
+                        NodeData::Int(ref id) => id.start_txg(),
+                        NodeData::Leaf(_) => txg
+                    };
+                    guard
+                };  // LCOV_EXCL_LINE   kcov false negative
+                Ok((self, child_guard))
+            }.boxed()
         }
     }
 
@@ -454,8 +454,12 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
             }).boxed()
         } else {
             let addr = *self.as_int().children[child_idx].ptr.as_addr();
-            dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr, txg)
-           .map_ok(move |arc| {
+            let afut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(&addr,
+                                                                         txg);
+            async move {
+                let arc = afut.await?;
+                let child_guard = arc.xlock().await;
+                drop(child_guard);
                 let child_node = Box::new(Arc::try_unwrap(*arc)
                     .expect("We should be the Node's only owner"));
                 let guard = TreeWriteGuard(
@@ -468,8 +472,8 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                 };
                 let end = txg + 1;
                 let elem = IntElem::new(*guard.key(), start..end, ptr);
-                (Some(elem), guard)
-            }).boxed()
+                Ok((Some(elem), guard))
+            }.boxed()
         }
     }
 
@@ -504,16 +508,16 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                     .boxed()
             } else {
                 let addr = *elem.ptr.as_addr();
-                let fut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
-                    &addr, txg)
-                .map_ok(move |arc| {
+                let afut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
+                    &addr, txg);
+                async move {
+                    let arc = afut.await?;
+                    let child_guard = arc.xlock().await;
+                    drop(child_guard);
                     let child_node = Box::new(Arc::try_unwrap(*arc)
                         .expect("We should be the Node's only owner"));
-                    TreeWriteGuard(
-                        child_node.0.try_write().unwrap()
-                    )
-                });
-                fut.boxed()
+                    Ok(TreeWriteGuard(child_node.0.try_write().unwrap()))
+                }.boxed()
             };
             let f2 = f.clone();
             lock_fut.and_then(move |guard| {
@@ -632,6 +636,15 @@ pub(super) struct IntData<A: Addr, K: Key, V: Value> {
 }
 
 impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
+    /// Are any of this node's children dirty?
+    ///
+    /// Note that the node itself could still be dirty, even if its children
+    /// aren't.
+    pub fn has_dirty_children(&self) -> bool {
+        self.children.iter()
+            .any(IntElem::is_dirty)
+    }
+
     /// How many children does this node have?
     pub fn nchildren(&self) -> usize {
         self.children.len()
@@ -739,6 +752,17 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
             true
         };
         len_ok && key_ok
+    }
+
+    /// Are any of this node's children dirty?
+    ///
+    /// Note that the node itself could still be dirty, even if its children
+    /// aren't.
+    pub fn has_dirty_children(&self) -> bool {
+        match self {
+            NodeData::Leaf(_) => false,
+            NodeData::Int(ni) => ni.has_dirty_children()
+        }
     }
 
     /// Is this node in danger of underflowing if one child gets merged?
@@ -1083,6 +1107,38 @@ fn treeptr_eq_mem() {
 #[test]
 fn txgt_min_value() {
     assert_eq!(TxgT(0), TxgT::min_value());
+}
+}
+
+/// Tests for NodeData.has_dirty_children
+#[cfg(test)]
+mod has_dirty_children {
+use super::*;
+
+#[test]
+fn nothing_dirty() {
+    let children = vec![
+        IntElem::new(0u32, TxgT::from(1)..TxgT::from(9), TreePtr::Addr(0)),
+        IntElem::new(256u32, TxgT::from(2)..TxgT::from(8), TreePtr::Addr(4u32)),
+    ];
+    let node_data = NodeData::<u32, u32, u32>::Int(IntData::new(children));
+    assert!(!node_data.has_dirty_children());
+}
+
+#[test]
+fn yes() {
+    let mut items: BTreeMap<u32, u32> = BTreeMap::new();
+    items.insert(0, 100);
+    items.insert(1, 200);
+    items.insert(99, 50_000);
+    let leaf: Box<Node<u32, u32, u32>> =
+        Box::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let children = vec![
+        IntElem::new(0u32, TxgT::from(1)..TxgT::from(9), TreePtr::Mem(leaf)),
+        IntElem::new(256u32, TxgT::from(2)..TxgT::from(8), TreePtr::Addr(4u32)),
+    ];
+    let node_data = NodeData::Int(IntData::new(children));
+    assert!(node_data.has_dirty_children());
 }
 }
 

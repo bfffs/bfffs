@@ -141,7 +141,7 @@ test_suite! {
         rt.block_on(
             old_idml.advance_transaction(|_| {
                 let label_writer = LabelWriter::new(0);
-                old_idml2.flush(0, txg)
+                old_idml2.flush(Some(0), txg)
                 .and_then(move |_| {
                     old_idml2.write_label(label_writer, txg)
                 })
@@ -171,7 +171,7 @@ test_suite! {
         let idml2 = idml.clone();
         rt.block_on(
             idml.advance_transaction(move |_| {
-                idml2.flush(0, txg)
+                idml2.flush(Some(0), txg)
                 .and_then(move |_| {
                     let label_writer = LabelWriter::new(0);
                     idml2.write_label(label_writer, txg)

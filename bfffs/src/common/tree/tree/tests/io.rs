@@ -19,8 +19,11 @@ use mockall::{
     predicate::{always, eq}
 };
 use pretty_assertions::assert_eq;
-use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
+use std::{
+    ffi::OsStr,
+    os::unix::ffi::OsStrExt,
+    sync::RwLock
+};
 use super::*;
 
 mock! {
@@ -1356,10 +1359,11 @@ root:
 
 /// Sync a Tree with both dirty Int nodes and dirty Leaf nodes
 #[test]
-fn write_deep() {
+fn write_height2() {
     let mut seq = Sequence::new();
     let mut mock = MockDML::new();
-    let addr = 42;
+    let addrl = 100;
+    let addri = 101;
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .once()
         .in_sequence(&mut seq)
@@ -1373,7 +1377,7 @@ fn write_deep() {
                 },
                 _ => false
             }
-        }).return_once(move |_, _, _| future::ok(addr).boxed());
+        }).return_once(move |_, _, _| future::ok(addrl).boxed());
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .once()
         .in_sequence(&mut seq)
@@ -1381,15 +1385,15 @@ fn write_deep() {
             let node_data = cacheable.0.try_read().unwrap();
             let int_data = node_data.as_int();
             int_data.children[0].key == 0 &&
-            int_data.children[0].ptr.is_addr() &&
+            int_data.children[0].ptr == TreePtr::Addr(addrl) &&
             int_data.children[0].txgs == (TxgT::from(42) .. TxgT::from(43)) &&
             int_data.children[1].key == 256 &&
-            int_data.children[1].ptr.is_addr() &&
+            int_data.children[1].ptr == TreePtr::Addr(256) &&
             int_data.children[1].txgs == (TxgT::from(41) .. TxgT::from(42)) &&
             *txg == TxgT::from(42)
-        }).return_once(move |_, _, _| future::ok(addr).boxed());
+        }).return_once(move |_, _, _| future::ok(addri).boxed());
     let dml = Arc::new(mock);
-    let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1427,11 +1431,208 @@ root:
 
     let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
-    let root = Arc::get_mut(&mut tree.i).unwrap()
-        .root.get_mut().unwrap();
-    assert_eq!(*root.ptr.as_addr(), addr);
-    assert_eq!(root.txgs.start, TxgT::from(41));
-    assert_eq!(root.txgs.end, TxgT::from(43));
+
+    assert_eq!(format!("{}", tree),
+r#"---
+height: 2
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 41
+    end: 43
+  ptr:
+    Addr: 101"#);
+}
+
+/// Sync a Tree with dirty nodes at all levels, with a height of 3.
+#[test]
+fn write_height3() {
+    let mut mock = MockDML::new();
+    mock.expect_put::<Arc<Node<u32, u32, f32>>>()
+        .once()
+        .withf(move |cacheable, _compression, txg| {
+            let node_data = cacheable.0.try_read().unwrap();
+            match node_data.deref() {
+                NodeData::Leaf(leaf_data) => {
+                    leaf_data.get(&15) == Some(15.0) &&
+                    leaf_data.get(&16) == Some(16.0) &&
+                    *txg == TxgT::from(42)
+                },
+                _ => false
+            }
+        }).return_once(move |_, _, _| future::ok(7).boxed());
+    mock.expect_put::<Arc<Node<u32, u32, f32>>>()
+        .once()
+        .withf(move |cacheable, _compression, txg| {
+            let nd = cacheable.0.try_read().unwrap();
+            !nd.is_leaf() &&
+            nd.as_int().children[0].key == 10 &&
+            nd.as_int().children[0].ptr.is_addr() &&
+            nd.as_int().children[0].txgs == (TxgT::from(9)..TxgT::from(10)) &&
+            nd.as_int().children[1].key == 15 &&
+            nd.as_int().children[1].ptr.is_addr() &&
+            nd.as_int().children[1].txgs == (TxgT::from(42)..TxgT::from(43)) &&
+            nd.as_int().children[2].key == 20 &&
+            nd.as_int().children[2].ptr.is_addr() &&
+            nd.as_int().children[2].txgs == (TxgT::from(5)..TxgT::from(7)) &&
+            *txg == TxgT::from(42)
+        }).return_once(move |_, _, _| future::ok(8).boxed());
+    mock.expect_put::<Arc<Node<u32, u32, f32>>>()
+        .once()
+        .withf(move |cacheable, _compression, txg| {
+            let node_data = cacheable.0.try_read().unwrap();
+            match node_data.deref() {
+                NodeData::Leaf(leaf_data) => {
+                    leaf_data.get(&50) == Some(50.0) &&
+                    leaf_data.get(&51) == Some(51.0) &&
+                    *txg == TxgT::from(42)
+                },
+                _ => false
+            }
+        }).return_once(move |_, _, _| future::ok(9).boxed());
+    mock.expect_put::<Arc<Node<u32, u32, f32>>>()
+        .once()
+        .withf(move |cacheable, _compression, txg| {
+            let nd = cacheable.0.try_read().unwrap();
+            !nd.is_leaf() &&
+            nd.as_int().children[0].key == 40 &&
+            nd.as_int().children[0].ptr.is_addr() &&
+            nd.as_int().children[0].txgs == (TxgT::from(9)..TxgT::from(10)) &&
+            nd.as_int().children[1].key == 50 &&
+            nd.as_int().children[1].ptr.is_addr() &&
+            nd.as_int().children[1].txgs == (TxgT::from(42)..TxgT::from(43)) &&
+            nd.as_int().children[2].key == 60 &&
+            nd.as_int().children[2].ptr.is_addr() &&
+            nd.as_int().children[2].txgs == (TxgT::from(7)..TxgT::from(8)) &&
+            *txg == TxgT::from(42)
+        }).return_once(move |_, _, _| future::ok(10).boxed());
+    mock.expect_put::<Arc<Node<u32, u32, f32>>>()
+        .once()
+        .withf(move |cacheable, _compression, txg| {
+            let nd = cacheable.0.try_read().unwrap();
+            !nd.is_leaf() &&
+            nd.as_int().children[0].key == 0 &&
+            nd.as_int().children[0].ptr.is_addr() &&
+            nd.as_int().children[0].txgs == (TxgT::from(5)..TxgT::from(43)) &&
+            nd.as_int().children[1].key == 30 &&
+            nd.as_int().children[1].ptr.is_addr() &&
+            nd.as_int().children[1].txgs == (TxgT::from(20)..TxgT::from(32)) &&
+            nd.as_int().children[2].key == 40 &&
+            nd.as_int().children[2].ptr.is_addr() &&
+            nd.as_int().children[2].txgs == (TxgT::from(7)..TxgT::from(43)) &&
+            *txg == TxgT::from(42)
+        }).return_once(move |_, _, _| future::ok(11).boxed());
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+---
+height: 3
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 0
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 5
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Addr: 2
+                    - key: 15
+                      txgs:
+                        start: 9
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              15: 15.0
+                              16: 16.0
+                    - key: 20
+                      txgs:
+                        start: 5
+                        end: 7
+                      ptr:
+                        Addr: 3
+          - key: 30
+            txgs:
+              start: 20
+              end: 32
+            ptr:
+              Addr: 4
+          - key: 40
+            txgs:
+              start: 7
+              end: 42
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 40
+                      txgs:
+                        start: 9
+                        end: 10
+                      ptr:
+                        Addr: 5
+                    - key: 50
+                      txgs:
+                        start: 11
+                        end: 42
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              50: 50.0
+                              51: 51.0
+                    - key: 60
+                      txgs:
+                        start: 7
+                        end: 8
+                      ptr:
+                        Addr: 6
+"#);
+
+    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
+    assert!(r.is_ok());
+    assert_eq!(format!("{}", tree),
+r#"---
+height: 3
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 5
+    end: 43
+  ptr:
+    Addr: 11"#);
 }
 
 #[test]
@@ -1484,6 +1685,7 @@ root:
 
     let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
+    assert!(r.is_ok());
     let root = Arc::get_mut(&mut tree.i).unwrap()
         .root.get_mut().unwrap();
     assert_eq!(*root.ptr.as_addr(), addr);
@@ -1535,4 +1737,261 @@ root:
     assert_eq!(root.txgs.start, TxgT::from(42));
     assert_eq!(root.txgs.end, TxgT::from(43));
 }
+
+/// While flushing a Tree, another task dirties a previously-flushed node.
+///
+/// This is ok!  `Tree::flush_once` should proceed, and _not_ re-flush the
+/// dirtied node.
+#[test]
+fn write_race() {
+    let mut seq = Sequence::new();
+    let otree: Arc<RwLock<Option<Tree<u32, MockDML, u32, f32>>>> =
+        Arc::new(RwLock::new(None));
+    let otree2 = otree.clone();
+    let mut mock = MockDML::new();
+    let addr0 = 69;
+    let addr10 = 70;
+    let addr20 = 71;
+    mock.expect_put::<Arc<Node<u32, u32, f32>>>()
+        .once()
+        .in_sequence(&mut seq)
+        .withf(move |cacheable, _compression, txg| {
+            let node_data = cacheable.0.try_read().unwrap();
+            match node_data.deref() {
+                NodeData::Leaf(leaf_data) => {
+                    leaf_data.get(&0) == Some(0.0) &&
+                    leaf_data.get(&1) == Some(1.0) &&
+                    *txg == TxgT::from(42)
+                },
+                _ => false
+            }
+        }).return_once(move |_, _, _| future::ok(addr0).boxed());
+    mock.expect_put::<Arc<Node<u32, u32, f32>>>()
+        .once()
+        .in_sequence(&mut seq)
+        .withf(move |cacheable, _compression, txg| {
+            let node_data = cacheable.0.try_read().unwrap();
+            match node_data.deref() {
+                NodeData::Leaf(leaf_data) => {
+                    leaf_data.get(&10) == Some(10.0) &&
+                    leaf_data.get(&11) == Some(11.0) &&
+                    *txg == TxgT::from(42)
+                },
+                _ => false
+            }
+        }).return_once(move |_, _, _| {
+            // Now dirty the leaf node just flushed
+            otree2.read()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .insert(2, 2.0, TxgT::from(42))
+                .now_or_never()
+                .unwrap()
+                .unwrap();
+            future::ok(addr10).boxed()
+        });
+    let mut ld0 = LeafData::default();
+    ld0.insert(0, 0.0);
+    ld0.insert(1, 1.0);
+    let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
+    expect_pop(&mut mock, addr0, leafnode0);
+    mock.expect_put::<Arc<Node<u32, u32, f32>>>()
+        .once()
+        .in_sequence(&mut seq)
+        .withf(move |cacheable, _compression, txg| {
+            let node_data = cacheable.0.try_read().unwrap();
+            match node_data.deref() {
+                NodeData::Leaf(leaf_data) => {
+                    leaf_data.get(&20) == Some(20.0) &&
+                    leaf_data.get(&21) == Some(21.0) &&
+                    *txg == TxgT::from(42)
+                },
+                _ => false
+            }
+        }).return_once(move |_, _, _| future::ok(addr20).boxed());
+    let dml = Arc::new(mock);
+    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+---
+height: 3
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 30
+    end: 42
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                    - key: 5
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Addr: 0
+          - key: 10
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              10: 10.0
+                              11: 11.0
+                    - key: 15
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1
+          - key: 20
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 20
+                      txgs:
+                        start: 41
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              20: 20.0
+                              21: 21.0
+                    - key: 25
+                      txgs:
+                        start: 40
+                        end: 41
+                      ptr:
+                        Addr: 2
+"#);
+    *otree.write().unwrap() = Some(tree);
+    let guard = otree.read().unwrap();
+    let tref = guard.as_ref().unwrap();
+    let r = Tree::flush_once(tref.i.clone(), TxgT::from(42))
+        .now_or_never().unwrap();
+    assert_eq!(r, Ok(true));
+
+    assert_eq!(format!("{}", tref),
+r#"---
+height: 3
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  key: 0
+  txgs:
+    start: 30
+    end: 43
+  ptr:
+    Mem:
+      Int:
+        children:
+          - key: 0
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 0
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Mem:
+                          Leaf:
+                            items:
+                              0: 0.0
+                              1: 1.0
+                              2: 2.0
+                    - key: 5
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Addr: 0
+          - key: 10
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 10
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Addr: 70
+                    - key: 15
+                      txgs:
+                        start: 41
+                        end: 42
+                      ptr:
+                        Addr: 1
+          - key: 20
+            txgs:
+              start: 41
+              end: 43
+            ptr:
+              Mem:
+                Int:
+                  children:
+                    - key: 20
+                      txgs:
+                        start: 42
+                        end: 43
+                      ptr:
+                        Addr: 71
+                    - key: 25
+                      txgs:
+                        start: 40
+                        end: 41
+                      ptr:
+                        Addr: 2"#);
+}
+
 // LCOV_EXCL_STOP

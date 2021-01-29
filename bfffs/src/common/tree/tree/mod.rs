@@ -867,102 +867,209 @@ impl<A, D, K, V> Tree<A, D, K, V>
         })
     }   // LCOV_EXCL_LINE   kcov false negative
 
-    /// Flush all in-memory Nodes to disk
-    // Like range_delete, keep the entire Tree locked during flush.  That's
-    // because we need to write child nodes before we have valid addresses for
-    // their parents' child pointers.  It's also the only way to guarantee that
-    // the Tree will be completely clean by the time that flush returns.  Flush
-    // will probably only happen during TXG sync, which is once every few
-    // seconds.
-    //
-    // Alternatively, it would be possible to create a streaming flusher like
-    // RangeQuery that would descend through the tree multiple times, flushing a
-    // portion at each time.  But it wouldn't be able to guarantee a clean tree.
-    pub fn flush(&self, txg: TxgT) -> impl Future<Output=Result<(), Error>>
+    /// Flush all in-memory Nodes to disk.
+    pub fn flush(&self, txg: TxgT)
+        -> impl Future<Output=Result<(), Error>>
     {
-        let dml2 = self.i.dml.clone();
-        let int_compressor = self.i.int_compressor;
-        let leaf_compressor = self.i.leaf_compressor;
-        self.write()
-            .then(move |root_guard| {
-            if root_guard.ptr.is_dirty() {
-                // If the root is dirty, then we have ownership over it.  But
-                // another task may still have a lock on it.  We must acquire
-                // then release the lock to ensure that we have the sole
-                // reference.
-                let fut = Tree::xlock_root(&dml2, root_guard, txg)
-                    .and_then(move |(mut root_guard, child_guard)|
-                {
-                    drop(child_guard);
-                    let ptr = mem::replace(&mut root_guard.ptr, TreePtr::None);
-                    Tree::flush_r(dml2, int_compressor, leaf_compressor,
-                                  *ptr.into_node(), txg)
-                        .map_ok(move |(addr, txgs)| {
-                            root_guard.ptr = TreePtr::Addr(addr);
-                            root_guard.txgs = txgs;
-                        })
-                });
-                fut.boxed()
-            } else {
-                future::ok(()).boxed()
+        let i = self.i.clone();
+        async move {
+            while let true = Tree::flush_once(i.clone(), txg).await? {
             }
-        })
+            Ok(())
+        }
     }
 
-    fn flush_r(dml: Arc<D>, int_compressor: Compression,
-               leaf_compressor: Compression, mut node: Node<A, K, V>, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(D::Addr, Range<TxgT>), Error>> + Send>>
+    /// Progressively flush all in-memory Nodes to disk.
+    ///
+    /// Each invocation will flush the lowest echelon of dirty nodes.  So
+    /// multiple invocations are necessary to flush an entire Tree.
+    ///
+    /// Note that the tree is not locked during flush, so by the time it flush
+    /// finishes, the tree may have already been re-dirtied.
+    ///
+    /// # Returns
+    ///
+    /// `false` if the Tree is no longer dirty, `true` otherwise.  Of course,
+    /// absent locking it may immediately become dirtied again.
+    // flush_once scans through the Tree in Key order, flushing as it goes.
+    // That means that it can only flush the lowest dirty echelon of any given
+    // branch of the tree.  Alternatively, it could start over at Key 0 on each
+    // pass.  That would allow it to flush the entire Tree on a single
+    // invocation.  However, that would be unfair.  It would bias the flushing
+    // process toward low keys.  It would also flush low keyed Int nodes before
+    // high key Leaf nodes.  That would be inefficient, because it's likely that
+    // the Int nodes could become redirtied again quickly.  Better to treat all
+    // keys fairly, and to flush leaf nodes before int nodes.
+    fn flush_once(i: Arc<Inner<A, D, K, V>>, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<bool, Error>> + Send>>
     {
-        if node.0.get_mut().expect("node.0.get_mut").is_leaf() {
-            let fut = Tree::write_leaf(dml, leaf_compressor, node, txg)
-                .map_ok(move |addr| {
-                    (addr, txg..txg + 1)
-                });
-            return fut.boxed();
-        }
-        let mut ndata = node.0.try_write().expect("node.0.try_write");
+        let dml = i.dml.clone();
+        let lcomp = i.leaf_compressor;
+        let icomp = i.int_compressor;
+        let i2 = i.clone();
 
-        // We need to flush each dirty child, rewrite its TreePtr, and update
-        // the Node's txg range.  Satisfying the borrow checker requires that
-        // xlock's continuation have ownership over the child IntElem.  So we
-        // need to deconstruct the entire NodeData.children vector and
-        // reassemble it after the collect::<FuturesOrdered>
-        let dml2 = dml.clone();
-        ndata.as_int_mut().children.drain(..)
-        .map(move |elem| {
-            if elem.is_dirty()
-            {
-                // If the child is dirty, then we have ownership over it.  We
-                // need to lock it, then release the lock.  Then we'll know that
-                // we have exclusive access to it, and we can move it into the
-                // Cache.
-                let key = elem.key;
-                let dml3 = dml.clone();
-                let fut = elem.ptr.as_mem().xlock()
-                .then(move |guard| {
-                    drop(guard);
-                    Tree::flush_r(dml3, int_compressor, leaf_compressor,
-                                  *elem.ptr.into_node(), txg)
-                }).map_ok(move |(addr, txgs)| {
-                    IntElem::new(key, txgs, TreePtr::Addr(addr))
-                });
-                fut.boxed()
-            } else { // LCOV_EXCL_LINE kcov false negative
-                future::ok(elem).boxed()
+        stream::try_unfold((true, K::min_value()), move |(more, lowest)|
+        {
+            let i3 = i2.clone();
+            let dml2 = dml.clone();
+            async move {
+                if !more {
+                    Ok(None)
+                } else {
+                    let rg = Tree::write_root(&i3).await;
+                    if rg.ptr.is_dirty() {
+                        let (mut rg, guard) = Tree::xlock_root(&dml2, rg, txg)
+                            .await?;
+                        if guard.has_dirty_children() {
+                            let height = i3.height.load(Ordering::Relaxed);
+                            debug_assert!(height > 1);
+                            drop(rg);
+                            // It's ok to use height here even after dropping
+                            // rg.  The height may only ever change at the root
+                            // node.  If the root node grows, the tree height
+                            // will grow but the height of guard will not.
+                            Tree::flush_r(dml2, guard, lcomp, icomp, height,
+                                          txg, lowest).await
+                            .map(|kopt| kopt.map(|k| (true, (true, k))))
+                        } else {
+                            let height = i3.height.load(Ordering::Relaxed);
+                            if height == 1 {
+                                drop(guard);
+                                let old_ptr = mem::replace(&mut rg.ptr,
+                                                           TreePtr::None);
+                                let addr = Tree::write_leaf(dml2, lcomp,
+                                    *old_ptr.into_node(), txg)
+                                    .await?;
+                                let _ = mem::replace(&mut rg.ptr,
+                                                     TreePtr::Addr(addr));
+                                rg.txgs = txg .. txg + 1;
+                                Ok(Some((false, (false, lowest))))
+                            } else {
+                                let start_txg = guard.as_int()
+                                    .children.iter()
+                                    .map(|e| e.txgs.start)
+                                    .min()
+                                    .unwrap();
+                                drop(guard);
+                                let rptr = mem::replace(&mut rg.ptr,
+                                                        TreePtr::None);
+                                let rnode = *rptr.into_node();
+                                let a = dml2.put(Arc::new(rnode), icomp, txg)
+                                    .await?;
+                                let _ = mem::replace(&mut rg.ptr,
+                                                     TreePtr::Addr(a));
+                                let txgs = start_txg .. txg + 1;
+                                rg.txgs = txgs;
+                                Ok(Some((false, (false, lowest))))
+                            }
+                        }
+                    } else {
+                        Ok(Some((false, (false, lowest))))
+                    }
+                }
             }
-        }).collect::<FuturesOrdered<_>>()
-        .try_collect::<Vec<_>>()
-        .and_then(move |elems| {
-            let start_txg = elems.iter()
-                .map(|e| e.txgs.start)
-                .min()
-                .unwrap();
-            ndata.as_int_mut().children = elems;
-            drop(ndata);
-            let arc: Arc<Node<A, K, V>> = Arc::new(node);
-            dml2.put(arc, int_compressor, txg)
-                .map_ok(move |addr| (addr, start_txg..txg + 1))
-        }).boxed()
+        }).try_fold(true, |_acc, more_to_do| future::ok(more_to_do)).boxed()
+    }
+
+    /// Flush all of the children of the given node.
+    ///
+    /// They must all be leaves, which is to say that the node must be a
+    /// terminal int node.
+    async fn flush_leaves(dml: Arc<D>, leaf_compressor: Compression,
+        mut node: TreeWriteGuard<A, K, V>, txg: TxgT)
+        -> Result<Option<K>, Error>
+    {
+        let int = node.as_int_mut();
+        int.children.iter_mut()
+            .filter(|elem| elem.is_dirty())
+            .map(move |elem| {
+                let dml3 = dml.clone();
+                async move {
+                    // If the child is dirty, then we have ownership over it.
+                    // We need to lock it, then release the lock.  Then we'll
+                    // know that we have exclusive access to it, and we can move
+                    // it into the Cache.
+                    let guard = elem.ptr.as_mem().xlock().await;
+                    drop(guard);
+                    let old_ptr = mem::replace(&mut elem.ptr, TreePtr::None);
+                    let addr = Tree::write_leaf(dml3, leaf_compressor,
+                        *old_ptr.into_node(), txg)
+                        .await?;
+                    let txgs = txg .. txg + 1;
+                    let _ = mem::replace(&mut elem.ptr, TreePtr::Addr(addr));
+                    elem.txgs = txgs;
+                    let r: Result<(), Error> = Ok(());
+                    r
+                }
+            }).collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>().await?;
+        debug_assert_eq!(int.children.iter()
+            .map(|child| child.txgs.end)
+            .max()
+            .unwrap(),
+            txg + 1,
+            "called flush_leaves on a node with no dirty children"
+        );
+        Ok(None)
+    }
+
+    /// Progressive flush beginning in the node `guard`.
+    ///
+    /// `height` is the tree height of `guard`.  1 means that `guard` is a leaf.
+    ///
+    /// # Returns
+    ///
+    /// `None` if this node and all of its children have been flushed.
+    /// `Some(k)` to indicate some node with key `k` has not yet been flushed.
+    fn flush_r(
+        dml: Arc<D>,
+        mut guard: TreeWriteGuard<A, K, V>,
+        leaf_compressor: Compression,
+        int_compressor: Compression,
+        height: u64,
+        txg: TxgT,
+        lowest: K)
+        -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>
+    {
+        debug_assert!(height >= 2);
+
+        if height == 2 {
+            return Tree::flush_leaves(dml, leaf_compressor, guard, txg).boxed();
+        }
+
+        let int = guard.as_int_mut();
+        let mut idx = int.position(&lowest);
+        while idx < int.children.len() && !int.children[idx].is_dirty() {
+            idx += 1;
+        }
+        if idx >= int.children.len() {
+            return future::ok(None).boxed();
+        }
+        async move {
+            let int = guard.as_int_mut();
+            let next_key = int.children.get(idx + 1).map(|c| c.key);
+            let elem = &mut int.children[idx].ptr;
+            let child = elem.as_mem().xlock().await;
+            if !child.has_dirty_children() {
+                let start_txg = child.as_int().children.iter()
+                    .map(|e| e.txgs.start)
+                    .min()
+                    .unwrap();
+                drop(child);
+                let node = *mem::replace(elem, TreePtr::None).into_node();
+                let a = dml.put(Arc::new(node), int_compressor, txg).await?;
+                let _ = mem::replace(elem, TreePtr::Addr(a));
+                let txgs = start_txg .. txg + 1;
+                int.children[idx].txgs = txgs;
+                Ok(next_key)
+            } else {
+                drop(guard);
+                let child_next_key = Tree::flush_r(dml, child,
+                    leaf_compressor, int_compressor, height - 1, txg, lowest)
+                    .await?;
+                Ok(child_next_key.or(next_key))
+            }
+        }.boxed()
     }
 
     #[cfg(test)]
@@ -1004,10 +1111,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }).boxed()
     }
 
-    /// Private helper for `Range::poll`.  Returns a subset of the total
-    /// results, consisting of all matching (K,V) pairs within a single Leaf
-    /// Node, plus an optional Bound for the next iteration of the search.  If
-    /// the Bound is `None`, then the search is complete.
+    /// Private helper for `RangeQuery::poll_next`.  Returns a subset of the
+    /// total results, consisting of all matching (K,V) pairs within a single
+    /// Leaf Node, plus an optional Bound for the next iteration of the search.
+    /// If the Bound is `None`, then the search is complete.
     fn get_range<R, T>(inner: &Inner<A, D, K, V>, range: R)
         -> impl Future<Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>),
                        Error>> + Send
@@ -1318,12 +1425,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let rangeclone = range.clone();
         let dml2 = self.i.dml.clone();
         let inner2 = self.i.clone();
+        let inner3 = self.i.clone();
         let limits = self.i.limits;
-        let height = self.i.height.load(Ordering::Relaxed) as u8;
         self.write()
             .then(move |guard| {
                 Tree::xlock_root(&dml2, guard, txg)
                     .and_then(move |(tree_guard, root_guard)| {
+                        let height = inner2.height.load(Ordering::Relaxed) as u8;
                         // ptr is guaranteed to be a TreePtr::Mem because we
                         // just xlock()ed it.
                         let id = tree_guard.ptr.as_mem()
@@ -1339,7 +1447,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             })
                     })
             }).and_then(move |(tree_guard, m)| {
-                Tree::range_delete_pass2(inner2, tree_guard, m, rangeclone, txg)
+                Tree::range_delete_pass2(inner3, tree_guard, m, rangeclone, txg)
             })
     }
 
@@ -2031,23 +2139,26 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         guard.txgs.end = txg + 1;
         if guard.ptr.is_mem() {
-            guard.ptr.as_mem().0.write()
-             .map(move |child_guard| {
-                  Ok((guard, TreeWriteGuard(child_guard)))
-             }).boxed()
+            async move {
+                let child_guard = guard.ptr.as_mem().0.write().await;
+                Ok((guard, TreeWriteGuard(child_guard)))
+            }.boxed()
         } else {
             let addr = *guard.ptr.as_addr();
-            dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
-                &addr, txg)
-            .map_ok(move |arc| {
-                let child_node = Box::new(Arc::try_unwrap(*arc)
-                    .expect("We should be the Node's only owner"));
-                guard.ptr = TreePtr::Mem(child_node);
+            let afut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
+                &addr, txg);
+            async move {
+                let arc = afut.await?;
+                let child_guard = arc.xlock().await;
+                drop(child_guard);
+                let child_node = Arc::try_unwrap(*arc)
+                    .expect("We should be the only owner");
+                guard.ptr = TreePtr::Mem(Box::new(child_node));
                 let child_guard = TreeWriteGuard(
                     guard.ptr.as_mem().0.try_write().unwrap()
                 );
-                (guard, child_guard)
-            }).boxed()
+                Ok((guard, child_guard))
+            }.boxed()
         }
     }
 }
