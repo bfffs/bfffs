@@ -102,8 +102,9 @@ impl Syncer {
     fn run(handle: Handle, inner: Arc<Inner>, mut rx: mpsc::Receiver<SyncerMsg>)
         -> JoinHandle<()>
     {
-        // Fixed 5-second duration
+        // Fixed 5 second sync duration
         let sync_duration = Duration::new(5, 0);
+        // Fixed 0.1 second flush duration
         let flush_duration = Duration::new(0, 100_000_000);
         let taskfut = async move {
             let mut sync_time = Instant::now() + sync_duration;

@@ -1806,7 +1806,7 @@ impl Fs {
     /// - `parent_fd`:  `FileData` of the parent directory, as returned by
     ///                 [`lookup`].
     /// - `name`:       Name of the directory entry to remove.
-    // Note, unlink unlink, rmdir takes no Option<&FileData> argument, because
+    // Note, unlike unlink, rmdir takes no Option<&FileData> argument, because
     // there is no need to support open-but-deleted directories.
     pub fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32> {
         // Outline:
