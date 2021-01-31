@@ -31,6 +31,7 @@ use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
     ops::Range,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -101,8 +102,9 @@ impl Syncer {
     fn run(handle: Handle, inner: Arc<Inner>, mut rx: mpsc::Receiver<SyncerMsg>)
         -> JoinHandle<()>
     {
-        // Fixed 5-second duration
+        // Fixed 5 second sync duration
         let sync_duration = Duration::new(5, 0);
+        // Fixed 0.1 second flush duration
         let flush_duration = Duration::new(0, 100_000_000);
         let taskfut = async move {
             let mut sync_time = Instant::now() + sync_duration;
@@ -359,8 +361,11 @@ impl Database {
 
     /// Get the value of the `name` property for the dataset identified by
     /// `tree`.
+    // Note: it returns a Boxed future rather than `impl Future` to prevent
+    // type-length limit errors in the compiler.
     pub fn get_prop(&self, tree_id: TreeID, name: PropertyName)
-        -> impl Future<Output=Result<(Property, PropertySource), Error>> + Send
+        -> Pin<Box<dyn Future<Output=Result<(Property, PropertySource), Error>>
+            + Send>>
     {
         // Outline:
         // 1) Look for the property in the propcache
@@ -397,7 +402,7 @@ impl Database {
                 });
                 fut.boxed()
             }
-        })
+        }).boxed()
     }
 
     /// Insert a property into the filesystem, but don't modify the propcache

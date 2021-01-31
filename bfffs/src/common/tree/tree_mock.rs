@@ -59,6 +59,7 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
         pub fn insert(&self, k: K, v: V, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
+        pub fn is_dirty(&self) -> bool;
         pub fn last_key(&self)
             -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>;
         pub fn open(dml: Arc<D>, seq: bool, on_disk: TreeOnDisk<A>)

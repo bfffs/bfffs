@@ -2,7 +2,6 @@
 //! Common VFS implementation
 
 use bitfield::*;
-use cfg_if::cfg_if;
 use crate::{
     common::{
         *,
@@ -868,47 +867,40 @@ impl Fs {
         let db2 = database.clone();
         let db3 = database.clone();
         let db4 = database.clone();
-        let (last_key, (atimep, _), (recsizep, _)) =
+        let (last_key, (atimep, _), (recsizep, _), _) =
         handle.block_on(async move {
             db4.fsread(tree, move |dataset| {
                 let last_key_fut = dataset.last_key();
-
-                future::try_join3(last_key_fut,
-                                  db2.get_prop(tree, PropertyName::Atime),
-                                  db2.get_prop(tree, PropertyName::RecordSize))
+                let atime_fut = db2.get_prop(tree, PropertyName::Atime);
+                let recsize_fut = db2.get_prop(tree, PropertyName::RecordSize);
+                let di_fut = db3.fswrite(tree, move |dataset| {
+                    // Delete all dying inodes.  If there are any, it means that
+                    // the previous mount was uncleanly dismounted.
+                    let ds = Arc::new(dataset);
+                    let ds2 = ds.clone();
+                    ds.range(FSKey::dying_inode_range())
+                    .try_fold(false, move |_acc, (_k, v)| {
+                        let ds3 = ds.clone();
+                        async move {
+                            let ino = v.as_dying_inode().unwrap().ino();
+                            Fs::do_delete_inode(ds3, ino).await?;
+                            Ok(true)
+                        }
+                    }).and_then(move |had_dying_inodes| async move {
+                        // Finally, range delete all of the dying inodes, if any
+                        if had_dying_inodes {
+                            ds2.range_delete(FSKey::dying_inode_range()).await?;
+                        }
+                        Ok(())
+                    })
+                }).boxed();
+                future::try_join4(last_key_fut, atime_fut, recsize_fut, di_fut)
             }).map_err(Error::unhandled)
             .await
         }).unwrap();
         let next_object = AtomicU64::new(last_key.unwrap().object() + 1);
         let atime = atimep.as_bool();
         let record_size = recsizep.as_u8();
-
-        // In the background, delete all dying inodes.  If there are any, it
-        // means that the previous mount was uncleanly dismounted.
-        let ditask = async move {
-            db3.fswrite(tree, move |dataset| {
-                let ds = Arc::new(dataset);
-                let ds2 = ds.clone();
-                ds.range(FSKey::dying_inode_range())
-                .try_for_each_concurrent(None, move |(_k, v)| {
-                    let ino = v.as_dying_inode().unwrap().ino();
-                    Fs::do_delete_inode(ds.clone(), ino)
-                }).and_then(move |_| {
-                    // Finally, range delete all of the dying inodes
-                    ds2.range_delete(FSKey::dying_inode_range())
-                })
-            }).map_err(Error::unhandled)
-            .await
-        };
-        cfg_if! {
-            if #[cfg(test)] {
-                // For the unit tests, do it synchronously.  This makes it
-                // easier to write mock expectations.
-                handle.block_on(ditask).unwrap();
-            } else {
-                handle.spawn(ditask);
-            }
-        }
 
         Fs {
             db: database,
@@ -1814,7 +1806,7 @@ impl Fs {
     /// - `parent_fd`:  `FileData` of the parent directory, as returned by
     ///                 [`lookup`].
     /// - `name`:       Name of the directory entry to remove.
-    // Note, unlink unlink, rmdir takes no Option<&FileData> argument, because
+    // Note, unlike unlink, rmdir takes no Option<&FileData> argument, because
     // there is no need to support open-but-deleted directories.
     pub fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32> {
         // Outline:
@@ -2165,12 +2157,6 @@ fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
         .with(eq(FSKey::dying_inode_range()))
         .returning(move |_| {
             mock_range_query(Vec::new())
-        });
-    rwds.expect_range_delete()
-        .once()
-        .with(eq(FSKey::dying_inode_range()))
-        .returning(|_| {
-            future::ok(()).boxed()
         });
     let mut db = Database::default();
     db.expect_new_fs()
