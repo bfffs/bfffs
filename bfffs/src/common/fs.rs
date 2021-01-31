@@ -890,12 +890,19 @@ impl Fs {
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
                 ds.range(FSKey::dying_inode_range())
-                .try_for_each_concurrent(None, move |(_k, v)| {
-                    let ino = v.as_dying_inode().unwrap().ino();
-                    Fs::do_delete_inode(ds.clone(), ino)
-                }).and_then(move |_| {
-                    // Finally, range delete all of the dying inodes
-                    ds2.range_delete(FSKey::dying_inode_range())
+                .try_fold(false, move |_acc, (_k, v)| {
+                    let ds3 = ds.clone();
+                    async move {
+                        let ino = v.as_dying_inode().unwrap().ino();
+                        Fs::do_delete_inode(ds3, ino).await?;
+                        Ok(true)
+                    }
+                }).and_then(move |had_dying_inodes| async move {
+                    // Finally, range delete all of the dying inodes, if any.
+                    if had_dying_inodes {
+                        ds2.range_delete(FSKey::dying_inode_range()).await?;
+                    }
+                    Ok(())
                 })
             }).map_err(Error::unhandled)
             .await
@@ -2165,12 +2172,6 @@ fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
         .with(eq(FSKey::dying_inode_range()))
         .returning(move |_| {
             mock_range_query(Vec::new())
-        });
-    rwds.expect_range_delete()
-        .once()
-        .with(eq(FSKey::dying_inode_range()))
-        .returning(|_| {
-            future::ok(()).boxed()
         });
     let mut db = Database::default();
     db.expect_new_fs()
