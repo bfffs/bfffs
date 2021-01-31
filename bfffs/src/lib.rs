@@ -14,7 +14,7 @@
 #![allow(clippy::module_inception)]
 
 // error: reached the type-length limit while instantiating std::pin::Pin...
-#![type_length_limit="3193873"]
+#![type_length_limit="3198763"]
 // error: trait bounds overflowed in Database::sync_transaction_priv
 #![recursion_limit="256"]
 
