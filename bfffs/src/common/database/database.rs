@@ -31,6 +31,7 @@ use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
     ops::Range,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -359,8 +360,11 @@ impl Database {
 
     /// Get the value of the `name` property for the dataset identified by
     /// `tree`.
+    // Note: it returns a Boxed future rather than `impl Future` to prevent
+    // type-length limit errors in the compiler.
     pub fn get_prop(&self, tree_id: TreeID, name: PropertyName)
-        -> impl Future<Output=Result<(Property, PropertySource), Error>> + Send
+        -> Pin<Box<dyn Future<Output=Result<(Property, PropertySource), Error>>
+            + Send>>
     {
         // Outline:
         // 1) Look for the property in the propcache
@@ -397,7 +401,7 @@ impl Database {
                 });
                 fut.boxed()
             }
-        })
+        }).boxed()
     }
 
     /// Insert a property into the filesystem, but don't modify the propcache
