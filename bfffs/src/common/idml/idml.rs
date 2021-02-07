@@ -495,7 +495,7 @@ impl DML for IDML {
                     let cacheval = cache2.lock().unwrap()
                         .get::<R>(&Key::Rid(rid));
                     let bfut = cacheval.map(|cacheref: Box<R>|{
-                        let t = cacheref.to_owned().downcast::<T>().unwrap();
+                        let t = cacheref.into_owned().downcast::<T>().unwrap();
                         future::ok(t).boxed()
                     }).unwrap_or_else(|| {
                         Box::pin(ddml2.get_direct::<T>(&entry.drp))

@@ -353,7 +353,7 @@ impl Database {
             let txg_guard = inner2.idml.txg().await;
             let txg = *txg_guard;
             let guard = inner2.fs_trees.read().await;
-            stream::iter(guard.iter().map(|g| Ok(g)))
+            stream::iter(guard.iter().map(Ok))
                 .try_fold((), move |_acc, (_tree_id, itree)|
                           itree.flush(txg)
                 ).await?;

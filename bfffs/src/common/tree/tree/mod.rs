@@ -906,11 +906,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml = i.dml.clone();
         let lcomp = i.leaf_compressor;
         let icomp = i.int_compressor;
-        let i2 = i.clone();
 
         stream::try_unfold((true, K::min_value()), move |(more, lowest)|
         {
-            let i3 = i2.clone();
+            let i3 = i.clone();
             let dml2 = dml.clone();
             async move {
                 if !more {

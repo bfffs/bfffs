@@ -169,10 +169,10 @@ impl<'a> FreeSpaceMap {
     }
 
     fn deserialize(vdev: Arc<dyn VdevRaidApi>, buf: DivBuf, zones: ZoneT)
-        -> bincode::Result<Pin<Box<
+        -> Pin<Box<
                 dyn Future<Output=Result<(Self, Arc<dyn VdevRaidApi>), Error>>
                 + Send
-            >>>
+            >>
     {
         let mut fsm = FreeSpaceMap::new(zones);
         let oz_futs = FuturesUnordered::new();
@@ -181,7 +181,7 @@ impl<'a> FreeSpaceMap {
             let sod = SpacemapOnDisk::deserialize(i as u64, &db).unwrap();
             if let Err(e) = sod {
                 let fut = future::err(e);
-                return Ok(Box::pin(fut));
+                return Box::pin(fut);
             }
             for zod in sod.unwrap().zones.into_iter() {
                 if zod.allocated_blocks > 0 {
@@ -208,7 +208,7 @@ impl<'a> FreeSpaceMap {
         assert_eq!(zid, zones);
         fsm.clear_dirty_zones();
         let fut = oz_futs.try_collect::<Vec<_>>().map(|_| Ok((fsm, vdev)));
-        Ok(Box::pin(fut))
+        Box::pin(fut)
     }
 
     /// Mark zone `zone_id` as dirty
@@ -419,7 +419,6 @@ impl<'a> FreeSpaceMap {
         .and_then(move |_| {
             FreeSpaceMap::deserialize(vdev, dbs.try_const().unwrap(),
                                       total_zones)
-            .unwrap()
         }).await
     }
 

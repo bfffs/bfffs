@@ -60,7 +60,7 @@ pub trait CacheRef: Any + Send {
 
     /// Convert this shared `CacheRef` into an owned `Cacheable`, which may or
     /// may not involve copying
-    fn to_owned(self) -> Box<dyn Cacheable>;
+    fn into_owned(self) -> Box<dyn Cacheable>;
 }
 
 downcast!(dyn CacheRef);
@@ -97,7 +97,7 @@ impl CacheRef for DivBuf {
         self.clone()
     }
 
-    fn to_owned(self) -> Box<dyn Cacheable> {
+    fn into_owned(self) -> Box<dyn Cacheable> {
         // Data copy
         Box::new(DivBufShared::from(self[..].to_vec()))
     }
