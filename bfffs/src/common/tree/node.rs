@@ -1023,7 +1023,7 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
         dbs.try_const().unwrap()
     }   // LCOV_EXCL_LINE kcov false negative
 
-    fn to_owned(self) -> Box<dyn Cacheable> {
+    fn into_owned(self) -> Box<dyn Cacheable> {
         Box::new(self)
     }
 }

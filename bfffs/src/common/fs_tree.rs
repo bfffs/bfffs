@@ -272,7 +272,7 @@ impl Serialize for FSKey {
     }
 }
 
-/// `FSValue`s that are stored as in in-BTree hash tables
+/// `FSValue`s that are stored in in-BTree hash tables
 pub trait HTItem: TryFrom<FSValue<RID>, Error=()> + Clone + Send + Sized + 'static {
     /// Some other type that may be used by the `same` method
     type Aux: Clone + Copy + Send;
@@ -289,6 +289,7 @@ pub trait HTItem: TryFrom<FSValue<RID>, Error=()> + Clone + Send + Sized + 'stat
 
     /// Create a bucket of `HTItem`s from a vector of `Self`.  Used for putting
     /// the bucket back into the Tree.
+    #[allow(clippy::wrong_self_convention)]
     fn into_bucket(selves: Vec<Self>) -> FSValue<RID>;
 
     /// Turn self into a regular `FSValue`, suitable for inserting into the Tree

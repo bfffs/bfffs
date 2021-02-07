@@ -199,14 +199,14 @@ impl From<nix::Error> for Error {
     }
 }
 
-impl Into<i32> for Error {
-    fn into(self) -> i32 {
-        match self {
+impl From<Error> for i32 {
+    fn from(e: Error) -> Self {
+        match e {
             Error::EUNKNOWN =>
                 panic!("Unknown error codes should never be exposed"),
             // Checksum errors are a special case of I/O errors
             Error::ECKSUM => Error::EIO.to_i32().unwrap(),
-            _ => self.to_i32().unwrap()
+            _ => e.to_i32().unwrap()
         }
     }
 }
@@ -237,9 +237,9 @@ impl From<u32> for TxgT {
     }
 }
 
-impl Into<u32> for TxgT {
-    fn into(self) -> u32 {
-        self.0
+impl From<TxgT> for u32 {
+    fn from(t: TxgT) -> Self {
+        t.0
     }
 }
 
