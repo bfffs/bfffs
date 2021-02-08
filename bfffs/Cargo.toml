@@ -39,6 +39,8 @@ serde_yaml = "0.8.6"
 time = "0.1"
 tokio = { version = "0.2.7", features = ["rt-threaded", "sync", "time"] }
 tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "5dbb35cb4cbb5ff55faa6063426af1a04c363ad6" }
+tracing = "0.1.5"
+tracing-futures = "0.2.4"
 uuid = { version = "0.8", features = ["serde", "v4"]}
 
 [dependencies.clap]
@@ -48,13 +50,11 @@ features=  [ "suggestions", "color", "wrap_help" ]
 
 [dev-dependencies]
 chashmap = "2"
-env_logger = "0.5"
 futures-test = "0.3.7"
 galvanic-test = "0.2"
 glob = "0.2"
 histogram = "0.6"
 itertools = "0.7.1"
-log = "0.4"
 mockall = "0.9.0"
 num_cpus = "1"
 permutohedron = "0.2"
@@ -62,3 +62,8 @@ pretty_assertions = "0.5"
 rand = "0.7"
 rand_xorshift = "0.2"
 tempfile = "3"
+
+[dev-dependencies.tracing-subscriber]
+version = "0.2.15"
+default-features = false
+features = [ "ansi", "env-filter", "fmt", "tracing-log" ]

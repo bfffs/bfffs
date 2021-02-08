@@ -21,6 +21,7 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 use tokio::runtime::{Builder, Runtime};
+use tracing_subscriber::EnvFilter;
 
 mod ffi;
 
@@ -89,6 +90,10 @@ pub static INITIALIZE: extern "C" fn() = rust_ctor;
 #[no_mangle]
 pub extern "C" fn rust_ctor()
 {
+    tracing_subscriber::fmt()
+        .pretty()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
     unsafe {
         OPTIONS = Some([
             fio_option::new(

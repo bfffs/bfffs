@@ -2543,7 +2543,7 @@ test_suite! {
         common::pool::*,
     };
     use galvanic_test::*;
-    use log::*;
+    use tracing::*;
     use pretty_assertions::assert_eq;
     use rand::{
         Rng,
@@ -2562,6 +2562,7 @@ test_suite! {
     };
     use tempfile::Builder;
     use tokio::runtime::Runtime;
+    use tracing_subscriber::EnvFilter;
 
     #[derive(Clone, Copy, Debug)]
     pub enum Op {
@@ -2768,9 +2769,12 @@ test_suite! {
                     zone_size: u64) -> TortureTest
     {
         setup(&mut self) {
-            static ENV_LOGGER: Once = Once::new();
-            ENV_LOGGER.call_once(|| {
-                env_logger::init();
+            static TRACINGSUBSCRIBER: Once = Once::new();
+            TRACINGSUBSCRIBER.call_once(|| {
+                tracing_subscriber::fmt()
+                    .pretty()
+                    .with_env_filter(EnvFilter::from_default_env())
+                    .init();
             });
 
             let mut rt = Runtime::new().unwrap();

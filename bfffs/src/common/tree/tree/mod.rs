@@ -37,6 +37,8 @@ use std::{
 };
 use super::*;
 use tokio::runtime;
+use tracing::{Level, instrument};
+use tracing_futures::Instrument;
 
 #[cfg(test)] mod tests;
 
@@ -172,7 +174,7 @@ impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
     where A: Addr,
           D: DML<Addr=A> + 'static,
           K: Key + Borrow<T>,
-          T: Ord + Clone + Send + 'static,
+          T: Debug + Ord + Clone + Send + 'static,
           V: Value
 {
     type Item = Result<(K, V), Error>;
@@ -180,6 +182,10 @@ impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
     fn poll_next<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
         -> Poll<Option<Self::Item>>
     {
+        // Note: #[instrument] is currently incompatible with Mockall.  The
+        // following is equivalent.
+        let span = tracing::span!(Level::INFO, "poll_next");
+        let _enter = span.enter();
         self.as_mut()
             .pin_get_data()
             .pop_front()
@@ -1077,6 +1083,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Lookup the value of key `k`.  Return `None` if no value is present.
+    #[instrument(skip(self))]
     pub fn get(&self, k: K) -> impl Future<Output=Result<Option<V>, Error>>
     {
         let dml2 = self.i.dml.clone();
@@ -1086,11 +1093,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
                      .and_then(move |guard| {
                          drop(tree_guard);
                          Tree::get_r(dml2, guard, k)
+
                      })
-            })
+            }).in_current_span()
     }
 
     /// Lookup the value of key `k` in a node, which must already be locked.
+    #[instrument(skip(dml, node))]
     fn get_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>, k: K)
         -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
     {
@@ -1107,18 +1116,20 @@ impl<A, D, K, V> Tree<A, D, K, V>
         .and_then(move |next_node| {
             drop(node);
             Tree::get_r(dml, next_node, k)
-        }).boxed()
+        }).in_current_span()
+        .boxed()
     }
 
     /// Private helper for `RangeQuery::poll_next`.  Returns a subset of the
     /// total results, consisting of all matching (K,V) pairs within a single
     /// Leaf Node, plus an optional Bound for the next iteration of the search.
     /// If the Bound is `None`, then the search is complete.
+    #[instrument(skip(inner))]
     fn get_range<R, T>(inner: &Inner<A, D, K, V>, range: R)
         -> impl Future<Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>),
                        Error>> + Send
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + Send + 'static,
+              R: Clone + Debug + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + Send + 'static
     {
         let dml2 = inner.dml.clone();
@@ -1129,18 +1140,19 @@ impl<A, D, K, V> Tree<A, D, K, V>
                          drop(tree_guard);
                          Tree::get_range_r(dml2, g, None, range)
                      })
-            })
+            }).in_current_span()
     }   // LCOV_EXCL_LINE kcov false negative
 
     /// Range lookup beginning in the node `guard`.  `next_guard`, if present,
     /// must be the node immediately to the right (and possibly up one or more
     /// levels) from `guard`.
+    #[instrument(skip(dml, guard, next_guard))]
     fn get_range_r<R, T>(dml: Arc<D>, guard: TreeReadGuard<A, K, V>,
                          next_guard: Option<TreeReadGuard<A, K, V>>, range: R)
         -> Pin<Box<dyn Future<Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>),
                           Error>> + Send>>
         where K: Borrow<T>,
-              R: Clone + RangeBounds<T> + Send + 'static,
+              R: Clone + Debug + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + Send + 'static
     {
         let dml2 = dml.clone();
@@ -1206,7 +1218,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             } else {
                                 None
                             }
-                        }).boxed()
+                        })
+                        .boxed()
                     } else {
                         future::ok(None).boxed()
                     }
@@ -1221,7 +1234,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         .and_then(move |(child_guard, next_guard)| {
             drop(guard);
             Tree::get_range_r(dml, child_guard, next_guard, range)
-        }).boxed()
+        }).in_current_span()
+        .boxed()
     }
 
     /// Insert value `v` into the tree at key `k`, returning the previous value
@@ -1331,6 +1345,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Return the highest valued key in the `Tree`
+    #[instrument(skip(self))]
     pub fn last_key(&self) -> impl Future<Output=Result<Option<K>, Error>> {
         let dml2 = self.i.dml.clone();
         self.read()
@@ -1340,11 +1355,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                          drop(tree_guard);
                          Tree::last_key_r(dml2, guard)
                      })
-            })
+            }).in_current_span()
     }
 
     /// Find the last key amongst a node (which must already be locked), and its
     /// children
+    #[instrument(skip(dml, node))]
     fn last_key_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>)
         -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>
     {
@@ -1361,7 +1377,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
         .and_then(move |next_node| {
             drop(node);
             Tree::last_key_r(dml, next_node)
-        }).boxed()
+        }).in_current_span()
+        .boxed()
     }
 
     fn new(dml: Arc<D>, limits: Limits, seq: bool) -> Self {

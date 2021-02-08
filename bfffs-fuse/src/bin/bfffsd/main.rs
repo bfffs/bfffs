@@ -17,13 +17,17 @@ use tokio::{
     runtime::Builder,
     signal::unix::{signal, SignalKind},
 };
+use tracing_subscriber::EnvFilter;
 
 mod fs;
 
 use crate::fs::FuseFs;
 
 fn main() {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .pretty()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
     let app = clap::App::new("bfffsd")
         .version(crate_version!())
         .arg(clap::Arg::with_name("option")

@@ -73,7 +73,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
     fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
+              T: Debug + Ord + Clone + Send + 'static
     {
         self.tree.range(range)
     }
@@ -81,7 +81,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
     fn range<R, T>(&self, _range: R) -> RangeQuery<K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
+              T: Debug + Ord + Clone + Send + 'static
     {
         // Should never be called.  In test mode, use DatasetMock::range
         // instead.
@@ -155,7 +155,7 @@ impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
     fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
+              T: Debug + Ord + Clone + Send + 'static
     {
         self.dataset.range(range)
     }
@@ -234,7 +234,7 @@ impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDataset<K, V> {
     fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static
+              T: Debug + Ord + Clone + Send + 'static
     {
         self.dataset.range(range)
     }

@@ -25,6 +25,7 @@ use futures::{
 use std::{
     cmp,
     ffi::{OsStr, OsString},
+    fmt::Debug,
     mem,
     os::unix::ffi::OsStrExt,
     pin::Pin,
@@ -2186,7 +2187,7 @@ fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
 /// return
 fn mock_range_query<K, T, V>(items: Vec<(K, V)>) -> RangeQuery<K, T, V>
     where K: Key + Borrow<T>,
-          T: Ord + Clone + Send,
+          T: Debug + Ord + Clone + Send,
           V: Value
 {
     let mut rq = RangeQuery::new();
