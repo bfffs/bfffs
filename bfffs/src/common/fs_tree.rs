@@ -2,7 +2,7 @@
 
 //! Data types used by trees representing filesystems
 
-use bitfield::*;
+use bitfield::bitfield;
 use crate::{
     common::{
         *,
@@ -21,11 +21,12 @@ use futures::{
     stream::FuturesOrdered
 };
 use metrohash::MetroHash64;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use num_enum::{IntoPrimitive, FromPrimitive};
 use serde::de::DeserializeOwned;
 use std::{
     convert::TryFrom,
     ffi::{OsString, OsStr},
+    fmt::{self, Debug},
     hash::{Hash, Hasher},
     mem,
     ops::{Bound, Range, RangeBounds},
@@ -48,7 +49,7 @@ pub enum ExtAttrNamespace {
 
 /// Constants that discriminate different `ObjKey`s.  I don't know of a way to
 /// do this within the definition of ObjKey itself.
-#[derive(IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 enum ObjKeyDiscriminant {
     DirEntry = 0,
@@ -57,6 +58,8 @@ enum ObjKeyDiscriminant {
     ExtAttr = 3,
     Property = 4,
     DyingInode = 5,
+    #[num_enum(default)]
+    Unknown = 255
 }
 
 /// The per-object portion of a `FSKey`
@@ -151,7 +154,6 @@ bitfield! {
     /// B-Tree keys for a Filesystem tree
     #[derive(Clone, Copy, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
     pub struct FSKey(u128);
-    impl Debug;
     u64; pub object, _: 127, 64;
     u8; pub objtype, _: 63, 56;
     u64; pub offset, _: 55, 0;
@@ -246,6 +248,14 @@ impl FSKey {
         let start = FSKey::compose(ino, 0, 0);
         let end = FSKey::compose(ino + 1, 0, 0);
         start..end
+    }
+}
+
+impl Debug for FSKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let objtype = ObjKeyDiscriminant::from(self.objtype() as u8);
+        write!(f, "FSKey {{ object: {:#x}, objtype: {:?}, offset: {:#x} }}",
+               self.object(), objtype, self.offset())
     }
 }
 
@@ -913,6 +923,10 @@ fn debug() {
     assert_eq!("ExtAttr(0)", format!("{:?}", ObjKey::ExtAttr(0)));
     assert_eq!("Property(Atime)",
         format!("{:?}", ObjKey::Property(PropertyName::Atime)));
+    assert_eq!("FSKey { object: 0x42, objtype: DirEntry, offset: 0x42 }",
+        format!("{:?}", FSKey::new(0x42, ObjKey::DirEntry(66))));
+    assert_eq!("FSKey { object: 0x42, objtype: Unknown, offset: 0x0 }",
+        format!("{:?}", FSKey::compose(0x42, 254, 0)));
 }
 
 #[test]
