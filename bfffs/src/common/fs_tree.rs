@@ -21,6 +21,7 @@ use futures::{
     stream::FuturesOrdered
 };
 use metrohash::MetroHash64;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::de::DeserializeOwned;
 use std::{
     convert::TryFrom,
@@ -47,6 +48,8 @@ pub enum ExtAttrNamespace {
 
 /// Constants that discriminate different `ObjKey`s.  I don't know of a way to
 /// do this within the definition of ObjKey itself.
+#[derive(IntoPrimitive, TryFromPrimitive)]
+#[repr(u8)]
 enum ObjKeyDiscriminant {
     DirEntry = 0,
     Inode = 1,
@@ -129,7 +132,7 @@ impl ObjKey {
             ObjKey::Property(_) => ObjKeyDiscriminant::Property,
             ObjKey::DyingInode(_) => ObjKeyDiscriminant::DyingInode,
         };
-        d as u8
+        d.into()
     }
 
     pub fn offset(&self) -> u64 {
@@ -193,7 +196,7 @@ impl FSKey {
     pub fn extent_range<R>(ino: u64, offsets: R) -> Range<Self>
         where R: RangeBounds<u64>
     {
-        let discriminant = ObjKeyDiscriminant::Extent as u8;
+        let discriminant = ObjKeyDiscriminant::Extent.into();
         let start = match offsets.start_bound() {
             Bound::Included(s) => {
                 FSKey::compose(ino, discriminant, *s)
@@ -216,19 +219,19 @@ impl FSKey {
     }
 
     pub fn is_direntry(&self) -> bool {
-        self.objtype() == ObjKeyDiscriminant::DirEntry as u8
+        self.objtype() == u8::from(ObjKeyDiscriminant::DirEntry)
     }
 
     pub fn is_dying_inode(&self) -> bool {
-        self.objtype() == ObjKeyDiscriminant::DyingInode as u8
+        self.objtype() == u8::from(ObjKeyDiscriminant::DyingInode)
     }
 
     pub fn is_extattr(&self) -> bool {
-        self.objtype() == ObjKeyDiscriminant::ExtAttr as u8
+        self.objtype() == u8::from(ObjKeyDiscriminant::ExtAttr)
     }
 
     pub fn is_inode(&self) -> bool {
-        self.objtype() == ObjKeyDiscriminant::Inode as u8
+        self.objtype() == u8::from(ObjKeyDiscriminant::Inode)
     }
 
     pub fn new(object: u64, objkey: ObjKey) -> Self {
