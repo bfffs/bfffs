@@ -34,7 +34,7 @@ mock! {
         fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
-                  T: Ord + Clone + Send + 'static;
+                  T: Debug + Ord + Clone + Send + 'static;
     }
 }
 
@@ -75,7 +75,7 @@ mock! {
         fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
-                  T: Ord + Clone + Send + 'static;
+                  T: Debug + Ord + Clone + Send + 'static;
     }
 }
 

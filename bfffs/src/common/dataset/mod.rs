@@ -16,6 +16,7 @@ use divbuf::DivBuf;
 use futures::Future;
 use std::{
     borrow::Borrow,
+    fmt::Debug,
     ops::RangeBounds,
     pin::Pin
 };
@@ -48,5 +49,5 @@ pub trait ReadDataset<K: Key, V: Value> {
     fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T> + 'static,
-              T: Ord + Clone + Send + 'static;
+              T: Debug + Ord + Clone + Send + 'static;
 }

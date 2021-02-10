@@ -21,6 +21,8 @@ use std::{
         Arc, Mutex
     },
 };
+use tracing::instrument;
+use tracing_futures::Instrument;
 use super::*;
 
 /// Container for the IDML's private trees
@@ -437,6 +439,7 @@ impl DML for IDML {
         self.cache.lock().unwrap().remove(&Key::Rid(*rid));
     }
 
+    #[instrument(skip(self))]
     fn get<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr)
         -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
     {
@@ -455,7 +458,7 @@ impl DML for IDML {
                     let key = Key::Rid(rid);
                     cache2.lock().unwrap().insert(key, cacheable);
                     r.downcast::<R>().unwrap()
-                });
+                }).in_current_span();
             Box::pin(fut)
         })
     }
@@ -508,6 +511,7 @@ impl DML for IDML {
         Box::pin(fut)
     }
 
+    #[instrument(skip(self))]
     fn put<T>(&self, cacheable: T, compression: Compression, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<Self::Addr, Error>> + Send>>
         where T: Cacheable

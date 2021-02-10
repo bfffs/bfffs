@@ -27,6 +27,8 @@ use std::{
     }
 };
 
+use tracing::instrument;
+use tracing_futures::Instrument;
 
 /// Anything that has a min_value method.  Too bad libstd doesn't define this.
 pub trait MinValue {
@@ -582,6 +584,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     }
 
     /// Lock nonexclusively
+    #[instrument(skip(dml))]
     pub fn rlock<D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: &Arc<D>)
         -> Pin<Box<dyn Future<
             Output=Result<TreeReadGuard<A, K, V>, Error>> + Send
@@ -591,6 +594,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
             TreePtr::Mem(ref node) => {
                 node.0.read()
                     .map(|g| Ok(TreeReadGuard::Mem(g)))
+                    .in_current_span()
                     .boxed()
             },
             TreePtr::Addr(ref addr) => {
@@ -600,7 +604,8 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
                         .map(move |guard|
                              Ok(TreeReadGuard::Addr(guard, node))
                         )
-                }).boxed()
+                }).in_current_span()
+                .boxed()
             },
             // LCOV_EXCL_START
             TreePtr::None => unreachable!("None is just a temporary value")

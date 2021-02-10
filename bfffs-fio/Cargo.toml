@@ -18,5 +18,10 @@ libc = "0.2.44"
 memoffset = "0.5.1"
 tokio = { version = "0.2.7", features = ["rt-threaded", "sync", "time"] }
 
+[dependencies.tracing-subscriber]
+version = "0.2.15"
+default-features = false
+features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
+
 [lib]
 crate-type = ["cdylib"]

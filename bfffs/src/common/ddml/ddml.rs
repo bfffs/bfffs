@@ -18,6 +18,8 @@ use std::{
     sync::{Arc, Mutex}
 };
 use super::*;
+use tracing::instrument;
+use tracing_futures::Instrument;
 
 #[cfg(not(test))] use crate::common::pool::Pool;
 #[cfg(test)] use crate::common::pool::MockPool as Pool;
@@ -229,6 +231,7 @@ impl DML for DDML {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
     }
 
+    #[instrument(skip(self))]
     fn get<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
         -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
     {
@@ -245,7 +248,7 @@ impl DML for DDML {
                     let r = cacheable.make_ref();
                     cache2.lock().unwrap().insert(Key::PBA(pba), cacheable);
                     r.downcast::<R>().unwrap()
-                })
+                }).in_current_span()
             ) as Pin<Box<_>>
         })
     }
@@ -263,6 +266,7 @@ impl DML for DDML {
         })
     }
 
+    #[instrument(skip(self))]
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr, Error>> + Send>>
@@ -275,7 +279,7 @@ impl DML for DDML {
                 cache2.lock().unwrap()
                     .insert(Key::PBA(pba), Box::new(cacheable));
                 drp
-            });
+            }).in_current_span();
         Box::pin(fut)
     }
 

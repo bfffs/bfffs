@@ -14,6 +14,7 @@ use futures::{
 use mockall::mock;
 use std::{
     borrow::Borrow,
+    fmt::Debug,
     io,
     ops::{Range, RangeBounds},
     pin::Pin,
@@ -67,7 +68,7 @@ mock! {
         pub fn range<R, T>(&self, range: R) -> RangeQuery<A, D, K, T, V>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
-                  T: Ord + Clone + Send + 'static;
+                  T: Debug + Ord + Clone + Send + 'static;
         pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
             where K: Borrow<T>,

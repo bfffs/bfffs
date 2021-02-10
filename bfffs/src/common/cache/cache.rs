@@ -6,6 +6,7 @@ use std::{
     fmt::{self, Debug},
     hash::BuildHasherDefault
 };
+use tracing::{Level, event};
 use super::*;
 
 struct LruEntry {
@@ -111,6 +112,11 @@ impl Cache {
     ///
     /// The block will be marked as the most recently used.
     pub fn insert(&mut self, key: Key, buf: Box<dyn Cacheable>) {
+        // Note: #[instrument] is currently incompatible with Mockall.  The
+        // following is equivalent.
+        let span = tracing::span!(Level::INFO, "insert", ?key);
+        let _enter = span.enter();
+
         assert!(buf.len() <= self.capacity);
         while self.size + buf.len() > self.capacity {
             self.expire();
@@ -121,15 +127,12 @@ impl Cache {
             // Inserting two different values with the same key is a bug, but
             // inserting two identical values is merely bad timing.  We must
             // compare the buffers to verify.
-            //
-            // TODO: provide some kind of indication that we've reached this
-            // point.  Perhaps a tracepoint, or maybe a counter, because getting
-            // here often implies a bug somewhere.
             {
                 let new_entry = &self.store[&key];
                 assert!(old_entry.buf.eq(&*new_entry.buf),
                     "Conflicting value cached with key={:?}", key);
             }
+            event!(Level::WARN, "duplicate_cache_insertion");
             // Just put the old entry back so we don't have to fix the linkages
             self.store.insert(key, old_entry);
             return;
