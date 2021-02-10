@@ -1,7 +1,7 @@
 // vim: tw=80
 // LCOV_EXCL_START
 //! Mock objects for bfffsd::fs
-use bfffs::common::{
+use bfffs_core::common::{
     database::{Database, TreeID},
     fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr},
     property::Property,

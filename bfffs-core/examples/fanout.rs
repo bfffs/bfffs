@@ -5,7 +5,7 @@
 //! simulating both sequential and random insertion into a large file.  It
 //! computes the Tree's padding fraction (lower is better) and the overall
 //! metadata fraction of the file system.
-use bfffs::{
+use bfffs_core::{
     common::{
         *,
         ddml::DRP,

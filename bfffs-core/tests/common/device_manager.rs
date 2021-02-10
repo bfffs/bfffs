@@ -5,7 +5,7 @@ use galvanic_test::test_suite;
 test_suite! {
     name device_manager;
 
-    use bfffs::{
+    use bfffs_core::{
         common::database::*,
         common::device_manager::*,
         common::cache::*,

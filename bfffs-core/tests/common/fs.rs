@@ -6,7 +6,7 @@ use galvanic_test::test_suite;
 test_suite! {
     name fs;
 
-    use bfffs::{
+    use bfffs_core::{
         common::{RID, ZERO_REGION_LEN},
         common::cache::*,
         common::database::*,
@@ -74,7 +74,7 @@ test_suite! {
     });
 
     fn assert_dirents_collide(name0: &OsStr, name1: &OsStr) {
-        use bfffs::common::fs_tree::ObjKey;
+        use bfffs_core::common::fs_tree::ObjKey;
 
         let objkey0 = ObjKey::dir_entry(name0);
         let objkey1 = ObjKey::dir_entry(name1);
@@ -87,7 +87,7 @@ test_suite! {
     fn assert_extattrs_collide(ns0: ExtAttrNamespace, name0: &OsStr,
                                ns1: ExtAttrNamespace, name1: &OsStr)
     {
-        use bfffs::common::fs_tree::ObjKey;
+        use bfffs_core::common::fs_tree::ObjKey;
 
         let objkey0 = ObjKey::extattr(ns0, name0);
         let objkey1 = ObjKey::extattr(ns1, name1);
@@ -2533,7 +2533,7 @@ root:
 test_suite! {
     name torture;
 
-    use bfffs::{
+    use bfffs_core::{
         common::*,
         common::cache::*,
         common::database::*,

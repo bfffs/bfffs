@@ -4,12 +4,12 @@ use galvanic_test::test_suite;
 test_suite! {
     name persistence;
 
-    use bfffs::common::vdev_file::*;
-    use bfffs::common::vdev_block::*;
-    use bfffs::common::raid;
-    use bfffs::common::cluster;
-    use bfffs::common::label::*;
-    use bfffs::common::pool::*;
+    use bfffs_core::common::vdev_file::*;
+    use bfffs_core::common::vdev_block::*;
+    use bfffs_core::common::raid;
+    use bfffs_core::common::cluster;
+    use bfffs_core::common::label::*;
+    use bfffs_core::common::pool::*;
     use futures::{TryFutureExt, future};
     use galvanic_test::*;
     use pretty_assertions::assert_eq;

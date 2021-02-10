@@ -5,7 +5,7 @@ authors = ["Alan Somers <asomers@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-bfffs = { path = "../bfffs" }
+bfffs-core = { path = "../bfffs-core" }
 cfg-if = "1.0"
 fuse = "0.3.1"
 futures = "0.3.0"

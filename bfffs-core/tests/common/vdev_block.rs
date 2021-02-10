@@ -5,7 +5,7 @@ test_suite! {
     // These tests use a real VdevLeaf object
     name vdev_block;
 
-    use bfffs::common::{vdev::*, vdev_block::*};
+    use bfffs_core::common::{vdev::*, vdev_block::*};
     use divbuf::DivBufShared;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;

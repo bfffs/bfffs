@@ -5,7 +5,7 @@ use galvanic_test::test_suite;
 test_suite! {
     name t;
 
-    use bfffs::{
+    use bfffs_core::{
         common::cache::*,
         common::database::*,
         common::ddml::*,

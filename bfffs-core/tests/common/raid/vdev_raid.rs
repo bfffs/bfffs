@@ -1,5 +1,5 @@
 // vim: tw=80
-use bfffs::common::raid::VdevRaid;
+use bfffs_core::common::raid::VdevRaid;
 use galvanic_test::test_suite;
 use std::fs;
 use tempfile::Builder;
@@ -48,7 +48,7 @@ test_suite! {
     // These tests use real VdevBlock and VdevLeaf objects
     name vdev_raid;
 
-    use bfffs::{
+    use bfffs_core::{
         common::*,
         common::raid::*,
         common::vdev::Vdev,
@@ -593,7 +593,7 @@ test_suite! {
 test_suite! {
     name persistence;
 
-    use bfffs::{
+    use bfffs_core::{
         common::label::*,
         common::vdev_block::*,
         common::vdev::Vdev,

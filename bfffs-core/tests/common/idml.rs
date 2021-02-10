@@ -4,15 +4,15 @@ use galvanic_test::test_suite;
 test_suite! {
     name persistence;
 
-    use bfffs::common::*;
-    use bfffs::common::cache::*;
-    use bfffs::common::vdev_block::*;
-    use bfffs::common::cluster;
-    use bfffs::common::pool::*;
-    use bfffs::common::ddml::*;
-    use bfffs::common::idml::*;
-    use bfffs::common::label::*;
-    use bfffs::common::vdev_file::*;
+    use bfffs_core::common::*;
+    use bfffs_core::common::cache::*;
+    use bfffs_core::common::vdev_block::*;
+    use bfffs_core::common::cluster;
+    use bfffs_core::common::pool::*;
+    use bfffs_core::common::ddml::*;
+    use bfffs_core::common::idml::*;
+    use bfffs_core::common::label::*;
+    use bfffs_core::common::vdev_file::*;
     use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;
@@ -200,11 +200,11 @@ test_suite! {
 test_suite! {
     name t;
 
-    use bfffs::common::*;
-    use bfffs::common::cache::*;
-    use bfffs::common::pool::*;
-    use bfffs::common::ddml::*;
-    use bfffs::common::idml::*;
+    use bfffs_core::common::*;
+    use bfffs_core::common::cache::*;
+    use bfffs_core::common::pool::*;
+    use bfffs_core::common::ddml::*;
+    use bfffs_core::common::idml::*;
     use divbuf::DivBufShared;
     use futures::{
         FutureExt,

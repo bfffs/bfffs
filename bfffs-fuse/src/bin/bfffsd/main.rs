@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use bfffs::{
+use bfffs_core::{
     common::{
         database::*,
         device_manager::DevManager,

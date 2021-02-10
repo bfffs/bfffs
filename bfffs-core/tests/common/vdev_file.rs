@@ -5,7 +5,7 @@ use galvanic_test::test_suite;
 test_suite! {
     name basic;
 
-    use bfffs::common::{
+    use bfffs_core::common::{
         Error,
         vdev::*,
         vdev_file::*
@@ -203,7 +203,7 @@ test_suite! {
 test_suite! {
     name persistence;
 
-    use bfffs::common::{
+    use bfffs_core::common::{
         *,
         label::*,
         vdev::*,

@@ -4,7 +4,7 @@ use galvanic_test::test_suite;
 test_suite! {
     name persistence;
 
-    use bfffs::{
+    use bfffs_core::{
         common::label::*,
         common::vdev_block::*,
         common::vdev::Vdev,

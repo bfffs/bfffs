@@ -56,7 +56,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
-name = "bfffs"
+name = "bfffs-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -109,7 +109,7 @@ dependencies = [
 name = "bfffs-fio"
 version = "0.1.0"
 dependencies = [
- "bfffs",
+ "bfffs-core",
  "cc",
  "futures",
  "lazy_static",
@@ -123,7 +123,7 @@ dependencies = [
 name = "bfffs-fuse"
 version = "0.1.0"
 dependencies = [
- "bfffs",
+ "bfffs-core",
  "cfg-if 1.0.0",
  "clap",
  "divbuf",

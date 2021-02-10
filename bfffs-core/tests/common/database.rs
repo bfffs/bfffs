@@ -1,13 +1,13 @@
 // vim: tw=80
-use bfffs::common::cache::*;
-use bfffs::common::cluster;
-use bfffs::common::database::*;
-use bfffs::common::ddml::*;
-use bfffs::common::idml::*;
-use bfffs::common::pool::*;
-use bfffs::common::vdev_block::*;
-use bfffs::common::vdev_file::*;
-use bfffs::common::raid;
+use bfffs_core::common::cache::*;
+use bfffs_core::common::cluster;
+use bfffs_core::common::database::*;
+use bfffs_core::common::ddml::*;
+use bfffs_core::common::idml::*;
+use bfffs_core::common::pool::*;
+use bfffs_core::common::vdev_block::*;
+use bfffs_core::common::vdev_file::*;
+use bfffs_core::common::raid;
 use futures::{TryFutureExt, future};
 use galvanic_test::test_suite;
 use std::{
@@ -148,7 +148,7 @@ test_suite! {
 test_suite! {
     name t;
 
-    use bfffs::common::{
+    use bfffs_core::common::{
         cache::*,
         pool::*,
         property::*,
