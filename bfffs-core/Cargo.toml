@@ -67,3 +67,7 @@ tempfile = "3"
 version = "0.2.15"
 default-features = false
 features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
+
+[[test]]
+name = "functional"
+path = "tests/functional/mod.rs"

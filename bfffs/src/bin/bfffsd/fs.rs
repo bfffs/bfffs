@@ -1,8 +1,8 @@
 // vim: tw=80
 //! FUSE filesystem access
 
-use bfffs_core::common::database::*;
-use bfffs_core::common::{
+use bfffs_core::database::*;
+use bfffs_core::{
     RID,
     database::TreeID,
     fs::{ExtAttr, ExtAttrNamespace, FileData, SetAttr}
@@ -40,7 +40,7 @@ cfg_if! {
         use fuse::{Filesystem, ReplyAttr, ReplyCreate, ReplyData,
                    ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyStatfs,
                    ReplyWrite, ReplyXattr, Request};
-        use bfffs_core::common::fs::Fs;
+        use bfffs_core::fs::Fs;
         pub use fuse::mount;
     }
 }
@@ -734,7 +734,7 @@ impl From<Fs> for FuseFs {
 mod t {
 
 use super::*;
-use bfffs_core::common::fs::{FileData, GetAttr, Mode};
+use bfffs_core::fs::{FileData, GetAttr, Mode};
 use mockall::{Sequence, predicate};
 use std::mem;
 
@@ -1435,7 +1435,7 @@ mod link {
 
 mod listxattr {
     use super::*;
-    use bfffs_core::common::fs_tree::{InlineExtAttr, InlineExtent};
+    use bfffs_core::fs_tree::{InlineExtAttr, InlineExtent};
 
     #[test]
     fn length_eperm() {
@@ -2300,7 +2300,7 @@ mod mknod {
 
 mod read {
     use super::*;
-    use bfffs_core::common::SGList;
+    use bfffs_core::SGList;
     use divbuf::*;
 
     #[test]

@@ -1,7 +1,7 @@
 // vim: tw=80
 // LCOV_EXCL_START
 //! Mock objects for bfffsd::fs
-use bfffs_core::common::{
+use bfffs_core::{
     database::{Database, TreeID},
     fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr},
     property::Property,
@@ -93,7 +93,7 @@ mock! {
             _flags: u32) -> Result<u32, i32>;
         //pub fn write<IU>(&self, fd: &FileData, offset: u64, data: IU,
             //_flags: u32) -> Result<u32, i32>
-            //where IU: Into<bfffs::common::fs::Uio>;
+            //where IU: Into<bfffs::fs::Uio>;
     }
 }
 

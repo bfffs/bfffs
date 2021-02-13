@@ -2,7 +2,7 @@
 //! Generates extended attribute names that result in hash collisions in the
 //! B-Tree
 
-use bfffs_core::common::fs_tree::*;
+use bfffs_core::fs_tree::*;
 use chashmap::CHashMap;
 use lazy_static::lazy_static;
 use rand_xorshift::XorShiftRng;

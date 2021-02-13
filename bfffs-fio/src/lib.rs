@@ -3,7 +3,7 @@
 // https://github.com/Gilnaa/memoffset/issues/34
 #![allow(clippy::unneeded_field_pattern)]
 
-use bfffs_core::common::{
+use bfffs_core::{
     database::TreeID,
     device_manager::DevManager,
     fs::{FileData, Fs},

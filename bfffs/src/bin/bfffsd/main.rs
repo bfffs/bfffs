@@ -1,10 +1,8 @@
 // vim: tw=80
 
 use bfffs_core::{
-    common::{
-        database::*,
-        device_manager::DevManager,
-    },
+    database::*,
+    device_manager::DevManager,
 };
 use clap::crate_version;
 use futures::StreamExt;

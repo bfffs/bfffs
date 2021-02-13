@@ -6,14 +6,12 @@
 //! computes the Tree's padding fraction (lower is better) and the overall
 //! metadata fraction of the file system.
 use bfffs_core::{
-    common::{
-        *,
-        ddml::DRP,
-        dml::*,
-        idml::RidtEntry,
-        fs_tree::*,
-        tree::*
-    }
+    *,
+    ddml::DRP,
+    dml::*,
+    idml::RidtEntry,
+    fs_tree::*,
+    tree::*
 };
 use divbuf::DivBufShared;
 use futures::{
