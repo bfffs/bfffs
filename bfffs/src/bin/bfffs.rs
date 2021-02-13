@@ -1,4 +1,4 @@
-use bfffs::common::{
+use bfffs_core::{
     database::TreeID,
     device_manager::DevManager,
     property::Property
@@ -118,13 +118,13 @@ pub fn main(args: &clap::ArgMatches) {
 }
 
 mod pool {
-use bfffs::common::BYTES_PER_LBA;
-use bfffs::common::cache::Cache;
-use bfffs::common::cluster::Cluster;
-use bfffs::common::database::*;
-use bfffs::common::ddml::DDML;
-use bfffs::common::idml::IDML;
-use bfffs::common::pool::Pool;
+use bfffs_core::BYTES_PER_LBA;
+use bfffs_core::cache::Cache;
+use bfffs_core::cluster::Cluster;
+use bfffs_core::database::*;
+use bfffs_core::ddml::DDML;
+use bfffs_core::idml::IDML;
+use bfffs_core::pool::Pool;
 use std::{
     convert::TryFrom,
     num::NonZeroU64,

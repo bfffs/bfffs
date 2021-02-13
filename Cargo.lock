@@ -59,6 +59,24 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 name = "bfffs"
 version = "0.1.0"
 dependencies = [
+ "bfffs-core",
+ "cfg-if 1.0.0",
+ "clap",
+ "divbuf",
+ "fuse",
+ "futures",
+ "libc",
+ "mockall",
+ "predicates",
+ "time",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bfffs-core"
+version = "0.1.0"
+dependencies = [
  "async-trait",
  "bincode",
  "bitfield",
@@ -109,30 +127,12 @@ dependencies = [
 name = "bfffs-fio"
 version = "0.1.0"
 dependencies = [
- "bfffs",
+ "bfffs-core",
  "cc",
  "futures",
  "lazy_static",
  "libc",
  "memoffset",
- "tokio",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "bfffs-fuse"
-version = "0.1.0"
-dependencies = [
- "bfffs",
- "cfg-if 1.0.0",
- "clap",
- "divbuf",
- "fuse",
- "futures",
- "libc",
- "mockall",
- "predicates",
- "time",
  "tokio",
  "tracing-subscriber",
 ]
