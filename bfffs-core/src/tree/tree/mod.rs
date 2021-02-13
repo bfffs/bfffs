@@ -35,7 +35,7 @@ use std::{
 };
 use super::*;
 use tokio::runtime;
-use tracing::{Level, instrument};
+use tracing::instrument;
 use tracing_futures::Instrument;
 
 #[cfg(test)] mod tests;
@@ -177,13 +177,10 @@ impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
 {
     type Item = Result<(K, V), Error>;
 
+    #[instrument(skip(self, cx))]
     fn poll_next<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
         -> Poll<Option<Self::Item>>
     {
-        // Note: #[instrument] is currently incompatible with Mockall.  The
-        // following is equivalent.
-        let span = tracing::span!(Level::INFO, "poll_next");
-        let _enter = span.enter();
         self.as_mut()
             .pin_get_data()
             .pop_front()
