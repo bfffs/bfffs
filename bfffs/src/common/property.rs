@@ -50,14 +50,14 @@ impl Property {
     pub fn as_bool(&self) -> bool {
         match self {
             Property::Atime(atime) => *atime,
-            _ => panic!(format!("{:?} is not a boolean Property", self))
+            _ => panic!("{:?} is not a boolean Property", self)
         }
     }
 
     pub fn as_u8(&self) -> u8 {
         match self {
             Property::RecordSize(rs) => *rs,
-            _ => panic!(format!("{:?} is not a u8 Property", self))
+            _ => panic!("{:?} is not a u8 Property", self)
         }
     }
 }
