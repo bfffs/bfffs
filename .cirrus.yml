@@ -30,4 +30,8 @@ task:
   test_script:
     - . $HOME/.cargo/env
     - cargo +$VERSION test $CARGO_ARGS --all --all-targets
+  fuseless_script:
+    - . $HOME/.cargo/env
+    - cd bfffs
+    - cargo +$VERSION check --no-default-features --all-targets
   before_cache_script: rm -rf $HOME/.cargo/registry/index

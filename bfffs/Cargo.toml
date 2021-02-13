@@ -4,10 +4,17 @@ version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
 edition = "2018"
 
+[features]
+default = ["fuse"]
+
+[[bin]]
+name = "bfffsd"
+required-features = ["fuse"]
+
 [dependencies]
 bfffs-core = { path = "../bfffs-core" }
 cfg-if = "1.0"
-fuse = "0.3.1"
+fuse = { version = "0.3.1", optional = true }
 futures = "0.3.0"
 libc = "0.2.44"
 time = "0.1"
