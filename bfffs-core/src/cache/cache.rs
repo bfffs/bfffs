@@ -111,12 +111,8 @@ impl Cache {
     /// Add a new block to the cache.
     ///
     /// The block will be marked as the most recently used.
+    #[tracing::instrument(skip(self, buf))]
     pub fn insert(&mut self, key: Key, buf: Box<dyn Cacheable>) {
-        // Note: #[instrument] is currently incompatible with Mockall.  The
-        // following is equivalent.
-        let span = tracing::span!(Level::INFO, "insert", ?key);
-        let _enter = span.enter();
-
         assert!(buf.len() <= self.capacity);
         while self.size + buf.len() > self.capacity {
             self.expire();
