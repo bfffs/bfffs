@@ -696,7 +696,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
             debug_assert!(max_fanout <= usize::from(u16::max_value()));
             let min_fanout = div_roundup(max_fanout as u16, spread);
             (min_fanout, max_fanout as u16)
-            // TODO: take account of compression
         };
 
         let (minlf, maxlf) = mk_fanout(Inner::<A, D, K, V>::LEAF_ELEM_SIZE,
