@@ -26,8 +26,6 @@ pub enum Key {
 }
 
 /// Types that implement `Cacheable` may be stored in the cache
-// Things in Cache will never be empty, so they don't need is_empty
-#[allow(clippy::len_without_is_empty)]
 pub trait Cacheable: Any + Debug + Send + Sync {
     /// Deserialize a buffer into Self.  Will panic if deserialization fails.
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized;
@@ -38,7 +36,7 @@ pub trait Cacheable: Any + Debug + Send + Sync {
     fn eq(&self, other: &dyn Cacheable) -> bool;
 
     /// How much space does this object use in the Cache?
-    fn len(&self) -> usize;
+    fn cache_space(&self) -> usize;
 
     /// Return a read-only handle to this object.
     ///
@@ -79,7 +77,9 @@ impl Cacheable for DivBufShared {
         }
     }
 
-    fn len(&self) -> usize {
+    fn cache_space(&self) -> usize {
+        // TODO: add the const overhead, but adjust the code in examples/fanout
+        // not to count it for purposes of computing the metadata fraction.
         self.len()
     }
 

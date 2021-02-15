@@ -10,9 +10,9 @@ use serde::de::DeserializeOwned;
 use std::ops::Range;
 
 mod node;
-use self::node::*;
-// Node must be visible for the IDML's unit tests
-pub(super) use self::node::Node;
+// Node is _supposed_ to be private, but must technically be public for the sake
+// of the integration tests.
+pub use self::node::*;
 
 pub use self::node::{Addr, Key, MinValue, Value};
 

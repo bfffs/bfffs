@@ -124,7 +124,7 @@ test_suite! {
             let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
             let clusters = vec![cluster];
             let pool = Pool::create(POOLNAME.to_string(), clusters);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             (rt, idml, tempdir, filename)
@@ -157,7 +157,7 @@ test_suite! {
                 .map_ok(move |cluster| (cluster, lr))
             }).map_ok(move |(cluster, reader)|{
                 let (pool, reader) = Pool::open(None, vec![(cluster, reader)]);
-                let cache = cache::Cache::with_capacity(1_000_000);
+                let cache = cache::Cache::with_capacity(4_194_304);
                 let arc_cache = Arc::new(Mutex::new(cache));
                 let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
                 idml::IDML::open(ddml, arc_cache, reader)
@@ -243,7 +243,7 @@ test_suite! {
             let cluster = Pool::create_cluster(cs, 1, lpz, 0, &paths);
             let clusters = vec![cluster];
             let pool = Pool::create(POOLNAME.to_string(), clusters);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = IDML::create(ddml, cache);
             (rt, idml, tempdir)

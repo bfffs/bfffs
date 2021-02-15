@@ -69,5 +69,10 @@ default-features = false
 features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
 
 [[test]]
+name = "cacheable_space"
+harness = false
+path = "tests/cacheable_space.rs"
+
+[[test]]
 name = "functional"
 path = "tests/functional/mod.rs"

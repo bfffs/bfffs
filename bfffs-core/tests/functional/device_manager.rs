@@ -55,7 +55,7 @@ test_suite! {
             let cluster = Pool::create_cluster(None, k, None, f, &paths);
             let pool = Pool::create(String::from("test_device_manager"),
                 vec![cluster]);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             let db = Database::create(idml, handle);

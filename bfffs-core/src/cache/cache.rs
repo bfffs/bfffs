@@ -113,11 +113,11 @@ impl Cache {
     /// The block will be marked as the most recently used.
     #[tracing::instrument(skip(self, buf))]
     pub fn insert(&mut self, key: Key, buf: Box<dyn Cacheable>) {
-        assert!(buf.len() <= self.capacity);
-        while self.size + buf.len() > self.capacity {
+        let cache_space = buf.cache_space();
+        assert!(cache_space <= self.capacity);
+        while self.size + cache_space > self.capacity {
             self.expire();
         }
-        let len = buf.len();
         let entry = LruEntry { buf, mru: None, lru: self.mru};
         if let Some(old_entry) = self.store.insert(key, entry) {
             // Inserting two different values with the same key is a bug, but
@@ -133,7 +133,7 @@ impl Cache {
             self.store.insert(key, old_entry);
             return;
         } else {
-            self.size += len;
+            self.size += cache_space;
         }
         if self.mru.is_some() {
             if let Some(v) = self.store.get_mut(&self.mru.unwrap()) {
@@ -153,7 +153,7 @@ impl Cache {
     /// present at all.
     pub fn remove(&mut self, key: &Key) -> Option<Box<dyn Cacheable>> {
         self.store.remove(key).map(|v| {
-            self.size -= v.buf.len();
+            self.size -= v.buf.cache_space();
             if v.mru.is_some() {
                 self.store.get_mut(&v.mru.unwrap()).unwrap().lru = v.lru;
             } else {
@@ -493,7 +493,7 @@ fn test_remove_last() {
     let dbs = Box::new(DivBufShared::from(vec![0u8; 6]));
     let key = Key::Rid(RID(0));
     cache.insert(key, dbs);
-    assert_eq!(cache.remove(&key).unwrap().len(), 6);
+    assert_eq!(cache.remove(&key).unwrap().cache_space(), 6);
     assert_eq!(cache.size(), 0);
     assert!(cache.lru.is_none());
     assert!(cache.mru.is_none());
@@ -511,7 +511,7 @@ fn test_remove_lru() {
     let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
-    assert_eq!(cache.remove(&key1).unwrap().len(), 5);
+    assert_eq!(cache.remove(&key1).unwrap().cache_space(), 5);
     assert!(cache.store.get(&key1).is_none());
     assert_eq!(cache.size(), 7);
     assert_eq!(cache.lru, Some(key2));
@@ -535,7 +535,7 @@ fn test_remove_middle() {
     let dbs = Box::new(DivBufShared::from(vec![0u8; 11]));
     cache.insert(key3, dbs);
 
-    assert_eq!(cache.remove(&key2).unwrap().len(), 7);
+    assert_eq!(cache.remove(&key2).unwrap().cache_space(), 7);
     assert!(cache.store.get(&key2).is_none());
     assert_eq!(cache.size(), 16);
     assert_eq!(cache.lru, Some(key1));
@@ -561,7 +561,7 @@ fn test_remove_mru() {
     let dbs = Box::new(DivBufShared::from(vec![0u8; 7]));
     cache.insert(key2, dbs);
 
-    assert_eq!(cache.remove(&key2).unwrap().len(), 7);
+    assert_eq!(cache.remove(&key2).unwrap().cache_space(), 7);
     assert!(cache.store.get(&key2).is_none());
     assert_eq!(cache.size(), 5);
     assert_eq!(cache.mru, Some(key1));

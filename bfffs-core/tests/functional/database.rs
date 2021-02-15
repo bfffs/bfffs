@@ -28,7 +28,7 @@ fn open_db(rt: &mut Runtime, path: PathBuf) -> Database {
             .map_ok(move |cluster| (cluster, lr))
         }).map_ok(move |(cluster, reader)|{
             let (pool, reader) = Pool::open(None, vec![(cluster, reader)]);
-            let cache = Cache::with_capacity(1_000_000);
+            let cache = Cache::with_capacity(4_194_304);
             let arc_cache = Arc::new(Mutex::new(cache));
             let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
             let (idml, reader) = IDML::open(ddml, arc_cache, reader);
@@ -93,7 +93,7 @@ test_suite! {
             let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
             let clusters = vec![cluster];
             let pool = Pool::create(POOLNAME.to_string(), clusters);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             let db = rt.block_on(async move {
@@ -183,7 +183,7 @@ test_suite! {
             let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
             let clusters = vec![cluster];
             let pool = Pool::create(POOLNAME.to_string(), clusters);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             let db = rt.block_on(async move {
@@ -275,7 +275,7 @@ test_suite! {
             vec![cluster]);
         let cache = Arc::new(
             Mutex::new(
-                Cache::with_capacity(1_000_000)
+                Cache::with_capacity(4_194_304)
             )
         );
         let ddml = Arc::new(DDML::new(pool, cache.clone()));

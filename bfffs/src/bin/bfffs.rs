@@ -262,7 +262,7 @@ impl Builder {
         let handle = self.rt.handle().clone();
         let db = {
             let pool = Pool::create(name, clusters);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(1000)));
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             Database::create(idml, handle)
