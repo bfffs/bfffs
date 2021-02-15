@@ -74,6 +74,12 @@ where T: Copy + Debug + DeserializeOwned + Ord + MinValue + PartialEq + Send +
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     Serialize + TypicalSize + 'static
 {
+    /// How much allocated space does this object own, excluding the object
+    /// itself?
+    fn allocated_space(&self) -> usize {
+        0
+    }
+
     /// Prepare this `Value` to be written to disk
     // LCOV_EXCL_START   unreachable code
     fn flush<D>(self, _dml: &D, _txg: TxgT)
@@ -111,7 +117,7 @@ pub(super) struct NodeId<K: Key> {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned,
                              V: DeserializeOwned"))]
-pub(super) enum TreePtr<A: Addr, K: Key, V: Value> {
+pub enum TreePtr<A: Addr, K: Key, V: Value> {
     /// DML Addresses point to a disk location
     // This is the only variant that gets serialized, so put it first.  That
     // gives it discriminant 0, which is the most compressible.
@@ -200,7 +206,7 @@ mod node_serializer {
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned, V: DeserializeOwned"))]
-pub(super) struct LeafData<K: Key, V> {
+pub struct LeafData<K: Key, V> {
     items: BTreeMap<K, V>
 }
 
@@ -307,7 +313,7 @@ impl<K: Key, V: Value> Default for LeafData<K, V> {
 /// Node size limits
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(test, derive(Default))]
-pub(super) struct Limits {
+pub struct Limits {
     /// Minimum interior node fanout.  Smaller nodes will be merged, or will
     /// steal children from their neighbors.
     // Can't combine min_leaf_fanout with max_leaf_fanout in a Range, because
@@ -348,7 +354,7 @@ impl Limits {
 }
 
 /// Guard that holds the Node lock object for reading
-pub(super) enum TreeReadGuard<A: Addr, K: Key, V: Value> {
+pub enum TreeReadGuard<A: Addr, K: Key, V: Value> {
     Mem(RwLockReadGuard<NodeData<A, K, V>>),
     Addr(RwLockReadGuard<NodeData<A, K, V>>, Box<Arc<Node<A, K, V>>>)
 }
@@ -371,7 +377,7 @@ impl<A: Addr, K: Key, V: Value> Deref for TreeReadGuard<A, K, V> {
 }
 
 /// Guard that holds the Node lock object for writing
-pub(super) struct TreeWriteGuard<A: Addr, K: Key, V: Value>(
+pub struct TreeWriteGuard<A: Addr, K: Key, V: Value>(
     pub(super) RwLockWriteGuard<NodeData<A, K, V>>
 );
 
@@ -549,7 +555,7 @@ impl<A: Addr, K: Key, V: Value> DerefMut for TreeWriteGuard<A, K, V> {
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
-pub(super) struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
+pub struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
     pub key: K,
     /// The range of transactions in which the target Node and all of its
     /// children were written.
@@ -634,7 +640,7 @@ impl<A: Addr, K: Key, V: Value> Default for IntElem<A, K, V> {
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned"))]
-pub(super) struct IntData<A: Addr, K: Key, V: Value> {
+pub struct IntData<A: Addr, K: Key, V: Value> {
     pub children: Vec<IntElem<A, K, V>>
 }
 
@@ -694,7 +700,7 @@ impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
-pub(super) enum NodeData<A: Addr, K: Key, V: Value> {
+pub enum NodeData<A: Addr, K: Key, V: Value> {
     Leaf(LeafData<K, V>),
     Int(IntData<A, K, V>),
 }
@@ -969,35 +975,32 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
         }
     }
 
-    fn len(&self) -> usize {
+    fn cache_space(&self) -> usize {
+        let arcsize = mem::size_of::<Arc<Node<A, K, V>>>();
+        let rwlocksize = mem::size_of::<RwLock<NodeData<A, K, V>>>();
+        let nodesize = mem::size_of::<Node<A, K, V>>();
         if let Ok(guard) = self.0.try_read() {
             match guard.deref() {
                 NodeData::Leaf(leaf) => {
+                    let allocated: usize = leaf.items.iter()
+                        .map(|(_k, v)| v.allocated_space())
+                        .sum();
                     // Rust's BTreeMap doesn't have any method to get its memory
-                    // consumption.  But it's dominated by two vecs in each
-                    // leaf, one storing keys and the other storing values.  As
-                    // of 1.26.1, the vecs are of length 11 and have minimum
-                    // size 5.  Each leaf has (on 64-bit arches) and additional
-                    // 12 bytes.  Each internal node has 12 children plus an
-                    // internal leaf node.  If each node on average has an
-                    // occupancy of 8, then an average tree will have n / 8
-                    // total nodes, a height of log(n, 8), and n / 7 internal
-                    // nodes.
-                    //
-                    // So the memory consumption will be roughly as follows,
-                    // assuming 64-bit pointers:
-                    let n = leaf.items.len();
-                    let nodes = n >> 3;
-                    let non_leaves = nodes / 7;
-                    let leaf_memory = 12 * (mem::size_of::<K>() +
-                                            mem::size_of::<V>()) + 12;
-                    let non_leaf_memory = 12 * 8;
-                    leaf_memory * nodes + non_leaf_memory * non_leaves
+                    // consumption.  It's hard to calculate theoretically, so
+                    // this model is experimentally determined.
+                    let kvs = mem::size_of::<K>() + mem::size_of::<V>();
+                    let n = leaf.items.len() as f64;
+                    ( 3.269795136 * n +
+                      1.836840272 * n * (kvs as f64) +
+                      476.8535918 ) as usize +
+                    allocated
                 },
                 NodeData::Int(int) => {
                     // IntData is layed out contiguously in memory
-                    // TODO: test this; I don't think it's right
-                    mem::size_of_val(int)
+                    let nkids = int.children.capacity();
+                    let kidsize = mem::size_of::<IntElem<A, K, V>>();
+                    let fudge = 280;    // Experimentally determined
+                    arcsize + rwlocksize + nodesize + nkids * kidsize + fudge
                 }
             }
         } else {
@@ -1031,13 +1034,13 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
     }
 }
 #[derive(Debug)]
-pub(crate) struct Node<A, K, V> (
+pub struct Node<A, K, V> (
     pub(super) RwLock<NodeData<A, K, V>>
 )
     where A: Addr, K: Key, V: Value;
 
 impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
-    pub(super) fn new(node_data: NodeData<A, K, V>) -> Self {
+    pub fn new(node_data: NodeData<A, K, V>) -> Self {
         Node(RwLock::new(node_data))
     }
 

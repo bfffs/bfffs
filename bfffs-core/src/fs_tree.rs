@@ -877,6 +877,39 @@ impl<A: Addr> TypicalSize for FSValue<A> {
 }
 
 impl<A: Addr> Value for FSValue<A> {
+    fn allocated_space(&self) -> usize {
+        fn inline_extent_space(extent: &InlineExtent) -> usize {
+            const FUDGE: usize = 64;    // Experimentally determined
+            extent.buf.len() + FUDGE
+        }
+
+        fn extattr_space<T: Addr>(extattr: &ExtAttr<T>) -> usize {
+            match extattr {
+                ExtAttr::Blob(blob_extattr) => blob_extattr.name.len(),
+                ExtAttr::Inline(inline_extattr) =>
+                    inline_extattr.name.len() +
+                    inline_extent_space(&inline_extattr.extent)
+            }
+        }
+
+        match self {
+            FSValue::DirEntry(dirent) => dirent.name.len(),
+            FSValue::InlineExtent(extent) => inline_extent_space(&extent),
+            FSValue::ExtAttr(extattr) => extattr_space(&extattr),
+            FSValue::ExtAttrs(extattrs) =>
+                extattrs.capacity() * mem::size_of::<ExtAttr<A>>() +
+                extattrs.iter()
+                .map(|extattr| extattr_space(&extattr))
+                .sum::<usize>(),
+            FSValue::DirEntries(dirents) =>
+                dirents.capacity() * mem::size_of::<Dirent>() +
+                dirents.iter()
+                .map(|de| de.name.len())
+                .sum::<usize>(),
+            _ => 0
+        }
+    }
+
     fn flush<D>(self, dml: &D, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<Self, Error>> + Send + 'static>>
         where D: DML + 'static, D::Addr: 'static

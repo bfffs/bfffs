@@ -220,7 +220,8 @@ impl FakeIDML {
                              txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<RID, Error>> + Send>>
     {
-        self.data_size.fetch_add(cacheable.len() as u64, Ordering::Relaxed);
+        self.data_size.fetch_add(cacheable.cache_space() as u64,
+            Ordering::Relaxed);
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
         let alloct2 = self.alloct.clone();
         let ridt2 = self.ridt.clone();
