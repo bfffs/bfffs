@@ -41,7 +41,7 @@ tokio = { version = "0.2.7", features = ["rt-threaded", "sync", "time"] }
 tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "5dbb35cb4cbb5ff55faa6063426af1a04c363ad6" }
 tracing = "0.1.5"
 tracing-futures = "0.2.4"
-uuid = { version = "0.8", features = ["serde", "v4"]}
+uuid = { version = "0.8.2", features = ["serde", "v4"]}
 
 [dev-dependencies.clap]
 version = "2"
@@ -59,9 +59,9 @@ mockall = "0.9.1"
 num_cpus = "1"
 permutohedron = "0.2"
 pretty_assertions = "0.5"
-rand = "0.7"
-rand_xorshift = "0.2"
-tempfile = "3"
+rand = "0.8"
+rand_xorshift = "0.3"
+tempfile = "3.2"
 
 [dev-dependencies.tracing-subscriber]
 version = "0.2.15"

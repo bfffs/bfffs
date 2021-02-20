@@ -27,6 +27,7 @@ use divbuf::{DivBuf, DivBufMut, DivBufShared};
 use enum_primitive_derive::Primitive;
 use lazy_static::lazy_static;
 use num_traits::{FromPrimitive, ToPrimitive};
+use serde_derive::{Deserialize, Serialize};
 use serde::{
     Deserialize,
     Serialize,
