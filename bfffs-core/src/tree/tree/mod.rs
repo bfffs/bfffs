@@ -1702,8 +1702,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Keep merging down the root as long as it has 1 child
         async move {
             loop {
+                let dml2 = self.i.dml.clone();
                 let (tree_guard2, root_guard) =
-                    Tree::xlock_and_merge_root(self.i.clone(), tree_guard, txg)
+                    Tree::xlock_and_merge_root(dml2, tree_guard, txg)
                     .await?;
                 if root_guard.is_leaf() || root_guard.as_int().nchildren() > 1
                 {
@@ -1719,8 +1720,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }).and_then(move |mut tree_guard| async move {
             // Keep merging down the root as long as it has 1 child
             loop {
+                let dml3 = self3.i.dml.clone();
                 let (tree_guard2, root_guard) = 
-                    Tree::xlock_and_merge_root(self3.i.clone(), tree_guard, txg)
+                    Tree::xlock_and_merge_root(dml3, tree_guard, txg)
                     .await?;
                 if root_guard.is_leaf() || root_guard.as_int().nchildren() > 1 {
                     break Ok(());
@@ -1923,7 +1925,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> Result<Option<V>, Error>
     {
         let tree_guard = self.write().await;
-        let (_, rg) = Tree::xlock_and_merge_root(self.i.clone(),
+        let (_, rg) = Tree::xlock_and_merge_root(self.i.dml.clone(),
             tree_guard, txg).await?;
         Tree::remove_no_fix(self, rg, k, txg).await
     }
@@ -2015,7 +2017,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
     /// memory, then COW it.  If it has an only child, merge the root node with
     /// its child.
-    fn xlock_and_merge_root(inner: Arc<Inner<A, D, K, V>>,
+    fn xlock_and_merge_root(dml: Arc<D>,
                   tree_guard: RwLockWriteGuard<TreeRoot<A, K, V>>, txg: TxgT)
         -> impl Future<Output=Result<(RwLockWriteGuard<TreeRoot<A, K, V>>,
                              TreeWriteGuard<A, K, V>),
@@ -2029,7 +2031,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // If it's not a leaf and has no children:
         //     Make it a leaf
         //     Fix the tree's height
-        Tree::xlock_root(&inner.dml, tree_guard, txg)
+        Tree::xlock_root(&dml, tree_guard, txg)
             .and_then(move |(mut tree_guard, mut root_guard)| {
                 let nchildren = root_guard.len();
                 if !root_guard.is_leaf() && nchildren == 1 {
@@ -2042,7 +2044,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // The root's key must always be the absolute minimum
                     tree_guard.elem.key = K::min_value();
                     tree_guard.height -= 1;
-                    Tree::xlock_root(&inner.dml, tree_guard, txg).boxed()
+                    Tree::xlock_root(&dml, tree_guard, txg).boxed()
                 } else if !root_guard.is_leaf() && nchildren == 0 {
                     drop(root_guard);
                     let new_root = IntElem::default();
@@ -2050,7 +2052,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // The root's key must always be the absolute minimum
                     tree_guard.elem.key = K::min_value();
                     tree_guard.height = 1;
-                    Tree::xlock_root(&inner.dml, tree_guard, txg).boxed()
+                    Tree::xlock_root(&dml, tree_guard, txg).boxed()
                 } else {
                     future::ok((tree_guard, root_guard)).boxed()
                 }
