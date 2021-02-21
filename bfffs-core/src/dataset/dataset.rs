@@ -98,7 +98,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
     fn remove(&self, k: K, txg: TxgT)
         -> impl Future<Output=Result<Option<V>, Error>> + Send
     {
-        self.tree.remove(k, txg)
+        self.tree.clone().remove(k, txg)
     }
 
     fn remove_blob(&self, rid: RID, txg: TxgT)

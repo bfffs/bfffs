@@ -7979,7 +7979,7 @@ root:
 fn remove_last_key() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -7998,8 +7998,8 @@ root:
       Leaf:
         items:
           0: 0.0
-"#);
-    let r = tree.remove(0, TxgT::from(42))
+"#));
+    let r = tree.clone().remove(0, TxgT::from(42))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
@@ -8026,7 +8026,7 @@ root:
 fn remove_from_leaf() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -8047,8 +8047,8 @@ root:
           0: 0.0
           1: 1.0
           2: 2.0
-"#);
-    let r = tree.remove(1, TxgT::from(42))
+"#));
+    let r = tree.clone().remove(1, TxgT::from(42))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(1.0)));
     assert_eq!(format!("{}", tree),
@@ -8077,7 +8077,7 @@ root:
 fn remove_and_merge_down() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -8106,8 +8106,8 @@ root:
                     0: 0.0
                     1: 1.0
                     2: 2.0
-"#);
-    let r2 = tree.remove(1, TxgT::from(42))
+"#));
+    let r2 = tree.clone().remove(1, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8136,7 +8136,7 @@ root:
 fn remove_and_merge_int_left() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -8258,8 +8258,8 @@ root:
                             items:
                               21: 21.0
                               22: 22.0
-                              23: 23.0"#);
-    let r2 = tree.remove(23, TxgT::from(42))
+                              23: 23.0"#));
+    let r2 = tree.clone().remove(23, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8382,7 +8382,7 @@ root:
 fn remove_and_merge_int_right() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -8494,8 +8494,8 @@ root:
                           Leaf:
                             items:
                               21: 21.0
-                              22: 22.0"#);
-    let r2 = tree.remove(4, TxgT::from(42))
+                              22: 22.0"#));
+    let r2 = tree.clone().remove(4, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8608,7 +8608,7 @@ root:
 fn remove_and_merge_leaf_left() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -8656,8 +8656,8 @@ root:
                   items:
                     5: 5.0
                     7: 7.0
-"#);
-    let r2 = tree.remove(7, TxgT::from(42))
+"#));
+    let r2 = tree.clone().remove(7, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8705,7 +8705,7 @@ root:
 fn remove_and_merge_leaf_right() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -8754,8 +8754,8 @@ root:
                     5: 5.0
                     6: 6.0
                     7: 7.0
-"#);
-    let r2 = tree.remove(4, TxgT::from(42))
+"#));
+    let r2 = tree.clone().remove(4, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8804,7 +8804,7 @@ root:
 fn remove_and_steal_int_left() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -8936,8 +8936,8 @@ root:
                             items:
                               24: 24.0
                               25: 25.0
-                              26: 26.0"#);
-    let r2 = tree.remove(26, TxgT::from(42))
+                              26: 26.0"#));
+    let r2 = tree.clone().remove(26, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -9078,7 +9078,7 @@ root:
 fn remove_and_steal_int_right() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -9210,8 +9210,8 @@ root:
                           Leaf:
                             items:
                               24: 24.0
-                              26: 26.0"#);
-    let r2 = tree.remove(14, TxgT::from(42))
+                              26: 26.0"#));
+    let r2 = tree.clone().remove(14, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -9352,7 +9352,7 @@ root:
 fn remove_and_steal_leaf_left() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -9403,8 +9403,8 @@ root:
                   items:
                     8: 8.0
                     9: 9.0
-"#);
-    let r2 = tree.remove(8, TxgT::from(42))
+"#));
+    let r2 = tree.clone().remove(8, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -9463,7 +9463,7 @@ root:
 fn remove_and_steal_leaf_right() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -9514,8 +9514,8 @@ root:
                     7: 7.0
                     8: 8.0
                     9: 9.0
-"#);
-    let r2 = tree.remove(4, TxgT::from(42))
+"#));
+    let r2 = tree.clone().remove(4, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -9575,7 +9575,9 @@ fn remove_nonexistent() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+    );
     let r = tree.remove(3, TxgT::from(42))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(None));

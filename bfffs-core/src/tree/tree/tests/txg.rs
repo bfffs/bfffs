@@ -525,7 +525,7 @@ fn merge() {
         .with(eq(addrl1), eq(TxgT::from(42)))
         .return_once(move |_, _| Box::pin(future::ok(Box::new(ln1))));
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -594,8 +594,8 @@ root:
               start: 15
               end: 16
             ptr:
-              Addr: 6"#);
-    let r2 = tree.remove(4, TxgT::from(42))
+              Addr: 6"#));
+    let r2 = tree.clone().remove(4, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -810,7 +810,7 @@ root:
 fn steal() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -896,8 +896,8 @@ root:
                             items:
                               24: 24.0
                               25: 25.0
-                              26: 26.0"#);
-    let r2 = tree.remove(26, TxgT::from(42))
+                              26: 26.0"#));
+    let r2 = tree.clone().remove(26, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),

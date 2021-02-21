@@ -73,8 +73,8 @@ mock! {
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Ord + Clone + Send + 'static;
-        pub fn remove(&self, k: K, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
+        pub async fn remove(self: Arc<Self>, k: K, txg: TxgT)
+            -> Result<Option<V>, Error>;
         pub fn serialize(&self) -> Result<TreeOnDisk<A>, Error>;
     }
 }

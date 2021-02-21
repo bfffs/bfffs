@@ -1961,19 +1961,18 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Remove and return the value at key `k`, if any.
-    pub fn remove(&self, k: K, txg: TxgT)
-        -> impl Future<Output=Result<Option<V>, Error>> + Send
+    pub async fn remove(self: Arc<Self>, k: K, txg: TxgT)
+        -> Result<Option<V>, Error>
     {
-        let i2 = self.i.clone();
-        self.write()
-            .then(move |tree_guard| {
-                Tree::remove_locked(i2, tree_guard, k, txg)
-            })
+        let tree_guard = self.write().await;
+        let (_, rg) = Tree::xlock_and_merge_root(self.i.clone(),
+            tree_guard, txg).await?;
+        Tree::remove_no_fix(self, rg, k, txg).await
     }
 
     /// Remove key `k` from an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn remove_int(inner: Arc<Inner<A, D, K, V>>,
+    fn remove_int(self: Arc<Self>,
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, child: TreeWriteGuard<A, K, V>, k: K,
                   txg: TxgT)
@@ -1982,51 +1981,34 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // First, fix the node, if necessary.  Merge/steal even if the node
         // currently satifisfies the min fanout, because we may remove end up
         // removing a child
-        if child.in_danger(&inner.limits) {
-            let dml2 = inner.dml.clone();
-            Tree::fix_int(&inner, parent, child_idx, child, txg)
-                .and_then(move |(parent, _, _)| {
-                    let child_idx = parent.as_int().position(&k);
-                    parent.xlock(&dml2, child_idx, txg)
-                }).and_then(move |(parent, child)| {
-                    drop(parent);
-                    Tree::remove_no_fix(inner, child, k, txg)
-                }).boxed()
+        if child.in_danger(&self.i.limits) {
+            let dml2 = self.i.dml.clone();
+            async move {
+                let (parent, _, _) = Tree::fix_int(&self.i, parent, child_idx,
+                                                   child, txg).await?;
+                let child_idx = parent.as_int().position(&k);
+                let (_, child) = parent.xlock(&dml2, child_idx, txg).await?;
+                Tree::remove_no_fix(self, child, k, txg).await
+            }.boxed()
         } else {
             drop(parent);
-            Tree::remove_no_fix(inner, child, k, txg)
+            Tree::remove_no_fix(self, child, k, txg).boxed()
         }
     }
 
-    /// Helper for `remove`.  Handles removal once the tree is locked
-    fn remove_locked(inner: Arc<Inner<A, D, K, V>>,
-                     tree_guard: RwLockWriteGuard<IntElem<A, K, V>>, k: K,
-                     txg: TxgT)
-        -> impl Future<Output=Result<Option<V>, Error>> + Send
-    {
-        Tree::xlock_and_merge_root(inner.clone(), tree_guard, txg)
-            .and_then(move |(tree_guard, root_guard)| {
-                drop(tree_guard);
-                Tree::remove_no_fix(inner, root_guard, k, txg)
-            })
-    }
-
     /// Remove key `k` from a node, but don't try to fixup the node.
-    fn remove_no_fix(inner: Arc<Inner<A, D, K, V>>,
+    async fn remove_no_fix(self: Arc<Self>,
                      mut node: TreeWriteGuard<A, K, V>, k: K, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
+        -> Result<Option<V>, Error>
     {
 
         if node.is_leaf() {
             let old_v = node.as_leaf_mut().remove(&k);
-            future::ok(old_v).boxed()
+            Ok(old_v)
         } else {
             let child_idx = node.as_int().position(&k);
-            let fut = node.xlock(&inner.dml, child_idx, txg);
-            fut.and_then(move |(parent, child)| {
-                Tree::remove_int(inner, parent, child_idx, child, k,
-                                 txg)
-            }).boxed()
+            let (parent, child) = node.xlock(&self.i.dml, child_idx, txg).await?;
+            Tree::remove_int(self, parent, child_idx, child, k, txg).await
         }
     }
 

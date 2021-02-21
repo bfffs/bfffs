@@ -1170,7 +1170,7 @@ fn remove_and_merge_down() {
         .return_once(move |_, _| future::ok(Box::new(leafnode)).boxed());
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1194,8 +1194,8 @@ root:
               end: 42
             ptr:
               Addr: 0
-"#);
-    let r2 = tree.remove(1, TxgT::from(42)).now_or_never().unwrap();
+"#));
+    let r2 = tree.clone().remove(1, TxgT::from(42)).now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
