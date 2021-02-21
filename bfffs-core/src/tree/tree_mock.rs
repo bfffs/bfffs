@@ -46,8 +46,7 @@ mock! {
               K: Key,
               V: Value
     {
-        pub fn check(&self)
-            -> Pin<Box<dyn Future<Output=Result<bool, Error>> + Send>>;
+        pub async fn check(self: Arc<Self>) -> Result<bool, Error>;
         pub fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
         pub fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)

@@ -2489,7 +2489,7 @@ root:
 fn range_delete_merge_and_underflow() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -2562,11 +2562,11 @@ root:
                     13: 13.0
                     14: 14.0
                     15: 15.0
-"#);
+"#));
     let r = tree.range_delete(2..6, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
-    assert!(tree.check().now_or_never().unwrap().unwrap());
+    assert!(tree.clone().check().now_or_never().unwrap().unwrap());
     assert_eq!(format!("{}", &tree),
 r#"---
 height: 2
@@ -2829,7 +2829,7 @@ root:
 fn range_delete_merge_descending_and_ascending() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -2959,8 +2959,8 @@ root:
                             items:
                               1759: 861
                               1762: 864
-"#);
-    assert!(tree.check().now_or_never().unwrap().unwrap());
+"#));
+    assert!(tree.clone().check().now_or_never().unwrap().unwrap());
     let r = tree.range_delete(1024..1536, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());

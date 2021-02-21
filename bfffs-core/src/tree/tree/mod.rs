@@ -546,36 +546,28 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Audit the whole Tree for consistency and invariants
     // TODO: check node size limits, too
-    pub fn check(&self) -> impl Future<Output=Result<bool, Error>> + Send {
+    pub async fn check(self: Arc<Self>) -> Result<bool, Error> {
         // Keep the whole tree locked and use LIFO lock discipline
         let height = self.i.height.load(Ordering::Relaxed) as u8;
-        let inner = self.i.clone();
-        self.read()
-        .then(move |tree_guard| {
-            tree_guard.rlock(&inner.dml)
-            .and_then(move |guard| {
-                let root_ok = guard.check(tree_guard.key, height - 1, true,
-                                          &inner.limits);
-                if height == 1 {
-                    future::ok(root_ok).boxed()
-                } else {
-                    let fut = Tree::check_r(&inner.dml, height - 1, &guard,
-                                            inner.limits)
-                    .map_ok(move |r| {
-                        if r.2.start < tree_guard.txgs.start ||
-                           r.2.end > tree_guard.txgs.end {
-                            eprintln!(concat!("TXG inconsistency! Tree ",
-                                "contained TXGs {:?} but Root node recorded ",
-                                "{:?}"), r.1, tree_guard.txgs);
-                            false
-                        } else {
-                            root_ok && r.0
-                        }
-                    });
-                    fut.boxed()
-                }
-            })
-        })
+        let tree_guard = self.read().await;
+        let guard = tree_guard.rlock(&self.i.dml).await?;
+        let root_ok = guard.check(tree_guard.key, height - 1, true,
+                                  &self.i.limits);
+        if height == 1 {
+            Ok(root_ok)
+        } else {
+            let r = Tree::check_r(&self.i.dml, height - 1, &guard,
+                                  self.i.limits).await?;
+            if r.2.start < tree_guard.txgs.start ||
+               r.2.end > tree_guard.txgs.end
+            {
+                eprintln!("TXG inconsistency! Tree contained TXGs {:?} but \
+                          Root node recorded {:?}", r.1, tree_guard.txgs);
+                Ok(false)
+            } else {
+                Ok(root_ok && r.0)
+            }
+        }
     }
 
     /// # Parameters

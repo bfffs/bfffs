@@ -133,8 +133,8 @@ impl<'a> IDML {
     ///
     /// `true` on success, `false` on failure
     pub fn check(&self) -> impl Future<Output=Result<bool, Error>> {
-        future::try_join3(self.alloct.check(),
-                          self.ridt.check(),
+        future::try_join3(self.alloct.clone().check(),
+                          self.ridt.clone().check(),
                           self.check_ridt())
         .map_ok(|(x, y, z)| x && y && z)
     }

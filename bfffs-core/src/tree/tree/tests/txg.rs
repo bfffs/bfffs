@@ -11,7 +11,7 @@ use super::*;
 fn check_bad_root_txgs() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -49,7 +49,7 @@ root:
                   items:
                     256: 256.0
                     257: 257.0
-"#);
+"#));
 
     assert!(!tree.check()
             .now_or_never().unwrap()
@@ -60,7 +60,7 @@ root:
 fn check_bad_int_txgs() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -134,7 +134,7 @@ root:
                             items:
                               12: 12.0
                               13: 13.0
-"#);
+"#));
 
     assert!(!tree.check()
             .now_or_never().unwrap()
@@ -145,7 +145,7 @@ root:
 fn check_bad_key() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -183,7 +183,7 @@ root:
                   items:
                     13: 13.0
                     14: 14.0
-"#);
+"#));
 
     assert!(!tree.check()
             .now_or_never().unwrap()
@@ -194,7 +194,7 @@ root:
 fn check_ok() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -271,7 +271,7 @@ root:
                             items:
                               12: 12.0
                               13: 13.0
-"#);
+"#));
 
     assert!(tree.check()
             .now_or_never().unwrap()
@@ -282,7 +282,9 @@ root:
 fn check_empty() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::create(dml, false, 1.0, 1.0);
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::create(dml, false, 1.0, 1.0)
+    );
 
     assert!(tree.check()
             .now_or_never().unwrap()
@@ -293,7 +295,7 @@ fn check_empty() {
 fn check_leaf_underflow() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -330,7 +332,7 @@ root:
                   items:
                     13: 13.0
                     14: 14.0
-"#);
+"#));
 
     assert!(!tree.check()
             .now_or_never().unwrap()
@@ -342,7 +344,7 @@ root:
 fn check_root_int_underflow() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -384,7 +386,7 @@ root:
                     21: 21.0
                     22: 22.0
                     23: 23.0
-"#);
+"#));
 
     assert!(tree.check()
             .now_or_never().unwrap()
@@ -396,7 +398,7 @@ root:
 fn check_root_leaf_ok() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -415,7 +417,7 @@ root:
       Leaf:
         items:
           0: 0.0
-"#);
+"#));
 
     assert!(tree.check()
             .now_or_never().unwrap()
@@ -426,7 +428,7 @@ root:
 fn check_root_leaf_overflow() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -450,7 +452,7 @@ root:
           3: 3.0
           4: 4.0
           5: 5.0
-"#);
+"#));
 
     assert!(!tree.check()
             .now_or_never().unwrap()
@@ -462,7 +464,7 @@ root:
 fn check_unsorted() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -501,7 +503,7 @@ root:
                     5: 5.0
                     6: 6.0
                     11: 11.0
-"#);
+"#));
 
     assert!(!tree.check()
             .now_or_never().unwrap()
