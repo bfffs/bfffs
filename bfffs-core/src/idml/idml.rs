@@ -639,10 +639,10 @@ mod t {
     {
         let entry = RidtEntry{drp: *drp, refcount};
         let txg = TxgT::from(0);
-        idml.ridt.insert(rid, entry, txg)
+        idml.ridt.clone().insert(rid, entry, txg)
             .now_or_never().unwrap()
             .unwrap();
-        idml.alloct.insert(drp.pba(), rid, txg)
+        idml.alloct.clone().insert(drp.pba(), rid, txg)
             .now_or_never().unwrap()
             .unwrap();
     }
@@ -695,7 +695,7 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         // Inject a record into the AllocT but not the RIDT
         let txg = TxgT::from(0);
-        idml.alloct.insert(drp.pba(), rid, txg)
+        idml.alloct.clone().insert(drp.pba(), rid, txg)
             .now_or_never().unwrap()
             .unwrap();
 
@@ -715,7 +715,7 @@ mod t {
         // Inject a record into the RIDT but not the AllocT
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        idml.ridt.insert(rid, entry, txg)
+        idml.ridt.clone().insert(rid, entry, txg)
             .now_or_never().unwrap()
             .unwrap();
 
@@ -736,10 +736,10 @@ mod t {
         // Inject a mismatched pair of records
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        idml.ridt.insert(rid, entry, txg)
+        idml.ridt.clone().insert(rid, entry, txg)
             .now_or_never().unwrap()
             .unwrap();
-        idml.alloct.insert(drp2.pba(), rid, txg)
+        idml.alloct.clone().insert(drp2.pba(), rid, txg)
             .now_or_never().unwrap()
             .unwrap();
 

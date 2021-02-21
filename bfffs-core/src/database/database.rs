@@ -161,7 +161,7 @@ struct Inner {
     // replace it with a per-cpu counter.
     dirty: AtomicBool,
     fs_trees: RwLock<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
-    forest: ITree<TreeID, TreeOnDisk<RID>>,
+    forest: Arc<ITree<TreeID, TreeOnDisk<RID>>>,
     idml: Arc<IDML>,
     propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>,
 }
@@ -172,7 +172,7 @@ impl Inner {
         let dirty = AtomicBool::new(true);
         let fs_trees = RwLock::new(BTreeMap::new());
         let propcache = Mutex::new(BTreeMap::new());
-        Inner{dirty, fs_trees, idml, forest, propcache}
+        Inner{dirty, fs_trees, idml, forest: Arc::new(forest), propcache}
     }
 
     // Must be called from within a Tokio executor context
@@ -636,7 +636,7 @@ impl Database {
             let forest_futs = guard.iter()
                 .map(|(tree_id, itree)| {
                     let tod = itree.serialize().unwrap();
-                    inner2.forest.insert(*tree_id, tod, txg)
+                    inner2.forest.clone().insert(*tree_id, tod, txg)
                 }).collect::<FuturesUnordered<_>>();
             drop(guard);
             forest_futs.try_collect::<Vec<_>>().await?;

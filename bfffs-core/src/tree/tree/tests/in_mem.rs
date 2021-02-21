@@ -15,8 +15,10 @@ fn insert() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
-    let r = tree.insert(0, 0.0, TxgT::from(42))
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+    );
+    let r = tree.clone().insert(0, 0.0, TxgT::from(42))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
@@ -46,7 +48,7 @@ root:
 fn insert_lower_than_parents_key() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -88,8 +90,8 @@ root:
                     72: 72.0
                     73: 73.0
                     74: 74.0
-"#);
-    assert!(tree.insert(36, 36.0, TxgT::from(42))
+"#));
+    assert!(tree.clone().insert(36, 36.0, TxgT::from(42))
             .now_or_never().unwrap()
             .is_ok());
     assert_eq!(format!("{}", tree),
@@ -141,7 +143,7 @@ root:
 fn insert_dup() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -160,8 +162,8 @@ root:
       Leaf:
         items:
           0: 0.0
-"#);
-    let r = tree.insert(0, 100.0, TxgT::from(42))
+"#));
+    let r = tree.clone().insert(0, 100.0, TxgT::from(42))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
@@ -191,7 +193,7 @@ root:
 fn insert_dup_no_split() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -214,8 +216,8 @@ root:
           2: 2.0
           3: 3.0
           4: 4.0
-"#);
-    let r = tree.insert(0, 100.0, TxgT::from(42))
+"#));
+    let r = tree.clone().insert(0, 100.0, TxgT::from(42))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
@@ -248,7 +250,7 @@ root:
 fn insert_split_int() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -369,8 +371,8 @@ root:
                             items:
                               21: 21.0
                               22: 22.0
-                              23: 23.0"#);
-    let r2 = tree.insert(24, 24.0, TxgT::from(42))
+                              23: 23.0"#));
+    let r2 = tree.clone().insert(24, 24.0, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -511,7 +513,7 @@ root:
 fn insert_split_int_sequential() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, true, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, true, r#"
 ---
 height: 3
 limits:
@@ -644,8 +646,8 @@ root:
                           Leaf:
                             items:
                               30: 30.0
-                              31: 31.0"#);
-    let r2 = tree.insert(33, 33.0, TxgT::from(42))
+                              31: 31.0"#));
+    let r2 = tree.clone().insert(33, 33.0, TxgT::from(42))
     .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -798,7 +800,7 @@ root:
 fn insert_split_leaf() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -840,8 +842,8 @@ root:
                     5: 5.0
                     6: 6.0
                     7: 7.0
-"#);
-    let r2 = tree.insert(8, 8.0, TxgT::from(42))
+"#));
+    let r2 = tree.clone().insert(8, 8.0, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", tree),
@@ -902,7 +904,7 @@ root:
 fn insert_split_leaf_sequential() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, true, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, true, r#"
 ---
 height: 2
 limits:
@@ -948,8 +950,8 @@ root:
                     9: 9.0
                     10: 10.0
                     11: 11.0
-"#);
-    let r2 = tree.insert(12, 12.0, TxgT::from(42))
+"#));
+    let r2 = tree.clone().insert(12, 12.0, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", tree),
@@ -1014,7 +1016,7 @@ root:
 fn insert_split_root_int() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1087,8 +1089,8 @@ root:
                     12: 12.0
                     13: 13.0
                     14: 14.0
-"#);
-    let r2 = tree.insert(15, 15.0, TxgT::from(42))
+"#));
+    let r2 = tree.clone().insert(15, 15.0, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1188,7 +1190,7 @@ root:
 fn insert_split_root_leaf() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -1211,8 +1213,8 @@ root:
           2: 2.0
           3: 3.0
           4: 4.0
-"#);
-    let r2 = tree.insert(5, 5.0, TxgT::from(42))
+"#));
+    let r2 = tree.clone().insert(5, 5.0, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1262,8 +1264,10 @@ fn get() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
-    let r = tree.insert(0, 0.0, TxgT::from(42))
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+    );
+    let r = tree.clone().insert(0, 0.0, TxgT::from(42))
         .and_then(|_| tree.get(0))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(0.0)));
@@ -2829,7 +2833,7 @@ root:
 fn range_delete_merge_descending_and_ascending() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -6909,9 +6913,11 @@ fn range_delete_at_end() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+    );
     (0..23).map(|k| {
-        tree.insert(k, k as f32, TxgT::from(2))
+        tree.clone().insert(k, k as f32, TxgT::from(2))
     }).collect::<FuturesUnordered<_>>()
     .try_collect::<Vec<_>>()
     .now_or_never().unwrap()
@@ -6926,7 +6932,7 @@ fn range_delete_at_end() {
 fn range_delete_range_from() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -6997,7 +7003,7 @@ root:
                             items:
                               26: 26.0
                               27: 27.0
-"#);
+"#));
     let r = tree.range_delete(5.., TxgT::from(2))
         .now_or_never().unwrap();
     assert!(r.is_ok());
@@ -7264,9 +7270,11 @@ fn range_delete_to_end_deep() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+    );
     (0..23).map(|k| {
-        tree.insert(k, k as f32, TxgT::from(2))
+        tree.clone().insert(k, k as f32, TxgT::from(2))
     }).collect::<FuturesUnordered<_>>()
     .try_collect::<Vec<_>>()
     .now_or_never().unwrap()

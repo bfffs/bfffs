@@ -48,7 +48,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
     fn insert(&self, txg: TxgT, k: K, v: V)
         -> impl Future<Output=Result<Option<V>, Error>>
     {
-        self.tree.insert(k, v, txg)
+        self.tree.clone().insert(k, v, txg)
     }
 
     fn last_key(&self) -> impl Future<Output=Result<Option<K>, Error>>

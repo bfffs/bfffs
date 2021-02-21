@@ -57,8 +57,8 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
         pub fn get(&self, k: K)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
-        pub fn insert(&self, k: K, v: V, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
+        pub async fn insert(self: Arc<Self>, k: K, v: V, txg: TxgT)
+            -> Result<Option<V>, Error>;
         pub fn is_dirty(&self) -> bool;
         pub fn last_key(&self)
             -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>;

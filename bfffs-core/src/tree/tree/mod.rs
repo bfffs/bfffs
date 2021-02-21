@@ -1226,60 +1226,72 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Insert value `v` into the tree at key `k`, returning the previous value
     /// for that key, if any.
-    pub fn insert(&self, k: K, v: V, txg: TxgT)
-        -> impl Future<Output=Result<Option<V>, Error>>
+    pub async fn insert(self: Arc<Self>, k: K, v: V, txg: TxgT)
+        -> Result<Option<V>, Error>
     {
-        let inner2 = self.i.clone();
-        self.write()
-            .then(move |guard| {
-                Tree::xlock_root(&inner2.dml, guard, txg)
-                     .and_then(move |(root_guard, child_guard)| {
-                         Tree::insert_locked(inner2, root_guard,
-                                             child_guard, k, v, txg)
-                     })
-            })
+        let guard = self.write().await;
+        let (mut rg, mut cg) = Tree::xlock_root(&self.i.dml, guard, txg).await?;
+
+        // First, split the root node, if necessary
+        if cg.should_split(&k, &self.i.limits) {
+            let seq = self.i.sequentially_optimized;
+            let (old_txgs, new_elem) = cg.split(&self.i.limits, seq, txg);
+            let new_root_data = NodeData::Int( IntData::new(vec![new_elem]));
+            let old_root_data = mem::replace(cg.deref_mut(), new_root_data);
+            let old_root_node = Node::new(old_root_data);
+            let old_ptr = TreePtr::Mem(Box::new(old_root_node));
+            let old_elem = IntElem::new(K::min_value(), old_txgs, old_ptr );
+            cg.as_int_mut().children.insert(0, old_elem);
+            self.i.height.fetch_add(1, Ordering::Relaxed);
+        }
+
+        if cg.is_leaf() {
+            Tree::<A, D, K, V>::insert_leaf_no_split(&mut *rg, cg, k, v,
+                txg).await
+        } else {
+            drop(rg);
+            self.insert_int_no_split(cg, k, v, txg).await
+        }
     }
 
     /// Insert value `v` into an internal node.  The internal node and its
     /// relevant child must both be already locked.
-    fn insert_int(inner: Arc<Inner<A, D, K, V>>,
+    fn insert_int(self: Arc<Self>,
                   mut parent: TreeWriteGuard<A, K, V>, child_idx: usize,
                   mut child: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
     {
         // First, split the node, if necessary
-        if (*child).should_split(&k, &inner.limits) {
-            let seq = inner.sequentially_optimized;
-            let (old_txgs, new_elem) = child.split(&inner.limits, seq, txg);
+        if (*child).should_split(&k, &self.i.limits) {
+            let seq = self.i.sequentially_optimized;
+            let (old_txgs, new_elem) = child.split(&self.i.limits, seq, txg);
             parent.as_int_mut().children[child_idx].txgs = old_txgs;
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
-            Box::pin(Tree::insert_int_no_split(inner, parent, k, v, txg))
+            Box::pin(Tree::insert_int_no_split(self, parent, k, v, txg))
         } else if child.is_leaf() {
             let elem = &mut parent.as_int_mut().children[child_idx];
             Box::pin(Tree::<A, D, K, V>::insert_leaf_no_split(elem,
                 child, k, v, txg))
         } else {
             drop(parent);
-            Box::pin(Tree::insert_int_no_split(inner, child, k, v, txg))
+            Box::pin(Tree::insert_int_no_split(self, child, k, v, txg))
         }
     }
 
     /// Insert a value into an int node without splitting it
-    fn insert_int_no_split(inner: Arc<Inner<A, D, K, V>>,
+    async fn insert_int_no_split(self: Arc<Self>,
                            mut node: TreeWriteGuard<A, K, V>, k: K, v: V,
                            txg: TxgT)
-        -> impl Future<Output=Result<Option<V>, Error>>
+        -> Result<Option<V>, Error>
     {
         let child_idx = node.as_int().position(&k);
         if k < node.as_int().children[child_idx].key {
             debug_assert_eq!(child_idx, 0);
             node.as_int_mut().children[child_idx].key = k;
         }
-        let fut = node.xlock(&inner.dml, child_idx, txg);
-        fut.and_then(move |(parent, child)| {
-                Tree::insert_int(inner, parent, child_idx, child, k, v, txg)
-        })
+        let (parent, child) = node.xlock(&self.i.dml, child_idx, txg).await?;
+        Tree::insert_int(self, parent, child_idx, child, k, v, txg).await
     }
 
     /// Insert a value into a leaf node without splitting it
@@ -1291,34 +1303,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         elem.txgs = txg..txg + 1;
         future::ok(old_v)
     }   // LCOV_EXCL_LINE   kcov false negative
-
-    /// Helper for `insert`.  Handles insertion once the tree is locked
-    fn insert_locked(inner: Arc<Inner<A, D, K, V>>,
-                     mut relem: RwLockWriteGuard<IntElem<A, K, V>>,
-                     mut rnode: TreeWriteGuard<A, K, V>, k: K, v: V, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
-    {
-        // First, split the root node, if necessary
-        if rnode.should_split(&k, &inner.limits) {
-            let seq = inner.sequentially_optimized;
-            let (old_txgs, new_elem) = rnode.split(&inner.limits, seq, txg);
-            let new_root_data = NodeData::Int( IntData::new(vec![new_elem]));
-            let old_root_data = mem::replace(rnode.deref_mut(), new_root_data);
-            let old_root_node = Node::new(old_root_data);
-            let old_ptr = TreePtr::Mem(Box::new(old_root_node));
-            let old_elem = IntElem::new(K::min_value(), old_txgs, old_ptr );
-            rnode.as_int_mut().children.insert(0, old_elem);
-            inner.height.fetch_add(1, Ordering::Relaxed);
-        }
-
-        if rnode.is_leaf() {
-            Tree::<A, D, K, V>::insert_leaf_no_split(&mut *relem, rnode, k, v,
-                txg).boxed()
-        } else {
-            drop(relem);
-            Tree::insert_int_no_split(inner, rnode, k, v, txg).boxed()
-        }
-    }
 
     /// Has the Tree been modified since the last time it was flushed to disk?
     pub fn is_dirty(&self) -> bool {

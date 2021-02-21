@@ -681,7 +681,7 @@ fn split() {
         .with(eq(addrl), eq(TxgT::from(42)))
         .return_once(move |_, _| Box::pin(future::ok(Box::new(node))));
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -729,8 +729,8 @@ root:
               end: 34
             ptr:
               Addr: 1280
-"#);
-    let r2 = tree.insert(15, 15.0, TxgT::from(42))
+"#));
+    let r2 = tree.clone().insert(15, 15.0, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),

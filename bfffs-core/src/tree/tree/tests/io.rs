@@ -422,7 +422,7 @@ fn insert_below_root() {
             future::ok(Box::new(node)).boxed()
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -452,9 +452,9 @@ root:
               end: 42
             ptr:
               Addr: 256
-"#);
+"#));
 
-    let r = tree.insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -504,7 +504,7 @@ fn insert_root() {
             future::ok(Box::new(node)).boxed()
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -520,9 +520,9 @@ root:
     end: 42
   ptr:
     Addr: 0
-"#);
+"#));
 
-    let r = tree.insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -557,7 +557,7 @@ fn is_dirty() {
             future::ok(Box::new(node)).boxed()
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -573,10 +573,10 @@ root:
     end: 42
   ptr:
     Addr: 0
-"#);
+"#));
 
     assert!(!tree.is_dirty());
-    tree.insert(0, 0, TxgT::from(42)).now_or_never().unwrap().unwrap();
+    tree.clone().insert(0, 0, TxgT::from(42)).now_or_never().unwrap().unwrap();
     assert!(tree.is_dirty());
 }
 
@@ -1745,7 +1745,7 @@ root:
 #[test]
 fn write_race() {
     let mut seq = Sequence::new();
-    let otree: Arc<RwLock<Option<Tree<u32, MockDML, u32, f32>>>> =
+    let otree: Arc<RwLock<Option<Arc<Tree<u32, MockDML, u32, f32>>>>> =
         Arc::new(RwLock::new(None));
     let otree2 = otree.clone();
     let mut mock = MockDML::new();
@@ -1785,6 +1785,7 @@ fn write_race() {
                 .unwrap()
                 .as_ref()
                 .unwrap()
+                .clone()
                 .insert(2, 2.0, TxgT::from(42))
                 .now_or_never()
                 .unwrap()
@@ -1811,7 +1812,7 @@ fn write_race() {
             }
         }).return_once(move |_, _, _| future::ok(addr20).boxed());
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -1901,7 +1902,7 @@ root:
                         end: 41
                       ptr:
                         Addr: 2
-"#);
+"#));
     *otree.write().unwrap() = Some(tree);
     let guard = otree.read().unwrap();
     let tref = guard.as_ref().unwrap();
