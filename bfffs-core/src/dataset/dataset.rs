@@ -92,7 +92,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Debug + Ord + Clone + Send + 'static
     {
-        self.tree.range_delete(range, txg)
+        self.tree.clone().range_delete(range, txg)
     }
 
     fn remove(&self, k: K, txg: TxgT)

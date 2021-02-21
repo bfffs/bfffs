@@ -1384,8 +1384,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     // [^EXODUS]: Carey, Michael J., et al. "Storage management for objects in
     // EXODUS." Object-oriented concepts, databases, and applications (1989):
     // 341-369
-    pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
-        -> impl Future<Output=Result<(), Error>> + Send
+    pub async fn range_delete<R, T>(self: Arc<Self>, range: R, txg: TxgT)
+        -> Result<(), Error>
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
@@ -1405,31 +1405,19 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // 2) Traverse the tree again, fixing underflowing nodes.
         let rangeclone = range.clone();
         let dml2 = self.i.dml.clone();
-        let inner2 = self.i.clone();
-        let inner3 = self.i.clone();
+        let self2 = self.clone();
         let limits = self.i.limits;
-        self.write()
-            .then(move |guard| {
-                Tree::xlock_root(&dml2, guard, txg)
-                    .and_then(move |(tree_guard, root_guard)| {
-                        let height = inner2.height.load(Ordering::Relaxed) as u8;
-                        // ptr is guaranteed to be a TreePtr::Mem because we
-                        // just xlock()ed it.
-                        let id = tree_guard.ptr.as_mem()
-                            as *const Node<A, K, V> as usize;
-                        Tree::range_delete_pass1(limits, dml2,
-                                                 height - 1, root_guard, range,
-                                                 None, txg)
-                            .map_ok(move |(mut m, danger, _)| {
-                                if danger {
-                                    m.insert(id);
-                                }
-                                (tree_guard, m)
-                            })
-                    })
-            }).and_then(move |(tree_guard, m)| {
-                Tree::range_delete_pass2(inner3, tree_guard, m, rangeclone, txg)
-            })
+        let guard = self.write().await;
+        let (tg, rg) = Tree::xlock_root(&dml2, guard, txg).await?;
+        let height = self2.i.height.load(Ordering::Relaxed) as u8;
+        // ptr is guaranteed to be a TreePtr::Mem because we just xlock()ed it.
+        let id = tg.ptr.as_mem() as *const Node<A, K, V> as usize;
+        let (mut m, danger, _) = Tree::range_delete_pass1(limits, dml2,
+            height - 1, rg, range, None, txg).await?;
+        if danger {
+            m.insert(id);
+        }
+        Tree::range_delete_pass2(self, tg, m, rangeclone, txg).await
     }
 
     /// Subroutine of range_delete.  Returns the bounds, as indices, of the
@@ -1715,7 +1703,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     //   as opposed to nodes that might underflow if their children are merged.
     // * Has no less concurrency, because even a top-down approach keeps the
     //   whole Tree locked.
-    fn range_delete_pass2<R, T>(inner: Arc<Inner<A, D, K, V>>,
+    fn range_delete_pass2<R, T>(self: Arc<Self>,
         mut tree_guard: RwLockWriteGuard<IntElem<A, K, V>>, map: HashSet<usize>,
         range: R, txg: TxgT)
         -> impl Future<Output=Result<(), Error>> + Send
@@ -1723,13 +1711,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
-        let inner2 = inner.clone();
-        let inner3 = inner.clone();
+        let self2 = self.clone();
+        let self3 = self.clone();
         // Keep merging down the root as long as it has 1 child
         async move {
             loop {
                 let (tree_guard2, root_guard) =
-                    Tree::xlock_and_merge_root(inner.clone(), tree_guard, txg)
+                    Tree::xlock_and_merge_root(self.i.clone(), tree_guard, txg)
                     .await?;
                 if root_guard.is_leaf() || root_guard.as_int().nchildren() > 1
                 {
@@ -1739,14 +1727,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 }
             }
         }.and_then(move |(tree_guard, root_guard)| {
-            Tree::range_delete_pass2_r(inner2, root_guard.unwrap(), map, range,
+            Tree::range_delete_pass2_r(self2, root_guard.unwrap(), map, range,
                                        txg)
             .map_ok(|_| tree_guard)
         }).and_then(move |mut tree_guard| async move {
             // Keep merging down the root as long as it has 1 child
             loop {
                 let (tree_guard2, root_guard) = 
-                    Tree::xlock_and_merge_root(inner3.clone(), tree_guard, txg)
+                    Tree::xlock_and_merge_root(self3.i.clone(), tree_guard, txg)
                     .await?;
                 if root_guard.is_leaf() || root_guard.as_int().nchildren() > 1 {
                     break Ok(());
@@ -1754,22 +1742,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     tree_guard = tree_guard2;
                 }
             }
-            //future::loop_fn(tree_guard, move |tree_guard| {
-                //Tree::xlock_and_merge_root(inner3.clone(), tree_guard, txg)
-                //.and_then(move |(tree_guard, root_guard)| {
-                    //if !root_guard.is_leaf() &&
-                        //root_guard.as_int().nchildren() == 1 {
-                        //Ok(Loop::Continue(tree_guard))
-                    //} else {
-                        //Ok(Loop::Break(tree_guard))
-                    //}
-                //})
-            //})
         })
     }
 
     #[allow(clippy::unnecessary_unwrap)]
-    fn range_delete_pass2_r<R, T>(inner: Arc<Inner<A, D, K, V>>,
+    fn range_delete_pass2_r<R, T>(self: Arc<Self>,
         guard: TreeWriteGuard<A, K, V>, mut map: HashSet<usize>, range: R,
         txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<HashSet<usize>, Error>> + Send>>
@@ -1795,9 +1772,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
             if to_fix.is_empty() {
                 return future::ok(map).boxed()
             }
-            let inner3 = inner.clone();
-            let inner7 = inner.clone();
-            let limits2 = inner.limits;
+            let self3 = self.clone();
+            let self7 = self.clone();
+            let limits2 = self.i.limits;
             let range3 = range.clone();
             let left_idx = to_fix[0];
             let right_idx = to_fix.get(1).cloned();
@@ -1820,7 +1797,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     }
                 }
             };
-            let fut = guard.xlock(&inner.dml, left_idx, txg)
+            let fut = guard.xlock(&self.i.dml, left_idx, txg)
             .and_then(move |(guard, child_guard)| async move {
                 // After a range_delete, fixing once may be insufficient to
                 // fix a Node, because two nodes may merge that could have
@@ -1838,15 +1815,15 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         break Ok((guard, child_guard, mb, mm));
                     }
                     let i = left_idx - mb;
-                    let inner8 = inner7.clone();
-                    match Tree::fix_int(&inner7, guard, i, child_guard, txg)
+                    let self8 = self7.clone();
+                    match Tree::fix_int(&self7.i, guard, i, child_guard, txg)
                         .await
                     {
                         Err(e) => {
                             break Err(e);
                         },
                         Ok((guard, nmb, nma)) => {
-                            match guard.xlock(&inner8.dml, i - nmb as usize,
+                            match guard.xlock(&self8.i.dml, i - nmb as usize,
                                               txg)
                                 .await
                             {
@@ -1867,22 +1844,22 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 (TreeWriteGuard<A, K, V>, TreeWriteGuard<A, K, V>, usize, usize)|
             {
                 // Recurse into the left child
-                Tree::range_delete_pass2_r(inner3, child_guard, map,
+                Tree::range_delete_pass2_r(self3, child_guard, map,
                                            range3, txg)
                 .map_ok(move |map| (guard, map, mb, mm))
             }).and_then(move |(guard, map, mb, mm)| {
                 // Fix into the right node, if it exists and was not merged
                 // with the left node
                 if right_idx.is_some() && mm == 0 {
-                    let inner8 = inner.clone();
+                    let self8 = self.clone();
                     let j = right_idx.unwrap() - mb;
-                    let fut = guard.xlock(&inner.dml, j, txg)
+                    let fut = guard.xlock(&self.i.dml, j, txg)
                     .and_then(move |(guard, child_guard)| {
                         if underflow(&child_guard, false) {
-                            let fut = Tree::fix_int(&inner, guard, j,
+                            let fut = Tree::fix_int(&self.i, guard, j,
                                                     child_guard, txg)
                             .and_then(move |(guard, nmb, _nma)| {
-                                guard.xlock(&inner.dml, j - nmb as usize, txg)
+                                guard.xlock(&self.i.dml, j - nmb as usize, txg)
                                 .map_ok(move |(guard, child_guard)|
                                      (guard, child_guard, mb, mm + nmb as usize)
                                  )
@@ -1893,7 +1870,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         }
                     }).and_then(move |(guard, child_guard, mb, mm)| {
                         // Now recurse into the right child
-                        Tree::range_delete_pass2_r(inner8, child_guard, map,
+                        Tree::range_delete_pass2_r(self8, child_guard, map,
                                                    range, txg)
                         .map_ok(move |map| (guard, map, mb, mm))
                     });

@@ -1276,7 +1276,7 @@ fn get() {
 #[test]
 fn get_deep() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1314,7 +1314,7 @@ root:
                   items:
                     3: 3.0
                     4: 4.0
-"#);
+"#));
     let r = tree.get(3).now_or_never().unwrap();
     assert_eq!(r, Ok(Some(3.0)))
 }
@@ -1398,7 +1398,7 @@ root:
 fn range_delete() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -1511,8 +1511,8 @@ root:
                             items:
                               37: 37.0
                               40: 40.0
-"#);
-    let r = tree.range_delete(11..=31, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(11..=31, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1574,7 +1574,7 @@ root:
 fn range_delete_danger() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -1685,8 +1685,8 @@ root:
                             items:
                               37: 37.0
                               40: 40.0
-"#);
-    let r = tree.range_delete(5..6, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(5..6, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1806,7 +1806,7 @@ root:
 fn range_delete_exc_exc() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1870,8 +1870,8 @@ root:
                     20: 20.0
                     21: 21.0
                     22: 22.0
-"#);
-    let r = tree.range_delete(
+"#));
+    let r = tree.clone().range_delete(
         (Bound::Excluded(4), Bound::Excluded(10)),
         TxgT::from(42))
         .now_or_never().unwrap();
@@ -1935,7 +1935,7 @@ root:
 fn range_delete_exc_inc() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1999,8 +1999,8 @@ root:
                     20: 20.0
                     21: 21.0
                     22: 22.0
-"#);
-    let r = tree.range_delete(
+"#));
+    let r = tree.clone().range_delete(
         (Bound::Excluded(4), Bound::Included(10)),
         TxgT::from(42))
         .now_or_never().unwrap();
@@ -2070,7 +2070,7 @@ fn range_delete_fix_three_times() {
         .returning(move |_, _| Box::pin(future::ok(())));
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 4
 limits:
@@ -2356,8 +2356,8 @@ root:
                         end: 8
                       ptr:
                         Addr: 10025
-"#);
-  let r = tree.range_delete(1024..1536, TxgT::from(42))
+"#));
+  let r = tree.clone().range_delete(1024..1536, TxgT::from(42))
     .now_or_never().unwrap();
   assert!(r.is_ok());
   assert_eq!(format!("{}", &tree),
@@ -2567,7 +2567,7 @@ root:
                     14: 14.0
                     15: 15.0
 "#));
-    let r = tree.range_delete(2..6, TxgT::from(42))
+    let r = tree.clone().range_delete(2..6, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert!(tree.clone().check().now_or_never().unwrap().unwrap());
@@ -2632,7 +2632,7 @@ root:
 fn range_delete_merge_and_parent_underflow() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -2740,8 +2740,8 @@ root:
               end: 1
             ptr:
               Addr: 10040
-"#);
-    let r = tree.range_delete(2..6, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(2..6, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -2965,7 +2965,7 @@ root:
                               1762: 864
 "#));
     assert!(tree.clone().check().now_or_never().unwrap().unwrap());
-    let r = tree.range_delete(1024..1536, TxgT::from(42))
+    let r = tree.clone().range_delete(1024..1536, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert!(tree.check().now_or_never().unwrap().unwrap());
@@ -2977,7 +2977,7 @@ root:
 fn range_delete_merge_left_child_twice() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -3060,8 +3060,8 @@ root:
                     42: 42.0
                     43: 43.0
                     44: 44.0
-"#);
-    let r = tree.range_delete(12..23, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(12..23, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -3134,7 +3134,7 @@ root:
 fn range_delete_merge_to_lca_twice() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 4
 limits:
@@ -3331,8 +3331,8 @@ root:
               end: 10
             ptr:
               Addr: 112144
-"#);
-    let r = tree.range_delete(11264..11776, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(11264..11776, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -3492,7 +3492,7 @@ root:
 fn range_delete_merge_right_child_descending() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -3558,8 +3558,8 @@ root:
                     5637: 7559
                     5638: 7560
                     5642: 7564
-"#);
-    let r = tree.range_delete(5120..5632, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(5120..5632, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -3615,7 +3615,7 @@ root:
 fn range_delete_merge_right_child_first() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -3739,8 +3739,8 @@ root:
               end: 15
             ptr:
               Addr: 7692
-"#);
-    tree.range_delete(7168..7680, TxgT::from(42))
+"#));
+    tree.clone().range_delete(7168..7680, TxgT::from(42))
         .now_or_never().unwrap().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3829,7 +3829,7 @@ root:
 fn range_delete_merge_root() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -3871,8 +3871,8 @@ root:
                     6: 6.0
                     7: 7.0
                     8: 8.0
-"#);
-    let r = tree.range_delete(0..4, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(0..4, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -3908,7 +3908,7 @@ root:
 fn range_delete_merge_root_during_ascent() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -4049,8 +4049,8 @@ root:
                               3581: 6693
                               3584: 3091
                               3585: 3092
-"#);
-    let r = tree.range_delete(3072..3584, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(3072..3584, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4101,7 +4101,7 @@ root:
 fn range_delete_merge_root_twice() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -4183,8 +4183,8 @@ root:
                               15: 15.0
                               16: 16.0
                               17: 17.0
-"#);
-    let r = tree.range_delete(0..13, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(0..13, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4219,7 +4219,7 @@ root:
 fn range_delete_parent_and_child_underflow_after_descent() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 4
 limits:
@@ -4428,8 +4428,8 @@ root:
                         end: 11
                       ptr:
                         Addr: 1005119
-"#);
-    let r = tree.range_delete(3584..4096, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(3584..4096, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4553,7 +4553,7 @@ root:
 fn range_delete_cant_fix_for_minfanout_plus_two() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -4647,8 +4647,8 @@ root:
                         end: 42
                       ptr:
                         Addr: 1004627
-"#);
-    let r = tree.range_delete(4480..4600, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(4480..4600, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4751,7 +4751,7 @@ root:
 fn range_delete_cant_steal_to_fix_lca() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -4853,8 +4853,8 @@ root:
                         end: 2
                       ptr:
                         Addr: 1000070
-"#);
-    let r = tree.range_delete(21..32, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(21..32, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4946,7 +4946,7 @@ root:
 fn range_delete_single_node() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -4998,8 +4998,8 @@ root:
                     10: 10.0
                     11: 11.0
                     12: 12.0
-"#);
-    let r = tree.range_delete(5..7, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(5..7, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -5061,7 +5061,7 @@ root:
 fn range_delete_underflow_and_steal_left() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -5168,8 +5168,8 @@ root:
                         end: 42
                       ptr:
                         Addr: 1004637
-"#);
-    let r = tree.range_delete(4480..4605, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(4480..4605, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -5275,7 +5275,7 @@ root:
 fn range_delete_to_end() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -5325,8 +5325,8 @@ root:
                   items:
                     10: 10.0
                     11: 11.0
-"#);
-    let r = tree.range_delete(7..20, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(7..20, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -5376,7 +5376,7 @@ root:
 fn range_delete_to_end_of_int_node() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -5500,8 +5500,8 @@ root:
                             items:
                               40: 40.0
                               41: 41.0
-"#);
-    let r = tree.range_delete(10..16, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(10..16, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     // Ideally the leaf node with key 7 wouldn't have its end txg changed.
@@ -5628,7 +5628,7 @@ root:
 fn range_delete_whole_nodes() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -5689,8 +5689,8 @@ root:
                     20: 20.0
                     21: 21.0
                     22: 22.0
-"#);
-    let r = tree.range_delete(4..20, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(4..20, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     // Ideally the first leaf node wouldn't have its end txg changed.  However,
@@ -5743,7 +5743,7 @@ root:
 fn range_delete_whole_node_denormalized() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -5823,8 +5823,8 @@ root:
                         end: 42
                       ptr:
                         Addr: 1004617
-"#);
-    let r = tree.range_delete(4610..4613, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(4610..4613, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -5899,7 +5899,7 @@ fn range_delete_pass2_steal_creates_an_lca() {
         .returning(move |_, _| Box::pin(future::ok(())));
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 5
 limits:
@@ -6287,8 +6287,8 @@ root:
                                   end: 6
                                 ptr:
                                   Addr: 105330
-"#);
-    let r = tree.range_delete(4608..5120, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(4608..5120, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -6449,7 +6449,7 @@ root:
 fn range_delete_pass2_steal_left() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -6535,8 +6535,8 @@ root:
                         end: 1
                       ptr:
                         Addr: 34
-"#);
-    let r = tree.range_delete(3..21, TxgT::from(2))
+"#));
+    let r = tree.clone().range_delete(3..21, TxgT::from(2))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -6620,7 +6620,7 @@ root:
 fn range_delete_pass2_steal_right() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 4
 limits:
@@ -6802,8 +6802,8 @@ root:
                         end: 23
                       ptr:
                         Addr: 1012155
-"#);
-    let r = tree.range_delete(11264..11776, TxgT::from(42))
+"#));
+    let r = tree.clone().range_delete(11264..11776, TxgT::from(42))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -7004,7 +7004,7 @@ root:
                               26: 26.0
                               27: 27.0
 "#));
-    let r = tree.range_delete(5.., TxgT::from(2))
+    let r = tree.clone().range_delete(5.., TxgT::from(2))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -7048,7 +7048,7 @@ root:
 fn range_delete_range_full() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -7123,8 +7123,8 @@ root:
                             items:
                               26: 26.0
                               27: 27.0
-"#);
-    let r = tree.range_delete(.., TxgT::from(2))
+"#));
+    let r = tree.clone().range_delete(.., TxgT::from(2))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -7152,7 +7152,7 @@ root:
 fn range_delete_range_to() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -7223,8 +7223,8 @@ root:
                         end: 1
                       ptr:
                         Addr: 10026
-"#);
-    let r = tree.range_delete(..21, TxgT::from(2))
+"#));
+    let r = tree.clone().range_delete(..21, TxgT::from(2))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -7279,7 +7279,7 @@ fn range_delete_to_end_deep() {
     .try_collect::<Vec<_>>()
     .now_or_never().unwrap()
     .unwrap();
-    let r = tree.range_delete(5..24, TxgT::from(2))
+    let r = tree.clone().range_delete(5..24, TxgT::from(2))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     // NB: in this case, it would be acceptable for the final Tree to consist of
@@ -7331,7 +7331,7 @@ root:
 fn range_delete_underflow_in_parent_and_child() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -7407,8 +7407,8 @@ root:
                             items:
                               26: 26.0
                               27: 27.0
-"#);
-    let r = tree.range_delete(2..30, TxgT::from(2))
+"#));
+    let r = tree.clone().range_delete(2..30, TxgT::from(2))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),

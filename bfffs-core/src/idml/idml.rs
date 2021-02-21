@@ -181,10 +181,10 @@ impl<'a> IDML {
             // Finish alloct.range_delete before alloct.clean_zone, because the
             // range delete is likely to eliminate most if not all nodes that
             // need to be moved by clean_zone
-            let atfut = alloct3.range_delete(pba_range.clone(), txg)
-                .and_then(move |_| {
-                    alloct3.clean_zone(pba_range, zone.txgs, txg)
-                });
+            let atfut = alloct3.clone().range_delete(pba_range.clone(), txg)
+            .and_then(move |_| {
+                alloct3.clean_zone(pba_range, zone.txgs, txg)
+            });
             future::try_join(czfut, atfut).map_ok(drop)
         }).map_ok(move |_| {
             #[cfg(debug_assertions)]

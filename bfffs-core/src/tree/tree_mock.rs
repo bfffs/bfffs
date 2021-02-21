@@ -68,8 +68,8 @@ mock! {
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Debug + Ord + Clone + Send + 'static;
-        pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        pub async fn range_delete<R, T>(self: Arc<Self>, range: R, txg: TxgT)
+            -> Result<(), Error>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Ord + Clone + Send + 'static;
