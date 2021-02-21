@@ -93,7 +93,7 @@ impl DRP {
         let csize = if compression == Compression::None {
             lsize as u32
         } else {
-            rng.gen_range(0, lsize as u32)
+            rng.gen_range(0..lsize as u32)
         };
         DRP {
             pba: PBA {

@@ -11,7 +11,7 @@ use futures::{
     stream::FuturesOrdered
 };
 use futures_locks::*;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Serialize, de::DeserializeOwned};
 use std::{
     borrow::Borrow,
     cmp::max,

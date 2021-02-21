@@ -2620,7 +2620,7 @@ test_suite! {
         }
 
         fn ls(&mut self) {
-            let idx = self.rng.gen_range(0, self.dirs.len() + 1);
+            let idx = self.rng.gen_range(0..self.dirs.len() + 1);
             let (fname, fd) = if idx == self.dirs.len() {
                 ("/".to_owned(), &self.root)
             } else {
@@ -2655,10 +2655,10 @@ test_suite! {
         fn read(&mut self) {
             if !self.files.is_empty() {
                 // Pick a random file to read from
-                let idx = self.rng.gen_range(0, self.files.len());
+                let idx = self.rng.gen_range(0..self.files.len());
                 let fd = &self.files[idx].1;
                 // Pick a random offset within the first 8KB
-                let ofs = 2048 * self.rng.gen_range(0, 4);
+                let ofs = 2048 * self.rng.gen_range(0..4);
                 info!("read {:x} at offset {}", self.files[idx].0, ofs);
                 let r = self.fs.read(&fd, ofs, 2048);
                 // TODO: check buffer contents
@@ -2680,7 +2680,7 @@ test_suite! {
 
         fn rm(&mut self) {
             if !self.files.is_empty() {
-                let idx = self.rng.gen_range(0, self.files.len());
+                let idx = self.rng.gen_range(0..self.files.len());
                 let (basename, fd) = self.files.remove(idx);
                 let fname = format!("{:x}", basename);
                 info!("rm {}", fname);
@@ -2691,7 +2691,7 @@ test_suite! {
 
         fn rmdir(&mut self) {
             if !self.dirs.is_empty() {
-                let idx = self.rng.gen_range(0, self.dirs.len());
+                let idx = self.rng.gen_range(0..self.dirs.len());
                 let fname = format!("{:x}", self.dirs.remove(idx).0);
                 info!("rmdir {}", fname);
                 self.fs.rmdir(&self.root, &OsString::from(&fname)).unwrap();
@@ -2748,10 +2748,10 @@ test_suite! {
         fn write(&mut self) {
             if !self.files.is_empty() {
                 // Pick a random file to write to
-                let idx = self.rng.gen_range(0, self.files.len());
+                let idx = self.rng.gen_range(0..self.files.len());
                 let fd = &self.files[idx].1;
                 // Pick a random offset within the first 8KB
-                let piece: u64 = self.rng.gen_range(0, 4);
+                let piece: u64 = self.rng.gen_range(0..4);
                 let ofs = 2048 * piece;
                 // Use a predictable fill value
                 let fill = (fd.ino().wrapping_mul(piece) %
