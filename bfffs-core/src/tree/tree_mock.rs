@@ -47,8 +47,9 @@ mock! {
               V: Value
     {
         pub async fn check(self: Arc<Self>) -> Result<bool, Error>;
-        pub fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+        pub async fn clean_zone(self: Arc<Self>, pbas: Range<PBA>,
+                                txgs: Range<TxgT>, txg: TxgT)
+            -> Result<(), Error>;
         pub fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)
             -> MockTree<A, D, K, V>;
         pub fn dump(&self, f: &mut (dyn io::Write + 'static))

@@ -95,7 +95,7 @@ fn basic() {
             Box::pin(future::ok(drp))
         });
     let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDML, u32, f32> = Tree::from_str(ddml, false, r#"
+    let tree = Arc::new(Tree::<DRP, DDML, u32, f32>::from_str(ddml, false, r#"
 ---
 height: 3
 limits:
@@ -196,12 +196,12 @@ root:
                           lsize: 0
                           csize: 0
                           checksum: 0
-"#);
+"#));
 
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);
     let txgs = TxgT::from(20)..TxgT::from(30);
-    tree.clean_zone(start..end, txgs, TxgT::from(42))
+    tree.clone().clean_zone(start..end, txgs, TxgT::from(42))
     .now_or_never().unwrap()
     .unwrap();
     let clean_tree = format!("{}", tree);
@@ -372,7 +372,7 @@ fn dirty_root() {
             Box::pin(future::ok(drp))
         });
     let ddml = Arc::new(mock);
-    let tree: Tree<DRP, DDML, u32, f32> = Tree::from_str(ddml, false, r#"
+    let tree = Arc::new(Tree::<DRP, DDML, u32, f32>::from_str(ddml, false, r#"
 ---
 height: 2
 limits:
@@ -395,7 +395,7 @@ root:
       lsize: 0
       csize: 0
       checksum: 0
-"#);
+"#));
 
     let start = PBA::new(0, 100);
     let end = PBA::new(0, 200);

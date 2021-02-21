@@ -245,8 +245,8 @@ struct CleanZonePass1Inner<D, K, V>
     /// Range of transactions that may contain PBAs of interest
     txgs: Range<TxgT>,
 
-    /// Handle to the tree's inner struct
-    inner: Arc<Inner<ddml::DRP, D, K, V>>,
+    /// Handle to the tree
+    tree: Arc<Tree<ddml::DRP, D, K, V>>,
 }
 
 /// Result type of `Tree::clean_zone`
@@ -276,7 +276,7 @@ impl<D, K, V> CleanZonePass1<D, K, V>
           V: Value
     {
 
-    fn new(inner: Arc<Inner<ddml::DRP, D, K, V>>, pbas: Range<PBA>,
+    fn new(tree: Arc<Tree<ddml::DRP, D, K, V>>, pbas: Range<PBA>,
            txgs: Range<TxgT>, echelon: u8)
         -> CleanZonePass1<D, K, V>
     {
@@ -284,7 +284,7 @@ impl<D, K, V> CleanZonePass1<D, K, V>
         let data = VecDeque::new();
         let last_fut = None;
         let inner = CleanZonePass1Inner{cursor, data, echelon, last_fut, pbas,
-                                        txgs, inner};
+                                        txgs, tree};
         CleanZonePass1{inner: RefCell::new(inner)}
     }
 }
@@ -318,7 +318,7 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
                             let params = GetDirtyNodeParams {
                                 key: l, pbas, txgs, echelon: e
                             };
-                            Box::pin(Tree::get_dirty_nodes(i.inner.clone(),
+                            Box::pin(Tree::get_dirty_nodes(i.tree.clone(),
                                 params))
                         });
                         match f.as_mut().poll(cx) {
@@ -2155,8 +2155,9 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     ///             It is an error if any block in `pbas` was written outside of
     ///             this transaction range.
     /// `txg` -     The current transaction number
-    pub fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
-        -> impl Future<Output=Result<(), Error>> + Send
+    pub async fn clean_zone(self: Arc<Self>, pbas: Range<PBA>,
+                            txgs: Range<TxgT>, txg: TxgT)
+        -> Result<(), Error>
     {
         // We can't rewrite children before their parents while sticking to a
         // lock-coupling discipline.  And we can't rewrite parents before their
@@ -2180,13 +2181,13 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
         // 2) If the tree height decreases before we lock the tree, then that's
         //    just one level we won't have to clean anymore
         let tree_height = self.i.height.load(Ordering::Relaxed) as u8;
-        let inner2 = self.i.clone();
         stream::iter(0..tree_height)
         .map(Ok)
         .try_for_each(move |echelon| {
-            let inner3 = inner2.clone();
-            CleanZonePass1::new(inner2.clone(), pbas.clone(),
-                                txgs.clone(), echelon)
+            let self2 = self.clone();
+            let self3 = self.clone();
+            CleanZonePass1::new(self3, pbas.clone(), txgs.clone(),
+                                echelon)
             .try_collect::<Vec<_>>()
             .and_then(move |nodes| {
                 stream::iter(nodes.into_iter())
@@ -2195,46 +2196,40 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                     // TODO: consider attempting to rewrite multiple nodes
                     // at once, so as not to spend so much time traversing
                     // the tree
-                    Tree::rewrite_node(inner3.clone(), node, txg)
+                    Tree::rewrite_node(self2.clone(), node, txg)
                 })
             })
-        })
+        }).await
     }
 
     /// Find all Nodes starting at `key` at a given level of the Tree which lay
     /// in the indicated range of PBAs.  `txgs` must include all transactions in
     /// which anything was written to any block in `pbas`.
-    fn get_dirty_nodes(inner: Arc<Inner<ddml::DRP, D, K, V>>,
-                       params: GetDirtyNodeParams<K>)
-        -> impl Future<Output=Result<(VecDeque<NodeId<K>>, Option<K>), Error>>
+    async fn get_dirty_nodes(self: Arc<Self>, params: GetDirtyNodeParams<K>)
+        -> Result<(VecDeque<NodeId<K>>, Option<K>), Error>
     {
-        Tree::<ddml::DRP, D, K, V>::read_root(&*inner)
-            .then(move |tree_guard| {
-                let h = inner.height.load(Ordering::Relaxed) as u8;
-                if h == params.echelon + 1 {
-                    // Clean the tree root
-                    let dirty = if tree_guard.ptr.is_addr() &&
-                        tree_guard.ptr.as_addr().pba() >= params.pbas.start &&
-                        tree_guard.ptr.as_addr().pba() < params.pbas.end {
-                        let mut v = VecDeque::new();
-                        v.push_back(NodeId{height: params.echelon,
-                            key: tree_guard.key});
-                        v
-                    } else {   // LCOV_EXCL_LINE   kcov false negative
-                        VecDeque::new()
-                    };
-                    future::ok((dirty, None)).boxed()
-                } else {
-                    let dml2 = inner.dml.clone();
-                    let fut = tree_guard.rlock(&dml2)
-                         .and_then(move |guard| {
-                             drop(tree_guard);
-                             Tree::get_dirty_nodes_r(dml2, guard, h - 1, None,
-                                                     params)
-                         });
-                    fut.boxed()
-                }
-            })
+        let tree_guard = Tree::<ddml::DRP, D, K, V>::read_root(&*self.i).await;
+        let h = self.i.height.load(Ordering::Relaxed) as u8;
+        if h == params.echelon + 1 {
+            // Clean the tree root
+            let dirty = if tree_guard.ptr.is_addr() &&
+                tree_guard.ptr.as_addr().pba() >= params.pbas.start &&
+                tree_guard.ptr.as_addr().pba() < params.pbas.end
+            {
+                let mut v = VecDeque::new();
+                let nid = NodeId{height: params.echelon, key: tree_guard.key};
+                v.push_back(nid);
+                v
+            } else {   // LCOV_EXCL_LINE   kcov false negative
+                VecDeque::new()
+            };
+            Ok((dirty, None))
+        } else {
+            let dml2 = self.i.dml.clone();
+            let guard = tree_guard.rlock(&dml2).await?;
+            drop(tree_guard);
+            Tree::get_dirty_nodes_r(dml2, guard, h - 1, None, params).await
+        }
     }
 
     /// Find dirty nodes as specified by 'params'.  `next_key`, if present, must
@@ -2289,14 +2284,13 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     }
 
     /// Rewrite `node`, without modifying its contents
-    fn rewrite_node(inner: Arc<Inner<ddml::DRP, D, K, V>>,
-                    node: NodeId<K>, txg: TxgT)
+    fn rewrite_node(self: Arc<Self>, node: NodeId<K>, txg: TxgT)
         -> impl Future<Output=Result<(), Error>> + Send
     {
-        Tree::<ddml::DRP, D, K, V>::write_root(&*inner)
+        Tree::<ddml::DRP, D, K, V>::write_root(&self.i)
         .then(move |mut guard| {
             let h = inner.height.load(Ordering::Relaxed) as u8;
-            let dml2 = inner.dml.clone();
+            let dml2 = self.i.dml.clone();
             if h == node.height + 1 {
                 // Clean the root node
                 if guard.ptr.is_mem() {
