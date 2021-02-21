@@ -721,7 +721,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         //   can be deserialized into a BTreeMap<A, NodeData>.  Otherwise,
         //   extend its parent's representation.
         // * Last of all, print the root's representation.
-        let inner = self.i.clone();
         let rrf = Rc::new(RefCell::new(f));
         let rrf2 = rrf.clone();
         let rrf3 = rrf.clone();
@@ -732,12 +731,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
             .unwrap();
         let fut = self.read()
             .then(move |tree_guard| {
-                tree_guard.rlock(&inner.dml)
+                tree_guard.rlock(&self.i.dml)
                 .and_then(move |guard| {
                     let mut f2 = rrf2.borrow_mut();
-                    let s = serde_yaml::to_string(&*inner).unwrap();
+                    let s = serde_yaml::to_string(&*self.i).unwrap();
                     writeln!(f2, "{}", &s).unwrap();
-                    Tree::dump_r(inner.dml.clone(), guard, rrf)
+                    Tree::dump_r(self.i.dml.clone(), guard, rrf)
                 }).map_ok(move |guard| {
                     let mut f3 = rrf3.borrow_mut();
                     let mut hmap = BTreeMap::new();
