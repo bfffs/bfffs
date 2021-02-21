@@ -1335,7 +1335,7 @@ root:
 #[test]
 fn write_clean() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -1351,7 +1351,7 @@ root:
     end: 42
   ptr:
     Addr: 0
-"#);
+"#));
 
     let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
@@ -1393,7 +1393,7 @@ fn write_height2() {
             *txg == TxgT::from(42)
         }).return_once(move |_, _, _| future::ok(addri).boxed());
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1427,9 +1427,9 @@ root:
               end: 42
             ptr:
               Addr: 256
-"#);
+"#));
 
-    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
 
     assert_eq!(format!("{}", tree),
@@ -1529,7 +1529,7 @@ fn write_height3() {
             *txg == TxgT::from(42)
         }).return_once(move |_, _, _| future::ok(11).boxed());
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -1613,9 +1613,9 @@ root:
                         end: 8
                       ptr:
                         Addr: 6
-"#);
+"#));
 
-    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", tree),
 r#"---
@@ -1651,7 +1651,8 @@ fn write_int() {
             *txg == TxgT::from(42)
         }).returning(move |_, _, _| future::ok(addr).boxed());
     let dml = Arc::new(mock);
-    let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let mut tree = Arc::new(
+        Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -1681,12 +1682,13 @@ root:
               end: 25
             ptr:
               Addr: 256
-"#);
+"#));
 
-    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
     assert!(r.is_ok());
-    let root = Arc::get_mut(&mut tree.i).unwrap()
+    let tref = Arc::get_mut(&mut tree).unwrap();
+    let root = Arc::get_mut(&mut tref.i).unwrap()
         .root.get_mut().unwrap();
     assert_eq!(*root.ptr.as_addr(), addr);
     assert_eq!(root.txgs.start, TxgT::from(5));
@@ -1707,7 +1709,8 @@ fn write_leaf() {
             *txg == TxgT::from(42)
         }).returning(move |_, _, _| future::ok(addr).boxed());
     let dml = Arc::new(mock);
-    let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let mut tree = Arc::new(
+        Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -1727,11 +1730,12 @@ root:
         items:
           0: 100
           1: 200
-"#);
+"#));
 
-    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
-    let root = Arc::get_mut(&mut tree.i).unwrap()
+    let tref = Arc::get_mut(&mut tree).unwrap();
+    let root = Arc::get_mut(&mut tref.i).unwrap()
         .root.get_mut().unwrap();
     assert_eq!(*root.ptr.as_addr(), addr);
     assert_eq!(root.txgs.start, TxgT::from(42));
@@ -1906,7 +1910,7 @@ root:
     *otree.write().unwrap() = Some(tree);
     let guard = otree.read().unwrap();
     let tref = guard.as_ref().unwrap();
-    let r = Tree::flush_once(tref.i.clone(), TxgT::from(42))
+    let r = tref.clone().flush_once(TxgT::from(42))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(true));
 

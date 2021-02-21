@@ -217,8 +217,8 @@ impl<'a> IDML {
     pub fn flush(&self, idx: Option<u32>, txg: TxgT)
         -> impl Future<Output=Result<(), Error>> + Send
     {
-        let tfut = future::try_join(self.alloct.flush(txg),
-                                    self.ridt.flush(txg))
+        let tfut = future::try_join(self.alloct.clone().flush(txg),
+                                    self.ridt.clone().flush(txg))
             .map_ok(drop);
         if let Some(idx) = idx {
             let ddml2 = self.ddml.clone();

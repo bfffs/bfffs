@@ -54,8 +54,7 @@ mock! {
             -> MockTree<A, D, K, V>;
         pub fn dump(&self, f: &mut (dyn io::Write + 'static))
             -> Result<(), Error>;
-        pub fn flush(&self, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+        pub async fn flush(self: Arc<Self>, txg: TxgT) -> Result<(), Error>;
         pub fn get(&self, k: K)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
         pub async fn insert(self: Arc<Self>, k: K, v: V, txg: TxgT)

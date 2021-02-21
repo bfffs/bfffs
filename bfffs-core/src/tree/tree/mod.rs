@@ -860,15 +860,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }   // LCOV_EXCL_LINE   kcov false negative
 
     /// Flush all in-memory Nodes to disk.
-    pub fn flush(&self, txg: TxgT)
-        -> impl Future<Output=Result<(), Error>>
+    pub async fn flush(self: Arc<Self>, txg: TxgT) -> Result<(), Error>
     {
-        let i = self.i.clone();
-        async move {
-            while let true = Tree::flush_once(i.clone(), txg).await? {
-            }
-            Ok(())
+        while let true = Tree::flush_once(self.clone(), txg).await? {
         }
+        Ok(())
     }
 
     /// Progressively flush all in-memory Nodes to disk.
@@ -892,27 +888,26 @@ impl<A, D, K, V> Tree<A, D, K, V>
     // high key Leaf nodes.  That would be inefficient, because it's likely that
     // the Int nodes could become redirtied again quickly.  Better to treat all
     // keys fairly, and to flush leaf nodes before int nodes.
-    fn flush_once(i: Arc<Inner<A, D, K, V>>, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<bool, Error>> + Send>>
+    async fn flush_once(self: Arc<Self>, txg: TxgT) -> Result<bool, Error>
     {
-        let dml = i.dml.clone();
-        let lcomp = i.leaf_compressor;
-        let icomp = i.int_compressor;
+        let dml = self.i.dml.clone();
+        let lcomp = self.i.leaf_compressor;
+        let icomp = self.i.int_compressor;
 
         stream::try_unfold((true, K::min_value()), move |(more, lowest)|
         {
-            let i3 = i.clone();
+            let self3 = self.clone();
             let dml2 = dml.clone();
             async move {
                 if !more {
                     Ok(None)
                 } else {
-                    let rg = Tree::write_root(&i3).await;
+                    let rg = Tree::write_root(&self3.i).await;
                     if rg.ptr.is_dirty() {
                         let (mut rg, guard) = Tree::xlock_root(&dml2, rg, txg)
                             .await?;
                         if guard.has_dirty_children() {
-                            let height = i3.height.load(Ordering::Relaxed);
+                            let height = self3.i.height.load(Ordering::Relaxed);
                             debug_assert!(height > 1);
                             drop(rg);
                             // It's ok to use height here even after dropping
@@ -923,7 +918,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                           txg, lowest).await
                             .map(|kopt| kopt.map(|k| (true, (true, k))))
                         } else {
-                            let height = i3.height.load(Ordering::Relaxed);
+                            let height = self3.i.height.load(Ordering::Relaxed);
                             if height == 1 {
                                 drop(guard);
                                 let old_ptr = mem::replace(&mut rg.ptr,
@@ -959,7 +954,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     }
                 }
             }
-        }).try_fold(true, |_acc, more_to_do| future::ok(more_to_do)).boxed()
+        }).try_fold(true, |_acc, more_to_do| future::ok(more_to_do)).await
     }
 
     /// Flush all of the children of the given node.
