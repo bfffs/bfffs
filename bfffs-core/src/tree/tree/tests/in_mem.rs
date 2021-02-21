@@ -7435,7 +7435,7 @@ root:
 #[test]
 fn range_empty_range() {
     let dml = Arc::new(MockDML::new());
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7473,7 +7473,7 @@ root:
                   items:
                     3: 3.0
                     4: 4.0
-"#);
+"#));
     let r = tree.range(1..1)
         .try_collect()
         .now_or_never().unwrap();
@@ -7484,7 +7484,9 @@ root:
 #[test]
 fn range_empty_tree() {
     let dml = Arc::new(MockDML::new());
-    let tree = Tree::<u32, MockDML, u32, f32>::create(dml, false, 1.0, 1.0);
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::create(dml, false, 1.0, 1.0)
+    );
     let r = tree.range(..)
         .try_collect()
         .now_or_never().unwrap();
@@ -7495,7 +7497,7 @@ fn range_empty_tree() {
 #[test]
 fn range_full() {
     let dml = Arc::new(MockDML::new());
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7533,7 +7535,7 @@ root:
                   items:
                     3: 3.0
                     4: 4.0
-"#);
+"#));
     let r = tree.range(..)
         .try_collect()
         .now_or_never().unwrap();
@@ -7543,7 +7545,7 @@ root:
 #[test]
 fn range_exclusive_start() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7581,7 +7583,7 @@ root:
                   items:
                     3: 3.0
                     4: 4.0
-"#);
+"#));
     // A query that starts on a leaf
     let r = tree.range((Bound::Excluded(0), Bound::Excluded(4)))
         .try_collect()
@@ -7598,7 +7600,7 @@ root:
 #[test]
 fn range_leaf() {
     let dml = Arc::new(MockDML::new());
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -7621,7 +7623,7 @@ root:
           2: 2.0
           3: 3.0
           4: 4.0
-"#);
+"#));
     let r = tree.range(1..3)
         .try_collect()
         .now_or_never().unwrap();
@@ -7631,7 +7633,7 @@ root:
 #[test]
 fn range_leaf_inclusive_end() {
     let dml = Arc::new(MockDML::new());
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -7654,7 +7656,7 @@ root:
           2: 2.0
           3: 3.0
           4: 4.0
-"#);
+"#));
     let r = tree.range(3..=4)
         .try_collect()
         .now_or_never().unwrap();
@@ -7664,7 +7666,7 @@ root:
 #[test]
 fn range_nonexistent_between_two_leaves() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7702,7 +7704,7 @@ root:
                   items:
                     5: 5.0
                     6: 6.0
-"#);
+"#));
     let r = tree.range(2..4)
         .try_collect()
         .now_or_never().unwrap();
@@ -7712,7 +7714,7 @@ root:
 #[test]
 fn range_two_ints() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 3
 limits:
@@ -7766,7 +7768,7 @@ root:
                             items:
                               9: 9.0
                               10: 10.0
-"#);
+"#));
     let r = tree.range(1..10)
         .try_collect()
         .now_or_never().unwrap();
@@ -7776,7 +7778,7 @@ root:
 #[test]
 fn range_ends_between_two_leaves() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7814,7 +7816,7 @@ root:
                   items:
                     4: 4.0
                     5: 5.0
-"#);
+"#));
     let r = tree.range(0..3)
         .try_collect()
         .now_or_never().unwrap();
@@ -7824,7 +7826,7 @@ root:
 #[test]
 fn range_ends_before_node_but_after_parent_pointer() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7862,7 +7864,7 @@ root:
                   items:
                     6: 6.0
                     7: 7.0
-"#);
+"#));
     let r = tree.range(0..5)
         .try_collect()
         .now_or_never().unwrap();
@@ -7872,7 +7874,7 @@ root:
 #[test]
 fn range_starts_between_two_leaves() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7920,7 +7922,7 @@ root:
                   items:
                     5: 5.0
                     6: 6.0
-"#);
+"#));
     let r = tree.range(2..6)
         .try_collect()
         .now_or_never().unwrap();
@@ -7930,7 +7932,7 @@ root:
 #[test]
 fn range_two_leaves() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 2
 limits:
@@ -7968,7 +7970,7 @@ root:
                   items:
                     3: 3.0
                     4: 4.0
-"#);
+"#));
     let r = tree.range(1..4)
         .try_collect()
         .now_or_never().unwrap();

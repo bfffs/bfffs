@@ -118,8 +118,8 @@ pub struct RangeQuery<A, D, K, T, V>
                       Error>>
         + Send
     >>>,
-    /// Handle to the tree's inner
-    inner: Arc<Inner<A, D, K, V>>,
+    /// Handle to the tree
+    tree: Arc<Tree<A, D, K, V>>,
 }
 
 impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
@@ -130,7 +130,7 @@ impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
           V: Value
 {
 
-    fn new<R>(inner: Arc<Inner<A, D, K, V>>, range: R)
+    fn new<R>(tree: Arc<Tree<A, D, K, V>>, range: R)
         -> RangeQuery<A, D, K, T, V>
         where R: RangeBounds<T>
     {
@@ -145,7 +145,7 @@ impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
             Bound::Unbounded => Bound::Unbounded,
         };
         let data = VecDeque::new();
-        RangeQuery{cursor, data, end, last_fut: None, inner}
+        RangeQuery{cursor, data, end, last_fut: None, tree}
     }
 
     fn pin_get_cursor(self: Pin<&mut Self>) -> &mut Option<Bound<T>> {
@@ -193,7 +193,7 @@ impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
                     .unwrap_or_else(|| {
                         let l = self.as_mut().pin_get_cursor().clone().unwrap();
                         let r = (l, self.end.clone());
-                        Box::pin(Tree::get_range(&self.inner, r))
+                        Box::pin(Tree::get_range(&self.tree, r))
                     });
                     match fut.as_mut().poll(cx) {
                         Poll::Ready(Ok((v, bound))) => {
@@ -1105,16 +1105,16 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// total results, consisting of all matching (K,V) pairs within a single
     /// Leaf Node, plus an optional Bound for the next iteration of the search.
     /// If the Bound is `None`, then the search is complete.
-    #[instrument(skip(inner))]
-    fn get_range<R, T>(inner: &Inner<A, D, K, V>, range: R)
+    #[instrument(skip(self))]
+    fn get_range<R, T>(&self, range: R)
         -> impl Future<Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>),
                        Error>> + Send
         where K: Borrow<T>,
               R: Clone + Debug + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + Send + 'static
     {
-        let dml2 = inner.dml.clone();
-        Tree::<A, D, K, V>::read_root(&inner)
+        let dml2 = self.i.dml.clone();
+        Tree::<A, D, K, V>::read_root(&self.i)
             .then(move |tree_guard| {
                 tree_guard.rlock(&dml2)
                      .and_then(move |g| {
@@ -1361,7 +1361,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Lookup a range of (key, value) pairs for keys within the range `range`.
-    pub fn range<R, T>(&self, range: R) -> RangeQuery<A, D, K, T, V>
+    pub fn range<R, T>(self: &Arc<Self>, range: R) -> RangeQuery<A, D, K, T, V>
         where K: Borrow<T>,
               R: RangeBounds<T>,
               T: Ord + Clone + Send
@@ -1374,7 +1374,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             (Bound::Excluded(s), Bound::Excluded(e)) => debug_assert!(s < e),
             _ => ()
         };
-        RangeQuery::new(self.i.clone(), range)
+        RangeQuery::new(self.clone(), range)
     }
 
     /// Delete a range of keys

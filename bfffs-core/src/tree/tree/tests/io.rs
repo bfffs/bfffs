@@ -1043,7 +1043,7 @@ fn range_leaf() {
             fut.boxed()
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 height: 1
 limits:
@@ -1059,7 +1059,7 @@ root:
     end: 42
   ptr:
     Addr: 0
-"#);
+"#));
     let mut rt = basic_runtime();
     let r = rt.block_on(async {
         tree.range(1..3)
