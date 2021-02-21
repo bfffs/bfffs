@@ -352,8 +352,7 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
 #[cfg_attr(test, derive(Deserialize, PartialEq))]
 struct TreeRoot<A: Addr, K: Key, V: Value> {
     /// Tree height.  1 if the Tree consists of a single Leaf node.
-    // TODO: change to u8, which should be enough for any tree.
-    height: u64,
+    height: u8,
     elem: IntElem<A, K, V>,
 }
 
@@ -388,7 +387,7 @@ impl<A: Addr, D: DML, K: Key, V: Value> Inner<A, D, K, V> {
         Inner::new(dml, il.root.height, il.limits, il.root.elem, seq)
     }
 
-    pub fn new(dml: Arc<D>, height: u64, limits: Limits,
+    pub fn new(dml: Arc<D>, height: u8, limits: Limits,
                elem: IntElem<A, K, V>, seq: bool) -> Self
     {
         debug_assert!(Self::INT_ELEM_SIZE < u8::max_value as usize);
@@ -475,7 +474,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let tgf = self.read();
         tokio::spawn( async move {
             let tree_guard = tgf.await;
-            let height = tree_guard.height as u8;
+            let height = tree_guard.height;
             if tree_guard.elem.ptr.is_addr()
                 && ranges_overlap(&txgs, &tree_guard.elem.txgs)
             {
@@ -538,7 +537,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     pub async fn check(self: Arc<Self>) -> Result<bool, Error> {
         // Keep the whole tree locked and use LIFO lock discipline
         let tree_guard = self.read().await;
-        let height = tree_guard.height as u8;
+        let height = tree_guard.height;
         let guard = tree_guard.elem.rlock(&self.i.dml).await?;
         let root_ok = guard.check(tree_guard.elem.key, height - 1, true,
                                   &self.i.limits);
@@ -1000,7 +999,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         mut guard: TreeWriteGuard<A, K, V>,
         leaf_compressor: Compression,
         int_compressor: Compression,
-        height: u64,
+        height: u8,
         txg: TxgT,
         lowest: K)
         -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>
@@ -1395,7 +1394,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let dml2 = self.i.dml.clone();
         let limits = self.i.limits;
         let guard = self.write().await;
-        let height = guard.height as u8;
+        let height = guard.height;
         let (tg, rg) = Tree::xlock_root(&dml2, guard, txg).await?;
         // ptr is guaranteed to be a TreePtr::Mem because we just xlock()ed it.
         let id = tg.elem.ptr.as_mem() as *const Node<A, K, V> as usize;
@@ -1978,6 +1977,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         .map(|root_guard| {
             let iod = InnerOnDisk{
                 height: root_guard.height,
+                _reserved: Default::default(),
                 limits: self.i.limits,
                 root: *root_guard.elem.ptr.as_addr(),
                 txgs: root_guard.elem.txgs.clone(),
@@ -2139,7 +2139,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
         //    root node obviously can't be stored in the target zone
         // 2) If the tree height decreases before we lock the tree, then that's
         //    just one level we won't have to clean anymore
-        let tree_height = self.read().await.height as u8;
+        let tree_height = self.read().await.height;
         stream::iter(0..tree_height)
         .map(Ok)
         .try_for_each(move |echelon| {
@@ -2168,7 +2168,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
         -> Result<(VecDeque<NodeId<K>>, Option<K>), Error>
     {
         let tree_guard = Tree::<ddml::DRP, D, K, V>::read_root(&*self.i).await;
-        let h = tree_guard.height as u8;
+        let h = tree_guard.height;
         if h == params.echelon + 1 {
             // Clean the tree root
             let dirty = if tree_guard.elem.ptr.is_addr() &&
@@ -2251,7 +2251,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     {
         Tree::<ddml::DRP, D, K, V>::write_root(&self.i)
         .then(move |mut guard| {
-            let h = guard.height as u8;
+            let h = guard.height;
             let dml2 = self.i.dml.clone();
             if h == node.height + 1 {
                 // Clean the root node

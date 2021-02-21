@@ -601,6 +601,7 @@ fn open() {
     let tod = TreeOnDisk(
         InnerOnDisk {
             height: 1,
+            _reserved: Default::default(),
             limits,
             root: root_drp,
             txgs: TxgT(0)..TxgT(42),
@@ -1318,6 +1319,7 @@ fn serialize_inner() {
     let expected = TreeOnDisk(
         InnerOnDisk {
             height: 1,
+            _reserved: Default::default(),
             limits: Limits::new(2, 5, 2, 5),
             root: root_drp,
             txgs: TxgT(0)..TxgT(42),

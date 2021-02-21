@@ -33,7 +33,11 @@ cfg_if! {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned"))]
 struct InnerOnDisk<A: Addr> {
-    height: u64,
+    // 8 bits of tree height is sufficient for a tree that can contain more data
+    // than will ever be created by mankind, even with fanout of 2.
+    height: u8,
+    // Makes the rest of the structure line up nicely in a hexdump
+    _reserved: [u8; 7],
     limits: Limits,
     root: A,
     txgs: Range<TxgT>,
@@ -43,9 +47,10 @@ struct InnerOnDisk<A: Addr> {
 impl<A: Addr + Default> Default for InnerOnDisk<A> {
     fn default() -> Self {
         InnerOnDisk {
-            height: u64::default(),
-            limits: Limits::default(),
-            root: A::default(),
+            height: Default::default(),
+            _reserved: Default::default(),
+            limits: Default::default(),
+            root: Default::default(),
             txgs: TxgT(0)..TxgT(1),
         }
     }
