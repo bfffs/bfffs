@@ -16,7 +16,7 @@ fn insert() {
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
-        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
     let r = tree.clone().insert(0, 0.0, TxgT::from(42))
         .now_or_never().unwrap();
@@ -1284,7 +1284,7 @@ fn get() {
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
-        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
     let r = tree.clone().insert(0, 0.0, TxgT::from(42))
         .and_then(|_| tree.get(0))
@@ -1344,7 +1344,7 @@ fn get_nonexistent() {
     let mock = MockDML::new();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false, None);
     let r = tree.get(0).now_or_never().unwrap();
     assert_eq!(r, Ok(None))
 }
@@ -1353,7 +1353,7 @@ fn get_nonexistent() {
 fn last_key_empty() {
     let dml = Arc::new(MockDML::new());
     let limits = Limits::new(2, 5, 2, 5);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false, None);
     let r = tree.last_key().now_or_never().unwrap();
     assert_eq!(r, Ok(None))
 }
@@ -6988,7 +6988,7 @@ fn range_delete_at_end() {
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
-        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
     (0..23).map(|k| {
         tree.clone().insert(k, k as f32, TxgT::from(2))
@@ -7351,7 +7351,7 @@ fn range_delete_to_end_deep() {
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
-        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
     (0..23).map(|k| {
         tree.clone().insert(k, k as f32, TxgT::from(2))
@@ -9694,7 +9694,7 @@ fn remove_nonexistent() {
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
-        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false)
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
     let r = tree.remove(3, TxgT::from(42))
         .now_or_never().unwrap();

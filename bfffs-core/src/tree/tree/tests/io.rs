@@ -610,8 +610,8 @@ fn open() {
     let mock = DDML::default();
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDML, u32, u32>::open(ddml, false, tod);
-    assert_eq!(tree.i.limits, limits);
-    let root_guard = tree.i.root.try_read().unwrap();
+    assert_eq!(tree.limits, limits);
+    let root_guard = tree.root.try_read().unwrap();
     assert_eq!(root_guard.height, 1);
     assert_eq!(root_guard.elem.key, 0);
     assert_eq!(root_guard.elem.txgs, TxgT::from(0)..TxgT::from(42));
@@ -1125,7 +1125,7 @@ root:
       Addr: 102
   "#);
 
-    let root_guard = tree.i.root.try_read().unwrap();
+    let root_guard = tree.root.try_read().unwrap();
     let r = root_guard.elem.rlock(&dml).map_ok(|node| {
         let int_data = (*node).as_int();
         assert_eq!(int_data.nchildren(), 2);
@@ -1719,7 +1719,7 @@ root:
     assert!(r.is_ok());
     assert!(r.is_ok());
     let tref = Arc::get_mut(&mut tree).unwrap();
-    let root = tref.i.root.get_mut().unwrap();
+    let root = tref.root.get_mut().unwrap();
     assert_eq!(*root.elem.ptr.as_addr(), addr);
     assert_eq!(root.elem.txgs.start, TxgT::from(5));
     assert_eq!(root.elem.txgs.end, TxgT::from(43));
@@ -1766,7 +1766,7 @@ root:
     let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
     let tref = Arc::get_mut(&mut tree).unwrap();
-    let root = tref.i.root.get_mut().unwrap();
+    let root = tref.root.get_mut().unwrap();
     assert_eq!(*root.elem.ptr.as_addr(), addr);
     assert_eq!(root.elem.txgs.start, TxgT::from(42));
     assert_eq!(root.elem.txgs.end, TxgT::from(43));
