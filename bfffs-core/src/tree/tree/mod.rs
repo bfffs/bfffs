@@ -890,7 +890,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 if !more {
                     Ok(None)
                 } else {
-                    let rg = Tree::write_root(&self3.i).await;
+                    let rg = self3.write().await;
                     if rg.elem.ptr.is_dirty() {
                         let (mut rg, guard) = Tree::xlock_root(&dml2, rg, txg)
                             .await?;
@@ -1101,14 +1101,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
               T: Ord + Clone + Send + 'static
     {
         let dml2 = self.i.dml.clone();
-        Tree::<A, D, K, V>::read_root(&self.i)
-            .then(move |tree_guard| {
-                tree_guard.elem.rlock(&dml2)
-                     .and_then(move |g| {
-                         drop(tree_guard);
-                         Tree::get_range_r(dml2, g, None, range)
-                     })
-            }).in_current_span()
+        self.read()
+        .then(move |tree_guard| {
+            tree_guard.elem.rlock(&dml2)
+                 .and_then(move |g| {
+                     drop(tree_guard);
+                     Tree::get_range_r(dml2, g, None, range)
+                 })
+        }).in_current_span()
     }   // LCOV_EXCL_LINE kcov false negative
 
     /// Range lookup beginning in the node `guard`.  `next_guard`, if present,
@@ -1910,13 +1910,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Lock the Tree for reading
     fn read(&self) -> impl Future<Output=RwLockReadGuard<TreeRoot<A, K, V>>>
     {
-        Tree::<A, D, K, V>::read_root(&self.i)
-    }
-
-    fn read_root(inner: &Inner<A, D, K, V>)
-        -> impl Future<Output=RwLockReadGuard<TreeRoot<A, K, V>>>
-    {
-        inner.root.read()
+        self.i.root.read()
     }
 
     /// Remove and return the value at key `k`, if any.
@@ -1990,7 +1984,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Lock the Tree for writing
     fn write(&self) -> impl Future<Output=RwLockWriteGuard<TreeRoot<A, K, V>>>
     {
-        Tree::<A, D, K, V>::write_root(&self.i)
+        self.i.root.write()
     }
 
     // Clippy has a false positive on `node`
@@ -2005,12 +1999,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let arc: Arc<Node<A, K, V>> = Arc::new(node);
             dml.put(arc, compressor, txg)
         })
-    }
-
-    fn write_root(inner: &Inner<A, D, K, V>)
-        -> impl Future<Output=RwLockWriteGuard<TreeRoot<A, K, V>>>
-    {
-        inner.root.write()
     }
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
@@ -2168,7 +2156,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     async fn get_dirty_nodes(self: Arc<Self>, params: GetDirtyNodeParams<K>)
         -> Result<(VecDeque<NodeId<K>>, Option<K>), Error>
     {
-        let tree_guard = Tree::<ddml::DRP, D, K, V>::read_root(&self.i).await;
+        let tree_guard = self.read().await;
         let h = tree_guard.height;
         if h == params.echelon + 1 {
             // Clean the tree root
@@ -2250,7 +2238,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     fn rewrite_node(self: Arc<Self>, node: NodeId<K>, txg: TxgT)
         -> impl Future<Output=Result<(), Error>> + Send
     {
-        Tree::<ddml::DRP, D, K, V>::write_root(&self.i)
+        self.write()
         .then(move |mut guard| {
             let h = guard.height;
             let dml2 = self.i.dml.clone();
