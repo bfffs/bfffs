@@ -739,7 +739,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Fix an Int node in danger of being underfull, returning the parent guard
     /// back to the caller
-    #[allow(clippy::collapsible_if)]
+    #[allow(clippy::collapsible_if, clippy::collapsible_else_if)]
     fn fix_int<Q>(&self,
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, mut child: TreeWriteGuard<A, K, V>,
@@ -859,36 +859,34 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             Tree::flush_r(dml2, guard, lcomp, icomp, height,
                                           txg, lowest).await
                             .map(|kopt| kopt.map(|k| (true, (true, k))))
+                        } else if rg.height == 1 {
+                            drop(guard);
+                            let old_ptr = mem::replace(&mut rg.elem.ptr,
+                                                       TreePtr::None);
+                            let addr = Tree::write_leaf(dml2, lcomp,
+                                *old_ptr.into_node(), txg)
+                                .await?;
+                            let _ = mem::replace(&mut rg.elem.ptr,
+                                                 TreePtr::Addr(addr));
+                            rg.elem.txgs = txg .. txg + 1;
+                            Ok(Some((false, (false, lowest))))
                         } else {
-                            if rg.height == 1 {
-                                drop(guard);
-                                let old_ptr = mem::replace(&mut rg.elem.ptr,
-                                                           TreePtr::None);
-                                let addr = Tree::write_leaf(dml2, lcomp,
-                                    *old_ptr.into_node(), txg)
-                                    .await?;
-                                let _ = mem::replace(&mut rg.elem.ptr,
-                                                     TreePtr::Addr(addr));
-                                rg.elem.txgs = txg .. txg + 1;
-                                Ok(Some((false, (false, lowest))))
-                            } else {
-                                let start_txg = guard.as_int()
-                                    .children.iter()
-                                    .map(|e| e.txgs.start)
-                                    .min()
-                                    .unwrap();
-                                drop(guard);
-                                let rptr = mem::replace(&mut rg.elem.ptr,
-                                                        TreePtr::None);
-                                let rnode = *rptr.into_node();
-                                let a = dml2.put(Arc::new(rnode), icomp, txg)
-                                    .await?;
-                                let _ = mem::replace(&mut rg.elem.ptr,
-                                                     TreePtr::Addr(a));
-                                let txgs = start_txg .. txg + 1;
-                                rg.elem.txgs = txgs;
-                                Ok(Some((false, (false, lowest))))
-                            }
+                            let start_txg = guard.as_int()
+                                .children.iter()
+                                .map(|e| e.txgs.start)
+                                .min()
+                                .unwrap();
+                            drop(guard);
+                            let rptr = mem::replace(&mut rg.elem.ptr,
+                                                    TreePtr::None);
+                            let rnode = *rptr.into_node();
+                            let a = dml2.put(Arc::new(rnode), icomp, txg)
+                                .await?;
+                            let _ = mem::replace(&mut rg.elem.ptr,
+                                                 TreePtr::Addr(a));
+                            let txgs = start_txg .. txg + 1;
+                            rg.elem.txgs = txgs;
+                            Ok(Some((false, (false, lowest))))
                         }
                     } else {
                         Ok(Some((false, (false, lowest))))
