@@ -1719,8 +1719,7 @@ root:
     assert!(r.is_ok());
     assert!(r.is_ok());
     let tref = Arc::get_mut(&mut tree).unwrap();
-    let root = Arc::get_mut(&mut tref.i).unwrap()
-        .root.get_mut().unwrap();
+    let root = tref.i.root.get_mut().unwrap();
     assert_eq!(*root.elem.ptr.as_addr(), addr);
     assert_eq!(root.elem.txgs.start, TxgT::from(5));
     assert_eq!(root.elem.txgs.end, TxgT::from(43));
@@ -1767,8 +1766,7 @@ root:
     let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
     let tref = Arc::get_mut(&mut tree).unwrap();
-    let root = Arc::get_mut(&mut tref.i).unwrap()
-        .root.get_mut().unwrap();
+    let root = tref.i.root.get_mut().unwrap();
     assert_eq!(*root.elem.ptr.as_addr(), addr);
     assert_eq!(root.elem.txgs.start, TxgT::from(42));
     assert_eq!(root.elem.txgs.end, TxgT::from(43));

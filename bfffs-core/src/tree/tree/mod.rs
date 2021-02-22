@@ -446,7 +446,7 @@ type CheckR<K> = Pin<Box<dyn Future<
 /// *`K`:   Key type.  Must be ordered and copyable; should be compact
 /// *`V`:   Value type in the leaves.
 pub struct Tree<A: Addr, D: DML<Addr=A>, K: Key, V: Value> {
-    i: Arc<Inner<A, D, K, V>>
+    i: Inner<A, D, K, V>
 }
 
 impl<A, D, K, V> Tree<A, D, K, V>
@@ -722,7 +722,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 tree_guard.elem.rlock(&self.i.dml)
                 .and_then(move |guard| {
                     let mut f2 = rrf2.borrow_mut();
-                    let s = serde_yaml::to_string(&*self.i).unwrap();
+                    let s = serde_yaml::to_string(&self.i).unwrap();
                     writeln!(f2, "{}", &s).unwrap();
                     Tree::dump_r(self.i.dml.clone(), guard, rrf)
                 }).map_ok(move |guard| {
@@ -786,7 +786,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Fix an Int node in danger of being underfull, returning the parent guard
     /// back to the caller
     #[allow(clippy::collapsible_if)]
-    fn fix_int<Q>(inner: &Arc<Inner<A, D, K, V>>,
+    fn fix_int<Q>(inner: &Inner<A, D, K, V>,
                   parent: TreeWriteGuard<A, K, V>,
                   child_idx: usize, mut child: TreeWriteGuard<A, K, V>,
                   txg: TxgT)
@@ -1047,7 +1047,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     #[cfg(test)]
     pub fn from_str(dml: Arc<D>, seq: bool, s: &str) -> Self {
-        Tree{i: Arc::new(Inner::from_str(dml, seq, s))}
+        Tree{i: Inner::from_str(dml, seq, s)}
     }
 
     /// Lookup the value of key `k`.  Return `None` if no value is present.
@@ -1337,14 +1337,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
         // Since there are no on-disk children, the initial TXG range is empty
         let root_elem = IntElem::default();
         let inner = Inner::new(dml, 1, limits, root_elem, seq);
-        let i = Arc::new(inner);
-        Tree{ i }
+        Tree{ i: inner }
     }
 
     /// Open a `Tree` from its serialized representation
     pub fn open(dml: Arc<D>, seq: bool, on_disk: TreeOnDisk<A>) -> Self {
         let i = Inner::open(dml, seq, on_disk);
-        Tree{i: Arc::new(i)}
+        Tree{i}
     }
 
     /// Lookup a range of (key, value) pairs for keys within the range `range`.
@@ -2095,7 +2094,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 #[cfg(test)]
 impl<A: Addr, D: DML<Addr=A>, K: Key, V: Value> Display for Tree<A, D, K, V> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.write_str(&serde_yaml::to_string(&*self.i).unwrap())
+        f.write_str(&serde_yaml::to_string(&self.i).unwrap())
     }
 }
 
@@ -2169,7 +2168,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     async fn get_dirty_nodes(self: Arc<Self>, params: GetDirtyNodeParams<K>)
         -> Result<(VecDeque<NodeId<K>>, Option<K>), Error>
     {
-        let tree_guard = Tree::<ddml::DRP, D, K, V>::read_root(&*self.i).await;
+        let tree_guard = Tree::<ddml::DRP, D, K, V>::read_root(&self.i).await;
         let h = tree_guard.height;
         if h == params.echelon + 1 {
             // Clean the tree root
