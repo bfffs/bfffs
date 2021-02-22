@@ -46,20 +46,19 @@ mock! {
               K: Key,
               V: Value
     {
-        pub fn check(&self)
-            -> Pin<Box<dyn Future<Output=Result<bool, Error>> + Send>>;
-        pub fn clean_zone(&self, pbas: Range<PBA>, txgs: Range<TxgT>, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+        pub async fn check(self: Arc<Self>) -> Result<bool, Error>;
+        pub async fn clean_zone(self: Arc<Self>, pbas: Range<PBA>,
+                                txgs: Range<TxgT>, txg: TxgT)
+            -> Result<(), Error>;
         pub fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)
             -> MockTree<A, D, K, V>;
         pub fn dump(&self, f: &mut (dyn io::Write + 'static))
             -> Result<(), Error>;
-        pub fn flush(&self, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+        pub async fn flush(self: Arc<Self>, txg: TxgT) -> Result<(), Error>;
         pub fn get(&self, k: K)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
-        pub fn insert(&self, k: K, v: V, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
+        pub async fn insert(self: Arc<Self>, k: K, v: V, txg: TxgT)
+            -> Result<Option<V>, Error>;
         pub fn is_dirty(&self) -> bool;
         pub fn last_key(&self)
             -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>;
@@ -69,13 +68,13 @@ mock! {
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Debug + Ord + Clone + Send + 'static;
-        pub fn range_delete<R, T>(&self, range: R, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        pub async fn range_delete<R, T>(self: Arc<Self>, range: R, txg: TxgT)
+            -> Result<(), Error>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Ord + Clone + Send + 'static;
-        pub fn remove(&self, k: K, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
+        pub async fn remove(self: Arc<Self>, k: K, txg: TxgT)
+            -> Result<Option<V>, Error>;
         pub fn serialize(&self) -> Result<TreeOnDisk<A>, Error>;
     }
 }

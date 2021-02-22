@@ -348,7 +348,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
                 tree3.insert(key, value, txg)
             }).map_ok(drop)
         }).and_then(move |_| {
-            tree2.flush(txg)
+            tree2.clone().flush(txg)
         }).and_then(move |_| {
             let ridt_fut = idml4.ridt.range(..)
             .try_fold(0, |count, _| future::ok::<_, Error>(count + 1));
@@ -356,8 +356,8 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
             .try_fold(0, |count, _| future::ok::<_, Error>(count + 1));
             future::try_join(ridt_fut, alloct_fut)
             .and_then(move |entries| {
-                future::try_join(idml4.ridt.flush(txg),
-                                 idml4.alloct.flush(txg))
+                future::try_join(idml4.ridt.clone().flush(txg),
+                                 idml4.alloct.clone().flush(txg))
                 .map_ok(move |_| entries)
             })
         })

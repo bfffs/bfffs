@@ -48,7 +48,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
     fn insert(&self, txg: TxgT, k: K, v: V)
         -> impl Future<Output=Result<Option<V>, Error>>
     {
-        self.tree.insert(k, v, txg)
+        self.tree.clone().insert(k, v, txg)
     }
 
     fn last_key(&self) -> impl Future<Output=Result<Option<K>, Error>>
@@ -92,13 +92,13 @@ impl<K: Key, V: Value> Dataset<K, V> {
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Debug + Ord + Clone + Send + 'static
     {
-        self.tree.range_delete(range, txg)
+        self.tree.clone().range_delete(range, txg)
     }
 
     fn remove(&self, k: K, txg: TxgT)
         -> impl Future<Output=Result<Option<V>, Error>> + Send
     {
-        self.tree.remove(k, txg)
+        self.tree.clone().remove(k, txg)
     }
 
     fn remove_blob(&self, rid: RID, txg: TxgT)

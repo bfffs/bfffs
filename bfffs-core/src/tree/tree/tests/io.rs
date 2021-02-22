@@ -80,7 +80,6 @@ fn addresses() {
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -88,52 +87,54 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 8
-              end: 9
-            ptr:
-              Addr: 3
-          - key: 10
-            txgs:
-              start: 20
-              end: 32
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 10
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Addr: 2
-                    - key: 15
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              15: 15.0
-                              16: 16.0
-                              17: 17.0
-          # This  Node is not returned due to its TXG range
-          - key: 20
-            txgs:
-              start: 0
-              end: 1
-            ptr:
-              Addr: 4
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 8
+                end: 9
+              ptr:
+                Addr: 3
+            - key: 10
+              txgs:
+                start: 20
+                end: 32
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 10
+                        txgs:
+                          start: 9
+                          end: 10
+                        ptr:
+                          Addr: 2
+                      - key: 15
+                        txgs:
+                          start: 9
+                          end: 10
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                15: 15.0
+                                16: 16.0
+                                17: 17.0
+            # This  Node is not returned due to its TXG range
+            - key: 20
+              txgs:
+                start: 0
+                end: 1
+              ptr:
+                Addr: 4
 "#);
     let mut rt = basic_runtime();
     let addrs = rt.block_on(async {
@@ -152,7 +153,6 @@ fn addresses_leaf() {
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -160,12 +160,14 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 41
-    end: 42
-  ptr:
-    Addr: 0"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Addr: 0"#);
     let mut rt = basic_runtime();
     let addrs = rt.block_on(async {
         tree.addresses(..)
@@ -234,7 +236,6 @@ fn dump() {
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -242,55 +243,56 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 8
-              end: 9
-            ptr:
-              Addr: 3
-          - key: 10
-            txgs:
-              start: 20
-              end: 32
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 10
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Addr: 2
-                    - key: 15
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              15: 15.0
-                              16: 16.0
-                              17: 17.0
-          - key: 20
-            txgs:
-              start: 0
-              end: 1
-            ptr:
-              Addr: 4
-"#);
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 8
+                end: 9
+              ptr:
+                Addr: 3
+            - key: 10
+              txgs:
+                start: 20
+                end: 32
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 10
+                        txgs:
+                          start: 9
+                          end: 10
+                        ptr:
+                          Addr: 2
+                      - key: 15
+                        txgs:
+                          start: 9
+                          end: 10
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                15: 15.0
+                                16: 16.0
+                                17: 17.0
+            - key: 20
+              txgs:
+                start: 0
+                end: 1
+              ptr:
+                Addr: 4
+  "#);
 let expected =
 r#"---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -298,51 +300,53 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 8
-              end: 9
-            ptr:
-              Addr: 3
-          - key: 10
-            txgs:
-              start: 20
-              end: 32
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 10
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Addr: 2
-                    - key: 15
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              15: 15.0
-                              16: 16.0
-                              17: 17.0
-          - key: 20
-            txgs:
-              start: 0
-              end: 1
-            ptr:
-              Addr: 4
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 8
+                end: 9
+              ptr:
+                Addr: 3
+            - key: 10
+              txgs:
+                start: 20
+                end: 32
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 10
+                        txgs:
+                          start: 9
+                          end: 10
+                        ptr:
+                          Addr: 2
+                      - key: 15
+                        txgs:
+                          start: 9
+                          end: 10
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                15: 15.0
+                                16: 16.0
+                                17: 17.0
+            - key: 20
+              txgs:
+                start: 0
+                end: 1
+              ptr:
+                Addr: 4
 ---
 0:
   Leaf:
@@ -422,9 +426,8 @@ fn insert_below_root() {
             future::ok(Box::new(node)).boxed()
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
-height: 2
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -432,33 +435,34 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 41
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 41
-              end: 42
-            ptr:
-              Addr: 0
-          - key: 256
-            txgs:
-              start: 41
-              end: 42
-            ptr:
-              Addr: 256
-"#);
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 0
+            - key: 256
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 256
+  "#));
 
-    let r = tree.insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
-height: 2
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -466,29 +470,31 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 41
-    end: 43
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 42
-              end: 43
-            ptr:
-              Mem:
-                Leaf:
-                  items:
-                    0: 0
-          - key: 256
-            txgs:
-              start: 41
-              end: 42
-            ptr:
-              Addr: 256"#);
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 43
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 42
+                end: 43
+              ptr:
+                Mem:
+                  Leaf:
+                    items:
+                      0: 0
+            - key: 256
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 256"#);
 }
 
 /// Insert an item into a Tree that's not dirty
@@ -504,9 +510,8 @@ fn insert_root() {
             future::ok(Box::new(node)).boxed()
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -514,19 +519,20 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 41
-    end: 42
-  ptr:
-    Addr: 0
-"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Addr: 0
+  "#));
 
-    let r = tree.insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -534,15 +540,17 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 42
-    end: 43
-  ptr:
-    Mem:
-      Leaf:
-        items:
-          0: 0"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 42
+      end: 43
+    ptr:
+      Mem:
+        Leaf:
+          items:
+            0: 0"#);
 }
 
 #[test]
@@ -557,9 +565,8 @@ fn is_dirty() {
             future::ok(Box::new(node)).boxed()
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -567,16 +574,18 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 41
-    end: 42
-  ptr:
-    Addr: 0
-"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Addr: 0
+  "#));
 
     assert!(!tree.is_dirty());
-    tree.insert(0, 0, TxgT::from(42)).now_or_never().unwrap().unwrap();
+    tree.clone().insert(0, 0, TxgT::from(42)).now_or_never().unwrap().unwrap();
     assert!(tree.is_dirty());
 }
 
@@ -592,6 +601,7 @@ fn open() {
     let tod = TreeOnDisk(
         InnerOnDisk {
             height: 1,
+            _reserved: Default::default(),
             limits,
             root: root_drp,
             txgs: TxgT(0)..TxgT(42),
@@ -600,12 +610,12 @@ fn open() {
     let mock = DDML::default();
     let ddml = Arc::new(mock);
     let tree = Tree::<DRP, DDML, u32, u32>::open(ddml, false, tod);
-    assert_eq!(tree.i.height.load(Ordering::Relaxed), 1);
-    assert_eq!(tree.i.limits, limits);
-    let root_elem_guard = tree.i.root.try_read().unwrap();
-    assert_eq!(root_elem_guard.key, 0);
-    assert_eq!(root_elem_guard.txgs, TxgT::from(0)..TxgT::from(42));
-    let drp = root_elem_guard.ptr.as_addr();
+    assert_eq!(tree.limits, limits);
+    let root_guard = tree.root.try_read().unwrap();
+    assert_eq!(root_guard.height, 1);
+    assert_eq!(root_guard.elem.key, 0);
+    assert_eq!(root_guard.elem.txgs, TxgT::from(0)..TxgT::from(42));
+    let drp = root_guard.elem.ptr.as_addr();
     assert_eq!(*drp, root_drp);
 }
 
@@ -676,9 +686,8 @@ fn range_delete() {
     expect_pop(&mut mock, addrl7, leafnode7);
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -686,37 +695,39 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 8
-              end: 9
-            ptr:
-              Addr: 0
-          - key: 10
-            txgs:
-              start: 20
-              end: 32
-            ptr:
-              Addr: 1
-          - key: 20
-            txgs:
-              start: 8
-              end: 24
-            ptr:
-              Addr: 2
-"#);
-    tree.range_delete(5..25, TxgT::from(42)).now_or_never().unwrap().unwrap();
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 8
+                end: 9
+              ptr:
+                Addr: 0
+            - key: 10
+              txgs:
+                start: 20
+                end: 32
+              ptr:
+                Addr: 1
+            - key: 20
+              txgs:
+                start: 8
+                end: 24
+              ptr:
+                Addr: 2
+  "#));
+    tree.clone().range_delete(5..25, TxgT::from(42))
+        .now_or_never().unwrap().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -724,70 +735,72 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 43
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 0
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 0
-                      txgs:
-                        start: 0
-                        end: 1
-                      ptr:
-                        Addr: 10
-                    - key: 1
-                      txgs:
-                        start: 0
-                        end: 1
-                      ptr:
-                        Addr: 11
-          - key: 3
-            txgs:
-              start: 0
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 3
-                      txgs:
-                        start: 42
-                        end: 43
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              3: 3.0
-                              4: 4.0
-                    - key: 26
-                      txgs:
-                        start: 0
-                        end: 1
-                      ptr:
-                        Addr: 31
-                    - key: 29
-                      txgs:
-                        start: 0
-                        end: 1
-                      ptr:
-                        Addr: 32
-                    - key: 30
-                      txgs:
-                        start: 0
-                        end: 1
-                      ptr:
-                        Addr: 33"#);
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 43
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 0
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 0
+                        txgs:
+                          start: 0
+                          end: 1
+                        ptr:
+                          Addr: 10
+                      - key: 1
+                        txgs:
+                          start: 0
+                          end: 1
+                        ptr:
+                          Addr: 11
+            - key: 3
+              txgs:
+                start: 0
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 3
+                        txgs:
+                          start: 42
+                          end: 43
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                3: 3.0
+                                4: 4.0
+                      - key: 26
+                        txgs:
+                          start: 0
+                          end: 1
+                        ptr:
+                          Addr: 31
+                      - key: 29
+                        txgs:
+                          start: 0
+                          end: 1
+                        ptr:
+                          Addr: 32
+                      - key: 30
+                        txgs:
+                          start: 0
+                          end: 1
+                        ptr:
+                          Addr: 33"#);
 }
 
 /// Regression test for bug 2d045899e991a7cf977303abb565c09cf8c34b2f
@@ -810,9 +823,8 @@ fn range_delete_left_in_cut_full() {
     expect_delete(&mut mock, addrl1);
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -820,111 +832,113 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 3
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 0
-              end: 3
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 0
-                      txgs:
-                        start: 1
-                        end: 2
-                      ptr:
-                        Addr: 81
-                    - key: 22
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Addr: 94
-                    - key: 25
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              25: 21
-                              31: 27
-                              32: 16
-                    - key: 33
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              33: 17
-                              34: 18
-                              35: 19
-                    - key: 37
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              37: 17
-                              38: 18
-                              39: 19
-          - key: 46
-            txgs:
-              start: 1
-              end: 3
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 46
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              46: 20
-                              47: 21
-                              48: 27
-                              77: 33
-                              78: 34
-                    - key: 69
-                      txgs:
-                        start: 1
-                        end: 2
-                      ptr:
-                        Addr: 84
-                    - key: 72
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Addr: 172
-                    - key: 75
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Addr: 175
-"#);
-    tree.range_delete(4..32, TxgT::from(42)).now_or_never().unwrap().unwrap();
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 3
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 0
+                end: 3
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 0
+                        txgs:
+                          start: 1
+                          end: 2
+                        ptr:
+                          Addr: 81
+                      - key: 22
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Addr: 94
+                      - key: 25
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                25: 21
+                                31: 27
+                                32: 16
+                      - key: 33
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                33: 17
+                                34: 18
+                                35: 19
+                      - key: 37
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                37: 17
+                                38: 18
+                                39: 19
+            - key: 46
+              txgs:
+                start: 1
+                end: 3
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 46
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                46: 20
+                                47: 21
+                                48: 27
+                                77: 33
+                                78: 34
+                      - key: 69
+                        txgs:
+                          start: 1
+                          end: 2
+                        ptr:
+                          Addr: 84
+                      - key: 72
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Addr: 172
+                      - key: 75
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Addr: 175
+  "#));
+    tree.clone().range_delete(4..32, TxgT::from(42))
+        .now_or_never().unwrap().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -932,84 +946,86 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 43
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 2
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 25
-                      txgs:
-                        start: 42
-                        end: 43
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              32: 16.0
-                              33: 17.0
-                              34: 18.0
-                              35: 19.0
-                    - key: 37
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              37: 17.0
-                              38: 18.0
-                              39: 19.0
-                    - key: 46
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              46: 20.0
-                              47: 21.0
-                              48: 27.0
-                              77: 33.0
-                              78: 34.0
-          - key: 69
-            txgs:
-              start: 1
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 69
-                      txgs:
-                        start: 1
-                        end: 2
-                      ptr:
-                        Addr: 84
-                    - key: 72
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Addr: 172
-                    - key: 75
-                      txgs:
-                        start: 2
-                        end: 3
-                      ptr:
-                        Addr: 175"#);
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 43
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 2
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 25
+                        txgs:
+                          start: 42
+                          end: 43
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                32: 16.0
+                                33: 17.0
+                                34: 18.0
+                                35: 19.0
+                      - key: 37
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                37: 17.0
+                                38: 18.0
+                                39: 19.0
+                      - key: 46
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                46: 20.0
+                                47: 21.0
+                                48: 27.0
+                                77: 33.0
+                                78: 34.0
+            - key: 69
+              txgs:
+                start: 1
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 69
+                        txgs:
+                          start: 1
+                          end: 2
+                        ptr:
+                          Addr: 84
+                      - key: 72
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Addr: 172
+                      - key: 75
+                        txgs:
+                          start: 2
+                          end: 3
+                        ptr:
+                          Addr: 175"#);
 }
 
 #[test]
@@ -1043,9 +1059,8 @@ fn range_leaf() {
             fut.boxed()
         });
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1053,13 +1068,15 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Addr: 0
-"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Addr: 0
+  "#));
     let mut rt = basic_runtime();
     let r = rt.block_on(async {
         tree.range(1..3)
@@ -1091,7 +1108,6 @@ fn read_int() {
     let tree: Tree<u32, MockDML, u32, u32> =
         Tree::from_str(dml.clone(), false, r#"
 ---
-height: 2
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1099,16 +1115,18 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Addr: 102
-"#);
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Addr: 102
+  "#);
 
-    let root_guard = tree.i.root.try_read().unwrap();
-    let r = root_guard.rlock(&dml).map_ok(|node| {
+    let root_guard = tree.root.try_read().unwrap();
+    let r = root_guard.elem.rlock(&dml).map_ok(|node| {
         let int_data = (*node).as_int();
         assert_eq!(int_data.nchildren(), 2);
         // Validate IntElems as well as possible using their public API
@@ -1134,7 +1152,6 @@ fn read_leaf() {
     let dml = Arc::new(mock);
     let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1142,13 +1159,15 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Addr: 0
-"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Addr: 0
+  "#);
 
     let r = tree.get(1).now_or_never().unwrap();
     assert_eq!(Ok(Some(200)), r);
@@ -1170,9 +1189,8 @@ fn remove_and_merge_down() {
         .return_once(move |_, _| future::ok(Box::new(leafnode)).boxed());
 
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
-height: 2
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1180,26 +1198,27 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 41
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 41
-              end: 42
-            ptr:
-              Addr: 0
-"#);
-    let r2 = tree.remove(1, TxgT::from(42)).now_or_never().unwrap();
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 0
+  "#));
+    let r2 = tree.clone().remove(1, TxgT::from(42)).now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1207,17 +1226,19 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 41
-    end: 43
-  ptr:
-    Mem:
-      Leaf:
-        items:
-          3: 3.0
-          4: 4.0
-          5: 5.0"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 43
+    ptr:
+      Mem:
+        Leaf:
+          items:
+            3: 3.0
+            4: 4.0
+            5: 5.0"#);
 }
 
 // This test mimics what the IDML does with the alloc_t
@@ -1228,7 +1249,6 @@ fn serialize_alloc_t() {
     let typical_tree: Tree<DRP, DDML, PBA, RID> =
         Tree::from_str(idml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1236,22 +1256,24 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key:
-    cluster: 0
-    lba: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Addr:
-      pba:
-        cluster: 2
-        lba: 0x0102030405060708
-      compressed: true
-      lsize: 78
-      csize: 36
-      checksum: 0x0807060504030201
-"#);
+  height: 1
+  elem:
+    key:
+      cluster: 0
+      lba: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Addr:
+        pba:
+          cluster: 2
+          lba: 0x0102030405060708
+        compressed: true
+        lsize: 78
+        csize: 36
+        checksum: 0x0807060504030201
+  "#);
     let typical_tod = typical_tree.serialize().unwrap();
     assert_eq!(TreeOnDisk::<DRP>::TYPICAL_SIZE,
                bincode::serialized_size(&typical_tod).unwrap() as usize);
@@ -1265,7 +1287,6 @@ fn serialize_forest() {
     let typical_tree: Tree<RID, IDML, FSKey, FSValue<RID>> =
         Tree::from_str(idml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1273,14 +1294,16 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Addr:
-      1
-"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Addr:
+        1
+  "#);
 
     let typical_tod = typical_tree.serialize().unwrap();
     assert_eq!(TreeOnDisk::<RID>::TYPICAL_SIZE,
@@ -1296,6 +1319,7 @@ fn serialize_inner() {
     let expected = TreeOnDisk(
         InnerOnDisk {
             height: 1,
+            _reserved: Default::default(),
             limits: Limits::new(2, 5, 2, 5),
             root: root_drp,
             txgs: TxgT(0)..TxgT(42),
@@ -1305,7 +1329,6 @@ fn serialize_inner() {
     let ddml = Arc::new(mock);
     let tree: Tree<DRP, DDML, u32, u32> = Tree::from_str(ddml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1313,20 +1336,22 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Addr:
-      pba:
-        cluster: 2
-        lba: 0x0102030405060708
-      compressed: true
-      lsize: 78
-      csize: 36
-      checksum: 0x0807060504030201
-"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Addr:
+        pba:
+          cluster: 2
+          lba: 0x0102030405060708
+        compressed: true
+        lsize: 78
+        csize: 36
+        checksum: 0x0807060504030201
+  "#);
 
     assert_eq!(expected, tree.serialize().unwrap())
 }
@@ -1335,9 +1360,8 @@ root:
 #[test]
 fn write_clean() {
     let dml = Arc::new(MockDML::new());
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1345,13 +1369,15 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Addr: 0
-"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Addr: 0
+  "#));
 
     let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
@@ -1393,9 +1419,8 @@ fn write_height2() {
             *txg == TxgT::from(42)
         }).return_once(move |_, _, _| future::ok(addri).boxed());
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
-height: 2
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1403,38 +1428,39 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 30
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 41
-              end: 43
-            ptr:
-              Mem:
-                Leaf:
-                  items:
-                    0: 100
-                    1: 200
-          - key: 256
-            txgs:
-              start: 41
-              end: 42
-            ptr:
-              Addr: 256
-"#);
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 30
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 43
+              ptr:
+                Mem:
+                  Leaf:
+                    items:
+                      0: 100
+                      1: 200
+            - key: 256
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 256
+  "#));
 
-    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
 
     assert_eq!(format!("{}", tree),
 r#"---
-height: 2
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1442,12 +1468,14 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 41
-    end: 43
-  ptr:
-    Addr: 101"#);
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 43
+    ptr:
+      Addr: 101"#);
 }
 
 /// Sync a Tree with dirty nodes at all levels, with a height of 3.
@@ -1529,9 +1557,8 @@ fn write_height3() {
             *txg == TxgT::from(42)
         }).return_once(move |_, _, _| future::ok(11).boxed());
     let dml = Arc::new(mock);
-    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1539,87 +1566,88 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 5
-              end: 42
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 10
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Addr: 2
-                    - key: 15
-                      txgs:
-                        start: 9
-                        end: 42
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              15: 15.0
-                              16: 16.0
-                    - key: 20
-                      txgs:
-                        start: 5
-                        end: 7
-                      ptr:
-                        Addr: 3
-          - key: 30
-            txgs:
-              start: 20
-              end: 32
-            ptr:
-              Addr: 4
-          - key: 40
-            txgs:
-              start: 7
-              end: 42
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 40
-                      txgs:
-                        start: 9
-                        end: 10
-                      ptr:
-                        Addr: 5
-                    - key: 50
-                      txgs:
-                        start: 11
-                        end: 42
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              50: 50.0
-                              51: 51.0
-                    - key: 60
-                      txgs:
-                        start: 7
-                        end: 8
-                      ptr:
-                        Addr: 6
-"#);
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 5
+                end: 42
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 10
+                        txgs:
+                          start: 9
+                          end: 10
+                        ptr:
+                          Addr: 2
+                      - key: 15
+                        txgs:
+                          start: 9
+                          end: 42
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                15: 15.0
+                                16: 16.0
+                      - key: 20
+                        txgs:
+                          start: 5
+                          end: 7
+                        ptr:
+                          Addr: 3
+            - key: 30
+              txgs:
+                start: 20
+                end: 32
+              ptr:
+                Addr: 4
+            - key: 40
+              txgs:
+                start: 7
+                end: 42
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 40
+                        txgs:
+                          start: 9
+                          end: 10
+                        ptr:
+                          Addr: 5
+                      - key: 50
+                        txgs:
+                          start: 11
+                          end: 42
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                50: 50.0
+                                51: 51.0
+                      - key: 60
+                        txgs:
+                          start: 7
+                          end: 8
+                        ptr:
+                          Addr: 6
+  "#));
 
-    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", tree),
 r#"---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1627,12 +1655,14 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 5
-    end: 43
-  ptr:
-    Addr: 11"#);
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 5
+      end: 43
+    ptr:
+      Addr: 11"#);
 }
 
 #[test]
@@ -1651,9 +1681,9 @@ fn write_int() {
             *txg == TxgT::from(42)
         }).returning(move |_, _, _| future::ok(addr).boxed());
     let dml = Arc::new(mock);
-    let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let mut tree = Arc::new(
+        Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
-height: 2
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1661,36 +1691,38 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 5
-    end: 25
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 5
-              end: 15
-            ptr:
-              Addr: 0
-          - key: 256
-            txgs:
-              start: 18
-              end: 25
-            ptr:
-              Addr: 256
-"#);
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 5
+      end: 25
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 5
+                end: 15
+              ptr:
+                Addr: 0
+            - key: 256
+              txgs:
+                start: 18
+                end: 25
+              ptr:
+                Addr: 256
+  "#));
 
-    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
     assert!(r.is_ok());
-    let root = Arc::get_mut(&mut tree.i).unwrap()
-        .root.get_mut().unwrap();
-    assert_eq!(*root.ptr.as_addr(), addr);
-    assert_eq!(root.txgs.start, TxgT::from(5));
-    assert_eq!(root.txgs.end, TxgT::from(43));
+    let tref = Arc::get_mut(&mut tree).unwrap();
+    let root = tref.root.get_mut().unwrap();
+    assert_eq!(*root.elem.ptr.as_addr(), addr);
+    assert_eq!(root.elem.txgs.start, TxgT::from(5));
+    assert_eq!(root.elem.txgs.end, TxgT::from(43));
 }
 
 #[test]
@@ -1707,9 +1739,9 @@ fn write_leaf() {
             *txg == TxgT::from(42)
         }).returning(move |_, _, _| future::ok(addr).boxed());
     let dml = Arc::new(mock);
-    let mut tree: Tree<u32, MockDML, u32, u32> = Tree::from_str(dml, false, r#"
+    let mut tree = Arc::new(
+        Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
-height: 1
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1717,25 +1749,27 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 0
-    end: 1
-  ptr:
-    Mem:
-      Leaf:
-        items:
-          0: 100
-          1: 200
-"#);
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 1
+    ptr:
+      Mem:
+        Leaf:
+          items:
+            0: 100
+            1: 200
+  "#));
 
-    let r = tree.flush(TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
-    let root = Arc::get_mut(&mut tree.i).unwrap()
-        .root.get_mut().unwrap();
-    assert_eq!(*root.ptr.as_addr(), addr);
-    assert_eq!(root.txgs.start, TxgT::from(42));
-    assert_eq!(root.txgs.end, TxgT::from(43));
+    let tref = Arc::get_mut(&mut tree).unwrap();
+    let root = tref.root.get_mut().unwrap();
+    assert_eq!(*root.elem.ptr.as_addr(), addr);
+    assert_eq!(root.elem.txgs.start, TxgT::from(42));
+    assert_eq!(root.elem.txgs.end, TxgT::from(43));
 }
 
 /// While flushing a Tree, another task dirties a previously-flushed node.
@@ -1745,7 +1779,7 @@ root:
 #[test]
 fn write_race() {
     let mut seq = Sequence::new();
-    let otree: Arc<RwLock<Option<Tree<u32, MockDML, u32, f32>>>> =
+    let otree: Arc<RwLock<Option<Arc<Tree<u32, MockDML, u32, f32>>>>> =
         Arc::new(RwLock::new(None));
     let otree2 = otree.clone();
     let mut mock = MockDML::new();
@@ -1785,6 +1819,7 @@ fn write_race() {
                 .unwrap()
                 .as_ref()
                 .unwrap()
+                .clone()
                 .insert(2, 2.0, TxgT::from(42))
                 .now_or_never()
                 .unwrap()
@@ -1811,9 +1846,8 @@ fn write_race() {
             }
         }).return_once(move |_, _, _| future::ok(addr20).boxed());
     let dml = Arc::new(mock);
-    let tree = Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1821,97 +1855,98 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 30
-    end: 42
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 41
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 0
-                      txgs:
-                        start: 42
-                        end: 43
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              0: 0.0
-                              1: 1.0
-                    - key: 5
-                      txgs:
-                        start: 42
-                        end: 43
-                      ptr:
-                        Addr: 0
-          - key: 10
-            txgs:
-              start: 41
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 10
-                      txgs:
-                        start: 42
-                        end: 43
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              10: 10.0
-                              11: 11.0
-                    - key: 15
-                      txgs:
-                        start: 41
-                        end: 42
-                      ptr:
-                        Addr: 1
-          - key: 20
-            txgs:
-              start: 41
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 20
-                      txgs:
-                        start: 41
-                        end: 43
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              20: 20.0
-                              21: 21.0
-                    - key: 25
-                      txgs:
-                        start: 40
-                        end: 41
-                      ptr:
-                        Addr: 2
-"#);
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 30
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 0
+                        txgs:
+                          start: 42
+                          end: 43
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                0: 0.0
+                                1: 1.0
+                      - key: 5
+                        txgs:
+                          start: 42
+                          end: 43
+                        ptr:
+                          Addr: 0
+            - key: 10
+              txgs:
+                start: 41
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 10
+                        txgs:
+                          start: 42
+                          end: 43
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                10: 10.0
+                                11: 11.0
+                      - key: 15
+                        txgs:
+                          start: 41
+                          end: 42
+                        ptr:
+                          Addr: 1
+            - key: 20
+              txgs:
+                start: 41
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 20
+                        txgs:
+                          start: 41
+                          end: 43
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                20: 20.0
+                                21: 21.0
+                      - key: 25
+                        txgs:
+                          start: 40
+                          end: 41
+                        ptr:
+                          Addr: 2
+  "#));
     *otree.write().unwrap() = Some(tree);
     let guard = otree.read().unwrap();
     let tref = guard.as_ref().unwrap();
-    let r = Tree::flush_once(tref.i.clone(), TxgT::from(42))
+    let r = tref.clone().flush_once(TxgT::from(42))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(true));
 
     assert_eq!(format!("{}", tref),
 r#"---
-height: 3
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -1919,79 +1954,81 @@ limits:
   max_leaf_fanout: 5
   _max_size: 4194304
 root:
-  key: 0
-  txgs:
-    start: 30
-    end: 43
-  ptr:
-    Mem:
-      Int:
-        children:
-          - key: 0
-            txgs:
-              start: 41
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 0
-                      txgs:
-                        start: 42
-                        end: 43
-                      ptr:
-                        Mem:
-                          Leaf:
-                            items:
-                              0: 0.0
-                              1: 1.0
-                              2: 2.0
-                    - key: 5
-                      txgs:
-                        start: 42
-                        end: 43
-                      ptr:
-                        Addr: 0
-          - key: 10
-            txgs:
-              start: 41
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 10
-                      txgs:
-                        start: 42
-                        end: 43
-                      ptr:
-                        Addr: 70
-                    - key: 15
-                      txgs:
-                        start: 41
-                        end: 42
-                      ptr:
-                        Addr: 1
-          - key: 20
-            txgs:
-              start: 41
-              end: 43
-            ptr:
-              Mem:
-                Int:
-                  children:
-                    - key: 20
-                      txgs:
-                        start: 42
-                        end: 43
-                      ptr:
-                        Addr: 71
-                    - key: 25
-                      txgs:
-                        start: 40
-                        end: 41
-                      ptr:
-                        Addr: 2"#);
+  height: 3
+  elem:
+    key: 0
+    txgs:
+      start: 30
+      end: 43
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 0
+                        txgs:
+                          start: 42
+                          end: 43
+                        ptr:
+                          Mem:
+                            Leaf:
+                              items:
+                                0: 0.0
+                                1: 1.0
+                                2: 2.0
+                      - key: 5
+                        txgs:
+                          start: 42
+                          end: 43
+                        ptr:
+                          Addr: 0
+            - key: 10
+              txgs:
+                start: 41
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 10
+                        txgs:
+                          start: 42
+                          end: 43
+                        ptr:
+                          Addr: 70
+                      - key: 15
+                        txgs:
+                          start: 41
+                          end: 42
+                        ptr:
+                          Addr: 1
+            - key: 20
+              txgs:
+                start: 41
+                end: 43
+              ptr:
+                Mem:
+                  Int:
+                    children:
+                      - key: 20
+                        txgs:
+                          start: 42
+                          end: 43
+                        ptr:
+                          Addr: 71
+                      - key: 25
+                        txgs:
+                          start: 40
+                          end: 41
+                        ptr:
+                          Addr: 2"#);
 }
 
 // LCOV_EXCL_STOP

@@ -276,7 +276,6 @@ test_suite! {
         mocks.val.0.dump(&mut buf).unwrap();
         let fs_tree = String::from_utf8(buf).unwrap();
         let expected = r#"---
-height: 1
 limits:
   min_int_fanout: 91
   max_int_fanout: 364
@@ -284,12 +283,14 @@ limits:
   max_leaf_fanout: 2302
   _max_size: 4194304
 root:
-  key: 0-0-00000000000000
-  txgs:
-    start: 0
-    end: 1
-  ptr:
-    Addr: 0
+  height: 1
+  elem:
+    key: 0-0-00000000000000
+    txgs:
+      start: 0
+      end: 1
+    ptr:
+      Addr: 0
 ---
 0:
   Leaf:

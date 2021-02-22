@@ -23,20 +23,6 @@ use tracing::instrument;
 use tracing_futures::Instrument;
 use super::*;
 
-/// Container for the IDML's private trees
-struct Trees {
-    /// Allocation table.  The reverse of `ridt`.
-    ///
-    /// Maps disk addresses back to record IDs.  Used for operations like
-    /// garbage collection and defragmentation.
-    // TODO: consider a lazy delete strategy to reduce the amount of tree
-    // activity on pop/delete by deferring alloct removals to the cleaner.
-    alloct: DTree<PBA, RID>,
-
-    /// Record indirection table.  Maps record IDs to disk addresses.
-    ridt: DTree<RID, RidtEntry>,
-}
-
 /// Indirect Data Management Layer for a single `Pool`
 pub struct IDML {
     cache: Arc<Mutex<Cache>>,
@@ -49,9 +35,20 @@ pub struct IDML {
     /// Current transaction group
     transaction: RwLock<TxgT>,
 
+    /// Allocation table.  The reverse of `ridt`.
+    ///
+    /// Maps disk addresses back to record IDs.  Used for operations like
+    /// garbage collection and defragmentation.
+    // TODO: consider a lazy delete strategy to reduce the amount of tree
+    // activity on pop/delete by deferring alloct removals to the cleaner.
     // Even though it has a single owner, the tree must be Arc so IDML methods
     // can be 'static
-    trees: Arc<Trees>
+    alloct: Arc<DTree<PBA, RID>>,
+
+    /// Record indirection table.  Maps record IDs to disk addresses.
+    // Even though it has a single owner, the tree must be Arc so IDML methods
+    // can be 'static
+    ridt: Arc<DTree<RID, RidtEntry>>,
 }
 
 // Some of these methods have no unit tests.  Their test coverage is provided
@@ -72,16 +69,18 @@ impl<'a> IDML {
     ///
     /// `true` on success, `false` on failure
     fn check_ridt(&self) -> impl Future<Output=Result<bool, Error>> {
-        let trees2 = self.trees.clone();
-        let trees3 = self.trees.clone();
+        let alloct2 = self.alloct.clone();
+        let alloct3 = self.alloct.clone();
+        let ridt2 = self.ridt.clone();
+        let ridt3 = self.ridt.clone();
         // Grab the TXG lock exclusively, just so other users can't modify the
         // RIDT or AllocT while we're checking them.  NB: it might be
         // preferable to use a dedicated lock for this instead.
         self.transaction.write()
         .then(move |txg_guard| {
-            let alloct_fut = trees2.alloct.range(..)
+            let alloct_fut = alloct2.range(..)
             .try_fold(true, move |passes, (pba, rid)| {
-                trees2.ridt.get(rid)
+                ridt2.get(rid)
                 .map_ok(move |v| {
                     passes & match v {
                         Some(ridt_entry) => {
@@ -102,9 +101,9 @@ impl<'a> IDML {
                     }
                 })
             });
-            let ridt_fut = trees3.ridt.range(..)
+            let ridt_fut = ridt3.range(..)
             .try_fold(true, move |passes, (rid, entry)| {
-                trees3.alloct.get(entry.drp.pba())
+                alloct3.get(entry.drp.pba())
                 .map_ok(move |v| {
                     passes & match v {
                         Some(_) => true,
@@ -134,8 +133,8 @@ impl<'a> IDML {
     ///
     /// `true` on success, `false` on failure
     pub fn check(&self) -> impl Future<Output=Result<bool, Error>> {
-        future::try_join3(self.trees.alloct.check(),
-                          self.trees.ridt.check(),
+        future::try_join3(self.alloct.clone().check(),
+                          self.ridt.clone().check(),
                           self.check_ridt())
         .map_ok(|(x, y, z)| x && y && z)
     }
@@ -152,8 +151,10 @@ impl<'a> IDML {
         //    do in the second.
         let end = PBA::new(zone.pba.cluster, zone.pba.lba + zone.total_blocks);
         let cache2 = self.cache.clone();
-        let trees2 = self.trees.clone();
-        let trees3 = self.trees.clone();
+        let alloct2 = self.alloct.clone();
+        let alloct3 = self.alloct.clone();
+        let ridt2 = self.ridt.clone();
+        let ridt3 = self.ridt.clone();
         let ddml2 = self.ddml.clone();
         #[cfg(debug_assertions)]
         let ddml3 = self.ddml.clone();
@@ -165,7 +166,8 @@ impl<'a> IDML {
         // 1, so as not to interfere too much with foreground tasks
         self.list_indirect_records(&zone)
         .try_for_each(move |record| {
-            IDML::move_record(&cache2, &trees2, &ddml2, record, txg)
+            IDML::move_record(&cache2, ridt2.clone(), alloct2.clone(), &ddml2,
+                record, txg)
             .map_ok(move |drp| {
                 // We shouldn't have moved the record into the same zone
                 debug_assert!(drp.pba().cluster != pba.cluster ||
@@ -175,14 +177,14 @@ impl<'a> IDML {
         }).and_then(move |_| {
             let txgs2 = zone.txgs.clone();
             let pba_range = pba..end;
-            let czfut = trees3.ridt.clean_zone(pba_range.clone(), txgs2, txg);
+            let czfut = ridt3.clean_zone(pba_range.clone(), txgs2, txg);
             // Finish alloct.range_delete before alloct.clean_zone, because the
             // range delete is likely to eliminate most if not all nodes that
             // need to be moved by clean_zone
-            let atfut = trees3.alloct.range_delete(pba_range.clone(), txg)
-                .and_then(move |_| {
-                    trees3.alloct.clean_zone(pba_range, zone.txgs, txg)
-                });
+            let atfut = alloct3.clone().range_delete(pba_range.clone(), txg)
+            .and_then(move |_| {
+                alloct3.clean_zone(pba_range, zone.txgs, txg)
+            });
             future::try_join(czfut, atfut).map_ok(drop)
         }).map_ok(move |_| {
             #[cfg(debug_assertions)]
@@ -191,19 +193,21 @@ impl<'a> IDML {
     }
 
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
-        let alloct = DTree::<PBA, RID>::create(ddml.clone(), true, 16.5, 2.809);
+        let alloct = Arc::new(
+            DTree::<PBA, RID>::create(ddml.clone(), true, 16.5, 2.809)
+        );
         let next_rid = AtomicU64::new(0);
-        let ridt = DTree::<RID, RidtEntry>::create(ddml.clone(), true, 4.22,
-            3.73);
+        let ridt = Arc::new(
+            DTree::<RID, RidtEntry>::create(ddml.clone(), true, 4.22, 3.73)
+        );
         let transaction = RwLock::new(TxgT::from(0));
-        let trees = Arc::new(Trees{alloct, ridt});
-        IDML{cache, ddml, next_rid, transaction, trees}
+        IDML{cache, ddml, next_rid, transaction, alloct, ridt}
     }
 
     pub fn dump_trees(&self, f: &mut dyn io::Write) -> Result<(), Error>
     {
-        self.trees.ridt.dump(f)?;
-        self.trees.alloct.dump(f)
+        self.ridt.dump(f)?;
+        self.alloct.dump(f)
     }
 
     /// Flush the IDML's data to disk
@@ -213,8 +217,8 @@ impl<'a> IDML {
     pub fn flush(&self, idx: Option<u32>, txg: TxgT)
         -> impl Future<Output=Result<(), Error>> + Send
     {
-        let tfut = future::try_join(self.trees.alloct.flush(txg),
-                                    self.trees.ridt.flush(txg))
+        let tfut = future::try_join(self.alloct.clone().flush(txg),
+                                    self.ridt.clone().flush(txg))
             .map_ok(drop);
         if let Some(idx) = idx {
             let ddml2 = self.ddml.clone();
@@ -240,7 +244,7 @@ impl<'a> IDML {
         // Iterate through the AllocT to get indirect records from the target
         // zone.
         let end = PBA::new(zone.pba.cluster, zone.pba.lba + zone.total_blocks);
-        self.trees.alloct.range(zone.pba..end)
+        self.alloct.range(zone.pba..end)
             .map_ok(|(_pba, rid)| rid)
     }
 
@@ -256,17 +260,17 @@ impl<'a> IDML {
                  mut label_reader: LabelReader) -> (Self, LabelReader)
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let alloct = DTree::open(ddml.clone(), true, l.alloct);
-        let ridt = DTree::open(ddml.clone(), true, l.ridt);
+        let alloct = Arc::new(DTree::open(ddml.clone(), true, l.alloct));
+        let ridt = Arc::new(DTree::open(ddml.clone(), true, l.ridt));
         let transaction = RwLock::new(l.txg);
         let next_rid = AtomicU64::new(l.next_rid);
-        let trees = Arc::new(Trees{alloct, ridt});
-        let idml = IDML{cache, ddml, next_rid, transaction, trees};
+        let idml = IDML{cache, ddml, next_rid, transaction, alloct, ridt};
         (idml, label_reader)
     }
 
     /// Rewrite the given direct Record and update its metadata.
-    fn move_record(cache: &Arc<Mutex<Cache>>, trees: &Arc<Trees>,
+    fn move_record(cache: &Arc<Mutex<Cache>>, ridt: Arc<DTree<RID, RidtEntry>>,
+                   alloct: Arc<DTree<PBA, RID>>,
                    ddml: &Arc<DDML>, rid: RID, txg: TxgT)
         -> impl Future<Output=Result<DRP, Error>> + Send
     {
@@ -275,8 +279,8 @@ impl<'a> IDML {
         let cache2 = cache.clone();
         let ddml2 = ddml.clone();
         let ddml3 = ddml.clone();
-        let trees2 = trees.clone();
-        trees.ridt.get(rid)
+        let ridt2 = ridt.clone();
+        ridt.get(rid)
             .and_then(move |v| {
                 let mut entry = v.expect(
                     "Inconsistency in alloct.  Entry not found in RIDT");
@@ -332,8 +336,8 @@ impl<'a> IDML {
                 };
                 fut.and_then(move |drp: DRP| {
                     entry.drp = drp;
-                    let ridt_fut = trees2.ridt.insert(rid, entry, txg);
-                    let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
+                    let ridt_fut = ridt2.insert(rid, entry, txg);
+                    let alloct_fut = alloct.insert(drp.pba(), rid, txg);
                     future::try_join(ridt_fut, alloct_fut)
                     .map_ok(move |_| drp)
                 })
@@ -376,8 +380,8 @@ impl<'a> IDML {
         debug_assert!(self.transaction.try_read().is_err(),
             "IDML::write_label must be called with the txg lock held");
         let next_rid = self.next_rid.load(Ordering::Relaxed);
-        let alloct = self.trees.alloct.serialize().unwrap();
-        let ridt = self.trees.ridt.serialize().unwrap();
+        let alloct = self.alloct.serialize().unwrap();
+        let ridt = self.ridt.serialize().unwrap();
         let label = Label {
             alloct,
             next_rid,
@@ -407,17 +411,18 @@ impl DML for IDML {
     {
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
-        let trees2 = self.trees.clone();
+        let alloct2 = self.alloct.clone();
+        let ridt2 = self.ridt.clone();
         let rid = *ridp;
-        let fut = self.trees.ridt.get(rid)
+        let fut = self.ridt.get(rid)
             .and_then(unwrap_or_enoent)
             .and_then(move |mut entry| {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
                     cache2.lock().unwrap().remove(&Key::Rid(rid));
                     let ddml_fut = ddml2.delete_direct(&entry.drp, txg);
-                    let alloct_fut = trees2.alloct.remove(entry.drp.pba(), txg);
-                    let ridt_fut = trees2.ridt.remove(rid, txg);
+                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
+                    let ridt_fut = ridt2.remove(rid, txg);
                     Box::pin(
                         future::try_join3(ddml_fut, alloct_fut, ridt_fut)
                          .map_ok(|(_, old_rid, _old_ridt_entry)| {
@@ -425,7 +430,7 @@ impl DML for IDML {
                          })
                      )
                 } else {
-                    let ridt_fut = trees2.ridt.insert(rid, entry, txg)
+                    let ridt_fut = ridt2.insert(rid, entry, txg)
                         .map_ok(drop);
                     ridt_fut.boxed()
                 }
@@ -447,7 +452,7 @@ impl DML for IDML {
         }).unwrap_or_else(|| {
             let cache2 = self.cache.clone();
             let ddml2 = self.ddml.clone();
-            let fut = self.trees.ridt.get(rid)
+            let fut = self.ridt.get(rid)
                 .and_then(unwrap_or_enoent)
                 .and_then(move |entry| {
                     ddml2.get_direct(&entry.drp)
@@ -468,8 +473,9 @@ impl DML for IDML {
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
         let ddml3 = self.ddml.clone();
-        let trees2 = self.trees.clone();
-        let fut = self.trees.ridt.get(rid)
+        let alloct2 = self.alloct.clone();
+        let ridt2 = self.ridt.clone();
+        let fut = self.ridt.get(rid)
             .and_then(unwrap_or_enoent)
             .and_then(move |mut entry| {
                 entry.refcount -= 1;
@@ -485,8 +491,8 @@ impl DML for IDML {
                         }).unwrap_or_else(||{
                             ddml3.pop_direct::<T>(&entry.drp).boxed()
                         });
-                    let alloct_fut = trees2.alloct.remove(entry.drp.pba(), txg);
-                    let ridt_fut = trees2.ridt.remove(rid, txg);
+                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
+                    let ridt_fut = ridt2.remove(rid, txg);
                         future::try_join3(bfut, alloct_fut, ridt_fut)
                         .map_ok(|(cacheable, old_rid, _old_ridt_entry)| {
                             assert!(old_rid.is_some());
@@ -501,7 +507,7 @@ impl DML for IDML {
                     }).unwrap_or_else(|| {
                         Box::pin(ddml2.get_direct::<T>(&entry.drp))
                     });
-                    let ridt_fut = trees2.ridt.insert(rid, entry, txg);
+                    let ridt_fut = ridt2.insert(rid, entry, txg);
                     future::try_join(bfut, ridt_fut)
                     .map_ok(|(cacheable, _)| cacheable).boxed()
                 }
@@ -521,14 +527,15 @@ impl DML for IDML {
         // 3) Add entry to the RIDT
         // 4) Add reverse entry to the AllocT
         let cache2 = self.cache.clone();
-        let trees2 = self.trees.clone();
+        let alloct2 = self.alloct.clone();
+        let ridt2 = self.ridt.clone();
         let rid = RID(self.next_rid.fetch_add(1, Ordering::Relaxed));
 
         let fut = self.ddml.put_direct(&cacheable.make_ref(), compression, txg)
         .and_then(move|drp| {
-            let alloct_fut = trees2.alloct.insert(drp.pba(), rid, txg);
+            let alloct_fut = alloct2.insert(drp.pba(), rid, txg);
             let rid_entry = RidtEntry::new(drp);
-            let ridt_fut = trees2.ridt.insert(rid, rid_entry, txg);
+            let ridt_fut = ridt2.insert(rid, rid_entry, txg);
             future::try_join(ridt_fut, alloct_fut)
             .map_ok(move |(old_rid_entry, old_alloc_entry)| {
                 assert!(old_rid_entry.is_none(), "RID was not unique");
@@ -632,10 +639,10 @@ mod t {
     {
         let entry = RidtEntry{drp: *drp, refcount};
         let txg = TxgT::from(0);
-        idml.trees.ridt.insert(rid, entry, txg)
+        idml.ridt.clone().insert(rid, entry, txg)
             .now_or_never().unwrap()
             .unwrap();
-        idml.trees.alloct.insert(drp.pba(), rid, txg)
+        idml.alloct.clone().insert(drp.pba(), rid, txg)
             .now_or_never().unwrap()
             .unwrap();
     }
@@ -688,7 +695,7 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         // Inject a record into the AllocT but not the RIDT
         let txg = TxgT::from(0);
-        idml.trees.alloct.insert(drp.pba(), rid, txg)
+        idml.alloct.clone().insert(drp.pba(), rid, txg)
             .now_or_never().unwrap()
             .unwrap();
 
@@ -708,7 +715,7 @@ mod t {
         // Inject a record into the RIDT but not the AllocT
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        idml.trees.ridt.insert(rid, entry, txg)
+        idml.ridt.clone().insert(rid, entry, txg)
             .now_or_never().unwrap()
             .unwrap();
 
@@ -729,10 +736,10 @@ mod t {
         // Inject a mismatched pair of records
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        idml.trees.ridt.insert(rid, entry, txg)
+        idml.ridt.clone().insert(rid, entry, txg)
             .now_or_never().unwrap()
             .unwrap();
-        idml.trees.alloct.insert(drp2.pba(), rid, txg)
+        idml.alloct.clone().insert(drp2.pba(), rid, txg)
             .now_or_never().unwrap()
             .unwrap();
 
@@ -765,10 +772,10 @@ mod t {
             .now_or_never().unwrap()
             .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        assert!(idml.trees.ridt.get(rid)
+        assert!(idml.ridt.get(rid)
                 .now_or_never().unwrap()
                 .unwrap().is_none());
-        let alloc_rec = idml.trees.alloct.get(drp.pba())
+        let alloc_rec = idml.alloct.get(drp.pba())
             .now_or_never().unwrap()
             .unwrap();
         assert!(alloc_rec.is_none());
@@ -787,13 +794,13 @@ mod t {
         idml.delete(&rid, TxgT::from(42))
             .now_or_never().unwrap().unwrap();
         // Now verify the contents of the RIDT and AllocT
-        let entry2 = idml.trees.ridt.get(rid)
+        let entry2 = idml.ridt.get(rid)
             .now_or_never().unwrap()
             .unwrap()
             .unwrap();
         assert_eq!(entry2.drp, drp);
         assert_eq!(entry2.refcount, 1);
-        let alloc_rec = idml.trees.alloct.get(drp.pba())
+        let alloc_rec = idml.alloct.get(drp.pba())
             .now_or_never().unwrap()
             .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
@@ -957,18 +964,18 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp0, 1);
 
-        IDML::move_record(&idml.cache, &idml.trees, &idml.ddml, rid,
-            TxgT::from(0))
+        IDML::move_record(&idml.cache, idml.ridt.clone(), idml.alloct.clone(),
+            &idml.ddml, rid, TxgT::from(0))
         .now_or_never().unwrap().unwrap();
 
         // Now verify the RIDT and alloct entries
-        let entry = idml.trees.ridt.get(rid)
+        let entry = idml.ridt.get(rid)
             .now_or_never().unwrap()
             .unwrap()
             .unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp1_c);
-        let alloc_rec = idml.trees.alloct.get(drp1_c.pba())
+        let alloc_rec = idml.alloct.get(drp1_c.pba())
             .now_or_never().unwrap().unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
     }
@@ -1008,18 +1015,18 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp0, 1);
 
-        IDML::move_record(&idml.cache, &idml.trees, &idml.ddml, rid,
-            TxgT::from(0))
+        IDML::move_record(&idml.cache, idml.ridt.clone(), idml.alloct.clone(),
+            &idml.ddml, rid, TxgT::from(0))
             .now_or_never().unwrap().unwrap();
 
         // Now verify the RIDT and alloct entries
-        let entry = idml.trees.ridt.get(rid)
+        let entry = idml.ridt.get(rid)
             .now_or_never().unwrap()
             .unwrap()
             .unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp1_c);
-        let alloc_rec = idml.trees.alloct.get(drp1_c.pba())
+        let alloc_rec = idml.alloct.get(drp1_c.pba())
             .now_or_never().unwrap()
             .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
@@ -1058,17 +1065,17 @@ mod t {
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp0, 1);
 
-        IDML::move_record(&idml.cache, &idml.trees, &idml.ddml, rid,
-            TxgT::from(0))
+        IDML::move_record(&idml.cache, idml.ridt.clone(), idml.alloct.clone(),
+            &idml.ddml, rid, TxgT::from(0))
             .now_or_never().unwrap().unwrap();
 
         // Now verify the RIDT and alloct entries
-        let entry = idml.trees.ridt.get(rid)
+        let entry = idml.ridt.get(rid)
             .now_or_never().unwrap()
             .unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp1);
-        let alloc_rec = idml.trees.alloct.get(drp1.pba())
+        let alloc_rec = idml.alloct.get(drp1.pba())
             .now_or_never().unwrap()
             .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
@@ -1098,10 +1105,10 @@ mod t {
             .now_or_never().unwrap()
             .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        assert!(idml.trees.ridt.get(rid)
+        assert!(idml.ridt.get(rid)
                 .now_or_never().unwrap()
                 .unwrap().is_none());
-        let alloc_rec = idml.trees.alloct.get(drp.pba())
+        let alloc_rec = idml.alloct.get(drp.pba())
             .now_or_never().unwrap()
             .unwrap();
         assert!(alloc_rec.is_none());
@@ -1128,12 +1135,12 @@ mod t {
             .now_or_never().unwrap()
             .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        let entry2 = idml.trees.ridt.get(rid)
+        let entry2 = idml.ridt.get(rid)
             .now_or_never().unwrap()
             .unwrap().unwrap();
         assert_eq!(entry2.drp, drp);
         assert_eq!(entry2.refcount, 1);
-        let alloc_rec = idml.trees.alloct.get(drp.pba())
+        let alloc_rec = idml.alloct.get(drp.pba())
             .now_or_never().unwrap()
             .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
@@ -1166,10 +1173,10 @@ mod t {
             .now_or_never().unwrap()
             .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        assert!(idml.trees.ridt.get(rid)
+        assert!(idml.ridt.get(rid)
                 .now_or_never().unwrap()
                 .unwrap().is_none());
-        let alloc_rec = idml.trees.alloct.get(drp.pba())
+        let alloc_rec = idml.alloct.get(drp.pba())
             .now_or_never().unwrap()
             .unwrap();
         assert!(alloc_rec.is_none());
@@ -1200,12 +1207,12 @@ mod t {
             .now_or_never().unwrap()
             .unwrap();
         // Now verify the contents of the RIDT and AllocT
-        let entry2 = idml.trees.ridt.get(rid)
+        let entry2 = idml.ridt.get(rid)
             .now_or_never().unwrap()
             .unwrap().unwrap();
         assert_eq!(entry2.drp, drp);
         assert_eq!(entry2.refcount, 1);
-        let alloc_rec = idml.trees.alloct.get(drp.pba())
+        let alloc_rec = idml.alloct.get(drp.pba())
             .now_or_never().unwrap()
             .unwrap();
         assert_eq!(alloc_rec.unwrap(), rid);
@@ -1236,13 +1243,13 @@ mod t {
         assert_eq!(rid, actual_rid);
 
         // Now verify the contents of the RIDT and AllocT
-        let ridt_fut = idml.trees.ridt.get(actual_rid);
+        let ridt_fut = idml.ridt.get(actual_rid);
         let entry = ridt_fut
             .now_or_never().unwrap()
             .unwrap().unwrap();
         assert_eq!(entry.refcount, 1);
         assert_eq!(entry.drp, drp);
-        let alloc_rec = idml.trees.alloct.get(drp.pba())
+        let alloc_rec = idml.alloct.get(drp.pba())
             .now_or_never().unwrap()
             .unwrap();
         assert_eq!(alloc_rec.unwrap(), actual_rid);
