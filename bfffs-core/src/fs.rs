@@ -564,7 +564,7 @@ impl Fs {
         })
     }
 
-    // Remove the inode if this was its last reference
+    /// Remove the inode if this was its last reference
     fn do_inactive(ds: Arc<ReadWriteFilesystem>, ino: u64)
         -> impl Future<Output=Result<(), Error>>
     {
@@ -576,7 +576,7 @@ impl Fs {
                 Some(di2) => {
                     assert_eq!(ino, di2.as_dying_inode().unwrap().ino());
                     Fs::do_delete_inode(ds, ino).boxed()
-                }
+                },
             }
         })
     }
@@ -846,7 +846,8 @@ impl Fs {
                     dataset.insert(key, FSValue::Inode(iv)).map_ok(drop)
                 ).map_ok(drop).boxed()
             } else {
-                Fs::do_inactive(dataset, ino).boxed()
+                // Delete the inode straight away
+                Fs::do_delete_inode(dataset, ino).boxed()
             }
         })
     }
@@ -969,7 +970,10 @@ impl Fs {
     }
 
     pub fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32> {
-        let ino = fd.ino;
+        self.getattr_priv(fd.ino)
+    }
+
+    fn getattr_priv(&self, ino: u64) -> Result<GetAttr, i32> {
         self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 let key = FSKey::new(ino, ObjKey::Inode);
@@ -1101,6 +1105,15 @@ impl Fs {
                 })
             }).map_err(Error::into)
         )
+    }
+
+    /// Get an inode's attributes
+    ///
+    /// For testing purposes only!  Production code must use [`Fs::getattr`]
+    /// instead.
+    #[cfg(debug_assertions)]
+    pub fn igetattr(&self, ino: u64) -> Result<GetAttr, i32> {
+        self.getattr_priv(ino)
     }
 
     /// Create a hardlink from `fd` to `parent/name`.
