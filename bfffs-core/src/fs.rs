@@ -969,7 +969,10 @@ impl Fs {
     }
 
     pub fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32> {
-        let ino = fd.ino;
+        self.getattr_priv(fd.ino)
+    }
+
+    fn getattr_priv(&self, ino: u64) -> Result<GetAttr, i32> {
         self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
                 let key = FSKey::new(ino, ObjKey::Inode);
@@ -1101,6 +1104,15 @@ impl Fs {
                 })
             }).map_err(Error::into)
         )
+    }
+
+    /// Get an inode's attributes
+    ///
+    /// For testing purposes only!  Production code must use [`Fs::getattr`]
+    /// instead.
+    #[cfg(debug_assertions)]
+    pub fn igetattr(&self, ino: u64) -> Result<GetAttr, i32> {
+        self.getattr_priv(ino)
     }
 
     /// Create a hardlink from `fd` to `parent/name`.
