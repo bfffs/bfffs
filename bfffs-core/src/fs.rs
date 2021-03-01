@@ -564,7 +564,7 @@ impl Fs {
         })
     }
 
-    // Remove the inode if this was its last reference
+    /// Remove the inode if this was its last reference
     fn do_inactive(ds: Arc<ReadWriteFilesystem>, ino: u64)
         -> impl Future<Output=Result<(), Error>>
     {
@@ -576,7 +576,7 @@ impl Fs {
                 Some(di2) => {
                     assert_eq!(ino, di2.as_dying_inode().unwrap().ino());
                     Fs::do_delete_inode(ds, ino).boxed()
-                }
+                },
             }
         })
     }
@@ -846,7 +846,8 @@ impl Fs {
                     dataset.insert(key, FSValue::Inode(iv)).map_ok(drop)
                 ).map_ok(drop).boxed()
             } else {
-                Fs::do_inactive(dataset, ino).boxed()
+                // Delete the inode straight away
+                Fs::do_delete_inode(dataset, ino).boxed()
             }
         })
     }
