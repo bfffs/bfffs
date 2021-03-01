@@ -569,7 +569,7 @@ impl Fs {
         -> impl Future<Output=Result<(), Error>>
     {
         let dikey = FSKey::new(0, ObjKey::dying_inode(ino));
-        ds.get(dikey)
+        ds.remove(dikey)
         .and_then(move |di| {
             match di {
                 None => future::ok(()).boxed(),
@@ -3028,7 +3028,7 @@ fn unlink() {
             value.as_dying_inode().unwrap().ino() == ino
         }).returning(|_, _| future::ok(None).boxed());
 
-    ds1.expect_get()
+    ds1.expect_remove()
         .once()
         .withf(move |key| key.is_dying_inode())
         .returning(move |_| {
@@ -3152,7 +3152,7 @@ fn unlink_with_blob_extattr() {
             value.as_dying_inode().unwrap().ino() == ino
         }).returning(|_, _| future::ok(None).boxed());
 
-    ds1.expect_get()
+    ds1.expect_remove()
         .once()
         .withf(move |key| key.is_dying_inode())
         .returning(move |_| {
@@ -3323,7 +3323,7 @@ fn unlink_with_extattr_hash_collision() {
             value.as_dying_inode().unwrap().ino() == ino
         }).returning(|_, _| future::ok(None).boxed());
 
-    ds1.expect_get()
+    ds1.expect_remove()
         .once()
         .withf(move |key| key.is_dying_inode())
         .returning(move |_| {
