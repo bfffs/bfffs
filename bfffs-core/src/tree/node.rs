@@ -169,6 +169,15 @@ impl<A: Addr, K: Key, V: Value> TreePtr<A, K, V> {
     pub fn is_mem(&self) -> bool {
         matches!(self, TreePtr::Mem(_))
     }
+
+    /// Remove and return the inner `TreePtr::Mem` member.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` is not a `TreePtr::Mem`.
+    pub fn take(&mut self) -> Box<Node<A, K, V>> {
+        mem::replace(self, TreePtr::None).into_node()
+    }
 }
 
 impl<A: Addr, K: Key, V: Value> PartialEq  for TreePtr<A, K, V> {

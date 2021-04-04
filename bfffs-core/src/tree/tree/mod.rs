@@ -861,13 +861,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
                             .map(|kopt| kopt.map(|k| (true, (true, k))))
                         } else if rg.height == 1 {
                             drop(guard);
-                            let old_ptr = mem::replace(&mut rg.elem.ptr,
-                                                       TreePtr::None);
+                            let old_node = rg.elem.ptr.take();
                             let addr = Tree::write_leaf(dml2, lcomp,
-                                *old_ptr.into_node(), txg)
+                                *old_node, txg)
                                 .await?;
-                            let _ = mem::replace(&mut rg.elem.ptr,
-                                                 TreePtr::Addr(addr));
+                            rg.elem.ptr = TreePtr::Addr(addr);
                             rg.elem.txgs = txg .. txg + 1;
                             Ok(Some((false, (false, lowest))))
                         } else {
@@ -877,13 +875,10 @@ impl<A, D, K, V> Tree<A, D, K, V>
                                 .min()
                                 .unwrap();
                             drop(guard);
-                            let rptr = mem::replace(&mut rg.elem.ptr,
-                                                    TreePtr::None);
-                            let rnode = *rptr.into_node();
-                            let a = dml2.put(Arc::new(rnode), icomp, txg)
+                            let rnode = rg.elem.ptr.take();
+                            let a = dml2.put(Arc::new(*rnode), icomp, txg)
                                 .await?;
-                            let _ = mem::replace(&mut rg.elem.ptr,
-                                                 TreePtr::Addr(a));
+                            rg.elem.ptr = TreePtr::Addr(a);
                             let txgs = start_txg .. txg + 1;
                             rg.elem.txgs = txgs;
                             Ok(Some((false, (false, lowest))))
@@ -916,12 +911,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     // it into the Cache.
                     let guard = elem.ptr.as_mem().xlock().await;
                     drop(guard);
-                    let old_ptr = mem::replace(&mut elem.ptr, TreePtr::None);
+                    let old_node = elem.ptr.take();
                     let addr = Tree::write_leaf(dml3, leaf_compressor,
-                        *old_ptr.into_node(), txg)
+                        *old_node, txg)
                         .await?;
                     let txgs = txg .. txg + 1;
-                    let _ = mem::replace(&mut elem.ptr, TreePtr::Addr(addr));
+                    elem.ptr = TreePtr::Addr(addr);
                     elem.txgs = txgs;
                     let r: Result<(), Error> = Ok(());
                     r
@@ -973,17 +968,17 @@ impl<A, D, K, V> Tree<A, D, K, V>
         async move {
             let int = guard.as_int_mut();
             let next_key = int.children.get(idx + 1).map(|c| c.key);
-            let elem = &mut int.children[idx].ptr;
-            let child = elem.as_mem().xlock().await;
+            let cptr = &mut int.children[idx].ptr;
+            let child = cptr.as_mem().xlock().await;
             if !child.has_dirty_children() {
                 let start_txg = child.as_int().children.iter()
                     .map(|e| e.txgs.start)
                     .min()
                     .unwrap();
                 drop(child);
-                let node = *mem::replace(elem, TreePtr::None).into_node();
+                let node = *cptr.take();
                 let a = dml.put(Arc::new(node), int_compressor, txg).await?;
-                let _ = mem::replace(elem, TreePtr::Addr(a));
+                *cptr = TreePtr::Addr(a);
                 let txgs = start_txg .. txg + 1;
                 int.children[idx].txgs = txgs;
                 Ok(next_key)
