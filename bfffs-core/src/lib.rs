@@ -139,7 +139,7 @@ pub enum Error {
     ENOPROTOOPT     = libc::ENOPROTOOPT as isize,
     EPROTONOSUPPORT = libc::EPROTONOSUPPORT as isize,
     ESOCKTNOSUPPORT = libc::ESOCKTNOSUPPORT as isize,
-    ENOTSUP         = libc::ENOTSUP as isize,
+    EOPNOTSUPP      = libc::EOPNOTSUPP as isize,
     EPFNOSUPPORT    = libc::EPFNOSUPPORT as isize,
     EAFNOSUPPORT    = libc::EAFNOSUPPORT as isize,
     EADDRINUSE      = libc::EADDRINUSE as isize,
