@@ -472,47 +472,44 @@ impl DML for IDML {
         let rid = *ridp;
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
-        let ddml3 = self.ddml.clone();
         let alloct2 = self.alloct.clone();
         let ridt2 = self.ridt.clone();
-        let fut = self.ridt.get(rid)
-            .and_then(unwrap_or_enoent)
-            .and_then(move |mut entry| {
-                entry.refcount -= 1;
-                if entry.refcount == 0 {
-                    let cacheval = cache2.lock().unwrap()
-                        .remove(&Key::Rid(rid));
-                    let bfut = cacheval
-                        .map(move |cacheable| {
-                            let t = cacheable.downcast::<T>().unwrap();
-                            ddml2.delete(&entry.drp, txg)
-                            .map_ok(move |_| t)
-                            .boxed()
-                        }).unwrap_or_else(||{
-                            ddml3.pop_direct::<T>(&entry.drp).boxed()
-                        });
-                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
-                    let ridt_fut = ridt2.remove(rid, txg);
-                        future::try_join3(bfut, alloct_fut, ridt_fut)
-                        .map_ok(|(cacheable, old_rid, _old_ridt_entry)| {
-                            assert!(old_rid.is_some());
-                            cacheable
-                        }).boxed()
+        let efut = self.ridt.get(rid);
+        async move {
+            let mut entry = efut.await?
+                .ok_or(Error::ENOENT)?;
+            entry.refcount -= 1;
+            if entry.refcount == 0 {
+                let cacheval = cache2.lock().unwrap()
+                    .remove(&Key::Rid(rid));
+                let bfut = if let Some(cacheable) = cacheval {
+                    let t = cacheable.downcast::<T>().unwrap();
+                    ddml2.delete(&entry.drp, txg)
+                    .map_ok(move |_| t)
+                    .boxed()
                 } else {
-                    let cacheval = cache2.lock().unwrap()
-                        .get::<R>(&Key::Rid(rid));
-                    let bfut = cacheval.map(|cacheref: Box<R>|{
-                        let t = cacheref.into_owned().downcast::<T>().unwrap();
-                        future::ok(t).boxed()
-                    }).unwrap_or_else(|| {
-                        Box::pin(ddml2.get_direct::<T>(&entry.drp))
-                    });
-                    let ridt_fut = ridt2.insert(rid, entry, txg);
-                    future::try_join(bfut, ridt_fut)
-                    .map_ok(|(cacheable, _)| cacheable).boxed()
-                }
-            });
-        Box::pin(fut)
+                    ddml2.pop_direct::<T>(&entry.drp).boxed()
+                };
+                let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
+                let ridt_fut = ridt2.remove(rid, txg);
+                let (cacheable, old_rid, _old_ridt_entry) =
+                    future::try_join3(bfut, alloct_fut, ridt_fut).await?;
+                assert!(old_rid.is_some());
+                Ok(cacheable)
+            } else {
+                let cacheval = cache2.lock().unwrap()
+                    .get::<R>(&Key::Rid(rid));
+                let bfut = cacheval.map(|cacheref: Box<R>|{
+                    let t = cacheref.into_owned().downcast::<T>().unwrap();
+                    future::ok(t).boxed()
+                }).unwrap_or_else(|| {
+                    ddml2.get_direct::<T>(&entry.drp).boxed()
+                });
+                let ridt_fut = ridt2.insert(rid, entry, txg);
+                let (cacheable, _) = future::try_join(bfut, ridt_fut).await?;
+                Ok(cacheable)
+            }
+        }.boxed()
     }
 
     #[instrument(skip(self))]
