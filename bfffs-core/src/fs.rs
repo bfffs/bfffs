@@ -2030,53 +2030,51 @@ impl Fs {
         let uio = data.into();
 
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |ds| {
+            self.db.fswrite(self.tree, move |ds| async move {
                 let dataset = Arc::new(ds);
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
-                dataset.get(inode_key)
-                .and_then(move |r| {
-                    let mut value = r.unwrap();
-                    let inode = value.as_inode().unwrap();
-                    let filesize = inode.size;
-                    let rs = inode.record_size() as u64;
+                let mut value = dataset.get(inode_key).await?.unwrap();
+                let inode = value.as_inode().unwrap();
+                let filesize = inode.size;
+                let rs = inode.record_size() as u64;
 
-                    // Moving uio into the asynchronous domain is safe because
-                    // the async domain blocks on rx.wait().
-                    let datalen = uio.len();
-                    let offset0 = (offset % rs) as usize;
-                    let sglist = unsafe {
-                        uio.into_chunks(offset0, inode.record_size(),
-                            |chunk| Arc::new(DivBufShared::from(chunk)))
-                    };
+                // Moving uio into the asynchronous domain is safe because
+                // the async domain blocks on rx.wait().
+                let datalen = uio.len();
+                let offset0 = (offset % rs) as usize;
+                let sglist = unsafe {
+                    uio.into_chunks(offset0, inode.record_size(),
+                        |chunk| Arc::new(DivBufShared::from(chunk)))
+                };
 
-                    let data_futs = sglist.into_iter()
-                        .enumerate()
-                        .map(|(i, dbs)| {
-                        let ds3 = dataset.clone();
-                        Fs::write_record(ino, rs, offset, i, dbs, ds3)
-                    }).collect::<FuturesUnordered<_>>();
-                    let new_size = cmp::max(filesize, offset + datalen as u64);
-                    {
-                        let inode = value.as_mut_inode().unwrap();
-                        inode.size = new_size;
-                        let now = time::get_time();
-                        inode.mtime = now;
-                        inode.ctime = now;
-                    }
-                    let ino_fut = dataset.insert(inode_key, value).boxed();
-                    data_futs.push(ino_fut);
-                    data_futs.try_collect::<Vec<_>>()
-                    .map_ok(move |_| datalen as u32)
-                })
+                let data_futs = sglist.into_iter()
+                    .enumerate()
+                    .map(|(i, dbs)| {
+                    let ds3 = dataset.clone();
+                    Fs::write_record(ino, rs, offset, i, dbs, ds3).boxed()
+                }).collect::<FuturesUnordered<_>>();
+                let new_size = cmp::max(filesize, offset + datalen as u64);
+                {
+                    let inode = value.as_mut_inode().unwrap();
+                    inode.size = new_size;
+                    let now = time::get_time();
+                    inode.mtime = now;
+                    inode.ctime = now;
+                }
+                let ino_fut = dataset.insert(inode_key, value).boxed();
+                data_futs.push(ino_fut);
+                data_futs.try_collect::<Vec<_>>().await?;
+                Ok(datalen as u32)
             }).map_err(Error::into)
         )
     }
 
     // Subroutine of write
     #[inline]
-    fn write_record(ino: u64, rs: u64, offset: u64, i: usize,
-                    data: Arc<DivBufShared>, dataset: Arc<ReadWriteFilesystem>)
-        -> Pin<Box<dyn Future<Output=Result<Option<FSValue<RID>>, Error>> + Send>>
+    async fn write_record(ino: u64, rs: u64, offset: u64, i: usize,
+                    data: Arc<DivBufShared>,
+                    dataset: Arc<ReadWriteFilesystem>)
+        -> Result<Option<FSValue<RID>>, Error>
     {
         let baseoffset = offset - (offset % rs);
         let offs = baseoffset + i as u64 * rs;
@@ -2089,53 +2087,46 @@ impl Fs {
         let writelen = data.len();
         if (writelen as u64) < rs {
             // We must read-modify-write
-            let dataset4 = dataset.clone();
-            let fut = dataset.remove(k)
-            .and_then(move |r| {
-                match r {
-                    None => {
-                        // Either a hole, or beyond EOF
-                        let hsize = writelen + offset_into_rec;
-                        let r = Arc::new(DivBufShared::uninitialized(hsize));
-                        if offset_into_rec > 0 {
-                            let zrange = 0..offset_into_rec;
-                            for x in &mut r.try_mut().unwrap()[zrange] {
-                                *x = 0;
-                            }
+            let r = dataset.remove(k).await?;
+            let dbs: Arc<DivBufShared> = match r {
+                None => {
+                    // Either a hole, or beyond EOF
+                    let hsize = writelen + offset_into_rec;
+                    let r = Arc::new(DivBufShared::uninitialized(hsize));
+                    if offset_into_rec > 0 {
+                        let zrange = 0..offset_into_rec;
+                        for x in &mut r.try_mut().unwrap()[zrange] {
+                            *x = 0;
                         }
-                        future::ok(r).boxed()
-                    },
-                    Some(FSValue::InlineExtent(ile)) => {
-                        future::ok(ile.buf).boxed()
-                    },
-                    Some(FSValue::BlobExtent(be)) => {
-                        let fut = dataset4.remove_blob(be.rid)
-                            .map_ok(Arc::from);
-                        fut.boxed()
-                    },
-                    x => panic!("Unexpected value {:?} for key {:?}",
-                                x, k)
-                }.and_then(move |dbs: Arc<DivBufShared>| {
-                    let mut base = dbs.try_mut().unwrap();
-                    let overlay = data.try_const().unwrap();
-                    let l = overlay.len();
-                    let r = offset_into_rec..(offset_into_rec + l);
+                    }
+                    r
+                },
+                Some(FSValue::InlineExtent(ile)) => {
+                    ile.buf
+                },
+                Some(FSValue::BlobExtent(be)) => {
+                    Arc::from(dataset.remove_blob(be.rid).await?)
+                },
+                x => panic!("Unexpected value {:?} for key {:?}",
+                            x, k)
+            };
+            let mut base = dbs.try_mut().unwrap();
+            let overlay = data.try_const().unwrap();
+            let l = overlay.len();
+            let r = offset_into_rec..(offset_into_rec + l);
 
-                    // Extend the buffer, if necessary
-                    let newsize = cmp::max(offset_into_rec + l, base.len());
-                    base.try_resize(newsize, 0).unwrap();
+            // Extend the buffer, if necessary
+            let newsize = cmp::max(offset_into_rec + l, base.len());
+            base.try_resize(newsize, 0).unwrap();
 
-                    // Overwrite with new data
-                    base[r].copy_from_slice(&overlay[..]);
-                    let extent = InlineExtent::new(dbs);
-                    let new_v = FSValue::InlineExtent(extent);
-                    dataset.insert(k, new_v)
-                })
-            });
-            fut.boxed()
+            // Overwrite with new data
+            base[r].copy_from_slice(&overlay[..]);
+            let extent = InlineExtent::new(dbs);
+            let new_v = FSValue::InlineExtent(extent);
+            dataset.insert(k, new_v).await
         } else {
             let v = FSValue::InlineExtent(InlineExtent::new(data));
-            dataset.insert(k, v).boxed()
+            dataset.insert(k, v).await
         }
     }
 }
