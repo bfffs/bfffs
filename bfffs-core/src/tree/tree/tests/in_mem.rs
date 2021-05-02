@@ -1,7 +1,10 @@
 //! Tests regarding in-memory manipulation of Trees
 // LCOV_EXCL_START
 
-use crate::dml::MockDML;
+use crate::{
+    dml::MockDML,
+    writeback::Credit
+};
 use futures::{
     future,
     TryStreamExt,
@@ -12,13 +15,13 @@ use super::*;
 
 #[test]
 fn insert() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
         Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
-    let r = tree.clone().insert(0, 0.0, TxgT::from(42))
+    let r = tree.clone().insert(0, 0.0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
@@ -39,6 +42,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 16
           items:
             0: 0.0"#);
 }
@@ -47,7 +51,7 @@ root:
 // int node's own key, the int node's own key must be lowered to match.
 #[test]
 fn insert_lower_than_parents_key() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -75,6 +79,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       67: 67.0
                       68: 68.0
@@ -86,6 +91,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       70: 70.0
                       71: 71.0
@@ -93,7 +99,7 @@ root:
                       73: 73.0
                       74: 74.0
 "#));
-    assert!(tree.clone().insert(36, 36.0, TxgT::from(42))
+    assert!(tree.clone().insert(36, 36.0, TxgT::from(42), Credit::forge(8))
             .now_or_never().unwrap()
             .is_ok());
     assert_eq!(format!("{}", tree),
@@ -122,6 +128,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       36: 36.0
                       67: 67.0
@@ -134,6 +141,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       70: 70.0
                       71: 71.0
@@ -144,7 +152,7 @@ root:
 
 #[test]
 fn insert_dup() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -164,10 +172,11 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 16
           items:
             0: 0.0
 "#));
-    let r = tree.clone().insert(0, 100.0, TxgT::from(42))
+    let r = tree.clone().insert(0, 100.0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
@@ -188,6 +197,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 16
           items:
             0: 100.0"#);
 }
@@ -196,7 +206,7 @@ root:
 /// full
 #[test]
 fn insert_dup_no_split() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -216,6 +226,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 80
           items:
             0: 0.0
             1: 1.0
@@ -223,7 +234,7 @@ root:
             3: 3.0
             4: 4.0
   "#));
-    let r = tree.clone().insert(0, 100.0, TxgT::from(42))
+    let r = tree.clone().insert(0, 100.0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
@@ -244,6 +255,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 80
           items:
             0: 100.0
             1: 1.0
@@ -252,10 +264,81 @@ root:
             4: 4.0"#);
 }
 
+/// The caller supplies way more credit that is needed for this operation.
+#[test]
+fn insert_excess_credit() {
+    let mock = mock_dml();
+    let dml = Arc::new(mock);
+    let limits = Limits::new(2, 5, 2, 5);
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
+    );
+    let r = tree.clone().insert(0, 0.0, TxgT::from(42), Credit::forge(10000))
+        .now_or_never().unwrap();
+    assert_eq!(r, Ok(None));
+    assert_eq!(format!("{}", tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 42
+      end: 43
+    ptr:
+      Mem:
+        Leaf:
+          credit: 16
+          items:
+            0: 0.0"#);
+}
+
+/// The caller does not supply enough credit.
+#[should_panic(expected = "insufficient credit was provided")]
+#[test]
+fn insert_insufficient_credit() {
+    let mock = mock_dml();
+    let dml = Arc::new(mock);
+    let limits = Limits::new(2, 5, 2, 5);
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
+    );
+    let r = tree.clone().insert(0, 0.0, TxgT::from(42), Credit::forge(7))
+        .now_or_never().unwrap();
+    assert_eq!(r, Ok(None));
+    assert_eq!(format!("{}", tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 42
+      end: 43
+    ptr:
+      Mem:
+        Leaf:
+          credit: 16
+          items:
+            0: 0.0"#);
+}
+
 /// Insert a key that splits a non-root interior node
 #[test]
 fn insert_split_int() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -291,6 +374,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -302,6 +386,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -313,6 +398,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 6: 6.0
                                 7: 7.0
@@ -332,6 +418,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -343,6 +430,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -354,6 +442,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -365,6 +454,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 18: 18.0
                                 19: 19.0
@@ -376,11 +466,12 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 21: 21.0
                                 22: 22.0
                                 23: 23.0"#));
-    let r2 = tree.clone().insert(24, 24.0, TxgT::from(42))
+    let r2 = tree.clone().insert(24, 24.0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -417,6 +508,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -428,6 +520,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -439,6 +532,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 6: 6.0
                                 7: 7.0
@@ -458,6 +552,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -469,6 +564,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -480,6 +576,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -499,6 +596,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 18: 18.0
                                 19: 19.0
@@ -510,6 +608,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 21: 21.0
                                 22: 22.0
@@ -520,7 +619,7 @@ root:
 /// Insert a key that splits a sequentially-optimized non-root interior node
 #[test]
 fn insert_split_int_sequential() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, true, r#"
 ---
@@ -556,6 +655,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -566,6 +666,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -584,6 +685,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -594,6 +696,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -604,6 +707,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -614,6 +718,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 18: 18.0
                                 19: 19.0
@@ -624,6 +729,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0
@@ -634,6 +740,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 24: 24.0
                                 25: 25.0
@@ -644,6 +751,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 27: 27.0
                                 28: 28.0
@@ -654,10 +762,11 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 30: 30.0
                                 31: 31.0"#));
-    let r2 = tree.clone().insert(33, 33.0, TxgT::from(42))
+    let r2 = tree.clone().insert(33, 33.0, TxgT::from(42), Credit::forge(8))
     .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -694,6 +803,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -704,6 +814,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -722,6 +833,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -732,6 +844,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -742,6 +855,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -752,6 +866,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 18: 18.0
                                 19: 19.0
@@ -762,6 +877,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0
@@ -772,6 +888,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 24: 24.0
                                 25: 25.0
@@ -790,6 +907,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 27: 27.0
                                 28: 28.0
@@ -800,6 +918,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 30: 30.0
                                 31: 31.0
@@ -809,7 +928,7 @@ root:
 /// Insert a key that splits a non-root leaf node
 #[test]
 fn insert_split_leaf() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -837,6 +956,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       0: 0.0
                       1: 1.0
@@ -848,6 +968,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       3: 3.0
                       4: 4.0
@@ -855,7 +976,7 @@ root:
                       6: 6.0
                       7: 7.0
   "#));
-    let r2 = tree.clone().insert(8, 8.0, TxgT::from(42))
+    let r2 = tree.clone().insert(8, 8.0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", tree),
@@ -884,6 +1005,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       0: 0.0
                       1: 1.0
@@ -895,6 +1017,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       3: 3.0
                       4: 4.0
@@ -906,6 +1029,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       6: 6.0
                       7: 7.0
@@ -915,7 +1039,7 @@ root:
 /// Insert a key that splits a sequentially-optimized non-root leaf node
 #[test]
 fn insert_split_leaf_sequential() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, true, r#"
 ---
@@ -943,6 +1067,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       0: 0.0
                       1: 1.0
@@ -955,6 +1080,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 128
                     items:
                       4: 4.0
                       5: 5.0
@@ -965,7 +1091,7 @@ root:
                       10: 10.0
                       11: 11.0
   "#));
-    let r2 = tree.clone().insert(12, 12.0, TxgT::from(42))
+    let r2 = tree.clone().insert(12, 12.0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", tree),
@@ -994,6 +1120,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       0: 0.0
                       1: 1.0
@@ -1006,6 +1133,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 96
                     items:
                       4: 4.0
                       5: 5.0
@@ -1020,6 +1148,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       10: 10.0
                       11: 11.0
@@ -1029,7 +1158,7 @@ root:
 /// Insert a key that splits the root IntNode
 #[test]
 fn insert_split_root_int() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -1057,6 +1186,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       0: 0.0
                       1: 1.0
@@ -1068,6 +1198,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       3: 3.0
                       4: 4.0
@@ -1079,6 +1210,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       6: 6.0
                       7: 7.0
@@ -1090,6 +1222,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       9: 9.0
                       10: 10.0
@@ -1101,12 +1234,13 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       12: 12.0
                       13: 13.0
                       14: 14.0
   "#));
-    let r2 = tree.clone().insert(15, 15.0, TxgT::from(42))
+    let r2 = tree.clone().insert(15, 15.0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1143,6 +1277,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -1154,6 +1289,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -1165,6 +1301,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 6: 6.0
                                 7: 7.0
@@ -1184,6 +1321,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -1195,6 +1333,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -1205,7 +1344,7 @@ root:
 /// Insert a key that splits the root leaf node
 #[test]
 fn insert_split_root_leaf() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -1225,6 +1364,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 80
           items:
             0: 0.0
             1: 1.0
@@ -1232,7 +1372,7 @@ root:
             3: 3.0
             4: 4.0
   "#));
-    let r2 = tree.clone().insert(5, 5.0, TxgT::from(42))
+    let r2 = tree.clone().insert(5, 5.0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1261,6 +1401,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       0: 0.0
                       1: 1.0
@@ -1272,6 +1413,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       3: 3.0
                       4: 4.0
@@ -1280,13 +1422,13 @@ root:
 
 #[test]
 fn get() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
         Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
-    let r = tree.clone().insert(0, 0.0, TxgT::from(42))
+    let r = tree.clone().insert(0, 0.0, TxgT::from(42), Credit::forge(8))
         .and_then(|_| tree.get(0))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(0.0)));
@@ -1294,7 +1436,7 @@ fn get() {
 
 #[test]
 fn get_deep() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -1321,6 +1463,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -1331,6 +1474,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -1341,7 +1485,7 @@ root:
 
 #[test]
 fn get_nonexistent() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false, None);
@@ -1351,7 +1495,7 @@ fn get_nonexistent() {
 
 #[test]
 fn last_key_empty() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let limits = Limits::new(2, 5, 2, 5);
     let tree: Tree<u32, MockDML, u32, f32> = Tree::new(dml, limits, false, None);
     let r = tree.last_key().now_or_never().unwrap();
@@ -1360,7 +1504,7 @@ fn last_key_empty() {
 
 #[test]
 fn last_key() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
 ---
 limits:
@@ -1387,6 +1531,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -1397,6 +1542,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -1417,7 +1563,7 @@ root:
 //    nodes.
 #[test]
 fn range_delete() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -1453,6 +1599,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -1463,6 +1610,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 5: 5.0
                                 6: 6.0
@@ -1474,6 +1622,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 10: 10.0
                                 11: 11.0
@@ -1492,6 +1641,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -1502,6 +1652,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 20: 20.0
                                 25: 25.0
@@ -1520,6 +1671,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 31: 31.0
                                 32: 32.0
@@ -1530,11 +1682,13 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 37: 37.0
                                 40: 40.0
   "#));
-    let r = tree.clone().range_delete(11..=31, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(11..=31, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1563,6 +1717,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       1: 1.0
                       2: 2.0
@@ -1573,6 +1728,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       5: 5.0
                       6: 6.0
@@ -1585,6 +1741,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       32: 32.0
                       37: 37.0
@@ -1595,7 +1752,7 @@ root:
 // in the cut
 #[test]
 fn range_delete_danger() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -1631,6 +1788,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -1641,6 +1799,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 80
                               items:
                                 5: 5.0
                                 6: 6.0
@@ -1668,6 +1827,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -1678,6 +1838,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 20: 20.0
                                 25: 25.0
@@ -1696,6 +1857,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 31: 31.0
                                 32: 32.0
@@ -1706,11 +1868,13 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 37: 37.0
                                 40: 40.0
   "#));
-    let r = tree.clone().range_delete(5..6, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(5..6, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -1747,6 +1911,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -1757,6 +1922,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 6: 6.0
                                 7: 7.0
@@ -1783,6 +1949,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -1793,6 +1960,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 20: 20.0
                                 25: 25.0
@@ -1811,6 +1979,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 31: 31.0
                                 32: 32.0
@@ -1821,6 +1990,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 37: 37.0
                                 40: 40.0"#);
@@ -1829,7 +1999,7 @@ root:
 // Delete a range that's exclusive on the left and right
 #[test]
 fn range_delete_exc_exc() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -1857,6 +2027,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       1: 1.0
                       2: 2.0
@@ -1867,6 +2038,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       4: 4.0
                       5: 5.0
@@ -1880,6 +2052,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       10: 10.0
                       11: 11.0
@@ -1892,15 +2065,18 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       20: 20.0
                       21: 21.0
                       22: 22.0
   "#));
-    let r = tree.clone().range_delete(
-        (Bound::Excluded(4), Bound::Excluded(10)),
-        TxgT::from(42))
-        .now_or_never().unwrap();
+    let r = tree.clone()
+        .range_delete(
+            (Bound::Excluded(4), Bound::Excluded(10)),
+            TxgT::from(42),
+            Credit::forge(80)
+        ).now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -1928,6 +2104,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       1: 1.0
                       2: 2.0
@@ -1938,6 +2115,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       4: 4.0
                       10: 10.0
@@ -1951,6 +2129,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       20: 20.0
                       21: 21.0
@@ -1960,7 +2139,7 @@ root:
 // Delete a range that's exclusive on the left and inclusive on the right
 #[test]
 fn range_delete_exc_inc() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -1988,6 +2167,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       1: 1.0
                       2: 2.0
@@ -1998,6 +2178,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       4: 4.0
                       5: 5.0
@@ -2011,6 +2192,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       10: 10.0
                       11: 11.0
@@ -2023,15 +2205,18 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       20: 20.0
                       21: 21.0
                       22: 22.0
   "#));
-    let r = tree.clone().range_delete(
-        (Bound::Excluded(4), Bound::Included(10)),
-        TxgT::from(42))
-        .now_or_never().unwrap();
+    let r = tree.clone()
+        .range_delete(
+            (Bound::Excluded(4), Bound::Included(10)),
+            TxgT::from(42),
+            Credit::forge(80)
+        ).now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -2059,6 +2244,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       1: 1.0
                       2: 2.0
@@ -2069,6 +2255,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       4: 4.0
                       11: 11.0
@@ -2081,6 +2268,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       20: 20.0
                       21: 21.0
@@ -2094,7 +2282,7 @@ root:
 // a third merge to get 5 children.
 #[test]
 fn range_delete_fix_three_times() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     mock.expect_delete()
         .returning(move |_, _| Box::pin(future::ok(())));
 
@@ -2159,6 +2347,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           838: 646
                                           839: 647
@@ -2312,6 +2501,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           1530: 2317
                                           1535: 2322
@@ -2387,8 +2577,9 @@ root:
                         ptr:
                           Addr: 10025
   "#));
-  let r = tree.clone().range_delete(1024..1536, TxgT::from(42))
-    .now_or_never().unwrap();
+  let r = tree.clone()
+      .range_delete(1024..1536, TxgT::from(42), Credit::forge(80))
+      .now_or_never().unwrap();
   assert!(r.is_ok());
   assert_eq!(format!("{}", &tree),
 r#"---
@@ -2450,6 +2641,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           838: 646
                                           839: 647
@@ -2522,7 +2714,7 @@ root:
 /// Regression test for bug c2bd706
 #[test]
 fn range_delete_merge_and_underflow() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -2550,6 +2742,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       1: 1.0
                       2: 2.0
@@ -2561,6 +2754,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       4: 4.0
                       5: 5.0
@@ -2572,6 +2766,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       7: 7.0
                       8: 8.0
@@ -2583,6 +2778,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       10: 10.0
                       11: 11.0
@@ -2594,12 +2790,14 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       13: 13.0
                       14: 14.0
                       15: 15.0
   "#));
-    let r = tree.clone().range_delete(2..6, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(2..6, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert!(tree.clone().check().now_or_never().unwrap().unwrap());
@@ -2629,6 +2827,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       1: 1.0
                       6: 6.0
@@ -2642,6 +2841,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       10: 10.0
                       11: 11.0
@@ -2653,6 +2853,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       13: 13.0
                       14: 14.0
@@ -2663,7 +2864,7 @@ root:
 /// underflow in the parent.
 #[test]
 fn range_delete_merge_and_parent_underflow() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -2699,6 +2900,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -2710,6 +2912,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 4: 4.0
                                 5: 5.0
@@ -2721,6 +2924,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 7: 7.0
                                 8: 8.0
@@ -2746,6 +2950,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -2775,7 +2980,8 @@ root:
               ptr:
                 Addr: 10040
   "#));
-    let r = tree.clone().range_delete(2..6, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(2..6, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -2812,6 +3018,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 80
                               items:
                                 1: 1.0
                                 6: 6.0
@@ -2831,6 +3038,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -2866,7 +3074,7 @@ root:
 // while descending and again while ascending.
 #[test]
 fn range_delete_merge_descending_and_ascending() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -2902,6 +3110,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 462: 458
                                 494: 490
@@ -2912,6 +3121,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1025: 835
                                 1027: 837
@@ -2930,6 +3140,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1313: 1123
                                 1316: 1126
@@ -2940,6 +3151,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1368: 1178
                                 1662: 518
@@ -2958,6 +3170,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1663: 523
                                 1666: 547
@@ -2968,6 +3181,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1687: 776
                                 1690: 779
@@ -2986,6 +3200,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1727: 828
                                 1730: 832
@@ -2996,12 +3211,14 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1759: 861
                                 1762: 864
   "#));
     assert!(tree.clone().check().now_or_never().unwrap().unwrap());
-    let r = tree.clone().range_delete(1024..1536, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(1024..1536, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert!(tree.check().now_or_never().unwrap().unwrap());
@@ -3011,7 +3228,7 @@ root:
 // during ascent.
 #[test]
 fn range_delete_merge_left_child_twice() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -3039,6 +3256,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       0: 0.0
                       1: 1.0
@@ -3052,6 +3270,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       10: 10.0
                       11: 11.0
@@ -3065,6 +3284,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       20: 20.0
                       21: 21.0
@@ -3078,6 +3298,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       30: 30.0
                       31: 31.0
@@ -3091,6 +3312,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       40: 40.0
                       41: 41.0
@@ -3098,7 +3320,8 @@ root:
                       43: 43.0
                       44: 44.0
   "#));
-    let r = tree.clone().range_delete(12..23, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(12..23, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -3127,6 +3350,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       0: 0.0
                       1: 1.0
@@ -3140,6 +3364,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 144
                     items:
                       10: 10.0
                       11: 11.0
@@ -3157,6 +3382,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       40: 40.0
                       41: 41.0
@@ -3170,7 +3396,7 @@ root:
 /// left one again.
 #[test]
 fn range_delete_merge_to_lca_twice() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
@@ -3232,6 +3458,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           10714: 5916
                                           11722: 3874
@@ -3243,6 +3470,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           10726: 5916
                                           11727: 3874
@@ -3262,6 +3490,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           10738: 5916
                                           11739: 3874
@@ -3273,6 +3502,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           11742: 3927
                                           11744: 3938
@@ -3284,6 +3514,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           11782: 4343
                                           11784: 4345
@@ -3371,7 +3602,8 @@ root:
               ptr:
                 Addr: 112144
   "#));
-    let r = tree.clone().range_delete(11264..11776, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(11264..11776, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -3434,6 +3666,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 80
                                         items:
                                           10714: 5916
                                           11781: 4342
@@ -3530,7 +3763,7 @@ root:
 /// ascent, causing a "subtract with overflow" error.
 #[test]
 fn range_delete_merge_right_child_descending() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
@@ -3558,6 +3791,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       4903: 3431
                       4993: 3521
@@ -3570,6 +3804,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       5618: 5459
                       5623: 5464
@@ -3582,6 +3817,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       5629: 5470
                       5630: 5471
@@ -3594,13 +3830,15 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       5635: 7557
                       5637: 7559
                       5638: 7560
                       5642: 7564
   "#));
-    let r = tree.clone().range_delete(5120..5632, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(5120..5632, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -3629,6 +3867,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       4903: 3431
                       4993: 3521
@@ -3641,6 +3880,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       5635: 7557
                       5637: 7559
@@ -3655,7 +3895,7 @@ root:
 /// error when trying to merge the right child again.
 #[test]
 fn range_delete_merge_right_child_first() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
@@ -3691,6 +3931,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 7153: 6699
                                 7156: 6702
@@ -3703,6 +3944,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 7252: 6798
                                 7253: 6799
@@ -3715,6 +3957,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 7260: 6806
                                 7265: 6811
@@ -3727,6 +3970,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 7281: 6827
                                 7282: 6828
@@ -3747,6 +3991,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 7736: 5527
                                 7737: 5538
@@ -3783,7 +4028,8 @@ root:
               ptr:
                 Addr: 7692
   "#));
-    tree.clone().range_delete(7168..7680, TxgT::from(42))
+    tree.clone()
+        .range_delete(7168..7680, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -3819,6 +4065,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 7153: 6699
                                 7156: 6702
@@ -3831,6 +4078,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 7736: 5527
                                 7737: 5538
@@ -3871,7 +4119,7 @@ root:
 /// Delete a range that causes the root node to be merged down
 #[test]
 fn range_delete_merge_root() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -3899,6 +4147,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       1: 1.0
                       2: 2.0
@@ -3910,6 +4159,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       4: 4.0
                       5: 5.0
@@ -3917,7 +4167,8 @@ root:
                       7: 7.0
                       8: 8.0
   "#));
-    let r = tree.clone().range_delete(0..4, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(0..4, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -3938,6 +4189,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 80
           items:
             4: 4.0
             5: 5.0
@@ -3952,7 +4204,7 @@ root:
 /// case, that means by merging the root node down.
 #[test]
 fn range_delete_merge_root_during_ascent() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
@@ -3988,6 +4240,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 2778: 2859
                                 2781: 2868
@@ -3999,6 +4252,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 2965: 4758
                                 3027: 4820
@@ -4010,6 +4264,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3081: 6193
                                 3085: 6197
@@ -4029,6 +4284,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3112: 6224
                                 3113: 6225
@@ -4040,6 +4296,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3149: 6261
                                 3153: 6265
@@ -4051,6 +4308,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3157: 6269
                                 3166: 6278
@@ -4070,6 +4328,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3509: 6621
                                 3531: 6643
@@ -4081,6 +4340,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3546: 6658
                                 3547: 6659
@@ -4092,12 +4352,14 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3581: 6693
                                 3584: 3091
                                 3585: 3092
   "#));
-    let r = tree.clone().range_delete(3072..3584, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(3072..3584, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4126,6 +4388,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       2778: 2859
                       2781: 2868
@@ -4137,6 +4400,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       2965: 4758
                       3027: 4820
@@ -4147,7 +4411,7 @@ root:
 /// Delete a range that causes the root node to be merged two steps down
 #[test]
 fn range_delete_merge_root_twice() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -4183,6 +4447,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -4194,6 +4459,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 80
                               items:
                                 4: 4.0
                                 5: 5.0
@@ -4215,6 +4481,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 10: 10.0
                                 11: 11.0
@@ -4226,6 +4493,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 80
                               items:
                                 13: 13.0
                                 14: 14.0
@@ -4233,7 +4501,8 @@ root:
                                 16: 16.0
                                 17: 17.0
   "#));
-    let r = tree.clone().range_delete(0..13, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(0..13, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4254,6 +4523,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 80
           items:
             13: 13.0
             14: 14.0
@@ -4267,7 +4537,7 @@ root:
 // Bug #3a1c768
 #[test]
 fn range_delete_parent_and_child_underflow_after_descent() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
@@ -4323,6 +4593,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           3563: 2604
                                           3564: 2605
@@ -4335,6 +4606,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           3613: 3005
                                           3621: 3013
@@ -4347,6 +4619,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           3627: 3019
                                           3640: 3032
@@ -4359,6 +4632,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           3643: 3035
                                           3664: 3056
@@ -4379,6 +4653,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           4075: 3467
                                           4076: 3468
@@ -4391,6 +4666,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           4083: 3475
                                           4084: 3476
@@ -4403,6 +4679,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 80
                                         items:
                                           4091: 3483
                                           4092: 3484
@@ -4416,6 +4693,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           4609: 3745
                                           4610: 3746
@@ -4480,7 +4758,8 @@ root:
                         ptr:
                           Addr: 1005119
   "#));
-    let r = tree.clone().range_delete(3584..4096, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(3584..4096, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4537,6 +4816,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           3563: 2604
                                           3564: 2605
@@ -4549,6 +4829,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           4609: 3745
                                           4610: 3746
@@ -4603,7 +4884,7 @@ root:
 // Regression test for bug b959707
 #[test]
 fn range_delete_cant_fix_for_minfanout_plus_two() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -4657,6 +4938,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4193: 4193.0
                                 4195: 4195.0
@@ -4675,6 +4957,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4601: 4601.0
                                 4608: 4608.0
@@ -4685,6 +4968,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4610: 4610.0
                                 4612: 4612.0
@@ -4701,7 +4985,8 @@ root:
                         ptr:
                           Addr: 1004627
   "#));
-    let r = tree.clone().range_delete(4480..4600, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(4480..4600, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4756,6 +5041,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4193: 4193.0
                                 4195: 4195.0
@@ -4774,6 +5060,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4601: 4601.0
                                 4608: 4608.0
@@ -4784,6 +5071,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4610: 4610.0
                                 4612: 4612.0
@@ -4803,7 +5091,7 @@ root:
 
 #[test]
 fn range_delete_cant_steal_to_fix_lca() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -4845,6 +5133,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 10: 10.0
                                 11: 11.0
@@ -4856,6 +5145,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -4867,6 +5157,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 30: 30.0
                                 31: 31.0
@@ -4886,6 +5177,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 40: 40.0
                                 41: 41.0
@@ -4909,7 +5201,8 @@ root:
                         ptr:
                           Addr: 1000070
   "#));
-    let r = tree.clone().range_delete(21..32, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(21..32, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -4952,6 +5245,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 10: 10.0
                                 11: 11.0
@@ -4963,6 +5257,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 80
                               items:
                                 20: 20.0
                                 32: 32.0
@@ -5000,7 +5295,7 @@ root:
 // Delete a range that's contained within a single LeafNode
 #[test]
 fn range_delete_single_node() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -5028,6 +5323,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       1: 1.0
                       2: 2.0
@@ -5038,6 +5334,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       4: 4.0
                       5: 5.0
@@ -5051,12 +5348,14 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       10: 10.0
                       11: 11.0
                       12: 12.0
   "#));
-    let r = tree.clone().range_delete(5..7, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(5..7, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -5085,6 +5384,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       1: 1.0
                       2: 2.0
@@ -5095,6 +5395,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       4: 4.0
                       7: 7.0
@@ -5106,6 +5407,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       10: 10.0
                       11: 11.0
@@ -5117,7 +5419,7 @@ root:
 /// Regression test for 4a99d7f
 #[test]
 fn range_delete_underflow_and_steal_left() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -5165,6 +5467,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4193: 4193.0
                                 4195: 4195.0
@@ -5175,6 +5478,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4565: 4565.0
                                 4567: 4567.0
@@ -5193,6 +5497,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 80
                               items:
                                 4601: 4601.0
                                 4605: 4605.0
@@ -5206,6 +5511,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4610: 4610.0
                                 4612: 4612.0
@@ -5228,7 +5534,8 @@ root:
                         ptr:
                           Addr: 1004637
   "#));
-    let r = tree.clone().range_delete(4480..4605, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(4480..4605, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -5277,6 +5584,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4193: 4193.0
                                 4195: 4195.0
@@ -5287,6 +5595,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 4605: 4605.0
                                 4606: 4606.0
@@ -5299,6 +5608,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4610: 4610.0
                                 4612: 4612.0
@@ -5333,7 +5643,7 @@ root:
 // Delete a range that includes a whole Node at the end of the Tree
 #[test]
 fn range_delete_to_end() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -5361,6 +5671,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       1: 1.0
                       2: 2.0
@@ -5371,6 +5682,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       4: 4.0
                       5: 5.0
@@ -5383,11 +5695,13 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       10: 10.0
                       11: 11.0
   "#));
-    let r = tree.clone().range_delete(7..20, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(7..20, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -5416,6 +5730,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       1: 1.0
                       2: 2.0
@@ -5426,6 +5741,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       4: 4.0
                       5: 5.0
@@ -5436,7 +5752,7 @@ root:
 // int node to its right
 #[test]
 fn range_delete_to_end_of_int_node() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -5472,6 +5788,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -5482,6 +5799,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 4: 4.0
                                 5: 5.0
@@ -5493,6 +5811,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 7: 7.0
                                 8: 8.0
@@ -5503,6 +5822,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 10: 10.0
                                 11: 11.0
@@ -5521,6 +5841,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -5532,6 +5853,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 24: 24.0
                                 26: 26.0
@@ -5550,6 +5872,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 30: 30.0
                                 31: 31.0
@@ -5560,11 +5883,13 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 40: 40.0
                                 41: 41.0
   "#));
-    let r = tree.clone().range_delete(10..16, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(10..16, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     // Ideally the leaf node with key 7 wouldn't have its end txg changed.
@@ -5604,6 +5929,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -5614,6 +5940,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 4: 4.0
                                 5: 5.0
@@ -5625,6 +5952,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 7: 7.0
                                 8: 8.0
@@ -5643,6 +5971,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -5654,6 +5983,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 24: 24.0
                                 26: 26.0
@@ -5672,6 +6002,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 30: 30.0
                                 31: 31.0
@@ -5682,6 +6013,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 40: 40.0
                                 41: 41.0"#);
@@ -5690,7 +6022,7 @@ root:
 // Delete a range that includes only whole nodes
 #[test]
 fn range_delete_whole_nodes() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -5718,6 +6050,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       1: 1.0
                       2: 2.0
@@ -5729,6 +6062,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       4: 4.0
                       5: 5.0
@@ -5740,6 +6074,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       10: 10.0
                       11: 11.0
@@ -5750,12 +6085,14 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       20: 20.0
                       21: 21.0
                       22: 22.0
   "#));
-    let r = tree.clone().range_delete(4..20, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(4..20, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     // Ideally the first leaf node wouldn't have its end txg changed.  However,
@@ -5787,6 +6124,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       1: 1.0
                       2: 2.0
@@ -5798,6 +6136,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       20: 20.0
                       21: 21.0
@@ -5807,7 +6146,7 @@ root:
 // Delete a range of just a single whole node whose parent key isn't normalized
 #[test]
 fn range_delete_whole_node_denormalized() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -5881,6 +6220,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 4610: 4610.0
                                 4612: 4612.0
@@ -5891,7 +6231,8 @@ root:
                         ptr:
                           Addr: 1004617
   "#));
-    let r = tree.clone().range_delete(4610..4613, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(4610..4613, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -5962,7 +6303,7 @@ root:
 // range_delete_pass2 needs to steal 2 nodes in order to guarantee invariants.
 #[test]
 fn range_delete_pass2_steal_creates_an_lca() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     mock.expect_delete()
         .returning(move |_, _| Box::pin(future::ok(())));
 
@@ -6055,6 +6396,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 48
                                                   items:
                                                     3706: 3060
                                                     3704: 3061
@@ -6066,6 +6408,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 48
                                                   items:
                                                     4774: 3069
                                                     4775: 3070
@@ -6077,6 +6420,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 96
                                                   items:
                                                     4778: 3073
                                                     4780: 3075
@@ -6099,6 +6443,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 48
                                                   items:
                                                     4791: 3086
                                                     4792: 3087
@@ -6110,6 +6455,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 64
                                                   items:
                                                     4794: 3089
                                                     4795: 3090
@@ -6122,6 +6468,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 48
                                                   items:
                                                     4802: 3097
                                                     4804: 3099
@@ -6133,6 +6480,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 64
                                                   items:
                                                     4806: 3101
                                                     4808: 3103
@@ -6145,6 +6493,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 96
                                                   items:
                                                     4818: 3113
                                                     4820: 3115
@@ -6159,6 +6508,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 80
                                                   items:
                                                     4838: 3133
                                                     4839: 3134
@@ -6274,6 +6624,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 48
                                                   items:
                                                     5107: 3402
                                                     5112: 3407
@@ -6285,6 +6636,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 48
                                                   items:
                                                     5115: 3410
                                                     5119: 3414
@@ -6296,6 +6648,7 @@ root:
                                             ptr:
                                               Mem:
                                                 Leaf:
+                                                  credit: 48
                                                   items:
                                                     5122: 3417
                                                     5123: 3418
@@ -6357,7 +6710,8 @@ root:
                                   ptr:
                                     Addr: 105330
   "#));
-    let r = tree.clone().range_delete(4608..5120, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(4608..5120, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -6440,6 +6794,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           3704: 3061
                                           3706: 3060
@@ -6451,6 +6806,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           5120: 3415
                                           5122: 3417
@@ -6517,7 +6873,7 @@ root:
 // Range delete pass2 steals a leaf node to the left
 #[test]
 fn range_delete_pass2_steal_left() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -6559,6 +6915,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -6578,6 +6935,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -6607,7 +6965,8 @@ root:
                         ptr:
                           Addr: 34
   "#));
-    let r = tree.clone().range_delete(3..21, TxgT::from(2))
+    let r = tree.clone()
+        .range_delete(3..21, TxgT::from(2), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -6650,6 +7009,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0
@@ -6690,7 +7050,7 @@ root:
 // range_delete_pass2 tries to steal a node to the right
 #[test]
 fn range_delete_pass2_steal_right() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
 ---
@@ -6760,6 +7120,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           11264: 9282
                                           11269: 9287
@@ -6772,6 +7133,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           11281: 9299
                                           11283: 9301
@@ -6784,6 +7146,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           11288: 9306
                                           11292: 9310
@@ -6796,6 +7159,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 64
                                         items:
                                           11295: 9313
                                           11298: 9316
@@ -6816,6 +7180,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 32
                                         items:
                                           11511: 9529
                                           11514: 9532
@@ -6826,6 +7191,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 32
                                         items:
                                           11616: 9634
                                           11994: 6844
@@ -6836,6 +7202,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 32
                                         items:
                                           11995: 6871
                                           12002: 7037
@@ -6846,6 +7213,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 32
                                         items:
                                           12003: 7053
                                           12010: 7164
@@ -6876,7 +7244,8 @@ root:
                         ptr:
                           Addr: 1012155
   "#));
-    let r = tree.clone().range_delete(11264..11776, TxgT::from(42))
+    let r = tree.clone()
+        .range_delete(11264..11776, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -6947,6 +7316,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 48
                                         items:
                                           11994: 6844
                                           11995: 6871
@@ -6958,6 +7328,7 @@ root:
                                   ptr:
                                     Mem:
                                       Leaf:
+                                        credit: 32
                                         items:
                                           12003: 7053
                                           12010: 7164
@@ -6984,19 +7355,19 @@ root:
 // range_delete of a small range at the end of the tree
 #[test]
 fn range_delete_at_end() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
         Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
     (0..23).map(|k| {
-        tree.clone().insert(k, k as f32, TxgT::from(2))
+        tree.clone().insert(k, k as f32, TxgT::from(2), Credit::forge(8))
     }).collect::<FuturesUnordered<_>>()
     .try_collect::<Vec<_>>()
     .now_or_never().unwrap()
     .unwrap();
-    let r = tree.range_delete(22..23, TxgT::from(2))
+    let r = tree.range_delete(22..23, TxgT::from(2), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
 }
@@ -7004,7 +7375,7 @@ fn range_delete_at_end() {
 // range_delete with a RangeFrom (x..) argument
 #[test]
 fn range_delete_range_from() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -7046,6 +7417,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -7065,6 +7437,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -7075,11 +7448,13 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 26: 26.0
                                 27: 27.0
   "#));
-    let r = tree.clone().range_delete(5.., TxgT::from(2))
+    let r = tree.clone()
+        .range_delete(5.., TxgT::from(2), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -7114,6 +7489,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0"#);
@@ -7122,7 +7498,7 @@ root:
 // range_delete with a RangeFull (..) argument
 #[test]
 fn range_delete_range_full() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -7158,6 +7534,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -7168,6 +7545,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -7186,6 +7564,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -7197,11 +7576,13 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 26: 26.0
                                 27: 27.0
   "#));
-    let r = tree.clone().range_delete(.., TxgT::from(2))
+    let r = tree.clone()
+        .range_delete(.., TxgT::from(2), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -7222,13 +7603,14 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 0
           items: {}"#);
 }
 
 // range_delete with a RangeTo (..x) argument
 #[test]
 fn range_delete_range_to() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -7264,6 +7646,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -7274,6 +7657,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -7292,6 +7676,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -7303,7 +7688,8 @@ root:
                         ptr:
                           Addr: 10026
   "#));
-    let r = tree.clone().range_delete(..21, TxgT::from(2))
+    let r = tree.clone()
+        .range_delete(..21, TxgT::from(2), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -7332,6 +7718,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       21: 21.0
                       22: 22.0
@@ -7347,19 +7734,19 @@ root:
 // tree
 #[test]
 fn range_delete_to_end_deep() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
         Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
     (0..23).map(|k| {
-        tree.clone().insert(k, k as f32, TxgT::from(2))
+        tree.clone().insert(k, k as f32, TxgT::from(2), Credit::forge(8))
     }).collect::<FuturesUnordered<_>>()
     .try_collect::<Vec<_>>()
     .now_or_never().unwrap()
     .unwrap();
-    let r = tree.clone().range_delete(5..24, TxgT::from(2))
+    let r = tree.clone().range_delete(5..24, TxgT::from(2), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     // NB: in this case, it would be acceptable for the final Tree to consist of
@@ -7391,6 +7778,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       0: 0.0
                       1: 1.0
@@ -7402,6 +7790,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0"#);
@@ -7410,7 +7799,7 @@ root:
 
 #[test]
 fn range_delete_underflow_in_parent_and_child() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -7446,6 +7835,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 1: 1.0
                                 2: 2.0
@@ -7456,6 +7846,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -7475,6 +7866,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -7486,11 +7878,13 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 26: 26.0
                                 27: 27.0
   "#));
-    let r = tree.clone().range_delete(2..30, TxgT::from(2))
+    let r = tree.clone()
+        .range_delete(2..30, TxgT::from(2), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -7511,13 +7905,14 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 16
           items:
             1: 1.0"#);
 }
 
 #[test]
 fn range_empty_range() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7544,6 +7939,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -7554,6 +7950,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -7567,7 +7964,7 @@ root:
 // Empty tree
 #[test]
 fn range_empty_tree() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(
         Tree::<u32, MockDML, u32, f32>::create(dml, false, 1.0, 1.0)
     );
@@ -7580,7 +7977,7 @@ fn range_empty_tree() {
 // Unbounded range lookup
 #[test]
 fn range_full() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7607,6 +8004,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -7617,6 +8015,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -7629,7 +8028,7 @@ root:
 
 #[test]
 fn range_exclusive_start() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7656,6 +8055,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -7666,6 +8066,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -7685,7 +8086,7 @@ root:
 
 #[test]
 fn range_leaf() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7704,6 +8105,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 80
           items:
             0: 0.0
             1: 1.0
@@ -7719,7 +8121,7 @@ root:
 
 #[test]
 fn range_leaf_inclusive_end() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7738,6 +8140,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 80
           items:
             0: 0.0
             1: 1.0
@@ -7753,7 +8156,7 @@ root:
 
 #[test]
 fn range_nonexistent_between_two_leaves() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7780,6 +8183,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -7790,6 +8194,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       5: 5.0
                       6: 6.0
@@ -7802,7 +8207,7 @@ root:
 
 #[test]
 fn range_two_ints() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7837,6 +8242,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -7855,6 +8261,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -7867,7 +8274,7 @@ root:
 
 #[test]
 fn range_ends_between_two_leaves() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7894,6 +8301,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -7904,6 +8312,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       4: 4.0
                       5: 5.0
@@ -7916,7 +8325,7 @@ root:
 
 #[test]
 fn range_ends_before_node_but_after_parent_pointer() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7943,6 +8352,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -7953,6 +8363,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       6: 6.0
                       7: 7.0
@@ -7965,7 +8376,7 @@ root:
 
 #[test]
 fn range_starts_between_two_leaves() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -7992,6 +8403,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -8002,6 +8414,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -8012,6 +8425,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       5: 5.0
                       6: 6.0
@@ -8024,7 +8438,7 @@ root:
 
 #[test]
 fn range_two_leaves() {
-    let dml = Arc::new(MockDML::new());
+    let dml = Arc::new(mock_dml());
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
 limits:
@@ -8051,6 +8465,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -8061,6 +8476,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -8073,7 +8489,7 @@ root:
 
 #[test]
 fn remove_last_key() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -8093,10 +8509,11 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 16
           items:
             0: 0.0
   "#));
-    let r = tree.clone().remove(0, TxgT::from(42))
+    let r = tree.clone().remove(0, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(0.0)));
     assert_eq!(format!("{}", tree),
@@ -8117,12 +8534,13 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 0
           items: {}"#);
 }
 
 #[test]
 fn remove_from_leaf() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -8142,12 +8560,13 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 48
           items:
             0: 0.0
             1: 1.0
             2: 2.0
   "#));
-    let r = tree.clone().remove(1, TxgT::from(42))
+    let r = tree.clone().remove(1, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(1.0)));
     assert_eq!(format!("{}", tree),
@@ -8168,6 +8587,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 32
           items:
             0: 0.0
             2: 2.0"#);
@@ -8175,7 +8595,7 @@ root:
 
 #[test]
 fn remove_and_merge_down() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -8203,12 +8623,13 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       0: 0.0
                       1: 1.0
                       2: 2.0
   "#));
-    let r2 = tree.clone().remove(1, TxgT::from(42))
+    let r2 = tree.clone().remove(1, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8229,6 +8650,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 32
           items:
             0: 0.0
             2: 2.0"#);
@@ -8236,7 +8658,7 @@ root:
 
 #[test]
 fn remove_and_merge_int_left() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -8272,6 +8694,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -8282,6 +8705,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -8292,6 +8716,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 6: 6.0
                                 7: 7.0
@@ -8310,6 +8735,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -8320,6 +8746,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -8330,6 +8757,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -8348,6 +8776,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 18: 18.0
                                 19: 19.0
@@ -8358,11 +8787,12 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 21: 21.0
                                 22: 22.0
                                 23: 23.0"#));
-    let r2 = tree.clone().remove(23, TxgT::from(42))
+    let r2 = tree.clone().remove(23, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8399,6 +8829,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -8409,6 +8840,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -8419,6 +8851,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 6: 6.0
                                 7: 7.0
@@ -8437,6 +8870,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -8447,6 +8881,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -8457,6 +8892,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -8467,6 +8903,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 18: 18.0
                                 19: 19.0
@@ -8477,6 +8914,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0"#);
@@ -8484,7 +8922,7 @@ root:
 
 #[test]
 fn remove_and_merge_int_right() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -8520,6 +8958,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -8530,6 +8969,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 2: 2.0
                                 3: 3.0
@@ -8549,6 +8989,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -8559,6 +9000,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -8569,6 +9011,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -8587,6 +9030,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 18: 18.0
                                 19: 19.0
@@ -8597,10 +9041,11 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0"#));
-    let r2 = tree.clone().remove(4, TxgT::from(42))
+    let r2 = tree.clone().remove(4, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8637,6 +9082,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -8647,6 +9093,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 2: 2.0
                                 3: 3.0
@@ -8657,6 +9104,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -8667,6 +9115,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -8677,6 +9126,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -8695,6 +9145,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 18: 18.0
                                 19: 19.0
@@ -8705,6 +9156,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0"#);
@@ -8712,7 +9164,7 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_left() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -8740,6 +9192,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -8750,6 +9203,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -8760,11 +9214,12 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       5: 5.0
                       7: 7.0
   "#));
-    let r2 = tree.clone().remove(7, TxgT::from(42))
+    let r2 = tree.clone().remove(7, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8793,6 +9248,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -8803,6 +9259,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       3: 3.0
                       4: 4.0
@@ -8811,7 +9268,7 @@ root:
 
 #[test]
 fn remove_and_merge_leaf_right() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -8839,6 +9296,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -8849,6 +9307,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -8859,12 +9318,13 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       5: 5.0
                       6: 6.0
                       7: 7.0
   "#));
-    let r2 = tree.clone().remove(4, TxgT::from(42))
+    let r2 = tree.clone().remove(4, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -8893,6 +9353,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -8903,6 +9364,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       3: 3.0
                       5: 5.0
@@ -8912,7 +9374,7 @@ root:
 
 #[test]
 fn remove_and_steal_int_left() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -8948,6 +9410,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -8958,6 +9421,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 2: 2.0
                                 3: 3.0
@@ -8976,6 +9440,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -8986,6 +9451,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -8996,6 +9462,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -9006,6 +9473,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 17: 17.0
                                 18: 18.0
@@ -9016,6 +9484,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 19: 19.0
                                 20: 20.0
@@ -9034,6 +9503,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0
@@ -9044,11 +9514,12 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 24: 24.0
                                 25: 25.0
                                 26: 26.0"#));
-    let r2 = tree.clone().remove(26, TxgT::from(42))
+    let r2 = tree.clone().remove(26, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -9085,6 +9556,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -9095,6 +9567,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 2: 2.0
                                 3: 3.0
@@ -9113,6 +9586,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -9123,6 +9597,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -9133,6 +9608,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -9143,6 +9619,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 17: 17.0
                                 18: 18.0
@@ -9161,6 +9638,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 19: 19.0
                                 20: 20.0
@@ -9171,6 +9649,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0
@@ -9181,6 +9660,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 24: 24.0
                                 25: 25.0"#);
@@ -9188,7 +9668,7 @@ root:
 
 #[test]
 fn remove_and_steal_int_right() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -9224,6 +9704,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -9234,6 +9715,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 2: 2.0
                                 3: 3.0
@@ -9252,6 +9734,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -9262,6 +9745,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -9281,6 +9765,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -9291,6 +9776,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 17: 17.0
                                 18: 18.0
@@ -9301,6 +9787,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 19: 19.0
                                 20: 20.0
@@ -9311,6 +9798,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0
@@ -9321,10 +9809,11 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 24: 24.0
                                 26: 26.0"#));
-    let r2 = tree.clone().remove(14, TxgT::from(42))
+    let r2 = tree.clone().remove(14, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -9361,6 +9850,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -9371,6 +9861,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 2: 2.0
                                 3: 3.0
@@ -9389,6 +9880,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -9399,6 +9891,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -9409,6 +9902,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -9427,6 +9921,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 17: 17.0
                                 18: 18.0
@@ -9437,6 +9932,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 19: 19.0
                                 20: 20.0
@@ -9447,6 +9943,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 21: 21.0
                                 22: 22.0
@@ -9457,6 +9954,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 24: 24.0
                                 26: 26.0"#);
@@ -9464,7 +9962,7 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_left() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -9492,6 +9990,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -9502,6 +10001,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       2: 2.0
                       3: 3.0
@@ -9515,11 +10015,12 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       8: 8.0
                       9: 9.0
   "#));
-    let r2 = tree.clone().remove(8, TxgT::from(42))
+    let r2 = tree.clone().remove(8, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -9548,6 +10049,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -9558,6 +10060,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       2: 2.0
                       3: 3.0
@@ -9570,6 +10073,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       6: 6.0
                       9: 9.0"#);
@@ -9577,7 +10081,7 @@ root:
 
 #[test]
 fn remove_and_steal_leaf_right() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -9605,6 +10109,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -9615,6 +10120,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       4: 4.0
@@ -9625,6 +10131,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 80
                     items:
                       5: 5.0
                       6: 6.0
@@ -9632,7 +10139,7 @@ root:
                       8: 8.0
                       9: 9.0
   "#));
-    let r2 = tree.clone().remove(4, TxgT::from(42))
+    let r2 = tree.clone().remove(4, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -9661,6 +10168,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       1: 1.0
@@ -9671,6 +10179,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       3: 3.0
                       5: 5.0
@@ -9681,6 +10190,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       6: 6.0
                       7: 7.0
@@ -9690,13 +10200,13 @@ root:
 
 #[test]
 fn remove_nonexistent() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let limits = Limits::new(2, 5, 2, 5);
     let tree = Arc::new(
         Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
     );
-    let r = tree.remove(3, TxgT::from(42))
+    let r = tree.remove(3, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert_eq!(r, Ok(None));
 }

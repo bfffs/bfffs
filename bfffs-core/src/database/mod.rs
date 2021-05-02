@@ -7,7 +7,7 @@
 
 use crate::{
     *,
-    tree::MinValue
+    tree::{Key, MinValue}
 };
 use mockall_double::*;
 
@@ -25,6 +25,10 @@ pub use self::database::ReadWriteFilesystem;
 pub enum TreeID {
     /// A filesystem, snapshot, or clone
     Fs(u32)
+}
+
+impl Key for TreeID {
+    const USES_CREDIT: bool = false;
 }
 
 impl TypicalSize for TreeID {

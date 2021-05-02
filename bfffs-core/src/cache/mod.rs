@@ -43,6 +43,12 @@ pub trait Cacheable: Any + Debug + Send + Sync {
     /// As long as this handle is alive, the object will not be evicted from
     /// cache.
     fn make_ref(&self) -> Box<dyn CacheRef>;
+
+    /// How many bytes of writeback credit should this object use?
+    //
+    // It may not be equal to cache_space, because the wb_space needs to be
+    // extend()able and split()able.
+    fn wb_space(&self) -> usize;
 }
 
 downcast!(dyn Cacheable);
@@ -85,6 +91,10 @@ impl Cacheable for DivBufShared {
 
     fn make_ref(&self) -> Box<dyn CacheRef> {
         Box::new(self.try_const().unwrap())
+    }
+
+    fn wb_space(&self) -> usize {
+        self.len()
     }
 }
 

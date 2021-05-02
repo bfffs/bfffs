@@ -29,6 +29,17 @@ cfg_if! {
     }
 }
 
+/// Describes how much WriteBack credit is needed for various Tree operations,
+/// in the worst-case
+#[derive(Clone, Copy, Debug)]
+pub struct CreditRequirements {
+    /// Credit required for a worst-case insertion, *excluding* credit
+    /// requirements of individual `Value`s.
+    pub insert: usize,
+    pub range_delete: usize,
+    pub remove: usize
+}
+
 /// A version of `Inner` that is serializable
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned"))]

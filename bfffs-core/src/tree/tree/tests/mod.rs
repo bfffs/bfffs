@@ -5,6 +5,14 @@
 
 use super::*;
 
+/// Create a mock DML with some handy default expectations
+fn mock_dml() -> MockDML {
+    let mut mock = MockDML::new();
+    mock.expect_repay()
+        .returning(|credit| mem::forget(credit));
+    mock
+}
+
 #[allow(clippy::reversed_empty_ranges)]
 #[test]
 fn ranges_overlap_test() {

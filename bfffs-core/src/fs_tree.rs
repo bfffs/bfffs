@@ -257,6 +257,8 @@ impl Debug for FSKey {
     }
 }
 
+impl Key for FSKey {}
+
 impl TypicalSize for FSKey {
     const TYPICAL_SIZE: usize = 16;
 }
@@ -340,6 +342,12 @@ pub struct Dirent {
     pub dtype:  u8,
     #[serde(serialize_with = "serialize_dirent_name")]
     pub name:   OsString
+}
+
+impl Dirent {
+    pub fn allocated_space(&self) -> usize {
+        self.name.len()
+    }
 }
 
 impl HTItem for Dirent {
@@ -466,6 +474,18 @@ pub enum ExtAttr<A: Addr> {
 }
 
 impl<'a, A: Addr> ExtAttr<A> {
+    pub fn allocated_space(&self) -> usize {
+        const FUDGE: usize = 64;    // Experimentally determined
+
+        match self {
+            ExtAttr::Blob(blob_extattr) => blob_extattr.name.len(),
+            ExtAttr::Inline(inline_extattr) =>
+                inline_extattr.name.len() +
+                inline_extattr.extent.len() +
+                FUDGE
+        }
+    }
+
     pub fn as_inline(&'a self) -> Option<&'a InlineExtAttr> {
         if let ExtAttr::Inline(x) = self {
             Some(x)
@@ -702,6 +722,12 @@ pub struct InlineExtent {
 }
 
 impl InlineExtent {
+    const FUDGE: usize = 64;    // Experimentally determined
+
+    fn allocated_space(&self) -> usize {
+        self.buf.len() + Self::FUDGE
+    }
+
     fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<FSValue<A>, Error>>
             + Send + 'static>>
@@ -861,6 +887,12 @@ impl<A: Addr> FSValue<A> {
             None
         }
     }
+
+    /// How much writeback cache space will `nrecs` extents of size `rs` occupy,
+    /// in the worst case?
+    pub fn extent_space(rs: usize, nrecs: usize) -> usize {
+        nrecs * (rs + InlineExtent::FUDGE)
+    }
 }
 
 #[cfg(test)]
@@ -877,34 +909,21 @@ impl<A: Addr> TypicalSize for FSValue<A> {
 }
 
 impl<A: Addr> Value for FSValue<A> {
+
     fn allocated_space(&self) -> usize {
-        fn inline_extent_space(extent: &InlineExtent) -> usize {
-            const FUDGE: usize = 64;    // Experimentally determined
-            extent.buf.len() + FUDGE
-        }
-
-        fn extattr_space<T: Addr>(extattr: &ExtAttr<T>) -> usize {
-            match extattr {
-                ExtAttr::Blob(blob_extattr) => blob_extattr.name.len(),
-                ExtAttr::Inline(inline_extattr) =>
-                    inline_extattr.name.len() +
-                    inline_extent_space(&inline_extattr.extent)
-            }
-        }
-
         match self {
-            FSValue::DirEntry(dirent) => dirent.name.len(),
-            FSValue::InlineExtent(extent) => inline_extent_space(&extent),
-            FSValue::ExtAttr(extattr) => extattr_space(&extattr),
+            FSValue::DirEntry(dirent) => dirent.allocated_space(),
+            FSValue::InlineExtent(extent) => extent.allocated_space(),
+            FSValue::ExtAttr(extattr) => extattr.allocated_space(),
             FSValue::ExtAttrs(extattrs) =>
                 extattrs.capacity() * mem::size_of::<ExtAttr<A>>() +
                 extattrs.iter()
-                .map(|extattr| extattr_space(&extattr))
+                .map(|extattr| extattr.allocated_space())
                 .sum::<usize>(),
             FSValue::DirEntries(dirents) =>
                 dirents.capacity() * mem::size_of::<Dirent>() +
                 dirents.iter()
-                .map(|de| de.name.len())
+                .map(|de| de.allocated_space())
                 .sum::<usize>(),
             _ => 0
         }

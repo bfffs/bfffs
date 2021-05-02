@@ -5,7 +5,8 @@ use crate::{
     *,
     Error, TxgT,
     dml::*,
-    tree::*
+    tree::*,
+    writeback::Credit
 };
 use futures::{
     Future,
@@ -19,7 +20,7 @@ use std::{
     ops::{Range, RangeBounds},
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll}
+    task::{Context, Poll},
 };
 
 // RangeQuery can't be automock'd because
@@ -52,12 +53,14 @@ mock! {
             -> Result<(), Error>;
         pub fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)
             -> MockTree<A, D, K, V>;
+        pub fn credit_requirements(&self) -> CreditRequirements;
         pub fn dump(&self, f: &mut (dyn io::Write + 'static))
             -> Result<(), Error>;
         pub async fn flush(self: Arc<Self>, txg: TxgT) -> Result<(), Error>;
         pub fn get(&self, k: K)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
-        pub async fn insert(self: Arc<Self>, k: K, v: V, txg: TxgT)
+        pub async fn insert(self: Arc<Self>, k: K, v: V, txg: TxgT,
+                            credit: Credit)
             -> Result<Option<V>, Error>;
         pub fn is_dirty(&self) -> bool;
         pub fn last_key(&self)

@@ -32,8 +32,8 @@ fn basic() {
     let drpi1 = DRP::new(PBA{cluster: 0, lba: 4}, Compression::None, 0, 0, 0);
 
     let mut ld3 = LeafData::default();
-    ld3.insert(6, 6.0);
-    ld3.insert(7, 7.0);
+    ld3.items.insert(6, 6.0);
+    ld3.items.insert(7, 7.0);
     let ln3 = Arc::new(Node::new(NodeData::Leaf(ld3)));
 
     // On-disk internal node in the target zone, but with children outside
@@ -57,8 +57,8 @@ fn basic() {
     // On-disk leaf node in the target zone
     let drpl8 = DRP::new(PBA{cluster: 0, lba: 102}, Compression::None, 0, 0, 0);
     let mut ld8 = LeafData::default();
-    ld8.insert(16, 16.0);
-    ld8.insert(17, 17.0);
+    ld8.items.insert(16, 16.0);
+    ld8.items.insert(17, 17.0);
     let ln8 = Arc::new(Node::new(NodeData::Leaf(ld8)));
 
     let mut mock = DDML::default();
@@ -94,6 +94,8 @@ fn basic() {
             let drp = DRP::new(PBA{cluster: 1, lba}, compression, 0, 0, 0);
             Box::pin(future::ok(drp))
         });
+    mock.expect_repay()
+        .returning(|credit| mem::forget(credit));
     let ddml = Arc::new(mock);
     let tree = Arc::new(Tree::<DRP, DDML, u32, f32>::from_str(ddml, false, r#"
 ---
@@ -168,6 +170,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 6: 6.0
                                 7: 7.0
@@ -300,6 +303,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 6: 6.0
                                 7: 7.0

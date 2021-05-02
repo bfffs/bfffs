@@ -64,7 +64,7 @@ fn expect_pop(mock: &mut MockDML, addr: u32, node: NodeT)
 
 #[test]
 fn addresses() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     let addrl0 = 0;
     let addrl1 = 1;
     let addrl2 = 2;
@@ -124,6 +124,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -179,7 +180,7 @@ root:
 
 #[test]
 fn dump() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     let addrl0 = 0;
     let addrl1 = 1;
     let addrl2 = 2;
@@ -195,18 +196,18 @@ fn dump() {
     let intnode0 = Arc::new(Node::new(NodeData::Int(IntData::new(children0))));
 
     let mut ld0 = LeafData::default();
-    ld0.insert(0, 0.0);
-    ld0.insert(1, 1.0);
+    ld0.items.insert(0, 0.0);
+    ld0.items.insert(1, 1.0);
     let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
 
     let mut ld1 = LeafData::default();
-    ld1.insert(2, 2.0);
-    ld1.insert(3, 3.0);
+    ld1.items.insert(2, 2.0);
+    ld1.items.insert(3, 3.0);
     let leafnode1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
 
     let mut ld2 = LeafData::default();
-    ld2.insert(10, 10.0);
-    ld2.insert(11, 11.0);
+    ld2.items.insert(10, 10.0);
+    ld2.items.insert(11, 11.0);
     let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
 
     let children2 = vec![
@@ -216,13 +217,13 @@ fn dump() {
     let intnode2 = Arc::new(Node::new(NodeData::Int(IntData::new(children2))));
 
     let mut ld4 = LeafData::default();
-    ld4.insert(20, 20.0);
-    ld4.insert(21, 21.0);
+    ld4.items.insert(20, 20.0);
+    ld4.items.insert(21, 21.0);
     let leafnode4 = Arc::new(Node::new(NodeData::Leaf(ld4)));
 
     let mut ld5 = LeafData::default();
-    ld5.insert(25, 25.0);
-    ld5.insert(26, 26.0);
+    ld5.items.insert(25, 25.0);
+    ld5.items.insert(26, 26.0);
     let leafnode5 = Arc::new(Node::new(NodeData::Leaf(ld5)));
 
     expect_get(&mut mock, addri0, intnode0);     // lba 3
@@ -280,6 +281,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -337,6 +339,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -350,28 +353,33 @@ root:
 ---
 0:
   Leaf:
+    credit: 0
     items:
       0: 0.0
       1: 1.0
 1:
   Leaf:
+    credit: 0
     items:
       2: 2.0
       3: 3.0
 ---
 2:
   Leaf:
+    credit: 0
     items:
       10: 10.0
       11: 11.0
 ---
 5:
   Leaf:
+    credit: 0
     items:
       20: 20.0
       21: 21.0
 6:
   Leaf:
+    credit: 0
     items:
       25: 25.0
       26: 26.0
@@ -416,8 +424,12 @@ root:
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_below_root() {
-    let mut mock = MockDML::new();
-    let node = Arc::new(Node::new(NodeData::Leaf(LeafData::default())));
+    let mut mock = mock_dml();
+    let mut ld = LeafData::default();
+    ld.items.insert(3, 3);
+    ld.items.insert(4, 4);
+    ld.items.insert(5, 5);
+    let node = Arc::new(Node::new(NodeData::Leaf(ld)));
     let addrl = 0;
     mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
         .once()
@@ -459,7 +471,8 @@ root:
                 Addr: 256
   "#));
 
-    let r = tree.clone().insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().insert(0, 0, TxgT::from(42), Credit::forge(80))
+        .now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -487,8 +500,12 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       0: 0
+                      3: 3
+                      4: 4
+                      5: 5
             - key: 256
               txgs:
                 start: 41
@@ -497,10 +514,66 @@ root:
                 Addr: 256"#);
 }
 
+/// The insert operation has insufficient credit to xlock the leaf node
+#[test]
+#[should_panic(expected = "Insufficient credit to xlock leaf node")]
+fn insert_insufficient_credit() {
+    let mut mock = mock_dml();
+    let mut ld = LeafData::default();
+    ld.items.insert(3, 3);
+    ld.items.insert(4, 4);
+    ld.items.insert(5, 5);
+    let node = Arc::new(Node::new(NodeData::Leaf(ld)));
+    let addrl = 0;
+    mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
+        .once()
+        .with(eq(addrl), eq(TxgT::from(42)))
+        .return_once(move |_, _| {
+            future::ok(Box::new(node)).boxed()
+        });
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 0
+            - key: 256
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 256
+  "#));
+
+    tree.clone().insert(0, 0, TxgT::from(42), Credit::forge(8))
+        .now_or_never().unwrap()
+        .unwrap();
+}
+
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_root() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     let node = Arc::new(Node::new(NodeData::Leaf(LeafData::default())));
     let addrl = 0;
     mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
@@ -529,7 +602,8 @@ root:
       Addr: 0
   "#));
 
-    let r = tree.clone().insert(0, 0, TxgT::from(42)).now_or_never().unwrap();
+    let r = tree.clone().insert(0, 0, TxgT::from(42), Credit::forge(8))
+        .now_or_never().unwrap();
     assert_eq!(r, Ok(None));
     assert_eq!(format!("{}", tree),
 r#"---
@@ -549,13 +623,99 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 16
           items:
             0: 0"#);
 }
 
+/// Insert a key that splits the root leaf node
+#[test]
+fn insert_split_root_leaf() {
+    let mut mock = mock_dml();
+    let mut ld = LeafData::default();
+    ld.items.insert(0, 0.0);
+    ld.items.insert(1, 1.0);
+    ld.items.insert(2, 2.0);
+    ld.items.insert(3, 3.0);
+    ld.items.insert(4, 4.0);
+    let node = Arc::new(Node::new(NodeData::Leaf(ld)));
+    let addrl = 0;
+    mock.expect_pop::<Arc<Node<u32, u32, f32>>, Arc<Node<u32, u32, f32>>>()
+        .once()
+        .with(eq(addrl), eq(TxgT::from(42)))
+        .return_once(move |_, _| {
+            future::ok(Box::new(node)).boxed()
+        });
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Addr: 0
+  "#));
+    let r2 = tree.clone().insert(5, 5.0, TxgT::from(42), Credit::forge(80))
+        .now_or_never().unwrap();
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 43
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 42
+                end: 43
+              ptr:
+                Mem:
+                  Leaf:
+                    credit: 48
+                    items:
+                      0: 0.0
+                      1: 1.0
+                      2: 2.0
+            - key: 3
+              txgs:
+                start: 42
+                end: 43
+              ptr:
+                Mem:
+                  Leaf:
+                    credit: 48
+                    items:
+                      3: 3.0
+                      4: 4.0
+                      5: 5.0"#);
+}
+
 #[test]
 fn is_dirty() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     let node = Arc::new(Node::new(NodeData::Leaf(LeafData::default())));
     let addrl = 0;
     mock.expect_pop::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
@@ -585,7 +745,8 @@ root:
   "#));
 
     assert!(!tree.is_dirty());
-    tree.clone().insert(0, 0, TxgT::from(42)).now_or_never().unwrap().unwrap();
+    tree.clone().insert(0, 0, TxgT::from(42), Credit::forge(80))
+        .now_or_never().unwrap().unwrap();
     assert!(tree.is_dirty());
 }
 
@@ -661,18 +822,18 @@ fn range_delete() {
     let addri2 = 2;
 
     let mut ld2 = LeafData::default();
-    ld2.insert(3, 3.0);
-    ld2.insert(4, 4.0);
-    ld2.insert(5, 5.0);
+    ld2.items.insert(3, 3.0);
+    ld2.items.insert(4, 4.0);
+    ld2.items.insert(5, 5.0);
     let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
 
     let mut ld7 = LeafData::default();
-    ld7.insert(20, 20.0);
-    ld7.insert(21, 21.0);
-    ld7.insert(22, 22.0);
+    ld7.items.insert(20, 20.0);
+    ld7.items.insert(21, 21.0);
+    ld7.items.insert(22, 22.0);
     let leafnode7 = Arc::new(Node::new(NodeData::Leaf(ld7)));
 
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
 
     // These nodes are popped or deleted in pass1
     expect_delete(&mut mock, addrl3);
@@ -724,7 +885,7 @@ root:
               ptr:
                 Addr: 2
   "#));
-    tree.clone().range_delete(5..25, TxgT::from(42))
+    tree.clone().range_delete(5..25, TxgT::from(42), Credit::forge(120))
         .now_or_never().unwrap().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -780,6 +941,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 3: 3.0
                                 4: 4.0
@@ -808,13 +970,13 @@ root:
 /// should remove the entire node.
 #[test]
 fn range_delete_left_in_cut_full() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
 
     let addrl0 = 81;
     let mut ld0 = LeafData::default();
-    ld0.insert(19, 15.0);
-    ld0.insert(20, 16.0);
-    ld0.insert(21, 17.0);
+    ld0.items.insert(19, 15.0);
+    ld0.items.insert(20, 16.0);
+    ld0.items.insert(21, 17.0);
     let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
 
     let addrl1 = 94;
@@ -869,6 +1031,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 25: 21
                                 31: 27
@@ -880,6 +1043,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 33: 17
                                 34: 18
@@ -891,6 +1055,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 37: 17
                                 38: 18
@@ -910,6 +1075,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 80
                               items:
                                 46: 20
                                 47: 21
@@ -935,7 +1101,7 @@ root:
                         ptr:
                           Addr: 175
   "#));
-    tree.clone().range_delete(4..32, TxgT::from(42))
+    tree.clone().range_delete(4..32, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap().unwrap();
     assert_eq!(format!("{}", &tree),
 r#"---
@@ -971,6 +1137,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 32: 16.0
                                 33: 17.0
@@ -983,6 +1150,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 37: 17.0
                                 38: 18.0
@@ -994,6 +1162,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 80
                               items:
                                 46: 20.0
                                 47: 21.0
@@ -1030,13 +1199,13 @@ root:
 
 #[test]
 fn range_leaf() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     let mut ld1 = LeafData::default();
-    ld1.insert(0, 0.0);
-    ld1.insert(1, 1.0);
-    ld1.insert(2, 2.0);
-    ld1.insert(3, 3.0);
-    ld1.insert(4, 4.0);
+    ld1.items.insert(0, 0.0);
+    ld1.items.insert(1, 1.0);
+    ld1.items.insert(2, 2.0);
+    ld1.items.insert(3, 3.0);
+    ld1.items.insert(4, 4.0);
     let node1 = Arc::new(Node::<u32, u32, f32>::new(NodeData::Leaf(ld1)));
     mock.expect_get::<NodeT, NodeT>()
         .once()
@@ -1099,7 +1268,7 @@ fn read_int() {
     ];
     let node = Arc::new(Node::new(NodeData::Int(IntData::new(children))));
     let addrl = 102;
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     mock.expect_get::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
         .once()
         .with(eq(addrl))
@@ -1140,11 +1309,11 @@ root:
 
 #[test]
 fn read_leaf() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     let mut ld = LeafData::default();
-    ld.insert(0, 100);
-    ld.insert(1, 200);
-    ld.insert(99, 50_000);
+    ld.items.insert(0, 100);
+    ld.items.insert(1, 200);
+    ld.items.insert(99, 50_000);
     let node = Arc::new(Node::new(NodeData::Leaf(ld)));
     mock.expect_get::<Arc<Node<u32, u32, u32>>, Arc<Node<u32, u32, u32>>>()
         .once()
@@ -1174,13 +1343,328 @@ root:
 }
 
 #[test]
+fn remove() {
+    let mut mock = MockDML::new();
+
+    let mut ld = LeafData::default();
+    ld.items.insert(3, 3.0);
+    ld.items.insert(4, 4.0);
+    ld.items.insert(5, 5.0);
+    let leafnode = Arc::new(Node::new(NodeData::Leaf(ld)));
+    let addrl: u32 = 0;
+    mock.expect_pop::<NodeT, NodeT>()
+        .once()
+        .with(eq(addrl), always())
+        .return_once(move |_, _| future::ok(Box::new(leafnode)).boxed());
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 16)
+        .returning(|credit| mem::forget(credit));
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 32)
+        .returning(|credit| mem::forget(credit));
+
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 0
+            - key: 10
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 1
+  "#));
+    let r2 = tree.clone().remove(4, TxgT::from(42), Credit::forge(48))
+        .now_or_never()
+        .unwrap();
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 43
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 42
+                end: 43
+              ptr:
+                Mem:
+                  Leaf:
+                    credit: 32
+                    items:
+                      3: 3.0
+                      5: 5.0
+            - key: 10
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 1"#);
+}
+
+/// Allow merging the root down even when it's clean
+#[test]
 fn remove_and_merge_down() {
     let mut mock = MockDML::new();
 
     let mut ld = LeafData::default();
-    ld.insert(3, 3.0);
-    ld.insert(4, 4.0);
-    ld.insert(5, 5.0);
+    ld.items.insert(3, 3.0);
+    ld.items.insert(4, 4.0);
+    ld.items.insert(5, 5.0);
+    let leafnode = Arc::new(Node::new(NodeData::Leaf(ld)));
+    let addrl: u32 = 0;
+    mock.expect_pop::<NodeT, NodeT>()
+        .once()
+        .with(eq(addrl), always())
+        .return_once(move |_, _| future::ok(Box::new(leafnode)).boxed());
+    // First repay is excess credit from the xlock
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 56)
+        .returning(|credit| mem::forget(credit));
+    // Second repay is when dropping the tree
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 24)
+        .returning(|credit| mem::forget(credit));
+
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 0
+  "#));
+    let r2 = tree.clone().remove(1, TxgT::from(42), Credit::forge(80))
+        .now_or_never()
+        .unwrap();
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 43
+    ptr:
+      Mem:
+        Leaf:
+          credit: 48
+          items:
+            3: 3.0
+            4: 4.0
+            5: 5.0"#);
+}
+
+#[test]
+fn remove_and_steal_leaf_left() {
+    let mut seq = Sequence::new();
+    let mut mock = MockDML::new();//mock_dml();
+
+    let mut ld2 = LeafData::default();
+    ld2.items.insert(8, 8.0);
+    ld2.items.insert(9, 9.0);
+    let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
+    let addr2: u32 = 2;
+    mock.expect_pop::<NodeT, NodeT>()
+        .once()
+        .in_sequence(&mut seq)
+        .with(eq(addr2), always())
+        .return_once(move |_, _| future::ok(Box::new(leafnode2)).boxed());
+
+    let mut ld1 = LeafData::default();
+    ld1.items.insert(2, 2.0);
+    ld1.items.insert(3, 3.0);
+    ld1.items.insert(4, 4.0);
+    ld1.items.insert(5, 5.0);
+    ld1.items.insert(6, 6.0);
+    let leafnode1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
+    let addr1: u32 = 1;
+    mock.expect_pop::<NodeT, NodeT>()
+        .once()
+        .with(eq(addr1), always())
+        .return_once(move |_, _| future::ok(Box::new(leafnode1)).boxed());
+    // the first repay is excess credit from the remove operation
+    // The second is when dropping the tree
+    mock.expect_repay()
+        .times(2)
+        .withf(|credit| *credit == 32)
+        .returning(|credit| mem::forget(credit));
+
+    // The third is also when dropping the tree
+    mock.expect_repay()
+        .times(1)
+        .withf(|credit| *credit == 16)
+        .returning(|credit| mem::forget(credit));
+
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 0
+            - key: 2
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 1
+            - key: 8
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 2
+  "#));
+    let r2 = tree.clone().remove(8, TxgT::from(42), Credit::forge(80))
+        .now_or_never().unwrap();
+    assert!(r2.is_ok());
+    assert_eq!(format!("{}", &tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 43
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 0
+            - key: 2
+              txgs:
+                start: 42
+                end: 43
+              ptr:
+                Mem:
+                  Leaf:
+                    credit: 64
+                    items:
+                      2: 2.0
+                      3: 3.0
+                      4: 4.0
+                      5: 5.0
+            - key: 6
+              txgs:
+                start: 42
+                end: 43
+              ptr:
+                Mem:
+                  Leaf:
+                    credit: 32
+                    items:
+                      6: 6.0
+                      9: 9.0"#);
+}
+
+#[test]
+#[should_panic(expected="Insufficient credit to xlock leaf node")]
+fn remove_insufficient_credit() {
+    let mut mock = MockDML::new();
+
+    let mut ld = LeafData::default();
+    ld.items.insert(3, 3.0);
+    ld.items.insert(4, 4.0);
+    ld.items.insert(5, 5.0);
     let leafnode = Arc::new(Node::new(NodeData::Leaf(ld)));
     let addrl: u32 = 0;
     mock.expect_pop::<NodeT, NodeT>()
@@ -1214,31 +1698,17 @@ root:
                 end: 42
               ptr:
                 Addr: 0
+            - key: 10
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 1
   "#));
-    let r2 = tree.clone().remove(1, TxgT::from(42)).now_or_never().unwrap();
-    assert!(r2.is_ok());
-    assert_eq!(format!("{}", &tree),
-r#"---
-limits:
-  min_int_fanout: 2
-  max_int_fanout: 5
-  min_leaf_fanout: 2
-  max_leaf_fanout: 5
-  _max_size: 4194304
-root:
-  height: 1
-  elem:
-    key: 0
-    txgs:
-      start: 41
-      end: 43
-    ptr:
-      Mem:
-        Leaf:
-          items:
-            3: 3.0
-            4: 4.0
-            5: 5.0"#);
+    tree.clone().remove(4, TxgT::from(42), Credit::forge(23))
+        .now_or_never()
+        .unwrap()
+        .unwrap();
 }
 
 // This test mimics what the IDML does with the alloc_t
@@ -1404,6 +1874,11 @@ fn write_height2() {
                 _ => false
             }
         }).return_once(move |_, _, _| future::ok(addrl).boxed());
+    mock.expect_repay()
+        .once()
+        .in_sequence(&mut seq)
+        .withf(|credit| *credit == 16)
+        .returning(|credit| mem::forget(credit));
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .once()
         .in_sequence(&mut seq)
@@ -1445,6 +1920,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 100
                       1: 200
@@ -1495,6 +1971,10 @@ fn write_height3() {
                 _ => false
             }
         }).return_once(move |_, _, _| future::ok(7).boxed());
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 16)
+        .returning(|credit| mem::forget(credit));
     mock.expect_put::<Arc<Node<u32, u32, f32>>>()
         .once()
         .withf(move |cacheable, _compression, txg| {
@@ -1524,6 +2004,10 @@ fn write_height3() {
                 _ => false
             }
         }).return_once(move |_, _, _| future::ok(9).boxed());
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 16)
+        .returning(|credit| mem::forget(credit));
     mock.expect_put::<Arc<Node<u32, u32, f32>>>()
         .once()
         .withf(move |cacheable, _compression, txg| {
@@ -1597,6 +2081,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 15: 15.0
                                 16: 16.0
@@ -1633,6 +2118,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 50: 50.0
                                 51: 51.0
@@ -1738,6 +2224,10 @@ fn write_leaf() {
             leaf_data.get(&1) == Some(200) &&
             *txg == TxgT::from(42)
         }).returning(move |_, _, _| future::ok(addr).boxed());
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 16)
+        .returning(|credit| mem::forget(credit));
     let dml = Arc::new(mock);
     let mut tree = Arc::new(
         Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"
@@ -1758,6 +2248,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 32
           items:
             0: 100
             1: 200
@@ -1782,7 +2273,7 @@ fn write_race() {
     let otree: Arc<RwLock<Option<Arc<Tree<u32, MockDML, u32, f32>>>>> =
         Arc::new(RwLock::new(None));
     let otree2 = otree.clone();
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     let addr0 = 69;
     let addr10 = 70;
     let addr20 = 71;
@@ -1820,15 +2311,15 @@ fn write_race() {
                 .as_ref()
                 .unwrap()
                 .clone()
-                .insert(2, 2.0, TxgT::from(42))
+                .insert(2, 2.0, TxgT::from(42), Credit::forge(80))
                 .now_or_never()
                 .unwrap()
                 .unwrap();
             future::ok(addr10).boxed()
         });
     let mut ld0 = LeafData::default();
-    ld0.insert(0, 0.0);
-    ld0.insert(1, 1.0);
+    ld0.items.insert(0, 0.0);
+    ld0.items.insert(1, 1.0);
     let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
     expect_pop(&mut mock, addr0, leafnode0);
     mock.expect_put::<Arc<Node<u32, u32, f32>>>()
@@ -1845,6 +2336,7 @@ fn write_race() {
                 _ => false
             }
         }).return_once(move |_, _, _| future::ok(addr20).boxed());
+
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -1880,6 +2372,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -1904,6 +2397,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 10: 10.0
                                 11: 11.0
@@ -1928,6 +2422,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 20: 20.0
                                 21: 21.0
@@ -1979,6 +2474,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 0: 0.0
                                 1: 1.0
