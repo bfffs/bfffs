@@ -2029,19 +2029,26 @@ impl Fs {
         let ino = fd.ino;
         let uio = data.into();
 
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
+        let mut value = self.handle.block_on(
+            self.db.fsread(self.tree, move |dataset| {
+                let inode_key = FSKey::new(ino, ObjKey::Inode);
+                dataset.get(inode_key)
+            }).map_err::<i32, _>(Error::into)
+        )?.unwrap();
+
+        let rs = value.as_inode().unwrap().record_size() as u64;
+        let offset0 = (offset % rs) as usize;
+
         self.handle.block_on(
             self.db.fswrite(self.tree, move |ds| async move {
                 let dataset = Arc::new(ds);
-                let inode_key = FSKey::new(ino, ObjKey::Inode);
-                let mut value = dataset.get(inode_key).await?.unwrap();
                 let inode = value.as_inode().unwrap();
                 let filesize = inode.size;
-                let rs = inode.record_size() as u64;
 
                 // Moving uio into the asynchronous domain is safe because
                 // the async domain blocks on rx.wait().
                 let datalen = uio.len();
-                let offset0 = (offset % rs) as usize;
                 let sglist = unsafe {
                     uio.into_chunks(offset0, inode.record_size(),
                         |chunk| Arc::new(DivBufShared::from(chunk)))
