@@ -994,7 +994,7 @@ impl Fs {
         let ino = fd.ino();
 
         self.handle.block_on(
-            self.db.fswrite(self.tree, 0, 0, 1, 0, move |dataset| {
+            self.db.fswrite(self.tree, 0, 1, 1, 0, move |dataset| {
                 Fs::do_inactive(Arc::new(dataset), ino)
                 .map(|r| r.map(drop))
             }).map_err(Error::unhandled)

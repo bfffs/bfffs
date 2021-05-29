@@ -2385,6 +2385,42 @@ root:
         assert_ts_changed(&mocks.val.0, &root, false, true, true, false);
     }
 
+    /// Unlink a file with blobs on disk
+    test unlink_with_blobs(mocks) {
+        let root = mocks.val.0.root();
+        let filename = OsString::from("x");
+        let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
+        #[cfg(debug_assertions)] let ino = fd.ino();
+        let buf = vec![42u8; 4096];
+        for i in 0..1024 {
+            assert_eq!(Ok(4096), mocks.val.0.write(&fd, 4096 * i, &buf[..], 0));
+        }
+
+        mocks.val.0.sync();
+
+        let r = mocks.val.0.unlink(&root, Some(&fd), &filename);
+        assert_eq!(Ok(()), r);
+        mocks.val.0.inactive(fd);
+
+        // Check that the directory entry is gone
+        let r = mocks.val.0.lookup(None, &root, &filename);
+        assert_eq!(libc::ENOENT, r.unwrap_err(), "Dirent was not removed");
+        // Check that the inode is gone
+        #[cfg(debug_assertions)]
+        {
+            assert_eq!(mocks.val.0.igetattr(ino), Err(libc::ENOENT));
+        }
+
+        // The parent dir should not have an "x" directory entry
+        let entries = mocks.val.0.readdir(&root, 0);
+        let x_de = entries
+        .map(|r| r.unwrap())
+        .find(|(dirent, _ofs)| {
+            dirent.d_name[0] == 'x' as i8
+        });
+        assert!(x_de.is_none(), "Directory entry was not removed");
+    }
+
     // A very simple single record write to an empty file
     test write(mocks) {
         let root = mocks.val.0.root();
