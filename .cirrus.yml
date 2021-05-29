@@ -36,4 +36,9 @@ task:
     - . $HOME/.cargo/env
     - cd bfffs
     - cargo +$VERSION check --no-default-features --all-targets
+  release_script:
+    # Release builds are too slow, and differ little from debug builds.  Just
+    # check that it would compile, but don't try to build it.
+    - . $HOME/.cargo/env
+    - cargo +$VERSION check $CARGO_ARGS --release --all --all-targets
   before_cache_script: rm -rf $HOME/.cargo/registry/index

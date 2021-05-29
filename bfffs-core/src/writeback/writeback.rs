@@ -1,5 +1,4 @@
 // vim: tw=80
-use cfg_if::cfg_if;
 use futures::{
     Future,
     FutureExt,
@@ -12,6 +11,7 @@ use serde_derive::Deserialize;
 use std::{
     cmp::Ordering,
     collections::VecDeque,
+    convert::TryInto,
     mem,
     ops::Add,
     pin::Pin,
@@ -20,8 +20,6 @@ use std::{
         atomic::{AtomicIsize, AtomicUsize, Ordering::*}
     }
 };
-#[cfg(debug_assertions)]
-use std::convert::TryInto;
 #[cfg(test)]
 use std::fmt::Debug;
 
@@ -66,7 +64,6 @@ impl Credit {
         self.split(old >> 2)
     }
 
-    #[cfg(debug_assertions)]
     pub fn is_null(&self) -> bool {
         self.0.load(Relaxed) == 0
     }
@@ -143,7 +140,6 @@ struct Sleeper {
 /// It doesn't actually own the cached data; it just tracks how much there is.
 #[derive(Debug)]
 pub struct WriteBack {
-    #[cfg(debug_assertions)]
     capacity: isize,
     // Use isize instead of usize because it might temporarily go negative due
     // to the Relaxed ordering in the atomic fetch_sub
@@ -251,19 +247,10 @@ impl WriteBack {
     }
 
     pub fn with_capacity(capacity: isize) -> Self {
-        cfg_if! {
-            if #[cfg(debug_assertions)] {
-                WriteBack {
-                    capacity: capacity << 1,
-                    supply: AtomicIsize::new(capacity << 1),
-                    sleepers: Default::default()
-                }
-            } else {
-                WriteBack {
-                    supply: AtomicIsize::new(capacity << 1),
-                    sleepers: Default::default()
-                }
-            }
+        WriteBack {
+            capacity: capacity << 1,
+            supply: AtomicIsize::new(capacity << 1),
+            sleepers: Default::default()
         }
     }
 }
