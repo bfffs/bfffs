@@ -4,6 +4,8 @@ freebsd_instance:
 task:
   env:
     HOME: /tmp # cargo needs it
+    # Temporary workaround for https://github.com/rust-lang/rustup/issues/2774
+    RUSTUP_IO_THREADS: 1
   matrix:
     - name: cargo test (nightly)
       env:
