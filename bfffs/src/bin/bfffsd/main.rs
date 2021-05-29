@@ -45,8 +45,12 @@ fn main() {
          );
     let matches = app.get_matches();
 
-    // Unconditionally disable the kernel's buffer cache since BFFFS has its own
-    let mut opts = vec![OsString::from("-o"), OsString::from("direct_io")];
+    let mut opts = vec![
+        // Unconditionally disable the kernel's buffer cache; BFFFS has its own
+        OsString::from("-o"), OsString::from("direct_io"),
+        // Specify the file system type
+        OsString::from("-o"), OsString::from("subtype=bfffs"),
+    ];
     if let Some(it) = matches.values_of("option") {
         for o in it {
             opts.push(OsString::from("-o"));
