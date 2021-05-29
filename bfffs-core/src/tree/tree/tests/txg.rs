@@ -9,7 +9,7 @@ use super::*;
 
 #[test]
 fn check_bad_root_txgs() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -37,6 +37,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 1.0
                       1: 2.0
@@ -47,6 +48,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       256: 256.0
                       257: 257.0
@@ -59,7 +61,7 @@ root:
 
 #[test]
 fn check_bad_int_txgs() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -95,6 +97,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 1.0
                                 1: 2.0
@@ -105,6 +108,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 2: 3.0
                                 3: 4.0
@@ -123,6 +127,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 9: 9.0
                                 10: 10.0
@@ -133,6 +138,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -145,7 +151,7 @@ root:
 
 #[test]
 fn check_bad_key() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -173,6 +179,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       10: 10.0
                       11: 11.0
@@ -183,6 +190,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       13: 13.0
                       14: 14.0
@@ -195,7 +203,7 @@ root:
 
 #[test]
 fn check_ok() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -231,6 +239,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 0: 0.0
                                 1: 1.0
@@ -241,6 +250,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 80
                               items:
                                 2: 2.0
                                 3: 3.0
@@ -262,6 +272,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 10: 10.0
                                 11: 11.0
@@ -272,6 +283,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -284,7 +296,7 @@ root:
 
 #[test]
 fn check_empty() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(
         Tree::<u32, MockDML, u32, f32>::create(dml, false, 1.0, 1.0)
@@ -297,7 +309,7 @@ fn check_empty() {
 
 #[test]
 fn check_leaf_underflow() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -325,6 +337,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 16
                     items:
                       10: 10.0
             - key: 13
@@ -334,6 +347,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       13: 13.0
                       14: 14.0
@@ -347,7 +361,7 @@ root:
 // The root Node is always allowed to underflow
 #[test]
 fn check_root_int_underflow() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -375,6 +389,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       10: 10.0
                       11: 11.0
@@ -387,6 +402,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 64
                     items:
                       20: 20.0
                       21: 21.0
@@ -402,7 +418,7 @@ root:
 // The root node is allowed to underflow if it's a leaf
 #[test]
 fn check_root_leaf_ok() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -422,6 +438,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 16
           items:
             0: 0.0
   "#));
@@ -433,7 +450,7 @@ root:
 
 #[test]
 fn check_root_leaf_overflow() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -453,6 +470,7 @@ root:
     ptr:
       Mem:
         Leaf:
+          credit: 96
           items:
             0: 0.0
             1: 1.0
@@ -470,7 +488,7 @@ root:
 // The tree is unsorted overall, even though each Node is correctly sorted
 #[test]
 fn check_unsorted() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -498,6 +516,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 32
                     items:
                       0: 0.0
                       10: 10.0
@@ -508,6 +527,7 @@ root:
               ptr:
                 Mem:
                   Leaf:
+                    credit: 48
                     items:
                       5: 5.0
                       6: 6.0
@@ -522,11 +542,11 @@ root:
 /// Remove a key that merges two int nodes
 #[test]
 fn merge() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     let mut ld1 = LeafData::default();
-    ld1.insert(2, 2.0);
-    ld1.insert(3, 3.0);
-    ld1.insert(4, 4.0);
+    ld1.items.insert(2, 2.0);
+    ld1.items.insert(3, 3.0);
+    ld1.items.insert(4, 4.0);
     let addrl1 = 2;
     let ln1 = Arc::new(Node::new(NodeData::Leaf(ld1)));
     mock.expect_pop::<Arc<Node<u32, u32, f32>>, Arc<Node<u32, u32, f32>>>()
@@ -605,7 +625,7 @@ root:
                 end: 16
               ptr:
                 Addr: 6"#));
-    let r2 = tree.clone().remove(4, TxgT::from(42))
+    let r2 = tree.clone().remove(4, TxgT::from(42), Credit::forge(40))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -648,6 +668,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 2: 2.0
                                 3: 3.0
@@ -680,11 +701,11 @@ root:
 /// Insert a key that splits the root IntNode
 #[test]
 fn split() {
-    let mut mock = MockDML::new();
+    let mut mock = mock_dml();
     let mut ld = LeafData::default();
-    ld.insert(12, 12.0);
-    ld.insert(13, 13.0);
-    ld.insert(14, 14.0);
+    ld.items.insert(12, 12.0);
+    ld.items.insert(13, 13.0);
+    ld.items.insert(14, 14.0);
     let addrl = 1280;
     let node = Arc::new(Node::new(NodeData::Leaf(ld)));
     mock.expect_pop::<Arc<Node<u32, u32, f32>>, Arc<Node<u32, u32, f32>>>()
@@ -742,7 +763,7 @@ root:
               ptr:
                 Addr: 1280
   "#));
-    let r2 = tree.clone().insert(15, 15.0, TxgT::from(42))
+    let r2 = tree.clone().insert(15, 15.0, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -811,6 +832,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 64
                               items:
                                 12: 12.0
                                 13: 13.0
@@ -821,7 +843,7 @@ root:
 /// Recompute TXG ranges after stealing keys
 #[test]
 fn steal() {
-    let mock = MockDML::new();
+    let mock = mock_dml();
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
 ---
@@ -907,11 +929,12 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 48
                               items:
                                 24: 24.0
                                 25: 25.0
                                 26: 26.0"#));
-    let r2 = tree.clone().remove(26, TxgT::from(42))
+    let r2 = tree.clone().remove(26, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
     assert_eq!(format!("{}", &tree),
@@ -998,6 +1021,7 @@ root:
                         ptr:
                           Mem:
                             Leaf:
+                              credit: 32
                               items:
                                 24: 24.0
                                 25: 25.0"#);

@@ -9,7 +9,8 @@ use crate::{
     idml::*,
     label::*,
     property::*,
-    tree::{Tree, TreeOnDisk}
+    tree::{Tree, TreeOnDisk},
+    writeback::Credit
 };
 use futures::{
     Future,
@@ -200,30 +201,36 @@ impl Inner {
         }
     }
 
-    fn rw_filesystem(inner: &Arc<Inner>, tree_id: TreeID, txg: TxgT)
-        -> impl Future<Output=Result<ReadWriteFilesystem, Error>>
-    {
-        let idml2 = inner.idml.clone();
-        Inner::open_filesystem(&inner, tree_id)
-            .map_ok(move |fs| ReadWriteFilesystem::new(idml2, fs, txg))
-    }
-
     // The txg is a ref in test mode, but a RwlockWriteGuard in normal mode
     #[cfg_attr(test, allow(clippy::drop_ref))]
-    fn fswrite<F, B, R>(inner: Arc<Self>, tree_id: TreeID, f: F)
-        -> impl Future<Output=Result<R, Error>>
+    fn fswrite<F, B, R>(
+        inner: Arc<Self>,
+        tree_id: TreeID,
+        ninsert: usize,
+        nrange_delete: usize,
+        nremove: usize,
+        blob_bytes: usize,
+        f: F,
+    ) -> impl Future<Output=Result<R, Error>>
         where F: FnOnce(ReadWriteFilesystem) -> B,
               B: Future<Output=Result<R, Error>>,
     {
         inner.dirty.store(true, Ordering::Relaxed);
-        inner.idml.txg()
-        .then(move |txg| {
-            Inner::rw_filesystem(&inner, tree_id, *txg)
-                .and_then(|ds| f(ds))
-                .map_ok(move |r| {
-                    drop(txg);
-                    r
-                })
+        Inner::open_filesystem(&inner, tree_id)
+        .and_then(move |itree| async move {
+            let cr = itree.credit_requirements();
+            let credit = inner.idml.borrow_credit(
+                ninsert * cr.insert +
+                nrange_delete * cr.range_delete +
+                nremove * cr.remove +
+                blob_bytes
+            ).await;
+            let idml2 = inner.idml.clone();
+            let txg = inner.idml.txg().await;
+            let ds = ReadWriteFilesystem::new(idml2, itree, *txg, credit);
+            let r = f(ds).await;
+            drop(txg);
+            r
         })
     }
 
@@ -406,8 +413,10 @@ impl Database {
     }
 
     /// Insert a property into the filesystem, but don't modify the propcache
-    fn insert_prop(dataset: &ReadWriteFilesystem, prop: Property)
-        -> impl Future<Output=Result<(), Error>>
+    fn insert_prop(
+        dataset: &ReadWriteFilesystem,
+        prop: Property,
+    ) -> impl Future<Output=Result<(), Error>>
     {
         let objkey = ObjKey::Property(prop.name());
         let key = FSKey::new(PROPERTY_OBJECT, objkey);
@@ -424,22 +433,23 @@ impl Database {
     {
         self.inner.dirty.store(true, Ordering::Relaxed);
         let idml2 = self.inner.idml.clone();
-        let inner2 = self.inner.clone();
-        self.inner.fs_trees.with_write(move |mut guard| {
+        let inner3 = self.inner.clone();
+        // The FS tree's compressibility varies greatly, especially based on
+        // whether the write pattern is sequential or random.  5.98x is the
+        // lower value for random access.  We'll use that rather than the
+        // upper value, to keep cache usage lower.
+        let fs = Arc::new(ITree::create(idml2, false, 9.00, 1.61));
+        let ninsert = props.len() + 3;
+        self.inner.fs_trees.with_write(move |mut guard| async move {
             let k = (0..=u32::max_value()).find(|i| {
                 !guard.contains_key(&TreeID::Fs(*i))
             }).expect("Maximum number of filesystems reached");
             let tree_id: TreeID = TreeID::Fs(k);
-            // The FS tree's compressibility varies greatly, especially based on
-            // whether the write pattern is sequential or random.  5.98x is the
-            // lower value for random access.  We'll use that rather than the
-            // upper value, to keep cache usage lower.
-            let fs = Arc::new(ITree::create(idml2, false, 9.00, 1.61));
             guard.insert(tree_id, fs);
             drop(guard);
 
             // Create the filesystem's root directory
-            Inner::fswrite(inner2, tree_id, move |dataset| {
+            Inner::fswrite(inner3, tree_id, ninsert, 0, 0, 0, move |dataset| {
                 let ino = 1;    // FUSE requires root dir to have inode 1
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
                 let now = time::get_time();
@@ -479,27 +489,35 @@ impl Database {
 
                 // Set initial properties
                 let futs = props.iter()
-                .map(|prop| Database::insert_prop(&dataset, prop.clone())
-                     .boxed()
+                .map(|prop|
+                     Database::insert_prop(&dataset, prop.clone()).boxed()
                 ).collect::<FuturesUnordered<_>>();
                 futs.push(
-                    dataset.insert(inode_key, inode_value)
-                    .map_ok(drop)
+                    dataset.insert(inode_key, inode_value).map_ok(drop)
                     .boxed()
                 );
                 futs.push(
-                    dataset.insert(dot_key, dot_value)
-                    .map_ok(drop)
+                    dataset.insert(dot_key, dot_value).map_ok(drop)
                     .boxed()
                 );
                 futs.push(
-                    dataset.insert(dotdot_key, dotdot_value)
-                    .map_ok(drop)
+                    dataset.insert(dotdot_key, dotdot_value).map_ok(drop)
                     .boxed()
                 );
                 futs.try_collect::<Vec<_>>()
-            }).map_ok(move |_| tree_id)
+            }).await
+            .map(|_| tree_id)
         })
+    }
+
+    fn fsread_real<F, B, R>(&self, tree_id: TreeID, f: F)
+        -> impl Future<Output=Result<R, Error>> + Send
+        where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
+              B: Future<Output = Result<R, Error>> + Send + 'static,
+              R: 'static,
+    {
+        self.ro_filesystem(tree_id)
+            .and_then(|ds| f(ds))
     }
 
     /// Perform a read-only operation on a Filesystem
@@ -510,8 +528,7 @@ impl Database {
               B: Future<Output = Result<R, Error>> + Send + 'static,
               R: 'static,
     {
-        self.ro_filesystem(tree_id)
-            .and_then(|ds| f(ds))
+        self.fsread_real(tree_id, f)
     }
 
     /// See comments for `fswrite_inner`.
@@ -576,7 +593,7 @@ impl Database {
         self.inner.propcache.with(move |mut guard| {
             let name = prop.name();
             let prop2 = prop.clone();
-            Inner::fswrite(inner2, tree_id, move |dataset| {
+            Inner::fswrite(inner2, tree_id, 1, 0, 0, 0, move |dataset| {
                 Database::insert_prop(&dataset, prop)
             }).map(move |r| {
                 // BTreeMap sadly doesn't have a range_delete method.
@@ -636,7 +653,8 @@ impl Database {
             let forest_futs = guard.iter()
                 .map(|(tree_id, itree)| {
                     let tod = itree.serialize().unwrap();
-                    inner2.forest.clone().insert(*tree_id, tod, txg)
+                    inner2.forest.clone()
+                    .insert(*tree_id, tod, txg, Credit::null())
                 }).collect::<FuturesUnordered<_>>();
             drop(guard);
             forest_futs.try_collect::<Vec<_>>().await?;
@@ -665,14 +683,35 @@ impl Database {
     /// All operations conducted by the supplied closure will be completed
     /// within the same Pool transaction group.  Thus, after a power failure and
     /// recovery, either all will have completed, or none will have.
+    ///
+    /// # Arguments
+    ///
+    /// `tree_id` -         Identifies the Tree to write to
+    /// `ninsert`-          Maximum number of [`ReadWriteFilesystem::insert`]
+    ///                     operations that will be called.
+    /// `nrange_delete`-    Maximum number of
+    ///                     [`ReadWriteFilesystem::range_delete`] operations
+    ///                     that will be called.
+    /// `nremove`-          Maximum number of [`ReadWriteFilesystem::remove`]
+    ///                     operations that will be called.
+    /// `blob_bytes` -      Maximum number of bytes that will be written into
+    ///                     the tree as blobs.
     #[cfg(not(test))]
-    pub fn fswrite<F, B, R>(&self, tree_id: TreeID, f: F)
-        -> impl Future<Output=Result<R, Error>> + Send
+    pub fn fswrite<F, B, R>(
+        &self,
+        tree_id: TreeID,
+        ninsert: usize,
+        nrange_delete: usize,
+        nremove: usize,
+        blob_bytes: usize,
+        f: F
+    ) -> impl Future<Output=Result<R, Error>> + Send
         where F: FnOnce(ReadWriteFilesystem) -> B + Send + 'static,
               B: Future<Output=Result<R, Error>> + Send,
               R: 'static
     {
-        Inner::fswrite(self.inner.clone(), tree_id, f)
+        Inner::fswrite(self.inner.clone(), tree_id, ninsert, nrange_delete,
+            nremove, blob_bytes, f)
     }
 
     /// Helper for MockDatabase::fswrite.
@@ -701,8 +740,15 @@ impl MockDatabase {
         f(self.fsread_inner(tree_id))
     }
 
-    pub fn fswrite<F, B, R>(&self, tree_id: TreeID, f: F)
-        -> impl Future<Output=Result<R, Error>> + Send
+    pub fn fswrite<F, B, R>(
+        &self,
+        tree_id: TreeID,
+        _ninsert: usize,
+        _nrange_delete: usize,
+        _nremove: usize,
+        _blob_bytes: usize,
+        f: F
+    ) -> impl Future<Output=Result<R, Error>> + Send
         where F: FnOnce(ReadWriteFilesystem) -> B + Send + 'static,
               B: Future<Output=Result<R, Error>> + Send,
               R: 'static

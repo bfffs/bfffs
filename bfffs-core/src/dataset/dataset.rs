@@ -4,7 +4,8 @@ use crate::{
     *,
     dml::{Compression, DML},
     idml::IDML,
-    tree::{Key, Value}
+    tree::{CreditRequirements, Key, Value},
+    writeback::Credit
 };
 use futures::{Future, FutureExt};
 use std::{
@@ -27,6 +28,10 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.idml.allocated()
     }
 
+    fn credit_requirements(&self) -> CreditRequirements {
+        self.tree.credit_requirements()
+    }
+
     fn delete_blob(&self, rid: RID, txg: TxgT)
         -> impl Future<Output=Result<(), Error>>
     {
@@ -45,10 +50,10 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.idml.get::<DivBufShared, DivBuf>(&rid)
     }
 
-    fn insert(&self, txg: TxgT, k: K, v: V)
+    fn insert(&self, txg: TxgT, k: K, v: V, credit: Credit)
         -> impl Future<Output=Result<Option<V>, Error>>
     {
-        self.tree.clone().insert(k, v, txg)
+        self.tree.clone().insert(k, v, txg, credit)
     }
 
     fn last_key(&self) -> impl Future<Output=Result<Option<K>, Error>>
@@ -86,19 +91,19 @@ impl<K: Key, V: Value> Dataset<K, V> {
         unimplemented!()
     }
 
-    fn range_delete<R, T>(&self, range: R, txg: TxgT)
+    fn range_delete<R, T>(&self, range: R, txg: TxgT, credit: Credit)
         -> impl Future<Output=Result<(), Error>> + Send
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Debug + Ord + Clone + Send + 'static
     {
-        self.tree.clone().range_delete(range, txg)
+        self.tree.clone().range_delete(range, txg, credit)
     }
 
-    fn remove(&self, k: K, txg: TxgT)
+    fn remove(&self, k: K, txg: TxgT, credit: Credit)
         -> impl Future<Output=Result<Option<V>, Error>> + Send
     {
-        self.tree.clone().remove(k, txg)
+        self.tree.clone().remove(k, txg, credit)
     }
 
     fn remove_blob(&self, rid: RID, txg: TxgT)
@@ -137,6 +142,10 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
 }
 
 impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
+    fn credit_requirements(&self) -> CreditRequirements {
+        self.dataset.credit_requirements()
+    }
+
     fn get(&self, k: K)
         -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
     {
@@ -161,6 +170,8 @@ impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
 
 /// A dataset handle with read/write access
 pub struct ReadWriteDataset<K: Key, V: Value>  {
+    cr: CreditRequirements,
+    credit: Credit,
     dataset: Dataset<K, V>,
     txg: TxgT
 }
@@ -179,11 +190,24 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
     pub fn insert(&self, k: K, v: V)
         -> impl Future<Output=Result<Option<V>, Error>> + Send
     {
-        self.dataset.insert(self.txg, k, v)
+        let want = self.cr.insert + v.allocated_space();
+        let credit = self.credit.atomic_split(want);
+        self.dataset.insert(self.txg, k, v, credit)
     }
 
-    pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT) -> Self {
-        ReadWriteDataset{dataset: Dataset::new(idml, tree), txg}
+    pub fn new(
+        idml: Arc<IDML>,
+        tree: Arc<ITree<K, V>>,
+        txg: TxgT,
+        credit: Credit
+    ) -> Self
+    {
+        ReadWriteDataset{
+            cr: tree.credit_requirements(),
+            credit: credit,
+            dataset: Dataset::new(idml, tree),
+            txg
+        }
     }
 
     /// Write directly to the IDML, bypassing the Tree
@@ -199,13 +223,15 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Debug + Ord + Clone + Send + 'static
     {
-        self.dataset.range_delete(range, self.txg)
+        let credit = self.credit.atomic_split(self.cr.range_delete);
+        self.dataset.range_delete(range, self.txg, credit)
     }
 
     pub fn remove(&self, k: K)
         -> impl Future<Output=Result<Option<V>, Error>> + Send
     {
-        self.dataset.remove(k, self.txg)
+        let credit = self.credit.atomic_split(self.cr.remove);
+        self.dataset.remove(k, self.txg, credit)
     }
 
     pub fn remove_blob(&self, rid: RID)
@@ -216,6 +242,10 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
 }
 
 impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDataset<K, V> {
+    fn credit_requirements(&self) -> CreditRequirements {
+        self.dataset.credit_requirements()
+    }
+
     fn get(&self, k: K)
         -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
     {
@@ -243,5 +273,13 @@ impl<K, V> AsRef<ReadWriteDataset<K, V>> for ReadWriteDataset<K, V>
 {
     fn as_ref(&self) -> &Self {
         self
+    }
+}
+
+impl<K, V> Drop for ReadWriteDataset<K, V>
+    where K: Key, V: Value
+{
+    fn drop(&mut self) {
+        self.dataset.idml.repay(self.credit.take())
     }
 }

@@ -7,7 +7,7 @@ use crate::{
     database::*,
     dataset::ReadDataset,
     fs_tree::*,
-    property::*
+    property::*,
 };
 use divbuf::{DivBufShared, DivBuf};
 use futures::{
@@ -111,8 +111,12 @@ mod htable {
     }
 
     /// Insert an item that is stored in a BTree hash table
-    pub(super) fn insert<D, T>(dataset: D, key: FSKey, value: T, name: OsString)
-        -> impl Future<Output=Result<Option<T>, Error>> + Send
+    pub(super) fn insert<D, T>(
+        dataset: D,
+        key: FSKey,
+        value: T,
+        name: OsString,
+    ) -> impl Future<Output=Result<Option<T>, Error>> + Send
         where D: AsRef<ReadWriteFilesystem> + Send + 'static,
               T: HTItem
     {
@@ -134,7 +138,8 @@ mod htable {
                             let new = T::try_from(v).unwrap();
                             let values = vec![old, new];
                             let fsvalue = T::into_bucket(values);
-                            dataset.as_ref().insert(key, fsvalue)
+                            dataset.as_ref()
+                            .insert(key, fsvalue)
                             .map_ok(|_| None)
                         }).boxed()
                     }
@@ -175,9 +180,12 @@ mod htable {
     /// Remove an item that is stored in a BTree hash table
     ///
     /// Return the old item, if any.
-    pub(super) fn remove<D, T>(dataset: D, key: FSKey, aux: T::Aux,
-                               name: OsString)
-        -> impl Future<Output=Result<T, Error>> + Send
+    pub(super) fn remove<D, T>(
+        dataset: D,
+        key: FSKey,
+        aux: T::Aux,
+        name: OsString,
+    ) -> impl Future<Output=Result<T, Error>> + Send
         where D: AsRef<ReadWriteFilesystem> + Send + 'static,
               T: HTItem
     {
@@ -192,7 +200,8 @@ mod htable {
                     } else {
                         // Hash collision.  Put it back, and return not found
                         let value = old.into_fsvalue();
-                        let fut = dataset.as_ref().insert(key, value)
+                        let fut = dataset.as_ref()
+                        .insert(key, value)
                         .and_then(|_| future::err(T::ENOTFOUND));
                         fut.boxed()
                     }
@@ -211,14 +220,16 @@ mod htable {
                             // A 3 (or more) way collision; remove one
                             T::into_bucket(old)
                         };
-                        let fut = dataset.as_ref().insert(key, v)
+                        let fut = dataset.as_ref()
+                        .insert(key, v)
                         .map_ok(move |_| r);
                         fut.boxed()
                     } else {
                         // A 3 (or more) way hash collision between the
                         // accessed item and at least two different ones.
                         let v = T::into_bucket(old);
-                        let fut = dataset.as_ref().insert(key, v)
+                        let fut = dataset.as_ref()
+                        .insert(key, v)
                         .and_then(|_| future::err(T::ENOTFOUND));
                         fut.boxed()
                     }
@@ -256,8 +267,7 @@ impl Uio {
     unsafe fn into_chunks<F, T>(self, offset0: usize, rs: usize, f: F) -> Vec<T>
         where F: Fn(Vec<u8>) -> T
     {
-        let nrecs = (div_roundup(offset0 + self.len(), rs)
-                     - (offset0 / rs)) as usize;
+        let nrecs = self.nrecs(offset0, rs);
         let reclen1 = cmp::min(self.len(), rs - offset0);
         (0..nrecs).map(|rec| {
             let range = if rec == 0 {
@@ -275,6 +285,11 @@ impl Uio {
 
     fn len(&self) -> usize {
         self.data.len()
+    }
+
+    /// Across how many records will this UIO be spread?
+    fn nrecs(&self, offset0: usize, rs: usize) -> usize {
+        (div_roundup(offset0 + self.len(), rs) - (offset0 / rs)) as usize
     }
 }
 
@@ -333,6 +348,7 @@ impl FileData {
 /// Bridges the synchronous with Tokio domains, and the system-independent with
 /// system-dependent filesystem interfaces.
 pub struct Fs {
+    //cr: CreditRequirements,
     db: Arc<Database>,
     next_object: AtomicU64,
     handle: Handle,
@@ -430,15 +446,24 @@ struct CreateArgs<'a>
     uid: u32,
     gid: u32,
     nlink: u64,
-    cb: CreateCallback
+    cb: CreateCallback,
+    /// Credit needed by [`cb`], in multiples of the dataset's insert,
+    /// range_delete, remove CreditRequirements.
+    cb_credit: (usize, usize, usize),
 }
 
 impl<'a> CreateArgs<'a> {
     const DEFAULT_CB: CreateCallback = Fs::create_ts_callback;
 
-    pub fn callback(mut self, f: CreateCallback) -> Self
+    pub fn callback(
+        mut self, f: CreateCallback,
+        insert_cr: usize,
+        range_delete_cr: usize,
+        remove_cr: usize,
+    ) -> Self
     {
         self.cb = f;
+        self.cb_credit = (insert_cr, range_delete_cr, remove_cr);
         self
     }
 
@@ -452,8 +477,18 @@ impl<'a> CreateArgs<'a> {
                gid: u32, file_type: FileType) -> Self
     {
         let cb = Self::DEFAULT_CB;
-        CreateArgs{parent, flags: 0, name: name.to_owned(), perm,
-                   file_type, uid, gid, nlink: 1, cb}
+        CreateArgs{
+            parent,
+            flags: 0,
+            name: name.to_owned(),
+            perm,
+            file_type,
+            uid,
+            gid,
+            nlink: 1,
+            cb,
+            cb_credit: (0, 0, 0),
+        }
     }
 
     pub fn nlink(mut self, nlink: u64) -> Self {
@@ -472,9 +507,9 @@ impl Fs {
         let name = name.to_owned();
         let key = FSKey::new(fd.ino, objkey);
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, 1, 0, 1, 0, move |dataset| async move {
                 htable::remove::<ReadWriteFilesystem, ExtAttr<RID>>(dataset,
-                    key, ns, name)
+                    key, ns, name).await
             }).map_ok(drop)
             .map_err(Error::into)
         )
@@ -492,10 +527,13 @@ impl Fs {
             dtype: args.file_type.dtype(),
             name:   args.name
         };
+        let bb = parent_dirent.allocated_space();
         let parent_dirent_key = FSKey::new(args.parent.ino,
                                            parent_dirent_objkey);
 
         let cb = args.cb;
+        let cb_credit = args.cb_credit;
+
         let parent_ino = args.parent.ino;
         let fd_parent = if args.file_type == FileType::Dir {
             Some(parent_ino)
@@ -520,21 +558,22 @@ impl Fs {
         };
         let inode_value = FSValue::Inode(inode);
 
+        let ninsert = 5 + cb_credit.0;
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, ninsert, cb_credit.1, cb_credit.2, bb,
+            move |dataset| async move {
                 let ds = Arc::new(dataset);
                 let extra_fut = cb(&ds, parent_ino, ino);
-                future::try_join3(
-                    ds.insert(inode_key, inode_value),
-                    htable::insert(ds, parent_dirent_key, parent_dirent, name2),
-                    extra_fut
-                ).map_ok(move |(inode_r, dirent_r, _)| {
-                    assert!(dirent_r.is_none(),
-                    "Create of an existing file.  The VFS should prevent this");
-                    assert!(inode_r.is_none(),
-                    "Inode double-create detected, ino={}", ino);
-                    FileData::new(fd_parent, ino)
-                })
+                let inode_fut = ds.insert(inode_key, inode_value);
+                let dirent_fut = htable::insert(ds, parent_dirent_key,
+                                                parent_dirent, name2);
+                let (inode_r, dirent_r, _) = future::try_join3(inode_fut,
+                    dirent_fut, extra_fut).await?;
+                assert!(dirent_r.is_none(),
+                "Create of an existing file.  The VFS should prevent this");
+                assert!(inode_r.is_none(),
+                "Inode double-create detected, ino={}", ino);
+                Ok(FileData::new(fd_parent, ino))
             }).map_err(Error::into)
         )
     }
@@ -557,28 +596,26 @@ impl Fs {
         let extattr_stream = Fs::list_extattr_rids(&*ds, ino);
         extent_stream.chain(extattr_stream)
         .try_for_each_concurrent(None, move |rid| ds2.delete_blob(rid))
-        .and_then(move |_| {
+        .and_then(move |_| async move {
             // Finally, range_delete its key range, including inode,
             // inline extents, and inline extattrs
-            ds.range_delete(FSKey::obj_range(ino))
+            ds.range_delete(FSKey::obj_range(ino)).await
         })
     }
 
     /// Remove the inode if this was its last reference
-    fn do_inactive(ds: Arc<ReadWriteFilesystem>, ino: u64)
-        -> impl Future<Output=Result<(), Error>>
+    async fn do_inactive(ds: Arc<ReadWriteFilesystem>, ino: u64)
+        -> Result<(), Error>
     {
         let dikey = FSKey::new(0, ObjKey::dying_inode(ino));
-        ds.remove(dikey)
-        .and_then(move |di| {
-            match di {
-                None => future::ok(()).boxed(),
-                Some(di2) => {
-                    assert_eq!(ino, di2.as_dying_inode().unwrap().ino());
-                    Fs::do_delete_inode(ds, ino).boxed()
-                },
-            }
-        })
+        let di = ds.remove(dikey).await?;
+        match di {
+            None => Ok(()),
+            Some(di2) => {
+                assert_eq!(ino, di2.as_dying_inode().unwrap().ino());
+                Fs::do_delete_inode(ds, ino).await
+            },
+        }
     }
 
     /// Asynchronously read from a file.
@@ -668,7 +705,9 @@ impl Fs {
         let ino_fut = Fs::list_extattr_rids(&*dataset, ino)
         .try_for_each_concurrent(None, move |rid| {
             dataset2.delete_blob(rid)
-        }).and_then(move |_| dataset3.range_delete(FSKey::obj_range(ino)));
+        }).and_then(move |_|
+            dataset3.range_delete(FSKey::obj_range(ino))
+        );
 
         // 2) Update the parent dir's link count and timestamps
         let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
@@ -694,53 +733,55 @@ impl Fs {
         .map_ok(drop)
     }
 
-    fn do_setattr(dataset: Arc<ReadWriteFilesystem>, ino: u64, attr: SetAttr)
-        -> impl Future<Output=Result<(), Error>> + Send
+    async fn do_setattr(
+        dataset: Arc<ReadWriteFilesystem>,
+        ino: u64,
+        attr: SetAttr
+    ) -> Result<(), Error>
     {
         let inode_key = FSKey::new(ino, ObjKey::Inode);
-        dataset.get(inode_key)
-        .and_then(move |r| {
-            let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
-            iv.perm = attr.perm.unwrap_or(iv.perm);
-            iv.uid = attr.uid.unwrap_or(iv.uid);
-            iv.gid = attr.gid.unwrap_or(iv.gid);
-            let old_size = iv.size;
-            let new_size = attr.size.unwrap_or(iv.size);
-            iv.size = new_size;
-            iv.atime = attr.atime.unwrap_or(iv.atime);
-            iv.ctime = attr.ctime.unwrap_or(iv.ctime);
-            iv.mtime = attr.mtime.unwrap_or_else(|| {
-                if attr.size.is_some() {
-                    // Always update mtime when truncating
-                    iv.ctime
-                } else {
-                    iv.mtime
-                }
-            });
-            iv.birthtime = attr.birthtime.unwrap_or(iv.birthtime);
-            iv.flags = attr.flags.unwrap_or(iv.flags);
-
-            let truncate_fut = if new_size < old_size {
-                assert!(iv.file_type.dtype() == libc::DT_REG);
-                let rs = iv.record_size() as u64;
-                Fs::do_truncate(dataset.clone(), ino, new_size, rs).boxed()
+        let r = dataset.get(inode_key).await?;
+        let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
+        iv.perm = attr.perm.unwrap_or(iv.perm);
+        iv.uid = attr.uid.unwrap_or(iv.uid);
+        iv.gid = attr.gid.unwrap_or(iv.gid);
+        let old_size = iv.size;
+        let new_size = attr.size.unwrap_or(iv.size);
+        iv.size = new_size;
+        iv.atime = attr.atime.unwrap_or(iv.atime);
+        iv.ctime = attr.ctime.unwrap_or(iv.ctime);
+        iv.mtime = attr.mtime.unwrap_or_else(|| {
+            if attr.size.is_some() {
+                // Always update mtime when truncating
+                iv.ctime
             } else {
-                future::ok(()).boxed()
-            };
+                iv.mtime
+            }
+        });
+        iv.birthtime = attr.birthtime.unwrap_or(iv.birthtime);
+        iv.flags = attr.flags.unwrap_or(iv.flags);
 
-            future::try_join(dataset.insert(inode_key, FSValue::Inode(iv)),
-                             truncate_fut)
-            .map_ok(drop)
-        })
+        let truncate_fut = if new_size < old_size {
+            assert!(iv.file_type.dtype() == libc::DT_REG);
+            let rs = iv.record_size() as u64;
+            let dsx = dataset.clone();
+            Fs::do_truncate(dsx, ino, new_size, rs).boxed()
+        } else {
+            future::ok(()).boxed()
+        };
+
+        future::try_join(
+            dataset.insert(inode_key, FSValue::Inode(iv)),
+            truncate_fut
+        ).map_ok(drop).await
     }
 
     /// Remove all of a file's data past `size`.  This routine does _not_ update
     /// the Inode
-    fn do_truncate(dataset: Arc<ReadWriteFilesystem>, ino: u64, size: u64,
+    async fn do_truncate(dataset: Arc<ReadWriteFilesystem>, ino: u64, size: u64,
                    rs: u64)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> Result<(), Error>
     {
-        // Delete data past the truncation point
         let dataset2 = dataset.clone();
         let dataset3 = dataset.clone();
         let full_fut = dataset.range(FSKey::extent_range(ino, size..))
@@ -754,51 +795,48 @@ impl Fs {
         }).try_for_each_concurrent(None, move |rid| dataset2.delete_blob(rid))
         .and_then(move |_| {
             dataset3.range_delete(FSKey::extent_range(ino, size..))
-        });
+        }).boxed();
         let partial_fut = if size % rs > 0 {
             let ofs = size - size % rs;
             let len = (size - ofs) as usize;
             let k = FSKey::new(ino, ObjKey::Extent(ofs));
-            let fut = dataset.get(k)
-            .and_then(move |v| {
-                match v {
-                    None => {
-                        // It's a hole; nothing to do
-                        future::ok(()).boxed()
-                    },
-                    Some(FSValue::InlineExtent(ile)) => {
-                        let mut b = ile.buf.try_mut().unwrap();
-                        b.try_truncate(len).unwrap();
-                        let extent = InlineExtent::new(ile.buf);
-                        let v = FSValue::InlineExtent(extent);
-                        dataset.insert(k, v).map_ok(drop).boxed()
-                    },
-                    Some(FSValue::BlobExtent(be)) => {
-                        let fut = dataset.remove_blob(be.rid)
-                        .and_then(move |dbs: Box<DivBufShared>| {
-                            dbs.try_mut()
-                                .expect("DivBufShared wasn't uniquely owned")
-                                .try_truncate(len)
-                                .unwrap();
-                            let adbs = Arc::from(dbs);
-                            let extent = InlineExtent::new(adbs);
-                            let v = FSValue::InlineExtent(extent);
-                            dataset.insert(k, v)
-                            .map_ok(drop)
-                        });
-                        fut.boxed()
-                    },
-                    x => panic!("Unexpectec value {:?} for key {:?}",
-                                x, k)
-                }
-            });
-            fut.boxed()
+            // NB: removing a Value and reinserting is inefficient. Better to
+            // use a Tree::with_mut method to mutate it in place.
+            // https://github.com/bfffs/bfffs/issues/74
+            let v = dataset.remove(k).await?;
+            match v {
+                None => {
+                    // It's a hole; nothing to do
+                    future::ok(())
+                }.boxed(),
+                Some(FSValue::InlineExtent(ile)) => async move {
+                    let mut b = ile.buf.try_mut().unwrap();
+                    b.try_truncate(len).unwrap();
+                    let extent = InlineExtent::new(ile.buf);
+                    let v = FSValue::InlineExtent(extent);
+                    dataset.insert(k, v).await?;
+                    Ok(())
+                }.boxed(),
+                Some(FSValue::BlobExtent(be)) => async move {
+                    let dbs: Box<DivBufShared> = dataset.remove_blob(be.rid)
+                        .await?;
+                    dbs.try_mut()
+                        .expect("DivBufShared wasn't uniquely owned")
+                        .try_truncate(len)
+                        .unwrap();
+                    let adbs = Arc::from(dbs);
+                    let extent = InlineExtent::new(adbs);
+                    let v = FSValue::InlineExtent(extent);
+                    dataset.insert(k, v).await?;
+                    Ok(())
+                }.boxed(),
+                x => panic!("Unexpectec value {:?} for key {:?}", x, k)
+            }
         } else {
-            let fut = future::ok(());
-            fut.boxed()
+            future::ok(()).boxed()
         };
-        future::try_join(full_fut, partial_fut)
-        .map_ok(drop)
+        future::try_join(full_fut, partial_fut).await?;
+        Ok(())
     }
 
     /// Unlink a file whose inode number is known and whose directory entry is
@@ -820,7 +858,7 @@ impl Fs {
                     panic!("Orphan directory entry")
                 },
             }
-        }).and_then(move |mut iv| {
+        }).and_then(move |mut iv| async move {
             // 2a) Decrement the link count and touch the ctime
             iv.nlink = iv.nlink.saturating_sub(1);
             let nlink = iv.nlink;
@@ -843,12 +881,14 @@ impl Fs {
                 };
                 future::try_join(
                     fut,
-                    dataset.insert(key, FSValue::Inode(iv)).map_ok(drop)
-                ).map_ok(drop).boxed()
+                    dataset.insert(key, FSValue::Inode(iv))
+                    .map_ok(drop)
+                ).await?;
             } else {
                 // Delete the inode straight away
-                Fs::do_delete_inode(dataset, ino).boxed()
+                Fs::do_delete_inode(dataset, ino).await?;
             }
+            Ok(())
         })
     }
 
@@ -873,12 +913,13 @@ impl Fs {
                 let last_key_fut = dataset.last_key();
                 let atime_fut = db2.get_prop(tree, PropertyName::Atime);
                 let recsize_fut = db2.get_prop(tree, PropertyName::RecordSize);
-                let di_fut = db3.fswrite(tree, move |dataset| {
+                let di_fut = db3.fswrite(tree, 0, 1, 0, 0,
+                move |dataset| async move {
                     // Delete all dying inodes.  If there are any, it means that
                     // the previous mount was uncleanly dismounted.
                     let ds = Arc::new(dataset);
                     let ds2 = ds.clone();
-                    ds.range(FSKey::dying_inode_range())
+                    let had_dying_inodes = ds.range(FSKey::dying_inode_range())
                     .try_fold(false, move |_acc, (_k, v)| {
                         let ds3 = ds.clone();
                         async move {
@@ -886,13 +927,13 @@ impl Fs {
                             Fs::do_delete_inode(ds3, ino).await?;
                             Ok(true)
                         }
-                    }).and_then(move |had_dying_inodes| async move {
-                        // Finally, range delete all of the dying inodes, if any
-                        if had_dying_inodes {
-                            ds2.range_delete(FSKey::dying_inode_range()).await?;
-                        }
-                        Ok(())
-                    })
+                    }).await?;
+                    // Finally, range delete all of the dying inodes, if any
+                    if had_dying_inodes {
+                        ds2.range_delete(FSKey::dying_inode_range())
+                            .await?;
+                    }
+                    Ok(())
                 }).boxed();
                 future::try_join4(last_key_fut, atime_fut, recsize_fut, di_fut)
             }).map_err(Error::unhandled)
@@ -953,7 +994,7 @@ impl Fs {
         let ino = fd.ino();
 
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, 0, 0, 1, 0, move |dataset| {
                 Fs::do_inactive(Arc::new(dataset), ino)
                 .map(|r| r.map(drop))
             }).map_err(Error::unhandled)
@@ -1128,43 +1169,42 @@ impl Fs {
         let parent_ino = parent.ino;
         let name = name.to_owned();
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, 2, 0, 0, 0, move |dataset| async move {
                 let ds = Arc::new(dataset);
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
-                ds.get(inode_key)
-                .and_then(move |r| {
-                    let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
-                    iv.nlink += 1;
-                    let dtype = iv.file_type.dtype();
-                    // FUSE is single-threaded, so we don't have to worry that
-                    // the target gets deleted before we increase its link
-                    // count.  The real VFS will provide a held vnode rather
-                    // than an inode.  So in neither case is there a race here.
-                    let ifut = ds.insert(inode_key, FSValue::Inode(iv));
+                let r = ds.get(inode_key).await?;
+                let mut iv = r.unwrap().as_mut_inode().unwrap().clone();
+                iv.nlink += 1;
+                let dtype = iv.file_type.dtype();
+                // FUSE is single-threaded, so we don't have to worry that
+                // the target gets deleted before we increase its link
+                // count.  The real VFS will provide a held vnode rather
+                // than an inode.  So in neither case is there a race here.
+                let ifut = ds.insert(inode_key, FSValue::Inode(iv));
 
-                    let dirent_objkey = ObjKey::dir_entry(&name);
-                    let dirent = Dirent { ino, dtype, name };
-                    let dirent_key = FSKey::new(parent_ino, dirent_objkey);
-                    let dirent_value = FSValue::DirEntry(dirent);
-                    let dfut = ds.insert(dirent_key, dirent_value);
+                let dirent_objkey = ObjKey::dir_entry(&name);
+                let dirent = Dirent { ino, dtype, name };
+                let dirent_key = FSKey::new(parent_ino, dirent_objkey);
+                let dirent_value = FSValue::DirEntry(dirent);
+                let dfut = ds.insert(dirent_key, dirent_value);
 
-                    let now = time::get_time();
-                    let parent_attr = SetAttr {
-                        ctime: Some(now),
-                        mtime: Some(now),
-                        .. Default::default()
-                    };
-                    let parent_fut = Fs::do_setattr(ds.clone(), parent_ino,
-                        parent_attr);
+                let now = time::get_time();
+                let parent_attr = SetAttr {
+                    ctime: Some(now),
+                    mtime: Some(now),
+                    .. Default::default()
+                };
+                let parent_fut = Fs::do_setattr(ds.clone(), parent_ino,
+                    parent_attr);
 
-                    let ctime_attr = SetAttr {
-                        ctime: Some(now),
-                        .. Default::default()
-                    };
-                    let ctime_fut = Fs::do_setattr(ds, ino, ctime_attr);
+                let ctime_attr = SetAttr {
+                    ctime: Some(now),
+                    .. Default::default()
+                };
+                let ctime_fut = Fs::do_setattr(ds, ino, ctime_attr);
 
-                    future::try_join4(ifut, dfut, parent_fut, ctime_fut)
-                }).map_ok(drop)
+                future::try_join4(ifut, dfut, parent_fut, ctime_fut).await?;
+                Ok(())
             }).map_err(Error::into)
         )
     }
@@ -1314,8 +1354,11 @@ impl Fs {
     {
         let nlink = 2;  // One for the parent dir, and one for "."
 
-        fn f(dataset: &Arc<ReadWriteFilesystem>, parent_ino: u64, ino: u64)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'static>>
+        fn f(
+            dataset: &Arc<ReadWriteFilesystem>,
+            parent_ino: u64,
+            ino: u64,
+        ) -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'static>>
         {
             let dot_dirent = Dirent {
                 ino,
@@ -1364,7 +1407,7 @@ impl Fs {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Dir)
         .nlink(nlink)
-        .callback(f);
+        .callback(f, 3, 0, 0);
 
         self.do_create(create_args)
     }
@@ -1475,20 +1518,19 @@ impl Fs {
         // because they can be held during txg syncs.
         if self.atime {
             self.handle.block_on(
-                self.db.fswrite(self.tree, move |ds| {
-                    ds.get(inode_key)
-                    .and_then(move |r| {
-                        let mut value = r.expect("Inode not found");
-                        let inode = value.as_mut_inode()
-                            .expect("Wrong Value type");
-                        let now = time::get_time();
-                        inode.atime = now;
-                        let fsize = inode.size;
-                        let rs = inode.record_size() as u64;
-                        let afut = ds.insert(inode_key, value);
-                        let dfut = Fs::do_read(ds, ino, fsize, rs, offset, size);
-                        future::try_join(dfut, afut)
-                    }).map_ok(|(sglist, _)| sglist)
+                self.db.fswrite(self.tree, 1, 0, 0, 0, move |ds| async move {
+                    let r = ds.get(inode_key).await?;
+                    let mut value = r.expect("Inode not found");
+                    let inode = value.as_mut_inode()
+                        .expect("Wrong Value type");
+                    let now = time::get_time();
+                    inode.atime = now;
+                    let fsize = inode.size;
+                    let rs = inode.record_size() as u64;
+                    let afut = ds.insert(inode_key, value);
+                    let dfut = Fs::do_read(ds, ino, fsize, rs, offset, size);
+                    let (sglist, _) = future::try_join(dfut, afut).await?;
+                    Ok(sglist)
                 }).map_err(Error::into)
             )
         } else {
@@ -1698,7 +1740,7 @@ impl Fs {
         }
 
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, 8, 1, 1, 0, move |dataset| {
                 let ds = Arc::new(dataset);
                 let ds4 = ds.clone();
                 let ds5 = ds.clone();
@@ -1796,7 +1838,8 @@ impl Fs {
                     let unlink_fut = if let Some(v) = old_dst_ino {
                         // 3ci) Decrement old dst's link count
                         if isdir {
-                            let fut = Fs::do_rmdir(ds, newparent_ino, v, false);
+                            let fut = Fs::do_rmdir(ds, newparent_ino, v, false,
+                                                   );
                             fut.boxed()
                         } else {
                             let fut = Fs::do_unlink(ds.clone(), 0, v)
@@ -1832,30 +1875,36 @@ impl Fs {
         let owned_name3 = owned_name.clone();
         let objkey = ObjKey::dir_entry(&owned_name);
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, 2, 1, 1, 0, move |dataset| async move {
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
                 // 1) Lookup the directory
                 let key = FSKey::new(parent_ino, objkey);
-                htable::get(&htable::ReadFilesystem::ReadWrite(&ds), key, 0,
-                            owned_name3)
-                .and_then(move |de: Dirent| {
-                    let ino = de.ino;
-                    // 2) Check that the directory is empty
-                    Fs::ok_to_rmdir(&ds, ino, parent_ino, owned_name2)
-                    .map_ok(move |_| ino)
-                }).and_then(move |ino| {
-                    // 3) Remove the parent dir's dir_entry
-                    let de_key = FSKey::new(parent_ino, objkey);
-                    let dirent_fut = htable::remove::<Arc<ReadWriteFilesystem>,
-                                                      Dirent>
-                        (ds2.clone(), de_key, 0, owned_name);
+                let rde = htable::get::<Dirent>(
+                    &htable::ReadFilesystem::ReadWrite(&ds), key, 0,
+                    owned_name3).await;
+                if let Err(e) = rde {
+                    return Err(e);
+                };
+                let de = rde.unwrap();
+                // 2) Check that the directory is empty
+                let ino = de.ino;
+                if let Err(e) = Fs::ok_to_rmdir(&ds, ino, parent_ino,
+                                                owned_name2).await
+                {
+                    return Err(e);
+                }
+                // 3) Remove the parent dir's dir_entry
+                let de_key = FSKey::new(parent_ino, objkey);
+                let dirent_fut = htable::remove::<Arc<ReadWriteFilesystem>,
+                                                  Dirent>
+                    (ds2.clone(), de_key, 0, owned_name);
 
-                    // 4) Actually remove the directory
-                    let dfut = Fs::do_rmdir(ds2, parent_ino, ino, true);
+                // 4) Actually remove the directory
+                let dfut = Fs::do_rmdir(ds2, parent_ino, ino, true);
 
-                    future::try_join(dirent_fut, dfut)
-                }).map_ok(drop)
+                future::try_join(dirent_fut, dfut).await?;
+                Ok(())
             }).map_err(Error::into)
         )
     }
@@ -1867,8 +1916,18 @@ impl Fs {
 
     pub fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32> {
         let ino = fd.ino;
+        let mut ninsert = 1;
+        let mut nrange_delete = 0;
+        let mut nremove = 0;
+        if attr.size.is_some() {
+            // We're truncating
+            ninsert += 1;
+            nrange_delete += 1;
+            nremove += 1;
+        }
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, ninsert, nrange_delete, nremove, 0,
+            move |dataset| {
                 let ds = Arc::new(dataset);
                 if attr.ctime.is_none() {
                     attr.ctime = Some(time::get_time());
@@ -1894,10 +1953,12 @@ impl Fs {
             name: owned_name.clone(),
             extent
         });
+        let bb = extattr.allocated_space();
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |dataset| {
+            self.db.fswrite(self.tree, 2, 0, 0, bb, move |dataset| async move {
                 htable::insert(dataset, key, extattr, owned_name)
-                .map_ok(drop)
+                    .await?;
+                Ok(())
             }).map_err(Error::into)
         )
     }
@@ -1985,29 +2046,28 @@ impl Fs {
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
         self.handle.block_on(
-            self.db.fswrite(self.tree, move |ds| {
+            self.db.fswrite(self.tree, 3, 0, 1, 0, move |ds| async move {
                 let dataset = Arc::new(ds);
                 // 1) Lookup and remove the directory entry
                 let key = FSKey::new(parent_ino, dekey);
-                htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
-                    (dataset.clone(), key, 0, owned_name)
-                .and_then(move |dirent|  {
-                    if let Some(ino) = ino {
-                        assert_eq!(ino, dirent.ino);
-                    }
-                    // 2a) Unlink the inode
-                    let unlink_fut = Fs::do_unlink(dataset.clone(),
-                        lookup_count, dirent.ino);
-                    // 2b) Update parent's timestamps
-                    let now = time::get_time();
-                    let attr = SetAttr {
-                        ctime: Some(now),
-                        mtime: Some(now),
-                        .. Default::default()
-                    };
-                    let ts_fut = Fs::do_setattr(dataset, parent_ino, attr);
-                    future::try_join(unlink_fut, ts_fut)
-                }).map_ok(drop)
+                let dirent = htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
+                    (dataset.clone(), key, 0, owned_name).await?;
+                if let Some(ino) = ino {
+                    assert_eq!(ino, dirent.ino);
+                }
+                // 2a) Unlink the inode
+                let unlink_fut = Fs::do_unlink(dataset.clone(),
+                    lookup_count, dirent.ino);
+                // 2b) Update parent's timestamps
+                let now = time::get_time();
+                let attr = SetAttr {
+                    ctime: Some(now),
+                    mtime: Some(now),
+                    .. Default::default()
+                };
+                let ts_fut = Fs::do_setattr(dataset, parent_ino, attr);
+                future::try_join(unlink_fut, ts_fut).await?;
+                Ok(())
             }).map_err(Error::into)
         )
     }
@@ -2029,54 +2089,66 @@ impl Fs {
         let ino = fd.ino;
         let uio = data.into();
 
-        self.handle.block_on(
-            self.db.fswrite(self.tree, move |ds| {
-                let dataset = Arc::new(ds);
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
+        let mut value = self.handle.block_on(
+            self.db.fsread(self.tree, move |dataset| {
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
                 dataset.get(inode_key)
-                .and_then(move |r| {
-                    let mut value = r.unwrap();
-                    let inode = value.as_inode().unwrap();
-                    let filesize = inode.size;
-                    let rs = inode.record_size() as u64;
+            }).map_err::<i32, _>(Error::into)
+        )?.unwrap();
 
-                    // Moving uio into the asynchronous domain is safe because
-                    // the async domain blocks on rx.wait().
-                    let datalen = uio.len();
-                    let offset0 = (offset % rs) as usize;
-                    let sglist = unsafe {
-                        uio.into_chunks(offset0, inode.record_size(),
-                            |chunk| Arc::new(DivBufShared::from(chunk)))
-                    };
+        let rs = value.as_inode().unwrap().record_size();
+        let offset0 = (offset % rs as u64) as usize;
+        // Get WriteBack credit sufficient for nrecs full dirty records.  At
+        // this point, we don't know if any of the records we're writing to are
+        // already dirty.
+        let nrecs = uio.nrecs(offset0, rs);
+        let bb = FSValue::<RID>::extent_space(rs, nrecs);
 
-                    let data_futs = sglist.into_iter()
-                        .enumerate()
-                        .map(|(i, dbs)| {
+        self.handle.block_on(
+            self.db.fswrite(self.tree, 1 + nrecs, 0, nrecs, bb,
+            move |ds| async move {
+                let dataset = Arc::new(ds);
+                let inode = value.as_inode().unwrap();
+                let filesize = inode.size;
+
+                // Moving uio into the asynchronous domain is safe because
+                // the async domain blocks on rx.wait().
+                let datalen = uio.len();
+                let sglist = unsafe {
+                    uio.into_chunks(offset0, rs,
+                        |chunk| Arc::new(DivBufShared::from(chunk)))
+                };
+
+                let data_futs = sglist.into_iter()
+                    .enumerate()
+                    .map(|(i, dbs)| {
                         let ds3 = dataset.clone();
-                        Fs::write_record(ino, rs, offset, i, dbs, ds3)
+                        Fs::write_record(ino, rs as u64, offset, i, dbs, ds3)
+                            .boxed()
                     }).collect::<FuturesUnordered<_>>();
-                    let new_size = cmp::max(filesize, offset + datalen as u64);
-                    {
-                        let inode = value.as_mut_inode().unwrap();
-                        inode.size = new_size;
-                        let now = time::get_time();
-                        inode.mtime = now;
-                        inode.ctime = now;
-                    }
-                    let ino_fut = dataset.insert(inode_key, value).boxed();
-                    data_futs.push(ino_fut);
-                    data_futs.try_collect::<Vec<_>>()
-                    .map_ok(move |_| datalen as u32)
-                })
+                let new_size = cmp::max(filesize, offset + datalen as u64);
+                {
+                    let inode = value.as_mut_inode().unwrap();
+                    inode.size = new_size;
+                    let now = time::get_time();
+                    inode.mtime = now;
+                    inode.ctime = now;
+                }
+                let ino_fut = dataset.insert(inode_key, value).boxed();
+                data_futs.push(ino_fut);
+                data_futs.try_collect::<Vec<_>>().await?;
+                Ok(datalen as u32)
             }).map_err(Error::into)
         )
     }
 
-    // Subroutine of write
+    /// Subroutine of write
     #[inline]
-    fn write_record(ino: u64, rs: u64, offset: u64, i: usize,
-                    data: Arc<DivBufShared>, dataset: Arc<ReadWriteFilesystem>)
-        -> Pin<Box<dyn Future<Output=Result<Option<FSValue<RID>>, Error>> + Send>>
+    async fn write_record(ino: u64, rs: u64, offset: u64, i: usize,
+                    data: Arc<DivBufShared>,
+                    dataset: Arc<ReadWriteFilesystem>)
+        -> Result<Option<FSValue<RID>>, Error>
     {
         let baseoffset = offset - (offset % rs);
         let offs = baseoffset + i as u64 * rs;
@@ -2089,58 +2161,53 @@ impl Fs {
         let writelen = data.len();
         if (writelen as u64) < rs {
             // We must read-modify-write
-            let dataset4 = dataset.clone();
-            let fut = dataset.remove(k)
-            .and_then(move |r| {
-                match r {
-                    None => {
-                        // Either a hole, or beyond EOF
-                        let hsize = writelen + offset_into_rec;
-                        let r = Arc::new(DivBufShared::uninitialized(hsize));
-                        if offset_into_rec > 0 {
-                            let zrange = 0..offset_into_rec;
-                            for x in &mut r.try_mut().unwrap()[zrange] {
-                                *x = 0;
-                            }
+            let r = dataset.remove(k).await?;
+            let dbs: Arc<DivBufShared> = match r {
+                None => {
+                    // Either a hole, or beyond EOF
+                    let hsize = writelen + offset_into_rec;
+                    let r = Arc::new(DivBufShared::uninitialized(hsize));
+                    if offset_into_rec > 0 {
+                        let zrange = 0..offset_into_rec;
+                        for x in &mut r.try_mut().unwrap()[zrange] {
+                            *x = 0;
                         }
-                        future::ok(r).boxed()
-                    },
-                    Some(FSValue::InlineExtent(ile)) => {
-                        future::ok(ile.buf).boxed()
-                    },
-                    Some(FSValue::BlobExtent(be)) => {
-                        let fut = dataset4.remove_blob(be.rid)
-                            .map_ok(Arc::from);
-                        fut.boxed()
-                    },
-                    x => panic!("Unexpected value {:?} for key {:?}",
-                                x, k)
-                }.and_then(move |dbs: Arc<DivBufShared>| {
-                    let mut base = dbs.try_mut().unwrap();
-                    let overlay = data.try_const().unwrap();
-                    let l = overlay.len();
-                    let r = offset_into_rec..(offset_into_rec + l);
+                    }
+                    r
+                },
+                Some(FSValue::InlineExtent(ile)) => {
+                    ile.buf
+                },
+                Some(FSValue::BlobExtent(be)) => {
+                    Arc::from(dataset.remove_blob(be.rid).await?)
+                },
+                x => panic!("Unexpected value {:?} for key {:?}",
+                            x, k)
+            };
+            let mut base = dbs.try_mut().unwrap();
+            let overlay = data.try_const().unwrap();
+            let l = overlay.len();
+            let r = offset_into_rec..(offset_into_rec + l);
 
-                    // Extend the buffer, if necessary
-                    let newsize = cmp::max(offset_into_rec + l, base.len());
-                    base.try_resize(newsize, 0).unwrap();
+            // Extend the buffer, if necessary
+            let newsize = cmp::max(offset_into_rec + l, base.len());
+            base.try_resize(newsize, 0).unwrap();
 
-                    // Overwrite with new data
-                    base[r].copy_from_slice(&overlay[..]);
-                    let extent = InlineExtent::new(dbs);
-                    let new_v = FSValue::InlineExtent(extent);
-                    dataset.insert(k, new_v)
-                })
-            });
-            fut.boxed()
+            // Overwrite with new data
+            base[r].copy_from_slice(&overlay[..]);
+            let extent = InlineExtent::new(dbs);
+            let new_v = FSValue::InlineExtent(extent);
+            dataset.insert(k, new_v).await
         } else {
             let v = FSValue::InlineExtent(InlineExtent::new(data));
-            dataset.insert(k, v).boxed()
+            dataset.insert(k, v).await
         }
     }
 }
 
 // LCOV_EXCL_START
+// TODO: add unit tests to assert that Fs::write borrows the correct amount
+// of credit
 #[cfg(test)]
 mod t {
 
@@ -2154,10 +2221,14 @@ use mockall::{Sequence, predicate::*};
 use pretty_assertions::assert_eq;
 use std::borrow::Borrow;
 
+fn read_write_filesystem() -> ReadWriteFilesystem {
+    ReadWriteFilesystem::default()
+}
+
 fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
     let mut rt = basic_runtime();
     let mut rods = ReadOnlyFilesystem::default();
-    let mut rwds = ReadWriteFilesystem::default();
+    let mut rwds = read_write_filesystem();
     rods.expect_last_key()
         .once()
         .returning(|| {
@@ -2219,7 +2290,7 @@ fn mock_range_query<K, T, V>(items: Vec<(K, V)>) -> RangeQuery<K, T, V>
 #[test]
 fn create() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds = read_write_filesystem();
     let root_ino = 1;
     let ino = 2;
     let filename = OsString::from("x");
@@ -2254,7 +2325,9 @@ fn create() {
             value.as_inode().unwrap().perm == 0o644 &&
             value.as_inode().unwrap().uid == 123 &&
             value.as_inode().unwrap().gid == 456
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
     ds.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -2262,7 +2335,9 @@ fn create() {
             value.as_direntry().unwrap().dtype == libc::DT_REG &&
             value.as_direntry().unwrap().name == filename2 &&
             value.as_direntry().unwrap().ino == ino
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
     ds.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -2272,7 +2347,9 @@ fn create() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
@@ -2286,7 +2363,7 @@ fn create() {
 #[test]
 fn create_hash_collision() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds = read_write_filesystem();
     let root_ino = 1;
     let ino = 2;
     let other_ino = 100;
@@ -2320,7 +2397,9 @@ fn create_hash_collision() {
         .once()
         .withf(|key, _value| {
             key.is_inode()
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
     ds.expect_insert()
         .once()
         .withf(|key, _value| {
@@ -2375,7 +2454,9 @@ fn create_hash_collision() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
 
     db.expect_fswrite_inner()
         .once()
@@ -2453,7 +2534,7 @@ fn debug_setattr() {
 #[test]
 fn deleteextattr_3way_collision() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds = read_write_filesystem();
     let ino = 1;
     // Three attributes share a bucket.  The test will delete name2
     let name0 = OsString::from("foo");
@@ -2516,7 +2597,7 @@ fn deleteextattr_3way_collision() {
 #[test]
 fn deleteextattr_3way_collision_enoattr() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds = read_write_filesystem();
     let ino = 1;
     // name0 and name1 are stored.  The test tries to delete name2
     let name0 = OsString::from("foo");
@@ -2584,7 +2665,7 @@ fn fsync() {
 #[test]
 fn rename_eio() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds = read_write_filesystem();
     let srcname = OsString::from("x");
     let dstname = OsString::from("y");
     let src_ino = 3;
@@ -2603,8 +2684,9 @@ fn rename_eio() {
         });
     ds.expect_remove()
         .once()
-        .with(eq(FSKey::new(1, ObjKey::dir_entry(&srcname))))
-        .returning(move |_| {
+        .with(
+            eq(FSKey::new(1, ObjKey::dir_entry(&srcname)))
+        ).returning(move |_| {
             future::err(Error::EIO).boxed()
         });
 
@@ -2624,7 +2706,7 @@ fn rename_eio() {
 #[test]
 fn rmdir_with_blob_extattr() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds = read_write_filesystem();
     let parent_ino = 1;
     let ino = 2;
     let xattr_blob_rid = RID(88888);
@@ -2705,8 +2787,9 @@ fn rmdir_with_blob_extattr() {
         });
     ds.expect_remove()
         .once()
-        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
-        .returning(move |_| {
+        .with(
+            eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        ).returning(move |_| {
             let dirent = Dirent {
                 ino,
                 dtype: libc::DT_REG,
@@ -2804,7 +2887,7 @@ fn rmdir_with_blob_extattr() {
 #[test]
 fn setextattr() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds = read_write_filesystem();
     let root_ino = 1;
     let name = OsString::from("foo");
     let name2 = name.clone();
@@ -2823,7 +2906,9 @@ fn setextattr() {
         ie.namespace == namespace &&
         ie.name == name2 &&
         &ie.extent.buf.try_const().unwrap()[..] == value2.as_bytes()
-    }).returning(|_, _| future::ok(None).boxed());
+    }).returning(|_, _| {
+        future::ok(None).boxed()
+    });
 
     db.expect_fswrite_inner()
         .once()
@@ -2838,7 +2923,7 @@ fn setextattr() {
 #[test]
 fn setextattr_3way_collision() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds = ReadWriteFilesystem::default();
+    let mut ds = read_write_filesystem();
     let root_ino = 1;
     // name0 and name1 are already set
     let name0 = OsString::from("foo");
@@ -2955,8 +3040,8 @@ fn sync() {
 #[test]
 fn unlink() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds0 = ReadWriteFilesystem::default();
-    let mut ds1 = ReadWriteFilesystem::default();
+    let mut ds0 = read_write_filesystem();
+    let mut ds1 = read_write_filesystem();
     let parent_ino = 1;
     let ino = 2;
     let blob_rid = RID(99999);
@@ -2967,8 +3052,9 @@ fn unlink() {
 
     ds0.expect_remove()
         .once()
-        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
-        .returning(move |_| {
+        .with(
+            eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        ).returning(move |_| {
             let dirent = Dirent {
                 ino,
                 dtype: libc::DT_REG,
@@ -3023,7 +3109,9 @@ fn unlink() {
             key.object() == ino &&
             value.as_inode().unwrap().nlink == 0 &&
             value.as_inode().unwrap().ctime != old_ts
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -3033,13 +3121,17 @@ fn unlink() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
             key.is_dying_inode() &&
             value.as_dying_inode().unwrap().ino() == ino
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
 
     ds1.expect_remove()
         .once()
@@ -3075,7 +3167,9 @@ fn unlink() {
     ds1.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
-        .returning(|_| future::ok(()).boxed());
+        .returning(|_| {
+            future::ok(()).boxed()
+        });
 
     db.expect_fswrite_inner()
         .once()
@@ -3096,8 +3190,8 @@ fn unlink() {
 #[test]
 fn unlink_with_blob_extattr() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds0 = ReadWriteFilesystem::default();
-    let mut ds1 = ReadWriteFilesystem::default();
+    let mut ds0 = read_write_filesystem();
+    let mut ds1 = read_write_filesystem();
     let parent_ino = 1;
     let ino = 2;
     let blob_rid = RID(99999);
@@ -3108,8 +3202,9 @@ fn unlink_with_blob_extattr() {
 
     ds0.expect_remove()
         .once()
-        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
-        .returning(move |_| {
+        .with(
+            eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        ).returning(move |_| {
             let dirent = Dirent {
                 ino,
                 dtype: libc::DT_REG,
@@ -3163,7 +3258,9 @@ fn unlink_with_blob_extattr() {
         .withf(move |key, value| {
             key.is_dying_inode() &&
             value.as_dying_inode().unwrap().ino() == ino
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
 
     ds1.expect_remove()
         .once()
@@ -3218,7 +3315,9 @@ fn unlink_with_blob_extattr() {
     ds1.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
-        .returning(|_| future::ok(()).boxed());
+        .returning(|_| {
+            future::ok(()).boxed()
+        });
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -3226,7 +3325,9 @@ fn unlink_with_blob_extattr() {
             key.object() == ino &&
             value.as_inode().unwrap().nlink == 0 &&
             value.as_inode().unwrap().ctime != old_ts
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -3236,7 +3337,9 @@ fn unlink_with_blob_extattr() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
 
     db.expect_fswrite_inner()
         .once()
@@ -3258,8 +3361,8 @@ fn unlink_with_blob_extattr() {
 #[test]
 fn unlink_with_extattr_hash_collision() {
     let (rt, mut db, tree_id) = setup();
-    let mut ds0 = ReadWriteFilesystem::default();
-    let mut ds1 = ReadWriteFilesystem::default();
+    let mut ds0 = read_write_filesystem();
+    let mut ds1 = read_write_filesystem();
     let parent_ino = 1;
     let ino = 2;
     let xattr_blob_rid = RID(88888);
@@ -3269,8 +3372,9 @@ fn unlink_with_extattr_hash_collision() {
 
     ds0.expect_remove()
         .once()
-        .with(eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename))))
-        .returning(move |_| {
+        .with(
+            eq(FSKey::new(parent_ino, ObjKey::dir_entry(&filename)))
+        ).returning(move |_| {
             let dirent = Dirent {
                 ino,
                 dtype: libc::DT_REG,
@@ -3328,13 +3432,17 @@ fn unlink_with_extattr_hash_collision() {
             value.as_inode().unwrap().mtime != old_ts &&
             value.as_inode().unwrap().ctime != old_ts &&
             value.as_inode().unwrap().birthtime == old_ts
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
             key.is_dying_inode() &&
             value.as_dying_inode().unwrap().ino() == ino
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
 
     ds1.expect_remove()
         .once()
@@ -3380,7 +3488,9 @@ fn unlink_with_extattr_hash_collision() {
     ds1.expect_range_delete()
         .once()
         .with(eq(FSKey::obj_range(ino)))
-        .returning(|_| future::ok(()).boxed());
+        .returning(|_| {
+            future::ok(()).boxed()
+        });
     ds0.expect_insert()
         .once()
         .withf(move |key, value| {
@@ -3388,7 +3498,9 @@ fn unlink_with_extattr_hash_collision() {
             key.object() == ino &&
             value.as_inode().unwrap().nlink == 0 &&
             value.as_inode().unwrap().ctime != old_ts
-        }).returning(|_, _| future::ok(None).boxed());
+        }).returning(|_, _| {
+            future::ok(None).boxed()
+        });
 
     db.expect_fswrite_inner()
         .once()

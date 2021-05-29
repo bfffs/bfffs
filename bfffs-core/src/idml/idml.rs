@@ -6,7 +6,8 @@ use crate::{
     ddml::*,
     cache::{Cache, Cacheable, CacheRef, Key},
     label::*,
-    tree::TreeOnDisk
+    tree::TreeOnDisk,
+    writeback::{Credit, WriteBack}
 };
 use futures::{Future, FutureExt, Stream, TryFutureExt, TryStreamExt, future};
 use futures_locks::{RwLock, RwLockReadFut};
@@ -49,6 +50,9 @@ pub struct IDML {
     // Even though it has a single owner, the tree must be Arc so IDML methods
     // can be 'static
     ridt: Arc<DTree<RID, RidtEntry>>,
+
+    /// The IDML is the owner of the WriteBack tracker
+    writeback: WriteBack
 }
 
 // Some of these methods have no unit tests.  Their test coverage is provided
@@ -59,6 +63,12 @@ impl<'a> IDML {
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {
         self.ddml.allocated()
+    }
+
+    pub fn borrow_credit(&self, size: usize)
+        -> Pin<Box<dyn Future<Output=Credit> + Send>>
+    {
+        self.writeback.borrow(size).boxed()
     }
 
     /// Foreground RIDT/AllocT consistency check.
@@ -181,7 +191,8 @@ impl<'a> IDML {
             // Finish alloct.range_delete before alloct.clean_zone, because the
             // range delete is likely to eliminate most if not all nodes that
             // need to be moved by clean_zone
-            let atfut = alloct3.clone().range_delete(pba_range.clone(), txg)
+            let atfut = alloct3.clone()
+            .range_delete(pba_range.clone(), txg, Credit::null())
             .and_then(move |_| {
                 alloct3.clean_zone(pba_range, zone.txgs, txg)
             });
@@ -201,7 +212,9 @@ impl<'a> IDML {
             DTree::<RID, RidtEntry>::create(ddml.clone(), true, 4.22, 3.73)
         );
         let transaction = RwLock::new(TxgT::from(0));
-        IDML{cache, ddml, next_rid, transaction, alloct, ridt}
+        // TODO: apply configurable writeback size
+        let writeback = WriteBack::limitless();
+        IDML{cache, ddml, next_rid, transaction, alloct, ridt, writeback}
     }
 
     pub fn dump_trees(&self, f: &mut dyn io::Write) -> Result<(), Error>
@@ -264,7 +277,17 @@ impl<'a> IDML {
         let ridt = Arc::new(DTree::open(ddml.clone(), true, l.ridt));
         let transaction = RwLock::new(l.txg);
         let next_rid = AtomicU64::new(l.next_rid);
-        let idml = IDML{cache, ddml, next_rid, transaction, alloct, ridt};
+        // TODO: apply configurable writeback size
+        let writeback = WriteBack::limitless();
+        let idml = IDML{
+            cache,
+            ddml,
+            next_rid,
+            transaction,
+            alloct,
+            ridt,
+            writeback
+        };
         (idml, label_reader)
     }
 
@@ -336,8 +359,10 @@ impl<'a> IDML {
                 };
                 fut.and_then(move |drp: DRP| {
                     entry.drp = drp;
-                    let ridt_fut = ridt2.insert(rid, entry, txg);
-                    let alloct_fut = alloct.insert(drp.pba(), rid, txg);
+                    let ridt_fut = ridt2.insert(rid, entry, txg,
+                                                Credit::null());
+                    let alloct_fut = alloct.insert(drp.pba(), rid, txg,
+                                                   Credit::null());
                     future::try_join(ridt_fut, alloct_fut)
                     .map_ok(move |_| drp)
                 })
@@ -421,8 +446,9 @@ impl DML for IDML {
                 if entry.refcount == 0 {
                     cache2.lock().unwrap().remove(&Key::Rid(rid));
                     let ddml_fut = ddml2.delete_direct(&entry.drp, txg);
-                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
-                    let ridt_fut = ridt2.remove(rid, txg);
+                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg,
+                        Credit::null());
+                    let ridt_fut = ridt2.remove(rid, txg, Credit::null());
                     Box::pin(
                         future::try_join3(ddml_fut, alloct_fut, ridt_fut)
                          .map_ok(|(_, old_rid, _old_ridt_entry)| {
@@ -430,7 +456,7 @@ impl DML for IDML {
                          })
                      )
                 } else {
-                    let ridt_fut = ridt2.insert(rid, entry, txg)
+                    let ridt_fut = ridt2.insert(rid, entry, txg, Credit::null())
                         .map_ok(drop);
                     ridt_fut.boxed()
                 }
@@ -472,47 +498,45 @@ impl DML for IDML {
         let rid = *ridp;
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
-        let ddml3 = self.ddml.clone();
         let alloct2 = self.alloct.clone();
         let ridt2 = self.ridt.clone();
-        let fut = self.ridt.get(rid)
-            .and_then(unwrap_or_enoent)
-            .and_then(move |mut entry| {
-                entry.refcount -= 1;
-                if entry.refcount == 0 {
-                    let cacheval = cache2.lock().unwrap()
-                        .remove(&Key::Rid(rid));
-                    let bfut = cacheval
-                        .map(move |cacheable| {
-                            let t = cacheable.downcast::<T>().unwrap();
-                            ddml2.delete(&entry.drp, txg)
-                            .map_ok(move |_| t)
-                            .boxed()
-                        }).unwrap_or_else(||{
-                            ddml3.pop_direct::<T>(&entry.drp).boxed()
-                        });
-                    let alloct_fut = alloct2.remove(entry.drp.pba(), txg);
-                    let ridt_fut = ridt2.remove(rid, txg);
-                        future::try_join3(bfut, alloct_fut, ridt_fut)
-                        .map_ok(|(cacheable, old_rid, _old_ridt_entry)| {
-                            assert!(old_rid.is_some());
-                            cacheable
-                        }).boxed()
+        let efut = self.ridt.get(rid);
+        async move {
+            let mut entry = efut.await?
+                .ok_or(Error::ENOENT)?;
+            entry.refcount -= 1;
+            if entry.refcount == 0 {
+                let cacheval = cache2.lock().unwrap()
+                    .remove(&Key::Rid(rid));
+                let bfut = if let Some(cacheable) = cacheval {
+                    let t = cacheable.downcast::<T>().unwrap();
+                    ddml2.delete(&entry.drp, txg)
+                    .map_ok(move |_| t)
+                    .boxed()
                 } else {
-                    let cacheval = cache2.lock().unwrap()
-                        .get::<R>(&Key::Rid(rid));
-                    let bfut = cacheval.map(|cacheref: Box<R>|{
-                        let t = cacheref.into_owned().downcast::<T>().unwrap();
-                        future::ok(t).boxed()
-                    }).unwrap_or_else(|| {
-                        Box::pin(ddml2.get_direct::<T>(&entry.drp))
-                    });
-                    let ridt_fut = ridt2.insert(rid, entry, txg);
-                    future::try_join(bfut, ridt_fut)
-                    .map_ok(|(cacheable, _)| cacheable).boxed()
-                }
-            });
-        Box::pin(fut)
+                    ddml2.pop_direct::<T>(&entry.drp).boxed()
+                };
+                let alloct_fut = alloct2.remove(entry.drp.pba(), txg,
+                    Credit::null());
+                let ridt_fut = ridt2.remove(rid, txg, Credit::null());
+                let (cacheable, old_rid, _old_ridt_entry) =
+                    future::try_join3(bfut, alloct_fut, ridt_fut).await?;
+                assert!(old_rid.is_some());
+                Ok(cacheable)
+            } else {
+                let cacheval = cache2.lock().unwrap()
+                    .get::<R>(&Key::Rid(rid));
+                let bfut = cacheval.map(|cacheref: Box<R>|{
+                    let t = cacheref.into_owned().downcast::<T>().unwrap();
+                    future::ok(t).boxed()
+                }).unwrap_or_else(|| {
+                    ddml2.get_direct::<T>(&entry.drp).boxed()
+                });
+                let ridt_fut = ridt2.insert(rid, entry, txg, Credit::null());
+                let (cacheable, _) = future::try_join(bfut, ridt_fut).await?;
+                Ok(cacheable)
+            }
+        }.boxed()
     }
 
     #[instrument(skip(self))]
@@ -533,9 +557,10 @@ impl DML for IDML {
 
         let fut = self.ddml.put_direct(&cacheable.make_ref(), compression, txg)
         .and_then(move|drp| {
-            let alloct_fut = alloct2.insert(drp.pba(), rid, txg);
+            let alloct_fut = alloct2.insert(drp.pba(), rid, txg,
+                                            Credit::null());
             let rid_entry = RidtEntry::new(drp);
-            let ridt_fut = ridt2.insert(rid, rid_entry, txg);
+            let ridt_fut = ridt2.insert(rid, rid_entry, txg, Credit::null());
             future::try_join(ridt_fut, alloct_fut)
             .map_ok(move |(old_rid_entry, old_alloc_entry)| {
                 assert!(old_rid_entry.is_none(), "RID was not unique");
@@ -548,6 +573,10 @@ impl DML for IDML {
             })
         });
         Box::pin(fut)
+    }
+
+    fn repay(&self, credit: Credit) {
+        self.writeback.repay(credit)
     }
 
     fn sync_all(&self, txg: TxgT)
@@ -571,6 +600,8 @@ struct Label {
 mock!{
     pub IDML {
         pub fn allocated(&self) -> LbaT;
+        pub fn borrow_credit(&self, size: usize)
+            -> Pin<Box<dyn Future<Output=Credit> + Send>>;
         pub fn check(&self) -> Pin<Box<dyn Future<Output=Result<bool, Error>>>>;
         pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
@@ -608,6 +639,7 @@ mock!{
         fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                                  txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<RID, Error>> + Send>>;
+        fn repay(&self, credit: Credit);
         fn sync_all(&self, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
     }
@@ -639,12 +671,20 @@ mod t {
     {
         let entry = RidtEntry{drp: *drp, refcount};
         let txg = TxgT::from(0);
-        idml.ridt.clone().insert(rid, entry, txg)
+        idml.ridt.clone().insert(rid, entry, txg, Credit::null())
             .now_or_never().unwrap()
             .unwrap();
-        idml.alloct.clone().insert(drp.pba(), rid, txg)
+        idml.alloct.clone().insert(drp.pba(), rid, txg, Credit::null())
             .now_or_never().unwrap()
             .unwrap();
+    }
+
+    fn mock_ddml() -> DDML {
+        let mut ddml = DDML::default();
+        ddml.expect_repay()
+            .withf(|credit| *credit == 0usize)
+            .return_const(());
+        ddml
     }
 
     // pet kcov
@@ -675,7 +715,7 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let cache = Cache::default();
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 2);
@@ -690,12 +730,12 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let cache = Cache::default();
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         // Inject a record into the AllocT but not the RIDT
         let txg = TxgT::from(0);
-        idml.alloct.clone().insert(drp.pba(), rid, txg)
+        idml.alloct.clone().insert(drp.pba(), rid, txg, Credit::null())
             .now_or_never().unwrap()
             .unwrap();
 
@@ -709,13 +749,13 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let cache = Cache::default();
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         // Inject a record into the RIDT but not the AllocT
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        idml.ridt.clone().insert(rid, entry, txg)
+        idml.ridt.clone().insert(rid, entry, txg, Credit::null())
             .now_or_never().unwrap()
             .unwrap();
 
@@ -730,16 +770,16 @@ mod t {
         let drp = DRP::random(Compression::None, 4096);
         let drp2 = DRP::random(Compression::None, 4096);
         let cache = Cache::default();
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         // Inject a mismatched pair of records
         let entry = RidtEntry{drp, refcount: 2};
         let txg = TxgT::from(0);
-        idml.ridt.clone().insert(rid, entry, txg)
+        idml.ridt.clone().insert(rid, entry, txg, Credit::null())
             .now_or_never().unwrap()
             .unwrap();
-        idml.alloct.clone().insert(drp2.pba(), rid, txg)
+        idml.alloct.clone().insert(drp2.pba(), rid, txg, Credit::null())
             .now_or_never().unwrap()
             .unwrap();
 
@@ -759,7 +799,7 @@ mod t {
             .returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         ddml.expect_delete_direct()
             .once()
             .with(eq(drp), eq(TxgT::from(42)))
@@ -786,7 +826,7 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let cache = Cache::default();
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 2);
@@ -816,7 +856,7 @@ mod t {
             .returning(|_| {
                 Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
             });
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
@@ -834,7 +874,7 @@ mod t {
             .returning(move |_| {
                 Some(Box::new(dbs.try_const().unwrap()))
             });
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
@@ -865,7 +905,7 @@ mod t {
             .returning(move |_, dbs| {
                 owned_by_cache2.lock().unwrap().push(dbs);
             });
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         ddml.expect_get_direct::<DivBufShared>()
             .once()
             .with(eq(drp))
@@ -888,7 +928,7 @@ mod t {
         let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100, zid: 0,
                             freed_blocks: 50, txgs};
         let cache = Cache::default();
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
@@ -932,7 +972,7 @@ mod t {
         let drp1_c = drp1;
         let mut seq = Sequence::new();
         let mut cache = Cache::default();
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         cache.expect_get_ref()
             .once()
             .with(eq(Key::Rid(rid)))
@@ -991,7 +1031,7 @@ mod t {
         let drp1_c = drp1;
         let mut seq = Sequence::new();
         let cache = Cache::default();
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         ddml.expect_get_direct()
             .once()
             .in_sequence(&mut seq)
@@ -1042,7 +1082,7 @@ mod t {
         let drp1 = DRP::random(Compression::None, 4096);
         let mut seq = Sequence::new();
         let mut cache = Cache::default();
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         cache.expect_get_ref()
             .once()
             .in_sequence(&mut seq)
@@ -1086,7 +1126,7 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let mut cache = Cache::default();
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         cache.expect_remove()
             .once()
             .with(eq(Key::Rid(RID(42))))
@@ -1126,7 +1166,7 @@ mod t {
             .returning(move |_| {
                 Some(Box::new(dbs.try_const().unwrap()))
             });
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 2);
@@ -1151,7 +1191,7 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let mut cache = Cache::default();
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         cache.expect_remove()
             .once()
             .with(eq(Key::Rid(RID(42))))
@@ -1187,7 +1227,7 @@ mod t {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let mut cache = Cache::default();
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         cache.expect_get::<DivBuf>()
             .once()
             .with(eq(Key::Rid(RID(42))))
@@ -1221,7 +1261,7 @@ mod t {
     #[test]
     fn put() {
         let mut cache = Cache::default();
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdead_beef);
         let rid = RID(0);
@@ -1259,7 +1299,7 @@ mod t {
     fn sync_all() {
         let rid = RID(42);
         let cache = Cache::default();
-        let mut ddml = DDML::default();
+        let mut ddml = mock_ddml();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdead_beef);
         ddml.expect_put::<Arc<tree::Node<DRP, RID, RidtEntry>>>()
@@ -1290,7 +1330,7 @@ mod t {
     #[test]
     fn advance_transaction() {
         let cache = Cache::default();
-        let ddml = DDML::default();
+        let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 

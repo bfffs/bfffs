@@ -12,12 +12,15 @@ use bfffs_core::{
     LbaT,
     PBA,
     RID,
-    TxgT
+    TxgT,
+    writeback::{Credit, WriteBack}
 };
 use divbuf::DivBufShared;
+use futures::FutureExt;
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     ffi::OsString,
+    mem,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -47,19 +50,48 @@ unsafe impl GlobalAlloc for Counter {
 #[global_allocator]
 static A: Counter = Counter;
 
+/// Borrow enough credit for an insertion.
+///
+/// This test program doesn't really care about credit.  Borrow enough to
+/// satisfy Node's assertions.
+fn borrow_credit<V: Value>(wb: &WriteBack, v: &V) -> Credit {
+    let want = mem::size_of::<(FSKey, V)>() + v.allocated_space();
+    wb.borrow(want).now_or_never().unwrap()
+}
 
-fn alloct_leaf(n: usize) -> Box<dyn Cacheable> {
+trait CacheableForgetable: Cacheable {
+    fn forget(self: Box<Self>) -> Credit;
+}
+
+impl<K: Key, V: Value> CacheableForgetable for Arc<Node<DRP, K, V>> {
+    fn forget(self: Box<Self>) -> Credit {
+        Credit::null()
+    }
+}
+
+impl CacheableForgetable for Arc<Node<RID, FSKey, FSValue<RID>>> {
+    fn forget(self: Box<Self>) -> Credit {
+        let nd = Arc::try_unwrap(*self).unwrap().try_unwrap().unwrap();
+        if nd.is_leaf() {
+            nd.into_leaf().forget()
+        } else {
+            Credit::null()
+        }
+    }
+}
+
+fn alloct_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = PBA::new(1, i as LbaT);
         let v = RID(i as u64);
-        ld.insert(k, v);
+        ld.insert(k, v, Credit::null());
     }
     let node_data = NodeData::<DRP, PBA, RID>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn alloct_int(n: usize) -> Box<dyn Cacheable> {
+fn alloct_int(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let txgs = TxgT::from(0)..TxgT::from(1);
     let mut children = Vec::with_capacity(n);
     for i in 0..n {
@@ -73,7 +105,7 @@ fn alloct_int(n: usize) -> Box<dyn Cacheable> {
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn ridt_int(n: usize) -> Box<dyn Cacheable> {
+fn ridt_int(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let txgs = TxgT::from(0)..TxgT::from(1);
     let mut children = Vec::with_capacity(n);
     for i in 0..n {
@@ -87,20 +119,20 @@ fn ridt_int(n: usize) -> Box<dyn Cacheable> {
     Box::new(Arc::new(Node::new(nd)))
 }
 
-fn ridt_leaf(n: usize) -> Box<dyn Cacheable> {
+fn ridt_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = RID(i as u64);
         let addr = PBA::new(0, i as LbaT);
         let drp = DRP::new(addr, Compression::None, 40000, 40000, 0);
         let v = RidtEntry::new(drp);
-        ld.insert(k, v);
+        ld.insert(k, v, Credit::null());
     }
     let node_data = NodeData::<DRP, RID, RidtEntry>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_int(n: usize) -> Box<dyn Cacheable> {
+fn fs_int(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let txgs = TxgT::from(0)..TxgT::from(1);
     let mut children = Vec::with_capacity(n);
     for i in 0..n {
@@ -113,7 +145,8 @@ fn fs_int(n: usize) -> Box<dyn Cacheable> {
     Box::new(Arc::new(Node::new(nd)))
 }
 
-fn fs_leaf_blob_extent(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_blob_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable>
+{
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -122,13 +155,14 @@ fn fs_leaf_blob_extent(n: usize) -> Box<dyn Cacheable> {
             rid: RID(i as u64)
         };
         let v = FSValue::BlobExtent(extent);
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_leaf_direntry(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_direntry(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -138,13 +172,14 @@ fn fs_leaf_direntry(n: usize) -> Box<dyn Cacheable> {
             name: OsString::from("something_moderately_long_but_not_too_long")
         };
         let v = FSValue::DirEntry(dirent);
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_leaf_direntries(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_direntries(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -159,24 +194,26 @@ fn fs_leaf_direntries(n: usize) -> Box<dyn Cacheable> {
             name: OsString::from("something_also_pretty_long_string")
         };
         let v = FSValue::DirEntries(vec![dirent0, dirent1]);
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_leaf_dyinginode(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_dyinginode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
         let v = FSValue::DyingInode(DyingInode::from(0));
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_leaf_extattr_blob(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_extattr_blob(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -191,13 +228,14 @@ fn fs_leaf_extattr_blob(n: usize) -> Box<dyn Cacheable> {
         };
         let extattr = ExtAttr::Blob(blob_ext_attr);
         let v = FSValue::ExtAttr(extattr);
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_leaf_extattr_inline(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_extattr_inline(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -210,13 +248,14 @@ fn fs_leaf_extattr_inline(n: usize) -> Box<dyn Cacheable> {
         };
         let extattr = ExtAttr::Inline(inline_ext_attr);
         let v = FSValue::ExtAttr(extattr);
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_leaf_extattrs(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_extattrs(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -241,26 +280,28 @@ fn fs_leaf_extattrs(n: usize) -> Box<dyn Cacheable> {
         };
         let extattr1 = ExtAttr::Blob(blob_ext_attr1);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_leaf_inline_extent(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_inline_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
         let dbs = DivBufShared::from(vec![42u8; 2048]);
         let extent = InlineExtent::new(Arc::new(dbs));
         let v = FSValue::InlineExtent(extent);
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_leaf_inode(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_inode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -278,18 +319,20 @@ fn fs_leaf_inode(n: usize) -> Box<dyn Cacheable> {
             file_type: FileType::Reg(17)
         };
         let v = FSValue::Inode(inode);
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
 }
 
-fn fs_leaf_property(n: usize) -> Box<dyn Cacheable> {
+fn fs_leaf_property(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
         let v = FSValue::Property(Property::RecordSize(17));
-        ld.insert(k, v);
+        let credit = borrow_credit(&wb, &v);
+        ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -303,13 +346,15 @@ fn logrange(min: usize, max: usize) -> impl Iterator<Item=usize> {
 }
 
 fn measure(name: &str, pos: &str, n: usize, verbose: bool,
-    f: fn(usize) -> Box<dyn Cacheable>) -> bool
+    f: fn(&WriteBack, usize) -> Box<dyn CacheableForgetable>) -> bool
 {
+    let wb = WriteBack::limitless();
     let before = ALLOCATED.load(SeqCst);
-    let c = f(n);
+    let c = f(&wb, n);
     let after = ALLOCATED.load(SeqCst);
     let actual = after - before;
     let calc = c.cache_space();
+    wb.repay(c.forget());
     let err = 100.0 * (calc as f64) / (actual as f64) - 100.0;
     if verbose {
         println!("{:>8}{:>22}{:>8}{:>12}{:>12}{:>12.2}%", name, pos, n, actual,

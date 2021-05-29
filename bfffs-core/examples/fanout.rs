@@ -11,7 +11,8 @@ use bfffs_core::{
     dml::*,
     idml::RidtEntry,
     fs_tree::*,
-    tree::*
+    tree::*,
+    writeback::{Credit, WriteBack}
 };
 use divbuf::DivBufShared;
 use futures::{
@@ -28,6 +29,7 @@ use rand_xorshift::XorShiftRng;
 use std::{
     collections::BTreeMap,
     io::{ErrorKind, Write},
+    mem,
     num::NonZeroU8,
     pin::Pin,
     str::FromStr,
@@ -172,6 +174,11 @@ impl DML for FakeDDML {
         future::ok(drp).boxed()
     }
 
+    fn repay(&self, credit: Credit) {
+        debug_assert!(credit.is_null());
+        mem::forget(credit);
+    }
+
     /// Sync all records written so far to stable storage.
     fn sync_all(&self, _txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
@@ -188,10 +195,15 @@ struct FakeIDML {
     next_rid: AtomicU64,
     ridt: Arc<Tree<DRP, FakeDDML, RID, RidtEntry>>,
     save: bool,
-    stats: Stats
+    stats: Stats,
+    writeback: WriteBack
 }
 
 impl FakeIDML {
+    fn borrow_credit(&self, want: usize) -> impl Future<Output=Credit> + Send {
+        self.writeback.borrow(want)
+    }
+
     fn data_size(&self) -> u64 {
         self.data_size.load(Ordering::Relaxed)
     }
@@ -203,6 +215,7 @@ impl FakeIDML {
         let alloct = Arc::new(Tree::create(alloct_ddml, true, 16.5,
             2.809));
         let ridt = Arc::new(Tree::create(ridt_ddml, true, 4.22, 3.73));
+        let writeback = WriteBack::limitless();
         FakeIDML {
             alloct,
             data_size: AtomicU64::default(),
@@ -211,7 +224,8 @@ impl FakeIDML {
             next_rid: AtomicU64::default(),
             ridt,
             save,
-            stats: Stats::default()
+            stats: Stats::default(),
+            writeback
         }
     }
 
@@ -230,8 +244,8 @@ impl FakeIDML {
         .and_then(move |drp| {
             let pba = drp.pba();
             let ridt_entry = RidtEntry::new(drp);
-            future::try_join(ridt2.insert(rid, ridt_entry, txg),
-                             alloct2.insert(pba, rid, txg))
+            future::try_join(ridt2.insert(rid, ridt_entry, txg, Credit::null()),
+                             alloct2.insert(pba, rid, txg, Credit::null()))
             .map_ok(move |_| rid)
         });
         fut.boxed()
@@ -291,11 +305,15 @@ impl DML for FakeIDML {
         .and_then(move |drp| {
             let pba = drp.pba();
             let ridt_entry = RidtEntry::new(drp);
-            future::try_join(ridt2.insert(rid, ridt_entry, txg),
-                             alloct2.insert(pba, rid, txg))
+            future::try_join(ridt2.insert(rid, ridt_entry, txg, Credit::null()),
+                             alloct2.insert(pba, rid, txg, Credit::null()))
             .map_ok(move |_| rid)
         });
         fut.boxed()
+    }
+
+    fn repay(&self, credit: Credit) {
+        self.writeback.repay(credit);
     }
 
     /// Sync all records written so far to stable storage.
@@ -332,6 +350,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     let tree2 = tree.clone();
     let txg = TxgT::from(0);
     let data = vec![0u8; RECSIZE as usize];
+    let cr = tree.credit_requirements();
 
     let (alloct_entries, ridt_entries) = rt.block_on(
         stream::iter(0..nelems)
@@ -340,12 +359,14 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
             let dbs = DivBufShared::from(data.clone());
             let offset = f(i);
             let tree3 = tree.clone();
-            idml3.put_data(dbs, Compression::None, txg)
-            .and_then(move |rid| {
+            future::try_join(
+                idml3.put_data(dbs, Compression::None, txg),
+                idml3.borrow_credit(cr.insert).map(Ok)
+            ).and_then(move |(rid, credit)| {
                 let key = FSKey::new(INODE, ObjKey::Extent(offset));
                 let be = BlobExtent { lsize: RECSIZE, rid};
                 let value = FSValue::BlobExtent(be);
-                tree3.insert(key, value, txg)
+                tree3.insert(key, value, txg, credit)
             }).map_ok(drop)
         }).and_then(move |_| {
             tree2.clone().flush(txg)

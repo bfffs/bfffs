@@ -294,6 +294,7 @@ root:
 ---
 0:
   Leaf:
+    credit: 0
     items:
       1-0-706caad497db23:
         DirEntry:
@@ -1956,6 +1957,36 @@ root:
             .. Default::default()
         };
         mocks.val.0.setattr(&fd, attr).unwrap();
+
+        // Now extend the file past the truncated record
+        attr.size = Some(8192);
+        mocks.val.0.setattr(&fd, attr).unwrap();
+
+        // Finally, read the truncated record.  It should be a hole
+        let sglist = mocks.val.0.read(&fd, 4096, 4096).unwrap();
+        let db = &sglist[0];
+        let expected = [0u8; 4096];
+        assert_eq!(&db[..], &expected[..]);
+    }
+
+    // Like setattr_truncate, but with blobs
+    test setattr_truncate_blobs(mocks) {
+        let root = mocks.val.0.root();
+        // First write two records
+        let fd = mocks.val.0.create(&root, &OsString::from("x"), 0o644, 0, 0)
+        .unwrap();
+        let buf = vec![42u8; 8192];
+        let r = mocks.val.0.write(&fd, 0, &buf[..], 0);
+        assert_eq!(Ok(8192), r);
+        mocks.val.0.sync(); // Create blob records
+
+        // Then truncate one of them.
+        let mut attr = SetAttr {
+            size: Some(4096),
+            .. Default::default()
+        };
+        mocks.val.0.setattr(&fd, attr).unwrap();
+        mocks.val.0.sync(); // Create blob records
 
         // Now extend the file past the truncated record
         attr.size = Some(8192);

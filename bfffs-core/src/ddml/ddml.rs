@@ -4,6 +4,7 @@ use crate::{
     cache::{Cache, Cacheable, CacheRef, Key},
     label::*,
     vdev::*,
+    writeback::Credit
 };
 use futures::{Future, TryFutureExt, future};
 use metrohash::MetroHash64;
@@ -12,6 +13,7 @@ use std::{
     borrow,
     hash::Hasher,
     iter,
+    mem,
     pin::Pin,
     sync::{Arc, Mutex}
 };
@@ -281,6 +283,13 @@ impl DML for DDML {
         Box::pin(fut)
     }
 
+    fn repay(&self, credit: Credit) {
+        // Writes to the DDML should never attempt to borrow credit.  That could
+        // lead to deadlocks.
+        debug_assert!(credit.is_null());
+        mem::forget(credit);
+    }
+
     fn sync_all(&self, _txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
@@ -325,6 +334,7 @@ mock! {
         fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                                  txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<DRP, Error>> + Send>>;
+        fn repay(&self, credit: Credit);
         fn sync_all(&self, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
     }

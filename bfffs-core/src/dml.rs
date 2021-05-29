@@ -1,14 +1,17 @@
 // vim: tw=80
 
-use crate::*;
+pub use crate::{
+    *,
+    cache::{Cacheable, CacheRef},
+    writeback::Credit
+};
 use futures::Future;
 #[cfg(test)] use mockall::automock;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     num::NonZeroU8,
     pin::Pin
 };
-
-pub use crate::cache::{Cacheable, CacheRef};
 
 /// Compression mode in use
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -114,6 +117,9 @@ pub trait DML: Send + Sync {
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr, Error>> + Send>>;
+
+    /// Repay [`WriteBack`] [`Credit`]
+    fn repay(&self, credit: Credit);
 
     /// Sync all records written so far to stable storage.
     fn sync_all(&self, txg: TxgT)

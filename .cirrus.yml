@@ -15,7 +15,7 @@ task:
         CARGO_ARGS: --all-features
     - name: cargo test (stable)
       env:
-        VERSION: 1.42.0
+        VERSION: 1.45.0
   setup_script:
     - pkg install -y c-blosc isa-l fusefs-libs pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh

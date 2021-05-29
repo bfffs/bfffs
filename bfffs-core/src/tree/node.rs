@@ -1,7 +1,11 @@
 // vim: tw=80
 
 //! Nodes for Trees (private module)
-use crate::{*, dml::*};
+use crate::{
+    *,
+    dml::*,
+    writeback::Credit
+};
 use futures::{
     Future,
     FutureExt,
@@ -11,12 +15,17 @@ use futures::{
     stream::FuturesOrdered
 };
 use futures_locks::*;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{
+    Serialize,
+    de::{self, DeserializeOwned, Deserialize, Deserializer, SeqAccess, Visitor},
+    ser::SerializeStruct,
+};
 use std::{
     borrow::Borrow,
     cmp::max,
     collections::{BTreeMap, VecDeque},
-    fmt::Debug,
+    fmt::{self, Debug},
+    marker::PhantomData,
     mem,
     ops::{Bound, Deref, DerefMut, Range, RangeBounds},
     pin::Pin,
@@ -65,11 +74,27 @@ where T: Copy + Debug + DeserializeOwned + Eq + Ord + PartialEq + Send +
     Sync + Serialize + TypicalSize + 'static {}
 
 pub trait Key: Copy + Debug + DeserializeOwned + Ord + PartialEq + MinValue +
-    Send + Sync + Serialize + TypicalSize + 'static {}
+    Send + Sync + Serialize + TypicalSize + 'static
+{
+    /// Do write operations in trees that use this Key type require writeback
+    /// credit?
+    // This is bit of a hack; whether or not to use writeback credit is really a
+    // function of how the tree is used, not what type of key it uses.  But
+    // it's easier to discriminate based on Key rather than by adding
+    // an additional generic parameter all the way up the stack.
+    const USES_CREDIT: bool = true;
+}
 
-impl<T> Key for T
-where T: Copy + Debug + DeserializeOwned + Ord + MinValue + PartialEq + Send +
-    Sync + Serialize + TypicalSize + 'static {}
+impl Key for PBA {
+    const USES_CREDIT: bool = false;
+}
+
+impl Key for RID {
+    const USES_CREDIT: bool = false;
+}
+
+#[cfg(test)]
+impl Key for u32 {}
 
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
     Serialize + TypicalSize + 'static
@@ -213,35 +238,94 @@ mod node_serializer {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
-#[serde(bound(deserialize = "K: DeserializeOwned, V: DeserializeOwned"))]
+#[derive(Debug)]
 pub struct LeafData<K: Key, V> {
-    items: BTreeMap<K, V>
+    /// WriteBack credit, if this `LeafData` is dirty.  Anytime the node is
+    /// dirty and not exclusively locked, this should be at least as great as
+    /// `wb_space()`.
+    // Is there any way to eliminate this based on K::USES_CREDIT?
+    credit: Credit,
+    #[cfg(test)] pub(super) items: BTreeMap<K, V>,
+    #[cfg(not(test))] items: BTreeMap<K, V>,
 }
 
 impl<K: Key, V: Value> LeafData<K, V> {
+    /// Absorb as much credit as this LeafData needs.  Call this after
+    /// deserializing a `LeafData` into a dirty state.
+    pub fn acredit(&mut self, credit: &mut Credit) {
+        debug_assert_eq!(self.credit, 0,
+            "Attempting to acredit an already accredited leaf node");
+        if K::USES_CREDIT {
+            let need = self.wb_space();
+            assert!(*credit >= need,
+                    "Insufficient credit to xlock leaf node");
+            self.credit = credit.split(need);
+        }
+    }
+
+    fn assert_accredited(&self) {
+        if K::USES_CREDIT {
+            debug_assert_eq!(self.credit, self.wb_space(),
+                "Invariant violation: inconsistent node credit");
+        }
+    }
+
     /// Flush all items to stable storage.
     ///
-    /// For most items, this is a nop.
-    pub fn flush<A, D>(self, d: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Self, Error>> + Send>>
+    /// For most item types, this is a nop.
+    pub fn flush<A, D>(mut self, d: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<(Self, Credit), Error>> + Send>>
         where D: DML<Addr=A> + 'static, A: 'static
     {
+        let credit = self.credit.take();
         if V::needs_flush() {
             self.items.into_iter().map(|(k, v)| {
                 v.flush(d, txg)
                 .map_ok(move |v| (k, v))
             }).collect::<FuturesOrdered<_>>()
             .try_collect::<Vec<_>>()
-            .map_ok(|items| LeafData{items: items.into_iter().collect()})
-            .boxed()
+            .map_ok(|items| {
+                let ld = LeafData{
+                    credit: Credit::null(),
+                    items: items.into_iter().collect()
+                };
+                (ld, credit)
+            }).boxed()
         } else {
-            future::ok(self).boxed()
+            future::ok((self, credit)).boxed()
         }
     }
 
-    pub fn insert(&mut self, k: K, v: V) -> Option<V> {
-        self.items.insert(k, v)
+    /// Discard the contents of this `LeafData` without flushing to disk.
+    pub fn forget(mut self) -> Credit {
+        self.credit.take()
+    }
+
+    /// Insert one key-value pair into the LeafData, returning the old value, if
+    /// any.  Also, return any excess credit that was provided.
+    pub fn insert(&mut self, k: K, v: V, mut credit: Credit)
+        -> (Option<V>, Credit)
+    {
+        self.assert_accredited();
+        let v_space = v.allocated_space();
+        let old_v = self.items.insert(k, v);
+        let excess_credit = if K::USES_CREDIT {
+            let kvs = mem::size_of::<(K, V)>();
+            let old_space = old_v.as_ref()
+                .map(|v| v.allocated_space() + kvs)
+                .unwrap_or(0);
+            let excess = (&mut credit + old_space).checked_sub(v_space + kvs)
+                .expect("insufficient credit was provided for this insertion");
+            self.credit.extend(credit);
+            self.credit.split(excess)
+        } else {
+            debug_assert!(credit.is_null());
+            Credit::null()
+        };
+        self.assert_accredited();
+        // Return excess credit, which might've resulted from an insertion
+        // to an already-dirty record.
+        (old_v, excess_credit)
     }
 
     pub fn get<Q>(&self, k: &Q) -> Option<V>
@@ -280,23 +364,44 @@ impl<K: Key, V: Value> LeafData<K, V> {
 
     /// Delete all keys within the given range, possibly leaving an empty
     /// LeafNode.
-    pub fn range_delete<R, T>(&mut self, range: R)
+    pub fn range_delete<R, T>(&mut self, range: R) -> Credit
         where K: Borrow<T>,
               R: RangeBounds<T>,
               T: Ord + Clone
     {
+        self.assert_accredited();
+        // TODO: use BTreeMap::drain_filter, when that feature stabilizes.
+        // https://github.com/rust-lang/rust/issues/70530
         let keys = self.items.range(range)
             .map(|(k, _)| *k)
             .collect::<Vec<K>>();
-        for k in keys {
-            self.items.remove(k.borrow());
-        }
+        let l = keys.len();
+        let allocated_space: usize = keys.into_iter()
+            .map(|k| {
+                let v = self.items.remove(k.borrow()).unwrap();
+                v.allocated_space()
+            }).sum();
+        let kvs = mem::size_of::<(K, V)>();
+        let credit = self.credit.split(allocated_space + l * kvs);
+        self.assert_accredited();
+        credit
     }
 
-    pub fn remove<Q>(&mut self, k: &Q) -> Option<V>
+    pub fn remove<Q>(&mut self, k: &Q) -> (Option<V>, Credit)
         where K: Borrow<Q>, Q: Ord
     {
-        self.items.remove(k)
+        self.assert_accredited();
+        let old_v = self.items.remove(k);
+        let credit = if K::USES_CREDIT {
+            let old_space = old_v.as_ref()
+                .map(|v| v.allocated_space() + mem::size_of::<(K, V)>())
+                .unwrap_or(0);
+            self.credit.split(old_space)
+        } else {
+            Credit::null()
+        };
+        self.assert_accredited();
+        (old_v, credit)
     }
 
     /// Split this LeafNode in two.  Returns the transaction range of the rump
@@ -304,18 +409,143 @@ impl<K: Key, V: Value> LeafData<K, V> {
     pub fn split<A: Addr>(&mut self, left_items: usize, txg: TxgT)
         -> (Range<TxgT>, IntElem<A, K, V>)
     {
+        self.assert_accredited();
         let cutoff = *self.items.keys().nth(left_items).unwrap();
         let new_items = self.items.split_off(&cutoff);
-        let node = Node::new(NodeData::Leaf(LeafData{items: new_items}));
+        let mut ld = LeafData {
+            credit: Credit::null(),
+            items: new_items
+        };
+        if K::USES_CREDIT {
+            ld.credit.extend(self.credit.split(ld.wb_space()));
+        }
+        self.assert_accredited();
+        ld.assert_accredited();
         // There are no children, so the TXG range is just the current TXG
         let txgs = txg..txg + 1;
-        (txgs.clone(), IntElem::new(cutoff, txgs, TreePtr::Mem(Box::new(node))))
+        let node = Box::new(Node::new(NodeData::Leaf(ld)));
+        (txgs.clone(), IntElem::new(cutoff, txgs, TreePtr::Mem(node)))
+    }
+
+    fn wb_space(&self) -> usize {
+        // Unlike cache_space, we need to be able to update the credit when
+        // adding and removing individual items.  So we simplify the
+        // calculation, trading accuracy for mutatability.
+        let allocated: usize = self.items.iter()
+            .map(|(_k, v)| v.allocated_space())
+            .sum();
+        let kvs = self.items.len() * mem::size_of::<(K, V)>();
+        allocated + kvs
     }
 }
 
 impl<K: Key, V: Value> Default for LeafData<K, V> {
     fn default() -> Self {
-        LeafData{items: BTreeMap::new()}
+        LeafData{credit: Credit::null(), items: BTreeMap::new()}
+    }
+}
+
+impl<K: Key, V: Value> PartialEq for LeafData<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        // Ignore credit, for purposes of equality testing.
+        // It's not considered part of the content, and it should always be None
+        // for cached LeafData anyway.
+        self.items == other.items
+    }
+}
+
+impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: Deserializer<'de>
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field { Credit, Items }
+
+        struct LeafDataVisitor<K: Key, V: Value> {
+            _k: PhantomData<K>,
+            _v: PhantomData<V>
+        }
+        impl<'de, K: Key, V: Value> Visitor<'de> for LeafDataVisitor<K, V> {
+            type Value = LeafData<K, V>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct LeafData")
+            }
+
+            fn visit_seq<SV>(self, mut seq: SV)
+                -> Result<Self::Value, SV::Error>
+                where SV: SeqAccess<'de>
+            {
+                // The only support serializer that uses a Seq is Bincode, where
+                // we don't serialize Credit
+                let items = seq.next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                let credit = Credit::null();
+                Ok(LeafData{credit, items})
+            }
+
+            #[cfg(test)]
+            fn visit_map<SV>(self, mut map: SV)
+                -> Result<Self::Value, SV::Error>
+                where SV: de::MapAccess<'de>
+            {
+                // The only support serializer that uses a Map is YAML, for unit
+                // tests and Tree::dump, where we do serialize Credit.
+                let mut credit = Credit::null();
+                let mut items = None;
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Credit => {
+                            if !credit.is_null() {
+                                return Err(
+                                    de::Error::duplicate_field("credit")
+                                );
+                            }
+                            credit = map.next_value()?;
+                        },
+                        Field::Items => {
+                            if items.is_some() {
+                                return Err(de::Error::duplicate_field("items"));
+                            }
+                            items = Some(map.next_value()?);
+                        }
+                    }
+                }
+                let items = items.ok_or_else(
+                    || de::Error::missing_field("items")
+                )?;
+                let ld = LeafData{ credit, items };
+                if K::USES_CREDIT {
+                    assert_eq!(ld.credit, ld.wb_space(),
+                        "Insufficient credit was present in the YAML tree");
+                }
+                Ok(ld)
+            }
+        }
+
+        const FIELDS: &'static [&'static str] = &["credit", "items"];
+        let visitor = LeafDataVisitor{_k: PhantomData, _v: PhantomData};
+        deserializer.deserialize_struct("LeafData", FIELDS, visitor)
+    }
+}
+
+impl<K: Key, V: Value> Serialize for LeafData<K, V> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        if serializer.is_human_readable() {
+            // When dumping dirty nodes to YAML, print the crecit
+            let mut ss = serializer.serialize_struct("LeafData", 2)?;
+            ss.serialize_field("credit", &self.credit)?;
+            ss.serialize_field("items", &self.items)?;
+            ss.end()
+        } else {
+            // But for Bincode, omit it, because it should always be 0.
+            let mut ss = serializer.serialize_struct("LeafData", 1)?;
+            ss.serialize_field("items", &self.items)?;
+            ss.end()
+        }
     }
 }
 
@@ -345,6 +575,11 @@ impl Limits {
     /// The maximum fanout that will be used for either leaf or int nodes
     pub(super) fn max_fanout(&self) -> u16 {
         max(self.max_leaf_fanout, self.max_int_fanout)
+    }
+
+    /// The largest number of of children a leaf node may ever have
+    pub(super) fn max_leaf_fanout(&self) -> u16 {
+        self.max_leaf_fanout
     }
 
     /// Construct a new fanout from inclusive limits
@@ -393,13 +628,18 @@ pub struct TreeWriteGuard<A: Addr, K: Key, V: Value>(
 impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// Lock the indicated child exclusively.  If it is not already resident
     /// in memory, then COW the target node.  Return both the original guard and
-    /// the child's guard.
+    /// the child's guard, and any credit leftover after dirtying the child.
     // Consuming and returning self prevents lifetime checker issues that
     // interfere with lock coupling.
-    pub fn xlock<D>(mut self, dml: &Arc<D>, child_idx: usize, txg: TxgT)
-        -> Pin<Box<dyn Future<
+    pub fn xlock<D>(
+        mut self,
+        dml: &Arc<D>,
+        child_idx: usize,
+        txg: TxgT,
+        mut credit: Credit
+    ) -> Pin<Box<dyn Future<
             Output=Result<
-                (TreeWriteGuard<A, K, V>, TreeWriteGuard<A, K, V>),
+                (TreeWriteGuard<A, K, V>, TreeWriteGuard<A, K, V>, Credit),
                 Error>
             > + Send
         >>
@@ -409,7 +649,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
         if self.as_int().children[child_idx].ptr.is_mem() {
             self.as_int().children[child_idx].ptr.as_mem().xlock()
                 .map(move |child_guard| {
-                      Ok((self, child_guard))
+                      Ok((self, child_guard, credit))
                  }).boxed()
         } else {
             let addr = *self.as_int()
@@ -420,7 +660,11 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                                                                   txg);
             async move {
                 let arc = afut.await?;
-                let child_guard = arc.xlock().await;
+                let mut child_guard = arc.xlock().await;
+                if child_guard.is_leaf() {
+                    let ld = child_guard.as_leaf_mut();
+                    ld.acredit(&mut credit);
+                }
                 drop(child_guard);
                 let child_node = Arc::try_unwrap(*arc)
                     .expect("We should be the Node's only owner");
@@ -436,7 +680,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                     };
                     guard
                 };  // LCOV_EXCL_LINE   kcov false negative
-                Ok((self, child_guard))
+                Ok((self, child_guard, credit))
             }.boxed()
         }
     }
@@ -448,13 +692,19 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     /// a new IntElem that points to it, if it's different from the old IntElem.
     /// The caller _must_ replace the old IntElem with the new one, or data will
     /// leak!  `height` is the height of `self`, not the target.  Leaves are 0.
-    pub fn xlock_nc<D>(&mut self, dml: &Arc<D>, child_idx: usize, height: u8,
-                       txg: TxgT)
-        -> Pin<Box<dyn Future<
-            Output=Result<(Option<IntElem<A, K, V>>, TreeWriteGuard<A, K, V>),
-                          Error>
-            > + Send
-        >>
+    pub fn xlock_nc<D>(
+        &mut self,
+        dml: &Arc<D>,
+        child_idx: usize,
+        height: u8,
+        txg: TxgT,
+        mut credit: Credit
+    ) -> Pin<Box<dyn Future<
+            Output=Result<
+                (Option<IntElem<A, K, V>>, TreeWriteGuard<A, K, V>, Credit),
+                Error
+            >
+        > + Send >>
         where D: DML<Addr=A> + 'static
     {
         self.as_int_mut().children[child_idx].txgs.end = txg + 1;
@@ -465,7 +715,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
             self.as_int().children[child_idx].ptr.as_mem().xlock()
             .map(move |child_guard| {
                 debug_assert!((height > 1) ^ child_guard.is_leaf());
-                Ok((None, child_guard))
+                Ok((None, child_guard, credit))
             }).boxed()
         } else {
             let addr = *self.as_int().children[child_idx].ptr.as_addr();
@@ -473,7 +723,11 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                                                                          txg);
             async move {
                 let arc = afut.await?;
-                let child_guard = arc.xlock().await;
+                let mut child_guard = arc.xlock().await;
+                if child_guard.is_leaf() {
+                    let ld = child_guard.as_leaf_mut();
+                    ld.acredit(&mut credit);
+                }
                 drop(child_guard);
                 let child_node = Box::new(Arc::try_unwrap(*arc)
                     .expect("We should be the Node's only owner"));
@@ -487,7 +741,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                 };
                 let end = txg + 1;
                 let elem = IntElem::new(*guard.key(), start..end, ptr);
-                Ok((Some(elem), guard))
+                Ok((Some(elem), guard, credit))
             }.boxed()
         }
     }
@@ -748,6 +1002,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     /// Check invariants for a single NodeData
+    // Don't check credit, because this node might not be dirty
     pub fn check(&self, key: K, height: u8, is_root: bool, limits: &Limits)
                  -> bool
     {
@@ -913,8 +1168,11 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         match self {
             NodeData::Int(int) =>
                 int.children.append(&mut other.as_int_mut().children),
-            NodeData::Leaf(leaf) =>
-                leaf.items.append(&mut other.as_leaf_mut().items)
+            NodeData::Leaf(leaf) => {
+                let other_ld = other.as_leaf_mut();
+                leaf.items.append(&mut other_ld.items);
+                leaf.credit.extend(other_ld.credit.take());
+            }
         }
     }
 
@@ -931,11 +1189,17 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
                 int.children.splice(0..0, other_right_half.into_iter());
             },
             NodeData::Leaf(leaf) => {
-                let other_items = &mut other.as_leaf_mut().items;
+                let other_ld = other.as_leaf_mut();
+                let other_items = &mut other_ld.items;
                 let cutoff_idx = other_items.len() - keys_to_share;
                 let cutoff = *other_items.keys().nth(cutoff_idx).unwrap();
                 let mut other_right_half = other_items.split_off(&cutoff);
+                let allocated: usize = other_right_half.iter()
+                    .map(|(_k, v)| v.allocated_space())
+                    .sum();
+                let kvs = other_right_half.len() * mem::size_of::<(K, V)>();
                 leaf.items.append(&mut other_right_half);
+                leaf.credit.extend(other_ld.credit.split(allocated + kvs));
             }
         }
     }
@@ -952,12 +1216,18 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
                 int.children.splice(nchildren.., other_left_half);
             },
             NodeData::Leaf(leaf) => {
-                let other_items = &mut other.as_leaf_mut().items;
+                let other_ld = other.as_leaf_mut();
+                let other_items = &mut other_ld.items;
                 let cutoff = *other_items.keys().nth(keys_to_share).unwrap();
                 let other_right_half = other_items.split_off(&cutoff);
                 let mut other_left_half =
                     mem::replace(other_items, other_right_half);
+                let allocated: usize = other_left_half.iter()
+                    .map(|(_k, v)| v.allocated_space())
+                    .sum();
+                let kvs = other_left_half.len() * mem::size_of::<(K, V)>();
                 leaf.items.append(&mut other_left_half);
+                leaf.credit.extend(other_ld.credit.split(allocated + kvs));
             }
         }
     }
@@ -1020,6 +1290,22 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
     fn make_ref(&self) -> Box<dyn CacheRef> {
         Box::new(self.clone())
     }
+
+    fn wb_space(&self) -> usize {
+        if let Ok(guard) = self.0.try_read() {
+            match guard.deref() {
+                NodeData::Leaf(leaf) => leaf.wb_space(),
+                NodeData::Int(_int) => {
+                    // We don't currently track WB credit for Int nodes.  We
+                    // treat them as free.
+                    0
+                }
+            }
+        } else {
+            unimplemented!()
+        }
+
+    }
 }
 
 impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
@@ -1053,15 +1339,32 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
         Node(RwLock::new(node_data))
     }
 
+    /// Attempt to unwrap Self into a [`NodeData`].
+    ///
+    /// Probably should only be used from test code.
+    pub fn try_unwrap(self) -> Result<NodeData<A, K, V>, Self> {
+        self.0.try_unwrap()
+        .map_err(|rwlock| Node(rwlock))
+    }
+
     /// Lock the indicated `Node` exclusively.
     pub(super) fn xlock(&self) -> impl Future<Output=TreeWriteGuard<A, K, V>>
     {
         self.0.write().map(TreeWriteGuard)
     }
-
 }
 
 // LCOV_EXCL_START
+#[cfg(test)]
+macro_rules! leaf_node {
+    ( $items: ident ) => {
+        Node(RwLock::new(NodeData::Leaf(LeafData{
+            credit: Credit::null(),
+            $items
+        })))
+    }
+}
+
 /// Basic tests of node types
 #[cfg(test)]
 mod t {
@@ -1075,8 +1378,7 @@ use super::*;
 #[test]
 fn debug() {
     let items: BTreeMap<u32, u32> = BTreeMap::new();
-    let node: Arc<Node<DRP, u32, u32>> =
-        Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node: Node<DRP, u32, u32> = leaf_node!(items);
     format!("{:?}", node);
 
     let mut children: Vec<IntElem<u32, u32, u32>> = Vec::new();
@@ -1088,8 +1390,7 @@ fn debug() {
 #[test]
 fn arc_node_eq() {
     let items: BTreeMap<u32, u32> = BTreeMap::new();
-    let node: Arc<Node<DRP, u32, u32>> =
-        Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node: Arc<Node<DRP, u32, u32>> = Arc::new(leaf_node!(items));
     assert!(node.eq(&node));
     let dbs = DivBufShared::from(Vec::new());
     assert!(!node.eq(&dbs));
@@ -1113,8 +1414,7 @@ fn treeptr_eq() {
 fn treeptr_eq_mem() {
     let x = TreePtr::Addr(0);
     let items: BTreeMap<u32, u32> = BTreeMap::new();
-    let node: Box<Node<u32, u32, u32>> =
-        Box::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node: Box<Node<u32, u32, u32>> = Box::new(leaf_node!(items));
     let y = TreePtr::Mem(node);
     assert_ne!(x, y);
 }
@@ -1146,8 +1446,7 @@ fn yes() {
     items.insert(0, 100);
     items.insert(1, 200);
     items.insert(99, 50_000);
-    let leaf: Box<Node<u32, u32, u32>> =
-        Box::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let leaf: Box<Node<u32, u32, u32>> = Box::new(leaf_node!(items));
     let children = vec![
         IntElem::new(0u32, TxgT::from(1)..TxgT::from(9), TreePtr::Mem(leaf)),
         IntElem::new(256u32, TxgT::from(2)..TxgT::from(8), TreePtr::Addr(4u32)),
@@ -1285,8 +1584,7 @@ fn serialize_leaf() {
     items.insert(0, 100);
     items.insert(1, 200);
     items.insert(99, 50_000);
-    let node: Arc<Node<DRP, u32, u32>> =
-        Arc::new(Node(RwLock::new(NodeData::Leaf(LeafData{items}))));
+    let node: Arc<Node<DRP, u32, u32>> = Arc::new(leaf_node!(items));
     let db = node.serialize();
     assert_eq!(&expected[..], &db[..]);
     drop(db);
