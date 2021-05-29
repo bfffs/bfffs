@@ -31,7 +31,7 @@ fn open_db(rt: &mut Runtime, path: PathBuf) -> Database {
             let cache = Cache::with_capacity(4_194_304);
             let arc_cache = Arc::new(Mutex::new(cache));
             let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
-            let (idml, reader) = IDML::open(ddml, arc_cache, reader);
+            let (idml, reader) = IDML::open(ddml, arc_cache, 1<<30, reader);
             Database::open(Arc::new(idml), handle, reader)
         }).await
     }).unwrap()

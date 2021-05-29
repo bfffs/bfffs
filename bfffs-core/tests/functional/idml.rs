@@ -160,7 +160,7 @@ test_suite! {
                 let cache = cache::Cache::with_capacity(4_194_304);
                 let arc_cache = Arc::new(Mutex::new(cache));
                 let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
-                idml::IDML::open(ddml, arc_cache, reader)
+                idml::IDML::open(ddml, arc_cache, 1<<30, reader)
             }).await
         }).unwrap();
     }

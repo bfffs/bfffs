@@ -223,10 +223,8 @@ impl WriteBack {
     }
 
     /// Construct a nearly unlimited WriteBack cache.
-    ///
-    /// TODO: remove this method once the actual constructor is hooked up.
     pub fn limitless() -> Self {
-        Self::with_capacity(isize::max_value() >> 1)
+        Self::with_capacity((isize::max_value() >> 1) as usize)
     }
 
     pub fn repay(&self, mut credit: Credit) {
@@ -246,10 +244,11 @@ impl WriteBack {
         mem::forget(credit);
     }
 
-    pub fn with_capacity(capacity: isize) -> Self {
+    pub fn with_capacity(capacity: usize) -> Self {
+        let icapacity: isize = capacity.try_into().unwrap();
         WriteBack {
-            capacity: capacity << 1,
-            supply: AtomicIsize::new(capacity << 1),
+            capacity: icapacity << 1,
+            supply: AtomicIsize::new(icapacity << 1),
             sleepers: Default::default()
         }
     }

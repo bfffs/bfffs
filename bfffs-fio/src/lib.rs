@@ -72,13 +72,15 @@ struct BfffsOptions
 {
     /// silly fio can't handle an offset of 0
     _pad:      u32,
+    cache_size: usize,
     pool_name: *const libc::c_char,
     /// The name of the device(s) that backs the pool.  If there are multiple
     /// devices, then they should be space-separated
     vdevs:     *const libc::c_char,
+    writeback_size: usize
 }
 
-static mut OPTIONS: Option<[fio_option; 3]> = None;
+static mut OPTIONS: Option<[fio_option; 5]> = None;
 
 #[link_section = ".init_array"]
 #[used] //  Don't allow the optimizer to eliminate this symbol!
@@ -97,12 +99,22 @@ pub extern "C" fn rust_ctor()
     unsafe {
         OPTIONS = Some([
             fio_option::new(
+                b"cache_size\0",
+                b"cache_size\0",
+                fio_opt_type_FIO_OPT_INT,
+                offset_of!(BfffsOptions, cache_size),
+                b"Cache size in bytes\0",
+                b"0\0",
+                opt_category___FIO_OPT_C_ENGINE,
+                opt_category_group_FIO_OPT_G_INVALID,
+            ),
+            fio_option::new(
                 b"pool\0",
                 b"pool\0",
                 fio_opt_type_FIO_OPT_STR_STORE,
                 offset_of!(BfffsOptions, pool_name),
                 b"Name of BFFFS pool\0",
-                b"\0",
+                b"0\0",
                 opt_category___FIO_OPT_C_ENGINE,
                 opt_category_group_FIO_OPT_G_INVALID,
             ),
@@ -112,6 +124,16 @@ pub extern "C" fn rust_ctor()
                 fio_opt_type_FIO_OPT_STR_STORE,
                 offset_of!(BfffsOptions, vdevs),
                 b"Name of BFFFS vdev(s)\0",
+                b"\0",
+                opt_category___FIO_OPT_C_ENGINE,
+                opt_category_group_FIO_OPT_G_INVALID,
+            ),
+            fio_option::new(
+                b"writeback_size\0",
+                b"writeback_size\0",
+                fio_opt_type_FIO_OPT_INT,
+                offset_of!(BfffsOptions, writeback_size),
+                b"Writeback cache size in bytes\0",
                 b"\0",
                 opt_category___FIO_OPT_C_ENGINE,
                 opt_category_group_FIO_OPT_G_INVALID,
@@ -207,7 +229,13 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
                 };
                 (pool, vdevs)
             };
-            let dev_manager = DevManager::default();
+            let mut dev_manager = DevManager::default();
+            if (*opts).cache_size != 0 {
+                dev_manager.cache_size((*opts).cache_size);
+            }
+            if (*opts).writeback_size != 0 {
+                dev_manager.writeback_size((*opts).writeback_size);
+            }
             for vdev in vdevs.split_whitespace() {
                 let borrowed_vdev: &str = vdev.borrow();
                 dev_manager.taste(borrowed_vdev);
