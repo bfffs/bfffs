@@ -166,9 +166,9 @@ impl FuseFs {
             .splitn(2, |&b| b == b'.')
             .take(2);
         let ns_str = OsStr::from_bytes(groups.next().unwrap());
-        let ns = if ns_str == OsString::from("user") {
+        let ns = if ns_str == "user" {
             ExtAttrNamespace::User
-        } else if ns_str == OsString::from("system") {
+        } else if ns_str == "system" {
             ExtAttrNamespace::System
         } else {
             panic!("Unknown namespace {:?}", ns_str)
@@ -2435,39 +2435,42 @@ mod read {
 mod readdir {
     use super::*;
 
-    // A directory containing one file of every file type recognized by
-    // rust-fuse
+    /// A directory containing one file of every file type recognized by
+    /// rust-fuse
+    // libc's ino type could be either u32 or u64, depending on which
+    // version of freebsd we're targeting.
+    #[allow(clippy::useless_conversion)]
     #[test]
     fn all_file_types() {
         let fh = 0xdeadbeef;
         // libc's ino type could be either u32 or u64, depending on which
         // version of freebsd we're targeting.
         let ofs = 0;
-        let mut dotname = [0 as libc::c_char; 256];
+        let mut dotname = [0; 256];
         dotname[0] = '.' as libc::c_char;
         let dot_ino = 42u32;
         let dot_ofs = 0;
-        let mut regname = [0 as libc::c_char; 256];
+        let mut regname = [0; 256];
         regname[0] = 'r' as libc::c_char;
         let reg_ino = 43u32;
         let reg_ofs = 1;
-        let mut charname = [0 as libc::c_char; 256];
+        let mut charname = [0; 256];
         charname[0] = 'c' as libc::c_char;
         let char_ino = 43u32;
         let char_ofs = 2;
-        let mut blockname = [0 as libc::c_char; 256];
+        let mut blockname = [0; 256];
         blockname[0] = 'b' as libc::c_char;
         let block_ino = 43u32;
         let block_ofs = 3;
-        let mut pipename = [0 as libc::c_char; 256];
+        let mut pipename = [0; 256];
         pipename[0] = 'p' as libc::c_char;
         let pipe_ino = 43u32;
         let pipe_ofs = 4;
-        let mut symlinkname = [0 as libc::c_char; 256];
+        let mut symlinkname = [0; 256];
         symlinkname[0] = 'l' as libc::c_char;
         let symlink_ino = 43u32;
         let symlink_ofs = 5;
-        let mut sockname = [0 as libc::c_char; 256];
+        let mut sockname = [0; 256];
         sockname[0] = 's' as libc::c_char;
         let sock_ino = 43u32;
         let sock_ofs = 6;
@@ -2645,18 +2648,19 @@ mod readdir {
         fusefs.readdir(&request, ino, fh, ofs, reply);
     }
 
-    // A directory containing nothing but "." and ".."
+    /// A directory containing nothing but "." and ".."
+    // libc's ino type could be either u32 or u64, depending on which
+    // version of freebsd we're targeting.
+    #[allow(clippy::useless_conversion)]
     #[test]
     fn empty() {
         let fh = 0xdeadbeef;
-        // libc's ino type could be either u32 or u64, depending on which
-        // version of freebsd we're targeting.
         let ino = 42u32;
         let parent = 41u32;
         let ofs = 0;
-        let mut dotname = [0 as libc::c_char; 256];
+        let mut dotname = [0; 256];
         dotname[0] = '.' as libc::c_char;
-        let mut dotdotname = [0 as libc::c_char; 256];
+        let mut dotdotname = [0; 256];
         dotdotname[0] = '.' as libc::c_char;
         dotdotname[1] = '.' as libc::c_char;
         let contents = vec![
@@ -2718,19 +2722,20 @@ mod readdir {
         fusefs.readdir(&request, ino.into(), fh, ofs, reply);
     }
 
-    // If the buffer provided by fuse runs out of space, we should terminate
-    // early.
+    /// If the buffer provided by fuse runs out of space, we should terminate
+    /// early.
+    // libc's ino type could be either u32 or u64, depending on which
+    // version of freebsd we're targeting.
+    #[allow(clippy::useless_conversion)]
     #[test]
     fn out_of_space() {
         let fh = 0xdeadbeef;
-        // libc's ino type could be either u32 or u64, depending on which
-        // version of freebsd we're targeting.
         let ino = 42u32;
         let parent = 41u32;
         let ofs = 0;
-        let mut dotname = [0 as libc::c_char; 256];
+        let mut dotname = [0; 256];
         dotname[0] = '.' as libc::c_char;
-        let mut dotdotname = [0 as libc::c_char; 256];
+        let mut dotdotname = [0; 256];
         dotdotname[0] = '.' as libc::c_char;
         dotdotname[1] = '.' as libc::c_char;
         let contents = vec![

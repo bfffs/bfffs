@@ -1945,7 +1945,7 @@ impl Fs {
         let objkey = ObjKey::extattr(ns, &name);
         let key = FSKey::new(ino, objkey);
         // Data copy
-        let buf = Arc::new(DivBufShared::from(&data[..]));
+        let buf = Arc::new(DivBufShared::from(data));
         let extent = InlineExtent::new(buf);
         let owned_name = name.to_owned();
         let extattr = ExtAttr::Inline(InlineExtAttr {

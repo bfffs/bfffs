@@ -225,12 +225,12 @@ impl Pool {
             .map(|_| AtomicU32::new(0))
             .collect();
         let stats = Arc::new(Stats{
-            allocated_space,
-            optimum_queue_depth,
             queue_depth,
-            size
+            optimum_queue_depth,
+            size,
+            allocated_space,
         });
-        Pool{name, clusters, stats, uuid}
+        Pool{clusters, name, stats, uuid}
     }
 
     /// Find the next closed zone in the pool.

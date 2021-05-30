@@ -9,7 +9,7 @@ use super::*;
 fn mock_dml() -> MockDML {
     let mut mock = MockDML::new();
     mock.expect_repay()
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
     mock
 }
 

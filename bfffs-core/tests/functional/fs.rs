@@ -1750,11 +1750,11 @@ root:
         {
             assert_eq!(mocks.val.0.igetattr(ino), Err(libc::ENOENT));
         }
-        assert!(mocks.val.0.readdir(&root, 0)
-            .find(|r| {
+        assert!(!mocks.val.0.readdir(&root, 0)
+            .any(|r| {
                 let dirent = r.unwrap().0;
                 dirent.d_name[0] == 'x' as i8
-            }).is_none());
+            }));
 
         // Make sure the parent dir's refcount dropped
         let inode = mocks.val.0.getattr(&root).unwrap();

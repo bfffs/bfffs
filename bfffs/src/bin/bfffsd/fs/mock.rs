@@ -1,6 +1,11 @@
 // vim: tw=80
 // LCOV_EXCL_START
 //! Mock objects for bfffsd::fs
+
+// rust-fuse contains many functions with > 7 arguments that we must redefine
+// here for our mocks.
+#![allow(clippy::too_many_arguments)]
+
 use bfffs_core::{
     database::{Database, TreeID},
     fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr},

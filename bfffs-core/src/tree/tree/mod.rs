@@ -1,4 +1,8 @@
 // vim: tw=80
+
+// Tree manipulation is complicated...
+#![allow(clippy::too_many_arguments)]
+
 use crate::{
     *,
     writeback::Credit
@@ -662,7 +666,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }
     }
 
-    fn drop_r(dml: &D, node: Box<Node<A, K, V>>) {
+    fn drop_r(dml: &D, node: Node<A, K, V>) {
         let node_data = node.0.try_unwrap()
             .expect("Can't drop a Tree with locked Nodes");
         match node_data {
@@ -670,7 +674,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             NodeData::Int(id) => {
                 for mut child in id.children.into_iter() {
                     if child.ptr.is_mem() {
-                        Tree::drop_r(dml, child.ptr.take());
+                        Tree::drop_r(dml, *child.ptr.take());
                     }
                 }
             }
@@ -2231,7 +2235,7 @@ impl<A, D, K, V> Drop for Tree<A, D, K, V>
             let mut guard = self.root.try_write()
                 .expect("Can't drop a locked Tree");
             if guard.elem.ptr.is_mem() {
-                Tree::drop_r(self.dml.as_ref(), guard.elem.ptr.take());
+                Tree::drop_r(self.dml.as_ref(), *guard.elem.ptr.take());
             }
         }
     }

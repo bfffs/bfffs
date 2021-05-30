@@ -55,7 +55,7 @@ impl VdevOneDisk {
     {
         let uuid = Uuid::new_v4();
         let blockdev = VdevBlock::create(path, lbas_per_zone).unwrap();
-        VdevOneDisk{uuid, blockdev}
+        VdevOneDisk{blockdev, uuid}
     }
 
     /// Open an existing `VdevOneDisk`

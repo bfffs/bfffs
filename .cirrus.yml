@@ -1,11 +1,20 @@
 freebsd_instance:
   image_family: freebsd-11-4-snap
 
-task:
+setup: &SETUP
   env:
     HOME: /tmp # cargo needs it
     # Temporary workaround for https://github.com/rust-lang/rustup/issues/2774
     RUSTUP_IO_THREADS: 1
+  setup_script:
+    - pkg install -y c-blosc isa-l fusefs-libs pkgconf
+    - fetch https://sh.rustup.rs -o rustup.sh
+    - sh rustup.sh -y --profile=minimal
+    - $HOME/.cargo/bin/rustup toolchain install $VERSION
+    # In 11.4, aio on ufs is considered unsafe
+    - sysctl vfs.aio.enable_unsafe=1
+
+task:
   matrix:
     - name: cargo test (nightly)
       env:
@@ -14,13 +23,7 @@ task:
     - name: cargo test (stable)
       env:
         VERSION: 1.52.0
-  setup_script:
-    - pkg install -y c-blosc isa-l fusefs-libs pkgconf
-    - fetch https://sh.rustup.rs -o rustup.sh
-    - sh rustup.sh -y --profile=minimal
-    - $HOME/.cargo/bin/rustup toolchain install $VERSION
-    # In 11.4, aio on ufs is considered unsafe
-    - sysctl vfs.aio.enable_unsafe=1
+  << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
     fingerprint_script: cat Cargo.lock || echo ""
@@ -40,3 +43,17 @@ task:
     - . $HOME/.cargo/env
     - cargo +$VERSION check $CARGO_ARGS --release --all --all-targets
   before_cache_script: rm -rf $HOME/.cargo/registry/index
+
+clippy_task:
+  name: clippy
+  env:
+    VERSION: nightly
+    CARGO_ARGS: --all-features
+  << : *SETUP
+  cargo_cache:
+    folder: $HOME/.cargo/registry
+  lint_script:
+    - . $HOME/.cargo/env
+    - $HOME/.cargo/bin/rustup component add --toolchain $VERSION clippy
+    - cargo +$VERSION clippy --all-features --all-targets -- -D warnings
+  before_cache_script: rm -rf $CARGO_HOME/registry/index

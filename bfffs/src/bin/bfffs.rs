@@ -237,9 +237,9 @@ impl Builder {
     }
 
     pub fn create_raid(&mut self, devs: &[&str]) {
-        let k = i16::from_str_radix(devs[0], 10)
+        let k = devs[0].parse()
             .expect("Disks per stripe must be an integer");
-        let f = i16::from_str_radix(devs[1], 10)
+        let f = devs[1].parse()
             .expect("Disks per stripe must be an integer");
         self.do_create_cluster(k, f, &devs[2..])
     }
