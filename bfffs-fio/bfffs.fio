@@ -14,6 +14,8 @@ end_fsync=1
 # Don't precreate files and zero-fill them.
 create_on_open=1
 # Your pool info goes here:
+cache_size=1g
+writeback_size=256m
 pool=foo
 vdevs=/dev/da0
 

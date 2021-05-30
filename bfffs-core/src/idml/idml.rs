@@ -267,18 +267,22 @@ impl<'a> IDML {
     ///
     /// * `ddml`:           An already-opened `DDML`
     /// * `cache`:          An already-constrcuted `Cache`
+    /// * `writeback_size`: Maximum amount of cached dirty data in bytes.
     /// * `label_reader`:   A `LabelReader` that has already consumed all labels
     ///                     prior to this layer.
-    pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
-                 mut label_reader: LabelReader) -> (Self, LabelReader)
+    pub fn open(
+        ddml: Arc<DDML>,
+        cache: Arc<Mutex<Cache>>,
+        writeback_size: usize,
+        mut label_reader: LabelReader,
+    ) -> (Self, LabelReader)
     {
         let l: Label = label_reader.deserialize().unwrap();
         let alloct = Arc::new(DTree::open(ddml.clone(), true, l.alloct));
         let ridt = Arc::new(DTree::open(ddml.clone(), true, l.ridt));
         let transaction = RwLock::new(l.txg);
         let next_rid = AtomicU64::new(l.next_rid);
-        // TODO: apply configurable writeback size
-        let writeback = WriteBack::limitless();
+        let writeback = WriteBack::with_capacity(writeback_size);
         let idml = IDML{
             cache,
             ddml,
@@ -612,7 +616,7 @@ mock!{
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
         pub fn list_closed_zones(&self)
             -> impl Iterator<Item=ClosedZone> + Send;
-        pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>,
+        pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>, wbs: usize,
                      mut label_reader: LabelReader) -> (Self, LabelReader);
         pub fn size(&self) -> LbaT;
         // Return a static reference instead of a RwLockReadFut because it makes

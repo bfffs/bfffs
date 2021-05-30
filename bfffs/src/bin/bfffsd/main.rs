@@ -8,6 +8,7 @@ use clap::crate_version;
 use futures::StreamExt;
 use std::{
     ffi::OsString,
+    process::exit,
     sync::Arc,
     thread
 };
@@ -22,6 +23,9 @@ mod fs;
 use crate::fs::FuseFs;
 
 fn main() {
+    let mut cache_size: Option<usize> = None;
+    let mut writeback_size: Option<usize> = None;
+
     tracing_subscriber::fmt()
         .pretty()
         .with_env_filter(EnvFilter::from_default_env())
@@ -53,6 +57,27 @@ fn main() {
     ];
     if let Some(it) = matches.values_of("option") {
         for o in it {
+            if let Some((name, value)) = o.split_once("=") {
+                if name == "cache_size" {
+                    let v = value.parse()
+                        .unwrap_or_else(|_| {
+                            eprintln!("cache_size must be numeric");
+                            exit(2);
+                        });
+                    cache_size = Some(v);
+                    continue;
+                } else if name == "writeback_size" {
+                    let v = value.parse()
+                        .unwrap_or_else(|_| {
+                            eprintln!("writeback_size must be numeric");
+                            exit(2);
+                        });
+                    writeback_size = Some(v);
+                    continue;
+                }
+                // else, must be a mount_fusefs option
+            }
+            // Must be a mount_fusefs option
             opts.push(OsString::from("-o"));
             opts.push(OsString::from(o));
         }
@@ -64,7 +89,14 @@ fn main() {
         .map(str::to_string)
         .collect::<Vec<_>>();
 
-    let dev_manager = DevManager::default();
+    let mut dev_manager = DevManager::default();
+    if let Some(cs) = cache_size {
+        dev_manager.cache_size(cs);
+    }
+    if let Some(wbs) = writeback_size {
+        dev_manager.writeback_size(wbs);
+    }
+
     for dev in devices.iter() {
         dev_manager.taste(dev);
     }

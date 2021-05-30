@@ -9,13 +9,11 @@ task:
   matrix:
     - name: cargo test (nightly)
       env:
-        # Pin nightly to 2020-08-28 to workaround Rust ICE
-        # https://github.com/rust-lang/rust/issues/67684
-        VERSION: nightly-2020-08-28-x86_64-unknown-freebsd
+        VERSION: nightly
         CARGO_ARGS: --all-features
     - name: cargo test (stable)
       env:
-        VERSION: 1.45.0
+        VERSION: 1.52.0
   setup_script:
     - pkg install -y c-blosc isa-l fusefs-libs pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh

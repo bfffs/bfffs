@@ -45,10 +45,17 @@ struct Inner {
 
 #[derive(Default)]
 pub struct DevManager {
-    inner: Mutex<Inner>
+    cache_size: Option<usize>,
+    inner: Mutex<Inner>,
+    writeback_size: Option<usize>
 }
 
 impl DevManager {
+    /// Set the maximum size in bytes of the Cache
+    pub fn cache_size(&mut self, cache_size: usize) {
+        self.cache_size = Some(cache_size);
+    }
+
     /// Import a pool by its pool name
     pub fn import_by_name<S>(&self, name: S, handle: Handle)
         -> Result<database::Database, Error>
@@ -92,11 +99,13 @@ impl DevManager {
             })
         }).collect::<Result<Vec<_>, Error>>()?;
         let (pool, label_reader) = Pool::open(Some(uuid), clusters);
-        let cache = cache::Cache::with_capacity(1_000_000_000);
+        let cs = self.cache_size.unwrap_or(1_073_741_824);
+        let wbs = self.writeback_size.unwrap_or(268_435_456);
+        let cache = cache::Cache::with_capacity(cs);
         let arc_cache = Arc::new(Mutex::new(cache));
         let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
         let (idml, label_reader) = idml::IDML::open(ddml, arc_cache,
-                                                    label_reader);
+            wbs, label_reader);
         Ok(database::Database::open(Arc::new(idml), h2, label_reader))
     }
 
@@ -192,4 +201,12 @@ impl DevManager {
             }).await
         }).unwrap();
     }
+
+    /// Set the maximum amount of dirty cached data, in bytes.
+    ///
+    /// This is independent of [`cache_size`].
+    pub fn writeback_size(&mut self, writeback_size: usize) {
+        self.writeback_size = Some(writeback_size);
+    }
+
 }

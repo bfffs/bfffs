@@ -22,6 +22,19 @@ target/debug/bfffs pool create foo /tmp/bfffs.img
 sudo target/debug/bfffsd -o allow_other,default_permissions foo /mnt /tmp/bfffs.img
 ```
 
+Where `OPTIONS` can be:
+
+* `allow_other,default_permissions` - Allow users other than the one running
+  bfffsd to access the mounted file system.
+* `cache_size` - Set the maximum mount of cached clean data in bytes.  Higher
+  values will generally give better performance.  Beware, though, that unlike
+  an in-kernel file system bfffsd will never shrink the cache in response to
+  memory pressure.  The kernel will simply kill bfffsd or some other process
+  instead.
+* `writeback_size` - Set the maximum amount of cached dirty data in bytes.
+  This is completely independent of `cache_size`.  Generally it should be at
+  least several seconds' worth of your disks' maximum throughput.
+
 # License
 BFFFS is primarily distributed under the terms of both the MIT license
 and the Apache License (Version 2.0).
