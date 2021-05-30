@@ -95,7 +95,7 @@ fn basic() {
             Box::pin(future::ok(drp))
         });
     mock.expect_repay()
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
     let ddml = Arc::new(mock);
     let tree = Arc::new(Tree::<DRP, DDML, u32, f32>::from_str(ddml, false, r#"
 ---

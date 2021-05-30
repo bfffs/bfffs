@@ -101,10 +101,9 @@ fn main() {
         dev_manager.taste(dev);
     }
     let uuid = dev_manager.importable_pools().iter()
-        .filter(|(name, _uuid)| {
+        .find(|(name, _uuid)| {
             **name == poolname
-        }).next()
-        .unwrap_or_else(|| {
+        }).unwrap_or_else(|| {
             eprintln!("error: pool {} not found", poolname);
             std::process::exit(1);
         }).1;

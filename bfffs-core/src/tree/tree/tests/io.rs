@@ -565,7 +565,7 @@ root:
                 Addr: 256
   "#));
 
-    tree.clone().insert(0, 0, TxgT::from(42), Credit::forge(8))
+    tree.insert(0, 0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap()
         .unwrap();
 }
@@ -1359,11 +1359,11 @@ fn remove() {
     mock.expect_repay()
         .once()
         .withf(|credit| *credit == 16)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
     mock.expect_repay()
         .once()
         .withf(|credit| *credit == 32)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
 
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
@@ -1459,12 +1459,12 @@ fn remove_and_merge_down() {
     mock.expect_repay()
         .once()
         .withf(|credit| *credit == 56)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
     // Second repay is when dropping the tree
     mock.expect_repay()
         .once()
         .withf(|credit| *credit == 24)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
 
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
@@ -1555,13 +1555,13 @@ fn remove_and_steal_leaf_left() {
     mock.expect_repay()
         .times(2)
         .withf(|credit| *credit == 32)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
 
     // The third is also when dropping the tree
     mock.expect_repay()
         .times(1)
         .withf(|credit| *credit == 16)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
 
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
@@ -1705,7 +1705,7 @@ root:
               ptr:
                 Addr: 1
   "#));
-    tree.clone().remove(4, TxgT::from(42), Credit::forge(23))
+    tree.remove(4, TxgT::from(42), Credit::forge(23))
         .now_or_never()
         .unwrap()
         .unwrap();
@@ -1878,7 +1878,7 @@ fn write_height2() {
         .once()
         .in_sequence(&mut seq)
         .withf(|credit| *credit == 16)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .once()
         .in_sequence(&mut seq)
@@ -1974,7 +1974,7 @@ fn write_height3() {
     mock.expect_repay()
         .once()
         .withf(|credit| *credit == 16)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
     mock.expect_put::<Arc<Node<u32, u32, f32>>>()
         .once()
         .withf(move |cacheable, _compression, txg| {
@@ -2007,7 +2007,7 @@ fn write_height3() {
     mock.expect_repay()
         .once()
         .withf(|credit| *credit == 16)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
     mock.expect_put::<Arc<Node<u32, u32, f32>>>()
         .once()
         .withf(move |cacheable, _compression, txg| {
@@ -2227,7 +2227,7 @@ fn write_leaf() {
     mock.expect_repay()
         .once()
         .withf(|credit| *credit == 16)
-        .returning(|credit| mem::forget(credit));
+        .returning(mem::forget);
     let dml = Arc::new(mock);
     let mut tree = Arc::new(
         Tree::<u32, MockDML, u32, u32>::from_str(dml, false, r#"

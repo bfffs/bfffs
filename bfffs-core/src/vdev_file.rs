@@ -335,7 +335,7 @@ impl VdevFile {
             // be once we move it into the ReadAt struct
             let buf: &'static mut [u8] =
                 mem::transmute::<&mut[u8], &'static mut [u8]>(ra.buf.as_mut());
-            let fut = self.file.read_at(&mut buf[..], off).unwrap();
+            let fut = self.file.read_at(&mut *buf, off).unwrap();
             Pin::get_unchecked_mut(ra.as_mut()).fut = Some(fut);
         }
         ra
@@ -442,7 +442,7 @@ impl VdevFile {
             let buf: &'static [u8] = mem::transmute::<&[u8], &'static [u8]>(
                 wa.buf.as_ref()
             );
-            let fut = self.file.write_at(&buf[..], off).unwrap();
+            let fut = self.file.write_at(buf, off).unwrap();
             Pin::get_unchecked_mut(wa.as_mut()).fut = Some(fut);
         }
         wa

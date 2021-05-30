@@ -524,7 +524,7 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
             }
         }
 
-        const FIELDS: &'static [&'static str] = &["credit", "items"];
+        const FIELDS: &[&str] = &["credit", "items"];
         let visitor = LeafDataVisitor{_k: PhantomData, _v: PhantomData};
         deserializer.deserialize_struct("LeafData", FIELDS, visitor)
     }
@@ -588,10 +588,10 @@ impl Limits {
     {
         let _max_size = 1<<22;    // BetrFS's max size
         Limits {
-            min_leaf_fanout,
-            max_leaf_fanout,
             min_int_fanout,
             max_int_fanout,
+            min_leaf_fanout,
+            max_leaf_fanout,
             _max_size
         }
     }
@@ -1075,6 +1075,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 
     /// Number of children or items in this `NodeData`
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         match self {
             NodeData::Leaf(leaf) => leaf.items.len(),
@@ -1344,7 +1345,7 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     /// Probably should only be used from test code.
     pub fn try_unwrap(self) -> Result<NodeData<A, K, V>, Self> {
         self.0.try_unwrap()
-        .map_err(|rwlock| Node(rwlock))
+        .map_err(Node)
     }
 
     /// Lock the indicated `Node` exclusively.

@@ -204,7 +204,7 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
     {
         ReadWriteDataset{
             cr: tree.credit_requirements(),
-            credit: credit,
+            credit,
             dataset: Dataset::new(idml, tree),
             txg
         }

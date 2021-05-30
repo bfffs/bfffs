@@ -557,7 +557,6 @@ impl Iterator for PrimeSIterData {
             if self.0.a < (stripe + 1) * i32::from(self.0.m) - 1 {
                 self.0.o[disk as usize] += 1;
                 self.0.a += 1;
-                ChunkId::Data(a + 1)
             } else {
                 // Update offsets for all the parity chunks, but don't actually
                 // return any.  Instead, skip parity chunks and go directly to
@@ -596,8 +595,8 @@ impl Iterator for PrimeSIterData {
                     self.0.stripe_iter += 1;
                     self.0.stripe += 1;
                 }
-                ChunkId::Data(a + 1)
             }
+            ChunkId::Data(a + 1)
         },
         ChunkId::Parity(_, _) => unreachable!() // LCOV_EXCL_LINE
         };
