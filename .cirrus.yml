@@ -4,6 +4,7 @@ freebsd_instance:
 setup: &SETUP
   env:
     HOME: /tmp # cargo needs it
+    RUST_BACKTRACE: full  # Better info for debugging test failures.
     # Temporary workaround for https://github.com/rust-lang/rustup/issues/2774
     RUSTUP_IO_THREADS: 1
   setup_script:
