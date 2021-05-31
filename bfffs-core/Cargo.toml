@@ -38,7 +38,7 @@ serde_derive = "1.0"
 serde_yaml = "0.8.6"
 time = "0.1"
 tokio = { version = "0.2.7", features = ["rt-threaded", "sync", "time"] }
-tokio-file = { git = "https://github.com/asomers/tokio-file", rev = "495055ff9ca8d75edd95af4b9f6f6e3b87ba0c9b" }
+tokio-file = "0.6.0"
 tracing = "0.1.5"
 tracing-futures = "0.2.4"
 uuid = { version = "0.8.2", features = ["serde", "v4"]}
