@@ -688,11 +688,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// To save RAM, the Tree is actually dumped as several independent YAML
     /// records.  The first one is the Tree itself, and the rest are other
     /// on-disk Nodes.  All the Nodes can be combined into a single YAML map by
-    /// simply removing the `---` separators.
+    /// simply removing the `...\n---` separators.
     // `&mut Formatter` isn't `Send`, so these Futures can only be used with the
     // single-threaded Runtime.  Given that limitation, we may as well
     // instantiate our own Runtime
-    pub fn dump(&self, f: &mut dyn io::Write) -> Result<(), Error> {
+    pub fn dump<'a>(&self, f: &'a mut dyn io::Write) -> Result<(), Error> {
         // Outline:
         // * Lock the whole tree and proceed bottom-up.
         // * YAMLize each Node
@@ -700,7 +700,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         //   can be deserialized into a BTreeMap<A, NodeData>.  Otherwise,
         //   extend its parent's representation.
         // * Last of all, print the root's representation.
-        let rrf = Rc::new(RefCell::new(f));
+        let bf = Box::new(f) as Box<dyn io::Write + 'a>;
+        let ser = serde_yaml::Serializer::new(bf);
+        let rrf = Rc::new(RefCell::new(ser));
         let rrf2 = rrf.clone();
         let rrf3 = rrf.clone();
         let mut rt = runtime::Builder::new()
@@ -712,40 +714,39 @@ impl<A, D, K, V> Tree<A, D, K, V>
             .then(move |tree_guard| {
                 tree_guard.elem.rlock(&self.dml)
                 .and_then(move |guard| {
-                    let mut f2 = rrf2.borrow_mut();
-                    let s = serde_yaml::to_string(&self).unwrap();
-                    writeln!(f2, "{}", &s).unwrap();
+                    let mut ser2 = rrf2.borrow_mut();
+                    <Self as Serialize>::serialize(self, &mut *ser2).unwrap();
                     Tree::dump_r(self.dml.clone(), guard, rrf)
                 }).map_ok(move |guard| {
-                    let mut f3 = rrf3.borrow_mut();
                     let mut hmap = BTreeMap::new();
                     if !guard.is_mem() {
                         hmap.insert(*tree_guard.elem.ptr.as_addr(),
                                     guard.deref());
                     }
                     if ! hmap.is_empty() {
-                        let s = serde_yaml::to_string(&hmap).unwrap();
-                        writeln!(f3, "{}", &s).unwrap();
+                        hmap.serialize(&mut *rrf3.borrow_mut()).unwrap();
                     }
                 })
             });
         rt.block_on(fut)
     }
 
-    fn dump_r<'a>(dml: Arc<D>, node: TreeReadGuard<A, K, V>,
-                  f: Rc<RefCell<&'a mut dyn io::Write>>)
-        -> Pin<Box<dyn Future<
+    fn dump_r<'a>(
+        dml: Arc<D>,
+        node: TreeReadGuard<A, K, V>,
+        ser: Rc<RefCell<serde_yaml::Serializer<Box<dyn io::Write + 'a>>>>
+    ) -> Pin<Box<dyn Future<
             Output=Result<TreeReadGuard<A, K, V>, Error>> + 'a
         >>
     {
-        let f2 = f.clone();
+        let ser2 = ser.clone();
         let fut = if let NodeData::Int(ref int) = *node {
             let futs = int.children.iter().map(move |child| {
                 let dml2 = dml.clone();
-                let f3 = f.clone();
+                let ser3 = ser.clone();
                 child.rlock(&dml)
                 .and_then(move |child_node| {
-                    Tree::dump_r(dml2, child_node, f3)
+                    Tree::dump_r(dml2, child_node, ser3)
                 })
             }).collect::<FuturesOrdered<_>>()
             .try_collect::<Vec<_>>();
@@ -765,8 +766,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     }
                 }
                 if ! hmap.is_empty() {
-                    let s = serde_yaml::to_string(&hmap).unwrap();
-                    writeln!(f2.borrow_mut(), "{}", &s).unwrap();
+                    hmap.serialize(&mut *ser2.borrow_mut()).unwrap();
                 }
             }
             node

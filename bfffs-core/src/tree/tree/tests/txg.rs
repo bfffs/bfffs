@@ -624,7 +624,8 @@ root:
                 start: 15
                 end: 16
               ptr:
-                Addr: 6"#));
+                Addr: 6
+"#));
     let r2 = tree.clone().remove(4, TxgT::from(42), Credit::forge(40))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
@@ -695,7 +696,8 @@ root:
                 start: 15
                 end: 16
               ptr:
-                Addr: 6"#);
+                Addr: 6
+"#);
 }
 
 /// Insert a key that splits the root IntNode
@@ -837,7 +839,8 @@ root:
                                 12: 12.0
                                 13: 13.0
                                 14: 14.0
-                                15: 15.0"#);
+                                15: 15.0
+"#);
 }
 
 /// Recompute TXG ranges after stealing keys
@@ -933,7 +936,8 @@ root:
                               items:
                                 24: 24.0
                                 25: 25.0
-                                26: 26.0"#));
+                                26: 26.0
+"#));
     let r2 = tree.clone().remove(26, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
@@ -1024,7 +1028,8 @@ root:
                               credit: 32
                               items:
                                 24: 24.0
-                                25: 25.0"#);
+                                25: 25.0
+"#);
 }
 
 // LCOV_EXCL_STOP
