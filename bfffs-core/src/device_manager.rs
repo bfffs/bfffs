@@ -153,7 +153,7 @@ impl DevManager {
             .collect::<Vec<_>>();
         let leaves = raids.iter().map(|raid| {
             let leaves = raid.iter_children().map(|uuid| {
-                inner.leaves.remove(&uuid).unwrap()
+                inner.leaves.remove(uuid).unwrap()
             }).collect::<Vec<_>>();
             (raid.uuid(), leaves)
         }).collect::<BTreeMap<_, _>>();

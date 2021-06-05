@@ -184,7 +184,7 @@ fn create(args: &clap::ArgMatches) {
                 devs.clear();
                 cluster_type = Some("raid")
             },
-            Some(ref dev) => {
+            Some(dev) => {
                 if cluster_type == None {
                     builder.create_single(dev);
                 } else {
@@ -245,7 +245,7 @@ impl Builder {
     }
 
     pub fn create_single(&mut self, dev: &str) {
-        self.do_create_cluster(1, 0, &[&dev])
+        self.do_create_cluster(1, 0, &[dev])
     }
 
     fn do_create_cluster(&mut self, k: i16, f: i16, devs: &[&str])

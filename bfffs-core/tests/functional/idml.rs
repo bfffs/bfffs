@@ -106,7 +106,7 @@ test_suite! {
         0x00, 0x00
     ];
 
-    const POOLNAME: &str = &"TestPool";
+    const POOLNAME: &str = "TestPool";
 
     fixture!( objects() -> (Runtime, Arc<IDML>, TempDir, PathBuf) {
         setup(&mut self) {
@@ -224,7 +224,7 @@ test_suite! {
     use tokio::runtime::Runtime;
 
     const LBA_PER_ZONE: LbaT = 256;
-    const POOLNAME: &str = &"TestPool";
+    const POOLNAME: &str = "TestPool";
 
     fixture!( objects() -> (Runtime, IDML, TempDir) {
         setup(&mut self) {

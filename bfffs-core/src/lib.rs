@@ -15,6 +15,10 @@
 // builds.  Silence clippy's complaints.
 #![allow(clippy::module_inception)]
 
+// I suppose I should probably fix this some day, but I just don't like the look
+// of e.g. "Idml" as opposed to "IDML".
+#![allow(clippy::upper_case_acronyms)]
+
 // error: reached the type-length limit while instantiating std::pin::Pin...
 #![type_length_limit="3790758"]
 // error: trait bounds overflowed in Database::sync_transaction_priv

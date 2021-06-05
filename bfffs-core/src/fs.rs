@@ -503,7 +503,7 @@ impl Fs {
                          name: &OsStr)
         -> Result<(), i32>
     {
-        let objkey = ObjKey::extattr(ns, &name);
+        let objkey = ObjKey::extattr(ns, name);
         let name = name.to_owned();
         let key = FSKey::new(fd.ino, objkey);
         self.handle.block_on(
@@ -1061,7 +1061,7 @@ impl Fs {
         -> Result<DivBuf, i32>
     {
         let owned_name = name.to_owned();
-        let objkey = ObjKey::extattr(ns, &name);
+        let objkey = ObjKey::extattr(ns, name);
         let key = FSKey::new(fd.ino, objkey);
         self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
@@ -1094,7 +1094,7 @@ impl Fs {
         -> Result<u32, i32>
     {
         let owned_name = name.to_owned();
-        let objkey = ObjKey::extattr(ns, &name);
+        let objkey = ObjKey::extattr(ns, name);
         let key = FSKey::new(fd.ino, objkey);
         self.handle.block_on(
             self.db.fsread(self.tree, move |dataset| {
@@ -1723,9 +1723,9 @@ impl Fs {
         //     parent.
         // 3ci) If dst existed and is not a directory, decrement its link count
         // 3cii) If dst existed and is a directory, remove it
-        let src_objkey = ObjKey::dir_entry(&name);
+        let src_objkey = ObjKey::dir_entry(name);
         let owned_name = name.to_owned();
-        let dst_objkey = ObjKey::dir_entry(&newname);
+        let dst_objkey = ObjKey::dir_entry(newname);
         let owned_newname = newname.to_owned();
         let owned_newname2 = owned_newname.clone();
         let owned_newname3 = owned_newname.clone();
@@ -1942,7 +1942,7 @@ impl Fs {
                       name: &OsStr, data: &[u8]) -> Result<(), i32>
     {
         let ino = fd.ino;
-        let objkey = ObjKey::extattr(ns, &name);
+        let objkey = ObjKey::extattr(ns, name);
         let key = FSKey::new(ino, objkey);
         // Data copy
         let buf = Arc::new(DivBufShared::from(data));

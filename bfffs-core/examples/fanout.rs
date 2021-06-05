@@ -334,11 +334,11 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
         .build()
         .unwrap();
     let next_lba = Arc::new(AtomicU64::default());
-    let alloct_ddml = Arc::new(FakeDDML::new(&"alloct", next_lba.clone(),
+    let alloct_ddml = Arc::new(FakeDDML::new("alloct", next_lba.clone(),
                                              save));
-    let ridt_ddml = Arc::new(FakeDDML::new(&"ridt", next_lba.clone(), save));
-    let data_ddml = Arc::new(FakeDDML::new(&"data", next_lba, false));
-    let idml = Arc::new(FakeIDML::new(&"fs", alloct_ddml.clone(), data_ddml,
+    let ridt_ddml = Arc::new(FakeDDML::new("ridt", next_lba.clone(), save));
+    let data_ddml = Arc::new(FakeDDML::new("data", next_lba, false));
+    let idml = Arc::new(FakeIDML::new("fs", alloct_ddml.clone(), data_ddml,
                                       ridt_ddml.clone(), save));
     let idml2 = idml.clone();
     let idml3 = idml.clone();

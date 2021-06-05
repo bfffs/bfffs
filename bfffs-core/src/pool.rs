@@ -306,7 +306,7 @@ impl Pool {
         assert_eq!(all_clusters.len(), label.children.len(),
             "Missing clusters");
         let children = label.children.iter().map(|uuid| {
-            all_clusters.remove(&uuid).unwrap()
+            all_clusters.remove(uuid).unwrap()
         }).collect::<Vec<_>>();
         (Pool::new(label.name, label.uuid, children), label_reader)
     }
