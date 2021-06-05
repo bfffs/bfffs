@@ -44,7 +44,8 @@ root:
         Leaf:
           credit: 16
           items:
-            0: 0.0"#);
+            0: 0.0
+"#);
 }
 
 // When inserting into an int node's first child and the key is lower than the
@@ -147,7 +148,8 @@ root:
                       71: 71.0
                       72: 72.0
                       73: 73.0
-                      74: 74.0"#);
+                      74: 74.0
+"#);
 }
 
 #[test]
@@ -199,7 +201,8 @@ root:
         Leaf:
           credit: 16
           items:
-            0: 100.0"#);
+            0: 100.0
+"#);
 }
 
 /// When overwriting an existing value, don't split the leaf node, even if it's
@@ -261,7 +264,8 @@ root:
             1: 1.0
             2: 2.0
             3: 3.0
-            4: 4.0"#);
+            4: 4.0
+"#);
 }
 
 /// The caller supplies way more credit that is needed for this operation.
@@ -296,7 +300,8 @@ root:
         Leaf:
           credit: 16
           items:
-            0: 0.0"#);
+            0: 0.0
+"#);
 }
 
 /// The caller does not supply enough credit.
@@ -332,7 +337,8 @@ root:
         Leaf:
           credit: 16
           items:
-            0: 0.0"#);
+            0: 0.0
+"#);
 }
 
 /// Insert a key that splits a non-root interior node
@@ -470,7 +476,8 @@ root:
                               items:
                                 21: 21.0
                                 22: 22.0
-                                23: 23.0"#));
+                                23: 23.0
+"#));
     let r2 = tree.clone().insert(24, 24.0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert!(r2.is_ok());
@@ -613,7 +620,8 @@ root:
                                 21: 21.0
                                 22: 22.0
                                 23: 23.0
-                                24: 24.0"#);
+                                24: 24.0
+"#);
 }
 
 /// Insert a key that splits a sequentially-optimized non-root interior node
@@ -765,7 +773,8 @@ root:
                               credit: 32
                               items:
                                 30: 30.0
-                                31: 31.0"#));
+                                31: 31.0
+"#));
     let r2 = tree.clone().insert(33, 33.0, TxgT::from(42), Credit::forge(8))
     .now_or_never().unwrap();
     assert!(r2.is_ok());
@@ -922,7 +931,8 @@ root:
                               items:
                                 30: 30.0
                                 31: 31.0
-                                33: 33.0"#);
+                                33: 33.0
+"#);
 }
 
 /// Insert a key that splits a non-root leaf node
@@ -1033,7 +1043,8 @@ root:
                     items:
                       6: 6.0
                       7: 7.0
-                      8: 8.0"#);
+                      8: 8.0
+"#);
 }
 
 /// Insert a key that splits a sequentially-optimized non-root leaf node
@@ -1152,7 +1163,8 @@ root:
                     items:
                       10: 10.0
                       11: 11.0
-                      12: 12.0"#);
+                      12: 12.0
+"#);
 }
 
 /// Insert a key that splits the root IntNode
@@ -1338,7 +1350,8 @@ root:
                                 12: 12.0
                                 13: 13.0
                                 14: 14.0
-                                15: 15.0"#);
+                                15: 15.0
+"#);
 }
 
 /// Insert a key that splits the root leaf node
@@ -1417,7 +1430,8 @@ root:
                     items:
                       3: 3.0
                       4: 4.0
-                      5: 5.0"#);
+                      5: 5.0
+"#);
 }
 
 #[test]
@@ -1745,7 +1759,8 @@ root:
                     items:
                       32: 32.0
                       37: 37.0
-                      40: 40.0"#);
+                      40: 40.0
+"#);
 }
 
 // After removing keys, one node is in danger because it has too many children
@@ -1993,7 +2008,8 @@ root:
                               credit: 32
                               items:
                                 37: 37.0
-                                40: 40.0"#);
+                                40: 40.0
+"#);
 }
 
 // Delete a range that's exclusive on the left and right
@@ -2133,7 +2149,8 @@ root:
                     items:
                       20: 20.0
                       21: 21.0
-                      22: 22.0"#);
+                      22: 22.0
+"#);
 }
 
 // Delete a range that's exclusive on the left and inclusive on the right
@@ -2272,7 +2289,8 @@ root:
                     items:
                       20: 20.0
                       21: 21.0
-                      22: 22.0"#);
+                      22: 22.0
+"#);
 }
 
 // During range_delete_pass2, one node needs to be fixed three times.  The node
@@ -2707,7 +2725,8 @@ root:
                           start: 4
                           end: 8
                         ptr:
-                          Addr: 10025"#);
+                          Addr: 10025
+"#);
 }
 
 /// Do a range delete that causes two Nodes to merge and yet still underflow.
@@ -2857,7 +2876,8 @@ root:
                     items:
                       13: 13.0
                       14: 14.0
-                      15: 15.0"#);
+                      15: 15.0
+"#);
 }
 
 /// Do a range delete that causes Nodes to merge during pass2, causing an
@@ -3066,7 +3086,8 @@ root:
                 start: 0
                 end: 1
               ptr:
-                Addr: 10040"#);
+                Addr: 10040
+"#);
 }
 
 // Regression test for bug 9bdac7a, where Tree::range_delete caused the
@@ -3388,7 +3409,8 @@ root:
                       41: 41.0
                       42: 42.0
                       43: 43.0
-                      44: 44.0"#);
+                      44: 44.0
+"#);
 }
 
 /// range_delete_pass1 results in two adjacent leaves with different parents
@@ -3754,7 +3776,8 @@ root:
                 start: 8
                 end: 10
               ptr:
-                Addr: 112144"#);
+                Addr: 112144
+"#);
 }
 
 /// Regression test for another bug similar to e6fd45d.  After pass1, Node
@@ -3885,7 +3908,8 @@ root:
                       5635: 7557
                       5637: 7559
                       5638: 7560
-                      5642: 7564"#);
+                      5642: 7564
+"#);
 }
 
 /// Regression test for bug e6fd45d.  After range_delete_pass1, Node 2,7148 has
@@ -4113,7 +4137,8 @@ root:
                 start: 14
                 end: 15
               ptr:
-                Addr: 7692"#);
+                Addr: 7692
+"#);
 }
 
 /// Delete a range that causes the root node to be merged down
@@ -4195,7 +4220,8 @@ root:
             5: 5.0
             6: 6.0
             7: 7.0
-            8: 8.0"#);
+            8: 8.0
+"#);
 }
 
 /// Regression test for bug 40b01eb: Can't fix a node during range_delete_pass2
@@ -4405,7 +4431,8 @@ root:
                       2965: 4758
                       3027: 4820
                       3584: 3091
-                      3585: 3092"#);
+                      3585: 3092
+"#);
 }
 
 /// Delete a range that causes the root node to be merged two steps down
@@ -4529,7 +4556,8 @@ root:
             14: 14.0
             15: 15.0
             16: 16.0
-            17: 17.0"#);
+            17: 17.0
+"#);
 }
 
 // After the descent phase of range_delete_pass2_r, there is an underflowing
@@ -4876,7 +4904,8 @@ root:
                           start: 9
                           end: 11
                         ptr:
-                          Addr: 1005119"#);
+                          Addr: 1005119
+"#);
 }
 
 // After pass1, there are two sibling nodes that can't be fixed so that each of
@@ -5086,7 +5115,8 @@ root:
                           start: 41
                           end: 42
                         ptr:
-                          Addr: 1004627"#);
+                          Addr: 1004627
+"#);
 }
 
 #[test]
@@ -5289,7 +5319,8 @@ root:
                           start: 1
                           end: 2
                         ptr:
-                          Addr: 1000070"#);
+                          Addr: 1000070
+"#);
 }
 
 // Delete a range that's contained within a single LeafNode
@@ -5411,7 +5442,8 @@ root:
                     items:
                       10: 10.0
                       11: 11.0
-                      12: 12.0"#);
+                      12: 12.0
+"#);
 }
 
 /// At 375e9ad5c6f01b09b87d12f2d01a68b3c5dfd58b, this test will cause a node to
@@ -5637,7 +5669,8 @@ root:
                           start: 41
                           end: 42
                         ptr:
-                          Addr: 1004637"#);
+                          Addr: 1004637
+"#);
 }
 
 // Delete a range that includes a whole Node at the end of the Tree
@@ -5745,7 +5778,8 @@ root:
                     items:
                       4: 4.0
                       5: 5.0
-                      6: 6.0"#);
+                      6: 6.0
+"#);
 }
 
 // Delete a range that passes the right side of an int node, with another
@@ -6016,7 +6050,8 @@ root:
                               credit: 32
                               items:
                                 40: 40.0
-                                41: 41.0"#);
+                                41: 41.0
+"#);
 }
 
 // Delete a range that includes only whole nodes
@@ -6140,7 +6175,8 @@ root:
                     items:
                       20: 20.0
                       21: 21.0
-                      22: 22.0"#);
+                      22: 22.0
+"#);
 }
 
 // Delete a range of just a single whole node whose parent key isn't normalized
@@ -6297,7 +6333,8 @@ root:
                           start: 41
                           end: 42
                         ptr:
-                          Addr: 1004617"#);
+                          Addr: 1004617
+"#);
 }
 
 // range_delete_pass2 needs to steal 2 nodes in order to guarantee invariants.
@@ -6867,7 +6904,8 @@ root:
                           start: 4
                           end: 6
                         ptr:
-                          Addr: 105330"#);
+                          Addr: 105330
+"#);
 }
 
 // Range delete pass2 steals a leaf node to the left
@@ -7044,7 +7082,8 @@ root:
                           start: 0
                           end: 1
                         ptr:
-                          Addr: 34"#);
+                          Addr: 34
+"#);
 }
 
 // range_delete_pass2 tries to steal a node to the right
@@ -7349,7 +7388,8 @@ root:
                           start: 22
                           end: 23
                         ptr:
-                          Addr: 1012155"#);
+                          Addr: 1012155
+"#);
 }
 
 // range_delete of a small range at the end of the tree
@@ -7492,7 +7532,8 @@ root:
                     credit: 32
                     items:
                       3: 3.0
-                      4: 4.0"#);
+                      4: 4.0
+"#);
 }
 
 // range_delete with a RangeFull (..) argument
@@ -7604,7 +7645,8 @@ root:
       Mem:
         Leaf:
           credit: 0
-          items: {}"#);
+          items: {}
+"#);
 }
 
 // range_delete with a RangeTo (..x) argument
@@ -7727,7 +7769,8 @@ root:
                 start: 0
                 end: 1
               ptr:
-                Addr: 10026"#);
+                Addr: 10026
+"#);
 }
 
 // range_delete with a range that includes a whole IntNode at the end of the
@@ -7793,7 +7836,8 @@ root:
                     credit: 32
                     items:
                       3: 3.0
-                      4: 4.0"#);
+                      4: 4.0
+"#);
 
 }
 
@@ -7907,7 +7951,8 @@ root:
         Leaf:
           credit: 16
           items:
-            1: 1.0"#);
+            1: 1.0
+"#);
 }
 
 #[test]
@@ -8535,7 +8580,8 @@ root:
       Mem:
         Leaf:
           credit: 0
-          items: {}"#);
+          items: {}
+"#);
 }
 
 #[test]
@@ -8590,7 +8636,8 @@ root:
           credit: 32
           items:
             0: 0.0
-            2: 2.0"#);
+            2: 2.0
+"#);
 }
 
 #[test]
@@ -8653,7 +8700,8 @@ root:
           credit: 32
           items:
             0: 0.0
-            2: 2.0"#);
+            2: 2.0
+"#);
 }
 
 #[test]
@@ -8791,7 +8839,8 @@ root:
                               items:
                                 21: 21.0
                                 22: 22.0
-                                23: 23.0"#));
+                                23: 23.0
+"#));
     let r2 = tree.clone().remove(23, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
@@ -8917,7 +8966,8 @@ root:
                               credit: 32
                               items:
                                 21: 21.0
-                                22: 22.0"#);
+                                22: 22.0
+"#);
 }
 
 #[test]
@@ -9044,7 +9094,8 @@ root:
                               credit: 32
                               items:
                                 21: 21.0
-                                22: 22.0"#));
+                                22: 22.0
+"#));
     let r2 = tree.clone().remove(4, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
@@ -9159,7 +9210,8 @@ root:
                               credit: 32
                               items:
                                 21: 21.0
-                                22: 22.0"#);
+                                22: 22.0
+"#);
 }
 
 #[test]
@@ -9263,7 +9315,8 @@ root:
                     items:
                       3: 3.0
                       4: 4.0
-                      5: 5.0"#);
+                      5: 5.0
+"#);
 }
 
 #[test]
@@ -9369,7 +9422,8 @@ root:
                       3: 3.0
                       5: 5.0
                       6: 6.0
-                      7: 7.0"#);
+                      7: 7.0
+"#);
 }
 
 #[test]
@@ -9518,7 +9572,8 @@ root:
                               items:
                                 24: 24.0
                                 25: 25.0
-                                26: 26.0"#));
+                                26: 26.0
+"#));
     let r2 = tree.clone().remove(26, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
@@ -9663,7 +9718,8 @@ root:
                               credit: 32
                               items:
                                 24: 24.0
-                                25: 25.0"#);
+                                25: 25.0
+"#);
 }
 
 #[test]
@@ -9812,7 +9868,8 @@ root:
                               credit: 32
                               items:
                                 24: 24.0
-                                26: 26.0"#));
+                                26: 26.0
+"#));
     let r2 = tree.clone().remove(14, TxgT::from(42), Credit::null())
         .now_or_never().unwrap();
     assert!(r2.is_ok());
@@ -9957,7 +10014,8 @@ root:
                               credit: 32
                               items:
                                 24: 24.0
-                                26: 26.0"#);
+                                26: 26.0
+"#);
 }
 
 #[test]
@@ -10076,7 +10134,8 @@ root:
                     credit: 32
                     items:
                       6: 6.0
-                      9: 9.0"#);
+                      9: 9.0
+"#);
 }
 
 #[test]
@@ -10195,7 +10254,8 @@ root:
                       6: 6.0
                       7: 7.0
                       8: 8.0
-                      9: 9.0"#);
+                      9: 9.0
+"#);
 }
 
 #[test]

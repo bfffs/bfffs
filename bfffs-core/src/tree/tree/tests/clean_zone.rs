@@ -332,7 +332,8 @@ root:
                             compressed: false
                             lsize: 0
                             csize: 0
-                            checksum: 0"#);
+                            checksum: 0
+"#);
 }
 
 // The Root node lies in the dirty zone

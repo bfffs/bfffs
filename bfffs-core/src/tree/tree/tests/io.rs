@@ -350,6 +350,7 @@ root:
                 end: 1
               ptr:
                 Addr: 4
+...
 ---
 0:
   Leaf:
@@ -363,6 +364,7 @@ root:
     items:
       2: 2.0
       3: 3.0
+...
 ---
 2:
   Leaf:
@@ -370,6 +372,7 @@ root:
     items:
       10: 10.0
       11: 11.0
+...
 ---
 5:
   Leaf:
@@ -383,6 +386,7 @@ root:
     items:
       25: 25.0
       26: 26.0
+...
 ---
 3:
   Int:
@@ -511,7 +515,8 @@ root:
                 start: 41
                 end: 42
               ptr:
-                Addr: 256"#);
+                Addr: 256
+"#);
 }
 
 /// The insert operation has insufficient credit to xlock the leaf node
@@ -625,7 +630,8 @@ root:
         Leaf:
           credit: 16
           items:
-            0: 0"#);
+            0: 0
+"#);
 }
 
 /// Insert a key that splits the root leaf node
@@ -710,7 +716,8 @@ root:
                     items:
                       3: 3.0
                       4: 4.0
-                      5: 5.0"#);
+                      5: 5.0
+"#);
 }
 
 #[test]
@@ -962,7 +969,8 @@ root:
                           start: 0
                           end: 1
                         ptr:
-                          Addr: 33"#);
+                          Addr: 33
+"#);
 }
 
 /// Regression test for bug 2d045899e991a7cf977303abb565c09cf8c34b2f
@@ -1194,7 +1202,8 @@ root:
                           start: 2
                           end: 3
                         ptr:
-                          Addr: 175"#);
+                          Addr: 175
+"#);
 }
 
 #[test]
@@ -1437,7 +1446,8 @@ root:
                 start: 41
                 end: 42
               ptr:
-                Addr: 1"#);
+                Addr: 1
+"#);
 }
 
 /// Allow merging the root down even when it's clean
@@ -1519,7 +1529,8 @@ root:
           items:
             3: 3.0
             4: 4.0
-            5: 5.0"#);
+            5: 5.0
+"#);
 }
 
 #[test]
@@ -1653,7 +1664,8 @@ root:
                     credit: 32
                     items:
                       6: 6.0
-                      9: 9.0"#);
+                      9: 9.0
+"#);
 }
 
 #[test]
@@ -1951,7 +1963,8 @@ root:
       start: 41
       end: 43
     ptr:
-      Addr: 101"#);
+      Addr: 101
+"#);
 }
 
 /// Sync a Tree with dirty nodes at all levels, with a height of 3.
@@ -2148,7 +2161,8 @@ root:
       start: 5
       end: 43
     ptr:
-      Addr: 11"#);
+      Addr: 11
+"#);
 }
 
 #[test]
@@ -2524,7 +2538,8 @@ root:
                           start: 40
                           end: 41
                         ptr:
-                          Addr: 2"#);
+                          Addr: 2
+"#);
 }
 
 // LCOV_EXCL_STOP

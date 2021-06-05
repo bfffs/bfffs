@@ -35,7 +35,7 @@ num_enum = "0.5.1"
 num-traits = "0.2.0"
 serde = "1.0.60"
 serde_derive = "1.0"
-serde_yaml = "0.8.6"
+serde_yaml = "0.8.16"
 time = "0.1"
 tokio = { version = "0.2.7", features = ["rt-threaded", "sync", "time"] }
 tokio-file = "0.6.0"
