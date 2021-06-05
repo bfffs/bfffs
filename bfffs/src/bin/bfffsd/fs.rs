@@ -197,7 +197,7 @@ impl Filesystem for FuseFs {
         // FUSE combines the functions of VOP_CREATE and VOP_GETATTR
         // into one.
         let perm = (mode & 0o7777) as u16;
-        let r = self.fs.create(&parent_fd, name, perm, req.uid(), req.gid())
+        let r = self.fs.create(parent_fd, name, perm, req.uid(), req.gid())
             .and_then(|fd| {
                 let r = self.do_getattr(&fd);
                 if r.is_ok() {
@@ -241,7 +241,7 @@ impl Filesystem for FuseFs {
     {
         let fd = self.files.get(&ino)
             .expect("fsync before lookup or after forget");
-        match self.fs.fsync(&fd) {
+        match self.fs.fsync(fd) {
             Ok(()) => reply.ok(),
             Err(e) => reply.error(e)
         }
@@ -250,7 +250,7 @@ impl Filesystem for FuseFs {
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         let fd = self.files.get(&ino)
             .expect("getattr before lookup or after forget");
-        match self.do_getattr(&fd) {
+        match self.do_getattr(fd) {
             Ok(file_attr) => reply.attr(&Self::TTL, &file_attr),
             Err(errno) => reply.error(errno)
         }
@@ -263,12 +263,12 @@ impl Filesystem for FuseFs {
             .expect("getxattr before lookup or after forget");
         let (ns, name) = FuseFs::split_xattr_name(packed_name);
         if size == 0 {
-            match self.fs.getextattrlen(&fd, ns, name) {
+            match self.fs.getextattrlen(fd, ns, name) {
                 Ok(len) => reply.size(len),
                 Err(errno) => reply.error(errno)
             }
         } else {
-            match self.fs.getextattr(&fd, ns, name) {
+            match self.fs.getextattr(fd, ns, name) {
                 // data copy
                 Ok(buf) => {
                     if buf.len() <= size as usize {
@@ -290,7 +290,7 @@ impl Filesystem for FuseFs {
         let fd = self.files.get(&ino)
             .expect("link before lookup or after forget");
         let ino = fd.ino();
-        match self.fs.link(&parent_fd, &fd, name) {
+        match self.fs.link(parent_fd, fd, name) {
             Ok(_) => {
                 match self.do_getattr(fd) {
                     Ok(file_attr) => {
@@ -324,7 +324,7 @@ impl Filesystem for FuseFs {
                 },
                 None => {
                     // Only name is cached
-                    let r = self.fs.lookup(grandparent_fd, &parent_fd, name)
+                    let r = self.fs.lookup(grandparent_fd, parent_fd, name)
                     .and_then(|fd| {
                         match self.do_getattr(&fd) {
                             Ok(file_attr) => {
@@ -347,7 +347,7 @@ impl Filesystem for FuseFs {
             },
             None => {
                 // Name is not cached
-                let r = self.fs.lookup(grandparent_fd, &parent_fd, name);
+                let r = self.fs.lookup(grandparent_fd, parent_fd, name);
                 self.handle_new_entry(r, parent, name, reply);
             }
         }
@@ -378,7 +378,7 @@ impl Filesystem for FuseFs {
                 } as u32;
                 prefix_len + name.as_bytes().len() as u32 + 1
             };
-            match self.fs.listextattrlen(&fd, f) {
+            match self.fs.listextattrlen(fd, f) {
                 Ok(len) => reply.size(len),
                 Err(errno) => reply.error(errno)
             }
@@ -392,7 +392,7 @@ impl Filesystem for FuseFs {
                 buf.extend_from_slice(extattr.name().as_bytes());
                 buf.push(b'\0');
             };
-            match self.fs.listextattr(&fd, size, f) {
+            match self.fs.listextattr(fd, size, f) {
                 Ok(buf) => {
                     if buf.len() <= size as usize {
                         // data copy
@@ -412,7 +412,7 @@ impl Filesystem for FuseFs {
         let parent_fd = self.files.get(&parent)
             .expect("mkdir of child before lookup of parent");
         let perm = (mode & 0o7777) as u16;
-        let r = self.fs.mkdir(&parent_fd, name, perm, req.uid(), req.gid());
+        let r = self.fs.mkdir(parent_fd, name, perm, req.uid(), req.gid());
         self.handle_new_entry(r, parent, name, reply);
     }
 
@@ -424,15 +424,15 @@ impl Filesystem for FuseFs {
         let perm = (mode & 0o7777) as u16;
         let r = match mode as u16 & libc::S_IFMT {
             libc::S_IFIFO =>
-                self.fs.mkfifo(&parent_fd, name, perm, req.uid(), req.gid()),
+                self.fs.mkfifo(parent_fd, name, perm, req.uid(), req.gid()),
             libc::S_IFCHR =>
-                self.fs.mkchar(&parent_fd, name, perm, req.uid(), req.gid(),
+                self.fs.mkchar(parent_fd, name, perm, req.uid(), req.gid(),
                     rdev),
             libc::S_IFBLK =>
-                self.fs.mkblock(&parent_fd, name, perm, req.uid(), req.gid(),
+                self.fs.mkblock(parent_fd, name, perm, req.uid(), req.gid(),
                     rdev),
             libc::S_IFSOCK =>
-                self.fs.mksock(&parent_fd, name, perm, req.uid(), req.gid()),
+                self.fs.mksock(parent_fd, name, perm, req.uid(), req.gid()),
             _ => Err(libc::EOPNOTSUPP)
         };
         self.handle_new_entry(r, parent, name, reply);
@@ -443,7 +443,7 @@ impl Filesystem for FuseFs {
     {
         let fd = self.files.get(&ino)
             .expect("read before lookup or after forget");
-        match self.fs.read(&fd, offset as u64, size as usize) {
+        match self.fs.read(fd, offset as u64, size as usize) {
             Ok(ref sglist) if sglist.is_empty() => reply.data(&[]),
             Ok(sglist) => {
                 if sglist.len() == 1 {
@@ -470,7 +470,7 @@ impl Filesystem for FuseFs {
     {
         let fd = self.files.get(&ino)
             .expect("read before lookup or after forget");
-        for v in self.fs.readdir(&fd, offset) {
+        for v in self.fs.readdir(fd, offset) {
             match v {
                 Ok((dirent, offset)) => {
                     let ft = match dirent.d_type {
@@ -505,8 +505,8 @@ impl Filesystem for FuseFs {
     fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
         let fd = self.files.get(&ino)
             .expect("readlink before lookup or after forget");
-        match self.fs.readlink(&fd) {
-            Ok(path) => reply.data(&path.as_bytes()),
+        match self.fs.readlink(fd) {
+            Ok(path) => reply.data(path.as_bytes()),
             Err(errno) => reply.error(errno)
         }
     }
@@ -517,7 +517,7 @@ impl Filesystem for FuseFs {
         let fd = self.files.get(&ino)
             .expect("removexattr before lookup or after forget");
         let (ns, name) = FuseFs::split_xattr_name(packed_name);
-        match self.fs.deleteextattr(&fd, ns, name) {
+        match self.fs.deleteextattr(fd, ns, name) {
             Ok(()) => reply.ok(),
             Err(errno) => reply.error(errno)
         }
@@ -564,7 +564,7 @@ impl Filesystem for FuseFs {
             }
         }
 
-        match self.fs.rename(&parent_fd, &src_fd, name, &newparent_fd,
+        match self.fs.rename(parent_fd, src_fd, name, newparent_fd,
             new_ino, newname)
         {
             Ok(ino) => {
@@ -594,7 +594,7 @@ impl Filesystem for FuseFs {
     {
         let parent_fd = self.files.get(&parent)
             .expect("rmdir before lookup or after forget");
-        match self.fs.rmdir(&parent_fd, name) {
+        match self.fs.rmdir(parent_fd, name) {
             Ok(()) => {
                 self.uncache_name(parent, name);
                 reply.ok()
@@ -632,8 +632,8 @@ impl Filesystem for FuseFs {
             birthtime: crtime,
             flags: flags.map(u64::from)
         };
-        let r = self.fs.setattr(&fd, attr)
-        .and_then(|_| self.do_getattr(&fd));
+        let r = self.fs.setattr(fd, attr)
+        .and_then(|_| self.do_getattr(fd));
         // FUSE combines the functions of VOP_SETATTR and VOP_GETATTR
         // into one.
         match r {
@@ -652,7 +652,7 @@ impl Filesystem for FuseFs {
         let fd = self.files.get(&ino)
             .expect("setxattr before lookup or after forget");
         let (ns, name) = FuseFs::split_xattr_name(packed_name);
-        match self.fs.setextattr(&fd, ns, name, value) {
+        match self.fs.setextattr(fd, ns, name, value) {
             Ok(()) => reply.ok(),
             Err(errno) => reply.error(errno)
         }
@@ -677,7 +677,7 @@ impl Filesystem for FuseFs {
         let perm = 0o755;
         let parent_fd = self.files.get(&parent)
             .expect("symlink before lookup or after forget");
-        let r = self.fs.symlink(&parent_fd, name, perm, req.uid(), req.gid(),
+        let r = self.fs.symlink(parent_fd, name, perm, req.uid(), req.gid(),
                                 link.as_os_str());
         self.handle_new_entry(r, parent, name, reply);
     }
@@ -690,11 +690,11 @@ impl Filesystem for FuseFs {
         let r = match self.names.get(&(parent, name.to_owned())) {
             None => {
                 // Name has lookup count of 0; therefore it must not be open
-                self.fs.unlink(&parent_fd, None, name)
+                self.fs.unlink(parent_fd, None, name)
             },
             Some(ino) => {
                 let fd = self.files.get(ino);
-                self.fs.unlink(&parent_fd, fd, name)
+                self.fs.unlink(parent_fd, fd, name)
             }
         };
         match r {
@@ -711,7 +711,7 @@ impl Filesystem for FuseFs {
     {
         let fd = self.files.get(&ino)
             .expect("write before lookup or after forget");
-        match self.fs.write(&fd, offset as u64, data, flags) {
+        match self.fs.write(fd, offset as u64, data, flags) {
             Ok(lsize) => reply.written(lsize),
             Err(errno) => reply.error(errno)
         }

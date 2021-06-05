@@ -73,7 +73,7 @@ test_suite! {
         0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00
     ];
 
-    const POOLNAME: &str = &"TestPool";
+    const POOLNAME: &str = "TestPool";
 
     fixture!( objects() -> (Runtime, Database, TempDir, PathBuf) {
         setup(&mut self) {
@@ -164,7 +164,7 @@ test_suite! {
     use super::*;
     use tempfile::{Builder, TempDir};
 
-    const POOLNAME: &str = &"TestPool";
+    const POOLNAME: &str = "TestPool";
 
     fixture!( objects() -> (Runtime, Database, TempDir, TreeID) {
         setup(&mut self) {

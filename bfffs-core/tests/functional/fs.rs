@@ -259,7 +259,7 @@ test_suite! {
         let ns = ExtAttrNamespace::User;
         let fd = mocks.val.0.create(&root, &filename, 0o644, 0, 0).unwrap();
         mocks.val.0.setextattr(&fd, ns, &name, &value[..]).unwrap();
-        clear_timestamps(&mocks.val.0, &&fd);
+        clear_timestamps(&mocks.val.0, &fd);
 
         mocks.val.0.deleteextattr(&fd, ns, &name).unwrap();
         assert_ts_changed(&mocks.val.0, &fd, false, false, false, false);
@@ -1520,11 +1520,11 @@ root:
         let dot = OsStr::from_bytes(b".");
         let srcdir = OsStr::from_bytes(b"srcdir");
         let dst = OsStr::from_bytes(b"dst");
-        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(&root, srcdir, 0o755, 0, 0)
         .unwrap();
 
-        let r = mocks.val.0.rename(&srcdir_fd, &srcdir_fd, &dot, &srcdir_fd,
-                None, &dst);
+        let r = mocks.val.0.rename(&srcdir_fd, &srcdir_fd, dot, &srcdir_fd,
+                None, dst);
         assert_eq!(Err(libc::EINVAL), r);
     }
 
@@ -1534,11 +1534,11 @@ root:
         let dotdot = OsStr::from_bytes(b"..");
         let srcdir = OsStr::from_bytes(b"srcdir");
         let dst = OsStr::from_bytes(b"dst");
-        let srcdir_fd = mocks.val.0.mkdir(&root, &srcdir, 0o755, 0, 0)
+        let srcdir_fd = mocks.val.0.mkdir(&root, srcdir, 0o755, 0, 0)
         .unwrap();
 
-        let r = mocks.val.0.rename(&srcdir_fd, &root, &dotdot, &srcdir_fd,
-                None, &dst);
+        let r = mocks.val.0.rename(&srcdir_fd, &root, dotdot, &srcdir_fd,
+                None, dst);
         assert_eq!(Err(libc::EINVAL), r);
     }
 
@@ -2749,7 +2749,7 @@ test_suite! {
                 let spec = &self.dirs[idx];
                 (format!("{:x}", spec.0), &spec.1)
             };
-            let c = self.fs.readdir(&fd, 0).count();
+            let c = self.fs.readdir(fd, 0).count();
             info!("ls {}: {} entries", fname, c);
         }
 
@@ -2782,7 +2782,7 @@ test_suite! {
                 // Pick a random offset within the first 8KB
                 let ofs = 2048 * self.rng.gen_range(0..4);
                 info!("read {:x} at offset {}", self.files[idx].0, ofs);
-                let r = self.fs.read(&fd, ofs, 2048);
+                let r = self.fs.read(fd, ofs, 2048);
                 // TODO: check buffer contents
                 assert!(r.is_ok());
             }
@@ -2881,7 +2881,7 @@ test_suite! {
                     as u8;
                 let buf = [fill; 2048];
                 info!("write {:x} at offset {}", self.files[idx].0, ofs);
-                let r = self.fs.write(&fd, ofs, &buf[..], 0);
+                let r = self.fs.write(fd, ofs, &buf[..], 0);
                 assert!(r.is_ok());
             }
         }

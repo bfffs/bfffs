@@ -291,8 +291,8 @@ pub unsafe extern "C" fn fio_bfffs_open(
     let root_opt = ROOT.read().unwrap();
     let root = root_opt.as_ref().unwrap();
     let r = fs
-        .lookup(None, &root, file_name)
-        .or_else(|_| fs.create(&root, file_name, 0o600, 0, 0));
+        .lookup(None, root, file_name)
+        .or_else(|_| fs.create(root, file_name, 0o600, 0, 0));
     match r {
         Ok(fd) => {
             // Store the inode number where fio would put its file

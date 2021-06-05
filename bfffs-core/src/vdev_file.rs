@@ -512,7 +512,7 @@ impl VdevFile {
                     }).collect::<Vec<_>>()
                     .into_boxed_slice();
             Pin::get_unchecked_mut(wva.as_mut()).slices = Some(slices);
-            let fut = self.file.writev_at(&wva.slices.as_ref().unwrap(), off)
+            let fut = self.file.writev_at(wva.slices.as_ref().unwrap(), off)
                 .unwrap();
             Pin::get_unchecked_mut(wva.as_mut()).fut = Some(fut);
         }

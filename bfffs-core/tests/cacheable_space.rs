@@ -155,7 +155,7 @@ fn fs_leaf_blob_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable>
             rid: RID(i as u64)
         };
         let v = FSValue::BlobExtent(extent);
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
@@ -172,7 +172,7 @@ fn fs_leaf_direntry(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
             name: OsString::from("something_moderately_long_but_not_too_long")
         };
         let v = FSValue::DirEntry(dirent);
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
@@ -194,7 +194,7 @@ fn fs_leaf_direntries(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> 
             name: OsString::from("something_also_pretty_long_string")
         };
         let v = FSValue::DirEntries(vec![dirent0, dirent1]);
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
@@ -206,7 +206,7 @@ fn fs_leaf_dyinginode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> 
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
         let v = FSValue::DyingInode(DyingInode::from(0));
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
@@ -228,7 +228,7 @@ fn fs_leaf_extattr_blob(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable
         };
         let extattr = ExtAttr::Blob(blob_ext_attr);
         let v = FSValue::ExtAttr(extattr);
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
@@ -248,7 +248,7 @@ fn fs_leaf_extattr_inline(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetab
         };
         let extattr = ExtAttr::Inline(inline_ext_attr);
         let v = FSValue::ExtAttr(extattr);
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
@@ -280,7 +280,7 @@ fn fs_leaf_extattrs(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         };
         let extattr1 = ExtAttr::Blob(blob_ext_attr1);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
@@ -294,7 +294,7 @@ fn fs_leaf_inline_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetabl
         let dbs = DivBufShared::from(vec![42u8; 2048]);
         let extent = InlineExtent::new(Arc::new(dbs));
         let v = FSValue::InlineExtent(extent);
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
@@ -319,7 +319,7 @@ fn fs_leaf_inode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
             file_type: FileType::Reg(17)
         };
         let v = FSValue::Inode(inode);
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);
@@ -331,7 +331,7 @@ fn fs_leaf_property(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
         let v = FSValue::Property(Property::RecordSize(17));
-        let credit = borrow_credit(&wb, &v);
+        let credit = borrow_credit(wb, &v);
         ld.insert(k, v, credit);
     }
     let node_data = NodeData::<RID, FSKey, FSValue<RID>>::Leaf(ld);

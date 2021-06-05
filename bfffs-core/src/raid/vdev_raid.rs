@@ -343,7 +343,7 @@ impl VdevRaid {
         assert_eq!(blocks.len(), label.children.len(),
             "Missing block devices");
         let children = label.children.iter().map(|uuid| {
-            blocks.remove(&uuid).unwrap()
+            blocks.remove(uuid).unwrap()
         }).collect::<Vec<_>>();
         VdevRaid::new(label.chunksize,
                       label.disks_per_stripe,

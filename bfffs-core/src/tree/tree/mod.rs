@@ -540,7 +540,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let range2 = range.clone();
             let dml2 = dml.clone();
             let key = c.key;
-            c.rlock(&dml)
+            c.rlock(dml)
             .and_then(move |guard| {
                 let data_ok = guard.check(key, height - 1, false, &limits);
                 if guard.is_leaf() {

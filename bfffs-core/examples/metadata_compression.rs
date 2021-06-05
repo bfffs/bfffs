@@ -24,18 +24,18 @@ const COMPRESSORS: [blosc::Compressor; 6] = [
 // For each pair of trees, the first entry is for leaf nodes and the second for
 // interior nodes.  The fanouts are generally different.
 const DATASETS: [(&str, usize); 6] = [
-    (&"alloct.18", 18),
-    (&"alloct.49", 49),
-    (&"ridt.43", 43),
-    (&"ridt.47", 47),
-    (&"fs.32", 32),
-    (&"fs.36", 36),
+    ("alloct.18", 18),
+    ("alloct.49", 49),
+    ("ridt.43", 43),
+    ("ridt.47", 47),
+    ("fs.32", 32),
+    ("fs.36", 36),
 ];
 
 const SHUFFLES: [(&str, blosc::ShuffleMode); 3] = [
-    (&"none", blosc::ShuffleMode::None),
-    (&"byte", blosc::ShuffleMode::Byte),
-    (&"bit", blosc::ShuffleMode::Bit),
+    ("none", blosc::ShuffleMode::None),
+    ("byte", blosc::ShuffleMode::Byte),
+    ("bit", blosc::ShuffleMode::Bit),
 ];
 
 fn main() {
