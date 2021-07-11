@@ -8,9 +8,9 @@
 
 use cfg_if::cfg_if;
 use crate::{
-    *,
     idml::IDML,
-    tree::{Key, Tree, Value}
+    tree::{self, Key, Tree, Value},
+    types::*,
 };
 use divbuf::DivBuf;
 use futures::Future;
@@ -29,7 +29,6 @@ cfg_if! {
         pub use self::dataset_mock::MockReadWriteDataset as ReadWriteDataset;
     } else {
         mod dataset;
-        use crate::tree;
         pub use self::dataset::{ReadOnlyDataset, ReadWriteDataset};
     }
 }

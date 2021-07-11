@@ -4,15 +4,18 @@ use galvanic_test::test_suite;
 test_suite! {
     name persistence;
 
-    use bfffs_core::*;
-    use bfffs_core::cache::*;
-    use bfffs_core::vdev_block::*;
-    use bfffs_core::cluster;
-    use bfffs_core::pool::*;
-    use bfffs_core::ddml::*;
-    use bfffs_core::idml::*;
-    use bfffs_core::label::*;
-    use bfffs_core::vdev_file::*;
+    use bfffs_core::{
+        cache::{self, Cache},
+        cluster,
+        ddml::{self, DDML},
+        idml::{self, IDML},
+        label::*,
+        pool::*,
+        raid,
+        types::*,
+        vdev_block::*,
+        vdev_file::*,
+    };
     use futures::TryFutureExt;
     use galvanic_test::*;
     use pretty_assertions::assert_eq;

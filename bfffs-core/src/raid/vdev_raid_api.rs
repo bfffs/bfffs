@@ -1,6 +1,10 @@
 // vim: tw=80
 use async_trait::async_trait;
-use crate::{*, label::*, vdev::*};
+use crate::{
+    label::*,
+    types::*,
+    vdev::*
+};
 
 /// The public interface for all RAID Vdevs.  All Vdevs that slot beneath a
 /// cluster must implement this API.

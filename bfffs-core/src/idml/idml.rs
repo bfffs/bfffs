@@ -665,6 +665,7 @@ impl<'a> MockIDML {
 mod t {
 
     use super::*;
+    use crate::tree;
     use divbuf::{DivBuf, DivBufShared};
     use futures::future;
     use pretty_assertions::assert_eq;

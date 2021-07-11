@@ -3,11 +3,12 @@
 
 use bitfield::*;
 use crate::{
-    *,
     database::*,
     dataset::ReadDataset,
     fs_tree::*,
     property::*,
+    types::*,
+    util::*
 };
 use divbuf::{DivBufShared, DivBuf};
 use futures::{
@@ -38,8 +39,8 @@ use tokio::{
     sync::mpsc,
 };
 
-pub use self::fs_tree::ExtAttr;
-pub use self::fs_tree::ExtAttrNamespace;
+pub use crate::fs_tree::ExtAttr;
+pub use crate::fs_tree::ExtAttrNamespace;
 
 /// Operations used for data that is stored in in-BTree hash tables
 mod htable {

@@ -7,8 +7,8 @@
 
 #[cfg(test)] use async_trait::async_trait;
 use crate::{
-    *,
     label::*,
+    types::*,
     vdev::*,
 };
 #[cfg(test)] use mockall::*;

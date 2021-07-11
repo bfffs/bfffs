@@ -1,10 +1,10 @@
 // vim: tw=80
 
 use crate::{
-    *,
     dml::{Compression, DML},
     idml::IDML,
     tree::{CreditRequirements, Key, Value},
+    types::*,
     writeback::Credit
 };
 use divbuf::{DivBuf, DivBufShared};

@@ -1,6 +1,11 @@
 // vim: tw=80
 
-use crate::{*, label::*, vdev::*};
+use crate::{
+    label::*,
+    types::*,
+    util::*,
+    vdev::*
+};
 use futures::{
     Future,
     FutureExt,
@@ -415,6 +420,7 @@ mod label {
 
 mod pool {
     use super::super::*;
+    use crate::cluster;
     use divbuf::DivBufShared;
     use futures::future;
     use mockall::predicate::*;

@@ -1,6 +1,6 @@
 // vim: tw=80
 
-use crate::*;
+use crate::types::IoVec;
 
 /// A Cursor type that can iterate over `SGList`s.
 ///
@@ -70,6 +70,7 @@ impl<'a, T: AsRef<[IoVec]>> From<&'a T> for SGCursor<'a> {
 // LCOV_EXCL_START
 #[cfg(test)]
 mod tests {
+    use crate::types::SGList;
     use divbuf::DivBufShared;
     use pretty_assertions::assert_eq;
     use super::*;

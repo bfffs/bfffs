@@ -3,7 +3,7 @@
 // This module contains methods that haven't yet been integrated into vdev_raid
 #![allow(unused)]
 
-use crate::*;
+use crate::types::SGList;
 use fixedbitset::FixedBitSet;
 use std::borrow::BorrowMut;
 use super::sgcursor::*;

@@ -2,8 +2,9 @@
 
 pub use crate::cache::{Cacheable, CacheRef};
 use crate::{
-    *,
-    writeback::Credit
+    writeback::Credit,
+    types::*,
+    util::*
 };
 use divbuf::DivBufShared;
 use futures::Future;

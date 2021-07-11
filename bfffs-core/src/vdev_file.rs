@@ -1,6 +1,11 @@
 // vim: tw=80
 
-use crate::{*, label::*, vdev::*};
+use crate::{
+    label::*,
+    types::*,
+    util::*,
+    vdev::*
+};
 use divbuf::DivBuf;
 use futures::{
     Future,

@@ -774,6 +774,7 @@ mod prop_cache_key {
 
 mod database {
     use super::super::*;
+    use crate::util::basic_runtime;
     use futures::future;
     use mockall::{Sequence, predicate::*};
 

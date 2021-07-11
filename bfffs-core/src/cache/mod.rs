@@ -3,7 +3,7 @@
 // https://github.com/fkoep/downcast-rs/issues/6
 #![allow(clippy::missing_safety_doc)]
 
-use crate::*;
+use crate::types::{PBA, RID};
 use divbuf::{DivBuf, DivBufShared};
 use downcast::*;
 use mockall_double::*;

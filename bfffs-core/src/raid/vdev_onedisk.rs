@@ -2,8 +2,9 @@
 
 use async_trait::async_trait;
 use crate::{
-    *,
     label::*,
+    types::*,
+    util::*,
     vdev::*,
 };
 use futures::future;

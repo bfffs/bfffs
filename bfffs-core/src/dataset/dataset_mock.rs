@@ -2,9 +2,9 @@
 // LCOV_EXCL_START
 
 use crate::{
-    *,
     dml::Compression,
     tree::{CreditRequirements, Key, Value},
+    types::*,
     writeback::Credit
 };
 use divbuf::{DivBuf, DivBufShared};

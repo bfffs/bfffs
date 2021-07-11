@@ -1,9 +1,10 @@
 // vim: tw=80
 
 use crate::{
-    *,
     label::*,
-    raid::VdevRaidApi,
+    raid::{self, VdevRaidApi},
+    types::*,
+    util::*,
     vdev::BoxVdevFut
 };
 use divbuf::{DivBuf, DivBufShared};

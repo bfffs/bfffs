@@ -22,7 +22,13 @@ use std::{
 };
 #[cfg(test)] use mockall::*;
 
-use crate::{*, label::*, vdev::*, vdev_file::*};
+use crate::{
+    label::*,
+    types::*,
+    util::*,
+    vdev::*,
+    vdev_file::*,
+};
 
 #[cfg(test)]
 pub type VdevLeaf = MockVdevFile;
