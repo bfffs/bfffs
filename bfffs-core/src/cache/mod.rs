@@ -4,6 +4,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 use crate::*;
+use divbuf::{DivBuf, DivBufShared};
 use downcast::*;
 use mockall_double::*;
 use std::{

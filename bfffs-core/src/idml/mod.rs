@@ -15,6 +15,7 @@ use crate::{
     tree::Value
 };
 use mockall_double::*;
+use serde_derive::{Deserialize, Serialize};
 
 mod idml;
 

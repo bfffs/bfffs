@@ -12,6 +12,7 @@ pub use crate::dml::{Compression, DML};
 pub use crate::pool::ClosedZone;
 
 use mockall_double::*;
+use serde_derive::{Deserialize, Serialize};
 
 mod ddml;
 

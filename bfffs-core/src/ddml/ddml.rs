@@ -1,11 +1,11 @@
 // vim: tw=80
 use crate::{
-    *,
     cache::{Cache, Cacheable, CacheRef, Key},
     label::*,
     vdev::*,
     writeback::Credit
 };
+use divbuf::DivBufShared;
 use futures::{Future, TryFutureExt, future};
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::mock;
@@ -378,7 +378,7 @@ mod drp {
 
 mod ddml {
     use super::super::*;
-    use divbuf::DivBufShared;
+    use divbuf::{DivBuf, DivBufShared};
     use futures::{FutureExt, future};
     use mockall::{
         self,

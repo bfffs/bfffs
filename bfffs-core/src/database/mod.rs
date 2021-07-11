@@ -10,6 +10,7 @@ use crate::{
     tree::{Key, MinValue}
 };
 use mockall_double::*;
+use serde_derive::{Deserialize, Serialize};
 
 mod database;
 

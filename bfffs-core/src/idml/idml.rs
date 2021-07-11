@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use crate::{
-    *,
     dml::*,
     ddml::*,
     cache::{Cache, Cacheable, CacheRef, Key},
@@ -9,9 +8,11 @@ use crate::{
     tree::TreeOnDisk,
     writeback::{Credit, WriteBack}
 };
+use divbuf::DivBufShared;
 use futures::{Future, FutureExt, Stream, TryFutureExt, TryStreamExt, future};
 use futures_locks::{RwLock, RwLockReadFut};
 #[cfg(test)] use mockall::mock;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     io,
     pin::Pin,
@@ -664,7 +665,7 @@ impl<'a> MockIDML {
 mod t {
 
     use super::*;
-    use divbuf::DivBufShared;
+    use divbuf::{DivBuf, DivBufShared};
     use futures::future;
     use pretty_assertions::assert_eq;
     use mockall::{Sequence, predicate::*};

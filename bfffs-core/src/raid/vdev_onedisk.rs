@@ -12,6 +12,7 @@ use std::{
     num::NonZeroU64,
     path::Path
 };
+use serde_derive::{Deserialize, Serialize};
 use super::{
     vdev_raid_api::*,
 };

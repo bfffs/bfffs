@@ -12,6 +12,7 @@ use crate::{
     vdev::*,
 };
 #[cfg(test)] use mockall::*;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     iter::once,

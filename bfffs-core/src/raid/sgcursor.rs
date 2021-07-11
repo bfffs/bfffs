@@ -70,6 +70,7 @@ impl<'a, T: AsRef<[IoVec]>> From<&'a T> for SGCursor<'a> {
 // LCOV_EXCL_START
 #[cfg(test)]
 mod tests {
+    use divbuf::DivBufShared;
     use pretty_assertions::assert_eq;
     use super::*;
     const MAX: usize = usize::max_value();

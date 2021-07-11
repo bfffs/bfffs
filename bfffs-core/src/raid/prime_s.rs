@@ -15,7 +15,7 @@ use crate::*;
 use std::{
     fmt::Debug,
     iter::FusedIterator,
-    ops::{Mul, Neg},
+    ops::{AddAssign, Div, Mul, Neg, Sub},
 };
 use super::declust::*;
 

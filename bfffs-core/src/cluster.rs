@@ -6,6 +6,7 @@ use crate::{
     raid::VdevRaidApi,
     vdev::BoxVdevFut
 };
+use divbuf::{DivBuf, DivBufShared};
 #[cfg(test)] use crate::raid::MockVdevRaid;
 use fixedbitset::FixedBitSet;
 use futures::{
@@ -18,12 +19,13 @@ use futures::{
 };
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::automock;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
     convert::TryFrom,
     fmt::{self, Display, Formatter},
-    hash::Hash,
+    hash::{Hash, Hasher},
     num::NonZeroU64,
     ops::Range,
     path::Path,

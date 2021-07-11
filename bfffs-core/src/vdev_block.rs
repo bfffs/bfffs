@@ -794,6 +794,7 @@ mock! {
 #[cfg(test)]
 mod t {
 
+use divbuf::DivBufShared;
 use galvanic_test::*;
 use super::*;
 

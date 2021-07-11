@@ -7,6 +7,7 @@ use crate::{
     tree::{CreditRequirements, Key, Value},
     writeback::Credit
 };
+use divbuf::{DivBuf, DivBufShared};
 use futures::{Future, FutureExt};
 use std::{
     borrow::Borrow,

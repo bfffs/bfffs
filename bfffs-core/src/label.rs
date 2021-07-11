@@ -2,7 +2,7 @@
 
 use byteorder::{BigEndian, ByteOrder};
 use crate::*;
-use divbuf::DivBufShared;
+use divbuf::{DivBuf, DivBufShared};
 use metrohash::MetroHash64;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};

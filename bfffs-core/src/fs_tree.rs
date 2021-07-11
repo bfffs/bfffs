@@ -4,7 +4,6 @@
 
 use bitfield::bitfield;
 use crate::{
-    *,
     dml::*,
     property::*,
     tree::*
@@ -20,7 +19,13 @@ use futures::{
 };
 use metrohash::MetroHash64;
 use num_enum::{IntoPrimitive, FromPrimitive};
-use serde::de::DeserializeOwned;
+use serde_derive::{Deserialize, Serialize};
+use serde::{
+    Deserialize,
+    Serialize,
+    Serializer,
+    de::DeserializeOwned
+};
 use std::{
     convert::TryFrom,
     ffi::{OsString, OsStr},

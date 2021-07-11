@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use crate::{
-    *,
     cleaner::*,
     dataset::{ITree, ReadOnlyDataset, ReadWriteDataset},
     dml::DML,
@@ -26,6 +25,7 @@ use futures::{
 };
 use futures_locks::{Mutex, RwLock};
 #[cfg(test)] use mockall::automock;
+use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},

@@ -10,6 +10,7 @@ use futures::{
     stream::FuturesUnordered
 };
 #[cfg(test)] use mockall::automock;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     ops::Range,
     pin::Pin,
