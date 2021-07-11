@@ -56,5 +56,7 @@ clippy_task:
   lint_script:
     - . $HOME/.cargo/env
     - $HOME/.cargo/bin/rustup component add --toolchain $VERSION clippy
-    - cargo +$VERSION clippy --all-features --all-targets -- -D warnings
+    # Suppress clippy::nonstandard_macro_braces due to a clippy bug.
+    # https://github.com/rust-lang/rust-clippy/issues/7434
+    - cargo +$VERSION clippy --all-features --all-targets -- -D warnings -A clippy::nonstandard_macro_braces
   before_cache_script: rm -rf $CARGO_HOME/registry/index
