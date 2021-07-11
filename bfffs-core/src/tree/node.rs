@@ -3,6 +3,8 @@
 //! Nodes for Trees (private module)
 use crate::{
     dml::*,
+    types::*,
+    util::*,
     writeback::Credit
 };
 use divbuf::{DivBuf, DivBufShared};

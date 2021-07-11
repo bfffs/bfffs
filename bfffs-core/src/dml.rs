@@ -1,8 +1,8 @@
 // vim: tw=80
 
-pub use crate::{
+pub use crate::cache::{Cacheable, CacheRef};
+use crate::{
     *,
-    cache::{Cacheable, CacheRef},
     writeback::Credit
 };
 use divbuf::DivBufShared;

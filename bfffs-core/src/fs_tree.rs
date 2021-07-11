@@ -6,7 +6,9 @@ use bitfield::bitfield;
 use crate::{
     dml::*,
     property::*,
-    tree::*
+    tree::*,
+    types::*,
+    util::*
 };
 use divbuf::DivBufShared;
 use futures::{
