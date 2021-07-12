@@ -2,11 +2,12 @@
 
 use async_trait::async_trait;
 use crate::{
-    *,
     label::*,
+    types::*,
+    util::*,
     vdev::*,
 };
-use divbuf::DivBufShared;
+use divbuf::{DivBuf, DivBufMut, DivBufShared};
 use futures::{
     TryFutureExt,
     TryStreamExt,
@@ -23,6 +24,7 @@ use std::{
     ptr,
     sync::RwLock
 };
+use serde_derive::{Deserialize, Serialize};
 use super::{
     codec::*,
     declust::*,

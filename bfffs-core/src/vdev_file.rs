@@ -1,6 +1,12 @@
 // vim: tw=80
 
-use crate::{*, label::*, vdev::*};
+use crate::{
+    label::*,
+    types::*,
+    util::*,
+    vdev::*
+};
+use divbuf::DivBuf;
 use futures::{
     Future,
     TryFutureExt,
@@ -10,6 +16,7 @@ use futures::{
 #[cfg(test)] use mockall::mock;
 use nix::libc::{c_int, off_t};
 use num_traits::FromPrimitive;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, BorrowMut},
     fs::OpenOptions,

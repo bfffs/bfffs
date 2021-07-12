@@ -6,10 +6,11 @@
 //! also owns the Forest and manages Transactions.
 
 use crate::{
-    *,
-    tree::{Key, MinValue}
+    tree::{Key, MinValue},
+    types::*,
 };
 use mockall_double::*;
+use serde_derive::{Deserialize, Serialize};
 
 mod database;
 

@@ -4,10 +4,11 @@
 
 use bitfield::bitfield;
 use crate::{
-    *,
     dml::*,
     property::*,
-    tree::*
+    tree::*,
+    types::*,
+    util::*
 };
 use divbuf::DivBufShared;
 use futures::{
@@ -20,7 +21,12 @@ use futures::{
 };
 use metrohash::MetroHash64;
 use num_enum::{IntoPrimitive, FromPrimitive};
-use serde::de::DeserializeOwned;
+use serde_derive::{Deserialize, Serialize};
+use serde::{
+    Serialize,
+    Serializer,
+    de::DeserializeOwned
+};
 use std::{
     convert::TryFrom,
     ffi::{OsString, OsStr},
@@ -615,8 +621,8 @@ impl FileType {
 }
 
 mod timespec_serializer {
-    use super::*;
-    use serde::{de::Deserializer, Serializer};
+    use serde_derive::{Deserialize, Serialize};
+    use serde::{de::Deserializer, Deserialize, Serialize, Serializer};
     use time::*;
 
     // time::Timespec doesn't derive Serde support.  Do it here.
@@ -695,8 +701,9 @@ impl Inode {
 
 /// This module ought to be unreachable, but must exist to satisfy rustc
 mod dbs_serializer {
-    use super::*;
-    use serde::{de::Deserializer, Serializer};
+    use divbuf::DivBufShared;
+    use serde::{de::Deserializer, Deserialize, Serialize, Serializer};
+    use std::sync::Arc;
 
     pub(super) fn deserialize<'de, DE>(deserializer: DE)
         -> Result<Arc<DivBufShared>, DE::Error>

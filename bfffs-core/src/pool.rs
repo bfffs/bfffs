@@ -1,6 +1,11 @@
 // vim: tw=80
 
-use crate::{*, label::*, vdev::*};
+use crate::{
+    label::*,
+    types::*,
+    util::*,
+    vdev::*
+};
 use futures::{
     Future,
     FutureExt,
@@ -10,6 +15,7 @@ use futures::{
     stream::FuturesUnordered
 };
 #[cfg(test)] use mockall::automock;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     ops::Range,
     pin::Pin,
@@ -414,6 +420,7 @@ mod label {
 
 mod pool {
     use super::super::*;
+    use crate::cluster;
     use divbuf::DivBufShared;
     use futures::future;
     use mockall::predicate::*;

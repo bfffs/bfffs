@@ -1,11 +1,15 @@
 // vim: tw=80
 use crate::{
-    *,
     cache::{Cache, Cacheable, CacheRef, Key},
+    dml::*,
     label::*,
+    pool::ClosedZone,
+    types::*,
+    util::*,
     vdev::*,
     writeback::Credit
 };
+use divbuf::DivBufShared;
 use futures::{Future, TryFutureExt, future};
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::mock;
@@ -17,7 +21,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex}
 };
-use super::*;
+use super::DRP;
 use tracing::instrument;
 use tracing_futures::Instrument;
 
@@ -378,7 +382,7 @@ mod drp {
 
 mod ddml {
     use super::super::*;
-    use divbuf::DivBufShared;
+    use divbuf::{DivBuf, DivBufShared};
     use futures::{FutureExt, future};
     use mockall::{
         self,

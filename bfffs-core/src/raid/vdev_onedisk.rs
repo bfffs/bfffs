@@ -2,8 +2,9 @@
 
 use async_trait::async_trait;
 use crate::{
-    *,
     label::*,
+    types::*,
+    util::*,
     vdev::*,
 };
 use futures::future;
@@ -12,6 +13,7 @@ use std::{
     num::NonZeroU64,
     path::Path
 };
+use serde_derive::{Deserialize, Serialize};
 use super::{
     vdev_raid_api::*,
 };

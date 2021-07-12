@@ -1,17 +1,19 @@
 // vim: tw=80
 
 use crate::{
-    *,
     dml::*,
     ddml::*,
     cache::{Cache, Cacheable, CacheRef, Key},
     label::*,
     tree::TreeOnDisk,
+    types::*,
     writeback::{Credit, WriteBack}
 };
+use divbuf::DivBufShared;
 use futures::{Future, FutureExt, Stream, TryFutureExt, TryStreamExt, future};
 use futures_locks::{RwLock, RwLockReadFut};
 #[cfg(test)] use mockall::mock;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     io,
     pin::Pin,
@@ -22,7 +24,7 @@ use std::{
 };
 use tracing::instrument;
 use tracing_futures::Instrument;
-use super::*;
+use super::{DTree, RidtEntry};
 
 /// Indirect Data Management Layer for a single `Pool`
 pub struct IDML {
@@ -664,7 +666,8 @@ impl<'a> MockIDML {
 mod t {
 
     use super::*;
-    use divbuf::DivBufShared;
+    use crate::tree;
+    use divbuf::{DivBuf, DivBufShared};
     use futures::future;
     use pretty_assertions::assert_eq;
     use mockall::{Sequence, predicate::*};

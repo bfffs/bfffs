@@ -7,14 +7,15 @@
 /// or deduplication.
 
 use crate::{
-    *,
     ddml::*,
     // Import tree::tree::Tree rather than tree::Tree so we can use the real
     // object and not the mock one, even in test mode.
     tree::tree::Tree,
-    tree::Value
+    tree::Value,
+    types::*,
 };
 use mockall_double::*;
+use serde_derive::{Deserialize, Serialize};
 
 mod idml;
 

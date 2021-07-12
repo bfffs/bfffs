@@ -1,8 +1,8 @@
 // vim: tw=80
 
 use crate::{
-    *,
-    idml::{ClosedZone, IDML}
+    idml::{ClosedZone, IDML},
+    types::*,
 };
 use futures::{
     Future,
@@ -156,6 +156,7 @@ impl Cleaner {
 #[cfg(test)]
 mod t {
 
+use crate::util::basic_runtime;
 use futures::future;
 use mockall::Sequence;
 use super::*;

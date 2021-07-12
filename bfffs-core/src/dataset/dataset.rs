@@ -1,12 +1,13 @@
 // vim: tw=80
 
 use crate::{
-    *,
     dml::{Compression, DML},
     idml::IDML,
     tree::{CreditRequirements, Key, Value},
+    types::*,
     writeback::Credit
 };
+use divbuf::{DivBuf, DivBufShared};
 use futures::{Future, FutureExt};
 use std::{
     borrow::Borrow,
@@ -15,7 +16,7 @@ use std::{
     pin::Pin,
     sync::Arc
 };
-use super::*;
+use super::{ITree, RangeQuery, ReadDataset};
 
 /// Inner Dataset structure, not directly exposed to user
 struct Dataset<K: Key, V: Value>  {

@@ -2,10 +2,12 @@
 
 //! Nodes for Trees (private module)
 use crate::{
-    *,
     dml::*,
+    types::*,
+    util::*,
     writeback::Credit
 };
+use divbuf::{DivBuf, DivBufShared};
 use futures::{
     Future,
     FutureExt,
@@ -16,10 +18,13 @@ use futures::{
 };
 use futures_locks::*;
 use serde::{
+    Deserialize,
     Serialize,
-    de::{self, DeserializeOwned, Deserialize, Deserializer, SeqAccess, Visitor},
+    Serializer,
+    de::{self, DeserializeOwned, Deserializer, SeqAccess, Visitor},
     ser::SerializeStruct,
 };
+use serde_derive::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     cmp::max,
@@ -218,8 +223,9 @@ impl<A: Addr, K: Key, V: Value> PartialEq  for TreePtr<A, K, V> {
 }
 
 mod node_serializer {
-    use super::*;
-    use serde::{Deserialize, de::Deserializer, Serializer};
+    use futures_locks::RwLock;
+    use serde::{Deserialize, de::Deserializer, Serialize, Serializer};
+    use super::{Addr, Key, Node, NodeData, Value};
 
     pub(super) fn deserialize<'de, A, DE, K, V>(deserializer: DE)
         -> Result<Box<Node<A, K, V>>, DE::Error>

@@ -5,13 +5,17 @@
 /// disk, and hash operations.  A Direct Record is a record that can never be
 /// duplicated, either through snapshots, clones, or deduplication.
 
-use crate::*;
+use crate::{
+    types::*,
+    util::*,
+};
 #[cfg(test)] use rand::{self, Rng};
 
 pub use crate::dml::{Compression, DML};
 pub use crate::pool::ClosedZone;
 
 use mockall_double::*;
+use serde_derive::{Deserialize, Serialize};
 
 mod ddml;
 

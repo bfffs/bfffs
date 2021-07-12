@@ -11,11 +11,11 @@
 //! Computer Architecture News. Vol. 26. No. 3. IEEE Computer Society, 1998.
 
 use fixedbitset::FixedBitSet;
-use crate::*;
+use crate::util::div_roundup;
 use std::{
     fmt::Debug,
     iter::FusedIterator,
-    ops::{Mul, Neg},
+    ops::{AddAssign, Div, Mul, Neg, Sub},
 };
 use super::declust::*;
 

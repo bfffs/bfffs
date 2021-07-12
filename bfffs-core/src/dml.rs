@@ -1,10 +1,12 @@
 // vim: tw=80
 
-pub use crate::{
-    *,
-    cache::{Cacheable, CacheRef},
-    writeback::Credit
+pub use crate::cache::{Cacheable, CacheRef};
+use crate::{
+    writeback::Credit,
+    types::*,
+    util::*
 };
+use divbuf::DivBufShared;
 use futures::Future;
 #[cfg(test)] use mockall::automock;
 use serde_derive::{Deserialize, Serialize};

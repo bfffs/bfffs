@@ -7,11 +7,12 @@
 
 #[cfg(test)] use async_trait::async_trait;
 use crate::{
-    *,
     label::*,
+    types::*,
     vdev::*,
 };
 #[cfg(test)] use mockall::*;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     iter::once,
