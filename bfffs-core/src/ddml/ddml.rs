@@ -1,7 +1,11 @@
 // vim: tw=80
 use crate::{
     cache::{Cache, Cacheable, CacheRef, Key},
+    dml::*,
     label::*,
+    pool::ClosedZone,
+    types::*,
+    util::*,
     vdev::*,
     writeback::Credit
 };
@@ -17,7 +21,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex}
 };
-use super::*;
+use super::DRP;
 use tracing::instrument;
 use tracing_futures::Instrument;
 

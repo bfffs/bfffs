@@ -5,6 +5,7 @@
 
 use crate::{
     ddml,
+    dml::{Compression, DML},
     types::*,
     util::*,
     writeback::Credit
@@ -23,7 +24,10 @@ use futures::{
 };
 use futures_locks::*;
 #[cfg(test)] use mockall::automock;
-use serde::Serializer;
+#[cfg(test)] use serde_derive::Deserialize;
+use serde_derive::Serialize;
+use serde::Serialize;
+#[cfg(test)] use serde::de::DeserializeOwned;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
 use std::{
     borrow::Borrow,
@@ -39,7 +43,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use super::*;
+use super::{Addr, CreditRequirements, InnerOnDisk, IntData, IntElem, Key, Limits, Node, NodeData, NodeId, TreeOnDisk, TreePtr, TreeReadGuard, TreeWriteGuard, Value};
 use tokio::runtime;
 use tracing::instrument;
 use tracing_futures::Instrument;
@@ -83,8 +87,9 @@ fn ranges_overlap<R, T, U>(x: &R, y: &Range<U>) -> bool
 }
 
 mod tree_root_serializer {
-    use super::*;
-    use serde::{Serialize, ser::Error};
+    use futures_locks::RwLock;
+    use serde::{Serialize, Serializer, ser::Error};
+    use super::{Addr, Key, TreeRoot, Value};
 
     pub(super) fn serialize<A, K, S, V>(x: &RwLock<TreeRoot<A, K, V>>, s: S)
         -> Result<S::Ok, S::Error>

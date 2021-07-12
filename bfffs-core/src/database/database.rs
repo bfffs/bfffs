@@ -9,6 +9,7 @@ use crate::{
     label::*,
     property::*,
     tree::{Tree, TreeOnDisk},
+    types::*,
     writeback::Credit
 };
 use futures::{
@@ -37,7 +38,7 @@ use std::{
     },
 };
 #[cfg(not(test))] use std::io;
-use super::*;
+use super::TreeID;
 #[cfg(not(test))] use tokio::runtime;
 use tokio::{
     runtime::Handle,

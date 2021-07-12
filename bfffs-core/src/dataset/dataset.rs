@@ -16,7 +16,7 @@ use std::{
     pin::Pin,
     sync::Arc
 };
-use super::*;
+use super::{ITree, RangeQuery, ReadDataset};
 
 /// Inner Dataset structure, not directly exposed to user
 struct Dataset<K: Key, V: Value>  {

@@ -6,6 +6,7 @@ use crate::{
     cache::{Cache, Cacheable, CacheRef, Key},
     label::*,
     tree::TreeOnDisk,
+    types::*,
     writeback::{Credit, WriteBack}
 };
 use divbuf::DivBufShared;
@@ -23,7 +24,7 @@ use std::{
 };
 use tracing::instrument;
 use tracing_futures::Instrument;
-use super::*;
+use super::{DTree, RidtEntry};
 
 /// Indirect Data Management Layer for a single `Pool`
 pub struct IDML {

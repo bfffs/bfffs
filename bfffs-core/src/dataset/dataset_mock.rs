@@ -3,6 +3,7 @@
 
 use crate::{
     dml::Compression,
+    idml::IDML,
     tree::{CreditRequirements, Key, Value},
     types::*,
     writeback::Credit
@@ -17,7 +18,7 @@ use std::{
     pin::Pin,
     sync::Arc
 };
-use super::*;
+use super::{ITree, RangeQuery, ReadDataset, ReadOnlyDataset, ReadWriteDataset};
 
 mock! {
     pub ReadOnlyDataset<K: Key, V: Value> {

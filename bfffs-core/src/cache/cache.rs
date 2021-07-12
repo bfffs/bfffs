@@ -7,7 +7,7 @@ use std::{
     hash::BuildHasherDefault
 };
 use tracing::{Level, event};
-use super::*;
+use super::{Cacheable, CacheRef, Key};
 
 struct LruEntry {
     buf: Box<dyn Cacheable>,
@@ -187,6 +187,11 @@ impl Cache {
 
 /// Get the least recently used entry
 // LCOV_EXCL_START
+#[cfg(test)]
+mod t {
+use super::*;
+use crate::types::*;
+use divbuf::{DivBuf, DivBufShared};
 
 // pet kcov
 #[test]
@@ -571,3 +576,4 @@ fn test_remove_mru() {
     }
 }
 // LCOV_EXCL_STOP
+}

@@ -3,7 +3,9 @@
 #[cfg(test)] mod io;
 #[cfg(test)] mod txg;
 
+use crate::dml::MockDML;
 use super::*;
+use super::super::LeafData;
 
 /// Create a mock DML with some handy default expectations
 fn mock_dml() -> MockDML {

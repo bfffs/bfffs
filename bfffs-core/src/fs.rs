@@ -44,7 +44,18 @@ pub use crate::fs_tree::ExtAttrNamespace;
 
 /// Operations used for data that is stored in in-BTree hash tables
 mod htable {
-    use super::*;
+    use crate::{
+        dataset::ReadDataset,
+        fs_tree::{FSKey, FSValue, HTItem, HTValue},
+        types::*
+    };
+    use futures::{Future, FutureExt, TryFutureExt, future};
+    use std::{
+        ffi::OsString,
+        mem,
+        pin::Pin
+    };
+    use super::{ReadOnlyFilesystem, ReadWriteFilesystem};
 
     /// Argument type for `htable::get`.
     // A more obvious approach would be to create a ReadDataset trait that is
