@@ -269,6 +269,10 @@ test_suite! {
     // Tree::dump, so the bulk of testing is in the tree tests.
     test dump(mocks(vec![])) {
         let root = mocks.val.0.root();
+        // Sync before clearing timestamps to improve determinism; the timed
+        // flusher may or may not have already flushed the tree.
+        mocks.val.0.sync();
+        // Clear timestamps to make the dump output deterministic
         clear_timestamps(&mocks.val.0, &root);
         mocks.val.0.sync();
 
@@ -287,13 +291,13 @@ root:
   elem:
     key: 0-0-00000000000000
     txgs:
-      start: 0
-      end: 1
+      start: 1
+      end: 2
     ptr:
-      Addr: 0
+      Addr: 2
 ...
 ---
-0:
+2:
   Leaf:
     credit: 0
     items:
