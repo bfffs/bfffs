@@ -606,7 +606,7 @@ impl Limits {
 /// Guard that holds the Node lock object for reading
 pub enum TreeReadGuard<A: Addr, K: Key, V: Value> {
     Mem(RwLockReadGuard<NodeData<A, K, V>>),
-    Addr(RwLockReadGuard<NodeData<A, K, V>>, Box<Arc<Node<A, K, V>>>)
+    Addr(RwLockReadGuard<NodeData<A, K, V>>, Arc<Node<A, K, V>>)
 }
 
 impl<A: Addr, K: Key, V: Value> TreeReadGuard<A, K, V> {
@@ -620,8 +620,8 @@ impl<A: Addr, K: Key, V: Value> Deref for TreeReadGuard<A, K, V> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            TreeReadGuard::Mem(guard) => &**guard,
-            TreeReadGuard::Addr(guard, _) => &**guard,
+            TreeReadGuard::Mem(guard) => &*guard,
+            TreeReadGuard::Addr(guard, _) => &*guard,
         }
     }
 }
@@ -875,7 +875,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
                 .and_then(|node| {
                     node.0.read()
                         .map(move |guard|
-                             Ok(TreeReadGuard::Addr(guard, node))
+                             Ok(TreeReadGuard::Addr(guard, *node))
                         )
                 }).in_current_span()
                 .boxed()
