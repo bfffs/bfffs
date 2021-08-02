@@ -3,10 +3,13 @@ use bfffs_core::{
     device_manager::DevManager,
     property::Property
 };
-use clap::crate_version;
+use clap::{
+    Clap,
+    crate_version
+};
 use futures::TryFutureExt;
 use std::{
-    path::Path,
+    path::PathBuf,
     process::exit,
     sync::Arc
 };
@@ -21,20 +24,26 @@ fn runtime() -> Runtime {
         .unwrap()
 }
 
-mod check {
-use super::*;
+#[derive(Clap, Clone, Debug)]
+/// Consistency check
+struct Check {
+    #[clap(required(true))]
+    /// Pool name
+    pool_name: String,
+    #[clap(required(true))]
+    disks: Vec<PathBuf>
+}
 
+impl Check{
 // Offline consistency check.  Checks that:
 // * RAID parity is consistent
 // * Checksums match
 // * RIDT and AllocT are exact inverses
 // * RIDT contains no orphan entries not found in the FSTrees
 // * Spacemaps match actual usage
-pub fn main(args: &clap::ArgMatches) {
-    let poolname = args.value_of("name").unwrap().to_owned();
-    let disks = args.values_of("disks").unwrap();
+pub fn main(self) {
     let dev_manager = DevManager::default();
-    for dev in disks.map(str::to_string)
+    for dev in self.disks.iter()
     {
         dev_manager.taste(dev);
     }
@@ -42,7 +51,7 @@ pub fn main(args: &clap::ArgMatches) {
     let mut rt = runtime();
     let handle = rt.handle().clone();
     let db = Arc::new(
-        dev_manager.import_by_name(poolname, handle)
+        dev_manager.import_by_name(self.pool_name, handle)
         .unwrap_or_else(|_e| {
             eprintln!("Error: pool not found");
             exit(1);
@@ -53,20 +62,33 @@ pub fn main(args: &clap::ArgMatches) {
     }).unwrap();
     // TODO: the other checks
 }
-
 }
 
-mod debug {
-use super::*;
+#[derive(Clap, Clone, Debug)]
+/// Dump internal filesystem information
+struct Dump {
+    /// Dump the Free Space Map
+    #[clap(short, long)]
+    fsm: bool,
+    /// Dump the file system tree
+    #[clap(short, long)]
+    tree: bool,
+    #[clap(required(true))]
+    /// Pool name
+    pool_name: String,
+    #[clap(required(true))]
+    disks: Vec<PathBuf>
+}
 
-fn dump_fsm<P: AsRef<Path>, S: AsRef<str>>(poolname: S, disks: &[P]) {
+impl Dump {
+fn dump_fsm(self) {
     let dev_manager = DevManager::default();
-    for disk in disks {
+    for disk in self.disks.iter() {
         dev_manager.taste(disk);
     }
     let uuid = dev_manager.importable_pools().iter()
         .find(|(name, _uuid)| {
-            *name == poolname.as_ref()
+            *name == self.pool_name
         }).unwrap().1;
     let mut rt = runtime();
     let clusters = rt.block_on(async move {
@@ -77,15 +99,15 @@ fn dump_fsm<P: AsRef<Path>, S: AsRef<str>>(poolname: S, disks: &[P]) {
     }
 }
 
-fn dump_tree<P: AsRef<Path>>(poolname: String, disks: &[P]) {
+fn dump_tree(self) {
     let dev_manager = DevManager::default();
-    for disk in disks {
+    for disk in self.disks.iter() {
         dev_manager.taste(disk);
     }
     let rt = runtime();
     let handle = rt.handle().clone();
     let db = Arc::new(
-        dev_manager.import_by_name(poolname, handle)
+        dev_manager.import_by_name(self.pool_name, handle)
         .unwrap_or_else(|_e| {
             eprintln!("Error: pool not found");
             exit(1);
@@ -96,25 +118,20 @@ fn dump_tree<P: AsRef<Path>>(poolname: String, disks: &[P]) {
     db.dump(&mut std::io::stdout(), tree_id).unwrap()
 }
 
-pub fn main(args: &clap::ArgMatches) {
-    match args.subcommand() {
-        ("dump", Some(args)) => {
-            let poolname = args.value_of("name").unwrap();
-            let disks = args.values_of("disks").unwrap().collect::<Vec<&str>>();
-            if args.is_present("fsm") {
-                dump_fsm(&poolname, &disks[..]);
-            }
-            if args.is_present("tree") {
-                dump_tree(poolname.to_string(), &disks[..]);
-            }
-        },
-        _ => {
-            println!("Error: subcommand required\n{}", args.usage());
-            std::process::exit(2);
-        },
+fn main(self) {
+    if self.fsm {
+        self.dump_fsm();
+    } else if self.tree {
+        self.dump_tree();
     }
 }
 
+}
+
+#[derive(Clap, Clone, Debug)]
+/// Debugging tools
+enum DebugCmd {
+    Dump(Dump)
 }
 
 mod pool {
@@ -128,29 +145,38 @@ use bfffs_core::pool::Pool;
 use std::{
     convert::TryFrom,
     num::NonZeroU64,
-    str::FromStr,
     sync::Mutex
 };
 use super::*;
 
-fn create(args: &clap::ArgMatches) {
+/// Create a new storage pool
+#[derive(Clap, Clone, Debug)]
+pub(super) struct Create {
+    /// Dataset properties, comma delimited
+    #[clap(short, long, require_delimiter(true))]
+    properties: Vec<String>,
+    /// Simulated zone size in MB
+    #[clap(long)]
+    zone_size: Option<u64>,
+    #[clap(required(true))]
+    /// Pool name
+    pool_name: String,
+    #[clap(required(true))]
+    vdev: Vec<String>
+}
+
+impl Create{
+pub(super) fn main(self) {
     let rt = runtime();
-    let name = args.value_of("name").unwrap().to_owned();
-     let zone_size = args.value_of("zone_size")
-        .map(|s| {
-            let lbas = u64::from_str(s)
-             .expect("zone_size must be a decimal integer")
-             * 1024 * 1024 / (BYTES_PER_LBA as u64);
+    let zone_size = self.zone_size
+        .map(|mbs| {
+            let lbas = mbs * 1024 * 1024 / (BYTES_PER_LBA as u64);
             NonZeroU64::new(lbas).expect("zone_size may not be zero")
         });
-    let propstrings = if let Some(it) = args.values_of("property") {
-         it.collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
 
-    let mut builder = Builder::new(name, propstrings, zone_size, rt);
-    let mut vdev_tokens = args.values_of("vdev").unwrap();
+    let props = self.properties.iter().map(String::as_str);
+    let mut builder = Builder::new(self.pool_name, props, zone_size, rt);
+    let mut vdev_tokens = self.vdev.iter().map(String::as_str);
     let mut cluster_type = None;
     let mut devs = vec![];
     loop {
@@ -195,6 +221,7 @@ fn create(args: &clap::ArgMatches) {
     }
     builder.format()
 }
+}
 
 struct Builder {
     clusters: Vec<Cluster>,
@@ -205,13 +232,13 @@ struct Builder {
 }
 
 impl Builder {
-    pub fn new(name: String, propstrings: Vec<&str>,
+    pub fn new<'a, P>(name: String, propstrings: P,
                zone_size: Option<NonZeroU64>, rt: Runtime)
         -> Self
+        where P: Iterator<Item=&'a str> + 'a
     {
         let clusters = Vec::new();
-        let properties = propstrings.into_iter()
-            .map(|ps| {
+        let properties = propstrings.map(|ps| {
                 Property::try_from(ps).unwrap_or_else(|_e| {
                     eprintln!("Invalid property specification {}", ps);
                     std::process::exit(2);
@@ -276,81 +303,33 @@ impl Builder {
     }
 }
 
-pub fn main(args: &clap::ArgMatches) {
-    match args.subcommand() {
-        ("create", Some(create_args)) => create(create_args),
-        _ => {
-            println!("Error: subcommand required\n{}", args.usage());
-            std::process::exit(2);
-        },
-    }
+#[derive(Clap, Clone, Debug)]
+/// Create, destroy, and modify storage pools
+pub(super) enum PoolCmd {
+    Create(Create)
 }
 
+}
+
+#[derive(Clap, Clone, Debug)]
+enum SubCommand{
+    Check(Check),
+    Debug(DebugCmd),
+    Pool(pool::PoolCmd)
+}
+
+#[derive(Clap, Clone, Debug)]
+#[clap(version = crate_version!())]
+struct Bfffs {
+    #[clap(subcommand)]
+    cmd: SubCommand,
 }
 
 fn main() {
-    let app = clap::App::new("bfffs")
-        .version(crate_version!())
-        .subcommand(clap::SubCommand::with_name("check")
-            .about("Consistency check")
-            .arg(clap::Arg::with_name("name")
-                 .help("Pool name")
-                 .required(true)
-            ).arg(clap::Arg::with_name("disks")
-                  .multiple(true)
-                  .required(true)
-            )
-        ).subcommand(clap::SubCommand::with_name("debug")
-            .about("Debugging tools")
-            .subcommand(clap::SubCommand::with_name("dump")
-                .about("Dump internal filesystem information")
-                .arg(clap::Arg::with_name("fsm")
-                     .help("Dump the Free Space Map")
-                     .long("fsm")
-                     .short("f")
-                ).arg(clap::Arg::with_name("tree")
-                     .help("Dump the file system tree")
-                     .long("tree")
-                     .short("t")
-                ).arg(clap::Arg::with_name("name")
-                     .help("Pool name")
-                     .required(true)
-                ).arg(clap::Arg::with_name("disks")
-                      .multiple(true)
-                      .required(true)
-                )
-            )
-        ).subcommand(clap::SubCommand::with_name("pool")
-            .about("create, destroy, and modify storage pools")
-            .subcommand(clap::SubCommand::with_name("create")
-                .about("create a new storage pool")
-                .arg(clap::Arg::with_name("zone_size")
-                     .help("Simulated Zone size in MB")
-                     .long("zone_size")
-                     .takes_value(true)
-                ).arg(clap::Arg::with_name("property")
-                     .help("Dataset properties, comma delimited")
-                     .short("o")
-                     .takes_value(true)
-                     .multiple(true)
-                     .require_delimiter(true)
-                ).arg(clap::Arg::with_name("name")
-                     .help("Pool name")
-                     .required(true)
-                ).arg(clap::Arg::with_name("vdev")
-                      .multiple(true)
-                      .required(true)
-                )
-            )
-        );
-    let matches = app.get_matches();
-    match matches.subcommand() {
-        ("check", Some(args)) => check::main(args),
-        ("debug", Some(args)) => debug::main(args),
-        ("pool", Some(args)) => pool::main(args),
-        _ => {
-            println!("Error: subcommand required\n{}", matches.usage());
-            std::process::exit(2);
-        },
+    let bfffs: Bfffs = Bfffs::parse();
+    match bfffs.cmd {
+        SubCommand::Check(check) => check.main(),
+        SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main(),
+        SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main(),
     }
 }
