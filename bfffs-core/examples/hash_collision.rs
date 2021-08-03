@@ -4,6 +4,7 @@
 
 use bfffs_core::fs_tree::*;
 use chashmap::CHashMap;
+use clap::Clap;
 use lazy_static::lazy_static;
 use rand_xorshift::XorShiftRng;
 use rand::{
@@ -140,28 +141,26 @@ impl Worker {
     }
 }
 
+#[derive(Clap, Clone, Copy, Debug)]
+/// Generate hash collisions for dirent and extattr storage in BFFFS
+struct Cli {
+    /// Generate extended attributes instead of directory entries
+    #[clap(short = 'x')]
+    extattr: bool,
+    /// Memory limit in GB
+    mem: i64
+}
+
 fn main() {
-    let app = clap::App::new("hash_collision")
-    .about("Generate hash collisions for dirent and extattr storage in BFFFS")
-    .arg(clap::Arg::with_name("extattr")
-         .long("extattr")
-         .short("x")
-         .help("Generate extended attributes instead of directory entries")
-    ).arg(clap::Arg::with_name("mem")
-         .help("Memory limit in GB")
-         .required(true)
-    );
-    let matches = app.get_matches();
-    let limit: i64 = matches.value_of("mem").unwrap().parse().unwrap();
+    let cli = Cli::parse();
     unsafe {
         // Limit RAM usage
         let rlimit = libc::rlimit{
-            rlim_cur: limit*(1<<30),
-            rlim_max: limit*(1<<30)
+            rlim_cur: cli.mem*(1<<30),
+            rlim_max: cli.mem*(1<<30)
         };
         libc::setrlimit(libc::RLIMIT_AS, &rlimit);
     }
-    let extattr: bool = matches.is_present("extattr");
 
     let mut now = time::Instant::now();
     let mut tries = 0u64;
@@ -172,7 +171,7 @@ fn main() {
     for _ in 0..ncpu {
         let mut worker = Worker::new(&HM, tx.clone());
         thread::spawn(move || {
-            if extattr {
+            if cli.extattr {
                 worker.run::<CExtattr>();
             } else {
                 worker.run::<CDirent>();
