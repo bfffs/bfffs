@@ -14,6 +14,7 @@ use bfffs_core::{
     tree::*,
     writeback::{Credit, WriteBack}
 };
+use clap::Clap;
 use divbuf::DivBufShared;
 use futures::{
     Future,
@@ -32,7 +33,6 @@ use std::{
     mem,
     num::NonZeroU8,
     pin::Pin,
-    str::FromStr,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -417,27 +417,25 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     println!("Overall Metadata fraction: {:#.3}%", 100.0 * mf);
 }
 
+#[derive(Clap, Clone, Copy, Debug)]
+struct Cli {
+    /// simulate sequential insertion
+    #[clap(short = 's')]
+    sequential: bool,
+    /// simulate random insertion
+    #[clap(short = 'r')]
+    random: bool,
+    /// save metadata records as /tmp/fanout/$table.$i.bin
+    #[clap(long)]
+    save: bool,
+    /// Number of records to simulate
+    records: Option<u64>
+}
+
 fn main() {
-    let app = clap::App::new("fanout")
-        .arg(clap::Arg::with_name("sequential")
-            .help("simulate sequential insertion")
-            .short("s")
-        ).arg(clap::Arg::with_name("random")
-            .help("simulate random insertion")
-            .short("r")
-        ).arg(clap::Arg::with_name("save")
-            .help("save metadata records as /tmp/fanout/$table.$i.bin")
-            .long("save")
-        ).arg(clap::Arg::with_name("records")
-            .help("Number of records to simulate")
-        );
-    let matches = app.get_matches();
-    let nrecs = matches.value_of("records")
-        .map(u64::from_str)
-        .unwrap_or(Ok(100_000))
-        .unwrap();
-    let save = matches.is_present("save");
-    if save {
+    let cli = Cli::parse();
+    let nrecs = cli.records.unwrap_or(100_000);
+    if cli.save {
         let r = std::fs::create_dir("/tmp/fanout");
         match r {
             Ok(_) => (),
@@ -448,15 +446,15 @@ fn main() {
             }
         }
     }
-    if matches.is_present("sequential") {
+    if cli.sequential {
         println!("=== Sequential insertion ===");
-        experiment(nrecs, save, |i| u64::from(RECSIZE) * i);
+        experiment(nrecs, cli.save, |i| u64::from(RECSIZE) * i);
         println!();
     }
-    if matches.is_present("random") {
+    if cli.random {
         println!("=== Random insertion ===");
         let mut rng = XorShiftRng::seed_from_u64(0);
-        experiment(nrecs, save, move |_| {
+        experiment(nrecs, cli.save, move |_| {
             u64::from(rng.next_u32()) * u64::from(RECSIZE)
         });
     }
