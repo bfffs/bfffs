@@ -13,6 +13,7 @@ use fuse3::{
     MountOptions
 };
 use std::{
+    io,
     process::exit,
     sync::Arc,
 };
@@ -34,6 +35,19 @@ struct Bfffsd {
     mountpoint: String,
     #[clap(required(true))]
     devices: Vec<String>
+}
+
+async fn mount(
+    db: Arc<Database>,
+    mountpoint: String,
+    opts: MountOptions,
+    tree_id: TreeID
+) -> io::Result<()>
+{
+    let fs = FuseFs::new(db, tree_id).await;
+    Session::new(&opts)
+        .mount(fs, mountpoint)
+        .await
 }
 
 #[tokio::main]
@@ -115,11 +129,7 @@ async fn main() {
             db2.clean().await.unwrap()
         }
     });
-    let fs = FuseFs::new(db, tree_id).await;
-    Session::new(&opts)
-        .mount(fs, &bfffsd.mountpoint)
-        .await
-        .unwrap()
+    mount(db, bfffsd.mountpoint, opts, tree_id).await.unwrap()
 }
 
 #[cfg(test)]
