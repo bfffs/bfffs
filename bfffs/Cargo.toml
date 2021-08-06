@@ -14,15 +14,18 @@ required-features = ["fuse"]
 
 [dependencies]
 async-trait = "0.1.40"
+bincode = "1.0.1"
 bfffs-core = { path = "../bfffs-core" }
 bytes = "1.0"
 cfg-if = "1.0"
-fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "f225749", optional = true, features = ["tokio-runtime"] }
+fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "3afd026", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
 libc = "0.2.44"
 nix = "0.22.0"
 time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.10.0", features = ["rt", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-seqpacket = "0.5.4"
+tracing = "0.1.5"
 
 [dependencies.clap]
 version = "3.0.0-beta.4"

@@ -63,6 +63,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bfffs-core",
+ "bincode",
  "bytes",
  "cfg-if",
  "clap",
@@ -75,6 +76,8 @@ dependencies = [
  "rstest",
  "time",
  "tokio",
+ "tokio-seqpacket",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -308,6 +311,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "filedesc"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17d6dfea8da8b55b0c77800947567f282cad3940dc7edc37bf897a6933afee8d"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -337,7 +349,7 @@ checksum = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
 [[package]]
 name = "fuse3"
 version = "0.2.1"
-source = "git+https://github.com/asomers/fuse3.git?rev=d3ed13e#d3ed13e4470625df16973efbffbab43c102ac649"
+source = "git+https://github.com/asomers/fuse3.git?rev=3afd026#3afd026e07321ec7aaf92928979c4a2ac12fd70a"
 dependencies = [
  "async-trait",
  "bincode",
@@ -695,9 +707,8 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7555d6c7164cc913be1ce7f95cbecdabda61eb2ccd89008524af306fb7f5031"
+version = "0.22.0"
+source = "git+https://github.com/asomers/nix.git?rev=2e37293877b97eae42b1ec06a09e437b96b69c07#2e37293877b97eae42b1ec06a09e437b96b69c07"
 dependencies = [
  "bitflags",
  "cc",
@@ -1363,6 +1374,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tokio-seqpacket"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c6c35a3e32adef32541a7491eaabccdb8e0a7ea10c3ad9814f9ab8f1c9174da"
+dependencies = [
+ "filedesc",
+ "libc",
+ "tokio",
 ]
 
 [[package]]

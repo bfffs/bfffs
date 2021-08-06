@@ -3,6 +3,7 @@ use bfffs_core::{
     device_manager::DevManager,
     property::Property
 };
+use bfffs::Bfffs;
 use clap::{
     Clap,
     crate_version
@@ -131,6 +132,44 @@ impl Dump {
 /// Debugging tools
 enum DebugCmd {
     Dump(Dump)
+}
+
+mod fs {
+    use bfffs_core::rpc;
+    use std::path::Path;
+    use super::*;
+
+    /// Mount a file system
+    #[derive(Clap, Clone, Debug)]
+    pub(super) struct Mount {
+        /// Mount options, comma delimited
+        #[clap(short = 'o', long, require_delimiter(true), value_delimiter(','))]
+        options: Vec<String>,
+        /// Pool name
+        pool_name: String,
+        /// Mountpoint
+        mountpoint: PathBuf,
+    }
+
+    impl Mount {
+        pub(super) fn main(self, sock: &Path) {
+            // For now, hardcode tree_id to 0
+            let tree_id = TreeID::Fs(0);
+
+            let rt = runtime();
+            rt.block_on(async move {
+                let bfffs = Bfffs::new(sock).await.unwrap();
+                let req = rpc::Request::mount(self.mountpoint, tree_id);
+                bfffs.call(req).await.unwrap();
+            });
+        }
+    }
+
+    #[derive(Clap, Clone, Debug)]
+    /// Create, destroy, and modify file systems
+    pub(super) enum FsCmd {
+        Mount(Mount)
+    }
 }
 
 mod pool {
@@ -322,20 +361,26 @@ enum SubCommand{
     #[clap(subcommand)]
     Debug(DebugCmd),
     #[clap(subcommand)]
+    Fs(fs::FsCmd),
+    #[clap(subcommand)]
     Pool(pool::PoolCmd)
 }
 
 #[derive(Clap, Clone, Debug)]
 #[clap(version = crate_version!())]
-struct Bfffs {
+struct Cli {
+    /// Path to the bfffsd socket
+    #[clap(long, default_value = "/var/run/bfffsd.sock")]
+    sock: PathBuf,
     #[clap(subcommand)]
     cmd: SubCommand,
 }
 
 fn main() {
-    let bfffs: Bfffs = Bfffs::parse();
-    match bfffs.cmd {
+    let cli: Cli = Cli::parse();
+    match cli.cmd {
         SubCommand::Check(check) => check.main(),
+        SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock),
         SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main(),
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main(),
     }
@@ -360,7 +405,7 @@ mod t {
     #[case(vec!["bfffs", "pool", "create"])]
     #[case(vec!["bfffs", "pool", "create", "testpool"])]
     fn missing_arg(#[case] args: Vec<&str>) {
-        let e = Bfffs::try_parse_from(args).unwrap_err();
+        let e = Cli::try_parse_from(args).unwrap_err();
         assert!(e.kind == MissingRequiredArgument ||
                 e.kind == DisplayHelpOnMissingArgumentOrSubcommand);
     }
@@ -368,9 +413,9 @@ mod t {
     #[test]
     fn check() {
         let args = vec!["bfffs", "check", "testpool", "/dev/da0", "/dev/da1"];
-        let bfffs = Bfffs::try_parse_from(args).unwrap();
-        assert!(matches!(bfffs.cmd, SubCommand::Check(_)));
-        if let SubCommand::Check(check) = bfffs.cmd {
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert!(matches!(cli.cmd, SubCommand::Check(_)));
+        if let SubCommand::Check(check) = cli.cmd {
             assert_eq!(check.pool_name, "testpool");
             assert_eq!(check.disks[0], Path::new("/dev/da0"));
             assert_eq!(check.disks[1], Path::new("/dev/da1"));
@@ -384,9 +429,9 @@ mod t {
         fn dump_fsm() {
             let args = vec!["bfffs", "debug", "dump", "-f", "testpool",
                 "/dev/da0", "/dev/da1"];
-            let bfffs = Bfffs::try_parse_from(args).unwrap();
-            assert!(matches!(bfffs.cmd, SubCommand::Debug(_)));
-            if let SubCommand::Debug(DebugCmd::Dump(debug)) = bfffs.cmd {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.cmd, SubCommand::Debug(_)));
+            if let SubCommand::Debug(DebugCmd::Dump(debug)) = cli.cmd {
                 assert_eq!(debug.pool_name, "testpool");
                 assert!(debug.fsm);
                 assert!(!debug.tree);
@@ -399,9 +444,9 @@ mod t {
         fn dump_tree() {
             let args = vec!["bfffs", "debug", "dump", "-t", "testpool",
                 "/dev/da0", "/dev/da1"];
-            let bfffs = Bfffs::try_parse_from(args).unwrap();
-            assert!(matches!(bfffs.cmd, SubCommand::Debug(_)));
-            if let SubCommand::Debug(DebugCmd::Dump(debug)) = bfffs.cmd {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.cmd, SubCommand::Debug(_)));
+            if let SubCommand::Debug(DebugCmd::Dump(debug)) = cli.cmd {
                 assert_eq!(debug.pool_name, "testpool");
                 assert!(!debug.fsm);
                 assert!(debug.tree);
@@ -422,10 +467,10 @@ mod t {
             fn plain() {
                 let args = vec!["bfffs", "pool", "create", "testpool",
                     "/dev/da0"];
-                let bfffs = Bfffs::try_parse_from(args).unwrap();
-                assert!(matches!(bfffs.cmd,
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd,
                                  SubCommand::Pool(PoolCmd::Create(_))));
-                if let SubCommand::Pool(PoolCmd::Create(create)) = bfffs.cmd {
+                if let SubCommand::Pool(PoolCmd::Create(create)) = cli.cmd {
                     assert_eq!(create.pool_name, "testpool");
                     assert!(create.properties.is_empty());
                     assert!(create.zone_size.is_none());
@@ -438,10 +483,10 @@ mod t {
                 let args = vec!["bfffs", "pool", "create", "-p",
                     "atime=off,recsize=65536",
                     "testpool", "/dev/da0"];
-                let bfffs = Bfffs::try_parse_from(args).unwrap();
-                assert!(matches!(bfffs.cmd,
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd,
                                  SubCommand::Pool(PoolCmd::Create(_))));
-                if let SubCommand::Pool(PoolCmd::Create(create)) = bfffs.cmd {
+                if let SubCommand::Pool(PoolCmd::Create(create)) = cli.cmd {
                     assert_eq!(
                         create.properties,
                         vec!["atime=off", "recsize=65536"]
@@ -453,10 +498,10 @@ mod t {
             fn zone_size() {
                 let args = vec!["bfffs", "pool", "create", "--zone-size",
                     "128", "testpool", "/dev/da0"];
-                let bfffs = Bfffs::try_parse_from(args).unwrap();
-                assert!(matches!(bfffs.cmd,
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd,
                                  SubCommand::Pool(PoolCmd::Create(_))));
-                if let SubCommand::Pool(PoolCmd::Create(create)) = bfffs.cmd {
+                if let SubCommand::Pool(PoolCmd::Create(create)) = cli.cmd {
                     assert_eq!(create.zone_size, Some(128));
                 }
             }

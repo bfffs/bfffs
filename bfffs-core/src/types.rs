@@ -12,6 +12,7 @@ use serde::{
 };
 use std::{
     fmt::{self, Display, Formatter},
+    io,
     ops::{Add, AddAssign, Sub},
 };
 
@@ -55,7 +56,7 @@ pub type IoVecMut = DivBufMut;
 pub type LbaT = u64;
 
 /// BFFFS's error type.  Basically just an errno
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Primitive)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Primitive, Serialize)]
 pub enum Error {
     // Standard errnos
     EPERM           = libc::EPERM as isize,
@@ -174,6 +175,15 @@ impl Error {
     //}
     pub fn unhandled_error<E: fmt::Debug>(e: E) -> Error {
         panic!("Unhandled error {:?}", e)
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(e: io::Error) -> Self {
+        e.raw_os_error()
+            .map(Error::from_i32)
+            .flatten()
+            .unwrap_or(Error::EUNKNOWN)
     }
 }
 
