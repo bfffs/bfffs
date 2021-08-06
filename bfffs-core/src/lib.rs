@@ -1,6 +1,5 @@
 // vim: tw=80
 
-#![cfg_attr(feature = "nightly", feature(plugin))]
 #![cfg_attr(all(feature = "nightly", test), feature(test))]
 
 // Disable the range_plus_one lint until this bug is fixed.  It generates many
