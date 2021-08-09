@@ -30,7 +30,7 @@ lazy_static = "1.0"
 libc = "0.2.44"
 metrohash = "1.0"
 mockall_double = "0.2.0"
-nix = "0.21.0"
+nix = "0.22.0"
 num_enum = "0.5.1"
 num-traits = "0.2.0"
 serde = "1.0.60"
@@ -38,7 +38,7 @@ serde_derive = "1.0"
 serde_yaml = "0.8.16"
 time = "0.1"
 tokio = { version = "0.2.7", features = ["rt-threaded", "sync", "time"] }
-tokio-file = "0.6.0"
+tokio-file = { git = "http://github.com/asomers/tokio-file.git", rev = "b635285" }
 tracing = "0.1.5"
 tracing-futures = "0.2.4"
 uuid = { version = "0.8.2", features = ["serde", "v4"]}

@@ -181,10 +181,7 @@ impl Error {
 
 impl From<nix::Error> for Error {
     fn from(e: nix::Error) -> Self {
-        match e {
-            nix::Error::Sys(errno) => Error::from_i32(errno as i32).unwrap(),
-            _ => Error::EUNKNOWN
-        }
+        Error::from_i32(e as i32).unwrap_or(Error::EUNKNOWN)
     }
 }
 
@@ -193,7 +190,8 @@ impl From<Error> for i32 {
         match e {
             Error::EUNKNOWN =>
                 panic!("Unknown error codes should never be exposed"),
-            // Checksum errors are a special case of I/O errors
+            // Checksum errors are a special case of I/O errors until FreeBSD
+            // 12.1, whenthey will become EINTEGRITY errors
             Error::ECKSUM => Error::EIO.to_i32().unwrap(),
             _ => e.to_i32().unwrap()
         }
@@ -345,8 +343,8 @@ use super::*;
 
 #[test]
 fn test_error() {
-    assert_eq!(Error::EPERM, Error::from(nix::Error::Sys(nix::errno::Errno::EPERM)));
-    assert_eq!(Error::EUNKNOWN, Error::from(nix::Error::InvalidUtf8));
+    assert_eq!(Error::EPERM, Error::from(nix::errno::Errno::EPERM));
+    assert_eq!(Error::EUNKNOWN, Error::from(nix::Error::UnknownErrno));
 }
 
 #[test]

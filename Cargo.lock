@@ -682,8 +682,7 @@ dependencies = [
 [[package]]
 name = "mio-aio"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a83fa4de607dea009ec388e6ea0b225533801416af38947de94b2bc9c8b60c97"
+source = "git+https://github.com/asomers/mio-aio?rev=fceac1d#fceac1dbec12d1b9da4a49a1667368efd0fe7f62"
 dependencies = [
  "mio",
  "nix",
@@ -764,9 +763,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.21.0"
+version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c3728fec49d363a50a8828a190b379a446cc5cf085c06259bbbeb34447e4ec7"
+checksum = "cf1e25ee6b412c2a1e3fcb6a4499a5c1bfe7f43e014bdce9a6b6666e5aa2d187"
 dependencies = [
  "bitflags",
  "cc",
@@ -1352,8 +1351,7 @@ dependencies = [
 [[package]]
 name = "tokio-file"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9ea8c6fe155f33aead843d0b15a9c6b32356ca9d069d39fabadc390fecb2496"
+source = "git+http://github.com/asomers/tokio-file.git?rev=b635285#b6352855ee84ae88d5bb5e06a98299fa53ba3260"
 dependencies = [
  "futures",
  "mio",
