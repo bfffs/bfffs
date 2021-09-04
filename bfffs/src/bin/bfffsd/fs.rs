@@ -177,6 +177,7 @@ impl FuseFs {
         (ns, name)
     }
 
+    #[allow(clippy::if_same_then_else)]
     fn uncache_name(&mut self, parent_ino: u64, name: &OsStr) {
         let name_key = (parent_ino, name.to_owned());
         // TODO: handle multiply linked files
