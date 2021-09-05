@@ -23,8 +23,7 @@ use metrohash::MetroHash64;
 use num_enum::{IntoPrimitive, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
 use serde::{
-    Serialize,
-    Serializer,
+    ser::{Serialize, Serializer},
     de::DeserializeOwned
 };
 use std::{
@@ -622,7 +621,10 @@ impl FileType {
 
 mod timespec_serializer {
     use serde_derive::{Deserialize, Serialize};
-    use serde::{de::Deserializer, Deserialize, Serialize, Serializer};
+    use serde::{
+        de::{Deserializer, Deserialize},
+        ser::{Serialize, Serializer}
+    };
     use time::*;
 
     // time::Timespec doesn't derive Serde support.  Do it here.

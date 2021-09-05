@@ -18,10 +18,8 @@ use futures::{
 };
 use futures_locks::*;
 use serde::{
-    Deserialize,
-    Serialize,
-    Serializer,
-    de::{self, DeserializeOwned, Deserializer, SeqAccess, Visitor},
+    ser::{Serialize, Serializer},
+    de::{self, Deserialize, DeserializeOwned, Deserializer, SeqAccess, Visitor},
     ser::SerializeStruct,
 };
 use serde_derive::{Deserialize, Serialize};

@@ -6,6 +6,7 @@ edition = "2018"
 
 [features]
 default = ["fuse"]
+fuse = ["fuse3"]
 
 [[bin]]
 name = "bfffsd"
@@ -14,7 +15,7 @@ required-features = ["fuse"]
 [dependencies]
 bfffs-core = { path = "../bfffs-core" }
 cfg-if = "1.0"
-fuse = { version = "0.3.1", optional = true }
+fuse3 = { git = "https://github.com/Sherlock-Holo/fuse3.git", rev = "1f8605f", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
 libc = "0.2.44"
 time = "0.1"

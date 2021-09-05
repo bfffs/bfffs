@@ -8,7 +8,13 @@ use bfffs_core::{
     fs::{ExtAttr, ExtAttrNamespace, FileData, SetAttr}
 };
 use cfg_if::cfg_if;
-use fuse::{FileAttr, FileType };
+use fuse3::{
+    FileType,
+    raw::{
+        Filesystem,
+        reply::{FileAttr, ReplyEntry}
+    }
+};
 use std::{
     collections::hash_map::HashMap,
     ffi::{OsString, OsStr},
@@ -23,25 +29,25 @@ use tokio::runtime::Handle;
 cfg_if! {
     if #[cfg(test)] {
         mod mock;
-        use self::mock::Filesystem;
+        //use self::mock::Filesystem;
         use self::mock::MockFs as Fs;
-        use self::mock::MockRequest as Request;
-        use self::mock::MockReplyAttr as ReplyAttr;
-        use self::mock::MockReplyCreate as ReplyCreate;
-        use self::mock::MockReplyData as ReplyData;
-        use self::mock::MockReplyDirectory as ReplyDirectory;
-        use self::mock::MockReplyEmpty as ReplyEmpty;
-        use self::mock::MockReplyEntry as ReplyEntry;
-        use self::mock::MockReplyStatfs as ReplyStatfs;
-        use self::mock::MockReplyWrite as ReplyWrite;
-        use self::mock::MockReplyXattr as ReplyXattr;
-        pub use self::mock::mount;
+        //use self::mock::MockRequest as Request;
+        //use self::mock::MockReplyAttr as ReplyAttr;
+        //use self::mock::MockReplyCreate as ReplyCreate;
+        //use self::mock::MockReplyData as ReplyData;
+        //use self::mock::MockReplyDirectory as ReplyDirectory;
+        //use self::mock::MockReplyEmpty as ReplyEmpty;
+        //use self::mock::MockReplyEntry as ReplyEntry;
+        //use self::mock::MockReplyStatfs as ReplyStatfs;
+        //use self::mock::MockReplyWrite as ReplyWrite;
+        //use self::mock::MockReplyXattr as ReplyXattr;
+        //pub use self::mock::mount;
     } else {
-        use fuse::{Filesystem, ReplyAttr, ReplyCreate, ReplyData,
-                   ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyStatfs,
-                   ReplyWrite, ReplyXattr, Request};
+        //use fuse3::{Filesystem, ReplyAttr, ReplyCreate, ReplyData,
+                   //ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyStatfs,
+                   //ReplyWrite, ReplyXattr, Request};
         use bfffs_core::fs::Fs;
-        pub use fuse::mount;
+        ////pub use fuse::mount;
     }
 }
 
@@ -190,533 +196,533 @@ impl FuseFs {
 }
 
 impl Filesystem for FuseFs {
-    fn create(&mut self, req: &Request, parent: u64, name: &OsStr,
-              mode: u32, _flags: u32, reply: ReplyCreate) {
-        let parent_fd = self.files.get(&parent)
-            .expect("create before lookup of parent directory");
+    //fn create(&mut self, req: &Request, parent: u64, name: &OsStr,
+              //mode: u32, _flags: u32, reply: ReplyCreate) {
+        //let parent_fd = self.files.get(&parent)
+            //.expect("create before lookup of parent directory");
 
-        // FUSE combines the functions of VOP_CREATE and VOP_GETATTR
-        // into one.
-        let perm = (mode & 0o7777) as u16;
-        let r = self.fs.create(parent_fd, name, perm, req.uid(), req.gid())
-            .and_then(|fd| {
-                let r = self.do_getattr(&fd);
-                if r.is_ok() {
-                    self.cache_file(parent, name, fd);
-                } else {
-                    self.fs.inactive(fd);
-                }
-                r
-            });
-        match r {
-            Ok(file_attr) => {
-                // The generation number is only used for filesystems exported
-                // by NFS, and is only needed if the filesystem reuses deleted
-                // inodes.  BFFFS does not reuse deleted inodes.
-                let gen = 0;
-                reply.created(&Self::TTL, &file_attr, gen, 0, 0)
-            },
-            Err(e) => {
-                reply.error(e)
-            }
-        }
-    }
+        //// FUSE combines the functions of VOP_CREATE and VOP_GETATTR
+        //// into one.
+        //let perm = (mode & 0o7777) as u16;
+        //let r = self.fs.create(parent_fd, name, perm, req.uid(), req.gid())
+            //.and_then(|fd| {
+                //let r = self.do_getattr(&fd);
+                //if r.is_ok() {
+                    //self.cache_file(parent, name, fd);
+                //} else {
+                    //self.fs.inactive(fd);
+                //}
+                //r
+            //});
+        //match r {
+            //Ok(file_attr) => {
+                //// The generation number is only used for filesystems exported
+                //// by NFS, and is only needed if the filesystem reuses deleted
+                //// inodes.  BFFFS does not reuse deleted inodes.
+                //let gen = 0;
+                //reply.created(&Self::TTL, &file_attr, gen, 0, 0)
+            //},
+            //Err(e) => {
+                //reply.error(e)
+            //}
+        //}
+    //}
 
-    fn destroy(&mut self, _req: &Request) {
-        self.fs.sync()
-    }
+    //fn destroy(&mut self, _req: &Request) {
+        //self.fs.sync()
+    //}
 
-    fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {
-        // XXX will FUSE_FORGET ever be sent with nlookup less than the actual
-        // lookup count?  Not as far as I know.
-        // TODO: figure out how to expire entries from the name cache, too
-        let mut fd = self.files.remove(&ino)
-            .expect("Forget before lookup or double-forget");
-        fd.lookup_count -= nlookup;
-        assert_eq!(fd.lookup_count, 0, "Partial forgets are not yet handled");
-        self.fs.inactive(fd);
-    }
+    //fn forget(&mut self, _req: &Request, ino: u64, nlookup: u64) {
+        //// XXX will FUSE_FORGET ever be sent with nlookup less than the actual
+        //// lookup count?  Not as far as I know.
+        //// TODO: figure out how to expire entries from the name cache, too
+        //let mut fd = self.files.remove(&ino)
+            //.expect("Forget before lookup or double-forget");
+        //fd.lookup_count -= nlookup;
+        //assert_eq!(fd.lookup_count, 0, "Partial forgets are not yet handled");
+        //self.fs.inactive(fd);
+    //}
 
-    fn fsync(&mut self, _req: &Request, ino: u64, _fh: u64, _datasync: bool,
-             reply: ReplyEmpty)
-    {
-        let fd = self.files.get(&ino)
-            .expect("fsync before lookup or after forget");
-        match self.fs.fsync(fd) {
-            Ok(()) => reply.ok(),
-            Err(e) => reply.error(e)
-        }
-    }
+    //fn fsync(&mut self, _req: &Request, ino: u64, _fh: u64, _datasync: bool,
+             //reply: ReplyEmpty)
+    //{
+        //let fd = self.files.get(&ino)
+            //.expect("fsync before lookup or after forget");
+        //match self.fs.fsync(fd) {
+            //Ok(()) => reply.ok(),
+            //Err(e) => reply.error(e)
+        //}
+    //}
 
-    fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        let fd = self.files.get(&ino)
-            .expect("getattr before lookup or after forget");
-        match self.do_getattr(fd) {
-            Ok(file_attr) => reply.attr(&Self::TTL, &file_attr),
-            Err(errno) => reply.error(errno)
-        }
-    }
+    //fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
+        //let fd = self.files.get(&ino)
+            //.expect("getattr before lookup or after forget");
+        //match self.do_getattr(fd) {
+            //Ok(file_attr) => reply.attr(&Self::TTL, &file_attr),
+            //Err(errno) => reply.error(errno)
+        //}
+    //}
 
-    fn getxattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
-                size: u32, reply: ReplyXattr)
-    {
-        let fd = self.files.get(&ino)
-            .expect("getxattr before lookup or after forget");
-        let (ns, name) = FuseFs::split_xattr_name(packed_name);
-        if size == 0 {
-            match self.fs.getextattrlen(fd, ns, name) {
-                Ok(len) => reply.size(len),
-                Err(errno) => reply.error(errno)
-            }
-        } else {
-            match self.fs.getextattr(fd, ns, name) {
-                // data copy
-                Ok(buf) => {
-                    if buf.len() <= size as usize {
-                        reply.data(&buf[..])
-                    } else {
-                        reply.error(libc::ERANGE)
-                    }
-                },
-                Err(errno) => reply.error(errno)
-            }
-        }
-    }
+    //fn getxattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
+                //size: u32, reply: ReplyXattr)
+    //{
+        //let fd = self.files.get(&ino)
+            //.expect("getxattr before lookup or after forget");
+        //let (ns, name) = FuseFs::split_xattr_name(packed_name);
+        //if size == 0 {
+            //match self.fs.getextattrlen(fd, ns, name) {
+                //Ok(len) => reply.size(len),
+                //Err(errno) => reply.error(errno)
+            //}
+        //} else {
+            //match self.fs.getextattr(fd, ns, name) {
+                //// data copy
+                //Ok(buf) => {
+                    //if buf.len() <= size as usize {
+                        //reply.data(&buf[..])
+                    //} else {
+                        //reply.error(libc::ERANGE)
+                    //}
+                //},
+                //Err(errno) => reply.error(errno)
+            //}
+        //}
+    //}
 
-    fn link(&mut self, _req: &Request, ino: u64, parent: u64,
-            name: &OsStr, reply: ReplyEntry)
-    {
-        let parent_fd = self.files.get(&parent)
-            .expect("link before lookup or after forget");
-        let fd = self.files.get(&ino)
-            .expect("link before lookup or after forget");
-        let ino = fd.ino();
-        match self.fs.link(parent_fd, fd, name) {
-            Ok(_) => {
-                match self.do_getattr(fd) {
-                    Ok(file_attr) => {
-                        self.cache_name(parent, name, ino);
-                        self.reply_entry(&file_attr, reply);
-                    },
-                    Err(e) => reply.error(e),
-                };
-            },
-            Err(e) => reply.error(e)
-        }
-    }
+    //fn link(&mut self, _req: &Request, ino: u64, parent: u64,
+            //name: &OsStr, reply: ReplyEntry)
+    //{
+        //let parent_fd = self.files.get(&parent)
+            //.expect("link before lookup or after forget");
+        //let fd = self.files.get(&ino)
+            //.expect("link before lookup or after forget");
+        //let ino = fd.ino();
+        //match self.fs.link(parent_fd, fd, name) {
+            //Ok(_) => {
+                //match self.do_getattr(fd) {
+                    //Ok(file_attr) => {
+                        //self.cache_name(parent, name, ino);
+                        //self.reply_entry(&file_attr, reply);
+                    //},
+                    //Err(e) => reply.error(e),
+                //};
+            //},
+            //Err(e) => reply.error(e)
+        //}
+    //}
 
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr,
-               reply: ReplyEntry)
-    {
-        let parent_fd = self.files.get(&parent)
-            .expect("lookup of child before lookup of parent");
-        let grandparent_fd = self.files.get(&parent);
-        match self.names.get(&(parent, name.to_owned())) {
-            Some(ino) => match self.files.get(ino) {
-                Some(fd) => {
-                    // Name and inode are cached
-                    match self.do_getattr(fd) {
-                        Ok(file_attr) => {
-                            self.files.get_mut(ino).unwrap().lookup_count += 1;
-                            self.reply_entry(&file_attr, reply)
-                        },
-                        Err(e) => reply.error(e),
-                    }
-                },
-                None => {
-                    // Only name is cached
-                    let r = self.fs.lookup(grandparent_fd, parent_fd, name)
-                    .and_then(|fd| {
-                        match self.do_getattr(&fd) {
-                            Ok(file_attr) => {
-                                let ino = fd.ino();
-                                assert!(self.files.insert(ino, fd).is_none(),
-                                    "Inode number reuse detected");
-                                Ok(file_attr)
-                            },
-                            Err(e) => {
-                                self.fs.inactive(fd);
-                                Err(e)
-                            }
-                        }
-                    });
-                    match r {
-                        Ok(file_attr) => self.reply_entry(&file_attr, reply),
-                        Err(e) => reply.error(e)
-                    }
-                }
-            },
-            None => {
-                // Name is not cached
-                let r = self.fs.lookup(grandparent_fd, parent_fd, name);
-                self.handle_new_entry(r, parent, name, reply);
-            }
-        }
-    }
+    //fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr,
+               //reply: ReplyEntry)
+    //{
+        //let parent_fd = self.files.get(&parent)
+            //.expect("lookup of child before lookup of parent");
+        //let grandparent_fd = self.files.get(&parent);
+        //match self.names.get(&(parent, name.to_owned())) {
+            //Some(ino) => match self.files.get(ino) {
+                //Some(fd) => {
+                    //// Name and inode are cached
+                    //match self.do_getattr(fd) {
+                        //Ok(file_attr) => {
+                            //self.files.get_mut(ino).unwrap().lookup_count += 1;
+                            //self.reply_entry(&file_attr, reply)
+                        //},
+                        //Err(e) => reply.error(e),
+                    //}
+                //},
+                //None => {
+                    //// Only name is cached
+                    //let r = self.fs.lookup(grandparent_fd, parent_fd, name)
+                    //.and_then(|fd| {
+                        //match self.do_getattr(&fd) {
+                            //Ok(file_attr) => {
+                                //let ino = fd.ino();
+                                //assert!(self.files.insert(ino, fd).is_none(),
+                                    //"Inode number reuse detected");
+                                //Ok(file_attr)
+                            //},
+                            //Err(e) => {
+                                //self.fs.inactive(fd);
+                                //Err(e)
+                            //}
+                        //}
+                    //});
+                    //match r {
+                        //Ok(file_attr) => self.reply_entry(&file_attr, reply),
+                        //Err(e) => reply.error(e)
+                    //}
+                //}
+            //},
+            //None => {
+                //// Name is not cached
+                //let r = self.fs.lookup(grandparent_fd, parent_fd, name);
+                //self.handle_new_entry(r, parent, name, reply);
+            //}
+        //}
+    //}
 
-    /// Get a list of all of the file's extended attributes
-    ///
-    /// # Parameters
-    ///
-    /// - `size`:   Maximum size to return.  If `0`, then `listxattr` will
-    ///             return the size of buffer needed, but no data.
-    ///
-    /// # Returns
-    ///
-    /// All of the file's extended attributes, concatenated and packed in the
-    /// form `<NAMESPACE>.<NAME>\0`.
-    fn listxattr(&mut self, _req: &Request, ino: u64, size: u32,
-                 reply: ReplyXattr)
-    {
-        let fd = self.files.get(&ino)
-            .expect("listxattr before lookup or after forget");
-        if size == 0 {
-            let f = |extattr: &ExtAttr<RID>| {
-                let name = extattr.name();
-                let prefix_len = match extattr.namespace() {
-                    ExtAttrNamespace::User => b"user.".len(),
-                    ExtAttrNamespace::System => b"system.".len(),
-                } as u32;
-                prefix_len + name.as_bytes().len() as u32 + 1
-            };
-            match self.fs.listextattrlen(fd, f) {
-                Ok(len) => reply.size(len),
-                Err(errno) => reply.error(errno)
-            }
-        } else {
-            let f = |buf: &mut Vec<u8>, extattr: &ExtAttr<RID>| {
-                let s = match extattr.namespace() {
-                    ExtAttrNamespace::User => &b"user."[..],
-                    ExtAttrNamespace::System => &b"system."[..],
-                };
-                buf.extend_from_slice(s);
-                buf.extend_from_slice(extattr.name().as_bytes());
-                buf.push(b'\0');
-            };
-            match self.fs.listextattr(fd, size, f) {
-                Ok(buf) => {
-                    if buf.len() <= size as usize {
-                        // data copy
-                        reply.data(&buf[..])
-                    } else {
-                        reply.error(libc::ERANGE)
-                    }
-                },
-                Err(errno) => reply.error(errno)
-            }
-        }
-    }
+    ///// Get a list of all of the file's extended attributes
+    /////
+    ///// # Parameters
+    /////
+    ///// - `size`:   Maximum size to return.  If `0`, then `listxattr` will
+    /////             return the size of buffer needed, but no data.
+    /////
+    ///// # Returns
+    /////
+    ///// All of the file's extended attributes, concatenated and packed in the
+    ///// form `<NAMESPACE>.<NAME>\0`.
+    //fn listxattr(&mut self, _req: &Request, ino: u64, size: u32,
+                 //reply: ReplyXattr)
+    //{
+        //let fd = self.files.get(&ino)
+            //.expect("listxattr before lookup or after forget");
+        //if size == 0 {
+            //let f = |extattr: &ExtAttr<RID>| {
+                //let name = extattr.name();
+                //let prefix_len = match extattr.namespace() {
+                    //ExtAttrNamespace::User => b"user.".len(),
+                    //ExtAttrNamespace::System => b"system.".len(),
+                //} as u32;
+                //prefix_len + name.as_bytes().len() as u32 + 1
+            //};
+            //match self.fs.listextattrlen(fd, f) {
+                //Ok(len) => reply.size(len),
+                //Err(errno) => reply.error(errno)
+            //}
+        //} else {
+            //let f = |buf: &mut Vec<u8>, extattr: &ExtAttr<RID>| {
+                //let s = match extattr.namespace() {
+                    //ExtAttrNamespace::User => &b"user."[..],
+                    //ExtAttrNamespace::System => &b"system."[..],
+                //};
+                //buf.extend_from_slice(s);
+                //buf.extend_from_slice(extattr.name().as_bytes());
+                //buf.push(b'\0');
+            //};
+            //match self.fs.listextattr(fd, size, f) {
+                //Ok(buf) => {
+                    //if buf.len() <= size as usize {
+                        //// data copy
+                        //reply.data(&buf[..])
+                    //} else {
+                        //reply.error(libc::ERANGE)
+                    //}
+                //},
+                //Err(errno) => reply.error(errno)
+            //}
+        //}
+    //}
 
-    fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
-                 reply: ReplyEntry)
-    {
-        let parent_fd = self.files.get(&parent)
-            .expect("mkdir of child before lookup of parent");
-        let perm = (mode & 0o7777) as u16;
-        let r = self.fs.mkdir(parent_fd, name, perm, req.uid(), req.gid());
-        self.handle_new_entry(r, parent, name, reply);
-    }
+    //fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
+                 //reply: ReplyEntry)
+    //{
+        //let parent_fd = self.files.get(&parent)
+            //.expect("mkdir of child before lookup of parent");
+        //let perm = (mode & 0o7777) as u16;
+        //let r = self.fs.mkdir(parent_fd, name, perm, req.uid(), req.gid());
+        //self.handle_new_entry(r, parent, name, reply);
+    //}
 
-    fn mknod(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
-             rdev: u32, reply: ReplyEntry)
-    {
-        let parent_fd = self.files.get(&parent)
-            .expect("mknod of child before lookup of parent");
-        let perm = (mode & 0o7777) as u16;
-        let r = match mode as u16 & libc::S_IFMT {
-            libc::S_IFIFO =>
-                self.fs.mkfifo(parent_fd, name, perm, req.uid(), req.gid()),
-            libc::S_IFCHR =>
-                self.fs.mkchar(parent_fd, name, perm, req.uid(), req.gid(),
-                    rdev),
-            libc::S_IFBLK =>
-                self.fs.mkblock(parent_fd, name, perm, req.uid(), req.gid(),
-                    rdev),
-            libc::S_IFSOCK =>
-                self.fs.mksock(parent_fd, name, perm, req.uid(), req.gid()),
-            _ => Err(libc::EOPNOTSUPP)
-        };
-        self.handle_new_entry(r, parent, name, reply);
-    }
+    //fn mknod(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32,
+             //rdev: u32, reply: ReplyEntry)
+    //{
+        //let parent_fd = self.files.get(&parent)
+            //.expect("mknod of child before lookup of parent");
+        //let perm = (mode & 0o7777) as u16;
+        //let r = match mode as u16 & libc::S_IFMT {
+            //libc::S_IFIFO =>
+                //self.fs.mkfifo(parent_fd, name, perm, req.uid(), req.gid()),
+            //libc::S_IFCHR =>
+                //self.fs.mkchar(parent_fd, name, perm, req.uid(), req.gid(),
+                    //rdev),
+            //libc::S_IFBLK =>
+                //self.fs.mkblock(parent_fd, name, perm, req.uid(), req.gid(),
+                    //rdev),
+            //libc::S_IFSOCK =>
+                //self.fs.mksock(parent_fd, name, perm, req.uid(), req.gid()),
+            //_ => Err(libc::EOPNOTSUPP)
+        //};
+        //self.handle_new_entry(r, parent, name, reply);
+    //}
 
-    fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
-            size: u32, reply: ReplyData)
-    {
-        let fd = self.files.get(&ino)
-            .expect("read before lookup or after forget");
-        match self.fs.read(fd, offset as u64, size as usize) {
-            Ok(ref sglist) if sglist.is_empty() => reply.data(&[]),
-            Ok(sglist) => {
-                if sglist.len() == 1 {
-                    reply.data(&sglist[0][..])
-                } else {
-                    // Vectored data requires an additional data copy, thanks to
-                    // https://github.com/zargony/rust-fuse/issues/120
-                    let total_len = sglist.iter()
-                        .map(|iovec| iovec.len())
-                        .sum();
-                    let mut v = Vec::with_capacity(total_len);
-                    for iov in sglist.into_iter() {
-                        v.extend_from_slice(&iov[..]);
-                    }
-                    reply.data(&v[..])
-                }
-            }
-            Err(errno) => reply.error(errno)
-        }
-    }
+    //fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
+            //size: u32, reply: ReplyData)
+    //{
+        //let fd = self.files.get(&ino)
+            //.expect("read before lookup or after forget");
+        //match self.fs.read(fd, offset as u64, size as usize) {
+            //Ok(ref sglist) if sglist.is_empty() => reply.data(&[]),
+            //Ok(sglist) => {
+                //if sglist.len() == 1 {
+                    //reply.data(&sglist[0][..])
+                //} else {
+                    //// Vectored data requires an additional data copy, thanks to
+                    //// https://github.com/zargony/rust-fuse/issues/120
+                    //let total_len = sglist.iter()
+                        //.map(|iovec| iovec.len())
+                        //.sum();
+                    //let mut v = Vec::with_capacity(total_len);
+                    //for iov in sglist.into_iter() {
+                        //v.extend_from_slice(&iov[..]);
+                    //}
+                    //reply.data(&v[..])
+                //}
+            //}
+            //Err(errno) => reply.error(errno)
+        //}
+    //}
 
-    fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
-               mut reply: ReplyDirectory)
-    {
-        let fd = self.files.get(&ino)
-            .expect("read before lookup or after forget");
-        for v in self.fs.readdir(fd, offset) {
-            match v {
-                Ok((dirent, offset)) => {
-                    let ft = match dirent.d_type {
-                        libc::DT_FIFO => FileType::NamedPipe,
-                        libc::DT_CHR => FileType::CharDevice,
-                        libc::DT_DIR => FileType::Directory,
-                        libc::DT_BLK => FileType::BlockDevice,
-                        libc::DT_REG => FileType::RegularFile,
-                        libc::DT_LNK => FileType::Symlink,
-                        libc::DT_SOCK => FileType::Socket,
-                        e => panic!("Unknown dirent type {:?}", e)
-                    };
-                    let nameptr = dirent.d_name.as_ptr() as *const u8;
-                    let namelen = usize::from(dirent.d_namlen);
-                    let name = unsafe{slice::from_raw_parts(nameptr, namelen)};
-                    let r = reply.add(dirent.d_fileno.into(), offset, ft,
-                        OsStr::from_bytes(name));
-                    if r {
-                        // Out of space in the reply buffer.  
-                        break
-                    }
-                },
-                Err(e) => {
-                    reply.error(e);
-                    return;
-                }
-            }
-        }
-        reply.ok();
-    }
+    //fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
+               //mut reply: ReplyDirectory)
+    //{
+        //let fd = self.files.get(&ino)
+            //.expect("read before lookup or after forget");
+        //for v in self.fs.readdir(fd, offset) {
+            //match v {
+                //Ok((dirent, offset)) => {
+                    //let ft = match dirent.d_type {
+                        //libc::DT_FIFO => FileType::NamedPipe,
+                        //libc::DT_CHR => FileType::CharDevice,
+                        //libc::DT_DIR => FileType::Directory,
+                        //libc::DT_BLK => FileType::BlockDevice,
+                        //libc::DT_REG => FileType::RegularFile,
+                        //libc::DT_LNK => FileType::Symlink,
+                        //libc::DT_SOCK => FileType::Socket,
+                        //e => panic!("Unknown dirent type {:?}", e)
+                    //};
+                    //let nameptr = dirent.d_name.as_ptr() as *const u8;
+                    //let namelen = usize::from(dirent.d_namlen);
+                    //let name = unsafe{slice::from_raw_parts(nameptr, namelen)};
+                    //let r = reply.add(dirent.d_fileno.into(), offset, ft,
+                        //OsStr::from_bytes(name));
+                    //if r {
+                        //// Out of space in the reply buffer.  
+                        //break
+                    //}
+                //},
+                //Err(e) => {
+                    //reply.error(e);
+                    //return;
+                //}
+            //}
+        //}
+        //reply.ok();
+    //}
 
-    fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
-        let fd = self.files.get(&ino)
-            .expect("readlink before lookup or after forget");
-        match self.fs.readlink(fd) {
-            Ok(path) => reply.data(path.as_bytes()),
-            Err(errno) => reply.error(errno)
-        }
-    }
+    //fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
+        //let fd = self.files.get(&ino)
+            //.expect("readlink before lookup or after forget");
+        //match self.fs.readlink(fd) {
+            //Ok(path) => reply.data(path.as_bytes()),
+            //Err(errno) => reply.error(errno)
+        //}
+    //}
 
-    fn removexattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
-                   reply: ReplyEmpty)
-    {
-        let fd = self.files.get(&ino)
-            .expect("removexattr before lookup or after forget");
-        let (ns, name) = FuseFs::split_xattr_name(packed_name);
-        match self.fs.deleteextattr(fd, ns, name) {
-            Ok(()) => reply.ok(),
-            Err(errno) => reply.error(errno)
-        }
-    }
+    //fn removexattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
+                   //reply: ReplyEmpty)
+    //{
+        //let fd = self.files.get(&ino)
+            //.expect("removexattr before lookup or after forget");
+        //let (ns, name) = FuseFs::split_xattr_name(packed_name);
+        //match self.fs.deleteextattr(fd, ns, name) {
+            //Ok(()) => reply.ok(),
+            //Err(errno) => reply.error(errno)
+        //}
+    //}
 
-    // Note: rename is vulnerable to directory loops when linked against fuse2.
-    // rust-fuse can't yet use fuse3.  See also:
-    // https://github.com/zargony/rust-fuse/pull/97
-    // https://github.com/libfuse/libfuse/commit/d105faf
-    fn rename(&mut self, _req: &Request, parent: u64, name: &OsStr,
-        newparent: u64, newname: &OsStr, reply: ReplyEmpty)
-    {
-        let new_ino = self.names.get(&(newparent, newname.to_owned()))
-            .cloned();
-        let parent_fd = self.files.get(&parent)
-            .expect("rename before lookup or after forget of parent");
-        let newparent_fd = self.files.get(&newparent)
-            .expect("rename before lookup or after forget of new parent");
-        let newname_key = (newparent, newname.to_owned());
+    //// Note: rename is vulnerable to directory loops when linked against fuse2.
+    //// rust-fuse can't yet use fuse3.  See also:
+    //// https://github.com/zargony/rust-fuse/pull/97
+    //// https://github.com/libfuse/libfuse/commit/d105faf
+    //fn rename(&mut self, _req: &Request, parent: u64, name: &OsStr,
+        //newparent: u64, newname: &OsStr, reply: ReplyEmpty)
+    //{
+        //let new_ino = self.names.get(&(newparent, newname.to_owned()))
+            //.cloned();
+        //let parent_fd = self.files.get(&parent)
+            //.expect("rename before lookup or after forget of parent");
+        //let newparent_fd = self.files.get(&newparent)
+            //.expect("rename before lookup or after forget of new parent");
+        //let newname_key = (newparent, newname.to_owned());
 
-        // Dirloop check
-        let src_ino = *self.names.get(&(parent, name.to_owned()))
-            .expect("rename before lookup or after forget of source");
-        let src_fd = self.files.get(&src_ino)
-            .expect("rename before lookup or after forget of source");
-        let mut fd = self.files.get(&newparent)
-            .expect("Uncached destination directory");
-        loop {
-            match fd.parent() {
-                None => {
-                    // Root directory, or not a directory
-                    break;
-                },
-                Some(ino) if src_ino == ino => {
-                    // Dirloop detected!
-                    reply.error(libc::EINVAL);
-                    return;
-                },
-                // Keep recursing
-                _ => {
-                    fd = self.files.get(&fd.parent().unwrap())
-                        .expect("Uncached parent directory");
-                }
-            }
-        }
+        //// Dirloop check
+        //let src_ino = *self.names.get(&(parent, name.to_owned()))
+            //.expect("rename before lookup or after forget of source");
+        //let src_fd = self.files.get(&src_ino)
+            //.expect("rename before lookup or after forget of source");
+        //let mut fd = self.files.get(&newparent)
+            //.expect("Uncached destination directory");
+        //loop {
+            //match fd.parent() {
+                //None => {
+                    //// Root directory, or not a directory
+                    //break;
+                //},
+                //Some(ino) if src_ino == ino => {
+                    //// Dirloop detected!
+                    //reply.error(libc::EINVAL);
+                    //return;
+                //},
+                //// Keep recursing
+                //_ => {
+                    //fd = self.files.get(&fd.parent().unwrap())
+                        //.expect("Uncached parent directory");
+                //}
+            //}
+        //}
 
-        match self.fs.rename(parent_fd, src_fd, name, newparent_fd,
-            new_ino, newname)
-        {
-            Ok(ino) => {
-                assert_eq!(ino, src_ino);
-                // Remove the cached destination file, if any
-                self.uncache_name(newparent, newname);
-                // Remove the cached source name (but not inode)
-                let name_key = (parent, name.to_owned());
-                let cache_ino = self.names.remove(&name_key).unwrap();
-                assert_eq!(ino, cache_ino);
-                // And cache it in the new location
-                self.names.insert(newname_key, cache_ino);
-                // Reparent the moved file
-                if let Some(fd) = self.files.get_mut(&ino) {
-                    fd.reparent(newparent);
-                }
-                reply.ok()
-            },
-            Err(errno) => {
-                reply.error(errno);
-            }
-        }
-    }
+        //match self.fs.rename(parent_fd, src_fd, name, newparent_fd,
+            //new_ino, newname)
+        //{
+            //Ok(ino) => {
+                //assert_eq!(ino, src_ino);
+                //// Remove the cached destination file, if any
+                //self.uncache_name(newparent, newname);
+                //// Remove the cached source name (but not inode)
+                //let name_key = (parent, name.to_owned());
+                //let cache_ino = self.names.remove(&name_key).unwrap();
+                //assert_eq!(ino, cache_ino);
+                //// And cache it in the new location
+                //self.names.insert(newname_key, cache_ino);
+                //// Reparent the moved file
+                //if let Some(fd) = self.files.get_mut(&ino) {
+                    //fd.reparent(newparent);
+                //}
+                //reply.ok()
+            //},
+            //Err(errno) => {
+                //reply.error(errno);
+            //}
+        //}
+    //}
 
-    fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr,
-             reply: ReplyEmpty)
-    {
-        let parent_fd = self.files.get(&parent)
-            .expect("rmdir before lookup or after forget");
-        match self.fs.rmdir(parent_fd, name) {
-            Ok(()) => {
-                self.uncache_name(parent, name);
-                reply.ok()
-            },
-            Err(errno) => reply.error(errno)
-        }
-    }
+    //fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr,
+             //reply: ReplyEmpty)
+    //{
+        //let parent_fd = self.files.get(&parent)
+            //.expect("rmdir before lookup or after forget");
+        //match self.fs.rmdir(parent_fd, name) {
+            //Ok(()) => {
+                //self.uncache_name(parent, name);
+                //reply.ok()
+            //},
+            //Err(errno) => reply.error(errno)
+        //}
+    //}
 
-    fn setattr(&mut self,
-               _req: &Request,
-               ino: u64,
-               mode: Option<u32>,
-               uid: Option<u32>,
-               gid: Option<u32>,
-               size: Option<u64>,
-               atime: Option<Timespec>,
-               mtime: Option<Timespec>,
-               _fh: Option<u64>,
-               crtime: Option<Timespec>,
-               chgtime: Option<Timespec>,
-               _bkuptime: Option<Timespec>,
-               flags: Option<u32>,
-               reply: ReplyAttr)
-    {
-        let fd = self.files.get(&ino)
-            .expect("setattr before lookup or after forget");
-        let attr = SetAttr {
-            perm: mode.map(|m| (m & 0o7777) as u16),
-            uid,
-            gid,
-            size,
-            atime,
-            mtime,
-            ctime: chgtime,
-            birthtime: crtime,
-            flags: flags.map(u64::from)
-        };
-        let r = self.fs.setattr(fd, attr)
-        .and_then(|_| self.do_getattr(fd));
-        // FUSE combines the functions of VOP_SETATTR and VOP_GETATTR
-        // into one.
-        match r {
-            Ok(file_attr) => {
-                reply.attr(&Self::TTL, &file_attr)
-            },
-            Err(e) => {
-                reply.error(e)
-            }
-        }
-    }
+    //fn setattr(&mut self,
+               //_req: &Request,
+               //ino: u64,
+               //mode: Option<u32>,
+               //uid: Option<u32>,
+               //gid: Option<u32>,
+               //size: Option<u64>,
+               //atime: Option<Timespec>,
+               //mtime: Option<Timespec>,
+               //_fh: Option<u64>,
+               //crtime: Option<Timespec>,
+               //chgtime: Option<Timespec>,
+               //_bkuptime: Option<Timespec>,
+               //flags: Option<u32>,
+               //reply: ReplyAttr)
+    //{
+        //let fd = self.files.get(&ino)
+            //.expect("setattr before lookup or after forget");
+        //let attr = SetAttr {
+            //perm: mode.map(|m| (m & 0o7777) as u16),
+            //uid,
+            //gid,
+            //size,
+            //atime,
+            //mtime,
+            //ctime: chgtime,
+            //birthtime: crtime,
+            //flags: flags.map(u64::from)
+        //};
+        //let r = self.fs.setattr(fd, attr)
+        //.and_then(|_| self.do_getattr(fd));
+        //// FUSE combines the functions of VOP_SETATTR and VOP_GETATTR
+        //// into one.
+        //match r {
+            //Ok(file_attr) => {
+                //reply.attr(&Self::TTL, &file_attr)
+            //},
+            //Err(e) => {
+                //reply.error(e)
+            //}
+        //}
+    //}
 
-    fn setxattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
-                value: &[u8], _flags: u32, _position: u32, reply: ReplyEmpty)
-    {
-        let fd = self.files.get(&ino)
-            .expect("setxattr before lookup or after forget");
-        let (ns, name) = FuseFs::split_xattr_name(packed_name);
-        match self.fs.setextattr(fd, ns, name, value) {
-            Ok(()) => reply.ok(),
-            Err(errno) => reply.error(errno)
-        }
-    }
+    //fn setxattr(&mut self, _req: &Request, ino: u64, packed_name: &OsStr,
+                //value: &[u8], _flags: u32, _position: u32, reply: ReplyEmpty)
+    //{
+        //let fd = self.files.get(&ino)
+            //.expect("setxattr before lookup or after forget");
+        //let (ns, name) = FuseFs::split_xattr_name(packed_name);
+        //match self.fs.setextattr(fd, ns, name, value) {
+            //Ok(()) => reply.ok(),
+            //Err(errno) => reply.error(errno)
+        //}
+    //}
 
-    fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
-        match self.fs.statvfs() {
-            Ok(statvfs) =>
-                reply.statfs(statvfs.f_blocks, statvfs.f_bfree,
-                             statvfs.f_bavail, statvfs.f_files, statvfs.f_ffree,
-                             statvfs.f_bsize as u32, statvfs.f_namemax as u32,
-                             statvfs.f_frsize as u32),
-            Err(e) => reply.error(e)
-        };
-    }
+    //fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
+        //match self.fs.statvfs() {
+            //Ok(statvfs) =>
+                //reply.statfs(statvfs.f_blocks, statvfs.f_bfree,
+                             //statvfs.f_bavail, statvfs.f_files, statvfs.f_ffree,
+                             //statvfs.f_bsize as u32, statvfs.f_namemax as u32,
+                             //statvfs.f_frsize as u32),
+            //Err(e) => reply.error(e)
+        //};
+    //}
 
-    fn symlink(&mut self, req: &Request, parent: u64, name: &OsStr,
-               link: &Path, reply: ReplyEntry)
-    {
-        // Weirdly, FUSE doesn't supply the symlink's mode.  Use a sensible
-        // default.
-        let perm = 0o755;
-        let parent_fd = self.files.get(&parent)
-            .expect("symlink before lookup or after forget");
-        let r = self.fs.symlink(parent_fd, name, perm, req.uid(), req.gid(),
-                                link.as_os_str());
-        self.handle_new_entry(r, parent, name, reply);
-    }
+    //fn symlink(&mut self, req: &Request, parent: u64, name: &OsStr,
+               //link: &Path, reply: ReplyEntry)
+    //{
+        //// Weirdly, FUSE doesn't supply the symlink's mode.  Use a sensible
+        //// default.
+        //let perm = 0o755;
+        //let parent_fd = self.files.get(&parent)
+            //.expect("symlink before lookup or after forget");
+        //let r = self.fs.symlink(parent_fd, name, perm, req.uid(), req.gid(),
+                                //link.as_os_str());
+        //self.handle_new_entry(r, parent, name, reply);
+    //}
 
-    fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr,
-              reply: ReplyEmpty)
-    {
-        let parent_fd = self.files.get(&parent)
-            .expect("unlink before lookup or after forget");
-        let r = match self.names.get(&(parent, name.to_owned())) {
-            None => {
-                // Name has lookup count of 0; therefore it must not be open
-                self.fs.unlink(parent_fd, None, name)
-            },
-            Some(ino) => {
-                let fd = self.files.get(ino);
-                self.fs.unlink(parent_fd, fd, name)
-            }
-        };
-        match r {
-            Ok(()) => {
-                self.uncache_name(parent, name);
-                reply.ok()
-            },
-            Err(errno) => reply.error(errno)
-        }
-    }
+    //fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr,
+              //reply: ReplyEmpty)
+    //{
+        //let parent_fd = self.files.get(&parent)
+            //.expect("unlink before lookup or after forget");
+        //let r = match self.names.get(&(parent, name.to_owned())) {
+            //None => {
+                //// Name has lookup count of 0; therefore it must not be open
+                //self.fs.unlink(parent_fd, None, name)
+            //},
+            //Some(ino) => {
+                //let fd = self.files.get(ino);
+                //self.fs.unlink(parent_fd, fd, name)
+            //}
+        //};
+        //match r {
+            //Ok(()) => {
+                //self.uncache_name(parent, name);
+                //reply.ok()
+            //},
+            //Err(errno) => reply.error(errno)
+        //}
+    //}
 
-    fn write(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
-             data: &[u8], flags: u32, reply: ReplyWrite)
-    {
-        let fd = self.files.get(&ino)
-            .expect("write before lookup or after forget");
-        match self.fs.write(fd, offset as u64, data, flags) {
-            Ok(lsize) => reply.written(lsize),
-            Err(errno) => reply.error(errno)
-        }
-    }
+    //fn write(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64,
+             //data: &[u8], flags: u32, reply: ReplyWrite)
+    //{
+        //let fd = self.files.get(&ino)
+            //.expect("write before lookup or after forget");
+        //match self.fs.write(fd, offset as u64, data, flags) {
+            //Ok(lsize) => reply.written(lsize),
+            //Err(errno) => reply.error(errno)
+        //}
+    //}
 }
 
 impl From<Fs> for FuseFs {
