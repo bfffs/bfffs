@@ -689,12 +689,12 @@ pub struct Inode {
 }
 
 impl Inode {
-    /// This file's record size in bytes
-    pub fn record_size(&self) -> usize {
+    /// This file's record size in bytes.
+    pub fn record_size(&self) -> Option<usize> {
         if let FileType::Reg(exp) = self.file_type {
-            1 << exp
+            Some(1 << exp)
         } else {
-            panic!("Only regular files have record sizes")
+            None
         }
     }
 }

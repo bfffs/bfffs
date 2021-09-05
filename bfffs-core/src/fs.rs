@@ -415,6 +415,8 @@ pub struct GetAttr {
     pub gid:        u32,
     /// Device number, for device nodes only
     pub rdev:       u32,
+    /// Optimal I/O block size
+    pub blksize:    u32,
     /// File flags
     pub flags:      u64,
 }
@@ -775,7 +777,7 @@ impl Fs {
 
         let truncate_fut = if new_size < old_size {
             assert!(iv.file_type.dtype() == libc::DT_REG);
-            let rs = iv.record_size() as u64;
+            let rs = iv.record_size().unwrap() as u64;
             let dsx = dataset.clone();
             Fs::do_truncate(dsx, ino, new_size, rs).boxed()
         } else {
@@ -1039,6 +1041,12 @@ impl Fs {
                                 FileType::Char(x) | FileType::Block(x) => x,
                                 _ => 0
                             };
+                            // Non-regular files don't have a defined block
+                            // size, but we need to pick something.  4kB seems
+                            // as good as anything else.
+                            let blksize = inode.record_size()
+                                .unwrap_or(4096)
+                                as u32;
                             let attr = GetAttr {
                                 ino,
                                 size: inode.size,
@@ -1052,6 +1060,7 @@ impl Fs {
                                 uid: inode.uid,
                                 gid: inode.gid,
                                 rdev,
+                                blksize,
                                 flags: inode.flags,
                             };
                             Ok(attr)
@@ -1538,7 +1547,7 @@ impl Fs {
                     let now = time::get_time();
                     inode.atime = now;
                     let fsize = inode.size;
-                    let rs = inode.record_size() as u64;
+                    let rs = inode.record_size().unwrap() as u64;
                     let afut = ds.insert(inode_key, value);
                     let dfut = Fs::do_read(ds, ino, fsize, rs, offset, size);
                     let (sglist, _) = future::try_join(dfut, afut).await?;
@@ -1554,7 +1563,7 @@ impl Fs {
                         let inode = value.as_inode()
                             .expect("Wrong Value type");
                         let fsize = inode.size;
-                        let rs = inode.record_size() as u64;
+                        let rs = inode.record_size().unwrap() as u64;
                         Fs::do_read(ds, ino, fsize, rs, offset, size)
                     })
                 }).map_err(Error::into)
@@ -2109,7 +2118,7 @@ impl Fs {
             }).map_err::<i32, _>(Error::into)
         )?.unwrap();
 
-        let rs = value.as_inode().unwrap().record_size();
+        let rs = value.as_inode().unwrap().record_size().unwrap();
         let offset0 = (offset % rs as u64) as usize;
         // Get WriteBack credit sufficient for nrecs full dirty records.  At
         // this point, we don't know if any of the records we're writing to are
@@ -2495,10 +2504,11 @@ fn debug_getattr() {
         uid: 1000,
         gid: 1000,
         rdev: 0,
+        blksize: 131072,
         flags: 0,
     };
     let s = format!("{:?}", attr);
-    assert_eq!("GetAttr { ino: 1, size: 4096, blocks: 1, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: Mode { .0: 33188, perm: 420 }, nlink: 1, uid: 1000, gid: 1000, rdev: 0, flags: 0 }", s);
+    assert_eq!("GetAttr { ino: 1, size: 4096, blocks: 1, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: Mode { .0: 33188, perm: 420 }, nlink: 1, uid: 1000, gid: 1000, rdev: 0, blksize: 131072, flags: 0 }", s);
 }
 
 // Pet kcov
@@ -2517,6 +2527,7 @@ fn eq_getattr() {
         uid: 1000,
         gid: 1000,
         rdev: 0,
+        blksize: 65536,
         flags: 0,
     };
     let attr2 = attr;

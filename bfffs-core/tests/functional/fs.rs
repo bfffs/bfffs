@@ -338,6 +338,7 @@ root:
         let root = harness4k.0.root();
         let attr = harness4k.0.getattr(&root).unwrap();
         assert_eq!(attr.nlink, 1);
+        assert_eq!(attr.blksize, 4096);
         assert_eq!(attr.flags, 0);
         assert!(attr.atime.sec > 0);
         assert!(attr.mtime.sec > 0);
@@ -347,6 +348,27 @@ root:
         assert_eq!(attr.gid, 0);
         assert_eq!(attr.mode.perm(), 0o755);
         assert_eq!(attr.mode.file_type(), libc::S_IFDIR);
+    }
+
+    /// Regular files' st_blksize should equal the record size
+    #[rstest]
+    fn getattr_4k(harness4k: Harness) {
+        let name = OsStr::from_bytes(b"x");
+        let root = harness4k.0.root();
+        let fd = harness4k.0.create(&root, name, 0o644, 0, 0).unwrap();
+        let attr = harness4k.0.getattr(&fd).unwrap();
+        assert_eq!(attr.blksize, 4096);
+    }
+
+    /// Regular files' st_blksize should equal the record size
+    #[rstest]
+    #[case(harness(vec![Property::RecordSize(13)]))]
+    fn getattr_8k(#[case] harness: Harness) {
+        let name = OsStr::from_bytes(b"y");
+        let root = harness.0.root();
+        let fd = harness.0.create(&root, name, 0o644, 0, 0).unwrap();
+        let attr = harness.0.getattr(&fd).unwrap();
+        assert_eq!(attr.blksize, 8192);
     }
 
     #[rstest]
