@@ -21,7 +21,7 @@ time = "0.1"
 tokio = { version = "0.2.7", features = ["rt-threaded", "signal", "stream", "sync", "time"] }
 
 [dependencies.clap]
-version = "3.0.0-beta.2"
+version = "3.0.0-beta.4"
 default-features = true
 features=  [ "wrap_help"]
 
