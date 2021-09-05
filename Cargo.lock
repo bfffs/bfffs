@@ -70,7 +70,7 @@ dependencies = [
  "libc",
  "mockall",
  "rstest",
- "time",
+ "time 0.1.43",
  "tokio",
  "tracing-subscriber",
 ]
@@ -117,7 +117,7 @@ dependencies = [
  "serde_derive",
  "serde_yaml",
  "tempfile",
- "time",
+ "time 0.3.2",
  "tokio",
  "tokio-file",
  "tracing",
@@ -540,6 +540,12 @@ checksum = "0d47946d458e94a1b7bcabbf6521ea7c037062c81f534615abcad76e84d4970d"
 dependencies = [
  "either",
 ]
+
+[[package]]
+name = "itoa"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b71991ff56294aa922b450139ee08b3bfc70982c6b2c7562771375cf73542dd4"
 
 [[package]]
 name = "lazy_static"
@@ -1319,6 +1325,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "time"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e0a10c9a9fb3a5dce8c2239ed670f1a2569fcf42da035f5face1b19860d52b0"
+dependencies = [
+ "itoa",
+ "libc",
+]
+
+[[package]]
 name = "tokio"
 version = "1.11.0"
 source = "git+https://github.com/tokio-rs/tokio?rev=957ed3e#957ed3eac07222a2d86ccfde8f29f29599f6f563"
@@ -1349,7 +1365,7 @@ dependencies = [
 [[package]]
 name = "tokio-macros"
 version = "1.3.0"
-source = "git+https://github.com/asomers/tokio?rev=668e725#668e725bde1bb2e5225b0b67e39e0f9057fda4f4"
+source = "git+https://github.com/tokio-rs/tokio?rev=957ed3e#957ed3eac07222a2d86ccfde8f29f29599f6f563"
 dependencies = [
  "proc-macro2",
  "quote",

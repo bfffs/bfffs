@@ -103,11 +103,12 @@ impl FuseFs {
                     _ => panic!("Unknown file type 0o{:o}",
                                 attr.mode.file_type())
                 };
+                let atime_st = std::time::UNIX_EPOCH.checked_add(std::time::Duration::new(attr.atime.sec, attr.atime.nsec)).unwrap();
                 let reply_attr = FileAttr {
                     ino: attr.ino,
                     size: attr.size,
                     blocks: attr.blocks,
-                    atime: attr.atime,
+                    atime: atime_st,
                     mtime: attr.mtime,
                     ctime: attr.ctime,
                     crtime: attr.birthtime,

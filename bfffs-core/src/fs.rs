@@ -41,6 +41,7 @@ use tokio::{
 
 pub use crate::fs_tree::ExtAttr;
 pub use crate::fs_tree::ExtAttrNamespace;
+pub use crate::fs_tree::Timespec;
 
 /// Operations used for data that is stored in in-BTree hash tables
 mod htable {
@@ -398,13 +399,13 @@ pub struct GetAttr {
     /// File size in blocks
     pub blocks:     u64,
     /// access time
-    pub atime:      time::Timespec,
+    pub atime:      Timespec,
     /// modification time
-    pub mtime:      time::Timespec,
+    pub mtime:      Timespec,
     /// change time
-    pub ctime:      time::Timespec,
+    pub ctime:      Timespec,
     /// birth time
-    pub birthtime:  time::Timespec,
+    pub birthtime:  Timespec,
     /// File mode as returned by stat(2)
     pub mode: Mode,
     /// Link count
@@ -427,13 +428,13 @@ pub struct SetAttr {
     /// File size in bytes
     pub size:       Option<u64>,
     /// access time
-    pub atime:      Option<time::Timespec>,
+    pub atime:      Option<Timespec>,
     /// modification time
-    pub mtime:      Option<time::Timespec>,
+    pub mtime:      Option<Timespec>,
     /// change time
-    pub ctime:      Option<time::Timespec>,
+    pub ctime:      Option<Timespec>,
     /// birth time
-    pub birthtime:  Option<time::Timespec>,
+    pub birthtime:  Option<Timespec>,
     /// File permissions
     pub perm:       Option<u16>,
     /// user id
@@ -556,7 +557,7 @@ impl Fs {
             // accurately store the parent ino.
             None
         };
-        let now = time::get_time();
+        let now = Timespec::now();
         let inode = Inode {
             size: 0,
             nlink: args.nlink,
@@ -731,7 +732,7 @@ impl Fs {
                 let mut value = r.unwrap();
                 {
                     let inode = value.as_mut_inode().unwrap();
-                    let now = time::get_time();
+                    let now = Timespec::now();
                     inode.mtime = now;
                     inode.ctime = now;
                     inode.nlink -= 1;
@@ -876,7 +877,7 @@ impl Fs {
             // 2a) Decrement the link count and touch the ctime
             iv.nlink = iv.nlink.saturating_sub(1);
             let nlink = iv.nlink;
-            iv.ctime = time::get_time();
+            iv.ctime = Timespec::now();
             // 2b) Update Inode, if we aren't immediately deleting it
             if nlink > 0 || lookup_count > 0 {
                 let fut = if nlink == 0 {
@@ -984,7 +985,7 @@ impl Fs {
                           _ino: u64)
         -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
     {
-        let now = time::get_time();
+        let now = Timespec::now();
         let attr = SetAttr {
             ctime: Some(now),
             mtime: Some(now),
@@ -1209,7 +1210,7 @@ impl Fs {
                 let dirent_value = FSValue::DirEntry(dirent);
                 let dfut = ds.insert(dirent_key, dirent_value);
 
-                let now = time::get_time();
+                let now = Timespec::now();
                 let parent_attr = SetAttr {
                     ctime: Some(now),
                     mtime: Some(now),
@@ -1409,7 +1410,7 @@ impl Fs {
                     {
                         let inode = value.as_mut_inode().unwrap();
                         inode.nlink += 1;
-                        let now = time::get_time();
+                        let now = Timespec::now();
                         inode.mtime = now;
                         inode.ctime = now;
                     }
@@ -1544,7 +1545,7 @@ impl Fs {
                     let mut value = r.expect("Inode not found");
                     let inode = value.as_mut_inode()
                         .expect("Wrong Value type");
-                    let now = time::get_time();
+                    let now = Timespec::now();
                     inode.atime = now;
                     let fsize = inode.size;
                     let rs = inode.record_size().unwrap() as u64;
@@ -1821,7 +1822,7 @@ impl Fs {
                         let mut value = r.unwrap();
                         {
                             let inode = value.as_mut_inode().unwrap();
-                            let now = time::get_time();
+                            let now = Timespec::now();
                             inode.mtime = now;
                             inode.ctime = now;
                             if isdir && (!samedir || old_dst_ino.is_some()) {
@@ -1842,7 +1843,7 @@ impl Fs {
                             let mut value = r.unwrap();
                             {
                                 let inode = value.as_mut_inode().unwrap();
-                                let now = time::get_time();
+                                let now = Timespec::now();
                                 inode.mtime = now;
                                 inode.ctime = now;
                                 if isdir && old_dst_ino.is_none() {
@@ -1951,7 +1952,7 @@ impl Fs {
             move |dataset| {
                 let ds = Arc::new(dataset);
                 if attr.ctime.is_none() {
-                    attr.ctime = Some(time::get_time());
+                    attr.ctime = Some(Timespec::now());
                 }
                 Fs::do_setattr(ds, ino, attr)
                 .map_ok(drop)
@@ -2080,7 +2081,7 @@ impl Fs {
                 let unlink_fut = Fs::do_unlink(dataset.clone(),
                     lookup_count, dirent.ino);
                 // 2b) Update parent's timestamps
-                let now = time::get_time();
+                let now = Timespec::now();
                 let attr = SetAttr {
                     ctime: Some(now),
                     mtime: Some(now),
@@ -2152,7 +2153,7 @@ impl Fs {
                 {
                     let inode = value.as_mut_inode().unwrap();
                     inode.size = new_size;
-                    let now = time::get_time();
+                    let now = Timespec::now();
                     inode.mtime = now;
                     inode.ctime = now;
                 }
@@ -2316,7 +2317,7 @@ fn create() {
     let ino = 2;
     let filename = OsString::from("x");
     let filename2 = filename.clone();
-    let old_ts = time::Timespec::new(0, 0);
+    let old_ts = Timespec::new(0, 0);
     ds.expect_get()
         .once()
         .with(eq(FSKey::new(root_ino, ObjKey::Inode)))
@@ -2394,7 +2395,7 @@ fn create_hash_collision() {
     let filename4 = filename.clone();
     let other_filename = OsString::from("y");
     let other_filename2 = other_filename.clone();
-    let old_ts = time::Timespec::new(0, 0);
+    let old_ts = Timespec::new(0, 0);
     ds.expect_get()
         .once()
         .with(eq(FSKey::new(root_ino, ObjKey::Inode)))
@@ -2495,10 +2496,10 @@ fn debug_getattr() {
         ino: 1,
         size: 4096,
         blocks: 1,
-        atime: time::Timespec::new(1, 2),
-        mtime: time::Timespec::new(3, 4),
-        ctime: time::Timespec::new(5, 6),
-        birthtime: time::Timespec::new(7, 8),
+        atime: Timespec::new(1, 2),
+        mtime: Timespec::new(3, 4),
+        ctime: Timespec::new(5, 6),
+        birthtime: Timespec::new(7, 8),
         mode: Mode(libc::S_IFREG | 0o644),
         nlink: 1,
         uid: 1000,
@@ -2518,10 +2519,10 @@ fn eq_getattr() {
         ino: 1,
         size: 4096,
         blocks: 1,
-        atime: time::Timespec::new(1, 2),
-        mtime: time::Timespec::new(3, 4),
-        ctime: time::Timespec::new(5, 6),
-        birthtime: time::Timespec::new(7, 8),
+        atime: Timespec::new(1, 2),
+        mtime: Timespec::new(3, 4),
+        ctime: Timespec::new(5, 6),
+        birthtime: Timespec::new(7, 8),
         mode: Mode(libc::S_IFREG | 0o644),
         nlink: 1,
         uid: 1000,
@@ -2775,7 +2776,7 @@ fn rmdir_with_blob_extattr() {
             };
             let v1 = FSValue::DirEntry(dot_dirent);
 
-            let now = time::get_time();
+            let now = Timespec::now();
             let inode = Inode {
                 size: 0,
                 nlink: 2,
@@ -2858,7 +2859,7 @@ fn rmdir_with_blob_extattr() {
         .once()
         .with(eq(FSKey::new(parent_ino, ObjKey::Inode)))
         .returning(|_| {
-            let now = time::get_time();
+            let now = Timespec::now();
             let inode = Inode {
                 size: 0,
                 nlink: 3,
@@ -2880,7 +2881,7 @@ fn rmdir_with_blob_extattr() {
             *key == FSKey::new(parent_ino, ObjKey::Inode) &&
             value.as_inode().unwrap().nlink == 2
         }).returning(|_, _| {
-            let now = time::get_time();
+            let now = Timespec::now();
             let inode = Inode {
                 size: 0,
                 nlink: 2,
@@ -3070,7 +3071,7 @@ fn unlink() {
     let blob_rid = RID(99999);
     let filename = OsString::from("x");
     let filename2 = filename.clone();
-    let old_ts = time::Timespec::new(0, 0);
+    let old_ts = Timespec::new(0, 0);
     let mut seq = Sequence::new();
 
     ds0.expect_remove()
@@ -3240,7 +3241,7 @@ fn unlink_with_blob_extattr() {
         .once()
         .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
-            let now = time::get_time();
+            let now = Timespec::now();
             let inode = Inode {
                 size: 4098,
                 nlink: 1,
@@ -3256,7 +3257,7 @@ fn unlink_with_blob_extattr() {
             };
             future::ok(Some(FSValue::Inode(inode))).boxed()
         });
-    let old_ts = time::Timespec::new(0, 0);
+    let old_ts = Timespec::new(0, 0);
     ds0.expect_get()
         .once()
         .with(eq(FSKey::new(1, ObjKey::Inode)))
@@ -3410,7 +3411,7 @@ fn unlink_with_extattr_hash_collision() {
         .once()
         .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
-            let now = time::get_time();
+            let now = Timespec::now();
             let inode = Inode {
                 size: 0,
                 nlink: 1,
@@ -3426,7 +3427,7 @@ fn unlink_with_extattr_hash_collision() {
             };
             future::ok(Some(FSValue::Inode(inode))).boxed()
         });
-    let old_ts = time::Timespec::new(0, 0);
+    let old_ts = Timespec::new(0, 0);
     ds0.expect_get()
         .once()
         .with(eq(FSKey::new(1, ObjKey::Inode)))

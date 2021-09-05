@@ -24,7 +24,6 @@ mod fs {
         sync::{Arc, Mutex}
     };
     use tempfile::Builder;
-    use time::Timespec;
     use tokio::runtime::Runtime;
 
     type Harness = (Fs, Runtime, Arc<Mutex<Cache>>, Arc<Database>, TreeID);
@@ -320,10 +319,10 @@ root:
           size: 0
           nlink: 1
           flags: 0
-          atime: "1970-01-01 00:00:00 UTC"
-          mtime: "1970-01-01 00:00:00 UTC"
-          ctime: "1970-01-01 00:00:00 UTC"
-          birthtime: "1970-01-01 00:00:00 UTC"
+          atime: "1970-01-01T00:00:00Z"
+          mtime: "1970-01-01T00:00:00Z"
+          ctime: "1970-01-01T00:00:00Z"
+          birthtime: "1970-01-01T00:00:00Z"
           uid: 0
           gid: 0
           perm: 493

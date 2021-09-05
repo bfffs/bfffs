@@ -452,7 +452,8 @@ impl Database {
             Inner::fswrite(inner3, tree_id, ninsert, 0, 0, 0, move |dataset| {
                 let ino = 1;    // FUSE requires root dir to have inode 1
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
-                let now = time::get_time();
+                let now = Timespec::now();
+
                 let inode = Inode {
                     size: 0,
                     nlink: 1,   // for "."

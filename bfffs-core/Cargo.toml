@@ -36,7 +36,7 @@ num-traits = "0.2.0"
 serde = "1.0.60"
 serde_derive = "1.0"
 serde_yaml = "0.8.16"
-time = "0.1"
+time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.10.0", features = ["rt", "sync", "time"] }
 tokio-file = { git = "http://github.com/asomers/tokio-file.git", rev = "138c515" }
 tracing = "0.1.5"
