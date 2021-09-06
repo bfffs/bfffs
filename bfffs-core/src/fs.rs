@@ -318,7 +318,7 @@ impl<'a> From<&'a [u8]> for Uio {
 /// Information about an in-use file
 ///
 /// Basically, this is the stuff that would go in a vnode's v_data field
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct FileData {
     ino: u64,
     pub lookup_count: u64,
@@ -1202,6 +1202,7 @@ impl Fs {
                 // the target gets deleted before we increase its link
                 // count.  The real VFS will provide a held vnode rather
                 // than an inode.  So in neither case is there a race here.
+                // XXX TODO: fuse3 is _not_ single-threaded
                 let ifut = ds.insert(inode_key, FSValue::Inode(iv));
 
                 let dirent_objkey = ObjKey::dir_entry(&name);
@@ -1575,7 +1576,7 @@ impl Fs {
     // TODO: instead of the full size struct libc::dirent, use a variable size
     // structure in the mpsc channel
     pub fn readdir(&self, fd: &FileData, soffs: i64)
-        -> impl Iterator<Item=Result<(libc::dirent, i64), i32>>
+        -> impl Iterator<Item=Result<(libc::dirent, i64), i32>> + Send
     {
 
         bitfield! {

@@ -61,7 +61,9 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 name = "bfffs"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bfffs-core",
+ "bytes",
  "cfg-if",
  "clap",
  "divbuf",
@@ -70,7 +72,7 @@ dependencies = [
  "libc",
  "mockall",
  "rstest",
- "time 0.1.43",
+ "time",
  "tokio",
  "tracing-subscriber",
 ]
@@ -117,7 +119,7 @@ dependencies = [
  "serde_derive",
  "serde_yaml",
  "tempfile",
- "time 0.3.2",
+ "time",
  "tokio",
  "tokio-file",
  "tracing",
@@ -334,7 +336,7 @@ checksum = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
 [[package]]
 name = "fuse3"
 version = "0.2.1"
-source = "git+https://github.com/Sherlock-Holo/fuse3.git?rev=1f8605f#1f8605f32f60051ed95d792e89bd776f175f44e6"
+source = "git+https://github.com/asomers/fuse3.git?rev=22095c6#22095c61730d6d9c3d8060ea6574832394c7511f"
 dependencies = [
  "async-trait",
  "bincode",
@@ -1312,16 +1314,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8018d24e04c95ac8790716a5987d0fec4f8b27249ffa0f7d33f1369bdfb88cbd"
 dependencies = [
  "once_cell",
-]
-
-[[package]]
-name = "time"
-version = "0.1.43"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca8a50ef2360fbd1eeb0ecd46795a87a19024eb4b53c5dc916ca1fd95fe62438"
-dependencies = [
- "libc",
- "winapi",
 ]
 
 [[package]]

@@ -628,7 +628,6 @@ pub struct Timespec {
 }
 
 impl Timespec {
-    #[cfg(test)]
     pub fn new(sec: i64, nsec: u32) -> Self {
         Timespec { sec, nsec }
     }

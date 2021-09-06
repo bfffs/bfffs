@@ -8,11 +8,13 @@ use clap::{
     Clap,
     crate_version
 };
+use fuse3::{
+    raw::Session,
+    MountOptions
+};
 use std::{
-    ffi::OsString,
     process::exit,
     sync::Arc,
-    thread
 };
 use tokio::{
     runtime::Builder,
@@ -37,7 +39,8 @@ struct Bfffsd {
     devices: Vec<String>
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut cache_size: Option<usize> = None;
     let mut writeback_size: Option<usize> = None;
 
@@ -47,12 +50,10 @@ fn main() {
         .init();
     let bfffsd: Bfffsd = Bfffsd::parse();
 
-    let mut opts = vec![
-        // Unconditionally disable the kernel's buffer cache; BFFFS has its own
-        OsString::from("-o"), OsString::from("direct_io"),
-        // Specify the file system type
-        OsString::from("-o"), OsString::from("subtype=bfffs"),
-    ];
+    let mut opts = MountOptions::default();
+    opts.fs_name("bfffs");
+    // Unconditionally disable the kernel's buffer cache; BFFFS has its own
+    opts.custom_options("direct_io");
     for o in bfffsd.options.iter() {
         if let Some((name, value)) = o.split_once("=") {
             if name == "cache_size" {
@@ -75,8 +76,7 @@ fn main() {
             // else, must be a mount_fusefs option
         }
         // Must be a mount_fusefs option
-        opts.push(OsString::from("-o"));
-        opts.push(OsString::from(o));
+        opts.custom_options(o);
     }
 
     let mut dev_manager = DevManager::default();
@@ -109,17 +109,10 @@ fn main() {
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
     let db2 = db.clone();
-    let thr_handle = thread::spawn(move || {
-        let fs = FuseFs::new(db, handle2, tree_id);
-        // We need a separate vec of references :(
-        // https://github.com/zargony/rust-fuse/issues/117
-        let opt_refs = opts.iter().map(|o| o.as_ref()).collect::<Vec<_>>();
-        fs::mount(fs, &bfffsd.mountpoint, &opt_refs[..]).unwrap();
-    });
 
     // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term, this
     // is very handy for debugging the cleaner.
-    rt.spawn( async move {
+    tokio::spawn( async move {
         let mut stream = signal(SignalKind::user_defined1()).unwrap();
         loop {
             stream.recv().await;
@@ -127,7 +120,10 @@ fn main() {
         }
     });
 
-    thr_handle.join().unwrap()
+    Session::new(&opts)
+        .mount(FuseFs::new(db, handle2, tree_id), &bfffsd.mountpoint)
+        .await
+        .unwrap()
 }
 
 #[cfg(test)]
