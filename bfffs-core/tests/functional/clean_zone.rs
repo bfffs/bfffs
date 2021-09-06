@@ -28,7 +28,6 @@ fn harness(devsize: u64, zone_size: u64) -> Harness {
         .enable_time()
         .build()
         .unwrap();
-    let handle = rt.handle().clone();
     let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
     let filename = tempdir.path().join("vdev");
     let file = t!(fs::File::create(&filename));
@@ -45,8 +44,8 @@ fn harness(devsize: u64, zone_size: u64) -> Harness {
     );
     let ddml = Arc::new(DDML::new(pool, cache.clone()));
     let idml = IDML::create(ddml, cache);
-    let db = Arc::new(Database::create(Arc::new(idml), handle));
     let (db, tree_id) = rt.block_on(async move {
+        let db = Arc::new(Database::create(Arc::new(idml)));
         let tree_id = db.new_fs(Vec::new())
             .await.unwrap();
         (db, tree_id)

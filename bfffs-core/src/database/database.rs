@@ -41,7 +41,6 @@ use std::{
 use super::TreeID;
 #[cfg(not(test))] use tokio::runtime;
 use tokio::{
-    runtime::Handle,
     task::JoinHandle,
     time::{Duration, Instant, sleep_until},
 };
@@ -91,15 +90,15 @@ impl Syncer {
         }
     }
 
-    fn new(handle: Handle, inner: Arc<Inner>) -> Self {
+    fn new(inner: Arc<Inner>) -> Self {
         let (tx, rx) = mpsc::channel(1);
-        let jh = Syncer::run(handle, inner, rx);
+        let jh = Syncer::run(inner, rx);
         Syncer{jh, tx}
     }
 
     // Start a task that will sync the database at a fixed interval, but will
     // reset the timer if it gets a message on a channel.
-    fn run(handle: Handle, inner: Arc<Inner>, mut rx: mpsc::Receiver<SyncerMsg>)
+    fn run(inner: Arc<Inner>, mut rx: mpsc::Receiver<SyncerMsg>)
         -> JoinHandle<()>
     {
         // Fixed 5 second sync duration
@@ -142,7 +141,7 @@ impl Syncer {
                 };
             }
         };
-        handle.spawn(taskfut)
+        tokio::spawn(taskfut)
     }
 
     async fn shutdown(mut self) {
@@ -314,11 +313,13 @@ impl Database {
     }
 
     /// Construct a new `Database` from its `IDML`.
-    pub fn create(idml: Arc<IDML>, handle: Handle) -> Self
+    ///
+    /// Must be constructed from the context of a Tokio runtime.
+    pub fn create(idml: Arc<IDML>) -> Self
     {
         // Compression ratio is a total guess; it hasn't been measured yet.
         let forest = ITree::create(idml.clone(), true, 4.0, 2.0);
-        Database::new(idml, forest, handle)
+        Database::new(idml, forest)
     }
 
     /// Dump a YAMLized representation of the given Tree to a plain
@@ -540,12 +541,11 @@ impl Database {
     {
         unimplemented!()
     }
-    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>,
-           handle: Handle) -> Self
+    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>) -> Self
     {
-        let cleaner = Cleaner::new(handle.clone(), idml.clone(), None);
+        let cleaner = Cleaner::new(idml.clone(), None);
         let inner = Arc::new(Inner::new(idml, forest));
-        let syncer = Syncer::new(handle, inner.clone());
+        let syncer = Syncer::new(inner.clone());
         Database{cleaner, inner, syncer}
     }
 
@@ -556,13 +556,12 @@ impl Database {
     /// * `idml`:           An already-opened `IDML`
     /// * `label_reader`:   A `LabelReader` that has already consumed all labels
     ///                     prior to this layer.
-    pub fn open(idml: Arc<IDML>, handle: Handle, mut label_reader: LabelReader)
-        -> Self
+    pub fn open(idml: Arc<IDML>, mut label_reader: LabelReader) -> Self
     {
         let l: Label = label_reader.deserialize().unwrap();
         let forest = Tree::<RID, IDML, TreeID, TreeOnDisk<RID>>::open(
             idml.clone(), true, l.forest);
-        Database::new(idml, forest, handle)
+        Database::new(idml, forest)
     }
 
     fn ro_filesystem(&self, tree_id: TreeID)
@@ -792,10 +791,9 @@ mod database {
         let forest = Tree::default();
 
         let rt = basic_runtime();
-        let handle = rt.handle().clone();
 
         rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest, handle);
+            let db = Database::new(Arc::new(idml), forest);
             db.shutdown().await
         });
     }
@@ -807,7 +805,6 @@ mod database {
         let mut forest = Tree::default();
 
         let rt = basic_runtime();
-        let handle = rt.handle().clone();
 
         idml.expect_advance_transaction_inner()
             .once()
@@ -861,7 +858,7 @@ mod database {
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
         rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest, handle);
+            let db = Database::new(Arc::new(idml), forest);
             db.sync_transaction()
             .and_then(move |_| {
                 // Syncing a 2nd time should be a no-op, since the database
@@ -878,10 +875,9 @@ mod database {
         let forest = Tree::default();
 
         let rt = basic_runtime();
-        let handle = rt.handle().clone();
 
         rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest, handle);
+            let db = Database::new(Arc::new(idml), forest);
             db.inner.dirty.store(false, Ordering::Relaxed);
             db.sync_transaction().await
         }).unwrap();

@@ -48,9 +48,8 @@ mod fs {
         let pool = Pool::create(String::from("test_fs"), vec![cluster]);
         let ddml = Arc::new(DDML::new(pool, cache2.clone()));
         let idml = IDML::create(ddml, cache2);
-        let handle = rt.handle().clone();
         let (db, tree_id) = rt.block_on(async move {
-            let db = Arc::new(Database::create(Arc::new(idml), handle));
+            let db = Arc::new(Database::create(Arc::new(idml)));
             let tree_id = db.new_fs(props).await.unwrap();
             (db, tree_id)
         });
@@ -3041,7 +3040,6 @@ mod torture {
         });
 
         let rt = Runtime::new().unwrap();
-        let handle = rt.handle().clone();
         let len = 1 << 30;  // 1GB
         let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
         let filename = tempdir.path().join("vdev");
@@ -3059,7 +3057,7 @@ mod torture {
         );
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
-        let db = Arc::new(Database::create(Arc::new(idml), handle));
+        let db = Arc::new(Database::create(Arc::new(idml)));
         let handle = rt.handle().clone();
         let (db, tree_id) = rt.block_on(async move {
             let tree_id = db.new_fs(Vec::new()).await.unwrap();

@@ -39,15 +39,14 @@ mod device_manager {
             fname
         }).collect::<Vec<_>>();
         let pathsclone = paths.clone();
-        let handle = rt.handle().clone();
         let cluster = Pool::create_cluster(None, k, None, f, &paths);
         let pool = Pool::create(String::from("test_device_manager"),
             vec![cluster]);
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
-        let db = Database::create(idml, handle);
         rt.block_on( async {
+            let db = Database::create(idml);
             db.sync_transaction().await
         }).unwrap();
         let dev_manager = DevManager::default();
@@ -71,36 +70,38 @@ mod device_manager {
     #[apply(all_configs)]
     fn import_by_name(h: Harness) {
         let (rt, dm, paths, _tempdir) = h;
-        for path in paths.iter() {
-            dm.taste(path);
-        }
-        let handle = rt.handle().clone();
-        let _db = dm.import_by_name("test_device_manager", handle).unwrap();
+        rt.block_on(async move {
+            for path in paths.iter() {
+                dm.taste(path).await.unwrap();
+            }
+            dm.import_by_name("test_device_manager").await.unwrap();
+        })
     }
 
-    // Import a single pool by its UUID
+    /// Import a single pool by its UUID
     #[apply(all_configs)]
     fn import_by_uuid(h: Harness) {
         let (rt, dm, paths, _tempdir) = h;
-        for path in paths.iter() {
-            dm.taste(path);
-        }
-        let (name, uuid) = dm.importable_pools().pop().unwrap();
-        assert_eq!(name, "test_device_manager");
-        let handle = rt.handle().clone();
-        let _db = dm.import_by_uuid(uuid, handle).unwrap();
+        rt.block_on(async move {
+            for path in paths.iter() {
+                dm.taste(path).await.unwrap();
+            }
+            let (name, uuid) = dm.importable_pools().pop().unwrap();
+            assert_eq!(name, "test_device_manager");
+            dm.import_by_uuid(uuid).await.unwrap();
+        });
     }
 
     /// DeviceManager::import_clusters on a single pool
     #[apply(all_configs)]
     fn import_clusters(h: Harness) {
         let (rt, dm, paths, _tempdir) = h;
-        for path in paths.iter() {
-            dm.taste(path);
-        }
-        let (name, uuid) = dm.importable_pools().pop().unwrap();
-        assert_eq!(name, "test_device_manager");
         let clusters = rt.block_on(async move {
+            for path in paths.iter() {
+                dm.taste(path).await?;
+            }
+            let (name, uuid) = dm.importable_pools().pop().unwrap();
+            assert_eq!(name, "test_device_manager");
             dm.import_clusters(uuid).await
         }).unwrap();
         assert_eq!(clusters.len(), 1);

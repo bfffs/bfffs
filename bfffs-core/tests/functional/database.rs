@@ -17,7 +17,6 @@ use super::*;
 use tokio::runtime::Runtime;
 
 fn open_db(rt: &Runtime, path: PathBuf) -> Database {
-    let handle = rt.handle().clone();
     rt.block_on(async move {
         VdevFile::open(path)
         .and_then(|(leaf, reader)| {
@@ -31,7 +30,7 @@ fn open_db(rt: &Runtime, path: PathBuf) -> Database {
             let arc_cache = Arc::new(Mutex::new(cache));
             let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
             let (idml, reader) = IDML::open(ddml, arc_cache, 1<<30, reader);
-            Database::open(Arc::new(idml), handle, reader)
+            Database::open(Arc::new(idml), reader)
         }).await
     }).unwrap()
 }
@@ -85,7 +84,6 @@ mod persistence {
         }
         let paths = [filename.clone()];
         let rt = basic_runtime();
-        let handle = rt.handle().clone();
         let cs = NonZeroU64::new(1);
         let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
         let clusters = vec![cluster];
@@ -93,11 +91,9 @@ mod persistence {
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
-        let db = rt.block_on(async move {
-            let db = Database::create(idml, handle);
-            future::ok::<Database, ()>(db)
-            .await
-        }).unwrap();
+        let db = rt.block_on(async {
+            Database::create(idml)
+        });
         // Due to bincode's variable-length encoding and the
         // unpredictability of the root filesystem's timestamp, writing the
         // label will have unpredictable results if we create a root
@@ -174,7 +170,6 @@ mod t {
         }
         let paths = [filename];
         let rt = basic_runtime();
-        let handle = rt.handle().clone();
         let cs = NonZeroU64::new(1);
         let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
         let clusters = vec![cluster];
@@ -183,7 +178,7 @@ mod t {
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         let (db, tree_id) = rt.block_on(async move {
-            let db = Database::create(idml, handle);
+            let db = Database::create(idml);
             let tree_id = db.new_fs(Vec::new()).await.unwrap();
             (db, tree_id)
         });
@@ -258,7 +253,6 @@ mod t {
     #[test]
     fn shutdown() {
         let rt = basic_runtime();
-        let handle = rt.handle().clone();
         let len = 1 << 30;  // 1GB
         let tempdir =
             t!(Builder::new().prefix("database.tempdir()::shutdown").tempdir());
@@ -276,7 +270,9 @@ mod t {
         );
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
-        let db = Database::create(Arc::new(idml), handle);
-        rt.block_on(db.shutdown());
+        rt.block_on(async {
+            let db = Database::create(Arc::new(idml));
+            db.shutdown().await
+        });
     }
 }
