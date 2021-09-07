@@ -275,7 +275,7 @@ impl Inner {
                     // is sleep and try again later.
                     let duration = time::Duration::from_millis(10);
                     let schfut = self.reschedule();
-                    let delay_fut = tokio::time::delay_for(duration)
+                    let delay_fut = tokio::time::sleep(duration)
                     .then(move |_| schfut);
                     tokio::spawn(delay_fut);
                 }

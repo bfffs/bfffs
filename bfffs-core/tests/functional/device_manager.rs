@@ -35,8 +35,7 @@ test_suite! {
             let n = *self.n;
             let k = *self.k;
             let f = *self.f;
-            let mut rt = tokio::runtime::Builder::new()
-                .threaded_scheduler()
+            let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_io()
                 .enable_time()
                 .build()
@@ -96,7 +95,7 @@ test_suite! {
 
     /// DeviceManager::import_clusters on a single pool
     test import_clusters(mocks) {
-        let (mut rt, dm, paths, _tempdir) = mocks.val;
+        let (rt, dm, paths, _tempdir) = mocks.val;
         for path in paths.iter() {
             dm.taste(path);
         }

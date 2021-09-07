@@ -44,7 +44,7 @@ test_suite! {
     });
 
     test basic(objects) {
-        let (mut rt, ddml) = objects.val;
+        let (rt, ddml) = objects.val;
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let ddml2 = &ddml;
         rt.block_on(async {
@@ -74,7 +74,7 @@ test_suite! {
     // moderately large and compressible file
     test compressible(objects) {
         let txg = TxgT::from(0);
-        let (mut rt, ddml) = objects.val;
+        let (rt, ddml) = objects.val;
         let ddml2 = &ddml;
         let mut file = fs::File::open(
                 &Path::new("../bfffs-core/src/raid/vdev_raid.rs")
@@ -110,7 +110,7 @@ test_suite! {
 
     // Records of less than an LBA should be padded up.
     test short(objects) {
-        let (mut rt, ddml) = objects.val;
+        let (rt, ddml) = objects.val;
         let ddml2 = &ddml;
         let dbs = DivBufShared::from(vec![42u8; 1024]);
         rt.block_on(async {

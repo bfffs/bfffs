@@ -183,8 +183,7 @@ impl DevManager {
     pub fn taste<P: AsRef<Path>>(&self, p: P) {
         // taste should be called from the synchronous domain, so it needs to
         // create its own temporary Runtime
-        let mut rt = runtime::Builder::new()
-            .basic_scheduler()
+        let rt = runtime::Builder::new_current_thread()
             .enable_io()
             .build()
             .unwrap();

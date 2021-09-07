@@ -712,8 +712,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let rrf = Rc::new(RefCell::new(ser));
         let rrf2 = rrf.clone();
         let rrf3 = rrf.clone();
-        let mut rt = runtime::Builder::new()
-            .basic_scheduler()
+        let rt = runtime::Builder::new_current_thread()
             .enable_io()
             .build()
             .unwrap();

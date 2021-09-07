@@ -83,8 +83,7 @@ pub fn zero_sglist(len: usize) -> SGList {
 #[cfg(test)]
 /// Helper to generate the runtime used by most unit tests
 pub fn basic_runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new()
-        .basic_scheduler()
+    tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()
         .unwrap()

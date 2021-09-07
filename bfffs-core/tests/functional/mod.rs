@@ -12,8 +12,7 @@ macro_rules! t {
 
 /// Helper to generate the runtime used by most tests
 fn basic_runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new()
-        .basic_scheduler()
+    tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
         .build()

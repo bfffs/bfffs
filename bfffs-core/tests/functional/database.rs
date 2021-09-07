@@ -17,7 +17,7 @@ use std::{
 use super::*;
 use tokio::runtime::Runtime;
 
-fn open_db(rt: &mut Runtime, path: PathBuf) -> Database {
+fn open_db(rt: &Runtime, path: PathBuf) -> Database {
     let handle = rt.handle().clone();
     rt.block_on(async move {
         VdevFile::open(path)
@@ -87,7 +87,7 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename.clone()];
-            let mut rt = basic_runtime();
+            let rt = basic_runtime();
             let handle = rt.handle().clone();
             let cs = NonZeroU64::new(1);
             let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
@@ -113,16 +113,16 @@ test_suite! {
 
     // Test open-after-write
     test open(objects()) {
-        let (mut rt, old_db, _tempdir, path) = objects.val;
+        let (rt, old_db, _tempdir, path) = objects.val;
         rt.block_on(
             old_db.sync_transaction()
         ).unwrap();
         drop(old_db);
-        let _db = open_db(&mut rt, path);
+        let _db = open_db(&rt, path);
     }
 
     test sync_transaction(objects()) {
-        let (mut rt, db, _tempdir, path) = objects.val;
+        let (rt, db, _tempdir, path) = objects.val;
         rt.block_on(
             db.sync_transaction()
         ).unwrap();
@@ -177,7 +177,7 @@ test_suite! {
                 t!(file.set_len(len));
             }
             let paths = [filename];
-            let mut rt = basic_runtime();
+            let rt = basic_runtime();
             let handle = rt.handle().clone();
             let cs = NonZeroU64::new(1);
             let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
@@ -200,7 +200,7 @@ test_suite! {
     });
 
     test get_prop_default(objects()) {
-        let (mut rt, db, _tempdir, tree_id) = objects.val;
+        let (rt, db, _tempdir, tree_id) = objects.val;
 
         let (val, source) = rt.block_on(async {
             db.get_prop(tree_id, PropertyName::Atime)
@@ -211,7 +211,7 @@ test_suite! {
     }
 
     test open_filesystem(objects()) {
-        let (mut rt, db, tempdir, tree_id) = objects.val;
+        let (rt, db, tempdir, tree_id) = objects.val;
         // Sync the database, then drop and reopen it.  That's the only way to
         // clear Inner::fs_trees
         rt.block_on(
@@ -219,7 +219,7 @@ test_suite! {
         ).unwrap();
         drop(db);
         let filename = tempdir.path().join("vdev");
-        let db = open_db(&mut rt, filename);
+        let db = open_db(&rt, filename);
         rt.block_on(async move {
             db.fsread(tree_id, |_| future::ok(()))
             .await
@@ -227,7 +227,7 @@ test_suite! {
     }
 
     test new_fs_with_props(objects()) {
-        let (mut rt, db, _tempdir, _first_tree_id) = objects.val;
+        let (rt, db, _tempdir, _first_tree_id) = objects.val;
         let props = vec![Property::RecordSize(5)];
         let tree_id = rt.block_on(async {
             db.new_fs(props)
@@ -242,7 +242,7 @@ test_suite! {
     }
 
     test set_prop(objects()) {
-        let (mut rt, db, _tempdir, tree_id) = objects.val;
+        let (rt, db, _tempdir, tree_id) = objects.val;
 
         let (val, source) = rt.block_on(async {
             db.set_prop(tree_id, Property::Atime(false))
@@ -261,7 +261,7 @@ test_suite! {
     // multiple datasets.
 
     test shutdown() {
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let handle = rt.handle().clone();
         let len = 1 << 30;  // 1GB
         let tempdir =

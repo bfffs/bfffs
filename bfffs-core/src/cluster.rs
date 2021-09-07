@@ -1518,7 +1518,7 @@ mod cluster {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let result = rt.block_on(async {
             let (lba, fut) = cluster.write(db0, TxgT::from(0))
                 .expect("write failed early");

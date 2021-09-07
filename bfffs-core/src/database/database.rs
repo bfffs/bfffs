@@ -43,7 +43,7 @@ use super::TreeID;
 use tokio::{
     runtime::Handle,
     task::JoinHandle,
-    time::{Duration, Instant, delay_until},
+    time::{Duration, Instant, sleep_until},
 };
 
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
@@ -110,7 +110,7 @@ impl Syncer {
             let mut sync_time = Instant::now() + sync_duration;
             loop {
                 let wakeup_time = Instant::now() + flush_duration;
-                let mut delay_fut = delay_until(wakeup_time).fuse();
+                let mut delay_fut = Box::pin(sleep_until(wakeup_time).fuse());
                 select! {
                     _ = delay_fut => {
                         let now = Instant::now();
@@ -328,8 +328,7 @@ impl Database {
     #[cfg(not(test))]
     pub fn dump(&self, f: &mut dyn io::Write, tree: TreeID) -> Result<(), Error>
     {
-        let mut rt = runtime::Builder::new()
-            .basic_scheduler()
+        let rt = runtime::Builder::new_current_thread()
             .enable_io()
             .build()
             .unwrap();
@@ -791,7 +790,7 @@ mod database {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let handle = rt.handle().clone();
 
         rt.block_on(async {
@@ -806,7 +805,7 @@ mod database {
         let mut idml = IDML::default();
         let mut forest = Tree::default();
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let handle = rt.handle().clone();
 
         idml.expect_advance_transaction_inner()
@@ -877,7 +876,7 @@ mod database {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let handle = rt.handle().clone();
 
         rt.block_on(async {

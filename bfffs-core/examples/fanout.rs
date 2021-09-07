@@ -329,8 +329,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
 {
     const INODE: u64 = 2;
 
-    let mut rt = Builder::new()
-        .basic_scheduler()
+    let rt = Builder::new_current_thread()
         .build()
         .unwrap();
     let next_lba = Arc::new(AtomicU64::default());

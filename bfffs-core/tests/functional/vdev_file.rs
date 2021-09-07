@@ -68,7 +68,7 @@ test_suite! {
             Builder::new().prefix("test_read_at").tempdir()
         );
         let path = dir.path().join("vdev");
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         let e = rt.block_on(VdevFile::open(path))
             .err()
             .unwrap();
@@ -91,7 +91,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbs.try_mut().unwrap();
         let vdev = VdevFile::create(path, None).unwrap();
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
             vdev.read_at(rbuf, 10).await
         }).unwrap();
@@ -119,7 +119,7 @@ test_suite! {
         let rbuf1 = dbs1.try_mut().unwrap();
         let rbufs = vec![rbuf0, rbuf1];
         let vdev = VdevFile::create(path, None).unwrap();
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
             vdev.readv_at(rbufs, 10).await
         }).unwrap();
@@ -131,7 +131,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
             vdev.val.0.write_at(wbuf.clone(), 10).await
         }).unwrap();
@@ -145,7 +145,7 @@ test_suite! {
     test write_at_overwrite_label(vdev) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
             vdev.val.0.write_at(wbuf, 0).await
         }).unwrap();
@@ -155,7 +155,7 @@ test_suite! {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
             vdev.val.0.write_at(wbuf.clone(), 11).await
         }).unwrap();
@@ -172,7 +172,7 @@ test_suite! {
         let wbuf1 = dbs1.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let mut rbuf = vec![0u8; 4096];
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
             vdev.val.0.writev_at(wbufs, 10).await
         }).unwrap();
@@ -189,7 +189,7 @@ test_suite! {
         let wbuf = dbsw.try_const().unwrap();
         let dbsr = DivBufShared::from(vec![0u8; 4096]);
         let rbuf = dbsr.try_mut().unwrap();
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
             vd.write_at(wbuf.clone(), 10)
                 .and_then(|_| {
@@ -267,7 +267,7 @@ test_suite! {
             let offset1 = 4 * BYTES_PER_LBA as u64;
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         let (vdev, _label_reader) = rt.block_on(async {
             VdevFile::open(fixture.val.0).await
         }).unwrap();
@@ -291,7 +291,7 @@ test_suite! {
             f.write_all_at(&zeros, offset0 + 16).unwrap();
             f.write_all_at(&zeros, offset1 + 16).unwrap();
         }
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         let e = rt.block_on(async { VdevFile::open(fixture.val.0).await})
             .err()
             .expect("Opening the file should've failed");
@@ -309,7 +309,7 @@ test_suite! {
             let offset0 = 0;
             f.write_all_at(&GOLDEN, offset0).unwrap();
         }
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         let (vdev, _label_reader) = rt.block_on(async{
             VdevFile::open(fixture.val.0).await
         }).unwrap();
@@ -320,7 +320,7 @@ test_suite! {
 
     // Open a device without a valid label
     test open_invalid(fixture) {
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         let e = rt.block_on(async { VdevFile::open(fixture.val.0).await })
             .err()
             .expect("Opening the file should've failed");
@@ -338,7 +338,7 @@ test_suite! {
             let offset1 = 4 * BYTES_PER_LBA as u64;
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         let (vdev, _label_reader) = rt.block_on(async {
             VdevFile::open(fixture.val.0).await
         }).unwrap();
@@ -352,7 +352,7 @@ test_suite! {
         let lbas_per_zone = NonZeroU64::new(0xdead_beef_1a7e_babe);
         let vdev = VdevFile::create(fixture.val.0.clone(), lbas_per_zone)
             .unwrap();
-        let mut rt = runtime::Runtime::new().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
         let label_writer = LabelWriter::new(0);
         rt.block_on(async { vdev.write_label(label_writer).await })
             .unwrap();

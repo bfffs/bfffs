@@ -8,7 +8,6 @@ use clap::{
     Clap,
     crate_version
 };
-use futures::StreamExt;
 use std::{
     ffi::OsString,
     process::exit,
@@ -99,8 +98,7 @@ fn main() {
             std::process::exit(1);
         }).1;
 
-    let rt = Builder::new()
-        .threaded_scheduler()
+    let rt = Builder::new_multi_thread()
         .enable_io()
         .enable_time()
         .build()
@@ -121,15 +119,12 @@ fn main() {
 
     // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term, this
     // is very handy for debugging the cleaner.
-    rt.spawn( async {
-        signal(SignalKind::user_defined1())
-        .unwrap()
-        .for_each(move |_| {
-            let db3 = db2.clone();
-            async move {
-                db3.clean().await.unwrap()
-            }
-        }).await
+    rt.spawn( async move {
+        let mut stream = signal(SignalKind::user_defined1()).unwrap();
+        loop {
+            stream.recv().await;
+            db2.clean().await.unwrap()
+        }
     });
 
     thr_handle.join().unwrap()
