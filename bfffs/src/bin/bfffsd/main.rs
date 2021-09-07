@@ -88,7 +88,8 @@ async fn main() {
     }
 
     for dev in bfffsd.devices.iter() {
-        dev_manager.taste(dev);
+        // TODO: taste devices in parallel
+        dev_manager.taste(dev).await.unwrap();
     }
     let uuid = dev_manager.importable_pools().iter()
         .find(|(name, _uuid)| {
@@ -104,8 +105,7 @@ async fn main() {
         .build()
         .unwrap();
     let handle = rt.handle().clone();
-    let handle2 = rt.handle().clone();
-    let db = Arc::new(dev_manager.import_by_uuid(uuid, handle).unwrap());
+    let db = Arc::new(dev_manager.import_by_uuid(uuid).await.unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
     let db2 = db.clone();
@@ -120,8 +120,9 @@ async fn main() {
         }
     });
 
+    let fs = FuseFs::new(db, handle, tree_id).await;
     Session::new(&opts)
-        .mount(FuseFs::new(db, handle2, tree_id), &bfffsd.mountpoint)
+        .mount(fs, &bfffsd.mountpoint)
         .await
         .unwrap()
 }

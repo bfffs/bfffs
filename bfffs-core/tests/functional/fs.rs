@@ -54,7 +54,9 @@ mod fs {
             (db, tree_id)
         });
         let handle = rt.handle().clone();
-        let fs = Fs::new(db.clone(), handle, tree_id);
+        let fs = rt.block_on(async {
+            Fs::new(db.clone(), handle, tree_id).await
+        });
         (fs, rt, cache, db, tree_id)
     }
 
@@ -996,7 +998,9 @@ root:
 
         // Mount again
         let handle = rt.handle().clone();
-        let fs = Fs::new(db, handle, tree_id);
+        let fs = rt.block_on(async {
+            Fs::new(db, handle, tree_id).await
+        });
 
         // Try to open the file again.
         // Wait up to 2 seconds for the inode to be deleted
@@ -3063,7 +3067,9 @@ mod torture {
             let tree_id = db.new_fs(Vec::new()).await.unwrap();
             (db, tree_id)
         });
-        let fs = Fs::new(db.clone(), handle, tree_id);
+        let fs = rt.block_on(async {
+            Fs::new(db.clone(), handle, tree_id).await
+        });
         let seed = seed.unwrap_or_else(|| {
             let mut seed = [0u8; 16];
             let mut seeder = thread_rng();

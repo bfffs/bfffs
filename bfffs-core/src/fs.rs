@@ -909,51 +909,48 @@ impl Fs {
 
     /// Create a new Fs object (in memory, not on disk).
     ///
-    /// Must be called from the synchronous domain.
-    ///
     /// # Arguments
     ///
     /// - `handle`  -       Handle to a Tokio Runtime.  It must be running
     ///                     already, and must remaining running until after this
     ///                     object drops.  It must have the spawn and time
     ///                     featutes enabled.
-    pub fn new(database: Arc<Database>, handle: Handle, tree: TreeID) -> Self
+    pub async fn new(database: Arc<Database>, handle: Handle, tree: TreeID)
+        -> Self
     {
         let db2 = database.clone();
         let db3 = database.clone();
         let db4 = database.clone();
         let (last_key, (atimep, _), (recsizep, _), _) =
-        handle.block_on(async move {
-            db4.fsread(tree, move |dataset| {
-                let last_key_fut = dataset.last_key();
-                let atime_fut = db2.get_prop(tree, PropertyName::Atime);
-                let recsize_fut = db2.get_prop(tree, PropertyName::RecordSize);
-                let di_fut = db3.fswrite(tree, 0, 1, 0, 0,
-                move |dataset| async move {
-                    // Delete all dying inodes.  If there are any, it means that
-                    // the previous mount was uncleanly dismounted.
-                    let ds = Arc::new(dataset);
-                    let ds2 = ds.clone();
-                    let had_dying_inodes = ds.range(FSKey::dying_inode_range())
-                    .try_fold(false, move |_acc, (_k, v)| {
-                        let ds3 = ds.clone();
-                        async move {
-                            let ino = v.as_dying_inode().unwrap().ino();
-                            Fs::do_delete_inode(ds3, ino).await?;
-                            Ok(true)
-                        }
-                    }).await?;
-                    // Finally, range delete all of the dying inodes, if any
-                    if had_dying_inodes {
-                        ds2.range_delete(FSKey::dying_inode_range())
-                            .await?;
+        db4.fsread(tree, move |dataset| {
+            let last_key_fut = dataset.last_key();
+            let atime_fut = db2.get_prop(tree, PropertyName::Atime);
+            let recsize_fut = db2.get_prop(tree, PropertyName::RecordSize);
+            let di_fut = db3.fswrite(tree, 0, 1, 0, 0,
+            move |dataset| async move {
+                // Delete all dying inodes.  If there are any, it means that
+                // the previous mount was uncleanly dismounted.
+                let ds = Arc::new(dataset);
+                let ds2 = ds.clone();
+                let had_dying_inodes = ds.range(FSKey::dying_inode_range())
+                .try_fold(false, move |_acc, (_k, v)| {
+                    let ds3 = ds.clone();
+                    async move {
+                        let ino = v.as_dying_inode().unwrap().ino();
+                        Fs::do_delete_inode(ds3, ino).await?;
+                        Ok(true)
                     }
-                    Ok(())
-                }).boxed();
-                future::try_join4(last_key_fut, atime_fut, recsize_fut, di_fut)
-            }).map_err(Error::unhandled)
-            .await
-        }).unwrap();
+                }).await?;
+                // Finally, range delete all of the dying inodes, if any
+                if had_dying_inodes {
+                    ds2.range_delete(FSKey::dying_inode_range())
+                        .await?;
+                }
+                Ok(())
+            }).boxed();
+            future::try_join4(last_key_fut, atime_fut, recsize_fut, di_fut)
+        }).map_err(Error::unhandled)
+        .await.unwrap();
         let next_object = AtomicU64::new(last_key.unwrap().object() + 1);
         let atime = atimep.as_bool();
         let record_size = recsizep.as_u8();
@@ -2376,7 +2373,10 @@ fn create() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
 
     let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).unwrap();
     assert_eq!(ino, fd.ino);
@@ -2484,7 +2484,9 @@ fn create_hash_collision() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
 
     let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).unwrap();
     assert_eq!(ino, fd.ino);
@@ -2610,7 +2612,9 @@ fn deleteextattr_3way_collision() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     let fd = FileData::new(Some(1), ino);
     let r = fs.deleteextattr(&fd, namespace, &name2);
     assert_eq!(Ok(()), r);
@@ -2666,7 +2670,9 @@ fn deleteextattr_3way_collision_enoattr() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     let fd = FileData::new(Some(1), ino);
     let r = fs.deleteextattr(&fd, namespace, &name2);
     assert_eq!(Err(libc::ENOATTR), r);
@@ -2680,7 +2686,9 @@ fn fsync() {
     db.expect_sync_transaction()
         .once()
         .returning(|| future::ok(()).boxed());
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
 
     let fd = FileData::new(Some(1), ino);
     assert!(fs.fsync(&fd).is_ok());
@@ -2719,7 +2727,9 @@ fn rename_eio() {
         .once()
         .return_once(move |_| ds);
 
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     let root = fs.root();
     let fd = FileData::new_for_tests(Some(root.ino), src_ino);
     let r = fs.rename(&root, &fd, &srcname, &root, Some(dst_ino), &dstname);
@@ -2902,7 +2912,9 @@ fn rmdir_with_blob_extattr() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     let r = fs.rmdir(&fs.root(), &filename);
     assert_eq!(Ok(()), r);
 }
@@ -2938,7 +2950,9 @@ fn setextattr() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     let r = fs.setextattr(&fs.root(), namespace, &name, value.as_bytes());
     assert_eq!(Ok(()), r);
 }
@@ -3030,7 +3044,9 @@ fn setextattr_3way_collision() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     let r = fs.setextattr(&fs.root(), namespace, &name2, value2.as_bytes());
     assert_eq!(Ok(()), r);
 }
@@ -3046,7 +3062,9 @@ fn set_props() {
         .once()
         .with(eq(tree_id), eq(Property::RecordSize(13)))
         .returning(|_, _| future::ok(()).boxed());
-    let mut fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let mut fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     fs.set_props(vec![Property::Atime(false), Property::RecordSize(13)]);
 }
 
@@ -3056,7 +3074,9 @@ fn sync() {
     db.expect_sync_transaction()
         .once()
         .returning(|| future::ok(()).boxed());
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
 
     fs.sync();
 }
@@ -3204,7 +3224,9 @@ fn unlink() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     let fd = FileData::new(Some(parent_ino), ino);
     let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);
@@ -3374,7 +3396,9 @@ fn unlink_with_blob_extattr() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     let fd = FileData::new(Some(parent_ino), ino);
     let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);
@@ -3535,7 +3559,9 @@ fn unlink_with_extattr_hash_collision() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    });
     let fd = FileData::new(Some(parent_ino), ino);
     let r = fs.unlink(&fs.root(), Some(&fd), &filename);
     assert_eq!(Ok(()), r);

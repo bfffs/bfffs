@@ -129,10 +129,10 @@ impl FuseFs {
         }
     }
 
-    pub fn new(database: Arc<Database>, handle: Handle,
-               tree: TreeID) -> Self
+    pub async fn new(database: Arc<Database>, handle: Handle, tree: TreeID)
+        -> Self
     {
-        let fs = Fs::new(database, handle, tree);
+        let fs = Fs::new(database, handle, tree).await;
         FuseFs::from(fs)
     }
 

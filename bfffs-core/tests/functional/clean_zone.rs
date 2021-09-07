@@ -51,7 +51,9 @@ fn harness(devsize: u64, zone_size: u64) -> Harness {
         (db, tree_id)
     });
     let handle = rt.handle().clone();
-    let fs = Fs::new(db.clone(), handle, tree_id);
+    let fs = rt.block_on(async {
+        Fs::new(db.clone(), handle, tree_id).await
+    });
     (db, fs, rt)
 }
 
