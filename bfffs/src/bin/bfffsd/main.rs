@@ -28,7 +28,7 @@ use crate::fs::FuseFs;
 #[clap(version = crate_version!())]
 struct Bfffsd {
     /// Mount options, comma delimited
-    #[clap(short = 'o', long, require_delimiter(true))]
+    #[clap(short = 'o', long, require_delimiter(true), value_delimiter(','))]
     options: Vec<String>,
     /// Pool name
     pool_name: String,
