@@ -154,7 +154,7 @@ mod pool {
     #[derive(Clap, Clone, Debug)]
     pub(super) struct Create {
         /// Dataset properties, comma delimited
-        #[clap(short, long, require_delimiter(true))]
+        #[clap(short, long, require_delimiter(true), value_delimiter(','))]
         properties: Vec<String>,
         /// Simulated zone size in MB
         #[clap(long)]
@@ -320,7 +320,9 @@ mod pool {
 #[derive(Clap, Clone, Debug)]
 enum SubCommand{
     Check(Check),
+    #[clap(subcommand)]
     Debug(DebugCmd),
+    #[clap(subcommand)]
     Pool(pool::PoolCmd)
 }
 

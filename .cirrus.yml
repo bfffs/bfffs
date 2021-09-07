@@ -23,7 +23,7 @@ task:
         CARGO_ARGS: --all-features
     - name: cargo test (stable)
       env:
-        VERSION: 1.52.0
+        VERSION: 1.54.0
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
