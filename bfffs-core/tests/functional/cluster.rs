@@ -93,7 +93,7 @@ test_suite! {
     }
 
     test flush(objects()) {
-        let (mut rt, old_cluster, _tempdir, path) = objects.val;
+        let (rt, old_cluster, _tempdir, path) = objects.val;
         rt.block_on(async {
             old_cluster.flush(0).await
         }).unwrap();

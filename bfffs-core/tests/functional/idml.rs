@@ -138,7 +138,7 @@ test_suite! {
     // store separate golden labels for each VdevLeaf.  Instead, we'll just
     // check that we can open-after-write
     test open(objects()) {
-        let (mut rt, old_idml, _tempdir, path) = objects.val;
+        let (rt, old_idml, _tempdir, path) = objects.val;
         let txg = TxgT::from(42);
         let old_idml2 = old_idml.clone();
         rt.block_on(
@@ -169,7 +169,7 @@ test_suite! {
     }
 
     test write_label(objects()) {
-        let (mut rt, idml, _tempdir, path) = objects.val;
+        let (rt, idml, _tempdir, path) = objects.val;
         let txg = TxgT::from(42);
         let idml2 = idml.clone();
         rt.block_on(
@@ -256,7 +256,7 @@ test_suite! {
     // When moving the last record from a zone, the allocator should not reopen
     // the same zone for its destination
     test move_last_record(objects()) {
-        let (mut rt, idml, _tempdir) = objects.val;
+        let (rt, idml, _tempdir) = objects.val;
         let idml = Arc::new(idml);
         let ok = rt.block_on(async {
             // Write exactly 1 zone plus an LBA of data, then clean the first

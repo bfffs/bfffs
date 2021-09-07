@@ -42,8 +42,7 @@ test_suite! {
         setup(&mut self) {
             // Fs::new requires the threaded scheduler, so background threads
             // will always be available.
-            let mut rt = tokio::runtime::Builder::new()
-                .threaded_scheduler()
+            let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_io()
                 .enable_time()
                 .build()
@@ -2830,7 +2829,7 @@ test_suite! {
             drop(self.fs);
             let db = Arc::try_unwrap(self.db.take().unwrap())
                 .ok().expect("Arc::try_unwrap");
-            let mut rt = self.rt.take().unwrap();
+            let rt = self.rt.take().unwrap();
             rt.block_on(db.shutdown());
         }
 
@@ -2904,7 +2903,7 @@ test_suite! {
                     .init();
             });
 
-            let mut rt = Runtime::new().unwrap();
+            let rt = Runtime::new().unwrap();
             let handle = rt.handle().clone();
             let len = 1 << 30;  // 1GB
             let tempdir = t!(Builder::new().prefix("test_fs").tempdir());

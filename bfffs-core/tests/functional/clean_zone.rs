@@ -30,8 +30,7 @@ test_suite! {
     {
         setup(&mut self) {
             // Fs::new() requires the threaded scheduler
-            let mut rt = tokio::runtime::Builder::new()
-                .threaded_scheduler()
+            let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_io()
                 .enable_time()
                 .build()
@@ -81,7 +80,7 @@ test_suite! {
     // it, and does not reopen it.  We just have to sort-of take it on faith
     // that zone 0 is clean, because the public API doesn't expose zones.
     test clean_zone(mocks(1 << 20, 32)) {
-        let (db, fs, mut rt) = mocks.val;
+        let (db, fs, rt) = mocks.val;
         let root = fs.root();
         let small_filename = OsString::from("small");
         let small_fd = fs.create(&root, &small_filename, 0o644, 0, 0).unwrap();
@@ -104,7 +103,7 @@ test_suite! {
 
     #[ignore = "Test is slow" ]
     test clean_zone_leak(mocks(1 << 30, 512)) {
-        let (db, fs, mut rt) = mocks.val;
+        let (db, fs, rt) = mocks.val;
         let root = fs.root();
         for i in 0..16384 {
             let fname = format!("f.{}", i);
@@ -137,7 +136,7 @@ test_suite! {
     /// time.
     #[ignore = "Test is slow and intermittent" ]
     test get_mut(mocks(1 << 30, 512)) {
-        let (db, fs, mut rt) = mocks.val;
+        let (db, fs, rt) = mocks.val;
         let root = fs.root();
         for i in 0..16384 {
             let fname = format!("f.{}", i);

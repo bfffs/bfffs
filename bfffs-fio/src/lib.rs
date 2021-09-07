@@ -146,8 +146,7 @@ pub extern "C" fn rust_ctor()
 
 lazy_static! {
     static ref RUNTIME: Mutex<Runtime> = Mutex::new(
-        Builder::new()
-        .threaded_scheduler()
+        Builder::new_multi_thread()
         .enable_time()
         .enable_io()
         .build()

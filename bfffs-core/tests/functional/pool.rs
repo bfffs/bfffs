@@ -65,7 +65,7 @@ test_suite! {
 
     // Test open-after-write for Pool
     test open(objects()) {
-        let (mut rt, old_pool, _tempdir, paths) = objects.val;
+        let (rt, old_pool, _tempdir, paths) = objects.val;
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
         rt.block_on(async {
@@ -99,7 +99,7 @@ test_suite! {
     }
 
     test write_label(objects()) {
-        let (mut rt, old_pool, _tempdir, paths) = objects.val;
+        let (rt, old_pool, _tempdir, paths) = objects.val;
         rt.block_on(async {
             let label_writer = LabelWriter::new(0);
             old_pool.write_label(label_writer).await

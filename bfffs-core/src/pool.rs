@@ -505,7 +505,7 @@ mod pool {
             .once()
             .return_once(|_, _| Box::pin(future::ok(())));
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let clusters = vec![ c0, c1 ];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
@@ -551,7 +551,7 @@ mod pool {
                 Box::pin(future::ok(()))
             });
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let clusters = vec![ cluster, ];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
@@ -576,7 +576,7 @@ mod pool {
             .once()
             .return_once(move |_, _| Box::pin(future::err(e)));
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let clusters = vec![cluster];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
@@ -601,7 +601,7 @@ mod pool {
             c
         };
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let clusters = vec![cluster(), cluster()];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
@@ -621,7 +621,7 @@ mod pool {
                 }).once()
                 .return_once(|_, _| Ok((0, Box::pin(future::ok(())))));
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -642,7 +642,7 @@ mod pool {
                 .once()
                 .return_once(move |_, _| Ok((0, Box::pin(future::err(e)))));
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -663,7 +663,7 @@ mod pool {
                 .once()
                 .return_once(move |_, _| Err(e));
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -687,7 +687,7 @@ mod pool {
             .once()
             .return_once(|_, _| Box::pin(future::ok(())));
 
-        let mut rt = basic_runtime();
+        let rt = basic_runtime();
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
 
         let dbs = DivBufShared::from(vec![0u8; 1024]);

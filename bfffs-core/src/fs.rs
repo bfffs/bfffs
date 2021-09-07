@@ -1632,7 +1632,7 @@ impl Fs {
                 let bucket_idx = cursor.bucket_idx();
                 dataset.range(FSKey::dirent_range(ino, offs))
                 .try_for_each(move |(k, v)| {
-                    let mut tx2 = tx.clone();
+                    let tx2 = tx.clone();
                     async move {
                         match v {
                             FSValue::DirEntry(dirent) => {
@@ -1647,7 +1647,7 @@ impl Fs {
                                     .enumerate()
                                 ).map(Ok)
                                 .try_for_each(move |(i, dirent)| {
-                                    let mut tx3 = tx2.clone();
+                                    let tx3 = tx2.clone();
                                     async move {
                                         let idx = i + bucket_idx as usize;
                                         let curs = if idx < bucket_size - 1 {
@@ -2238,7 +2238,7 @@ fn read_write_filesystem() -> ReadWriteFilesystem {
 }
 
 fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
-    let mut rt = basic_runtime();
+    let rt = basic_runtime();
     let mut rods = ReadOnlyFilesystem::default();
     let mut rwds = read_write_filesystem();
     rods.expect_last_key()

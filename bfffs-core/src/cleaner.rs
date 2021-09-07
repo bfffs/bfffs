@@ -179,8 +179,7 @@ fn background() {
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
 
-    let rt = runtime::Builder::new()
-        .threaded_scheduler()
+    let rt = runtime::Builder::new_current_thread()
         .build()
         .unwrap();
     let handle = rt.handle().clone();

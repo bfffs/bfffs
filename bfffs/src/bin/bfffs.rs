@@ -16,8 +16,7 @@ use std::{
 use tokio::runtime::{Builder, Runtime};
 
 fn runtime() -> Runtime {
-    Builder::new()
-        .threaded_scheduler()
+    Builder::new_multi_thread()
         .enable_io()
         .enable_time()
         .build()
@@ -48,7 +47,7 @@ impl Check{
             dev_manager.taste(dev);
         }
 
-        let mut rt = runtime();
+        let rt = runtime();
         let handle = rt.handle().clone();
         let db = Arc::new(
             dev_manager.import_by_name(self.pool_name, handle)
@@ -90,7 +89,7 @@ impl Dump {
             .find(|(name, _uuid)| {
                 *name == self.pool_name
             }).unwrap().1;
-        let mut rt = runtime();
+        let rt = runtime();
         let clusters = rt.block_on(async move {
             dev_manager.import_clusters(uuid).await
         }).unwrap();
