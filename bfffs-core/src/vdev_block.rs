@@ -801,7 +801,6 @@ mock! {
 mod t {
 
 use divbuf::DivBufShared;
-use galvanic_test::*;
 use super::*;
 
 // pet kcov
@@ -856,9 +855,7 @@ fn blockop_partial_eq() {
     assert!(bo2 != bo1);
 }
 
-test_suite! {
-    name t;
-
+mod t {
     use divbuf::DivBufShared;
     use futures::{
         Future,
@@ -874,6 +871,7 @@ test_suite! {
     use mockall::predicate::*;
     use mockall::PredicateBooleanExt;
     use pretty_assertions::assert_eq;
+    use rstest::{fixture, rstest};
     use super::*;
 
     mock!{
@@ -885,36 +883,35 @@ test_suite! {
         }
     }
 
-    fixture!( mocks() -> MockVdevFile {
-            setup(&mut self) {
-            let mut leaf = MockVdevFile::new();
-            leaf.expect_size()
-                .once()
-                .return_const(262_144u64);
-            leaf.expect_lba2zone()
-                .with(ge(1).and(lt(1<<16)))
-                .return_const(Some(0));
-            leaf.expect_optimum_queue_depth()
-                .return_const(10u32);
-            leaf.expect_spacemap_space()
-                .return_const(1u64);
-            leaf.expect_zone_limits()
-                .with(eq(0))
-                .return_const((1, 1 << 16));
-            leaf.expect_zone_limits()
-                .with(eq(1))
-                .return_const((1 << 16, 2 << 16));
-            leaf.expect_zone_limits()
-                .with(eq(2))
-                .return_const((2 << 16, 3 << 16));
-            leaf
-        }
-    });
+    #[fixture]
+    fn leaf() -> MockVdevFile {
+        let mut leaf = MockVdevFile::new();
+        leaf.expect_size()
+            .once()
+            .return_const(262_144u64);
+        leaf.expect_lba2zone()
+            .with(ge(1).and(lt(1<<16)))
+            .return_const(Some(0));
+        leaf.expect_optimum_queue_depth()
+            .return_const(10u32);
+        leaf.expect_spacemap_space()
+            .return_const(1u64);
+        leaf.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 1 << 16));
+        leaf.expect_zone_limits()
+            .with(eq(1))
+            .return_const((1 << 16, 2 << 16));
+        leaf.expect_zone_limits()
+            .with(eq(2))
+            .return_const((2 << 16, 3 << 16));
+        leaf
+    }
 
     // Issueing an operation fails with EAGAIN.  This can happen if the
     // per-process or per-system AIO limits are reached
-    test issueing_eagain(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn issueing_eagain(mut leaf: MockVdevFile) {
         let mut seq0 = Sequence::new();
 
         // The first operation succeeds asynchronously.  When it does, that will
@@ -969,8 +966,8 @@ test_suite! {
     // Issueing an operation fails with EAGAIN, when the queue depth is 1.  This
     // can happen if the per-process or per-system AIO limits are monopolized by
     // other reactors.  In this case, we need a timer to wake us up.
-    test issueing_eagain_queue_depth_1(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn issueing_eagain_queue_depth_1(mut leaf: MockVdevFile) {
         let mut seq0 = Sequence::new();
 
         leaf.expect_read_at()
@@ -998,8 +995,8 @@ test_suite! {
         }).expect("test eagain_queue_depth_1");
     }
 
-    test basic_erase_zone(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn basic_erase_zone(mut leaf: MockVdevFile) {
         leaf.expect_erase_zone()
             .with(eq(1))
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
@@ -1010,8 +1007,8 @@ test_suite! {
         }).unwrap();
     }
 
-    test basic_finish_zone(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn basic_finish_zone(mut leaf: MockVdevFile) {
         leaf.expect_finish_zone()
             .with(eq(1))
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
@@ -1022,8 +1019,8 @@ test_suite! {
         }).unwrap();
     }
 
-    test basic_open_zone(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn basic_open_zone(mut leaf: MockVdevFile) {
         leaf.expect_open_zone()
             .with(eq(1))
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
@@ -1035,8 +1032,8 @@ test_suite! {
     }
 
     // basic reading works
-    test basic_read_at(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn basic_read_at(mut leaf: MockVdevFile) {
         leaf.expect_read_at()
             .with(always(), eq(2))
             .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
@@ -1050,8 +1047,8 @@ test_suite! {
     }
 
     // vectored reading works
-    test basic_readv_at(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn basic_readv_at(mut leaf: MockVdevFile) {
         leaf.expect_readv_at()
             .with(always(), eq(2))
             .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
@@ -1065,8 +1062,8 @@ test_suite! {
     }
 
     // sync_all works
-    test basic_sync_all(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn basic_sync_all(mut leaf: MockVdevFile) {
         leaf.expect_sync_all()
             .returning(|| Box::pin(future::ok::<(), Error>(())));
 
@@ -1078,8 +1075,8 @@ test_suite! {
 
     // data operations will be issued in C-LOOK order (from lowest LBA to
     // highest, then start over at lowest)
-    test sched_data(mocks) {
-        let leaf = mocks.val;
+    #[rstest]
+    fn sched_data(leaf: MockVdevFile) {
         let vdev = VdevBlock::new(leaf);
         let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
@@ -1128,8 +1125,8 @@ test_suite! {
     }
 
     // An erase zone command should be scheduled after any reads from that zone
-    test sched_erase_zone(mocks) {
-        let leaf = mocks.val;
+    #[rstest]
+    fn sched_erase_zone(leaf: MockVdevFile) {
         let vdev = VdevBlock::new(leaf);
         let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 12288]);
@@ -1176,8 +1173,8 @@ test_suite! {
     }
 
     // A finish zone command should be scheduled after any writes to that zone
-    test sched_finish_zone(mocks) {
-        let leaf = mocks.val;
+    #[rstest]
+    fn sched_finish_zone(leaf: MockVdevFile) {
         let vdev = VdevBlock::new(leaf);
         let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
@@ -1224,8 +1221,8 @@ test_suite! {
     }
 
     // An open zone command should be scheduled before any writes to that zone
-    test sched_open_zone(mocks) {
-        let leaf = mocks.val;
+    #[rstest]
+    fn sched_open_zone(leaf: MockVdevFile) {
         let vdev = VdevBlock::new(leaf);
         let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
@@ -1275,8 +1272,8 @@ test_suite! {
 
     // A sync_all command should be issued in strictly ordered mode; after all
     // previous commands and before all subsequent commands
-    test sched_sync_all(mocks) {
-        let leaf = mocks.val;
+    #[rstest]
+    fn sched_sync_all(leaf: MockVdevFile) {
         let vdev = VdevBlock::new(leaf);
         let mut inner = vdev.inner.write().unwrap();
         let dummy_dbs = DivBufShared::from(vec![0; 4096]);
@@ -1317,8 +1314,8 @@ test_suite! {
     }
 
     // Queued operations will both complete
-    test issueing_queued(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn issueing_queued(mut leaf: MockVdevFile) {
         let mut seq = Sequence::new();
 
         let (sender, receiver) = oneshot::channel::<()>();
@@ -1354,8 +1351,8 @@ test_suite! {
     // The first MAX_QUEUE_DEPTH operations will be issued immediately, in the
     // order in which they are requested.  Subsequent operations will be
     // reordered into LBA order
-    test issueing_queue_depth(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn issueing_queue_depth(mut leaf: MockVdevFile) {
         let num_ops = leaf.optimum_queue_depth() + 2;
         let mut seq = Sequence::new();
 
@@ -1428,8 +1425,8 @@ test_suite! {
     }
 
     // Basic writing works
-    test basic_write_at(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn basic_write_at(mut leaf: MockVdevFile) {
         leaf.expect_write_at()
             .with(always(), eq(1))
             .once()
@@ -1444,8 +1441,8 @@ test_suite! {
     }
 
     // vectored writing works
-    test basic_writev_at(mocks) {
-        let mut leaf = mocks.val;
+    #[rstest]
+    fn basic_writev_at(mut leaf: MockVdevFile) {
         leaf.expect_writev_at()
             .with(always(), eq(1))
             .returning(|_, _| Box::pin(future::ok::<(), Error>(())));

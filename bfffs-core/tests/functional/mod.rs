@@ -1,7 +1,10 @@
-#![type_length_limit="1640349"]
-#![recursion_limit="256"]   // galvanic_test hits the recursion limit
-// https://github.com/mindsbackyard/galvanic-test/pull/13
-#![allow(clippy::unnecessary_mut_passed)]
+// Temporarily allow this warning to reduce merge conflicts between the rstest
+// and fuse3 branches.
+#![allow(clippy::module_inception)]
+
+// rstest_reuse must be imported at the crate root for macro reasons
+// https://github.com/la10736/rstest/issues/128
+use rstest_reuse;
 
 macro_rules! t {
     ($e:expr) => (match $e {

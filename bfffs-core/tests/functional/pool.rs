@@ -1,9 +1,6 @@
 // vim: tw=80
-use galvanic_test::test_suite;
 
-test_suite! {
-    name persistence;
-
+mod persistence {
     use bfffs_core::vdev_file::*;
     use bfffs_core::vdev_block::*;
     use bfffs_core::raid;
@@ -11,8 +8,8 @@ test_suite! {
     use bfffs_core::label::*;
     use bfffs_core::pool::*;
     use futures::{TryFutureExt, future};
-    use galvanic_test::*;
     use pretty_assertions::assert_eq;
+    use rstest::{fixture, rstest};
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
@@ -41,31 +38,32 @@ test_suite! {
         0xab, 0x9d, 0xa5, 0x1a, 0x9d, 0x11, 0x5f, 0xfb,
     ];
 
-    fixture!( objects() -> (Runtime, Pool, TempDir, Vec<String>) {
-        setup(&mut self) {
-            let num_disks = 2;
-            let len = 1 << 26;  // 64 MB
-            let tempdir =
-                t!(Builder::new().prefix("test_pool_persistence").tempdir());
-            let paths = (0..num_disks).map(|i| {
-                let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
-                let file = t!(fs::File::create(&fname));
-                t!(file.set_len(len));
-                fname
-            }).collect::<Vec<_>>();
-            let rt = basic_runtime();
-            let clusters = paths.iter().map(|p| {
-                let cs = NonZeroU64::new(1);
-                Pool::create_cluster(cs, 1, None, 0, &[p][..])
-            }).collect::<Vec<_>>();
-            let pool = Pool::create("TestPool".to_string(), clusters);
-            (rt, pool, tempdir, paths)
-        }
-    });
+    type Harness = (Runtime, Pool, TempDir, Vec<String>);
+    #[fixture]
+    fn harness() -> Harness {
+        let num_disks = 2;
+        let len = 1 << 26;  // 64 MB
+        let tempdir =
+            t!(Builder::new().prefix("test_pool_persistence").tempdir());
+        let paths = (0..num_disks).map(|i| {
+            let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+            let file = t!(fs::File::create(&fname));
+            t!(file.set_len(len));
+            fname
+        }).collect::<Vec<_>>();
+        let rt = basic_runtime();
+        let clusters = paths.iter().map(|p| {
+            let cs = NonZeroU64::new(1);
+            Pool::create_cluster(cs, 1, None, 0, &[p][..])
+        }).collect::<Vec<_>>();
+        let pool = Pool::create("TestPool".to_string(), clusters);
+        (rt, pool, tempdir, paths)
+    }
 
     // Test open-after-write for Pool
-    test open(objects()) {
-        let (rt, old_pool, _tempdir, paths) = objects.val;
+    #[rstest]
+    fn open(harness: Harness) {
+        let (rt, old_pool, _tempdir, paths) = harness;
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
         rt.block_on(async {
@@ -98,8 +96,9 @@ test_suite! {
         assert_eq!(uuid, pool.uuid());
     }
 
-    test write_label(objects()) {
-        let (rt, old_pool, _tempdir, paths) = objects.val;
+    #[rstest]
+    fn write_label(harness: Harness) {
+        let (rt, old_pool, _tempdir, paths) = harness;
         rt.block_on(async {
             let label_writer = LabelWriter::new(0);
             old_pool.write_label(label_writer).await

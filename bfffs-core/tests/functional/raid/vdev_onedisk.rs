@@ -1,9 +1,6 @@
 // vim: tw=80
-use galvanic_test::test_suite;
 
-test_suite! {
-    name persistence;
-
+mod persistence {
     use bfffs_core::{
         label::*,
         vdev_block::*,
@@ -12,8 +9,8 @@ test_suite! {
         raid::{self, VdevOneDisk, VdevRaidApi},
     };
     use futures::TryFutureExt;
-    use galvanic_test::*;
     use pretty_assertions::assert_eq;
+    use rstest::{fixture, rstest};
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
@@ -35,22 +32,22 @@ test_suite! {
         0xf4, 0x26, 0x1f, 0x7a,
     ];
 
-    fixture!( mocks() -> (VdevOneDisk, TempDir, String) {
-        setup(&mut self) {
-            let len = 1 << 26;  // 64 MB
-            let tempdir = t!(
-                Builder::new().prefix("test_vdev_onedisk_persistence").tempdir()
-            );
-            let path = format!("{}/vdev", tempdir.path().display());
-            let file = t!(fs::File::create(&path));
-            t!(file.set_len(len));
-            let vdev = VdevOneDisk::create(None, path.clone());
-            (vdev, tempdir, path)
-        }
-    });
+    #[fixture]
+    fn harness() -> (VdevOneDisk, TempDir, String) {
+        let len = 1 << 26;  // 64 MB
+        let tempdir = t!(
+            Builder::new().prefix("test_vdev_onedisk_persistence").tempdir()
+        );
+        let path = format!("{}/vdev", tempdir.path().display());
+        let file = t!(fs::File::create(&path));
+        t!(file.set_len(len));
+        let vdev = VdevOneDisk::create(None, path.clone());
+        (vdev, tempdir, path)
+    }
 
-    test open_after_write(mocks()) {
-        let (old_vdev, _tempdir, path) = mocks.val;
+    #[rstest]
+    fn open_after_write(harness: (VdevOneDisk, TempDir, String)) {
+        let (old_vdev, _tempdir, path) = harness;
         let uuid = old_vdev.uuid();
         basic_runtime().block_on(async move {
             let label_writer = LabelWriter::new(0);
@@ -66,12 +63,13 @@ test_suite! {
         }).unwrap();
     }
 
-    test write_label(mocks()) {
+    #[rstest]
+    fn write_label(harness: (VdevOneDisk, TempDir, String)) {
         basic_runtime().block_on(async {
             let label_writer = LabelWriter::new(0);
-            mocks.val.0.write_label(label_writer).await
+            harness.0.write_label(label_writer).await
         }).unwrap();
-        let mut f = fs::File::open(mocks.val.2).unwrap();
+        let mut f = fs::File::open(harness.2).unwrap();
         let mut v = vec![0; 8192];
         f.seek(SeekFrom::Start(72)).unwrap();   // Skip the VdevLeaf label
         f.read_exact(&mut v).unwrap();
@@ -81,7 +79,7 @@ test_suite! {
             use std::io::Write;
             let mut df = File::create("/tmp/label.bin").unwrap();
             df.write_all(&v[..]).unwrap();
-            println!("UUID is {}", mocks.val.0.uuid());
+            println!("UUID is {}", harness.0.uuid());
         } */
         // Compare against the golden master, skipping the UUID fields
         assert_eq!(&v[0..4], &GOLDEN_VDEV_ONEDISK_LABEL[0..4]);

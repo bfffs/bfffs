@@ -1,10 +1,8 @@
 // vim: tw=80
-use galvanic_test::test_suite;
 
-// Constructs a real filesystem and tests the common FS routines, without mounting
-test_suite! {
-    name device_manager;
-
+/// Constructs a real filesystem and tests the common FS routines, without
+/// mounting
+mod device_manager {
     use bfffs_core::{
         database::*,
         device_manager::*,
@@ -13,8 +11,9 @@ test_suite! {
         idml::*,
         pool::*,
     };
-    use galvanic_test::*;
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
+    use rstest_reuse::{apply, template};
     use std::{
         fs,
         sync::{Arc, Mutex}
@@ -22,58 +21,56 @@ test_suite! {
     use tempfile::{Builder, TempDir};
     use tokio::runtime::Runtime;
 
-    fixture!( mocks(n: i16, k: i16, f: i16)
-              -> (Runtime, DevManager, Vec<String>, TempDir)
-    {
-        params {
-            vec![
-                (1, 1, 0),      // Single-disk configuration
-                (3, 3, 1),      // RAID configuration
-            ].into_iter()
-        }
-        setup(&mut self) {
-            let n = *self.n;
-            let k = *self.k;
-            let f = *self.f;
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_io()
-                .enable_time()
-                .build()
-                .unwrap();
-            let len = 1 << 30;  // 1GB
-            let tempdir =
-                t!(Builder::new().prefix("test_device_manager").tempdir());
-            let paths = (0..n).map(|i| {
-                let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
-                let file = t!(fs::File::create(&fname));
-                t!(file.set_len(len));
-                fname
-            }).collect::<Vec<_>>();
-            let pathsclone = paths.clone();
-            let handle = rt.handle().clone();
-            let cluster = Pool::create_cluster(None, k, None, f, &paths);
-            let pool = Pool::create(String::from("test_device_manager"),
-                vec![cluster]);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-            let ddml = Arc::new(DDML::new(pool, cache.clone()));
-            let idml = Arc::new(IDML::create(ddml, cache));
-            let db = Database::create(idml, handle);
-            rt.block_on(
-                db.sync_transaction()
-            ).unwrap();
-            let dev_manager = DevManager::default();
-            (rt, dev_manager, pathsclone, tempdir)
-        }
-    });
+    type Harness = (Runtime, DevManager, Vec<String>, TempDir);
 
-    // No disks have been tasted
-    test empty(mocks) {
-        assert!(mocks.val.1.importable_pools().is_empty());
+    fn harness(n: i16, k: i16, f: i16) -> Harness {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap();
+        let len = 1 << 30;  // 1GB
+        let tempdir =
+            t!(Builder::new().prefix("test_device_manager").tempdir());
+        let paths = (0..n).map(|i| {
+            let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+            let file = t!(fs::File::create(&fname));
+            t!(file.set_len(len));
+            fname
+        }).collect::<Vec<_>>();
+        let pathsclone = paths.clone();
+        let handle = rt.handle().clone();
+        let cluster = Pool::create_cluster(None, k, None, f, &paths);
+        let pool = Pool::create(String::from("test_device_manager"),
+            vec![cluster]);
+        let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
+        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let idml = Arc::new(IDML::create(ddml, cache));
+        let db = Database::create(idml, handle);
+        rt.block_on( async {
+            db.sync_transaction().await
+        }).unwrap();
+        let dev_manager = DevManager::default();
+        (rt, dev_manager, pathsclone, tempdir)
     }
 
-    // Import a single pool by its name.  Try both single-disk and raid pools
-    test import_by_name(mocks) {
-        let (rt, dm, paths, _tempdir) = mocks.val;
+    #[template]
+    #[rstest(h,
+             case(harness(1, 1, 0)),     // Single-disk configuration
+             case(harness(3, 3, 1)),     // RAID configuration
+     )]
+    fn all_configs(h: Harness) {}
+
+    /// No disks have been tasted
+    #[apply(all_configs)]
+    fn empty(h: Harness) {
+        assert!(h.1.importable_pools().is_empty());
+    }
+
+    /// Import a single pool by its name.  Try both single-disk and raid pools
+    #[apply(all_configs)]
+    fn import_by_name(h: Harness) {
+        let (rt, dm, paths, _tempdir) = h;
         for path in paths.iter() {
             dm.taste(path);
         }
@@ -82,8 +79,9 @@ test_suite! {
     }
 
     // Import a single pool by its UUID
-    test import_by_uuid(mocks) {
-        let (rt, dm, paths, _tempdir) = mocks.val;
+    #[apply(all_configs)]
+    fn import_by_uuid(h: Harness) {
+        let (rt, dm, paths, _tempdir) = h;
         for path in paths.iter() {
             dm.taste(path);
         }
@@ -94,8 +92,9 @@ test_suite! {
     }
 
     /// DeviceManager::import_clusters on a single pool
-    test import_clusters(mocks) {
-        let (rt, dm, paths, _tempdir) = mocks.val;
+    #[apply(all_configs)]
+    fn import_clusters(h: Harness) {
+        let (rt, dm, paths, _tempdir) = h;
         for path in paths.iter() {
             dm.taste(path);
         }

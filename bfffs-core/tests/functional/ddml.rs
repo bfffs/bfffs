@@ -1,9 +1,5 @@
 // vim: tw=80
-use galvanic_test::test_suite;
-
-test_suite! {
-    name ddml;
-
+mod ddml {
     use bfffs_core::{
         cache::*,
         ddml::*,
@@ -12,8 +8,8 @@ test_suite! {
     };
     use divbuf::{DivBuf, DivBufShared};
     use futures::TryFutureExt;
-    use galvanic_test::*;
     use pretty_assertions::assert_eq;
+    use rstest::{fixture, rstest};
     use std::{
         fs,
         io::Read,
@@ -25,26 +21,26 @@ test_suite! {
     use super::super::*;
     use tokio::runtime::Runtime;
 
-    fixture!( objects() -> (Runtime, DDML) {
-        setup(&mut self) {
-            let len = 1 << 26;  // 64 MB
-            let tempdir = t!(Builder::new().prefix("ddml").tempdir());
-            let filename = tempdir.path().join("vdev");
-            let file = t!(fs::File::create(&filename));
-            t!(file.set_len(len));
-            let rt = basic_runtime();
-            let cs = NonZeroU64::new(1);
-            let clusters = vec![
-                Pool::create_cluster(cs, 1, None, 0, &[filename][..])
-            ];
-            let pool = Pool::create("TestPool".to_string(), clusters);
-            let cache = Cache::with_capacity(1_000_000_000);
-            (rt, DDML::new(pool, Arc::new(Mutex::new(cache))))
-        }
-    });
+    #[fixture]
+    fn objects() -> (Runtime, DDML) {
+        let len = 1 << 26;  // 64 MB
+        let tempdir = t!(Builder::new().prefix("ddml").tempdir());
+        let filename = tempdir.path().join("vdev");
+        let file = t!(fs::File::create(&filename));
+        t!(file.set_len(len));
+        let rt = basic_runtime();
+        let cs = NonZeroU64::new(1);
+        let clusters = vec![
+            Pool::create_cluster(cs, 1, None, 0, &[filename][..])
+        ];
+        let pool = Pool::create("TestPool".to_string(), clusters);
+        let cache = Cache::with_capacity(1_000_000_000);
+        (rt, DDML::new(pool, Arc::new(Mutex::new(cache))))
+    }
 
-    test basic(objects) {
-        let (rt, ddml) = objects.val;
+    #[rstest]
+    fn basic(objects: (Runtime, DDML)) {
+        let (rt, ddml) = objects;
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let ddml2 = &ddml;
         rt.block_on(async {
@@ -72,9 +68,10 @@ test_suite! {
 
     // Round trip some compressible data.  Use the contents of vdev_raid.rs, a
     // moderately large and compressible file
-    test compressible(objects) {
+    #[rstest]
+    fn compressible(objects: (Runtime, DDML)) {
         let txg = TxgT::from(0);
-        let (rt, ddml) = objects.val;
+        let (rt, ddml) = objects;
         let ddml2 = &ddml;
         let mut file = fs::File::open(
                 &Path::new("../bfffs-core/src/raid/vdev_raid.rs")
@@ -109,8 +106,9 @@ test_suite! {
     }
 
     // Records of less than an LBA should be padded up.
-    test short(objects) {
-        let (rt, ddml) = objects.val;
+    #[rstest]
+    fn short(objects: (Runtime, DDML)) {
+        let (rt, ddml) = objects;
         let ddml2 = &ddml;
         let dbs = DivBufShared::from(vec![42u8; 1024]);
         rt.block_on(async {
