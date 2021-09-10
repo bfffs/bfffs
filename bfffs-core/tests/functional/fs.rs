@@ -1386,20 +1386,29 @@ root:
         let srcname = OsString::from("src");
         let fd = harness4k.0.symlink(&root, &srcname, 0o642, 0, 0, &dstname)
         .unwrap();
-        assert_eq!(dstname, harness4k.0.readlink(&fd).unwrap());
+        let output = harness4k.1.block_on(async {
+            harness4k.0.readlink(&fd).await
+        }).unwrap();
+        assert_eq!(dstname, output);
     }
 
     // Calling readlink on a non-symlink should return EINVAL
     #[rstest]
     fn readlink_einval(harness4k: Harness) {
         let root = harness4k.0.root();
-        assert_eq!(libc::EINVAL, harness4k.0.readlink(&root).unwrap_err());
+        let output = harness4k.1.block_on(async {
+            harness4k.0.readlink(&root).await
+        });
+        assert_eq!(libc::EINVAL, output.unwrap_err());
     }
 
     #[rstest]
     fn readlink_enoent(harness4k: Harness) {
         let fd = FileData::new_for_tests(Some(1), 1000);
-        assert_eq!(libc::ENOENT, harness4k.0.readlink(&fd).unwrap_err());
+        let output = harness4k.1.block_on(async {
+            harness4k.0.readlink(&fd).await
+        });
+        assert_eq!(libc::ENOENT, output.unwrap_err());
     }
 
     /// readlink(2) should not update any timestamps
@@ -1412,7 +1421,10 @@ root:
         .unwrap();
         clear_timestamps(&harness4k.0, &fd);
 
-        assert_eq!(dstname, harness4k.0.readlink(&fd).unwrap());
+        let output = harness4k.1.block_on(async {
+            harness4k.0.readlink(&fd).await
+        }).unwrap();
+        assert_eq!(dstname, output);
         assert_ts_changed(&harness4k.0, &fd, false, false, false, false);
     }
 

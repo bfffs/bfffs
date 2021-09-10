@@ -1684,28 +1684,27 @@ impl Fs {
         ReaddirIter{handle: self.handle.clone(), rx}
     }
 
-    pub fn readlink(&self, fd: &FileData) -> Result<OsString, i32> {
+    pub async fn readlink(&self, fd: &FileData) -> Result<OsString, i32> {
         let ino = fd.ino;
-        self.handle.block_on(
-            self.db.fsread(self.tree, move |dataset| {
-                let key = FSKey::new(ino, ObjKey::Inode);
-                dataset.get(key)
-                .map(move |r| {
-                    match r {
-                        Ok(Some(v)) => {
-                            let inode = v.as_inode().unwrap();
-                            if let FileType::Link(ref path) = inode.file_type {
-                                Ok(path.clone())
-                            } else {
-                                Err(Error::EINVAL)
-                            }
-                        },
-                        Ok(None) => Err(Error::ENOENT),
-                        Err(e) => Err(e)
-                    }
-                })
-            }).map_err(Error::into)
-        )
+        self.db.fsread(self.tree, move |dataset| {
+            let key = FSKey::new(ino, ObjKey::Inode);
+            dataset.get(key)
+            .map(move |r| {
+                match r {
+                    Ok(Some(v)) => {
+                        let inode = v.as_inode().unwrap();
+                        if let FileType::Link(ref path) = inode.file_type {
+                            Ok(path.clone())
+                        } else {
+                            Err(Error::EINVAL)
+                        }
+                    },
+                    Ok(None) => Err(Error::ENOENT),
+                    Err(e) => Err(e)
+                }
+            })
+        }).map_err(Error::into)
+        .await
     }
 
     /// Rename a file.  Return the inode number of the renamed file.
