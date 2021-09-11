@@ -91,7 +91,9 @@ fn clean_zone(#[case] harness: Harness) {
     }
     fs.sync();
 
-    fs.unlink(&root, Some(&big_fd), &big_filename).unwrap();
+    rt.block_on(async {
+        fs.unlink(&root, Some(&big_fd), &big_filename).await
+    }).unwrap();
     fs.sync();
 
     rt.block_on(db.clean()).unwrap();

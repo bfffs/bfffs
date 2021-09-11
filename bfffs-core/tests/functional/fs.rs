@@ -989,7 +989,9 @@ root:
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).unwrap();
         let ino = fd.ino();
-        let r = fs.unlink(&root, Some(&fd), &filename);
+        let r = rt.block_on(async {
+            fs.unlink(&root, Some(&fd), &filename).await
+        });
         fs.sync();
         assert_eq!(Ok(()), r);
 
@@ -2346,7 +2348,9 @@ root:
         let filename = OsString::from("x");
         let fd = harness4k.0.create(&root, &filename, 0o644, 0, 0).unwrap();
         #[cfg(debug_assertions)] let ino = fd.ino();
-        let r = harness4k.0.unlink(&root, Some(&fd), &filename);
+        let r = harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &filename).await
+        });
         assert_eq!(Ok(()), r);
         harness4k.0.inactive(fd);
 
@@ -2375,7 +2379,9 @@ root:
         let root = harness4k.0.root();
         let filename = OsString::from("x");
         let fd = harness4k.0.create(&root, &filename, 0o644, 0, 0).unwrap();
-        let r = harness4k.0.unlink(&root, Some(&fd), &filename);
+        let r = harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &filename).await
+        });
         assert_eq!(Ok(()), r);
 
         let attr = harness4k.0.getattr(&fd).expect("Inode deleted too soon");
@@ -2390,7 +2396,9 @@ root:
         let root = harness4k.0.root();
         let filename = OsString::from("x");
         let fd = harness4k.0.create(&root, &filename, 0o644, 0, 0).unwrap();
-        let r = harness4k.0.unlink(&root, Some(&fd), &filename);
+        let r = harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &filename).await
+        });
         assert_eq!(Ok(()), r);
 
         harness4k.0.sync();
@@ -2413,7 +2421,9 @@ root:
         let fd1 = harness4k.0.create(&root, &filename1, 0o644, 0, 0).unwrap();
         #[cfg(debug_assertions)] let ino1 = fd1.ino();
 
-        harness4k.0.unlink(&root, Some(&fd1), &filename1).unwrap();
+        harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd1), &filename1).await
+        }).unwrap();
         harness4k.0.inactive(fd1);
 
         assert_eq!(harness4k.0.lookup(None, &root, &filename0).unwrap().ino(),
@@ -2436,7 +2446,9 @@ root:
         harness4k.0.link(&root, &fd, &name2).unwrap();
         clear_timestamps(&harness4k.0, &fd);
 
-        harness4k.0.unlink(&root, Some(&fd), &name2).unwrap();
+        harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &name2).await
+        }).unwrap();
         assert_ts_changed(&harness4k.0, &fd, false, false, true, false);
     }
 
@@ -2445,8 +2457,12 @@ root:
         let root = harness4k.0.root();
         let filename = OsString::from("x");
         let fd = harness4k.0.create(&root, &filename, 0o644, 0, 0).unwrap();
-        harness4k.0.unlink(&root, Some(&fd), &filename).unwrap();
-        let e = harness4k.0.unlink(&root, Some(&fd), &filename).unwrap_err();
+        harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &filename).await
+        }).unwrap();
+        let e = harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &filename).await
+        }).unwrap_err();
         assert_eq!(e, libc::ENOENT);
     }
 
@@ -2461,7 +2477,9 @@ root:
         #[cfg(debug_assertions)] let ino = fd.ino();
         harness4k.0.link(&root, &fd, &name2).unwrap();
 
-        harness4k.0.unlink(&root, Some(&fd), &name1).unwrap();
+        harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &name1).await
+        }).unwrap();
         // File should still exist, now with link count 1.
         let attr = harness4k.0.getattr(&fd).unwrap();
         assert_eq!(attr.nlink, 1);
@@ -2476,7 +2494,9 @@ root:
         assert_eq!(attr.nlink, 1);
 
         // A second unlink should remove the file
-        harness4k.0.unlink(&root, Some(&fd), &name2).unwrap();
+        harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &name2).await
+        }).unwrap();
         harness4k.0.inactive(fd);
 
         // File should actually be gone now
@@ -2498,7 +2518,9 @@ root:
         let fd = harness4k.0.create(&root, &filename, 0o644, 0, 0).unwrap();
         #[cfg(debug_assertions)] let ino = fd.ino();
         harness4k.0.inactive(fd);
-        let r = harness4k.0.unlink(&root, None, &filename);
+        let r = harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, None, &filename).await
+        });
         assert_eq!(Ok(()), r);
 
         // Check that the directory entry is gone
@@ -2528,7 +2550,9 @@ root:
         let fd = harness4k.0.create(&root, &filename, 0o644, 0, 0).unwrap();
         clear_timestamps(&harness4k.0, &root);
 
-        harness4k.0.unlink(&root, Some(&fd), &filename).unwrap();
+        harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &filename).await
+        }).unwrap();
         harness4k.0.inactive(fd);
         assert_ts_changed(&harness4k.0, &root, false, true, true, false);
     }
@@ -2547,7 +2571,9 @@ root:
 
         harness4k.0.sync();
 
-        let r = harness4k.0.unlink(&root, Some(&fd), &filename);
+        let r = harness4k.1.block_on(async {
+            harness4k.0.unlink(&root, Some(&fd), &filename).await
+        });
         assert_eq!(Ok(()), r);
         harness4k.0.inactive(fd);
 
@@ -2952,9 +2978,11 @@ mod torture {
             let fname = format!("{:x}_x", num);
             let fd = FileData::new_for_tests(Some(1), num);
             info!("rm {}", fname);
-            assert_eq!(self.fs.unlink(&self.root, Some(&fd),
-                                      &OsString::from(&fname)),
-                       Err(Error::ENOENT.into()));
+            let r = self.rt.as_ref().unwrap().block_on(async {
+                self.fs.unlink(&self.root, Some(&fd), &OsString::from(&fname))
+                    .await
+            });
+            assert_eq!(r, Err(Error::ENOENT.into()));
         }
 
         fn rm(&mut self) {
@@ -2963,8 +2991,10 @@ mod torture {
                 let (basename, fd) = self.files.remove(idx);
                 let fname = format!("{:x}", basename);
                 info!("rm {}", fname);
-                self.fs.unlink(&self.root, Some(&fd), &OsString::from(&fname))
-                    .unwrap();
+                self.rt.as_ref().unwrap().block_on(async {
+                    self.fs.unlink(&self.root, Some(&fd),
+                        &OsString::from(&fname)).await
+                }).unwrap();
             }
         }
 

@@ -996,12 +996,13 @@ fn unlink() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    let (fd, fs) = rt.block_on(async {
+        let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await;
+        let fd = FileData::new(Some(parent_ino), ino);
+        let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
+        assert_eq!(Ok(()), r);
+        (fd, fs)
     });
-    let fd = FileData::new(Some(parent_ino), ino);
-    let r = fs.unlink(&fs.root(), Some(&fd), &filename);
-    assert_eq!(Ok(()), r);
     fs.inactive(fd);
 }
 
@@ -1168,12 +1169,13 @@ fn unlink_with_blob_extattr() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    let (fd, fs) = rt.block_on(async {
+        let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await;
+        let fd = FileData::new(Some(parent_ino), ino);
+        let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
+        assert_eq!(Ok(()), r);
+        (fd, fs)
     });
-    let fd = FileData::new(Some(parent_ino), ino);
-    let r = fs.unlink(&fs.root(), Some(&fd), &filename);
-    assert_eq!(Ok(()), r);
     fs.inactive(fd);
 }
 
@@ -1331,11 +1333,12 @@ fn unlink_with_extattr_hash_collision() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
+    let (fd, fs) = rt.block_on(async {
+        let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await;
+        let fd = FileData::new(Some(parent_ino), ino);
+        let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
+        assert_eq!(Ok(()), r);
+        (fd, fs)
     });
-    let fd = FileData::new(Some(parent_ino), ino);
-    let r = fs.unlink(&fs.root(), Some(&fd), &filename);
-    assert_eq!(Ok(()), r);
     fs.inactive(fd);
 }

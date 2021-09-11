@@ -2054,7 +2054,7 @@ impl Fs {
     /// - `fd`:         `FileData` of the directory entry to be removed, if
     ///                 known.  Must be provided if the file has been looked up!
     /// - `name`:       Name of the directory entry to remove.
-    pub fn unlink(&self, parent_fd: &FileData, fd: Option<&FileData>,
+    pub async fn unlink(&self, parent_fd: &FileData, fd: Option<&FileData>,
         name: &OsStr) -> Result<(), i32>
     {
         // Outline:
@@ -2066,31 +2066,30 @@ impl Fs {
         let parent_ino = parent_fd.ino;
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
-        self.handle.block_on(
-            self.db.fswrite(self.tree, 3, 0, 1, 0, move |ds| async move {
-                let dataset = Arc::new(ds);
-                // 1) Lookup and remove the directory entry
-                let key = FSKey::new(parent_ino, dekey);
-                let dirent = htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
-                    (dataset.clone(), key, 0, owned_name).await?;
-                if let Some(ino) = ino {
-                    assert_eq!(ino, dirent.ino);
-                }
-                // 2a) Unlink the inode
-                let unlink_fut = Fs::do_unlink(dataset.clone(),
-                    lookup_count, dirent.ino);
-                // 2b) Update parent's timestamps
-                let now = Timespec::now();
-                let attr = SetAttr {
-                    ctime: Some(now),
-                    mtime: Some(now),
-                    .. Default::default()
-                };
-                let ts_fut = Fs::do_setattr(dataset, parent_ino, attr);
-                future::try_join(unlink_fut, ts_fut).await?;
-                Ok(())
-            }).map_err(Error::into)
-        )
+        self.db.fswrite(self.tree, 3, 0, 1, 0, move |ds| async move {
+            let dataset = Arc::new(ds);
+            // 1) Lookup and remove the directory entry
+            let key = FSKey::new(parent_ino, dekey);
+            let dirent = htable::remove::<Arc<ReadWriteFilesystem>, Dirent>
+                (dataset.clone(), key, 0, owned_name).await?;
+            if let Some(ino) = ino {
+                assert_eq!(ino, dirent.ino);
+            }
+            // 2a) Unlink the inode
+            let unlink_fut = Fs::do_unlink(dataset.clone(),
+                lookup_count, dirent.ino);
+            // 2b) Update parent's timestamps
+            let now = Timespec::now();
+            let attr = SetAttr {
+                ctime: Some(now),
+                mtime: Some(now),
+                .. Default::default()
+            };
+            let ts_fut = Fs::do_setattr(dataset, parent_ino, attr);
+            future::try_join(unlink_fut, ts_fut).await?;
+            Ok(())
+        }).map_err(Error::into)
+        .await
     }
 
     pub fn write<IU>(&self, fd: &FileData, offset: u64, data: IU, _flags: u32)
