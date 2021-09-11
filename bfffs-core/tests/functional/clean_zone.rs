@@ -17,7 +17,6 @@ use std::{
     time
 };
 use tempfile::Builder;
-use tokio::runtime::Runtime;
 
 type Harness = (Arc<Database>, Fs);
 

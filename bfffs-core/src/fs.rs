@@ -1570,9 +1570,48 @@ impl Fs {
             }
         }
 
+        /// Stores the state of `ReaddirStream` as it iterates through a bucket
+        struct Bucketing {
+            /// Contents of the bucket that haven't been returned yet.
+            ///
+            /// Invariant: never empty
+            bucket: Vec<Dirent>,
+            /// Offset of the FSKey of this bucket
+            kofs: u64,
+            /// Number of dirents already returned from this bucket
+            returned: u8
+        }
+
         struct ReaddirStream {
-            cursor: Cursor,
-            rq: RangeQuery<FSKey, FSKey, FSValue<RID>>
+            /// Number of entries to skip from the first bucket
+            bucket_idx: u8,
+            rq: RangeQuery<FSKey, FSKey, FSValue<RID>>,
+            /// If the stream is currently positioned in the middle of a bucket,
+            /// store that bucket
+            bucketing: Option<Bucketing>
+        }
+        impl ReaddirStream {
+            /// Pop one entry from the contained bucket and return it
+            ///
+            /// # Panics
+            ///
+            /// Panics if there is no contained bucket
+            fn pop_bucket(mut self: Pin<&mut Self>)
+                -> (libc::dirent, i64)
+            {
+                let mut bucketing = self.bucketing.take().unwrap();
+                let dirent = bucketing.bucket.pop().unwrap();
+                bucketing.returned += 1;
+                let curs = if bucketing.bucket.is_empty() {
+                    Cursor::new(bucketing.kofs + 1, 0)
+                } else {
+                    let curs = Cursor::new(bucketing.kofs,
+                                           usize::from(bucketing.returned));
+                    self.bucketing = Some(bucketing);
+                    curs
+                };
+                (dirent2dirent(dirent), curs.0 as i64)
+            }
         }
         impl Stream for ReaddirStream {
             type Item = Result<(libc::dirent, i64), Error>;
@@ -1580,34 +1619,42 @@ impl Fs {
             fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context)
                 -> Poll<Option<Self::Item>>
             {
-                let bucket_idx = self.cursor.bucket_idx();
-                Pin::new(&mut self.rq).poll_next(cx)
-                .map_ok(|(k, v)| {
-                    match v {
+                if self.bucketing.is_some() {
+                    return Poll::Ready(Some(Ok(self.pop_bucket())));
+                }
+
+                match Pin::new(&mut self.rq).poll_next(cx) {
+                    Poll::Ready(Some(Ok((k, v)))) => match v {
                         FSValue::DirEntry(dirent) => {
                             let curs = Cursor::new(k.offset() + 1, 0);
-                            (dirent2dirent(dirent), curs.0 as i64)
+                            let de = dirent2dirent(dirent);
+                            Poll::Ready(Some(Ok((de, curs.0 as i64))))
                         },
-                        FSValue::DirEntries(bucket) => {
-                            let bucket_size = bucket.len();
-                            let (i, dirent) = bucket.into_iter()
-                            .skip(bucket_idx as usize)
-                            .enumerate()
-                            .next()
-                            .expect("readdir offset pointed beyond the end of a hash bucket?");
-
-                            let idx = i + bucket_idx as usize;
-                            let curs = if idx + i < bucket_size - 1 {
-                                Cursor::new(k.offset(), idx + 1)
+                        FSValue::DirEntries(mut bucket) => {
+                            for _ in 0..self.bucket_idx {
+                                // Ignore errors.  They indicate that the bucket
+                                // has shrunk since the Cursor was created
+                                let _ = bucket.pop();
+                            }
+                            self.bucket_idx = 0;
+                            if !bucket.is_empty() {
+                                self.bucketing = Some(Bucketing {
+                                    bucket,
+                                    kofs: k.offset(),
+                                    returned: 0
+                                });
+                                Poll::Ready(Some(Ok(self.pop_bucket())))
                             } else {
-                                Cursor::new(k.offset() + 1, 0)
-                            };
-                            (dirent2dirent(dirent), curs.0 as i64)
+                                self.poll_next(cx)
+                            }
                         },
                         x => panic!("Unexpected value {:?} for key {:?}",
                                     x, k)
-                    }
-                })
+                    },
+                    Poll::Ready(None) => Poll::Ready(None),
+                    Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+                    Poll::Pending => Poll::Pending,
+                }
             }
         }
 
@@ -1635,7 +1682,9 @@ impl Fs {
             let cursor = Cursor::from(soffs);
             let offs = cursor.offset();
             let rq = dataset.range(FSKey::dirent_range(ino, offs));
-            ReaddirStream{cursor, rq}
+            let bucketing = None;
+            let bucket_idx = cursor.bucket_idx();
+            ReaddirStream{bucket_idx, bucketing, rq}
         }).map_err(Error::into)
     }
 
