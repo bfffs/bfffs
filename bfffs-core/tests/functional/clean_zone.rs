@@ -19,15 +19,9 @@ use std::{
 use tempfile::Builder;
 use tokio::runtime::Runtime;
 
-type Harness = (Arc<Database>, Fs, Runtime);
+type Harness = (Arc<Database>, Fs);
 
-fn harness(devsize: u64, zone_size: u64) -> Harness {
-    // Fs::new() requires the threaded scheduler
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .unwrap();
+async fn harness(devsize: u64, zone_size: u64) -> Harness {
     let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
     let filename = tempdir.path().join("vdev");
     let file = t!(fs::File::create(&filename));
@@ -44,17 +38,10 @@ fn harness(devsize: u64, zone_size: u64) -> Harness {
     );
     let ddml = Arc::new(DDML::new(pool, cache.clone()));
     let idml = IDML::create(ddml, cache);
-    let (db, tree_id) = rt.block_on(async move {
-        let db = Arc::new(Database::create(Arc::new(idml)));
-        let tree_id = db.new_fs(Vec::new())
-            .await.unwrap();
-        (db, tree_id)
-    });
-    let handle = rt.handle().clone();
-    let fs = rt.block_on(async {
-        Fs::new(db.clone(), handle, tree_id).await
-    });
-    (db, fs, rt)
+    let db = Arc::new(Database::create(Arc::new(idml)));
+    let tree_id = db.new_fs(Vec::new()).await.unwrap();
+    let fs = Fs::new(db.clone(), tree_id).await;
+    (db, fs)
 }
 
 // This tests a regression in database::Syncer::run.  However, I can't
@@ -62,12 +49,13 @@ fn harness(devsize: u64, zone_size: u64) -> Harness {
 // file.
 #[ignore = "Test is slow" ]
 #[rstest]
-#[case(harness(1 << 20, 32))]
-fn sleep_sync_sync(#[case] harness: Harness) {
-    let (_db, fs, _rt) = harness;
+#[case(1 << 20, 32)]
+#[tokio::test]
+async fn sleep_sync_sync(#[case] devsize: u64, #[case] zone_size: u64) {
+    let (_db, fs) = harness(devsize, zone_size).await;
     thread::sleep(time::Duration::from_millis(5500));
-    fs.sync();
-    fs.sync();
+    fs.sync().await;
+    fs.sync().await;
 }
 
 // Minimal test for cleaning zones.  Fills up the first zone and part of the
@@ -75,60 +63,64 @@ fn sleep_sync_sync(#[case] harness: Harness) {
 // it, and does not reopen it.  We just have to sort-of take it on faith
 // that zone 0 is clean, because the public API doesn't expose zones.
 #[rstest]
-#[case(harness(1 << 20, 32))]
-fn clean_zone(#[case] harness: Harness) {
-    let (db, fs, rt) = harness;
+#[case(1 << 20, 32)]
+#[tokio::test]
+async fn clean_zone(#[case] devsize: u64, #[case] zone_size: u64) {
+    let (db, fs) = harness(devsize, zone_size).await;
     let root = fs.root();
     let small_filename = OsString::from("small");
-    let small_fd = fs.create(&root, &small_filename, 0o644, 0, 0).unwrap();
+    let small_fd = fs.create(&root, &small_filename, 0o644, 0, 0).await
+        .unwrap();
     let buf = vec![42u8; 4096];
-    fs.write(&small_fd, 0, &buf[..], 0).unwrap();
+    fs.write(&small_fd, 0, &buf[..], 0).await
+        .unwrap();
 
     let big_filename = OsString::from("big");
-    let big_fd = fs.create(&root, &big_filename, 0o644, 0, 0).unwrap();
+    let big_fd = fs.create(&root, &big_filename, 0o644, 0, 0).await
+        .unwrap();
     for i in 0..18 {
-        fs.write(&big_fd, i * 4096, &buf[..], 0).unwrap();
+        fs.write(&big_fd, i * 4096, &buf[..], 0).await
+            .unwrap();
     }
-    fs.sync();
+    fs.sync().await;
 
-    rt.block_on(async {
-        fs.unlink(&root, Some(&big_fd), &big_filename).await
-    }).unwrap();
-    fs.sync();
+    fs.unlink(&root, Some(&big_fd), &big_filename).await.unwrap();
+    fs.sync().await;
 
-    rt.block_on(db.clean()).unwrap();
-    fs.sync();
+    db.clean().await.unwrap();
+    fs.sync().await;
 }
 
 #[ignore = "Test is slow" ]
 #[rstest]
-#[case(harness(1 << 30, 512))]
-fn clean_zone_leak(#[case] harness: Harness) {
-    let (db, fs, rt) = harness;
+#[case(1 << 30, 512)]
+#[tokio::test]
+async fn clean_zone_leak(#[case] devsize: u64, #[case] zone_size: u64) {
+    let (db, fs) = harness(devsize, zone_size).await;
     let root = fs.root();
     for i in 0..16384 {
         let fname = format!("f.{}", i);
-        fs.mkdir(&root, &OsString::from(fname), 0o755, 0, 0).unwrap();
+        fs.mkdir(&root, &OsString::from(fname), 0o755, 0, 0).await.unwrap();
     }
-    fs.sync();
+    fs.sync().await;
     for i in 0..8000 {
         let fname = format!("f.{}", i);
-        fs.rmdir(&root, &OsString::from(fname)).unwrap();
+        fs.rmdir(&root, &OsString::from(fname)).await.unwrap();
     }
-    fs.sync();
-    let mut statvfs = fs.statvfs().unwrap();
+    fs.sync().await;
+    let mut statvfs = fs.statvfs().await.unwrap();
     println!("Before cleaning: {:?} free out of {:?}",
              statvfs.f_bfree, statvfs.f_blocks);
-    assert!(rt.block_on(db.check()).unwrap());
-    rt.block_on(db.clean()).unwrap();
-    statvfs = fs.statvfs().unwrap();
+    assert!(db.check().await.unwrap());
+    db.clean().await.unwrap();
+    statvfs = fs.statvfs().await.unwrap();
     println!("After cleaning: {:?} free out of {:?}",
              statvfs.f_bfree, statvfs.f_blocks);
-    assert!(rt.block_on(db.check()).unwrap());
+    assert!(db.check().await.unwrap());
     drop(fs);
     let owned_db = Arc::try_unwrap(db)
     .ok().expect("Unwrapping Database failed");
-    rt.block_on(owned_db.shutdown());
+    owned_db.shutdown().await;
 }
 
 /// A regression test for bug d5b4dab35d9be12ff1505e886ed5ca8ad4b6a526
@@ -137,25 +129,26 @@ fn clean_zone_leak(#[case] harness: Harness) {
 /// time.
 #[ignore = "Test is slow and intermittent" ]
 #[rstest]
-#[case(harness(1 << 30, 512))]
-fn get_mut(#[case] harness: Harness) {
-    let (db, fs, rt) = harness;
+#[case(1 << 30, 512)]
+#[tokio::test]
+async fn get_mut(#[case] devsize: u64, #[case] zone_size: u64) {
+    let (db, fs) = harness(devsize, zone_size).await;
     let root = fs.root();
     for i in 0..16384 {
         let fname = format!("f.{}", i);
-        fs.mkdir(&root, &OsString::from(fname), 0o755, 0, 0).unwrap();
+        fs.mkdir(&root, &OsString::from(fname), 0o755, 0, 0).await.unwrap();
     }
-    fs.sync();
+    fs.sync().await;
     for i in 0..8192 {
         let fname = format!("f.{}", 2 * i);
-        fs.rmdir(&root, &OsString::from(fname)).unwrap();
+        fs.rmdir(&root, &OsString::from(fname)).await.unwrap();
     }
-    fs.sync();
-    let mut statvfs = fs.statvfs().unwrap();
+    fs.sync().await;
+    let mut statvfs = fs.statvfs().await.unwrap();
     println!("Before cleaning: {:?} free out of {:?}",
              statvfs.f_bfree, statvfs.f_blocks);
-    rt.block_on(db.clean()).unwrap();
-    statvfs = fs.statvfs().unwrap();
+    db.clean().await.unwrap();
+    statvfs = fs.statvfs().await.unwrap();
     println!("After cleaning: {:?} free out of {:?}",
              statvfs.f_bfree, statvfs.f_blocks);
 }
