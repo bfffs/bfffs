@@ -17,8 +17,7 @@ fn read_write_filesystem() -> ReadWriteFilesystem {
     ReadWriteFilesystem::default()
 }
 
-fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
-    let rt = basic_runtime();
+async fn setup() -> (Database, TreeID) {
     let mut rods = ReadOnlyFilesystem::default();
     let mut rwds = read_write_filesystem();
     rods.expect_last_key()
@@ -53,8 +52,8 @@ fn setup() -> (tokio::runtime::Runtime, Database, TreeID) {
     // Use a small recordsize for most tests, because it's faster to test
     // conditions that require multiple records.
     let props = vec![Property::RecordSize(12)];
-    let tree_id = rt.block_on(db.new_fs(props)).unwrap();
-    (rt, db, tree_id)
+    let tree_id = db.new_fs(props).await.unwrap();
+    (db, tree_id)
 }
 
 /// Helper that creates a mock RangeQuery from the vec of items that it should
@@ -79,9 +78,9 @@ fn mock_range_query<K, T, V>(items: Vec<(K, V)>) -> RangeQuery<K, T, V>
     rq
 }
 
-#[test]
-fn create() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn create() {
+    let (mut db, tree_id) = setup().await;
     let mut ds = read_write_filesystem();
     let root_ino = 1;
     let ino = 2;
@@ -146,18 +145,15 @@ fn create() {
         .once()
         .return_once(move |_| ds);
 
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
-
-    let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).unwrap();
+    let fs = Fs::new(Arc::new(db), tree_id).await;
+    let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).await.unwrap();
     assert_eq!(ino, fd.ino);
 }
 
 /// Create experiences a hash collision when adding the new directory entry
-#[test]
-fn create_hash_collision() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn create_hash_collision() {
+    let (mut db, tree_id) = setup().await;
     let mut ds = read_write_filesystem();
     let root_ino = 1;
     let ino = 2;
@@ -256,11 +252,9 @@ fn create_hash_collision() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
+    let fs = Fs::new(Arc::new(db), tree_id).await;
 
-    let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).unwrap();
+    let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).await.unwrap();
     assert_eq!(ino, fd.ino);
 }
 
@@ -330,9 +324,9 @@ fn debug_setattr() {
 
 /// A 3-way hash collision of extended attributes.  deleteextattr removes one of
 /// them.
-#[test]
-fn deleteextattr_3way_collision() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn deleteextattr_3way_collision() {
+    let (mut db, tree_id) = setup().await;
     let mut ds = read_write_filesystem();
     let ino = 1;
     // Three attributes share a bucket.  The test will delete name2
@@ -384,20 +378,18 @@ fn deleteextattr_3way_collision() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
+    let fs = Fs::new(Arc::new(db), tree_id).await;
     let fd = FileData::new(Some(1), ino);
-    let r = fs.deleteextattr(&fd, namespace, &name2);
+    let r = fs.deleteextattr(&fd, namespace, &name2).await;
     assert_eq!(Ok(()), r);
 }
 
 /// A 3-way hash collision of extended attributes.  Two are stored in one key,
 /// and deleteextattr tries to delete a third that hashes to the same key, but
 /// isn't stored there.
-#[test]
-fn deleteextattr_3way_collision_enoattr() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn deleteextattr_3way_collision_enoattr() {
+    let (mut db, tree_id) = setup().await;
     let mut ds = read_write_filesystem();
     let ino = 1;
     // name0 and name1 are stored.  The test tries to delete name2
@@ -442,34 +434,30 @@ fn deleteextattr_3way_collision_enoattr() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
+    let fs = Fs::new(Arc::new(db), tree_id).await;
     let fd = FileData::new(Some(1), ino);
-    let r = fs.deleteextattr(&fd, namespace, &name2);
+    let r = fs.deleteextattr(&fd, namespace, &name2).await;
     assert_eq!(Err(libc::ENOATTR), r);
 }
 
-#[test]
-fn fsync() {
+#[tokio::test]
+async fn fsync() {
     let ino = 42;
 
-    let (rt, mut db, tree_id) = setup();
+    let (mut db, tree_id) = setup().await;
     db.expect_sync_transaction()
         .once()
         .returning(|| future::ok(()).boxed());
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
+    let fs = Fs::new(Arc::new(db), tree_id).await;
 
     let fd = FileData::new(Some(1), ino);
-    assert!(fs.fsync(&fd).is_ok());
+    assert!(fs.fsync(&fd).await.is_ok());
 }
 
 /// Reading the source returns EIO.  Don't delete the dest
-#[test]
-fn rename_eio() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn rename_eio() {
+    let (mut db, tree_id) = setup().await;
     let mut ds = read_write_filesystem();
     let srcname = OsString::from("x");
     let dstname = OsString::from("y");
@@ -499,20 +487,18 @@ fn rename_eio() {
         .once()
         .return_once(move |_| ds);
 
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
+    let fs = Fs::new(Arc::new(db), tree_id).await;
     let root = fs.root();
     let fd = FileData::new_for_tests(Some(root.ino), src_ino);
-    let r = fs.rename(&root, &fd, &srcname, &root, Some(dst_ino), &dstname);
+    let r = fs.rename(&root, &fd, &srcname, &root, Some(dst_ino), &dstname).await;
     assert_eq!(Err(libc::EIO), r);
 }
 
 // Rmdir a directory with extended attributes, and don't forget to free them
 // too!
-#[test]
-fn rmdir_with_blob_extattr() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn rmdir_with_blob_extattr() {
+    let (mut db, tree_id) = setup().await;
     let mut ds = read_write_filesystem();
     let parent_ino = 1;
     let ino = 2;
@@ -684,18 +670,16 @@ fn rmdir_with_blob_extattr() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
-    let r = fs.rmdir(&fs.root(), &filename);
+    let fs = Fs::new(Arc::new(db), tree_id).await;
+    let r = fs.rmdir(&fs.root(), &filename).await;
     assert_eq!(Ok(()), r);
 }
 
 /// Basic setextattr test, that does not rely on any other extattr
 /// functionality.
-#[test]
-fn setextattr() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn setextattr() {
+    let (mut db, tree_id) = setup().await;
     let mut ds = read_write_filesystem();
     let root_ino = 1;
     let name = OsString::from("foo");
@@ -722,18 +706,16 @@ fn setextattr() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
-    let r = fs.setextattr(&fs.root(), namespace, &name, value.as_bytes());
+    let fs = Fs::new(Arc::new(db), tree_id).await;
+    let r = fs.setextattr(&fs.root(), namespace, &name, value.as_bytes()).await;
     assert_eq!(Ok(()), r);
 }
 
 /// setextattr with a 3-way hash collision.  It's hard to programmatically
 /// generate 3-way hash collisions, so we simulate them using mocks
-#[test]
-fn setextattr_3way_collision() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn setextattr_3way_collision() {
+    let (mut db, tree_id) = setup().await;
     let mut ds = read_write_filesystem();
     let root_ino = 1;
     // name0 and name1 are already set
@@ -816,16 +798,14 @@ fn setextattr_3way_collision() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
-    let r = fs.setextattr(&fs.root(), namespace, &name2, value2.as_bytes());
+    let fs = Fs::new(Arc::new(db), tree_id).await;
+    let r = fs.setextattr(&fs.root(), namespace, &name2, value2.as_bytes()).await;
     assert_eq!(Ok(()), r);
 }
 
-#[test]
-fn set_props() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn set_props() {
+    let (mut db, tree_id) = setup().await;
     db.expect_set_prop()
         .once()
         .with(eq(tree_id), eq(Property::Atime(false)))
@@ -834,29 +814,25 @@ fn set_props() {
         .once()
         .with(eq(tree_id), eq(Property::RecordSize(13)))
         .returning(|_, _| future::ok(()).boxed());
-    let mut fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
-    fs.set_props(vec![Property::Atime(false), Property::RecordSize(13)]);
+    let mut fs = Fs::new(Arc::new(db), tree_id).await;
+    fs.set_props(vec![Property::Atime(false), Property::RecordSize(13)]).await;
 }
 
-#[test]
-fn sync() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn sync() {
+    let (mut db, tree_id) = setup().await;
     db.expect_sync_transaction()
         .once()
         .returning(|| future::ok(()).boxed());
-    let fs = rt.block_on(async {
-        Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await
-    });
+    let fs = Fs::new(Arc::new(db), tree_id).await;
 
-    fs.sync();
+    fs.sync().await;
 }
 
 // Verify that storage is freed when unlinking a normal file.
-#[test]
-fn unlink() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn unlink() {
+    let (mut db, tree_id) = setup().await;
     let mut ds0 = read_write_filesystem();
     let mut ds1 = read_write_filesystem();
     let parent_ino = 1;
@@ -996,20 +972,17 @@ fn unlink() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let (fd, fs) = rt.block_on(async {
-        let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await;
-        let fd = FileData::new(Some(parent_ino), ino);
-        let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
-        assert_eq!(Ok(()), r);
-        (fd, fs)
-    });
-    fs.inactive(fd);
+    let fs = Fs::new(Arc::new(db), tree_id).await;
+    let fd = FileData::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
+    assert_eq!(Ok(()), r);
+    fs.inactive(fd).await;
 }
 
 // Unlink a file with extended attributes, and don't forget to free them too!
-#[test]
-fn unlink_with_blob_extattr() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn unlink_with_blob_extattr() {
+    let (mut db, tree_id) = setup().await;
     let mut ds0 = read_write_filesystem();
     let mut ds1 = read_write_filesystem();
     let parent_ino = 1;
@@ -1169,21 +1142,18 @@ fn unlink_with_blob_extattr() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let (fd, fs) = rt.block_on(async {
-        let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await;
-        let fd = FileData::new(Some(parent_ino), ino);
-        let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
-        assert_eq!(Ok(()), r);
-        (fd, fs)
-    });
-    fs.inactive(fd);
+    let fs = Fs::new(Arc::new(db), tree_id).await;
+    let fd = FileData::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
+    assert_eq!(Ok(()), r);
+    fs.inactive(fd).await;
 }
 
 // Unlink a file with two extended attributes that hashed to the same bucket.
 // One is a blob, and must be freed
-#[test]
-fn unlink_with_extattr_hash_collision() {
-    let (rt, mut db, tree_id) = setup();
+#[tokio::test]
+async fn unlink_with_extattr_hash_collision() {
+    let (mut db, tree_id) = setup().await;
     let mut ds0 = read_write_filesystem();
     let mut ds1 = read_write_filesystem();
     let parent_ino = 1;
@@ -1333,12 +1303,9 @@ fn unlink_with_extattr_hash_collision() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let (fd, fs) = rt.block_on(async {
-        let fs = Fs::new(Arc::new(db), rt.handle().clone(), tree_id).await;
-        let fd = FileData::new(Some(parent_ino), ino);
-        let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
-        assert_eq!(Ok(()), r);
-        (fd, fs)
-    });
-    fs.inactive(fd);
+    let fs = Fs::new(Arc::new(db), tree_id).await;
+    let fd = FileData::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
+    assert_eq!(Ok(()), r);
+    fs.inactive(fd).await;
 }

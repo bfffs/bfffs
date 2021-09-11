@@ -16,6 +16,7 @@ use futures::{
     Future,
     FutureExt,
     SinkExt,
+    Stream,
     StreamExt,
     TryFutureExt,
     TryStreamExt,
@@ -531,6 +532,18 @@ impl Database {
               R: 'static,
     {
         self.fsread_real(tree_id, f)
+    }
+
+    /// Perform a streaming read-only operation on a Filesystem
+    pub fn fsreads<F, B, R>(&self, tree_id: TreeID, f: F)
+        -> impl Stream<Item=Result<R, Error>> + Send
+        where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
+              B: Stream<Item = Result<R, Error>> + Send + 'static,
+              R: 'static,
+    {
+        self.ro_filesystem(tree_id)
+            .map_ok(f)
+            .try_flatten_stream()
     }
 
     /// See comments for `fswrite_inner`.
