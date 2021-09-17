@@ -104,27 +104,26 @@ async fn main() {
         .enable_time()
         .build()
         .unwrap();
-    let handle = rt.handle().clone();
     let db = Arc::new(dev_manager.import_by_uuid(uuid).await.unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
     let db2 = db.clone();
 
-    // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term, this
-    // is very handy for debugging the cleaner.
-    tokio::spawn( async move {
-        let mut stream = signal(SignalKind::user_defined1()).unwrap();
-        loop {
-            stream.recv().await;
-            db2.clean().await.unwrap()
-        }
-    });
-
-    let fs = FuseFs::new(db, handle, tree_id).await;
-    Session::new(&opts)
-        .mount(fs, &bfffsd.mountpoint)
-        .await
-        .unwrap()
+    rt.block_on(async move {
+        // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term,
+        // this is very handy for debugging the cleaner.
+        tokio::spawn( async move {
+            let mut stream = signal(SignalKind::user_defined1()).unwrap();
+            loop {
+                stream.recv().await;
+                db2.clean().await.unwrap()
+            }
+        });
+        let fs = FuseFs::new(db, tree_id).await;
+        Session::new(&opts)
+            .mount(fs, &bfffsd.mountpoint)
+            .await
+    }).unwrap();
 }
 
 #[cfg(test)]

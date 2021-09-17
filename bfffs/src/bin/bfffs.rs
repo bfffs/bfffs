@@ -42,21 +42,21 @@ impl Check{
     // * Spacemaps match actual usage
     pub fn main(self) {
         let dev_manager = DevManager::default();
-        for dev in self.disks.iter()
-        {
-            dev_manager.taste(dev);
-        }
-
         let rt = runtime();
-        let handle = rt.handle().clone();
-        let db = Arc::new(
-            dev_manager.import_by_name(self.pool_name, handle)
-            .unwrap_or_else(|_e| {
-                eprintln!("Error: pool not found");
-                exit(1);
-            })
-        );
         rt.block_on(async {
+            for dev in self.disks.iter()
+            {
+                dev_manager.taste(dev).await.unwrap();
+            }
+
+            let db = Arc::new(
+                dev_manager.import_by_name(self.pool_name)
+                .await
+                .unwrap_or_else(|_e| {
+                    eprintln!("Error: pool not found");
+                    exit(1);
+                })
+            );
             db.check().await
         }).unwrap();
         // TODO: the other checks
@@ -82,15 +82,15 @@ struct Dump {
 impl Dump {
     fn dump_fsm(self) {
         let dev_manager = DevManager::default();
-        for disk in self.disks.iter() {
-            dev_manager.taste(disk);
-        }
-        let uuid = dev_manager.importable_pools().iter()
-            .find(|(name, _uuid)| {
-                *name == self.pool_name
-            }).unwrap().1;
         let rt = runtime();
         let clusters = rt.block_on(async move {
+            for disk in self.disks.iter() {
+                dev_manager.taste(disk).await.unwrap();
+            }
+            let uuid = dev_manager.importable_pools().iter()
+                .find(|(name, _uuid)| {
+                    *name == self.pool_name
+                }).unwrap().1;
             dev_manager.import_clusters(uuid).await
         }).unwrap();
         for c in clusters {
@@ -100,18 +100,19 @@ impl Dump {
 
     fn dump_tree(self) {
         let dev_manager = DevManager::default();
-        for disk in self.disks.iter() {
-            dev_manager.taste(disk);
-        }
         let rt = runtime();
-        let handle = rt.handle().clone();
-        let db = Arc::new(
-            dev_manager.import_by_name(self.pool_name, handle)
+        let db = rt.block_on(async {
+            for disk in self.disks.iter() {
+                dev_manager.taste(disk).await.unwrap();
+            }
+            dev_manager.import_by_name(self.pool_name)
+            .await
             .unwrap_or_else(|_e| {
                 eprintln!("Error: pool not found");
                 exit(1);
             })
-        );
+        });
+        let db = Arc::new(db);
         // For now, hardcode tree_id to 0
         let tree_id = TreeID::Fs(0);
         db.dump(&mut std::io::stdout(), tree_id).unwrap()
@@ -289,18 +290,17 @@ mod pool {
         pub fn format(&mut self) {
             let name = self.name.clone();
             let clusters = self.clusters.drain(..).collect();
-            let handle = self.rt.handle().clone();
-            let db = {
-                let pool = Pool::create(name, clusters);
-                let cache = Arc::new(
-                    Mutex::new(Cache::with_capacity(4_194_304))
-                );
-                let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                let idml = Arc::new(IDML::create(ddml, cache));
-                Database::create(idml, handle)
-            };
             let props = self.properties.clone();
             self.rt.block_on(async move {
+                let db = {
+                    let pool = Pool::create(name, clusters);
+                    let cache = Arc::new(
+                        Mutex::new(Cache::with_capacity(4_194_304))
+                    );
+                    let ddml = Arc::new(DDML::new(pool, cache.clone()));
+                    let idml = Arc::new(IDML::create(ddml, cache));
+                    Database::create(idml)
+                };
                 db.new_fs(props)
                 .and_then(|_tree_id| db.sync_transaction())
                 .await
