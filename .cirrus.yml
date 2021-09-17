@@ -1,5 +1,5 @@
 freebsd_instance:
-  image_family: freebsd-11-4-snap
+  image_family: freebsd-12-2-snap
 
 setup: &SETUP
   env:
@@ -12,7 +12,7 @@ setup: &SETUP
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y --profile=minimal
     - $HOME/.cargo/bin/rustup toolchain install $VERSION
-    # In 11.4, aio on ufs is considered unsafe
+    # In 12.2, aio on ufs is considered unsafe
     - sysctl vfs.aio.enable_unsafe=1
 
 task:
