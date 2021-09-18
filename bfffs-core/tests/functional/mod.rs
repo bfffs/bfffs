@@ -4,6 +4,7 @@
 
 // rstest_reuse must be imported at the crate root for macro reasons
 // https://github.com/la10736/rstest/issues/128
+#![allow(clippy::single_component_path_imports)]
 use rstest_reuse;
 
 macro_rules! t {

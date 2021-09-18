@@ -400,7 +400,6 @@ mod vdev_raid {
     }
 
     // Write less than an LBA at the start of a stripe
-    #[allow(clippy::identity_op)]
     #[rstest(h, case(harness(2, 2, 1, 1)))]
     fn write_tiny_at_start_of_stripe(h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
@@ -416,7 +415,7 @@ mod vdev_raid {
         assert_eq!(&wbuf[0..BYTES_PER_LBA * 3 / 4],
                    &dbsr.try_const().unwrap()[0..BYTES_PER_LBA * 3 / 4]);
         // The remainder of the LBA should've been zero-filled
-        let zbuf = vec![0u8; BYTES_PER_LBA * 1 / 4];
+        let zbuf = vec![0u8; BYTES_PER_LBA / 4];
         assert_eq!(&zbuf[..],
                    &dbsr.try_const().unwrap()[BYTES_PER_LBA * 3 / 4..]);
     }

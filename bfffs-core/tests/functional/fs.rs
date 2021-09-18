@@ -1815,7 +1815,7 @@ root:
         assert_ts_changed(&harness4k.0, &fd, false, false, false, false);
     }
 
-    #[allow(clippy::block_in_if_condition_stmt)]
+    #[allow(clippy::blocks_in_if_conditions)]
     #[rstest]
     fn rmdir(harness4k: Harness) {
         let root = harness4k.0.root();
