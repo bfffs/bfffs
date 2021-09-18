@@ -154,15 +154,15 @@ mod pool {
     pub(super) struct Create {
         /// Dataset properties, comma delimited
         #[clap(short, long, require_delimiter(true), value_delimiter(','))]
-        properties: Vec<String>,
+        pub(super) properties: Vec<String>,
         /// Simulated zone size in MB
         #[clap(long)]
-        zone_size: Option<u64>,
+        pub(super) zone_size: Option<u64>,
         #[clap(required(true))]
         /// Pool name
-        pool_name: String,
+        pub(super) pool_name: String,
         #[clap(required(true))]
-        vdev: Vec<String>
+        pub(super) vdev: Vec<String>
     }
 
     impl Create{
@@ -338,5 +338,128 @@ fn main() {
         SubCommand::Check(check) => check.main(),
         SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main(),
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main(),
+    }
+}
+
+#[cfg(test)]
+mod t {
+    use clap::ErrorKind::*;
+    use rstest::rstest;
+    use std::path::Path;
+    use super::*;
+
+    #[rstest]
+    #[case(Vec::new())]
+    #[case(vec!["bfffs"])]
+    #[case(vec!["bfffs", "check"])]
+    #[case(vec!["bfffs", "check", "testpool"])]
+    #[case(vec!["bfffs", "debug"])]
+    #[case(vec!["bfffs", "debug", "dump"])]
+    #[case(vec!["bfffs", "debug", "dump", "testpool"])]
+    #[case(vec!["bfffs", "pool"])]
+    #[case(vec!["bfffs", "pool", "create"])]
+    #[case(vec!["bfffs", "pool", "create", "testpool"])]
+    fn missing_arg(#[case] args: Vec<&str>) {
+        let e = Bfffs::try_parse_from(args).unwrap_err();
+        assert!(e.kind == MissingRequiredArgument ||
+                e.kind == DisplayHelpOnMissingArgumentOrSubcommand);
+    }
+
+    #[test]
+    fn check() {
+        let args = vec!["bfffs", "check", "testpool", "/dev/da0", "/dev/da1"];
+        let bfffs = Bfffs::try_parse_from(args).unwrap();
+        assert!(matches!(bfffs.cmd, SubCommand::Check(_)));
+        if let SubCommand::Check(check) = bfffs.cmd {
+            assert_eq!(check.pool_name, "testpool");
+            assert_eq!(check.disks[0], Path::new("/dev/da0"));
+            assert_eq!(check.disks[1], Path::new("/dev/da1"));
+        }
+    }
+
+    mod debug {
+        use super::*;
+
+        #[test]
+        fn dump_fsm() {
+            let args = vec!["bfffs", "debug", "dump", "-f", "testpool",
+                "/dev/da0", "/dev/da1"];
+            let bfffs = Bfffs::try_parse_from(args).unwrap();
+            assert!(matches!(bfffs.cmd, SubCommand::Debug(_)));
+            if let SubCommand::Debug(DebugCmd::Dump(debug)) = bfffs.cmd {
+                assert_eq!(debug.pool_name, "testpool");
+                assert!(debug.fsm);
+                assert!(!debug.tree);
+                assert_eq!(debug.disks[0], Path::new("/dev/da0"));
+                assert_eq!(debug.disks[1], Path::new("/dev/da1"));
+            }
+        }
+
+        #[test]
+        fn dump_tree() {
+            let args = vec!["bfffs", "debug", "dump", "-t", "testpool",
+                "/dev/da0", "/dev/da1"];
+            let bfffs = Bfffs::try_parse_from(args).unwrap();
+            assert!(matches!(bfffs.cmd, SubCommand::Debug(_)));
+            if let SubCommand::Debug(DebugCmd::Dump(debug)) = bfffs.cmd {
+                assert_eq!(debug.pool_name, "testpool");
+                assert!(!debug.fsm);
+                assert!(debug.tree);
+                assert_eq!(debug.disks[0], Path::new("/dev/da0"));
+                assert_eq!(debug.disks[1], Path::new("/dev/da1"));
+            }
+        }
+    }
+
+    mod pool {
+        use super::*;
+        use crate::pool::*;
+
+        mod create {
+            use super::*;
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "pool", "create", "testpool",
+                    "/dev/da0"];
+                let bfffs = Bfffs::try_parse_from(args).unwrap();
+                assert!(matches!(bfffs.cmd,
+                                 SubCommand::Pool(PoolCmd::Create(_))));
+                if let SubCommand::Pool(PoolCmd::Create(create)) = bfffs.cmd {
+                    assert_eq!(create.pool_name, "testpool");
+                    assert!(create.properties.is_empty());
+                    assert!(create.zone_size.is_none());
+                    assert_eq!(create.vdev[0], "/dev/da0");
+                }
+            }
+
+            #[test]
+            fn props() {
+                let args = vec!["bfffs", "pool", "create", "-p",
+                    "atime=off,recsize=65536",
+                    "testpool", "/dev/da0"];
+                let bfffs = Bfffs::try_parse_from(args).unwrap();
+                assert!(matches!(bfffs.cmd,
+                                 SubCommand::Pool(PoolCmd::Create(_))));
+                if let SubCommand::Pool(PoolCmd::Create(create)) = bfffs.cmd {
+                    assert_eq!(
+                        create.properties,
+                        vec!["atime=off", "recsize=65536"]
+                    );
+                }
+            }
+
+            #[test]
+            fn zone_size() {
+                let args = vec!["bfffs", "pool", "create", "--zone-size",
+                    "128", "testpool", "/dev/da0"];
+                let bfffs = Bfffs::try_parse_from(args).unwrap();
+                assert!(matches!(bfffs.cmd,
+                                 SubCommand::Pool(PoolCmd::Create(_))));
+                if let SubCommand::Pool(PoolCmd::Create(create)) = bfffs.cmd {
+                    assert_eq!(create.zone_size, Some(128));
+                }
+            }
+        }
     }
 }

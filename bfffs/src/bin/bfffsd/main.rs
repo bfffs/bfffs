@@ -129,3 +129,42 @@ fn main() {
 
     thr_handle.join().unwrap()
 }
+
+#[cfg(test)]
+mod t {
+    use clap::ErrorKind::*;
+    use rstest::rstest;
+    use super::*;
+
+    #[rstest]
+    #[case(Vec::new())]
+    #[case(vec!["bfffsd"])]
+    #[case(vec!["bfffsd", "testpool"])]
+    #[case(vec!["bfffsd", "testpool", "/mnt"])]
+    fn missing_arg(#[case] args: Vec<&str>) {
+        let e = Bfffsd::try_parse_from(args).unwrap_err();
+        assert!(e.kind == MissingRequiredArgument ||
+                e.kind == DisplayHelpOnMissingArgumentOrSubcommand);
+    }
+
+    #[test]
+    fn options() {
+        let args = vec!["bfffsd", "-o", "allow_other,default_permissions",
+            "testpool", "/mnt", "/dev/da0"];
+        let bfffsd = Bfffsd::try_parse_from(args).unwrap();
+        assert_eq!(bfffsd.pool_name, "testpool");
+        assert_eq!(bfffsd.mountpoint, "/mnt");
+        assert_eq!(bfffsd.options, vec!["allow_other", "default_permissions"]);
+        assert_eq!(bfffsd.devices[0], "/dev/da0");
+    }
+
+    #[test]
+    fn plain() {
+        let args = vec!["bfffsd", "testpool", "/mnt", "/dev/da0"];
+        let bfffsd = Bfffsd::try_parse_from(args).unwrap();
+        assert_eq!(bfffsd.pool_name, "testpool");
+        assert_eq!(bfffsd.mountpoint, "/mnt");
+        assert!(bfffsd.options.is_empty());
+        assert_eq!(bfffsd.devices[0], "/dev/da0");
+    }
+}
