@@ -1,9 +1,5 @@
 // vim: tw=80
-use galvanic_test::test_suite;
-
-test_suite! {
-    name persistence;
-
+mod persistence {
     use bfffs_core::{
         cache::{self, Cache},
         cluster,
@@ -17,8 +13,8 @@ test_suite! {
         vdev_file::*,
     };
     use futures::TryFutureExt;
-    use galvanic_test::*;
     use pretty_assertions::assert_eq;
+    use rstest::{fixture, rstest};
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
@@ -111,34 +107,34 @@ test_suite! {
 
     const POOLNAME: &str = "TestPool";
 
-    fixture!( objects() -> (Runtime, Arc<IDML>, TempDir, PathBuf) {
-        setup(&mut self) {
-            let len = 1 << 26;  // 64 MB
-            let tempdir =
-                t!(Builder::new().prefix("test_idml_persistence").tempdir());
-            let filename = tempdir.path().join("vdev");
-            {
-                let file = t!(fs::File::create(&filename));
-                t!(file.set_len(len));
-            }
-            let paths = [filename.clone()];
-            let rt = basic_runtime();
-            let cs = NonZeroU64::new(1);
-            let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
-            let clusters = vec![cluster];
-            let pool = Pool::create(POOLNAME.to_string(), clusters);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-            let ddml = Arc::new(DDML::new(pool, cache.clone()));
-            let idml = Arc::new(IDML::create(ddml, cache));
-            (rt, idml, tempdir, filename)
+    #[fixture]
+    fn objects() -> (Runtime, Arc<IDML>, TempDir, PathBuf) {
+        let len = 1 << 26;  // 64 MB
+        let tempdir =
+            t!(Builder::new().prefix("test_idml_persistence").tempdir());
+        let filename = tempdir.path().join("vdev");
+        {
+            let file = t!(fs::File::create(&filename));
+            t!(file.set_len(len));
         }
-    });
+        let paths = [filename.clone()];
+        let rt = basic_runtime();
+        let cs = NonZeroU64::new(1);
+        let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
+        let clusters = vec![cluster];
+        let pool = Pool::create(POOLNAME.to_string(), clusters);
+        let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
+        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let idml = Arc::new(IDML::create(ddml, cache));
+        (rt, idml, tempdir, filename)
+    }
 
     // Testing IDML::open with golden labels is too hard, because we need to
     // store separate golden labels for each VdevLeaf.  Instead, we'll just
     // check that we can open-after-write
-    test open(objects()) {
-        let (rt, old_idml, _tempdir, path) = objects.val;
+    #[rstest]
+    fn open(objects: (Runtime, Arc<IDML>, TempDir, PathBuf)) {
+        let (rt, old_idml, _tempdir, path) = objects;
         let txg = TxgT::from(42);
         let old_idml2 = old_idml.clone();
         rt.block_on(
@@ -168,8 +164,9 @@ test_suite! {
         }).unwrap();
     }
 
-    test write_label(objects()) {
-        let (rt, idml, _tempdir, path) = objects.val;
+    #[rstest]
+    fn write_label(objects: (Runtime, Arc<IDML>, TempDir, PathBuf)) {
+        let (rt, idml, _tempdir, path) = objects;
         let txg = TxgT::from(42);
         let idml2 = idml.clone();
         rt.block_on(
@@ -200,9 +197,7 @@ test_suite! {
     }
 }
 
-test_suite! {
-    name t;
-
+mod t {
     use bfffs_core::*;
     use bfffs_core::cache::*;
     use bfffs_core::pool::*;
@@ -216,7 +211,7 @@ test_suite! {
         TryStreamExt,
         stream
     };
-    use galvanic_test::*;
+    use rstest::{fixture, rstest};
     use std::{
         fs,
         num::NonZeroU64,
@@ -229,34 +224,34 @@ test_suite! {
     const LBA_PER_ZONE: LbaT = 256;
     const POOLNAME: &str = "TestPool";
 
-    fixture!( objects() -> (Runtime, IDML, TempDir) {
-        setup(&mut self) {
-            let len = 1 << 26;  // 64 MB
-            let tempdir =
-                t!(Builder::new().prefix("test_idml_persistence").tempdir());
-            let filename = tempdir.path().join("vdev");
-            {
-                let file = t!(fs::File::create(&filename));
-                t!(file.set_len(len));
-            }
-            let paths = [filename];
-            let rt = basic_runtime();
-            let cs = NonZeroU64::new(1);
-            let lpz = NonZeroU64::new(LBA_PER_ZONE);
-            let cluster = Pool::create_cluster(cs, 1, lpz, 0, &paths);
-            let clusters = vec![cluster];
-            let pool = Pool::create(POOLNAME.to_string(), clusters);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-            let ddml = Arc::new(DDML::new(pool, cache.clone()));
-            let idml = IDML::create(ddml, cache);
-            (rt, idml, tempdir)
+    #[fixture]
+    fn objects() -> (Runtime, IDML, TempDir) {
+        let len = 1 << 26;  // 64 MB
+        let tempdir =
+            t!(Builder::new().prefix("test_idml_persistence").tempdir());
+        let filename = tempdir.path().join("vdev");
+        {
+            let file = t!(fs::File::create(&filename));
+            t!(file.set_len(len));
         }
-    });
+        let paths = [filename];
+        let rt = basic_runtime();
+        let cs = NonZeroU64::new(1);
+        let lpz = NonZeroU64::new(LBA_PER_ZONE);
+        let cluster = Pool::create_cluster(cs, 1, lpz, 0, &paths);
+        let clusters = vec![cluster];
+        let pool = Pool::create(POOLNAME.to_string(), clusters);
+        let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
+        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let idml = IDML::create(ddml, cache);
+        (rt, idml, tempdir)
+    }
 
     // When moving the last record from a zone, the allocator should not reopen
     // the same zone for its destination
-    test move_last_record(objects()) {
-        let (rt, idml, _tempdir) = objects.val;
+    #[rstest]
+    fn move_last_record(objects: (Runtime, IDML, TempDir)) {
+        let (rt, idml, _tempdir) = objects;
         let idml = Arc::new(idml);
         let ok = rt.block_on(async {
             // Write exactly 1 zone plus an LBA of data, then clean the first

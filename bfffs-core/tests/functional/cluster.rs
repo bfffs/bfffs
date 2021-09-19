@@ -1,16 +1,12 @@
 // vim: tw=80
-use galvanic_test::test_suite;
-
-test_suite! {
-    name persistence;
-
+mod persistence {
     use bfffs_core::vdev_block::*;
     use bfffs_core::raid;
     use bfffs_core::cluster::*;
     use bfffs_core::vdev_file::*;
     use futures::TryFutureExt;
-    use galvanic_test::*;
     use pretty_assertions::assert_eq;
+    use rstest::{fixture, rstest};
     use std::{
         fs,
         io::{Read, Seek, SeekFrom, Write},
@@ -53,34 +49,34 @@ test_suite! {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ........
     ];
 
-    fixture!( objects() -> (Runtime, Cluster, TempDir, String) {
-        setup(&mut self) {
-            let len = 1 << 29;  // 512 MB
-            let tempdir =
-                t!(Builder::new().prefix("test_cluster_persistence").tempdir());
-            let fname = format!("{}/vdev", tempdir.path().display());
-            let file = t!(fs::File::create(&fname));
-            t!(file.set_len(len));
-            let rt = basic_runtime();
-            let lpz = NonZeroU64::new(65536);
-            let paths = vec![fname.clone()];
-            let cluster = Cluster::create(None, 1, lpz, 0, paths);
-            (rt, cluster, tempdir, fname)
-        }
-    });
+    #[fixture]
+    fn objects() -> (Runtime, Cluster, TempDir, String) {
+        let len = 1 << 29;  // 512 MB
+        let tempdir =
+            t!(Builder::new().prefix("test_cluster_persistence").tempdir());
+        let fname = format!("{}/vdev", tempdir.path().display());
+        let file = t!(fs::File::create(&fname));
+        t!(file.set_len(len));
+        let rt = basic_runtime();
+        let lpz = NonZeroU64::new(65536);
+        let paths = vec![fname.clone()];
+        let cluster = Cluster::create(None, 1, lpz, 0, paths);
+        (rt, cluster, tempdir, fname)
+    }
 
     // Test Cluster::open
-    test open(objects()) {
+    #[rstest]
+    fn open(objects: (Runtime, Cluster, TempDir, String)) {
         {
             let mut f = fs::OpenOptions::new()
                 .write(true)
-                .open(objects.val.3.clone()).unwrap();
+                .open(objects.3.clone()).unwrap();
             f.write_all(&GOLDEN_LABEL).unwrap();
             f.seek(SeekFrom::Start(32768)).unwrap();
             f.write_all(&GOLDEN_SPACEMAP).unwrap();
         }
         basic_runtime().block_on(async {
-            VdevFile::open(objects.val.3.clone())
+            VdevFile::open(objects.3.clone())
             .map_ok(|(leaf, reader)| {
                 (VdevBlock::new(leaf), reader)
             }).and_then(move |combined| {
@@ -92,8 +88,9 @@ test_suite! {
         }).unwrap();
     }
 
-    test flush(objects()) {
-        let (rt, old_cluster, _tempdir, path) = objects.val;
+    #[rstest]
+    fn flush(objects: (Runtime, Cluster, TempDir, String)) {
+        let (rt, old_cluster, _tempdir, path) = objects;
         rt.block_on(async {
             old_cluster.flush(0).await
         }).unwrap();

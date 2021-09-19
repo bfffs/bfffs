@@ -1,10 +1,7 @@
 // vim: tw=80
 #![allow(clippy::redundant_clone)]   // False positive
-use galvanic_test::test_suite;
 
-test_suite! {
-    name basic;
-
+mod basic {
     use bfffs_core::{
         Error,
         vdev::*,
@@ -12,8 +9,8 @@ test_suite! {
     };
     use divbuf::DivBufShared;
     use futures::TryFutureExt;
-    use galvanic_test::*;
     use pretty_assertions::assert_eq;
+    use rstest::{fixture, rstest};
     use std::{
         fs,
         io::{Read, Seek, SeekFrom, Write},
@@ -23,47 +20,54 @@ test_suite! {
     use tempfile::{Builder, TempDir};
     use tokio::runtime;
 
-    fixture!( vdev() -> (VdevFile, PathBuf, TempDir) {
-        setup(&mut self) {
-            let len = 1 << 26;  // 64MB
-            let tempdir =
-                t!(Builder::new().prefix("test_vdev_file_basic").tempdir());
-            let filename = tempdir.path().join("vdev");
-            let file = t!(fs::File::create(&filename));
-            t!(file.set_len(len));
-            let pb = filename.to_path_buf();
-            let vdev = VdevFile::create(filename, None).unwrap();
-            (vdev, pb, tempdir)
-        }
-    });
+    type Harness = (VdevFile, PathBuf, TempDir);
+
+    #[fixture]
+    fn harness() -> Harness {
+        let len = 1 << 26;  // 64MB
+        let tempdir =
+            t!(Builder::new().prefix("test_vdev_file_basic").tempdir());
+        let filename = tempdir.path().join("vdev");
+        let file = t!(fs::File::create(&filename));
+        t!(file.set_len(len));
+        let pb = filename.to_path_buf();
+        let vdev = VdevFile::create(filename, None).unwrap();
+        (vdev, pb, tempdir)
+    }
 
     // pet kcov
-    test debug(vdev) {
-        format!("{:?}", vdev.val.0);
+    #[rstest]
+    fn debug(harness: Harness) {
+        format!("{:?}", harness.0);
     }
 
-    test lba2zone(vdev) {
-        assert_eq!(vdev.val.0.lba2zone(0), None);
-        assert_eq!(vdev.val.0.lba2zone(9), None);
-        assert_eq!(vdev.val.0.lba2zone(10), Some(0));
-        assert_eq!(vdev.val.0.lba2zone((1 << 16) - 1), Some(0));
-        assert_eq!(vdev.val.0.lba2zone(1 << 16), Some(1));
+    #[rstest]
+    fn lba2zone(harness: Harness) {
+        assert_eq!(harness.0.lba2zone(0), None);
+        assert_eq!(harness.0.lba2zone(9), None);
+        assert_eq!(harness.0.lba2zone(10), Some(0));
+        assert_eq!(harness.0.lba2zone((1 << 16) - 1), Some(0));
+        assert_eq!(harness.0.lba2zone(1 << 16), Some(1));
     }
 
-    test size(vdev) {
-        assert_eq!(vdev.val.0.size(), 16_384);
+    #[rstest]
+    fn size(harness: Harness) {
+        assert_eq!(harness.0.size(), 16_384);
     }
 
-    test zone_limits(vdev) {
-        assert_eq!(vdev.val.0.zone_limits(0), (10, 1 << 16));
-        assert_eq!(vdev.val.0.zone_limits(1), (1 << 16, 2 << 16));
+    #[rstest]
+    fn zone_limits(harness: Harness) {
+        assert_eq!(harness.0.zone_limits(0), (10, 1 << 16));
+        assert_eq!(harness.0.zone_limits(1), (1 << 16, 2 << 16));
     }
 
-    test zones(vdev) {
-        assert_eq!(vdev.val.0.zones(), 1);
+    #[rstest]
+    fn zones(harness: Harness) {
+        assert_eq!(harness.0.zones(), 1);
     }
 
-    test open_enoent() {
+    #[test]
+    fn open_enoent() {
         let dir = t!(
             Builder::new().prefix("test_read_at").tempdir()
         );
@@ -75,7 +79,8 @@ test_suite! {
         assert_eq!(e, Error::ENOENT);
     }
 
-    test read_at() {
+    #[test]
+    fn read_at() {
         // Create the initial file
         let dir = t!(Builder::new().prefix("test_read_at").tempdir());
         let path = dir.path().join("vdev");
@@ -98,7 +103,8 @@ test_suite! {
         assert_eq!(&dbs.try_const().unwrap()[..], &wbuf[..]);
     }
 
-    test readv_at() {
+    #[test]
+    fn readv_at() {
         // Create the initial file
         let dir = t!(Builder::new().prefix("test_readv_at").tempdir());
         let path = dir.path().join("vdev");
@@ -127,45 +133,49 @@ test_suite! {
         assert_eq!(&dbs1.try_const().unwrap()[..], &wbuf[1024..]);
     }
 
-    test write_at(vdev) {
+    #[rstest]
+    fn write_at(harness: Harness) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
         let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            vdev.val.0.write_at(wbuf.clone(), 10).await
+            harness.0.write_at(wbuf.clone(), 10).await
         }).unwrap();
-        let mut f = t!(fs::File::open(vdev.val.1));
+        let mut f = t!(fs::File::open(harness.1));
         f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
         t!(f.read_exact(&mut rbuf));
         assert_eq!(rbuf, wbuf.deref().deref());
     }
 
     #[should_panic]
-    test write_at_overwrite_label(vdev) {
+    #[rstest]
+    fn write_at_overwrite_label(harness: Harness) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            vdev.val.0.write_at(wbuf, 0).await
+            harness.0.write_at(wbuf, 0).await
         }).unwrap();
     }
 
-    test write_at_lba(vdev) {
+    #[rstest]
+    fn write_at_lba(harness: Harness) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
         let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            vdev.val.0.write_at(wbuf.clone(), 11).await
+            harness.0.write_at(wbuf.clone(), 11).await
         }).unwrap();
-        let mut f = t!(fs::File::open(vdev.val.1));
+        let mut f = t!(fs::File::open(harness.1));
         t!(f.seek(SeekFrom::Start(11 * 4096)));
         t!(f.read_exact(&mut rbuf));
         assert_eq!(rbuf, wbuf.deref().deref());
     }
 
-    test writev_at(vdev) {
+    #[rstest]
+    fn writev_at(harness: Harness) {
         let dbs0 = DivBufShared::from(vec![0u8; 1024]);
         let dbs1 = DivBufShared::from(vec![1u8; 3072]);
         let wbuf0 = dbs0.try_const().unwrap();
@@ -174,17 +184,18 @@ test_suite! {
         let mut rbuf = vec![0u8; 4096];
         let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            vdev.val.0.writev_at(wbufs, 10).await
+            harness.0.writev_at(wbufs, 10).await
         }).unwrap();
-        let mut f = t!(fs::File::open(vdev.val.1));
+        let mut f = t!(fs::File::open(harness.1));
         t!(f.seek(SeekFrom::Start(10 * 4096)));
         t!(f.read_exact(&mut rbuf));
         assert_eq!(&rbuf[0..1024], wbuf0.deref().deref());
         assert_eq!(&rbuf[1024..4096], wbuf1.deref().deref());
     }
 
-    test read_after_write(vdev) {
-        let vd = vdev.val.0;
+    #[rstest]
+    fn read_after_write(harness: Harness) {
+        let vd = harness.0;
         let dbsw = DivBufShared::from(vec![1u8; 4096]);
         let wbuf = dbsw.try_const().unwrap();
         let dbsr = DivBufShared::from(vec![0u8; 4096]);
@@ -200,17 +211,15 @@ test_suite! {
     }
 }
 
-test_suite! {
-    name persistence;
-
+mod persistence {
     use bfffs_core::{
         *,
         label::*,
         vdev::*,
         vdev_file::*
     };
-    use galvanic_test::*;
     use pretty_assertions::assert_eq;
+    use rstest::{fixture, rstest};
     use std::{
         fs,
         io::Read,
@@ -241,27 +250,29 @@ test_suite! {
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
 
-    fixture!( fixture() -> (PathBuf, TempDir) {
-        setup(&mut self) {
-            let len = 1 << 26;  // 64MB
-            let tempdir = t!(
-                Builder::new().prefix("test_vdev_file_persistence").tempdir()
-            );
-            let filename = tempdir.path().join("vdev");
-            let file = t!(fs::File::create(&filename));
-            t!(file.set_len(len));
-            (filename, tempdir)
-        }
-    });
+    type Harness = (PathBuf, TempDir);
+
+    #[fixture]
+    fn harness() -> Harness {
+        let len = 1 << 26;  // 64MB
+        let tempdir = t!(
+            Builder::new().prefix("test_vdev_file_persistence").tempdir()
+        );
+        let filename = tempdir.path().join("vdev");
+        let file = t!(fs::File::create(&filename));
+        t!(file.set_len(len));
+        (filename, tempdir)
+    }
 
     /// Open the golden master label
-    test open(fixture) {
+    #[rstest]
+    fn open(harness: Harness) {
         let golden_uuid = Uuid::parse_str(
             "3fa1f6b9-54b1-4a10-bc6b-5b2a15e8a03d").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
-                .open(fixture.val.0.clone()).unwrap();
+                .open(harness.0.clone()).unwrap();
             let offset0 = 0;
             f.write_all_at(&GOLDEN, offset0).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
@@ -269,19 +280,20 @@ test_suite! {
         }
         let rt = runtime::Runtime::new().unwrap();
         let (vdev, _label_reader) = rt.block_on(async {
-            VdevFile::open(fixture.val.0).await
+            VdevFile::open(harness.0).await
         }).unwrap();
         assert_eq!(vdev.size(), 16_384);
         assert_eq!(vdev.uuid(), golden_uuid);
-        let _ = fixture.val.1;
+        let _ = harness.1;
     }
 
     // Open a device with only corrupted labels
-    test open_ecksum(fixture) {
+    #[rstest]
+    fn open_ecksum(harness: Harness) {
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
-                .open(fixture.val.0.clone()).unwrap();
+                .open(harness.0.clone()).unwrap();
             let offset0 = 0;
             f.write_all_at(&GOLDEN, offset0).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
@@ -292,72 +304,76 @@ test_suite! {
             f.write_all_at(&zeros, offset1 + 16).unwrap();
         }
         let rt = runtime::Runtime::new().unwrap();
-        let e = rt.block_on(async { VdevFile::open(fixture.val.0).await})
+        let e = rt.block_on(async { VdevFile::open(harness.0).await})
             .err()
             .expect("Opening the file should've failed");
         assert_eq!(e, Error::ECKSUM);
     }
 
     /// Open a device that only has one valid label, the first one
-    test open_first_label_only(fixture) {
+    #[rstest]
+    fn open_first_label_only(harness: Harness) {
         let golden_uuid = Uuid::parse_str(
             "3fa1f6b9-54b1-4a10-bc6b-5b2a15e8a03d").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
-                .open(fixture.val.0.clone()).unwrap();
+                .open(harness.0.clone()).unwrap();
             let offset0 = 0;
             f.write_all_at(&GOLDEN, offset0).unwrap();
         }
         let rt = runtime::Runtime::new().unwrap();
         let (vdev, _label_reader) = rt.block_on(async{
-            VdevFile::open(fixture.val.0).await
+            VdevFile::open(harness.0).await
         }).unwrap();
         assert_eq!(vdev.size(), 16_384);
         assert_eq!(vdev.uuid(), golden_uuid);
-        let _ = fixture.val.1;
+        let _ = harness.1;
     }
 
     // Open a device without a valid label
-    test open_invalid(fixture) {
+    #[rstest]
+    fn open_invalid(harness: Harness) {
         let rt = runtime::Runtime::new().unwrap();
-        let e = rt.block_on(async { VdevFile::open(fixture.val.0).await })
+        let e = rt.block_on(async { VdevFile::open(harness.0).await })
             .err()
             .expect("Opening the file should've failed");
         assert_eq!(e, Error::EINVAL);
     }
 
     /// Open a device that only has one valid label, the second one
-    test open_second_label_only(fixture) {
+    #[rstest]
+    fn open_second_label_only(harness: Harness) {
         let golden_uuid = Uuid::parse_str(
             "3fa1f6b9-54b1-4a10-bc6b-5b2a15e8a03d").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
-                .open(fixture.val.0.clone()).unwrap();
+                .open(harness.0.clone()).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
         let rt = runtime::Runtime::new().unwrap();
         let (vdev, _label_reader) = rt.block_on(async {
-            VdevFile::open(fixture.val.0).await
+            VdevFile::open(harness.0).await
         }).unwrap();
         assert_eq!(vdev.size(), 16_384);
         assert_eq!(vdev.uuid(), golden_uuid);
-        let _ = fixture.val.1;
+        let _ = harness.1;
     }
 
     // Write the label, and compare to a golden master
-    test write_label(fixture) {
+    #[rstest]
+    fn write_label(harness: Harness) {
         let lbas_per_zone = NonZeroU64::new(0xdead_beef_1a7e_babe);
-        let vdev = VdevFile::create(fixture.val.0.clone(), lbas_per_zone)
+        let vdev = VdevFile::create(harness.0.clone(), lbas_per_zone)
             .unwrap();
         let rt = runtime::Runtime::new().unwrap();
         let label_writer = LabelWriter::new(0);
         rt.block_on(async { vdev.write_label(label_writer).await })
             .unwrap();
 
-        let mut f = std::fs::File::open(fixture.val.0).unwrap();
+        let mut f = std::fs::File::open(harness.0).unwrap();
         let mut v = vec![0; 4096];
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection

@@ -1228,8 +1228,8 @@ mod t {
 
 use super::*;
 use futures::{FutureExt, future};
-use galvanic_test::*;
 use mockall::predicate::*;
+use rstest::rstest;
 
 // pet kcov
 #[test]
@@ -1245,144 +1245,150 @@ fn debug() {
     format!("{:?}", label);
 }
 
-test_suite! {
-    // Test basic layout properties
-    name basic;
+/// Test basic layout properties
+mod basic {
 
     use super::*;
     use mockall::PredicateBooleanExt;
     use pretty_assertions::assert_eq;
 
-    fixture!( mocks(n: i16, k: i16, f:i16, chunksize: LbaT) -> VdevRaid {
+    fn vr(n: i16, k: i16, f:i16, chunksize: LbaT) -> VdevRaid {
+        let mut blockdevs = Vec::<VdevBlock>::new();
+        for _ in 0..n {
+            let mut mock = VdevBlock::default();
+            mock.expect_size()
+                .return_const(262_144u64);
+            mock.expect_lba2zone()
+                .with(eq(0))
+                .return_const(None);
+            mock.expect_lba2zone()
+                .with(ge(1).and(lt(65536)))
+                .return_const(Some(0));
+            mock.expect_lba2zone()
+                .with(ge(65536).and(lt(131072)))
+                .return_const(Some(1));
+            mock.expect_optimum_queue_depth()
+                .return_const(10u32);
+            mock.expect_zone_limits()
+                .with(eq(0))
+                .return_const((1, 65536));
+            mock.expect_zone_limits()
+                .with(eq(1))
+                // 64k LBAs/zone
+                .return_const((65536, 131_072));
 
-        setup(&mut self) {
-            let mut blockdevs = Vec::<VdevBlock>::new();
-            for _ in 0..*self.n {
-                let mut mock = VdevBlock::default();
-                mock.expect_size()
-                    .return_const(262_144u64);
-                mock.expect_lba2zone()
-                    .with(eq(0))
-                    .return_const(None);
-                mock.expect_lba2zone()
-                    .with(ge(1).and(lt(65536)))
-                    .return_const(Some(0));
-                mock.expect_lba2zone()
-                    .with(ge(65536).and(lt(131072)))
-                    .return_const(Some(1));
-                mock.expect_optimum_queue_depth()
-                    .return_const(10u32);
-                mock.expect_zone_limits()
-                    .with(eq(0))
-                    .return_const((1, 65536));
-                mock.expect_zone_limits()
-                    .with(eq(1))
-                    // 64k LBAs/zone
-                    .return_const((65536, 131_072));
-
-                blockdevs.push(mock);
-            }
-
-            VdevRaid::new(*self.chunksize, *self.k, *self.f, Uuid::new_v4(),
-                          LayoutAlgorithm::PrimeS, blockdevs.into_boxed_slice())
+            blockdevs.push(mock);
         }
-    });
 
-    test small(mocks((5, 4, 1, 16))) {
-        assert_eq!(mocks.val.lba2zone(0), None);
-        assert_eq!(mocks.val.lba2zone(95), None);
-        assert_eq!(mocks.val.lba2zone(96), Some(0));
-        // Last LBA in zone 0
-        assert_eq!(mocks.val.lba2zone(245_759), Some(0));
-        // First LBA in zone 1
-        assert_eq!(mocks.val.lba2zone(245_760), Some(1));
-
-        assert_eq!(mocks.val.optimum_queue_depth(), 12);
-
-        assert_eq!(mocks.val.size(), 983_040);
-
-        assert_eq!(mocks.val.zone_limits(0), (96, 245_760));
-        assert_eq!(mocks.val.zone_limits(1), (245_760, 491_520));
+        VdevRaid::new(chunksize, k, f, Uuid::new_v4(),
+                      LayoutAlgorithm::PrimeS, blockdevs.into_boxed_slice())
     }
 
-    test medium(mocks((7, 4, 1, 16))) {
-        assert_eq!(mocks.val.lba2zone(0), None);
-        assert_eq!(mocks.val.lba2zone(95), None);
-        assert_eq!(mocks.val.lba2zone(96), Some(0));
+    #[rstest]
+    #[case(vr(5, 4, 1, 16))]
+    fn small(#[case] vr: VdevRaid) {
+        assert_eq!(vr.lba2zone(0), None);
+        assert_eq!(vr.lba2zone(95), None);
+        assert_eq!(vr.lba2zone(96), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.lba2zone(344_063), Some(0));
+        assert_eq!(vr.lba2zone(245_759), Some(0));
         // First LBA in zone 1
-        assert_eq!(mocks.val.lba2zone(344_064), Some(1));
+        assert_eq!(vr.lba2zone(245_760), Some(1));
 
-        assert_eq!(mocks.val.optimum_queue_depth(), 17);
+        assert_eq!(vr.optimum_queue_depth(), 12);
 
-        assert_eq!(mocks.val.size(), 1_376_256);
+        assert_eq!(vr.size(), 983_040);
 
-        assert_eq!(mocks.val.zone_limits(0), (96, 344_064));
-        assert_eq!(mocks.val.zone_limits(1), (344_064, 688_128));
+        assert_eq!(vr.zone_limits(0), (96, 245_760));
+        assert_eq!(vr.zone_limits(1), (245_760, 491_520));
+    }
+
+    #[rstest]
+    #[case(vr(7, 4, 1, 16))]
+    fn medium(#[case] vr: VdevRaid) {
+        assert_eq!(vr.lba2zone(0), None);
+        assert_eq!(vr.lba2zone(95), None);
+        assert_eq!(vr.lba2zone(96), Some(0));
+        // Last LBA in zone 0
+        assert_eq!(vr.lba2zone(344_063), Some(0));
+        // First LBA in zone 1
+        assert_eq!(vr.lba2zone(344_064), Some(1));
+
+        assert_eq!(vr.optimum_queue_depth(), 17);
+
+        assert_eq!(vr.size(), 1_376_256);
+
+        assert_eq!(vr.zone_limits(0), (96, 344_064));
+        assert_eq!(vr.zone_limits(1), (344_064, 688_128));
     }
 
     // A layout whose depth does not evenly divide the zone size.  The zone size
     // is not even a multiple of this layout's iterations.  So, it has a gap of
     // unused LBAs between zones
-    test has_gap(mocks((7, 5, 1, 16))) {
-        assert_eq!(mocks.val.lba2zone(0), None);
-        assert_eq!(mocks.val.lba2zone(127), None);
-        assert_eq!(mocks.val.lba2zone(128), Some(0));
+    #[rstest]
+    #[case(vr(7, 5, 1, 16))]
+    fn has_gap(#[case] vr: VdevRaid) {
+        assert_eq!(vr.lba2zone(0), None);
+        assert_eq!(vr.lba2zone(127), None);
+        assert_eq!(vr.lba2zone(128), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.lba2zone(366_975), Some(0));
+        assert_eq!(vr.lba2zone(366_975), Some(0));
         // An LBA in between zones 0 and 1
-        assert_eq!(mocks.val.lba2zone(366_976), None);
+        assert_eq!(vr.lba2zone(366_976), None);
         // First LBA in zone 1
-        assert_eq!(mocks.val.lba2zone(367_040), Some(1));
+        assert_eq!(vr.lba2zone(367_040), Some(1));
 
-        assert_eq!(mocks.val.optimum_queue_depth(), 14);
+        assert_eq!(vr.optimum_queue_depth(), 14);
 
-        assert_eq!(mocks.val.size(), 1_468_006);
+        assert_eq!(vr.size(), 1_468_006);
 
-        assert_eq!(mocks.val.zone_limits(0), (128, 366_976));
-        assert_eq!(mocks.val.zone_limits(1), (367_040, 733_952));
+        assert_eq!(vr.zone_limits(0), (128, 366_976));
+        assert_eq!(vr.zone_limits(1), (367_040, 733_952));
     }
 
     // A layout whose depth does not evenly divide the zone size and has
     // multiple whole stripes per row.  So, it has a gap of multiple stripes
     // between zones.
-    test has_multistripe_gap(mocks((11, 3, 1, 16))) {
-        assert_eq!(mocks.val.lba2zone(0), None);
-        assert_eq!(mocks.val.lba2zone(159), None);
-        assert_eq!(mocks.val.lba2zone(160), Some(0));
+    #[rstest]
+    #[case(vr(11, 3, 1, 16))]
+    fn has_multistripe_gap(#[case] vr: VdevRaid) {
+        assert_eq!(vr.lba2zone(0), None);
+        assert_eq!(vr.lba2zone(159), None);
+        assert_eq!(vr.lba2zone(160), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.lba2zone(480_511), Some(0));
+        assert_eq!(vr.lba2zone(480_511), Some(0));
         // LBAs in between zones 0 and 1
-        assert_eq!(mocks.val.lba2zone(480_512), None);
-        assert_eq!(mocks.val.lba2zone(480_639), None);
+        assert_eq!(vr.lba2zone(480_512), None);
+        assert_eq!(vr.lba2zone(480_639), None);
         // First LBA in zone 1
-        assert_eq!(mocks.val.lba2zone(480_640), Some(1));
+        assert_eq!(vr.lba2zone(480_640), Some(1));
 
-        assert_eq!(mocks.val.size(), 1_922_389);
+        assert_eq!(vr.size(), 1_922_389);
 
-        assert_eq!(mocks.val.zone_limits(0), (160, 480_512));
-        assert_eq!(mocks.val.zone_limits(1), (480_640, 961_152));
+        assert_eq!(vr.zone_limits(0), (160, 480_512));
+        assert_eq!(vr.zone_limits(1), (480_640, 961_152));
     }
 
     // A layout whose chunksize does not evenly divide the zone size.  One or
     // more entire rows must be skipped
-    test misaligned_chunksize(mocks((5, 4, 1, 5))) {
-        assert_eq!(mocks.val.lba2zone(0), None);
-        assert_eq!(mocks.val.lba2zone(29), None);
-        assert_eq!(mocks.val.lba2zone(30), Some(0));
+    #[rstest]
+    #[case(vr(5, 4, 1, 5))]
+    fn misaligned_chunksize(#[case] vr: VdevRaid) {
+        assert_eq!(vr.lba2zone(0), None);
+        assert_eq!(vr.lba2zone(29), None);
+        assert_eq!(vr.lba2zone(30), Some(0));
         // Last LBA in zone 0
-        assert_eq!(mocks.val.lba2zone(245_744), Some(0));
+        assert_eq!(vr.lba2zone(245_744), Some(0));
         // LBAs in the zone 0-1 gap
-        assert_eq!(mocks.val.lba2zone(245_745), None);
-        assert_eq!(mocks.val.lba2zone(245_774), None);
+        assert_eq!(vr.lba2zone(245_745), None);
+        assert_eq!(vr.lba2zone(245_774), None);
         // First LBA in zone 1
-        assert_eq!(mocks.val.lba2zone(245_775), Some(1));
+        assert_eq!(vr.lba2zone(245_775), Some(1));
 
-        assert_eq!(mocks.val.size(), 983_025);
+        assert_eq!(vr.size(), 983_025);
 
-        assert_eq!(mocks.val.zone_limits(0), (30, 245_745));
-        assert_eq!(mocks.val.zone_limits(1), (245_775, 491_505));
+        assert_eq!(vr.zone_limits(0), (30, 245_745));
+        assert_eq!(vr.zone_limits(1), (245_775, 491_505));
     }
 }
 
