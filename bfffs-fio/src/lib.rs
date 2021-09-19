@@ -373,6 +373,7 @@ pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     flags:              fio_ioengine_flags_FIO_SYNCIO as i32,
     get_file_size:      None,
     getevents:          Some(fio_bfffs_getevents),
+    get_max_open_zones: None,
     get_zoned_model:    None,
     init:               Some(fio_bfffs_init),
     invalidate:         Some(fio_bfffs_invalidate),

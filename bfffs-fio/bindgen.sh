@@ -2,7 +2,7 @@
 
 # fio doesn't install the necessary headers, so we have to reference its source
 # directory
-FIOPATH="/usr/home/somers/src/freebsd.org/ports/benchmarks/fio/work/fio-3.26"
+FIOPATH="/usr/home/somers/src/freebsd.org/ports/benchmarks/fio/work/fio-3.27"
 
 cat > src/ffi.rs << HERE
 #![allow(non_camel_case_types)]
@@ -13,10 +13,9 @@ cat > src/ffi.rs << HERE
 use libc::timespec;
 HERE
 
-# Use 1.0 compatibility mode to workaround a rustfmt bug involving unions:
-# https://github.com/rust-lang/rust-bindgen/issues/1120
-bindgen --no-rustfmt-bindings \
-	--no-layout-tests \
+# Disable layout tests due to this bindgen bug:
+# https://github.com/rust-lang/rust-bindgen/issues/867
+bindgen --no-layout-tests \
 	--whitelist-function 'generic_.*_file' \
 	--whitelist-type 'fio_file' \
 	--whitelist-type 'fio_option' \
@@ -29,6 +28,4 @@ bindgen --no-rustfmt-bindings \
 	--blacklist-type 'timespec' \
 	--whitelist-var 'FIO_IOOPS_VERSION' \
 	--ctypes-prefix libc \
-	--rust-target 1.27 \
 	src/ffi.h -- -I$FIOPATH >> src/ffi.rs
-rustup run 1.45.0 rustfmt --edition 2018 src/ffi.rs
