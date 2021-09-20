@@ -8,6 +8,7 @@ use bfffs_core::{
     device_manager::DevManager,
     fs::{FileData, Fs},
 };
+use futures::future::TryFutureExt;
 use lazy_static::lazy_static;
 use memoffset::offset_of;
 use std::{
@@ -145,6 +146,7 @@ pub extern "C" fn rust_ctor()
 }
 
 lazy_static! {
+    // TODO: try an RwLock now that we use fuse3
     static ref RUNTIME: Mutex<Runtime> = Mutex::new(
         Builder::new_multi_thread()
         .enable_time()
@@ -167,10 +169,11 @@ pub unsafe extern "C" fn fio_bfffs_close(
     f: *mut fio_file,
 ) -> libc::c_int
 {
+    let rt = RUNTIME.lock().unwrap();
     let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();
     let fd = FILES.write().unwrap().remove(&(*f).fd).unwrap();
-    fs.inactive(fd);
+    rt.block_on(async {fs.inactive(fd).await});
     (*f).fd = -1;
     0
 }
@@ -235,25 +238,26 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
             if (*opts).writeback_size != 0 {
                 dev_manager.writeback_size((*opts).writeback_size);
             }
-            for vdev in vdevs.split_whitespace() {
-                let borrowed_vdev: &str = vdev.borrow();
-                dev_manager.taste(borrowed_vdev);
-            }
-            let handle = rt.handle().clone();
-            let r = dev_manager.import_by_name(pool, handle);
-            if let Ok(db) = r {
-                let adb = Arc::new(db);
-                // For now, hardcode tree_id to 0
-                let tree_id = TreeID::Fs(0);
-                let root_fs = Fs::new(adb, rt.handle().clone(), tree_id);
-                let root = root_fs.root();
-                *fs = Some(root_fs);
-                *ROOT.write().unwrap() = Some(root);
-                0
-            } else {
-                eprintln!("Pool not found");
-                1
-            }
+            rt.block_on(async {
+                for vdev in vdevs.split_whitespace() {
+                    let borrowed_vdev: &str = vdev.borrow();
+                    dev_manager.taste(borrowed_vdev).await.unwrap();
+                }
+                let r = dev_manager.import_by_name(pool).await;
+                if let Ok(db) = r {
+                    let adb = Arc::new(db);
+                    // For now, hardcode tree_id to 0
+                    let tree_id = TreeID::Fs(0);
+                    let root_fs = Fs::new(adb, tree_id).await;
+                    let root = root_fs.root();
+                    *fs = Some(root_fs);
+                    *ROOT.write().unwrap() = Some(root);
+                    0
+                } else {
+                    eprintln!("Pool not found");
+                    1
+                }
+            })
         } else {
             eprintln!("Upgrade fio to 3.12 or later");
             1
@@ -283,29 +287,32 @@ pub unsafe extern "C" fn fio_bfffs_open(
     f: *mut fio_file,
 ) -> libc::c_int
 {
+    let rt = RUNTIME.lock().unwrap();
     let file_name =
         OsStr::from_bytes(CStr::from_ptr((*f).file_name).to_bytes());
     let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();
     let root_opt = ROOT.read().unwrap();
     let root = root_opt.as_ref().unwrap();
-    let r = fs
-        .lookup(None, root, file_name)
-        .or_else(|_| fs.create(root, file_name, 0o600, 0, 0));
-    match r {
-        Ok(fd) => {
-            // Store the inode number where fio would put its file
-            // descriptor
-            let filedesc = fd.ino() as i32;
-            (*f).fd = filedesc;
-            FILES.write().unwrap().insert(filedesc, fd);
-            0
+    rt.block_on(async {
+        let r = fs.lookup(None, root, file_name)
+        .or_else(|_| fs.create(root, file_name, 0o600, 0, 0))
+        .await;
+        match r {
+            Ok(fd) => {
+                // Store the inode number where fio would put its file
+                // descriptor
+                let filedesc = fd.ino() as i32;
+                (*f).fd = filedesc;
+                FILES.write().unwrap().insert(filedesc, fd);
+                0
+            }
+            Err(e) => {
+                eprintln!("fio_bfffs_open: {:?}", e);
+                1
+            }
         }
-        Err(e) => {
-            eprintln!("fio_bfffs_open: {:?}", e);
-            1
-        }
-    }
+    })
 }
 
 ///
@@ -319,6 +326,7 @@ pub unsafe extern "C" fn fio_bfffs_queue(
     io_u: *mut io_u,
 ) -> fio_q_status
 {
+    let rt = RUNTIME.lock().unwrap();
     let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();
     let files = FILES.read().unwrap();
@@ -333,20 +341,23 @@ pub unsafe extern "C" fn fio_bfffs_queue(
         ((*io_u).ddir, fd, (*io_u).offset, data)
     };
 
-    match ddir {
-        fio_ddir_DDIR_READ => {
-            fs.read(fd, offset, data.len()).unwrap();
+    rt.block_on(async {
+        match ddir {
+            fio_ddir_DDIR_READ => {
+                fs.read(fd, offset, data.len()).await.unwrap();
+            }
+            fio_ddir_DDIR_WRITE => {
+                fs.write(fd, offset, data, 0).await.unwrap();
+            }
+            fio_ddir_DDIR_SYNC => {
+                // Until we support fsync, we must sync the entire filesystem
+                fs.sync().await
+            }
+            _ => unimplemented!(),
         }
-        fio_ddir_DDIR_WRITE => {
-            fs.write(fd, offset, data, 0).unwrap();
-        }
-        fio_ddir_DDIR_SYNC => {
-            // Until we support fsync, we must sync the entire filesystem
-            fs.sync()
-        }
-        _ => unimplemented!(),
-    }
+    });
 
+    // TODO: does FIO have a way to initiate but not complete commands?
     fio_q_status_FIO_Q_COMPLETED
 }
 
@@ -362,6 +373,7 @@ pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     flags:              fio_ioengine_flags_FIO_SYNCIO as i32,
     get_file_size:      None,
     getevents:          Some(fio_bfffs_getevents),
+    get_max_open_zones: None,
     get_zoned_model:    None,
     init:               Some(fio_bfffs_init),
     invalidate:         Some(fio_bfffs_invalidate),

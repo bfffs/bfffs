@@ -15,10 +15,7 @@ use futures::{
     stream::self,
 };
 use std::sync::Arc;
-use tokio::{
-    runtime::Handle,
-    task::JoinHandle
-};
+use tokio::task::JoinHandle;
 
 struct SyncCleaner {
     /// Handle to the DML.
@@ -115,21 +112,21 @@ impl Cleaner {
         rx
     }
 
-    pub fn new(handle: Handle, idml: Arc<IDML>, thresh: Option<f32>) -> Self
+    pub fn new(idml: Arc<IDML>, thresh: Option<f32>) -> Self
     {
         let (tx, rx) = mpsc::channel(1);
-        let jh = Cleaner::run(handle, idml,
+        let jh = Cleaner::run(idml,
                               thresh.unwrap_or(Cleaner::DEFAULT_THRESHOLD), rx);
         Cleaner{jh, tx: Some(tx)}
     }
 
     // Start a task that will clean the system in the background, whenever
     // requested.
-    fn run(handle: Handle, idml: Arc<IDML>, thresh: f32,
+    fn run(idml: Arc<IDML>, thresh: f32,
            rx: mpsc::Receiver<oneshot::Sender<()>>)
         -> JoinHandle<()>
     {
-        handle.spawn(async move {
+        tokio::spawn(async move {
             let sync_cleaner = SyncCleaner::new(idml, thresh);
             rx.for_each(move |tx| {
                 sync_cleaner.clean_now()
@@ -182,9 +179,8 @@ fn background() {
     let rt = runtime::Builder::new_current_thread()
         .build()
         .unwrap();
-    let handle = rt.handle().clone();
     rt.spawn(async {
-        let cleaner = Cleaner::new(handle, Arc::new(idml), None);
+        let cleaner = Cleaner::new(Arc::new(idml), None);
         cleaner.clean()
             .map_err(Error::unhandled)
     });

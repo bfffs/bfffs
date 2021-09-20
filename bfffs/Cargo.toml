@@ -6,18 +6,21 @@ edition = "2018"
 
 [features]
 default = ["fuse"]
+fuse = ["fuse3"]
 
 [[bin]]
 name = "bfffsd"
 required-features = ["fuse"]
 
 [dependencies]
+async-trait = "0.1.40"
 bfffs-core = { path = "../bfffs-core" }
+bytes = "1.0"
 cfg-if = "1.0"
-fuse = { version = "0.3.1", optional = true }
+fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "22095c6", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
 libc = "0.2.44"
-time = "0.1"
+time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.10.0", features = ["rt", "rt-multi-thread", "signal", "sync", "time"] }
 
 [dependencies.clap]

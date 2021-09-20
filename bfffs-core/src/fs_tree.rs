@@ -23,8 +23,7 @@ use metrohash::MetroHash64;
 use num_enum::{IntoPrimitive, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
 use serde::{
-    Serialize,
-    Serializer,
+    ser::{Serialize, Serializer, SerializeStruct},
     de::DeserializeOwned
 };
 use std::{
@@ -38,7 +37,6 @@ use std::{
     pin::Pin,
     sync::Arc
 };
-use time::Timespec;
 
 /// Buffers of this size or larger will be written to disk as blobs.  Smaller
 /// buffers will be stored directly in the tree.
@@ -620,38 +618,58 @@ impl FileType {
     }   // LCOV_EXCL_LINE kcov false negative
 }
 
-mod timespec_serializer {
-    use serde_derive::{Deserialize, Serialize};
-    use serde::{de::Deserializer, Deserialize, Serialize, Serializer};
-    use time::*;
+/// BFFFS's timestamp data type.  Very close to FUSE's.
+///
+/// Unlike libc and Nix, the nsec field is 32 bits wide
+#[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
+pub struct Timespec {
+    pub sec: i64,
+    pub nsec: u32
+}
 
-    // time::Timespec doesn't derive Serde support.  Do it here.
-    #[derive(Serialize, Deserialize)]
-    struct TimespecDef {
-        sec: i64,
-        nsec: i32
+impl Timespec {
+    pub fn new(sec: i64, nsec: u32) -> Self {
+        Timespec { sec, nsec }
     }
 
-    pub(super) fn deserialize<'de, DE>(deserializer: DE)
-        -> Result<Timespec, DE::Error>
-        where DE: Deserializer<'de>
-    {
-        TimespecDef::deserialize(deserializer)
-            .map(|tsd| Timespec{sec: tsd.sec, nsec: tsd.nsec})
+    /// Get the current time in the local time zone
+    pub(crate) fn now() -> Self {
+        let clock_rt = nix::time::ClockId::CLOCK_REALTIME;
+        nix::time::clock_gettime(clock_rt).unwrap().into()
     }
+}
 
-    pub(super) fn serialize<S>(ts: &Timespec, serializer: S)
-        -> Result<S::Ok, S::Error>
+impl From<nix::sys::time::TimeSpec> for Timespec {
+    fn from(ts: nix::sys::time::TimeSpec) -> Self {
+        Timespec {
+            sec: ts.tv_sec(),
+            nsec: ts.tv_nsec() as u32
+        }
+    }
+}
+
+impl Serialize for Timespec {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
+        use ::time::OffsetDateTime;
+        use ::time::format_description::well_known::Rfc3339;
+
         if serializer.is_human_readable() {
             // When dumping to YAML, print the timestamp as a legible string
-            let tm = at_utc(*ts);
-            strftime("%F %T %Z", &tm).unwrap().serialize(serializer)
+            //const FORMAT = time::format_description::parse(
+            let odt = OffsetDateTime::from_unix_timestamp_nanos(
+                i128::from(self.sec) * 1000000000 + i128::from(self.nsec)
+            ).unwrap();
+            odt.format(&Rfc3339)
+                .unwrap()
+                .serialize(serializer)
         } else {
             // But for bincode, encode it compactly
-            let tsd = TimespecDef{ sec: ts.sec, nsec: ts.nsec};
-            tsd.serialize(serializer)
+            let mut state = serializer.serialize_struct("Timespec", 3)?;
+            state.serialize_field("sec", &self.sec)?;
+            state.serialize_field("nsec", &self.nsec)?;
+            state.end()
         }
     }
 }
@@ -666,16 +684,12 @@ pub struct Inode {
     /// File flags
     pub flags:      u64,
     /// access time
-    #[serde(with = "timespec_serializer")]
     pub atime:      Timespec,
     /// modification time
-    #[serde(with = "timespec_serializer")]
     pub mtime:      Timespec,
     /// change time
-    #[serde(with = "timespec_serializer")]
     pub ctime:      Timespec,
     /// birth time
-    #[serde(with = "timespec_serializer")]
     pub birthtime:  Timespec,
     /// user id
     pub uid:        u32,
@@ -689,12 +703,12 @@ pub struct Inode {
 }
 
 impl Inode {
-    /// This file's record size in bytes
-    pub fn record_size(&self) -> usize {
+    /// This file's record size in bytes.
+    pub fn record_size(&self) -> Option<usize> {
         if let FileType::Reg(exp) = self.file_type {
-            1 << exp
+            Some(1 << exp)
         } else {
-            panic!("Only regular files have record sizes")
+            None
         }
     }
 }

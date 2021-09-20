@@ -26,7 +26,7 @@ use futures_locks::*;
 #[cfg(test)] use mockall::automock;
 #[cfg(test)] use serde_derive::Deserialize;
 use serde_derive::Serialize;
-use serde::Serialize;
+use serde::ser::Serialize;
 #[cfg(test)] use serde::de::DeserializeOwned;
 #[cfg(test)] use std::fmt::{self, Display, Formatter};
 use std::{

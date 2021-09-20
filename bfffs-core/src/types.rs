@@ -6,10 +6,8 @@ use enum_primitive_derive::Primitive;
 use num_traits::{FromPrimitive, ToPrimitive};
 use serde_derive::{Deserialize, Serialize};
 use serde::{
-    Deserialize,
-    Serialize,
-    Serializer,
-    de::Deserializer,
+    ser::{Serialize, Serializer},
+    de::{Deserialize, Deserializer},
     ser::SerializeTuple
 };
 use std::{
