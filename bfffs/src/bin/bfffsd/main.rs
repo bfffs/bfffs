@@ -16,10 +16,7 @@ use std::{
     process::exit,
     sync::Arc,
 };
-use tokio::{
-    runtime::Builder,
-    signal::unix::{signal, SignalKind},
-};
+use tokio::signal::unix::{signal, SignalKind};
 use tracing_subscriber::EnvFilter;
 
 mod fs;
@@ -91,6 +88,7 @@ async fn main() {
         // TODO: taste devices in parallel
         dev_manager.taste(dev).await.unwrap();
     }
+
     let uuid = dev_manager.importable_pools().iter()
         .find(|(name, _uuid)| {
             **name == bfffsd.pool_name
@@ -99,31 +97,25 @@ async fn main() {
             std::process::exit(1);
         }).1;
 
-    let rt = Builder::new_multi_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .unwrap();
     let db = Arc::new(dev_manager.import_by_uuid(uuid).await.unwrap());
     // For now, hardcode tree_id to 0
     let tree_id = TreeID::Fs(0);
     let db2 = db.clone();
 
-    rt.block_on(async move {
-        // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term,
-        // this is very handy for debugging the cleaner.
-        tokio::spawn( async move {
-            let mut stream = signal(SignalKind::user_defined1()).unwrap();
-            loop {
-                stream.recv().await;
-                db2.clean().await.unwrap()
-            }
-        });
-        let fs = FuseFs::new(db, tree_id).await;
-        Session::new(&opts)
-            .mount(fs, &bfffsd.mountpoint)
-            .await
-    }).unwrap();
+    // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term,
+    // this is very handy for debugging the cleaner.
+    tokio::spawn( async move {
+        let mut stream = signal(SignalKind::user_defined1()).unwrap();
+        loop {
+            stream.recv().await;
+            db2.clean().await.unwrap()
+        }
+    });
+    let fs = FuseFs::new(db, tree_id).await;
+    Session::new(&opts)
+        .mount(fs, &bfffsd.mountpoint)
+        .await
+        .unwrap()
 }
 
 #[cfg(test)]

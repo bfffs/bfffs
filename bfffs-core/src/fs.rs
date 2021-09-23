@@ -1546,6 +1546,9 @@ impl Fs {
         }
     }
 
+    // TODO: change Ok type to just libc::dirent after switching to a FreeBSD
+    // 12+ ABI, since that has a builtin offset field.  Depends on
+    // https://github.com/rust-lang/libc/pull/2406
     pub fn readdir(&self, fd: &FileData, soffs: i64)
         -> impl Stream<Item=Result<(libc::dirent, i64), i32>> + Send
     {

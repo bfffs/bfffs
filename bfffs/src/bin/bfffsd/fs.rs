@@ -506,10 +506,7 @@ impl Filesystem for FuseFs {
         let fd = *self.files.lock().unwrap().get(&ino)
             .expect("read before lookup or after forget");
         let stream = self.fs.readdir(&fd, offset)
-            .map_ok(|(dirent, _offset)| {
-                // XXX BUG.  fuse3 currently doesn't handle the offset value
-                // correctly.  TODO: fix it.
-                // https://github.com/Sherlock-Holo/fuse3/issues/12
+            .map_ok(|(dirent, offset)| {
                 let kind = match dirent.d_type {
                     libc::DT_FIFO => FileType::NamedPipe,
                     libc::DT_CHR => FileType::CharDevice,
@@ -526,7 +523,8 @@ impl Filesystem for FuseFs {
                 DirectoryEntry {
                     inode: dirent.d_fileno.into(),
                     kind,
-                    name: OsStr::from_bytes(name).to_owned()
+                    name: OsStr::from_bytes(name).to_owned(),
+                    offset
                 }
             }).map_err(fuse3::Errno::from);
         let entries = Box::pin(stream);
