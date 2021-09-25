@@ -71,6 +71,7 @@ dependencies = [
  "futures",
  "libc",
  "mockall",
+ "nix",
  "rstest",
  "time",
  "tokio",
