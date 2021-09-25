@@ -17,7 +17,7 @@ async-trait = "0.1.40"
 bfffs-core = { path = "../bfffs-core" }
 bytes = "1.0"
 cfg-if = "1.0"
-fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "e2115a7", optional = true, features = ["tokio-runtime"] }
+fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "d3ed13e", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
 libc = "0.2.44"
 time = { version = "0.3.0", features = [ "formatting" ] }

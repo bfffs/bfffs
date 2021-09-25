@@ -49,6 +49,10 @@ async fn main() {
 
     let mut opts = MountOptions::default();
     opts.fs_name("bfffs");
+    if nix::unistd::getuid().is_root() {
+        opts.allow_other(true);
+        opts.default_permissions(true);
+    }
     // Unconditionally disable the kernel's buffer cache; BFFFS has its own
     opts.custom_options("direct_io");
     for o in bfffsd.options.iter() {
