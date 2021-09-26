@@ -14,6 +14,7 @@ mod fs {
     };
     use futures::TryStreamExt;
     use rand::{Rng, thread_rng};
+    use rstest::rstest;
     use std::{
         collections::HashSet,
         ffi::{CString, CStr, OsString, OsStr},
@@ -800,6 +801,98 @@ root:
         let filename = OsString::from("nonexistent");
         assert_eq!(fs.lookup(None, &root, &filename).await.unwrap_err(),
             libc::ENOENT);
+    }
+
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    #[tokio::test]
+    async fn lseek(#[case] blobs: bool) {
+        use SeekWhence::{Data, Hole};
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+
+
+        // Create a file like this:
+        // |      |======|      |======|>
+        // | hole | data | hole | data |EOF
+        let filename = OsString::from("x");
+        let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
+        let buf = vec![42u8; 4096];
+        fs.write(&fd, 4096, &buf[..], 0).await.unwrap();
+        fs.write(&fd, 12288, &buf[..], 0).await.unwrap();
+        if blobs {
+            // Sync the filesystem to flush the InlineExtents to BlobExtents
+            fs.sync().await;
+        }
+
+        // SeekData past EOF
+        assert_eq!(Err(libc::ENXIO), fs.lseek(&fd, 16485, Data).await);
+        // SeekHole past EOF
+        assert_eq!(Err(libc::ENXIO), fs.lseek(&fd, 16485, Hole).await);
+        // SeekHole with no hole until EOF
+        assert_eq!(Ok(16384), fs.lseek(&fd, 12288, Hole).await);
+        // SeekData at start of data
+        assert_eq!(Ok(4096), fs.lseek(&fd, 4096, Data).await);
+        // SeekHole at start of hole
+        assert_eq!(Ok(8192), fs.lseek(&fd, 8192, Hole).await);
+        // SeekData in middle of data
+        assert_eq!(Ok(6144), fs.lseek(&fd, 6144, Data).await);
+        // SeekHole in middle of hole
+        assert_eq!(Ok(2048), fs.lseek(&fd, 2048, Hole).await);
+        // SeekData before some data
+        assert_eq!(Ok(4096), fs.lseek(&fd, 2048, Data).await);
+        // SeekHole before a hole
+        assert_eq!(Ok(8192), fs.lseek(&fd, 6144, Hole).await);
+    }
+
+    // SeekData should return ENXIO if there is no data until EOF
+    #[tokio::test]
+    async fn lseek_data_before_eof() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+
+        let filename = OsString::from("x");
+        let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
+        let attr = SetAttr {
+            size: Some(4096),
+            .. Default::default()
+        };
+        fs.setattr(&fd, attr).await.unwrap();
+
+        let r = fs.lseek(&fd, 0, SeekWhence::Data).await;
+        assert_eq!(r, Err(libc::ENXIO));
+    }
+
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    #[tokio::test]
+    async fn lseek_last_hole(#[case] blobs: bool) {
+        use SeekWhence::Hole;
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+
+
+        // Create a file like this:
+        // |======|      |>
+        // | data | hole |EOF
+        let filename = OsString::from("x");
+        let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
+        let buf = vec![42u8; 4096];
+        fs.write(&fd, 0, &buf[..], 0).await.unwrap();
+        let attr = SetAttr {
+            size: Some(8192),
+            .. Default::default()
+        };
+        fs.setattr(&fd, attr).await.unwrap();
+        if blobs {
+            // Sync the filesystem to flush the InlineExtents to BlobExtents
+            fs.sync().await;
+        }
+
+        // SeekHole prior to the last hole in the file
+        assert_eq!(Ok(4096), fs.lseek(&fd, 0, Hole).await);
     }
 
     #[tokio::test]
