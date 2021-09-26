@@ -1412,6 +1412,47 @@ root:
         assert!(expected.is_empty());
     }
 
+    // Remove a file in a colliding hash bucket, then resume readdir at that
+    // point.  No remaining files should be skipped.
+    // NB: results may be different for a 3-way hash collision, but I can't yet
+    // generate any 3-way collisions to test with.
+    #[tokio::test]
+    async fn readdir_rm_during_stream_at_collision() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let filename0 = OsString::from("HsxUh682JQ");
+        let filename1 = OsString::from("4FatHJ8I6H");
+        assert_dirents_collide(&filename0, &filename1);
+
+        let _fd0 = fs.create(&root, &filename0, 0o644, 0, 0).await.unwrap();
+        let fd1 = fs.create(&root, &filename1, 0o644, 0, 0).await.unwrap();
+
+        // There's no requirement for the order of readdir's output, but
+        // filename1 happens to come first.
+        let mut stream0 = Box::pin(fs.readdir(&root, 0));
+        let (result0, offset0) = stream0.try_next().await.unwrap().unwrap();
+        assert_eq!(u64::from(result0.d_fileno), fd1.ino());
+
+        // Now interrupt the stream, remove the first has bucket entry, and
+        // resume with the supplied offset.
+        let r = fs.unlink(&root, Some(&fd1), &filename1).await;
+        assert_eq!(Ok(()), r);
+        let mut expected = HashSet::new();
+        expected.insert(OsString::from("."));
+        expected.insert(OsString::from(".."));
+        expected.insert(filename0);
+        drop(stream0);
+        let entries = readdir_all(&fs, &root, offset0).await;
+        for (entry, _) in entries.into_iter() {
+            let nameptr = entry.d_name.as_ptr() as *const u8;
+            let namelen = usize::from(entry.d_namlen);
+            let name_s = unsafe{slice::from_raw_parts(nameptr, namelen)};
+            let name = OsStr::from_bytes(name_s);
+            assert!(expected.remove(name));
+        }
+        assert!(expected.is_empty());
+    }
+
     // It's allowed for the client of Fs::readdir to drop the stream without
     // reading all entries.  The FUSE module does that when it runs out of space
     // in the kernel-provided buffer.
