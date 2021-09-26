@@ -4,7 +4,7 @@
 
 use bfffs_core::{
     database::{Database, TreeID},
-    fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr},
+    fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr, SeekWhence},
     property::Property,
     SGList,
     RID,
@@ -46,6 +46,8 @@ mock! {
             where F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static;
         pub async fn listextattrlen<F>(&self, fd: &FileData, f: F) -> Result<u32, i32>
             where F: Fn(&ExtAttr<RID>) -> u32 + Send + 'static;
+        pub async fn lseek(&self, fd: &FileData, mut offset: u64,
+            whence: SeekWhence) -> Result<u64, i32>;
         pub async fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, 
             id: u32, gid: u32) -> Result<FileData, i32>;
         pub async fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16,
