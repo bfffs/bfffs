@@ -809,6 +809,18 @@ pub enum Extent<'a, A: Addr> {
     Blob(&'a BlobExtent<A>)
 }
 
+impl<'a, A: Addr> Extent<'a, A> {
+    /// The length of this Extent, in bytes
+    // An extent can never be empty, so there's no point to is_empty()
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        match self {
+            Extent::Inline(ie) => ie.len(),
+            Extent::Blob(be) => be.lsize as usize
+        }
+    }
+}
+
 // This struct isn't really generic.  It should only ever be instantiated with
 // A=RID.  However, it's not possible to implement FSValue::flush without either
 // making FSValue generic, or using generics specialization.  And generics

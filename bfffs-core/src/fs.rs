@@ -510,6 +510,15 @@ impl<'a> CreateArgs<'a> {
     }
 }
 
+/// For use with [`Fs::lseek`]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SeekWhence {
+    /// Find the next hole
+    Hole = libc::SEEK_HOLE as isize,
+    /// Find the next data region
+    Data = libc::SEEK_DATA as isize,
+}
+
 impl Fs {
     /// Delete an extended attribute
     pub async fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
@@ -1343,6 +1352,79 @@ impl Fs {
                 };
                 future::ok::<u32, Error>(len)
             })
+        }).map_err(Error::into)
+        .await
+    }
+
+    /// Find the next hole or data region in a file
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(offset)`  - The requested region begins at `offset`, or `offset`
+    ///                   is the file size and there are no more holes between
+    ///                   the requested `offset` and EoF.`
+    /// - `Err(ENXIO)` -  For `Data`, there are no more data regions past
+    ///                   the supplied offset.  Or, the supplied offset already
+    ///                   points past EoF.
+    pub async fn lseek(&self,
+        fd: &FileData,
+        mut offset: u64,
+        whence: SeekWhence) -> Result<u64, i32>
+    {
+        let ino = fd.ino;
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
+        self.db.fsread(self.tree, move |ds| async move {
+            let r = ds.get(inode_key).await
+                .unwrap()
+                .expect("Inode not found");
+            let inode = r.as_inode()
+                .expect("Wrong value type");
+            let fsize = inode.size;
+            if offset > fsize {
+                Err(Error::ENXIO)
+            } else {
+                let rs = inode.record_size().unwrap() as u64;
+                let baseoffset = offset - (offset % rs);
+                let erange = FSKey::extent_range(ino, baseoffset..);
+                let mut ex_stream = ds.range(erange);
+                let mut r = match whence {
+                    SeekWhence::Data => Err(Error::ENXIO),
+                    SeekWhence::Hole => Ok(fsize)
+                };
+                while let Some((k, v)) = ex_stream.try_next().await? {
+                    let end = k.offset() + v.as_extent().unwrap().len() as u64;
+                    if end <= offset {
+                        // This extent is too low
+                        continue
+                    } else if k.offset() <= offset {
+                        // In the middle of a data region
+                        match whence {
+                            SeekWhence::Data => {
+                                r = Ok(offset);
+                                break
+                            },
+                            SeekWhence::Hole => {
+                                offset = end;
+                                r = Ok(offset);
+                                // Keep searching for holes
+                            }
+                        }
+                    } else {
+                        // The next data region is to the right
+                        match whence {
+                            SeekWhence::Data => {
+                                r = Ok(k.offset());
+                                break
+                            },
+                            SeekWhence::Hole => {
+                                r = Ok(offset);
+                                break
+                            }
+                        }
+                    }
+                }
+                r
+            }
         }).map_err(Error::into)
         .await
     }

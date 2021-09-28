@@ -6,7 +6,7 @@ use bfffs_core::database::*;
 use bfffs_core::{
     RID,
     database::TreeID,
-    fs::{self, ExtAttr, ExtAttrNamespace, FileData, Timespec}
+    fs::{self, ExtAttr, ExtAttrNamespace, FileData, SeekWhence, Timespec}
 };
 use bytes::Bytes;
 use cfg_if::cfg_if;
@@ -18,8 +18,8 @@ use fuse3::{
         Filesystem,
         reply::{
             DirectoryEntry, DirectoryEntryPlus, FileAttr, ReplyAttr,
-            ReplyCreated, ReplyData, ReplyDirectory, ReplyEntry, ReplyStatFs,
-            ReplyWrite, ReplyXAttr,
+            ReplyCreated, ReplyData, ReplyDirectory, ReplyEntry, ReplyLSeek,
+            ReplyStatFs, ReplyWrite, ReplyXAttr,
         },
         Request
     }
@@ -447,6 +447,22 @@ impl Filesystem for FuseFs {
                 Err(e) => Err(e.into())
             }
         }
+    }
+
+    async fn lseek(&self, _req: Request, ino: u64, _fh: u64, offset: u64,
+                   whence: u32) -> fuse3::Result<ReplyLSeek>
+    {
+        let fd = *self.files.lock().unwrap().get(&ino)
+            .expect("lseek before lookup or after forget");
+        let whence = match whence as i32 {
+            libc::SEEK_HOLE => SeekWhence::Hole,
+            libc::SEEK_DATA => SeekWhence::Data,
+            _ => return Err(libc::EINVAL.into())
+        };
+        self.fs.lseek(&fd, offset, whence)
+            .map_ok(|offset| ReplyLSeek{ offset })
+            .map_err(fuse3::Errno::from)
+            .await
     }
 
     async fn mkdir(&self, req: Request, parent: u64, name: &OsStr, mode: u32,
@@ -1833,6 +1849,54 @@ mod lookup {
         assert_eq!(reply.attr.rdev, 0);
         assert_eq!(reply.attr.blksize, 4096);
         assert_cached(&fusefs, parent, name, ino);
+    }
+}
+
+mod lseek {
+    use super::*;
+
+    #[test]
+    fn hole() {
+        let ino = 42;
+        let fh = 0xdeadbeef;
+        let ofs = 2048;
+
+        let request = Request::default();
+
+        let mut fusefs = make_mock_fs();
+        fusefs.fs.expect_lseek()
+            .times(1)
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino() == ino),
+                predicate::eq(ofs as u64),
+                predicate::eq(SeekWhence::Hole),
+            ).returning(|_ino, _ofs, _whence| Ok(4096));
+
+        fusefs.files.lock().unwrap()
+          .insert(ino, FileData::new_for_tests(None, ino));
+        let whence = libc::SEEK_HOLE as u32;
+        let reply = fusefs.lseek(request, ino, fh, ofs, whence)
+          .now_or_never().unwrap()
+          .unwrap();
+        assert_eq!(reply.offset, 4096);
+    }
+
+    #[test]
+    fn invalid_whence() {
+        let ino = 42;
+        let fh = 0xdeadbeef;
+        let ofs = 2048;
+
+        let request = Request::default();
+
+        let fusefs = make_mock_fs();
+
+        fusefs.files.lock().unwrap()
+          .insert(ino, FileData::new_for_tests(None, ino));
+        let whence = libc::SEEK_CUR as u32;
+        let reply = fusefs.lseek(request, ino, fh, ofs, whence)
+          .now_or_never().unwrap();
+        assert_eq!(reply, Err(fuse3::Errno::from(libc::EINVAL)));
     }
 }
 
