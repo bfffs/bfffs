@@ -1,6 +1,8 @@
 //! Measures the actual memory consumption of Cacheable implementors
 //!
 //! Can't use the standard test harness because we need to run single-threaded.
+#![allow(clippy::if_then_panic)]
+
 use bfffs_core::{
     cache::Cacheable,
     ddml::DRP,
