@@ -520,7 +520,7 @@ impl Database {
               R: 'static,
     {
         self.ro_filesystem(tree_id)
-            .and_then(|ds| f(ds))
+            .and_then(f)
     }
 
     /// Perform a read-only operation on a Filesystem
