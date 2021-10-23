@@ -67,6 +67,7 @@ async fn main() {
         opts.allow_other(true);
         opts.default_permissions(true);
     }
+    opts.no_open_dir_support(true);
     // Unconditionally disable the kernel's buffer cache; BFFFS has its own
     opts.custom_options("direct_io");
     for o in bfffsd.options.iter() {
