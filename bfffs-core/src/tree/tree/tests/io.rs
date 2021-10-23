@@ -420,7 +420,7 @@ root:
           Addr: 6
 "#;
     let mut out = Vec::new();
-    tree.dump(&mut out).unwrap();
+    tree.dump(&mut out).now_or_never().unwrap().unwrap();
     println!("{:?}", OsStr::from_bytes(&out[..]));
     assert_eq!(expected, OsStr::from_bytes(&out[..]));
 }

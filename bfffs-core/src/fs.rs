@@ -26,6 +26,7 @@ use std::{
     cmp,
     ffi::{OsStr, OsString},
     fmt::Debug,
+    io,
     mem,
     os::unix::ffi::OsStrExt,
     pin::Pin,
@@ -34,7 +35,6 @@ use std::{
         Arc,
     }
 };
-#[cfg(not(test))] use std::io;
 
 #[cfg(test)] mod tests;
 
@@ -989,10 +989,10 @@ impl Fs {
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
     /// `std::fs::File`.
-    #[cfg(not(test))]
-    pub fn dump(&self, f: &mut dyn io::Write) -> Result<(), i32> {
+    pub async fn dump(&self, f: &mut dyn io::Write) -> Result<(), i32> {
         self.db.dump(f, self.tree)
         .map_err(|e| e.into())
+        .await
     }
 
     /// Tell the file system that the given file is no longer needed by the

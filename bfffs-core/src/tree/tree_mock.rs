@@ -53,7 +53,7 @@ mock! {
         pub fn create(dml: Arc<D>, seq: bool, lzratio: f32, izratio: f32)
             -> MockTree<A, D, K, V>;
         pub fn credit_requirements(&self) -> CreditRequirements;
-        pub fn dump(&self, f: &mut (dyn io::Write + 'static))
+        pub async fn dump<'a>(&self, f: &'a mut dyn io::Write)
             -> Result<(), Error>;
         pub async fn flush(self: Arc<Self>, txg: TxgT) -> Result<(), Error>;
         pub fn get(&self, k: K)

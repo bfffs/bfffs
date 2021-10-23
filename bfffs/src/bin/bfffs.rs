@@ -102,21 +102,21 @@ impl Dump {
     fn dump_tree(self) {
         let dev_manager = DevManager::default();
         let rt = runtime();
-        let db = rt.block_on(async {
+        rt.block_on(async {
             for disk in self.disks.iter() {
                 dev_manager.taste(disk).await.unwrap();
             }
-            dev_manager.import_by_name(self.pool_name)
+            let db = dev_manager.import_by_name(self.pool_name)
             .await
             .unwrap_or_else(|_e| {
                 eprintln!("Error: pool not found");
                 exit(1);
-            })
+            });
+            let db = Arc::new(db);
+            // For now, hardcode tree_id to 0
+            let tree_id = TreeID::Fs(0);
+            db.dump(&mut std::io::stdout(), tree_id).await.unwrap()
         });
-        let db = Arc::new(db);
-        // For now, hardcode tree_id to 0
-        let tree_id = TreeID::Fs(0);
-        db.dump(&mut std::io::stdout(), tree_id).unwrap()
     }
 
     fn main(self) {

@@ -44,7 +44,6 @@ use std::{
     sync::Arc,
 };
 use super::{Addr, CreditRequirements, InnerOnDisk, IntData, IntElem, Key, Limits, Node, NodeData, NodeId, TreeOnDisk, TreePtr, TreeReadGuard, TreeWriteGuard, Value};
-use tokio::runtime;
 use tracing::instrument;
 use tracing_futures::Instrument;
 
@@ -690,16 +689,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Dump a YAMLized representation of the Tree to stdout.
     ///
-    /// Must be called from the synchronous domain.
-    ///
     /// To save RAM, the Tree is actually dumped as several independent YAML
     /// records.  The first one is the Tree itself, and the rest are other
     /// on-disk Nodes.  All the Nodes can be combined into a single YAML map by
     /// simply removing the `...\n---` separators.
-    // `&mut Formatter` isn't `Send`, so these Futures can only be used with the
-    // single-threaded Runtime.  Given that limitation, we may as well
-    // instantiate our own Runtime
-    pub fn dump<'a>(&self, f: &'a mut dyn io::Write) -> Result<(), Error> {
+    pub async fn dump(&self, f: &mut dyn io::Write) -> Result<(), Error> {
         // Outline:
         // * Lock the whole tree and proceed bottom-up.
         // * YAMLize each Node
@@ -707,16 +701,12 @@ impl<A, D, K, V> Tree<A, D, K, V>
         //   can be deserialized into a BTreeMap<A, NodeData>.  Otherwise,
         //   extend its parent's representation.
         // * Last of all, print the root's representation.
-        let bf = Box::new(f) as Box<dyn io::Write + 'a>;
+        let bf = Box::new(f) as Box<dyn io::Write>;
         let ser = serde_yaml::Serializer::new(bf);
         let rrf = Rc::new(RefCell::new(ser));
         let rrf2 = rrf.clone();
         let rrf3 = rrf.clone();
-        let rt = runtime::Builder::new_current_thread()
-            .enable_io()
-            .build()
-            .unwrap();
-        let fut = self.read()
+        self.read()
             .then(move |tree_guard| {
                 tree_guard.elem.rlock(&self.dml)
                 .and_then(move |guard| {
@@ -733,8 +723,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         hmap.serialize(&mut *rrf3.borrow_mut()).unwrap();
                     }
                 })
-            });
-        rt.block_on(fut)
+            }).await
     }
 
     fn dump_r<'a>(
