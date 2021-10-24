@@ -141,9 +141,7 @@ impl Codec {
     ///             discontiguous, and each may have a different structure.
     /// - `parity`: Storage for parity columns.  `f` columns of `len` bytes
     ///             each: will be populated upon return.
-    pub fn encodev<T>(&self, len: usize, data: &[SGList],
-                      parity: &mut [T])
-                      where T : BorrowMut<[u8]> {
+    pub fn encodev(&self, len: usize, data: &[SGList], parity: &mut [*mut u8]) {
         let mut cursors : Vec<SGCursor> =
             data.iter()
                 .map(SGCursor::from)
@@ -161,10 +159,9 @@ impl Codec {
                            (iovec.as_ptr(), iovec)
                        })
                        .unzip();
-            let prefs : Vec<*mut u8> =
-                parity.iter_mut()
-                      .map(|iov| iov.borrow_mut()[l..].as_mut_ptr())
-                      .collect();
+            let prefs: Vec<*mut u8> = parity.iter_mut()
+                .map(|iov| unsafe{iov.add(l)})
+                .collect();
             self.encode(ncl, &refs, &prefs);
             l += ncl;
         }
@@ -419,11 +416,11 @@ mod tests {
                         db1p2.try_const().unwrap(),
                         db1p3.try_const().unwrap()];
         let data = vec![sgb0, sgb1];
-        let pa1 = vec![0u8;len];
-        let mut pslice = [pa1];
+        let mut pa1 = vec![0u8; len];
+        let mut pslice = [pa1.as_mut_ptr()];
         codec.encodev(len, &data, &mut pslice[..]);
 
-        assert_eq!(pa0, pslice[0]);
+        assert_eq!(pa0, pa1);
     }
 
     // Test basic RAID update functionality using a small chunksize
