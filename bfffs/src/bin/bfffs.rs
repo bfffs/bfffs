@@ -14,15 +14,6 @@ use std::{
     process::exit,
     sync::Arc
 };
-use tokio::runtime::{Builder, Runtime};
-
-fn runtime() -> Runtime {
-    Builder::new_multi_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .unwrap()
-}
 
 #[derive(Clap, Clone, Debug)]
 /// Consistency check
@@ -41,25 +32,22 @@ impl Check{
     // * RIDT and AllocT are exact inverses
     // * RIDT contains no orphan entries not found in the FSTrees
     // * Spacemaps match actual usage
-    pub fn main(self) {
+    pub async fn main(self) {
         let dev_manager = DevManager::default();
-        let rt = runtime();
-        rt.block_on(async {
-            for dev in self.disks.iter()
-            {
-                dev_manager.taste(dev).await.unwrap();
-            }
+        for dev in self.disks.iter()
+        {
+            dev_manager.taste(dev).await.unwrap();
+        }
 
-            let db = Arc::new(
-                dev_manager.import_by_name(self.pool_name)
-                .await
-                .unwrap_or_else(|_e| {
-                    eprintln!("Error: pool not found");
-                    exit(1);
-                })
-            );
-            db.check().await
-        }).unwrap();
+        let db = Arc::new(
+            dev_manager.import_by_name(self.pool_name)
+            .await
+            .unwrap_or_else(|_e| {
+                eprintln!("Error: pool not found");
+                exit(1);
+            })
+        );
+        db.check().await.unwrap();
         // TODO: the other checks
     }
 }
@@ -81,49 +69,43 @@ struct Dump {
 }
 
 impl Dump {
-    fn dump_fsm(self) {
+    async fn dump_fsm(self) {
         let dev_manager = DevManager::default();
-        let rt = runtime();
-        let clusters = rt.block_on(async move {
-            for disk in self.disks.iter() {
-                dev_manager.taste(disk).await.unwrap();
-            }
-            let uuid = dev_manager.importable_pools().iter()
-                .find(|(name, _uuid)| {
-                    *name == self.pool_name
-                }).unwrap().1;
-            dev_manager.import_clusters(uuid).await
-        }).unwrap();
+        for disk in self.disks.iter() {
+            dev_manager.taste(disk).await.unwrap();
+        }
+        let uuid = dev_manager.importable_pools().iter()
+            .find(|(name, _uuid)| {
+                *name == self.pool_name
+            }).unwrap().1;
+        let clusters = dev_manager.import_clusters(uuid).await.unwrap();
         for c in clusters {
             println!("{}", c.dump_fsm());
         }
     }
 
-    fn dump_tree(self) {
+    async fn dump_tree(self) {
         let dev_manager = DevManager::default();
-        let rt = runtime();
-        rt.block_on(async {
-            for disk in self.disks.iter() {
-                dev_manager.taste(disk).await.unwrap();
-            }
-            let db = dev_manager.import_by_name(self.pool_name)
-            .await
-            .unwrap_or_else(|_e| {
-                eprintln!("Error: pool not found");
-                exit(1);
-            });
-            let db = Arc::new(db);
-            // For now, hardcode tree_id to 0
-            let tree_id = TreeID::Fs(0);
-            db.dump(&mut std::io::stdout(), tree_id).await.unwrap()
+        for disk in self.disks.iter() {
+            dev_manager.taste(disk).await.unwrap();
+        }
+        let db = dev_manager.import_by_name(self.pool_name)
+        .await
+        .unwrap_or_else(|_e| {
+            eprintln!("Error: pool not found");
+            exit(1);
         });
+        let db = Arc::new(db);
+        // For now, hardcode tree_id to 0
+        let tree_id = TreeID::Fs(0);
+        db.dump(&mut std::io::stdout(), tree_id).await.unwrap()
     }
 
-    fn main(self) {
+    async fn main(self) {
         if self.fsm {
-            self.dump_fsm();
+            self.dump_fsm().await;
         } else if self.tree {
-            self.dump_tree();
+            self.dump_tree().await
         }
     }
 }
@@ -152,16 +134,13 @@ mod fs {
     }
 
     impl Mount {
-        pub(super) fn main(self, sock: &Path) {
+        pub(super) async fn main(self, sock: &Path) {
             // For now, hardcode tree_id to 0
             let tree_id = TreeID::Fs(0);
 
-            let rt = runtime();
-            rt.block_on(async move {
-                let bfffs = Bfffs::new(sock).await.unwrap();
-                let req = rpc::Request::mount(self.mountpoint, tree_id);
-                bfffs.call(req).await.unwrap();
-            });
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            let req = rpc::Request::mount(self.mountpoint, tree_id);
+            bfffs.call(req).await.unwrap();
         }
     }
 
@@ -206,8 +185,7 @@ mod pool {
     }
 
     impl Create{
-        pub(super) fn main(self) {
-            let rt = runtime();
+        pub(super) async fn main(self) {
             let zone_size = self.zone_size
                 .map(|mbs| {
                     let lbas = mbs * 1024 * 1024 / (BYTES_PER_LBA as u64);
@@ -215,7 +193,7 @@ mod pool {
                 });
 
             let props = self.properties.iter().map(String::as_str);
-            let mut builder = Builder::new(self.pool_name, props, zone_size, rt);
+            let mut builder = Builder::new(self.pool_name, props, zone_size);
             let mut vdev_tokens = self.vdev.iter().map(String::as_str);
             let mut cluster_type = None;
             let mut devs = vec![];
@@ -262,7 +240,7 @@ mod pool {
                     }
                 }
             }
-            builder.format()
+            builder.format().await
         }
     }
 
@@ -270,13 +248,12 @@ mod pool {
         clusters: Vec<Cluster>,
         name: String,
         properties: Vec<Property>,
-        rt: Runtime,
         zone_size: Option<NonZeroU64>
     }
 
     impl Builder {
         pub fn new<'a, P>(name: String, propstrings: P,
-                   zone_size: Option<NonZeroU64>, rt: Runtime)
+                   zone_size: Option<NonZeroU64>)
             -> Self
             where P: Iterator<Item=&'a str> + 'a
         {
@@ -288,7 +265,7 @@ mod pool {
                     })
                 })
                 .collect::<Vec<_>>();
-            Builder{clusters, name, properties, rt, zone_size}
+            Builder{clusters, name, properties, zone_size}
         }
 
         pub fn create_cluster(&mut self, vtype: &str, devs: &[&str]) {
@@ -326,24 +303,23 @@ mod pool {
         }
 
         /// Actually format the disks
-        pub fn format(&mut self) {
+        pub async fn format(mut self) {
             let name = self.name.clone();
             let clusters = self.clusters.drain(..).collect();
             let props = self.properties.clone();
-            self.rt.block_on(async move {
-                let db = {
-                    let pool = Pool::create(name, clusters);
-                    let cache = Arc::new(
-                        Mutex::new(Cache::with_capacity(4_194_304))
-                    );
-                    let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                    let idml = Arc::new(IDML::create(ddml, cache));
-                    Database::create(idml)
-                };
-                db.new_fs(props)
-                .and_then(|_tree_id| db.sync_transaction())
-                .await
-            }).unwrap();
+            let db = {
+                let pool = Pool::create(name, clusters);
+                let cache = Arc::new(
+                    Mutex::new(Cache::with_capacity(4_194_304))
+                );
+                let ddml = Arc::new(DDML::new(pool, cache.clone()));
+                let idml = Arc::new(IDML::create(ddml, cache));
+                Database::create(idml)
+            };
+            db.new_fs(props)
+            .and_then(|_tree_id| db.sync_transaction())
+            .await
+            .unwrap()
         }
     }
 
@@ -376,13 +352,14 @@ struct Cli {
     cmd: SubCommand,
 }
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let cli: Cli = Cli::parse();
     match cli.cmd {
-        SubCommand::Check(check) => check.main(),
-        SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock),
-        SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main(),
-        SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main(),
+        SubCommand::Check(check) => check.main().await,
+        SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock).await,
+        SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main().await,
+        SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,
     }
 }
 
