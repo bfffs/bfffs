@@ -7,7 +7,7 @@ use crate::{
     util::*,
     vdev::*,
 };
-use divbuf::{DivBuf, DivBufMut, DivBufShared};
+use divbuf::{DivBuf, DivBufShared};
 use futures::{
     TryFutureExt,
     TryStreamExt,
@@ -514,15 +514,9 @@ impl VdevRaid {
         let stripes = chunks / m;
 
         // Allocate storage for parity for the entire operation
-        let mut parity = Vec::<IoVecMut>::with_capacity(f);
-        for _ in 0..f {
-            let mut v = Vec::<u8>::with_capacity(stripes * col_len);
-            //codec::encode will actually fill the column
-            unsafe { v.set_len(stripes * col_len) };
-            let col = DivBufShared::from(v);
-            let dbm = col.try_mut().unwrap();
-            parity.push(dbm);
-        }
+        let mut parity = (0..f)
+            .map(|_| Vec::<u8>::with_capacity(stripes * col_len))
+            .collect::<Vec<_>>();
 
         // Calculate parity.  We must do it separately for each stripe
         let mut data_refs : Vec<*const u8> = vec![ptr::null(); m];
@@ -536,12 +530,26 @@ impl VdevRaid {
                 data_refs[i] = col.as_ptr();
                 for p in 0..f {
                     let begin = s * col_len;
-                    let end = (s + 1) * col_len;
-                    parity_refs[p] = parity[p][begin..end].as_mut_ptr();
+                    debug_assert!(begin + col_len <= parity[p].capacity());
+                    // Safe because the assertion passed
+                    unsafe {
+                        parity_refs[p] = parity[p].as_mut_ptr().add(begin);
+                    }
                 }
             }
-            self.codec.encode(col_len, &data_refs, &parity_refs);
+            // Safe because the above assertion passed
+            unsafe {
+                self.codec.encode(col_len, &data_refs, &parity_refs);
+            }
         }
+
+        let mut pw = parity.into_iter()
+            .map(|mut v| {
+                // Safe because codec.encode filled the columns
+                unsafe { v.set_len(stripes * col_len);}
+                let dbs = DivBufShared::from(v);
+                dbs.try_const().unwrap()
+            }).collect::<Vec<_>>();
 
         // Create an SGList for each disk.
         let mut sglists = Vec::<SGList>::with_capacity(n);
@@ -559,8 +567,7 @@ impl VdevRaid {
         for (chunk_id, loc) in self.locator.iter(start, end) {
             let col = match chunk_id {
                 ChunkId::Data(_) => buf.split_to(col_len),
-                ChunkId::Parity(_, i) =>
-                    parity[i as usize].split_to(col_len).freeze()
+                ChunkId::Parity(_, i) => pw[i as usize].split_to(col_len)
             };
             let disk_lba = loc.offset * self.chunksize;
             if start_lbas[loc.disk as usize] == SENTINEL {
@@ -592,7 +599,10 @@ impl VdevRaid {
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f as usize;
 
-        let mut parity = Vec::<IoVecMut>::with_capacity(f);
+        let mut parity = (0..f)
+            .map(|_| Vec::<u8>::with_capacity(col_len))
+            .collect::<Vec<_>>();
+
         let dcols : Vec<IoVec> = buf.into_chunks(col_len).collect();
         {
             let drefs: Vec<*const u8> = dcols.iter()
@@ -600,20 +610,22 @@ impl VdevRaid {
                 .collect();
             debug_assert_eq!(dcols.len(), m);
 
-            let mut prefs = Vec::<*mut u8>::with_capacity(f);
-            for _ in 0..f {
-                let mut v = Vec::<u8>::with_capacity(col_len);
-                //codec::encode will actually fill the column
-                unsafe { v.set_len(col_len) };
-                let col = DivBufShared::from(v);
-                let mut dbm = col.try_mut().unwrap();
-                prefs.push(dbm.as_mut_ptr());
-                parity.push(dbm);
-            }
+            let prefs = parity.iter_mut()
+                .map(|v| v.as_mut_ptr())
+                .collect::<Vec<_>>();
 
-            self.codec.encode(col_len, &drefs, &prefs);
+            // Safe because each parity column is sized for `col_len`
+            unsafe {
+                self.codec.encode(col_len, &drefs, &prefs);
+            }
         }
-        let pw = parity.into_iter().map(DivBufMut::freeze);
+        let pw = parity.into_iter()
+            .map(|mut v| {
+                // Safe because codec::encode filled the column
+                unsafe { v.set_len(col_len); }
+                let dbs = DivBufShared::from(v);
+                dbs.try_const().unwrap()
+            });
 
         let data_fut = issue_1stripe_ops!(self, dcols, lba, false, write_at);
         let parity_fut = issue_1stripe_ops!(self, pw, lba, true, write_at);
@@ -652,20 +664,24 @@ impl VdevRaid {
         }
         debug_assert_eq!(dcursor.peek_len(), 0);
 
-        let mut pcols = Vec::<IoVecMut>::with_capacity(f);
-        let mut prefs = Vec::<*mut u8>::with_capacity(f);
-        for _ in 0..f {
-            let mut v = Vec::<u8>::with_capacity(col_len);
-            //codec::encode will actually fill the column
-            unsafe { v.set_len(col_len) };
-            let col = DivBufShared::from(v);
-            let mut dbm = col.try_mut().unwrap();
-            prefs.push(dbm.as_mut_ptr());
-            pcols.push(dbm);
-        }
+        let mut parity = (0..f)
+            .map(|_| Vec::<u8>::with_capacity(col_len))
+            .collect::<Vec<_>>();
+        let mut prefs = parity.iter_mut()
+            .map(|v| v.as_mut_ptr())
+            .collect::<Vec<_>>();
 
-        self.codec.encodev(col_len, &dcols, &mut pcols);
-        let pw = pcols.into_iter().map(DivBufMut::freeze);
+        // Safe because each parity column is sized for `col_len`
+        unsafe {
+            self.codec.encodev(col_len, &dcols, &mut prefs);
+        }
+        let pw = parity.into_iter()
+            .map(|mut v| {
+                // Safe because codec.encode filled the columns
+                unsafe { v.set_len(col_len);}
+                let dbs = DivBufShared::from(v);
+                dbs.try_const().unwrap()
+            });
 
         let data_fut = issue_1stripe_ops!(self, dcols, lba, false, writev_at);
         let parity_fut = issue_1stripe_ops!(self, pw, lba, true, write_at);
