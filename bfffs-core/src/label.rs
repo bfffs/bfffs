@@ -86,7 +86,7 @@ impl LabelReader {
             hasher.write(contents);
         }
         if checksum != hasher.finish() {
-            return Err(Error::ECKSUM);
+            return Err(Error::EINTEGRITY);
         }
 
         let mut cursor = io::Cursor::new(buffer);

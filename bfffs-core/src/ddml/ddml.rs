@@ -134,7 +134,7 @@ impl DDML {
                         future::ok(dbs)
                     }
                 } else {
-                    future::err(Error::ECKSUM)
+                    future::err(Error::EINTEGRITY)
                 }
             })
         )
@@ -539,7 +539,7 @@ mod ddml {
         let err = ddml.get::<DivBufShared, DivBuf>(&drp)
             .now_or_never().unwrap()
             .unwrap_err();
-        assert_eq!(err, Error::ECKSUM);
+        assert_eq!(err, Error::EINTEGRITY);
     }
 
     #[test]
@@ -668,7 +668,7 @@ mod ddml {
         let err = ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
             .now_or_never().unwrap()
             .unwrap_err();
-        assert_eq!(err, Error::ECKSUM);
+        assert_eq!(err, Error::EINTEGRITY);
     }
 
     #[test]

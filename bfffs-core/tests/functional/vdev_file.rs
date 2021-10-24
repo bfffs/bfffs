@@ -307,7 +307,7 @@ mod persistence {
         let e = rt.block_on(async { VdevFile::open(harness.0).await})
             .err()
             .expect("Opening the file should've failed");
-        assert_eq!(e, Error::ECKSUM);
+        assert_eq!(e, Error::EINTEGRITY);
     }
 
     /// Open a device that only has one valid label, the first one

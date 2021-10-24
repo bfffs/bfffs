@@ -155,11 +155,10 @@ pub enum Error {
     ECAPMODE        = libc::ECAPMODE as isize,
     ENOTRECOVERABLE = libc::ENOTRECOVERABLE as isize,
     EOWNERDEAD      = libc::EOWNERDEAD as isize,
+    EINTEGRITY      = libc::EINTEGRITY as isize,
 
     //// BFFFS custom error types below
     EUNKNOWN        = 256,
-    // TODO: Change ECKSUM to EINTEGRITY in FreeBSD 12.1
-    ECKSUM          = 257,
 }
 
 impl Error {
@@ -198,9 +197,6 @@ impl From<Error> for i32 {
         match e {
             Error::EUNKNOWN =>
                 panic!("Unknown error codes should never be exposed"),
-            // Checksum errors are a special case of I/O errors until FreeBSD
-            // 12.1, whenthey will become EINTEGRITY errors
-            Error::ECKSUM => Error::EIO.to_i32().unwrap(),
             _ => e.to_i32().unwrap()
         }
     }

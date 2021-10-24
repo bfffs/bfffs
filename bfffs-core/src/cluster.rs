@@ -645,7 +645,7 @@ impl SpacemapOnDisk {
             if hasher.finish() == sod.checksum {
                 Ok(sod)
             } else {
-                Err(Error::ECKSUM)
+                Err(Error::EINTEGRITY)
             }
         })
     }
@@ -1332,7 +1332,7 @@ mod cluster {
             });
 
         let r = FreeSpaceMap::open(Arc::new(vr)).now_or_never().unwrap();
-        assert_eq!(Error::ECKSUM, r.err().unwrap());
+        assert_eq!(Error::EINTEGRITY, r.err().unwrap());
     }
 
     #[test]
