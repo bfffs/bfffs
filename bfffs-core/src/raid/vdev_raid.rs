@@ -537,7 +537,10 @@ impl VdevRaid {
                     }
                 }
             }
-            self.codec.encode(col_len, &data_refs, &parity_refs);
+            // Safe because the above assertion passed
+            unsafe {
+                self.codec.encode(col_len, &data_refs, &parity_refs);
+            }
         }
 
         let mut pw = parity.into_iter()
@@ -611,7 +614,10 @@ impl VdevRaid {
                 .map(|v| v.as_mut_ptr())
                 .collect::<Vec<_>>();
 
-            self.codec.encode(col_len, &drefs, &prefs);
+            // Safe because each parity column is sized for `col_len`
+            unsafe {
+                self.codec.encode(col_len, &drefs, &prefs);
+            }
         }
         let pw = parity.into_iter()
             .map(|mut v| {
@@ -658,15 +664,17 @@ impl VdevRaid {
         }
         debug_assert_eq!(dcursor.peek_len(), 0);
 
-        let mut parity = Vec::<Vec<u8>>::with_capacity(f);
-        let mut prefs = Vec::<*mut u8>::with_capacity(f);
-        for _ in 0..f {
-            let mut v = Vec::<u8>::with_capacity(col_len);
-            prefs.push(v.as_mut_ptr());
-            parity.push(v);
-        }
+        let mut parity = (0..f)
+            .map(|_| Vec::<u8>::with_capacity(col_len))
+            .collect::<Vec<_>>();
+        let mut prefs = parity.iter_mut()
+            .map(|v| v.as_mut_ptr())
+            .collect::<Vec<_>>();
 
-        self.codec.encodev(col_len, &dcols, &mut prefs);
+        // Safe because each parity column is sized for `col_len`
+        unsafe {
+            self.codec.encodev(col_len, &dcols, &mut prefs);
+        }
         let pw = parity.into_iter()
             .map(|mut v| {
                 // Safe because codec.encode filled the columns

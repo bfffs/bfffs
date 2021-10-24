@@ -31,20 +31,23 @@ pub const fn version() -> u32 {
 /// - `data`:   Array of input vectors.  Must `k` vectors each of size `len`.
 /// - `parity`: Array of output vectors for parity columns.  Must be `f` vectors
 ///             each of size `len`.
-pub fn ec_encode_data(len: usize, k: u32, f: u32, gftbls: &[u8],
+///
+/// # Safety
+///
+/// Caller must ensure that the `data` and `parity` fields are of sufficient
+/// size and point to allocated memory.  `parity` need not be initialized.
+pub unsafe fn ec_encode_data(len: usize, k: u32, f: u32, gftbls: &[u8],
                       data: &[*const u8], parity: &[*mut u8]) {
     assert_eq!(gftbls.len(), (32 * f * k) as usize);
     assert_eq!(data.len(), k as usize);
     assert_eq!(parity.len(), f as usize);
 
-    unsafe {
-        // Note: isa-l defines gftbls and data as non-const, even though the
-        // implementation doesn't modify them
-        ffi::ec_encode_data(len as c_int, k as c_int, f as c_int,
-                            gftbls.as_ptr() as *mut c_uchar,
-                            data.as_ptr() as *mut *mut c_uchar,
-                            parity.as_ptr() as *mut *mut c_uchar);
-    }
+    // Note: isa-l defines gftbls and data as non-const, even though the
+    // implementation doesn't modify them
+    ffi::ec_encode_data(len as c_int, k as c_int, f as c_int,
+                        gftbls.as_ptr() as *mut c_uchar,
+                        data.as_ptr() as *mut *mut c_uchar,
+                        parity.as_ptr() as *mut *mut c_uchar);
 }
 
 /// Generate update for encode or decode of erasure codes from single source.
@@ -69,7 +72,11 @@ pub fn ec_encode_data(len: usize, k: u32, f: u32, gftbls: &[u8],
 /// - `parity`: Array of output vectors for parity columns.  Must be `f` vectors
 ///             each of size `len`.
 ///
-pub fn ec_encode_data_update(len: usize,
+/// # Safety
+///
+/// Caller must ensure that the `parity` field is of sufficient size and points
+/// to allocated memory.  It need not be initialized.
+pub unsafe fn ec_encode_data_update(len: usize,
                              k: u32,
                              f: u32,
                              vec_i: u32,
@@ -81,15 +88,13 @@ pub fn ec_encode_data_update(len: usize,
     assert_eq!(parity.len(), f as usize);
     assert!(vec_i < k);
 
-    unsafe {
-        // Note: isa-l defines gftbls and data as non-const, even though the
-        // implementation doesn't modify them
-        ffi::ec_encode_data_update(len as c_int, k as c_int, f as c_int,
-                                   vec_i as c_int,
-                                   gftbls.as_ptr() as *mut c_uchar,
-                                   data.as_ptr() as *mut c_uchar,
-                                   parity.as_ptr() as *mut *mut c_uchar);
-    }
+    // Note: isa-l defines gftbls and data as non-const, even though the
+    // implementation doesn't modify them
+    ffi::ec_encode_data_update(len as c_int, k as c_int, f as c_int,
+                               vec_i as c_int,
+                               gftbls.as_ptr() as *mut c_uchar,
+                               data.as_ptr() as *mut c_uchar,
+                               parity.as_ptr() as *mut *mut c_uchar);
 }
 
 /// Initialize tables for fast Erasure Code encode and decode.

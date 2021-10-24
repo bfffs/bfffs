@@ -79,7 +79,7 @@ impl Codec {
     /// number of corrupt columns equals `f` the row will be considered
     /// irrecoverable even though the original data can still be recovered via
     /// combinatorial reconstruction.
-    pub fn check(&self, _len: usize, _data: &[*const u8],
+    pub unsafe fn check(&self, _len: usize, _data: &[*const u8],
                  _parity: &[*const u8]) -> FixedBitSet {
         panic!("Unimplemented");
     }
@@ -110,7 +110,7 @@ impl Codec {
     ///                     `erasures`.  Upon return, they will be populated
     ///                     with the original data of the missing columns.
     /// - `erasures`:       Bitmap of the column indices of the missing columns.
-    pub fn decode(&self, len: usize, surviving: &[*const u8],
+    pub unsafe fn decode(&self, len: usize, surviving: &[*const u8],
                        missing: &[*mut u8], erasures: &FixedBitSet) {
         let k = self.m - self.f;
         let errs = erasures.count_ones(..k as usize) as u32;
@@ -126,7 +126,14 @@ impl Codec {
     /// - `data`:   Input array: `k` columns of `len` bytes each
     /// - `parity`: Storage for parity columns.  `f` columns of `len` bytes
     ///             each: will be populated upon return.
-    pub fn encode(&self, len: usize, data: &[*const u8], parity: &[*mut u8]) {
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the `data` and `parity` fields are of sufficient
+    /// size and point to allocated memory.  `parity` need not be initialized.
+    pub unsafe fn encode(&self, len: usize, data: &[*const u8],
+                         parity: &[*mut u8])
+    {
         let k = self.m - self.f;
         isa_l::ec_encode_data(len, k, self.f, &self.enc_tables, data, parity);
     }
@@ -141,7 +148,14 @@ impl Codec {
     ///             discontiguous, and each may have a different structure.
     /// - `parity`: Storage for parity columns.  `f` columns of `len` bytes
     ///             each: will be populated upon return.
-    pub fn encodev(&self, len: usize, data: &[SGList], parity: &mut [*mut u8]) {
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the `data` and `parity` fields are of sufficient
+    /// size and point to allocated memory.  `parity` need not be initialized.
+    pub unsafe fn encodev(&self, len: usize, data: &[SGList],
+                          parity: &mut [*mut u8])
+    {
         let mut cursors : Vec<SGCursor> =
             data.iter()
                 .map(SGCursor::from)
@@ -179,8 +193,14 @@ impl Codec {
     ///                 each: will be updated upon return.
     /// - `data_idx`:   Column index of the supplied data column.  Must lie in
     ///                 the range `[0, k)`.
-    pub fn encode_update(&self, len: usize, data: &[u8], parity: &[*mut u8],
-                         data_idx: u32) {
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the `parity` field is of sufficient size and
+    /// points to allocated memory.  It need not be initialized.
+    pub unsafe fn encode_update(&self, len: usize, data: &[u8],
+        parity: &[*mut u8], data_idx: u32)
+    {
         let k = self.m - self.f;
         isa_l::ec_encode_data_update(len, k, self.f, data_idx, &self.enc_tables,
                                      data, parity);
@@ -304,7 +324,7 @@ mod tests {
             for x in parity.iter_mut().take(f as usize) {
                 output.push(x.as_mut_ptr());
             }
-            codec.encode(len, &input, &output);
+            unsafe{ codec.encode(len, &input, &output); }
 
             // Iterate over all possible failure combinations
             for erasures_vec in (0..m).combinations(f as usize) {
@@ -336,7 +356,7 @@ mod tests {
                 for x in reconstructed.iter_mut().take(data_errs as usize) {
                     decoded.push(x.as_mut_ptr());
                 }
-                codec.decode(len, &surviving, &decoded, &erasures);
+                unsafe { codec.decode(len, &surviving, &decoded, &erasures); }
 
                 // Finally, compare
                 for i in 0..(data_errs as usize) {
@@ -363,14 +383,18 @@ mod tests {
             d0[i] = rng.gen();
             d1[i] = rng.gen();
         }
-        codec.encode(len, &[d0.as_ptr(), d1.as_ptr()], &[p0.as_mut_ptr()]);
+        unsafe {
+            codec.encode(len, &[d0.as_ptr(), d1.as_ptr()], &[p0.as_mut_ptr()]);
+        }
 
         // Now delete column 0 and rebuild
         let mut r0 = vec![0u8;len];
         let mut erasures = FixedBitSet::with_capacity(3);
         erasures.insert(0);
-        codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()],
-                     &erasures);
+        unsafe {
+            codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()],
+                         &erasures);
+        }
 
         // Verify that column was reconstructed correctly
         assert_eq!(d0, r0);
@@ -391,7 +415,10 @@ mod tests {
             da0[i] = rng.gen();
             da1[i] = rng.gen();
         }
-        codec.encode(len, &[da0.as_ptr(), da1.as_ptr()], &[pa0.as_mut_ptr()]);
+        unsafe {
+            codec.encode(len, &[da0.as_ptr(), da1.as_ptr()],
+                &[pa0.as_mut_ptr()]);
+        }
 
         // Next, split the same data into discontiguous SGLists
         // First segments are identically sized
@@ -418,7 +445,7 @@ mod tests {
         let data = vec![sgb0, sgb1];
         let mut pa1 = vec![0u8; len];
         let mut pslice = [pa1.as_mut_ptr()];
-        codec.encodev(len, &data, &mut pslice[..]);
+        unsafe { codec.encodev(len, &data, &mut pslice[..]); }
 
         assert_eq!(pa0, pa1);
     }
@@ -438,14 +465,19 @@ mod tests {
             d0[i] = rng.gen();
             d1[i] = rng.gen();
         }
-        codec.encode_update(len, &d0, &[p0.as_mut_ptr()], 0);
-        codec.encode_update(len, &d1, &[p0.as_mut_ptr()], 1);
+        unsafe {
+            codec.encode_update(len, &d0, &[p0.as_mut_ptr()], 0);
+            codec.encode_update(len, &d1, &[p0.as_mut_ptr()], 1);
+        }
 
         // Now delete column 0 and rebuild
         let mut r0 = vec![0u8;len];
         let mut erasures = FixedBitSet::with_capacity(3);
         erasures.insert(0);
-        codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()], &erasures);
+        unsafe {
+            codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()],
+                &erasures);
+        }
 
         // Verify that column was reconstructed correctly
         assert_eq!(d0, r0);
