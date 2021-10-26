@@ -3,6 +3,7 @@ use bfffs_core::{
     device_manager::DevManager,
     property::Property
 };
+use bfffs::Bfffs;
 use clap::{
     Clap,
     crate_version
@@ -13,15 +14,6 @@ use std::{
     process::exit,
     sync::Arc
 };
-use tokio::runtime::{Builder, Runtime};
-
-fn runtime() -> Runtime {
-    Builder::new_multi_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .unwrap()
-}
 
 #[derive(Clap, Clone, Debug)]
 /// Consistency check
@@ -40,25 +32,22 @@ impl Check{
     // * RIDT and AllocT are exact inverses
     // * RIDT contains no orphan entries not found in the FSTrees
     // * Spacemaps match actual usage
-    pub fn main(self) {
+    pub async fn main(self) {
         let dev_manager = DevManager::default();
-        let rt = runtime();
-        rt.block_on(async {
-            for dev in self.disks.iter()
-            {
-                dev_manager.taste(dev).await.unwrap();
-            }
+        for dev in self.disks.iter()
+        {
+            dev_manager.taste(dev).await.unwrap();
+        }
 
-            let db = Arc::new(
-                dev_manager.import_by_name(self.pool_name)
-                .await
-                .unwrap_or_else(|_e| {
-                    eprintln!("Error: pool not found");
-                    exit(1);
-                })
-            );
-            db.check().await
-        }).unwrap();
+        let db = Arc::new(
+            dev_manager.import_by_name(self.pool_name)
+            .await
+            .unwrap_or_else(|_e| {
+                eprintln!("Error: pool not found");
+                exit(1);
+            })
+        );
+        db.check().await.unwrap();
         // TODO: the other checks
     }
 }
@@ -80,49 +69,43 @@ struct Dump {
 }
 
 impl Dump {
-    fn dump_fsm(self) {
+    async fn dump_fsm(self) {
         let dev_manager = DevManager::default();
-        let rt = runtime();
-        let clusters = rt.block_on(async move {
-            for disk in self.disks.iter() {
-                dev_manager.taste(disk).await.unwrap();
-            }
-            let uuid = dev_manager.importable_pools().iter()
-                .find(|(name, _uuid)| {
-                    *name == self.pool_name
-                }).unwrap().1;
-            dev_manager.import_clusters(uuid).await
-        }).unwrap();
+        for disk in self.disks.iter() {
+            dev_manager.taste(disk).await.unwrap();
+        }
+        let uuid = dev_manager.importable_pools().iter()
+            .find(|(name, _uuid)| {
+                *name == self.pool_name
+            }).unwrap().1;
+        let clusters = dev_manager.import_clusters(uuid).await.unwrap();
         for c in clusters {
             println!("{}", c.dump_fsm());
         }
     }
 
-    fn dump_tree(self) {
+    async fn dump_tree(self) {
         let dev_manager = DevManager::default();
-        let rt = runtime();
-        let db = rt.block_on(async {
-            for disk in self.disks.iter() {
-                dev_manager.taste(disk).await.unwrap();
-            }
-            dev_manager.import_by_name(self.pool_name)
-            .await
-            .unwrap_or_else(|_e| {
-                eprintln!("Error: pool not found");
-                exit(1);
-            })
+        for disk in self.disks.iter() {
+            dev_manager.taste(disk).await.unwrap();
+        }
+        let db = dev_manager.import_by_name(self.pool_name)
+        .await
+        .unwrap_or_else(|_e| {
+            eprintln!("Error: pool not found");
+            exit(1);
         });
         let db = Arc::new(db);
         // For now, hardcode tree_id to 0
         let tree_id = TreeID::Fs(0);
-        db.dump(&mut std::io::stdout(), tree_id).unwrap()
+        db.dump(&mut std::io::stdout(), tree_id).await.unwrap()
     }
 
-    fn main(self) {
+    async fn main(self) {
         if self.fsm {
-            self.dump_fsm();
+            self.dump_fsm().await;
         } else if self.tree {
-            self.dump_tree();
+            self.dump_tree().await
         }
     }
 }
@@ -131,6 +114,41 @@ impl Dump {
 /// Debugging tools
 enum DebugCmd {
     Dump(Dump)
+}
+
+mod fs {
+    use bfffs_core::rpc;
+    use std::path::Path;
+    use super::*;
+
+    /// Mount a file system
+    #[derive(Clap, Clone, Debug)]
+    pub(super) struct Mount {
+        /// Mount options, comma delimited
+        #[clap(short = 'o', long, require_delimiter(true), value_delimiter(','))]
+        options: Vec<String>,
+        /// Pool name
+        pool_name: String,
+        /// Mountpoint
+        mountpoint: PathBuf,
+    }
+
+    impl Mount {
+        pub(super) async fn main(self, sock: &Path) {
+            // For now, hardcode tree_id to 0
+            let tree_id = TreeID::Fs(0);
+
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            let req = rpc::Request::mount(self.mountpoint, tree_id);
+            bfffs.call(req).await.unwrap();
+        }
+    }
+
+    #[derive(Clap, Clone, Debug)]
+    /// Create, destroy, and modify file systems
+    pub(super) enum FsCmd {
+        Mount(Mount)
+    }
 }
 
 mod pool {
@@ -167,8 +185,7 @@ mod pool {
     }
 
     impl Create{
-        pub(super) fn main(self) {
-            let rt = runtime();
+        pub(super) async fn main(self) {
             let zone_size = self.zone_size
                 .map(|mbs| {
                     let lbas = mbs * 1024 * 1024 / (BYTES_PER_LBA as u64);
@@ -176,7 +193,7 @@ mod pool {
                 });
 
             let props = self.properties.iter().map(String::as_str);
-            let mut builder = Builder::new(self.pool_name, props, zone_size, rt);
+            let mut builder = Builder::new(self.pool_name, props, zone_size);
             let mut vdev_tokens = self.vdev.iter().map(String::as_str);
             let mut cluster_type = None;
             let mut devs = vec![];
@@ -223,7 +240,7 @@ mod pool {
                     }
                 }
             }
-            builder.format()
+            builder.format().await
         }
     }
 
@@ -231,13 +248,12 @@ mod pool {
         clusters: Vec<Cluster>,
         name: String,
         properties: Vec<Property>,
-        rt: Runtime,
         zone_size: Option<NonZeroU64>
     }
 
     impl Builder {
         pub fn new<'a, P>(name: String, propstrings: P,
-                   zone_size: Option<NonZeroU64>, rt: Runtime)
+                   zone_size: Option<NonZeroU64>)
             -> Self
             where P: Iterator<Item=&'a str> + 'a
         {
@@ -249,7 +265,7 @@ mod pool {
                     })
                 })
                 .collect::<Vec<_>>();
-            Builder{clusters, name, properties, rt, zone_size}
+            Builder{clusters, name, properties, zone_size}
         }
 
         pub fn create_cluster(&mut self, vtype: &str, devs: &[&str]) {
@@ -287,24 +303,23 @@ mod pool {
         }
 
         /// Actually format the disks
-        pub fn format(&mut self) {
+        pub async fn format(mut self) {
             let name = self.name.clone();
             let clusters = self.clusters.drain(..).collect();
             let props = self.properties.clone();
-            self.rt.block_on(async move {
-                let db = {
-                    let pool = Pool::create(name, clusters);
-                    let cache = Arc::new(
-                        Mutex::new(Cache::with_capacity(4_194_304))
-                    );
-                    let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                    let idml = Arc::new(IDML::create(ddml, cache));
-                    Database::create(idml)
-                };
-                db.new_fs(props)
-                .and_then(|_tree_id| db.sync_transaction())
-                .await
-            }).unwrap();
+            let db = {
+                let pool = Pool::create(name, clusters);
+                let cache = Arc::new(
+                    Mutex::new(Cache::with_capacity(4_194_304))
+                );
+                let ddml = Arc::new(DDML::new(pool, cache.clone()));
+                let idml = Arc::new(IDML::create(ddml, cache));
+                Database::create(idml)
+            };
+            db.new_fs(props)
+            .and_then(|_tree_id| db.sync_transaction())
+            .await
+            .unwrap()
         }
     }
 
@@ -322,22 +337,29 @@ enum SubCommand{
     #[clap(subcommand)]
     Debug(DebugCmd),
     #[clap(subcommand)]
+    Fs(fs::FsCmd),
+    #[clap(subcommand)]
     Pool(pool::PoolCmd)
 }
 
 #[derive(Clap, Clone, Debug)]
 #[clap(version = crate_version!())]
-struct Bfffs {
+struct Cli {
+    /// Path to the bfffsd socket
+    #[clap(long, default_value = "/var/run/bfffsd.sock")]
+    sock: PathBuf,
     #[clap(subcommand)]
     cmd: SubCommand,
 }
 
-fn main() {
-    let bfffs: Bfffs = Bfffs::parse();
-    match bfffs.cmd {
-        SubCommand::Check(check) => check.main(),
-        SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main(),
-        SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main(),
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let cli: Cli = Cli::parse();
+    match cli.cmd {
+        SubCommand::Check(check) => check.main().await,
+        SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock).await,
+        SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main().await,
+        SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,
     }
 }
 
@@ -360,7 +382,7 @@ mod t {
     #[case(vec!["bfffs", "pool", "create"])]
     #[case(vec!["bfffs", "pool", "create", "testpool"])]
     fn missing_arg(#[case] args: Vec<&str>) {
-        let e = Bfffs::try_parse_from(args).unwrap_err();
+        let e = Cli::try_parse_from(args).unwrap_err();
         assert!(e.kind == MissingRequiredArgument ||
                 e.kind == DisplayHelpOnMissingArgumentOrSubcommand);
     }
@@ -368,9 +390,9 @@ mod t {
     #[test]
     fn check() {
         let args = vec!["bfffs", "check", "testpool", "/dev/da0", "/dev/da1"];
-        let bfffs = Bfffs::try_parse_from(args).unwrap();
-        assert!(matches!(bfffs.cmd, SubCommand::Check(_)));
-        if let SubCommand::Check(check) = bfffs.cmd {
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert!(matches!(cli.cmd, SubCommand::Check(_)));
+        if let SubCommand::Check(check) = cli.cmd {
             assert_eq!(check.pool_name, "testpool");
             assert_eq!(check.disks[0], Path::new("/dev/da0"));
             assert_eq!(check.disks[1], Path::new("/dev/da1"));
@@ -384,9 +406,9 @@ mod t {
         fn dump_fsm() {
             let args = vec!["bfffs", "debug", "dump", "-f", "testpool",
                 "/dev/da0", "/dev/da1"];
-            let bfffs = Bfffs::try_parse_from(args).unwrap();
-            assert!(matches!(bfffs.cmd, SubCommand::Debug(_)));
-            if let SubCommand::Debug(DebugCmd::Dump(debug)) = bfffs.cmd {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.cmd, SubCommand::Debug(_)));
+            if let SubCommand::Debug(DebugCmd::Dump(debug)) = cli.cmd {
                 assert_eq!(debug.pool_name, "testpool");
                 assert!(debug.fsm);
                 assert!(!debug.tree);
@@ -399,9 +421,9 @@ mod t {
         fn dump_tree() {
             let args = vec!["bfffs", "debug", "dump", "-t", "testpool",
                 "/dev/da0", "/dev/da1"];
-            let bfffs = Bfffs::try_parse_from(args).unwrap();
-            assert!(matches!(bfffs.cmd, SubCommand::Debug(_)));
-            if let SubCommand::Debug(DebugCmd::Dump(debug)) = bfffs.cmd {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.cmd, SubCommand::Debug(_)));
+            if let SubCommand::Debug(DebugCmd::Dump(debug)) = cli.cmd {
                 assert_eq!(debug.pool_name, "testpool");
                 assert!(!debug.fsm);
                 assert!(debug.tree);
@@ -422,10 +444,10 @@ mod t {
             fn plain() {
                 let args = vec!["bfffs", "pool", "create", "testpool",
                     "/dev/da0"];
-                let bfffs = Bfffs::try_parse_from(args).unwrap();
-                assert!(matches!(bfffs.cmd,
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd,
                                  SubCommand::Pool(PoolCmd::Create(_))));
-                if let SubCommand::Pool(PoolCmd::Create(create)) = bfffs.cmd {
+                if let SubCommand::Pool(PoolCmd::Create(create)) = cli.cmd {
                     assert_eq!(create.pool_name, "testpool");
                     assert!(create.properties.is_empty());
                     assert!(create.zone_size.is_none());
@@ -438,10 +460,10 @@ mod t {
                 let args = vec!["bfffs", "pool", "create", "-p",
                     "atime=off,recsize=65536",
                     "testpool", "/dev/da0"];
-                let bfffs = Bfffs::try_parse_from(args).unwrap();
-                assert!(matches!(bfffs.cmd,
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd,
                                  SubCommand::Pool(PoolCmd::Create(_))));
-                if let SubCommand::Pool(PoolCmd::Create(create)) = bfffs.cmd {
+                if let SubCommand::Pool(PoolCmd::Create(create)) = cli.cmd {
                     assert_eq!(
                         create.properties,
                         vec!["atime=off", "recsize=65536"]
@@ -453,10 +475,10 @@ mod t {
             fn zone_size() {
                 let args = vec!["bfffs", "pool", "create", "--zone-size",
                     "128", "testpool", "/dev/da0"];
-                let bfffs = Bfffs::try_parse_from(args).unwrap();
-                assert!(matches!(bfffs.cmd,
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd,
                                  SubCommand::Pool(PoolCmd::Create(_))));
-                if let SubCommand::Pool(PoolCmd::Create(create)) = bfffs.cmd {
+                if let SubCommand::Pool(PoolCmd::Create(create)) = cli.cmd {
                     assert_eq!(create.zone_size, Some(128));
                 }
             }

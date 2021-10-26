@@ -31,6 +31,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
+    io,
     ops::Range,
     pin::Pin,
     sync::{
@@ -38,9 +39,7 @@ use std::{
         Arc,
     },
 };
-#[cfg(not(test))] use std::io;
 use super::TreeID;
-#[cfg(not(test))] use tokio::runtime;
 use tokio::{
     task::JoinHandle,
     time::{Duration, Instant, sleep_until},
@@ -323,26 +322,15 @@ impl Database {
         Database::new(idml, forest)
     }
 
-    /// Dump a YAMLized representation of the given Tree to a plain
-    /// `std::fs::File`.
-    ///
-    /// Must be called from the synchronous domain.
-    #[cfg(not(test))]
-    pub fn dump(&self, f: &mut dyn io::Write, tree: TreeID) -> Result<(), Error>
+    /// Dump a YAMLized representation of the given Tree in text format.
+    pub async fn dump(&self, f: &mut dyn io::Write, tree: TreeID)
+        -> Result<(), Error>
     {
-        let rt = runtime::Builder::new_current_thread()
-            .enable_io()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            Inner::open_filesystem(&self.inner, tree).await
-        }).unwrap();
-        self.inner.fs_trees.try_read()
-        .map_err(|_| Error::EDEADLK)
-        .map(|guard| {
-            guard.get(&tree).unwrap()
-            .dump(f).unwrap();
-        })
+        Inner::open_filesystem(&self.inner, tree).await.unwrap();
+        match self.inner.fs_trees.try_read() {
+            Err(_) => Err(Error::EDEADLK),
+            Ok(guard) => guard.get(&tree).unwrap().dump(f).await
+        }
     }
 
     /// Flush the database's dirty data to disk.

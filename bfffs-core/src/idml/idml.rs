@@ -219,10 +219,10 @@ impl<'a> IDML {
         IDML{cache, ddml, next_rid, transaction, alloct, ridt, writeback}
     }
 
-    pub fn dump_trees(&self, f: &mut dyn io::Write) -> Result<(), Error>
+    pub async fn dump_trees(&self, f: &mut dyn io::Write) -> Result<(), Error>
     {
-        self.ridt.dump(f)?;
-        self.alloct.dump(f)
+        self.ridt.dump(f).await?;
+        self.alloct.dump(f).await
     }
 
     /// Flush the IDML's data to disk

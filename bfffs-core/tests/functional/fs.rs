@@ -279,8 +279,9 @@ mod fs {
     // Tree::dump, so the bulk of testing is in the tree tests.
     #[test]
     fn dump() {
+        let mut buf = Vec::with_capacity(1024);
         let rt = crate::basic_runtime();
-        let fs = rt.block_on(async {
+        rt.block_on(async {
             let (fs, _cache, _db, _tree_id) = harness(vec![]).await;
             let root = fs.root();
             // Sync before clearing timestamps to improve determinism; the timed
@@ -289,10 +290,8 @@ mod fs {
             // Clear timestamps to make the dump output deterministic
             clear_timestamps(&fs, &root).await;
             fs.sync().await;
-            fs
+            fs.dump(&mut buf).await.unwrap();
         });
-        let mut buf = Vec::with_capacity(1024);
-        fs.dump(&mut buf).unwrap();
         let fs_tree = String::from_utf8(buf).unwrap();
         let expected = r#"---
 limits:

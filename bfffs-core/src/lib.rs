@@ -45,6 +45,7 @@ pub mod label;
 pub mod pool;
 pub mod property;
 pub mod raid;
+pub mod rpc;
 pub mod tree;
 pub mod types;
 pub mod util;
