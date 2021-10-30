@@ -1,25 +1,29 @@
-# My preferred brace style is to use the same line iff everything fits on one
-# line; otherwise to use the next line.  But rustfmt doesn't have that option.
-brace_style = "AlwaysNextLine"
+binop_separator = "Back"
+brace_style = "SameLineWhere"
 ignore = [
+	# Generated code
 	"bfffs-fio/src/ffi.rs",
-	"isa-l/src/ffi/mod.rs"
+	# Generated code
+	"isa-l/src/ffi/mod.rs",
+	# rustfmt still doesn't work well with bfffs-core's heavy use of
+	# futures combinators.
+	"bfffs-core",
 ]
 edition = "2018"
 force_multiline_blocks = true
 format_strings = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"
 imports_layout = "HorizontalVertical"
+match_block_trailing_comma = false
 max_width = 80
-merge_imports = true
 reorder_impl_items = true
+reorder_imports = true
 struct_field_align_threshold = 16
 use_field_init_shorthand = true
-
-# wrap_comments must be false so it won't screw up bullet lists
-# https://github.com/rust-lang/rustfmt/issues/3224
-wrap_comments = false
 
 # TODO: Add some kind of chain_indent rule to make rustfmt work better with
 # futures, once this bug is fixed.  Until then, rustfmt can't be used on
 # futures-containing code.
 # https://github.com/rust-lang/rustfmt/issues/2080
+# https://github.com/rust-lang/rustfmt/issues/4306

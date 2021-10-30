@@ -45,16 +45,20 @@ task:
     - cargo +$VERSION check $CARGO_ARGS --release --all --all-targets
   before_cache_script: rm -rf $HOME/.cargo/registry/index
 
-clippy_task:
-  name: clippy
+lint_task:
+  name: lint
   env:
     VERSION: nightly
     CARGO_ARGS: --all-features
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
-  lint_script:
+  clippy_script:
     - . $HOME/.cargo/env
     - $HOME/.cargo/bin/rustup component add --toolchain $VERSION clippy
     - cargo +$VERSION clippy --all-features --all-targets -- -D warnings
+  fmt_script:
+    - . $HOME/.cargo/env
+    - rustup component add --toolchain $VERSION rustfmt
+    - cargo +$VERSION fmt --all -- --check --color=never
   before_cache_script: rm -rf $CARGO_HOME/registry/index
