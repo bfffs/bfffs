@@ -3,14 +3,6 @@
 // https://github.com/Gilnaa/memoffset/issues/34
 #![allow(clippy::unneeded_field_pattern)]
 
-use bfffs_core::{
-    database::TreeID,
-    device_manager::DevManager,
-    fs::{FileData, Fs},
-};
-use futures::future::TryFutureExt;
-use lazy_static::lazy_static;
-use memoffset::offset_of;
 use std::{
     borrow::Borrow,
     collections::hash_map::HashMap,
@@ -21,6 +13,15 @@ use std::{
     slice,
     sync::{Arc, Mutex, RwLock},
 };
+
+use bfffs_core::{
+    database::TreeID,
+    device_manager::DevManager,
+    fs::{FileData, Fs},
+};
+use futures::future::TryFutureExt;
+use lazy_static::lazy_static;
+use memoffset::offset_of;
 use tokio::runtime::{Builder, Runtime};
 use tracing_subscriber::EnvFilter;
 
@@ -28,8 +29,7 @@ mod ffi;
 
 use crate::ffi::*;
 
-impl fio_option
-{
+impl fio_option {
     #[allow(clippy::too_many_arguments)]
     fn new(
         name: &[u8],
@@ -40,8 +40,7 @@ impl fio_option
         def: &[u8],
         category: opt_category,
         group: opt_category_group,
-    ) -> Self
-    {
+    ) -> Self {
         fio_option {
             name: name as *const _ as *const libc::c_char,
             lname: lname as *const _ as *const libc::c_char,
@@ -56,10 +55,8 @@ impl fio_option
     }
 }
 
-impl flist_head
-{
-    const fn zeroed() -> Self
-    {
+impl flist_head {
+    const fn zeroed() -> Self {
         flist_head {
             next: ptr::null_mut(),
             prev: ptr::null_mut(),
@@ -69,16 +66,15 @@ impl flist_head
 
 #[repr(C)]
 #[derive(Debug)]
-struct BfffsOptions
-{
+struct BfffsOptions {
     /// silly fio can't handle an offset of 0
-    _pad:      u32,
-    cache_size: usize,
-    pool_name: *const libc::c_char,
+    _pad:           u32,
+    cache_size:     usize,
+    pool_name:      *const libc::c_char,
     /// The name of the device(s) that backs the pool.  If there are multiple
     /// devices, then they should be space-separated
-    vdevs:     *const libc::c_char,
-    writeback_size: usize
+    vdevs:          *const libc::c_char,
+    writeback_size: usize,
 }
 
 static mut OPTIONS: Option<[fio_option; 5]> = None;
@@ -91,8 +87,7 @@ pub static INITIALIZE: extern "C" fn() = rust_ctor;
 ///
 /// If mem::zeroed were a const_fn, then we wouldn't need this.
 #[no_mangle]
-pub extern "C" fn rust_ctor()
-{
+pub extern "C" fn rust_ctor() {
     tracing_subscriber::fmt()
         .pretty()
         .with_env_filter(EnvFilter::from_default_env())
@@ -167,20 +162,18 @@ lazy_static! {
 pub unsafe extern "C" fn fio_bfffs_close(
     _td: *mut thread_data,
     f: *mut fio_file,
-) -> libc::c_int
-{
+) -> libc::c_int {
     let rt = RUNTIME.lock().unwrap();
     let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();
     let fd = FILES.write().unwrap().remove(&(*f).fd).unwrap();
-    rt.block_on(async {fs.inactive(fd).await});
+    rt.block_on(async { fs.inactive(fd).await });
     (*f).fd = -1;
     0
 }
 
 #[no_mangle]
-pub extern "C" fn fio_bfffs_commit(_td: *mut thread_data) -> libc::c_int
-{
+pub extern "C" fn fio_bfffs_commit(_td: *mut thread_data) -> libc::c_int {
     1
 }
 
@@ -188,8 +181,7 @@ pub extern "C" fn fio_bfffs_commit(_td: *mut thread_data) -> libc::c_int
 pub extern "C" fn fio_bfffs_event(
     _td: *mut thread_data,
     _event: libc::c_int,
-) -> *mut io_u
-{
+) -> *mut io_u {
     ptr::null_mut()
 }
 
@@ -199,8 +191,7 @@ pub extern "C" fn fio_bfffs_getevents(
     _min: libc::c_uint,
     _max: libc::c_uint,
     _t: *const libc::timespec,
-) -> libc::c_int
-{
+) -> libc::c_int {
     0
 }
 
@@ -209,8 +200,7 @@ pub extern "C" fn fio_bfffs_getevents(
 ///
 /// Caller must ensure validity of the pointer arguments
 #[no_mangle]
-pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
-{
+pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
     let mut fs = FS.write().unwrap();
     if fs.is_none() {
         let rt = RUNTIME.lock().unwrap();
@@ -271,8 +261,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int
 pub extern "C" fn fio_bfffs_invalidate(
     _td: *mut thread_data,
     _f: *mut fio_file,
-) -> libc::c_int
-{
+) -> libc::c_int {
     // TODO: invalidate cache
     0
 }
@@ -285,8 +274,7 @@ pub extern "C" fn fio_bfffs_invalidate(
 pub unsafe extern "C" fn fio_bfffs_open(
     _td: *mut thread_data,
     f: *mut fio_file,
-) -> libc::c_int
-{
+) -> libc::c_int {
     let rt = RUNTIME.lock().unwrap();
     let file_name =
         OsStr::from_bytes(CStr::from_ptr((*f).file_name).to_bytes());
@@ -295,9 +283,10 @@ pub unsafe extern "C" fn fio_bfffs_open(
     let root_opt = ROOT.read().unwrap();
     let root = root_opt.as_ref().unwrap();
     rt.block_on(async {
-        let r = fs.lookup(None, root, file_name)
-        .or_else(|_| fs.create(root, file_name, 0o600, 0, 0))
-        .await;
+        let r = fs
+            .lookup(None, root, file_name)
+            .or_else(|_| fs.create(root, file_name, 0o600, 0, 0))
+            .await;
         match r {
             Ok(fd) => {
                 // Store the inode number where fio would put its file
@@ -324,8 +313,7 @@ pub unsafe extern "C" fn fio_bfffs_open(
 pub unsafe extern "C" fn fio_bfffs_queue(
     _td: *mut thread_data,
     io_u: *mut io_u,
-) -> fio_q_status
-{
+) -> fio_q_status {
     let rt = RUNTIME.lock().unwrap();
     let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();

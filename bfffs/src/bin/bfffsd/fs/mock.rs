@@ -2,20 +2,21 @@
 // LCOV_EXCL_START
 //! Mock objects for bfffsd::fs
 
-use bfffs_core::{
-    database::{Database, TreeID},
-    fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SetAttr, SeekWhence},
-    property::Property,
-    SGList,
-    RID,
-};
-use futures::Stream;
-use divbuf::DivBuf;
-use mockall::mock;
 use std::{
     ffi::{OsStr, OsString},
     sync::Arc,
 };
+
+use bfffs_core::{
+    database::{Database, TreeID},
+    fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SeekWhence, SetAttr},
+    property::Property,
+    SGList,
+    RID,
+};
+use divbuf::DivBuf;
+use futures::Stream;
+use mockall::mock;
 
 /*
  * Mock BFFFS structs
@@ -48,7 +49,7 @@ mock! {
             where F: Fn(&ExtAttr<RID>) -> u32 + Send + 'static;
         pub async fn lseek(&self, fd: &FileData, mut offset: u64,
             whence: SeekWhence) -> Result<u64, i32>;
-        pub async fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, 
+        pub async fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16,
             id: u32, gid: u32) -> Result<FileData, i32>;
         pub async fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16,
             uid: u32, gid: u32, rdev: u32) -> Result<FileData, i32>;

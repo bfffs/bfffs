@@ -4,11 +4,11 @@
 //! This library is for programmatic access to BFFFS.  It is intended to be A
 //! stable API.
 
-use bfffs_core::rpc;
 use std::path::Path;
-use tokio_seqpacket::UnixSeqpacket;
 
+use bfffs_core::rpc;
 pub use bfffs_core::Error;
+use tokio_seqpacket::UnixSeqpacket;
 
 // TODO: move definition into bfffs_core after
 // https://gitlab.com/cardoe/enum-primitive-derive/-/issues/8 is fixed.
@@ -17,7 +17,7 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 /// A connection to the bfffsd server
 #[derive(Debug)]
 pub struct Bfffs {
-    peer: UnixSeqpacket
+    peer: UnixSeqpacket,
 }
 
 impl Bfffs {
@@ -28,9 +28,8 @@ impl Bfffs {
 
     /// Connect to the server whose socket is at this path
     pub async fn new(sock: &Path) -> Result<Self> {
-        let peer = UnixSeqpacket::connect(sock).await
-            .map_err(Error::from)?;
-        Ok(Self{peer})
+        let peer = UnixSeqpacket::connect(sock).await.map_err(Error::from)?;
+        Ok(Self { peer })
     }
 
     /// Submit an RPC request to the server
@@ -49,7 +48,8 @@ impl Bfffs {
         } else if nread >= BUFSIZ {
             eprintln!(
                 "Server sent unexpectedly large response {} bytes",
-                nread);
+                nread
+            );
             Err(Error::EIO)
         } else {
             buf.truncate(nread);
