@@ -12,7 +12,7 @@ use std::{
 use bfffs_core::{database::*, device_manager::DevManager, rpc, Error};
 use clap::{crate_version, Clap};
 use fuse3::{raw::Session, MountOptions};
-use futures::{Future, FutureExt};
+use futures::{Future, FutureExt, TryFutureExt};
 use nix::{
     fcntl::{open, OFlag},
     sys::stat::Mode,
@@ -20,7 +20,7 @@ use nix::{
 };
 use tokio::signal::unix::{signal, SignalKind};
 use tokio_seqpacket::{UCred, UnixSeqpacketListener};
-use tracing::warn;
+use tracing::{error, warn};
 use tracing_subscriber::EnvFilter;
 
 mod fs;
@@ -177,9 +177,12 @@ impl Bfffsd {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::Mount(Err(Error::EPERM))
                 } else {
-                    // TODO: check that the mount succeeded.  This will require
-                    // an extension to fuse3.
-                    tokio::spawn(self.mount(req.mountpoint, req.tree_id));
+                    // TODO: synchronously check that the mount succeeded.  This
+                    // will require an extension to fuse3.
+                    tokio::spawn(
+                        self.mount(req.mountpoint, req.tree_id)
+                            .map_err(|e| error!("mount: {}", e)),
+                    );
                     rpc::Response::Mount(Ok(()))
                 }
             }
