@@ -103,6 +103,7 @@ impl Bfffsd {
             mount_opts.allow_other(true);
             mount_opts.default_permissions(true);
         }
+        mount_opts.no_open_support(true);
         mount_opts.no_open_dir_support(true);
         // Unconditionally disable the kernel's buffer cache; BFFFS has its own
         mount_opts.custom_options("direct_io");
