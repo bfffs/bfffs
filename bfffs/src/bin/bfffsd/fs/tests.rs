@@ -1,9 +1,11 @@
 // vim: tw=80
-use super::*;
+use std::mem;
+
 use bfffs_core::fs::{FileData, GetAttr, Mode};
 use futures::FutureExt;
-use mockall::{Sequence, predicate};
-use std::mem;
+use mockall::{predicate, Sequence};
+
+use super::*;
 
 fn assert_cached(fusefs: &FuseFs, parent_ino: u64, name: &OsStr, ino: u64) {
     assert!(fusefs.files.lock().unwrap().contains_key(&ino));
@@ -11,9 +13,12 @@ fn assert_cached(fusefs: &FuseFs, parent_ino: u64, name: &OsStr, ino: u64) {
     assert_eq!(Some(&ino), fusefs.names.lock().unwrap().get(&key));
 }
 
-fn assert_not_cached(fusefs: &FuseFs, parent_ino: u64, name: &OsStr,
-                     ino: Option<u64>)
-{
+fn assert_not_cached(
+    fusefs: &FuseFs,
+    parent_ino: u64,
+    name: &OsStr,
+    ino: Option<u64>,
+) {
     if let Some(i) = ino {
         assert!(!fusefs.files.lock().unwrap().contains_key(&i));
     }
@@ -23,7 +28,9 @@ fn assert_not_cached(fusefs: &FuseFs, parent_ino: u64, name: &OsStr,
 
 fn make_mock_fs() -> FuseFs {
     let mut mock_fs = Fs::default();
-    mock_fs.expect_root().returning(|| FileData::new_for_tests(None, 1));
+    mock_fs
+        .expect_root()
+        .returning(|| FileData::new_for_tests(None, 1));
     FuseFs::from(mock_fs)
 }
 
@@ -38,10 +45,16 @@ mod create {
         let name = OsStr::from_bytes(b"foo.txt");
         let parent = 42;
 
-        let request = Request { uid: 12345, gid: 12345, .. Default::default() };
+        let request = Request {
+            uid: 12345,
+            gid: 12345,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_create()
+        fusefs
+            .fs
+            .expect_create()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -49,12 +62,18 @@ mod create {
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
-            ).returning(|_, _, _, _, _| Err(libc::ENOTDIR));
+            )
+            .returning(|_, _, _, _, _| Err(libc::ENOTDIR));
 
-        fusefs.files.lock().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
             .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.create(request, parent, name, mode.into(), FLAGS)
-            .now_or_never().unwrap();
+        let reply = fusefs
+            .create(request, parent, name, mode.into(), FLAGS)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::ENOTDIR.into()));
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -67,10 +86,16 @@ mod create {
         let parent = 42;
         let ino = 43;
 
-        let request = Request { uid: 12345, gid: 12345, .. Default::default() };
+        let request = Request {
+            uid: 12345,
+            gid: 12345,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_create()
+        fusefs
+            .fs
+            .expect_create()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -78,21 +103,31 @@ mod create {
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
-            ).returning(move |_, _, _, _, _|
+            )
+            .returning(move |_, _, _, _, _| {
                 Ok(FileData::new_for_tests(None, ino))
-            );
-        fusefs.fs.expect_getattr()
+            });
+        fusefs
+            .fs
+            .expect_getattr()
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Err(libc::EIO));
-        fusefs.fs.expect_inactive()
+        fusefs
+            .fs
+            .expect_inactive()
             .withf(move |fd| fd.ino() == ino)
             .times(1)
             .return_const(());
 
-        fusefs.files.lock().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
             .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.create(request, parent, name, mode.into(), FLAGS)
-            .now_or_never().unwrap();
+        let reply = fusefs
+            .create(request, parent, name, mode.into(), FLAGS)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EIO.into()));
         assert_not_cached(&fusefs, parent, name, Some(ino));
     }
@@ -106,10 +141,16 @@ mod create {
         let uid = 12345u32;
         let gid = 54321u32;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_create()
+        fusefs
+            .fs
+            .expect_create()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -117,32 +158,40 @@ mod create {
                 predicate::eq(mode),
                 predicate::always(),
                 predicate::always(),
-            ).returning(move |_, _, _, _, _|
+            )
+            .returning(move |_, _, _, _, _| {
                 Ok(FileData::new_for_tests(None, ino))
-            );
-        fusefs.fs.expect_getattr()
+            });
+        fusefs
+            .fs
+            .expect_getattr()
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFREG),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 131072,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
             .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.create(request, parent, name, mode.into(), FLAGS)
-            .now_or_never().unwrap()
+        let reply = fusefs
+            .create(request, parent, name, mode.into(), FLAGS)
+            .now_or_never()
+            .unwrap()
             .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, 0);
@@ -166,18 +215,26 @@ mod removexattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_deleteextattr()
+        fusefs
+            .fs
+            .expect_deleteextattr()
             .times(1)
             .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
                 fd.ino() == ino &&
-                *ns == ExtAttrNamespace::System &&
-                name == OsStr::from_bytes(b"md5")
-            }).returning(move |_, _, _| Err(libc::ENOATTR));
+                    *ns == ExtAttrNamespace::System &&
+                    name == OsStr::from_bytes(b"md5")
+            })
+            .returning(move |_, _, _| Err(libc::ENOATTR));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.removexattr(request, ino, packed_name)
-            .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .removexattr(request, ino, packed_name)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::ENOATTR.into()));
     }
 
@@ -189,18 +246,26 @@ mod removexattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_deleteextattr()
+        fusefs
+            .fs
+            .expect_deleteextattr()
             .times(1)
             .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
                 fd.ino() == ino &&
-                *ns == ExtAttrNamespace::System &&
-                name == OsStr::from_bytes(b"md5")
-            }).returning(move |_, _, _| Ok(()));
+                    *ns == ExtAttrNamespace::System &&
+                    name == OsStr::from_bytes(b"md5")
+            })
+            .returning(move |_, _, _| Ok(()));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.removexattr(request, ino, packed_name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .removexattr(request, ino, packed_name)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Ok(()));
     }
 }
@@ -221,44 +286,54 @@ mod forget {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_lookup()
+        fusefs
+            .fs
+            .expect_lookup()
             .times(1)
             .with(
                 predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
-                predicate::eq(name)
-            ).returning(move |_, _, _|
-                Ok(FileData::new_for_tests(None, ino))
-            );
-        fusefs.fs.expect_getattr()
-            .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
+                predicate::eq(name),
+            )
+            .returning(move |_, _, _| Ok(FileData::new_for_tests(None, ino)));
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
             .return_const(Ok(GetAttr {
                 ino,
                 size,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFREG),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 4096,
-                flags: 0
+                flags: 0,
             }));
-        fusefs.fs.expect_inactive()
+        fusefs
+            .fs
+            .expect_inactive()
             .withf(move |fd| fd.ino() == ino)
             .times(1)
             .return_const(());
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.lookup(request, parent, name)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .lookup(request, parent, name)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply.attr.ino, ino);
         // forget does not return a Result
         fusefs.forget(request, ino, 1).now_or_never().unwrap();
@@ -277,16 +352,22 @@ mod fsync {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_fsync()
+        fusefs
+            .fs
+            .expect_fsync()
             .times(1)
-            .with(
-                predicate::function(move |fd: &FileData| fd.ino() == ino),
-            ).return_const(Err(libc::EIO));
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
+            .return_const(Err(libc::EIO));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.fsync(request, ino, fh, false)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .fsync(request, ino, fh, false)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EIO.into()));
     }
 
@@ -298,16 +379,22 @@ mod fsync {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_fsync()
+        fusefs
+            .fs
+            .expect_fsync()
             .times(1)
-            .with(
-                predicate::function(move |fd: &FileData| fd.ino() == ino),
-            ).return_const(Ok(()));
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
+            .return_const(Ok(()));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.fsync(request, ino, fh, false)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .fsync(request, ino, fh, false)
+            .now_or_never()
+            .unwrap();
         assert!(reply.is_ok());
     }
 }
@@ -322,15 +409,22 @@ mod getattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_getattr()
+        fusefs
+            .fs
+            .expect_getattr()
             .times(1)
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Err(libc::ENOENT));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.getattr(request, ino, None, 0)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .getattr(request, ino, None, 0)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::ENOENT.into()));
     }
 
@@ -345,31 +439,38 @@ mod getattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_getattr()
-            .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
             .return_const(Ok(GetAttr {
                 ino,
                 size,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFREG),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 8192,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.getattr(request, ino, None, 0)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .getattr(request, ino, None, 0)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, size);
         assert_eq!(reply.attr.kind, FileType::RegularFile);
@@ -383,8 +484,9 @@ mod getattr {
 }
 
 mod getxattr {
-    use super::*;
     use divbuf::DivBufShared;
+
+    use super::*;
 
     #[test]
     fn length_enoattr() {
@@ -395,18 +497,26 @@ mod getxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_getextattrlen()
+        fusefs
+            .fs
+            .expect_getextattrlen()
             .times(1)
             .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
                 fd.ino() == ino &&
-                *ns == ExtAttrNamespace::System &&
-                name == OsStr::from_bytes(b"md5")
-            }).returning(move |_, _, _| Err(libc::ENOATTR));
+                    *ns == ExtAttrNamespace::System &&
+                    name == OsStr::from_bytes(b"md5")
+            })
+            .returning(move |_, _, _| Err(libc::ENOATTR));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.getxattr(request, ino, packed_name, wantsize)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .getxattr(request, ino, packed_name, wantsize)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::ENOATTR.into()));
     }
 
@@ -420,19 +530,27 @@ mod getxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_getextattrlen()
+        fusefs
+            .fs
+            .expect_getextattrlen()
             .times(1)
             .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
                 fd.ino() == ino &&
-                *ns == ExtAttrNamespace::System &&
-                name == OsStr::from_bytes(b"md5")
-            }).returning(move |_, _, _| Ok(size));
+                    *ns == ExtAttrNamespace::System &&
+                    name == OsStr::from_bytes(b"md5")
+            })
+            .returning(move |_, _, _| Ok(size));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.getxattr(request, ino, packed_name, wantsize)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .getxattr(request, ino, packed_name, wantsize)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply, ReplyXAttr::Size(size));
     }
 
@@ -445,18 +563,26 @@ mod getxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_getextattr()
+        fusefs
+            .fs
+            .expect_getextattr()
             .times(1)
             .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
                 fd.ino() == ino &&
-                *ns == ExtAttrNamespace::System &&
-                name == OsStr::from_bytes(b"md5")
-            }).return_const(Err(libc::ENOATTR));
+                    *ns == ExtAttrNamespace::System &&
+                    name == OsStr::from_bytes(b"md5")
+            })
+            .return_const(Err(libc::ENOATTR));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.getxattr(request, ino, packed_name, wantsize)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .getxattr(request, ino, packed_name, wantsize)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::ENOATTR.into()));
     }
 
@@ -476,21 +602,29 @@ mod getxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_getextattr()
+        fusefs
+            .fs
+            .expect_getextattr()
             .times(1)
             .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
                 fd.ino() == ino &&
-                *ns == ExtAttrNamespace::System &&
-                name == OsStr::from_bytes(b"md5")
-            }).returning(move |_, _, _| {
+                    *ns == ExtAttrNamespace::System &&
+                    name == OsStr::from_bytes(b"md5")
+            })
+            .returning(move |_, _, _| {
                 let dbs = DivBufShared::from(&v[..]);
                 Ok(dbs.try_const().unwrap())
             });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.getxattr(request, ino, packed_name, wantsize)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .getxattr(request, ino, packed_name, wantsize)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::ERANGE.into()));
     }
 
@@ -504,22 +638,30 @@ mod getxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_getextattr()
+        fusefs
+            .fs
+            .expect_getextattr()
             .times(1)
             .withf(move |fd: &FileData, ns: &ExtAttrNamespace, name: &OsStr| {
                 fd.ino() == ino &&
-                *ns == ExtAttrNamespace::User &&
-                name == OsStr::from_bytes(b"md5")
-            }).returning(move |_, _, _| {
+                    *ns == ExtAttrNamespace::User &&
+                    name == OsStr::from_bytes(b"md5")
+            })
+            .returning(move |_, _, _| {
                 let dbs = DivBufShared::from(&v[..]);
                 Ok(dbs.try_const().unwrap())
             });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.getxattr(request, ino, packed_name, wantsize)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .getxattr(request, ino, packed_name, wantsize)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply, ReplyXAttr::Data(Bytes::copy_from_slice(v)));
     }
 }
@@ -538,20 +680,31 @@ mod link {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_link()
+        fusefs
+            .fs
+            .expect_link()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(name),
-            ).return_const(Err(libc::EPERM));
+            )
+            .return_const(Err(libc::EPERM));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.link(request, ino, parent, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .link(request, ino, parent, name)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EPERM.into()));
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -567,26 +720,39 @@ mod link {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_link()
+        fusefs
+            .fs
+            .expect_link()
             .times(1)
             .in_sequence(&mut seq)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(name),
-            ).return_const(Ok(()));
-        fusefs.fs.expect_getattr()
-            .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
+            )
+            .return_const(Ok(()));
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
             .in_sequence(&mut seq)
             .return_const(Err(libc::EIO));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.link(request, ino, parent, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .link(request, ino, parent, name)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EIO.into()));
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -605,43 +771,55 @@ mod link {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_link()
+        fusefs
+            .fs
+            .expect_link()
             .times(1)
             .in_sequence(&mut seq)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(name),
-            ).return_const(Ok(()));
-        fusefs.fs.expect_getattr()
-            .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
+            )
+            .return_const(Ok(()));
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
             .in_sequence(&mut seq)
             .return_const(Ok(GetAttr {
                 ino,
                 size,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFREG),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 16384,
-                flags: 0
+                flags: 0,
             }));
 
-
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.link(request, ino, parent, name)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .link(request, ino, parent, name)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.kind, FileType::RegularFile);
         assert_eq!(reply.attr.perm, mode);
@@ -655,8 +833,9 @@ mod link {
 }
 
 mod listxattr {
-    use super::*;
     use bfffs_core::fs_tree::{InlineExtAttr, InlineExtent};
+
+    use super::*;
 
     #[test]
     fn length_eperm() {
@@ -666,17 +845,25 @@ mod listxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_listextattrlen()
+        fusefs
+            .fs
+            .expect_listextattrlen()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
-                predicate::always()
-            ).returning(|_ino, _f| Err(libc::EPERM));
+                predicate::always(),
+            )
+            .returning(|_ino, _f| Err(libc::EPERM));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.listxattr(request, ino, wantsize)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .listxattr(request, ino, wantsize)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EPERM.into()));
     }
 
@@ -688,31 +875,36 @@ mod listxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_listextattrlen()
+        fusefs
+            .fs
+            .expect_listextattrlen()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
-                predicate::always()
-            ).returning(|_ino, f| {
-                Ok(
-                    f(&ExtAttr::Inline(InlineExtAttr {
-                        namespace: ExtAttrNamespace::System,
-                        name: OsString::from("md5"),
-                        extent: InlineExtent::default()
-                    })) +
-                    f(&ExtAttr::Inline(InlineExtAttr {
-                        namespace: ExtAttrNamespace::User,
-                        name: OsString::from("icon"),
-                        extent: InlineExtent::default()
-                    }))
-                )
+                predicate::always(),
+            )
+            .returning(|_ino, f| {
+                Ok(f(&ExtAttr::Inline(InlineExtAttr {
+                    namespace: ExtAttrNamespace::System,
+                    name:      OsString::from("md5"),
+                    extent:    InlineExtent::default(),
+                })) + f(&ExtAttr::Inline(InlineExtAttr {
+                    namespace: ExtAttrNamespace::User,
+                    name:      OsString::from("icon"),
+                    extent:    InlineExtent::default(),
+                })))
             });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.listxattr(request, ino, wantsize)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .listxattr(request, ino, wantsize)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply, ReplyXAttr::Size(21));
     }
 
@@ -724,17 +916,26 @@ mod listxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_listextattr()
+        fusefs
+            .fs
+            .expect_listextattr()
             .times(1)
-            .with(predicate::function(move |fd: &FileData| fd.ino() == ino),
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(wantsize),
-                predicate::always()
-            ).returning(|_ino, _size, _f| Err(libc::EPERM));
+                predicate::always(),
+            )
+            .returning(|_ino, _size, _f| Err(libc::EPERM));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.listxattr(request, ino, wantsize)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .listxattr(request, ino, wantsize)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EPERM.into()));
     }
 
@@ -749,32 +950,41 @@ mod listxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_listextattr()
+        fusefs
+            .fs
+            .expect_listextattr()
             .times(1)
-            .with(predicate::function(move |fd: &FileData| fd.ino() == ino),
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(wantsize),
-                predicate::always()
-            ).returning(|_ino, wantsize, f| {
+                predicate::always(),
+            )
+            .returning(|_ino, wantsize, f| {
                 let mut buf = Vec::with_capacity(wantsize as usize);
                 let md5 = ExtAttr::Inline(InlineExtAttr {
                     namespace: ExtAttrNamespace::System,
-                    name: OsString::from("md5"),
-                    extent: InlineExtent::default()
+                    name:      OsString::from("md5"),
+                    extent:    InlineExtent::default(),
                 });
                 let icon = ExtAttr::Inline(InlineExtAttr {
                     namespace: ExtAttrNamespace::User,
-                    name: OsString::from("icon"),
-                    extent: InlineExtent::default()
+                    name:      OsString::from("icon"),
+                    extent:    InlineExtent::default(),
                 });
                 f(&mut buf, &md5);
                 f(&mut buf, &icon);
                 Ok(buf)
             });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.listxattr(request, ino, wantsize)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .listxattr(request, ino, wantsize)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::ERANGE.into()));
     }
 
@@ -787,33 +997,42 @@ mod listxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_listextattr()
+        fusefs
+            .fs
+            .expect_listextattr()
             .times(1)
-            .with(predicate::function(move |fd: &FileData| fd.ino() == ino),
+            .with(
+                predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(wantsize),
-                predicate::always()
-            ).returning(|_ino, wantsize, f| {
+                predicate::always(),
+            )
+            .returning(|_ino, wantsize, f| {
                 let mut buf = Vec::with_capacity(wantsize as usize);
                 let md5 = ExtAttr::Inline(InlineExtAttr {
                     namespace: ExtAttrNamespace::System,
-                    name: OsString::from("md5"),
-                    extent: InlineExtent::default()
+                    name:      OsString::from("md5"),
+                    extent:    InlineExtent::default(),
                 });
                 let icon = ExtAttr::Inline(InlineExtAttr {
                     namespace: ExtAttrNamespace::User,
-                    name: OsString::from("icon"),
-                    extent: InlineExtent::default()
+                    name:      OsString::from("icon"),
+                    extent:    InlineExtent::default(),
                 });
                 f(&mut buf, &md5);
                 f(&mut buf, &icon);
                 Ok(buf)
             });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.listxattr(request, ino, wantsize)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .listxattr(request, ino, wantsize)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply, ReplyXAttr::Data(Bytes::copy_from_slice(expected)));
     }
 }
@@ -834,34 +1053,48 @@ mod lookup {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_getattr()
-            .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
             .return_const(Ok(GetAttr {
                 ino,
                 size,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFREG),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 32768,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(None, parent));
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(Some(1), ino));
-        fusefs.names.lock().unwrap().insert((parent, name.to_owned()), ino);
-        let reply = fusefs.lookup(request, parent, name)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(None, parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(Some(1), ino));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((parent, name.to_owned()), ino);
+        let reply = fusefs
+            .lookup(request, parent, name)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, size);
         assert_eq!(reply.attr.kind, FileType::RegularFile);
@@ -881,18 +1114,24 @@ mod lookup {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_lookup()
+        fusefs
+            .fs
+            .expect_lookup()
             .times(1)
             .with(
                 predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
-                predicate::eq(name)
-            ).returning(|_, _, _| Err(libc::ENOENT));
+                predicate::eq(name),
+            )
+            .returning(|_, _, _| Err(libc::ENOENT));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(None, parent));
-        let reply = fusefs.lookup(request, parent, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(None, parent));
+        let reply =
+            fusefs.lookup(request, parent, name).now_or_never().unwrap();
         assert_eq!(reply, Err(libc::ENOENT.into()));
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -911,42 +1150,53 @@ mod lookup {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_lookup()
+        fusefs
+            .fs
+            .expect_lookup()
             .times(1)
             .with(
                 predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
-                predicate::eq(name)
-            ).returning(move |_, _, _|
-                Ok(FileData::new_for_tests(None, ino))
-            );
-        fusefs.fs.expect_getattr()
-            .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
+                predicate::eq(name),
+            )
+            .returning(move |_, _, _| Ok(FileData::new_for_tests(None, ino)));
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
             .return_const(Ok(GetAttr {
                 ino,
                 size,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFREG),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 4096,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        fusefs.names.lock().unwrap().insert((parent, name.to_owned()),
-                             ino);
-        let reply = fusefs.lookup(request, parent, name)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((parent, name.to_owned()), ino);
+        let reply = fusefs
+            .lookup(request, parent, name)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, size);
         assert_eq!(reply.attr.kind, FileType::RegularFile);
@@ -970,28 +1220,40 @@ mod lookup {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_lookup()
+        fusefs
+            .fs
+            .expect_lookup()
             .times(1)
             .with(
                 predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
-                predicate::eq(name)
-            ).returning(move |_, _, _|
-                Ok(FileData::new_for_tests(None, ino))
-            );
-        fusefs.fs.expect_getattr()
-            .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
+                predicate::eq(name),
+            )
+            .returning(move |_, _, _| Ok(FileData::new_for_tests(None, ino)));
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
             .return_const(Err(libc::EIO));
-        fusefs.fs.expect_inactive()
+        fusefs
+            .fs
+            .expect_inactive()
             .withf(move |fd| fd.ino() == ino)
             .return_const(());
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        fusefs.names.lock().unwrap().insert((parent, name.to_owned()), ino);
-        let reply = fusefs.lookup(request, parent, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((parent, name.to_owned()), ino);
+        let reply =
+            fusefs.lookup(request, parent, name).now_or_never().unwrap();
         assert_eq!(reply, Err(libc::EIO.into()));
         assert!(!fusefs.files.lock().unwrap().contains_key(&ino));
     }
@@ -1009,40 +1271,48 @@ mod lookup {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_lookup()
+        fusefs
+            .fs
+            .expect_lookup()
             .times(1)
             .with(
                 predicate::always(),
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
-                predicate::eq(name)
-            ).returning(move |_, _, _|
-                Ok(FileData::new_for_tests(None, ino))
-            );
-        fusefs.fs.expect_getattr()
-            .with( predicate::function(move |fd: &FileData| fd.ino() == ino))
+                predicate::eq(name),
+            )
+            .returning(move |_, _, _| Ok(FileData::new_for_tests(None, ino)));
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .times(1)
             .return_const(Ok(GetAttr {
                 ino,
                 size,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFREG),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 4096,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.lookup(request, parent, name)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .lookup(request, parent, name)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, size);
         assert_eq!(reply.attr.kind, FileType::RegularFile);
@@ -1068,20 +1338,28 @@ mod lseek {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_lseek()
+        fusefs
+            .fs
+            .expect_lseek()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(SeekWhence::Hole),
-            ).returning(|_ino, _ofs, _whence| Ok(4096));
+            )
+            .returning(|_ino, _ofs, _whence| Ok(4096));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
         let whence = libc::SEEK_HOLE as u32;
-        let reply = fusefs.lseek(request, ino, fh, ofs, whence)
-          .now_or_never().unwrap()
-          .unwrap();
+        let reply = fusefs
+            .lseek(request, ino, fh, ofs, whence)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply.offset, 4096);
     }
 
@@ -1095,11 +1373,16 @@ mod lseek {
 
         let fusefs = make_mock_fs();
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
         let whence = libc::SEEK_CUR as u32;
-        let reply = fusefs.lseek(request, ino, fh, ofs, whence)
-          .now_or_never().unwrap();
+        let reply = fusefs
+            .lseek(request, ino, fh, ofs, whence)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(fuse3::Errno::from(libc::EINVAL)));
     }
 }
@@ -1115,10 +1398,16 @@ mod mkdir {
         let uid = 12345u32;
         let gid = 54321u32;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_mkdir()
+        fusefs
+            .fs
+            .expect_mkdir()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -1126,13 +1415,18 @@ mod mkdir {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(|_, _, _, _, _| Err(libc::EPERM));
+            )
+            .returning(|_, _, _, _, _| Err(libc::EPERM));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.mkdir(request, parent, name,
-            (libc::S_IFDIR | mode).into(), 0)
-            .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .mkdir(request, parent, name, (libc::S_IFDIR | mode).into(), 0)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EPERM.into()));
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -1147,10 +1441,16 @@ mod mkdir {
         let uid = 12345u32;
         let gid = 54321u32;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_mkdir()
+        fusefs
+            .fs
+            .expect_mkdir()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -1158,22 +1458,31 @@ mod mkdir {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(move |_, _, _, _, _|
+            )
+            .returning(move |_, _, _, _, _| {
                 Ok(FileData::new_for_tests(Some(parent), ino))
-            );
-        fusefs.fs.expect_getattr()
+            });
+        fusefs
+            .fs
+            .expect_getattr()
             .times(1)
             .return_const(Err(libc::EIO));
-        fusefs.fs.expect_inactive()
+        fusefs
+            .fs
+            .expect_inactive()
             .withf(move |fd| fd.ino() == ino)
             .times(1)
             .return_const(());
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.mkdir(request, parent, name,
-            (libc::S_IFDIR | mode).into(), 0)
-            .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .mkdir(request, parent, name, (libc::S_IFDIR | mode).into(), 0)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EIO.into()));
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -1187,10 +1496,16 @@ mod mkdir {
         let uid = 12345u32;
         let gid = 54321u32;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_mkdir()
+        fusefs
+            .fs
+            .expect_mkdir()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -1198,33 +1513,40 @@ mod mkdir {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(move |_, _, _, _, _|
+            )
+            .returning(move |_, _, _, _, _| {
                 Ok(FileData::new_for_tests(Some(parent), ino))
-            );
-        fusefs.fs.expect_getattr()
+            });
+        fusefs
+            .fs
+            .expect_getattr()
             .times(1)
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFDIR),
                 nlink: 1,
                 uid,
                 gid,
                 blksize: 4096,
                 rdev: 0,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.mkdir(request, parent, name,
-            (libc::S_IFDIR | mode).into(), 0)
-            .now_or_never().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .mkdir(request, parent, name, (libc::S_IFDIR | mode).into(), 0)
+            .now_or_never()
+            .unwrap()
             .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, 0);
@@ -1253,10 +1575,16 @@ mod mknod {
         let gid = 54321u32;
         let rdev = 69;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_mkblock()
+        fusefs
+            .fs
+            .expect_mkblock()
             .times(1)
             .in_sequence(&mut seq)
             .with(
@@ -1265,35 +1593,42 @@ mod mknod {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-                predicate::eq(rdev)
-            ).returning(move |_, _, _, _, _, _|
+                predicate::eq(rdev),
+            )
+            .returning(move |_, _, _, _, _, _| {
                 Ok(FileData::new_for_tests(None, ino))
-            );
-        fusefs.fs.expect_getattr()
+            });
+        fusefs
+            .fs
+            .expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFBLK),
                 nlink: 1,
                 uid,
                 gid,
                 rdev,
                 blksize: 4096,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.mknod(request, parent, name,
-            (libc::S_IFBLK | mode).into(), rdev)
-            .now_or_never().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .mknod(request, parent, name, (libc::S_IFBLK | mode).into(), rdev)
+            .now_or_never()
+            .unwrap()
             .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, 0);
@@ -1317,10 +1652,16 @@ mod mknod {
         let gid = 54321u32;
         let rdev = 69;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_mkchar()
+        fusefs
+            .fs
+            .expect_mkchar()
             .times(1)
             .in_sequence(&mut seq)
             .with(
@@ -1329,35 +1670,42 @@ mod mknod {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-                predicate::eq(rdev)
-            ).returning(move |_, _, _, _, _, _|
+                predicate::eq(rdev),
+            )
+            .returning(move |_, _, _, _, _, _| {
                 Ok(FileData::new_for_tests(None, ino))
-            );
-        fusefs.fs.expect_getattr()
+            });
+        fusefs
+            .fs
+            .expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFCHR),
                 nlink: 1,
                 uid,
                 gid,
                 rdev,
                 blksize: 4096,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.mknod(request, parent, name,
-            (libc::S_IFCHR | mode).into(), rdev)
-            .now_or_never().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .mknod(request, parent, name, (libc::S_IFCHR | mode).into(), rdev)
+            .now_or_never()
+            .unwrap()
             .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, 0);
@@ -1378,10 +1726,16 @@ mod mknod {
         let uid = 12345u32;
         let gid = 54321u32;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_mkfifo()
+        fusefs
+            .fs
+            .expect_mkfifo()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -1389,13 +1743,18 @@ mod mknod {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(|_, _, _, _, _| Err(libc::EPERM));
+            )
+            .returning(|_, _, _, _, _| Err(libc::EPERM));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.mknod(request, parent, name,
-            (libc::S_IFIFO | mode).into(), 0)
-            .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .mknod(request, parent, name, (libc::S_IFIFO | mode).into(), 0)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EPERM.into()));
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -1410,10 +1769,16 @@ mod mknod {
         let uid = 12345u32;
         let gid = 54321u32;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_mkfifo()
+        fusefs
+            .fs
+            .expect_mkfifo()
             .times(1)
             .in_sequence(&mut seq)
             .with(
@@ -1422,32 +1787,41 @@ mod mknod {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(None, ino)));
-        fusefs.fs.expect_getattr()
+            )
+            .returning(move |_, _, _, _, _| {
+                Ok(FileData::new_for_tests(None, ino))
+            });
+        fusefs
+            .fs
+            .expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFIFO),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 4096,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.mknod(request, parent, name,
-            (libc::S_IFIFO | mode).into(), 0)
-            .now_or_never().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .mknod(request, parent, name, (libc::S_IFIFO | mode).into(), 0)
+            .now_or_never()
+            .unwrap()
             .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, 0);
@@ -1469,10 +1843,16 @@ mod mknod {
         let uid = 12345u32;
         let gid = 54321u32;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_mksock()
+        fusefs
+            .fs
+            .expect_mksock()
             .times(1)
             .in_sequence(&mut seq)
             .with(
@@ -1481,32 +1861,41 @@ mod mknod {
                 predicate::eq(mode),
                 predicate::eq(uid),
                 predicate::eq(gid),
-            ).returning(move |_, _, _, _, _| Ok(FileData::new_for_tests(None, ino)));
-        fusefs.fs.expect_getattr()
+            )
+            .returning(move |_, _, _, _, _| {
+                Ok(FileData::new_for_tests(None, ino))
+            });
+        fusefs
+            .fs
+            .expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFSOCK),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 4096,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.mknod(request, parent, name,
-            (libc::S_IFSOCK | mode).into(), 0)
-            .now_or_never().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .mknod(request, parent, name, (libc::S_IFSOCK | mode).into(), 0)
+            .now_or_never()
+            .unwrap()
             .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, 0);
@@ -1520,9 +1909,10 @@ mod mknod {
 }
 
 mod read {
-    use super::*;
     use bfffs_core::SGList;
     use divbuf::*;
+
+    use super::*;
 
     #[test]
     fn eio() {
@@ -1534,19 +1924,28 @@ mod read {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_read()
+        fusefs
+            .fs
+            .expect_read()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(len as usize),
-            ).return_const(Err(libc::EIO));
+            )
+            .return_const(Err(libc::EIO));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.read(request, ino, fh, ofs, len)
-          .now_or_never().unwrap()
-          .err().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .read(request, ino, fh, ofs, len)
+            .now_or_never()
+            .unwrap()
+            .err()
+            .unwrap();
         assert_eq!(reply, libc::EIO.into());
     }
 
@@ -1561,19 +1960,27 @@ mod read {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_read()
+        fusefs
+            .fs
+            .expect_read()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(len as usize),
-            ).return_const(Ok(SGList::new()));
+            )
+            .return_const(Ok(SGList::new()));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.read(request, ino, fh, ofs, len)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .read(request, ino, fh, ofs, len)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert!(reply.data.is_empty());
     }
 
@@ -1589,23 +1996,31 @@ mod read {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_read()
+        fusefs
+            .fs
+            .expect_read()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(len as usize),
-            ).returning(|_ino, _ofs, _len| {
+            )
+            .returning(|_ino, _ofs, _len| {
                 let dbs = DivBufShared::from(DATA);
                 let db = dbs.try_const().unwrap();
                 Ok(vec![db])
             });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.read(request, ino, fh, ofs, len)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .read(request, ino, fh, ofs, len)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(&reply.data[..], DATA);
     }
 
@@ -1622,13 +2037,16 @@ mod read {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_read()
+        fusefs
+            .fs
+            .expect_read()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(len as usize),
-            ).returning(|_ino, _ofs, _len| {
+            )
+            .returning(|_ino, _ofs, _len| {
                 let dbs0 = DivBufShared::from(DATA0);
                 let db0 = dbs0.try_const().unwrap();
                 let dbs1 = DivBufShared::from(DATA1);
@@ -1636,11 +2054,16 @@ mod read {
                 Ok(vec![db0, db1])
             });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.read(request, ino, fh, ofs, len)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .read(request, ino, fh, ofs, len)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         // fuse3 doesn't work with scatter-gather reads; we have to
         // copy the buffers into one
         // https://github.com/Sherlock-Holo/fuse3/issues/13
@@ -1650,8 +2073,9 @@ mod read {
 }
 
 mod readdir {
-    use super::*;
     use futures::stream;
+
+    use super::*;
 
     /// A directory containing one file of every file type recognized by
     /// rust-fuse
@@ -1697,97 +2121,107 @@ mod readdir {
                 libc::dirent {
                     d_fileno: dot_ino.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_DIR,
-                    d_name: dotname,
-                    d_namlen: 1
+                    d_type:   libc::DT_DIR,
+                    d_name:   dotname,
+                    d_namlen: 1,
                 },
-                dot_ofs
+                dot_ofs,
             )),
             Ok((
                 libc::dirent {
                     d_fileno: reg_ino.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_REG,
-                    d_name: regname,
-                    d_namlen: 1
+                    d_type:   libc::DT_REG,
+                    d_name:   regname,
+                    d_namlen: 1,
                 },
-                reg_ofs
+                reg_ofs,
             )),
             Ok((
                 libc::dirent {
                     d_fileno: char_ino.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_CHR,
-                    d_name: charname,
-                    d_namlen: 1
+                    d_type:   libc::DT_CHR,
+                    d_name:   charname,
+                    d_namlen: 1,
                 },
-                char_ofs
+                char_ofs,
             )),
             Ok((
                 libc::dirent {
                     d_fileno: block_ino.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_BLK,
-                    d_name: blockname,
-                    d_namlen: 1
+                    d_type:   libc::DT_BLK,
+                    d_name:   blockname,
+                    d_namlen: 1,
                 },
-                block_ofs
+                block_ofs,
             )),
             Ok((
                 libc::dirent {
                     d_fileno: pipe_ino.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_FIFO,
-                    d_name: pipename,
-                    d_namlen: 1
+                    d_type:   libc::DT_FIFO,
+                    d_name:   pipename,
+                    d_namlen: 1,
                 },
-                pipe_ofs
+                pipe_ofs,
             )),
             Ok((
                 libc::dirent {
                     d_fileno: symlink_ino.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_LNK,
-                    d_name: symlinkname,
-                    d_namlen: 1
+                    d_type:   libc::DT_LNK,
+                    d_name:   symlinkname,
+                    d_namlen: 1,
                 },
-                symlink_ofs
+                symlink_ofs,
             )),
             Ok((
                 libc::dirent {
                     d_fileno: sock_ino.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_SOCK,
-                    d_name: sockname,
-                    d_namlen: 1
+                    d_type:   libc::DT_SOCK,
+                    d_name:   sockname,
+                    d_namlen: 1,
                 },
-                sock_ofs
+                sock_ofs,
             )),
         ];
 
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_readdir()
+        fusefs
+            .fs
+            .expect_readdir()
             .times(1)
             .with(
-                predicate::function(move |h: &FileData|
-                                    u64::from(dot_ino) == h.ino()
-                ),predicate::eq(ofs),
-            ).return_once(move |_, _| Box::pin(
-                    stream::iter(contents.into_iter())
-            ));
+                predicate::function(move |h: &FileData| {
+                    u64::from(dot_ino) == h.ino()
+                }),
+                predicate::eq(ofs),
+            )
+            .return_once(move |_, _| {
+                Box::pin(stream::iter(contents.into_iter()))
+            });
 
-        fusefs.files.lock().unwrap()
-          .insert(dot_ino.into(),
-            FileData::new_for_tests(Some(1), dot_ino.into()));
-        let reply = fusefs.readdir(request, dot_ino.into(), fh, ofs)
-            .now_or_never().unwrap()    // Result<_>
+        fusefs.files.lock().unwrap().insert(
+            dot_ino.into(),
+            FileData::new_for_tests(Some(1), dot_ino.into()),
+        );
+        #[rustfmt::skip]
+        let reply = fusefs
+            .readdir(request, dot_ino.into(), fh, ofs)
+            .now_or_never()
+            .unwrap()                   // Result<_>
             .unwrap()                   // ReplyDirectory
             .entries                    // Stream
             .try_collect::<Vec<_>>()    // Future<Result<Vec<_>>>
-            .now_or_never().unwrap()    // Result<Vec<_>>
-            .unwrap();                  // Vec<_>>
+            .now_or_never()             // Option<Result<Vec<_>>>
+            .unwrap()                   // Result<Vec<_>>
+            .unwrap()                   // Vec<_>>
+            ;
         assert_eq!(reply[0].inode, u64::from(dot_ino));
         assert_eq!(reply[0].kind, FileType::Directory);
         assert_eq!(reply[0].name, OsStr::from_bytes(b"."));
@@ -1810,7 +2244,7 @@ mod readdir {
         assert_eq!(reply[6].kind, FileType::Socket);
         assert_eq!(reply[6].name, OsStr::from_bytes(b"s"));
         assert_eq!(reply.len(), 7);
-}
+    }
 
     #[test]
     fn eio() {
@@ -1821,23 +2255,34 @@ mod readdir {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_readdir()
+        fusefs
+            .fs
+            .expect_readdir()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ofs),
-            ).returning(|_, _| Box::pin(
-                    stream::iter(vec![Err(libc::EIO)].into_iter())
-            ));
+            )
+            .returning(|_, _| {
+                Box::pin(stream::iter(vec![Err(libc::EIO)].into_iter()))
+            });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(Some(1), ino));
-        let reply = fusefs.readdir(request, ino, fh, ofs)
-            .now_or_never().unwrap()  // Result<_>
-            .unwrap()                 // ReplyDirectory
-            .entries                  // Stream
-            .try_collect::<Vec<_>>()  // Future<Result<Vec<_>>>
-            .now_or_never().unwrap(); // Result<Vec<_>>
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(Some(1), ino));
+        #[rustfmt::skip]
+        let reply = fusefs
+            .readdir(request, ino, fh, ofs)
+            .now_or_never()
+            .unwrap()                   // Result<_>
+            .unwrap()                   // ReplyDirectory
+            .entries                    // Stream
+            .try_collect::<Vec<_>>()    // Future<Result<Vec<_>>>
+            .now_or_never()             // Option<Result<Vec<_>>>
+            .unwrap()                   // Result<Vec<_>>
+        ;
         assert_eq!(reply, Err(libc::EIO.into()));
     }
 
@@ -1861,47 +2306,58 @@ mod readdir {
                 libc::dirent {
                     d_fileno: ino.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_DIR,
-                    d_name: dotname,
-                    d_namlen: 1
+                    d_type:   libc::DT_DIR,
+                    d_name:   dotname,
+                    d_namlen: 1,
                 },
-                0
+                0,
             )),
             Ok((
                 libc::dirent {
                     d_fileno: parent.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_DIR,
-                    d_name: dotdotname,
-                    d_namlen: 2
+                    d_type:   libc::DT_DIR,
+                    d_name:   dotdotname,
+                    d_namlen: 2,
                 },
-                1
-            ))
+                1,
+            )),
         ];
 
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_readdir()
+        fusefs
+            .fs
+            .expect_readdir()
             .times(1)
             .with(
-                predicate::function(move |fd: &FileData|
-                                    u64::from(ino) == fd.ino()
-                ), predicate::eq(ofs),
-            ).return_once(move |_, _| Box::pin(
-                    stream::iter(contents.into_iter())
-            ));
+                predicate::function(move |fd: &FileData| {
+                    u64::from(ino) == fd.ino()
+                }),
+                predicate::eq(ofs),
+            )
+            .return_once(move |_, _| {
+                Box::pin(stream::iter(contents.into_iter()))
+            });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino.into(),
-            FileData::new_for_tests(Some(1), ino.into()));
-        let reply = fusefs.readdir(request, ino.into(), fh, ofs)
-            .now_or_never().unwrap()    // Result<_>
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino.into(), FileData::new_for_tests(Some(1), ino.into()));
+        #[rustfmt::skip]
+        let reply = fusefs
+            .readdir(request, ino.into(), fh, ofs)
+            .now_or_never()
+            .unwrap()                   // Result<_>
             .unwrap()                   // ReplyDirectory
             .entries                    // Stream
             .try_collect::<Vec<_>>()    // Future<Result<Vec<_>>>
-            .now_or_never().unwrap()    // Result<Vec<_>>
-            .unwrap();                  // Vec<_>>
+            .now_or_never()             // Option
+            .unwrap()                   // Result<Vec<_>>
+            .unwrap()                   // Vec<_>>
+            ;
         assert_eq!(reply[0].inode, u64::from(ino));
         assert_eq!(reply[0].kind, FileType::Directory);
         assert_eq!(reply[0].name, OsStr::from_bytes(b"."));
@@ -1932,47 +2388,54 @@ mod readdir {
                 libc::dirent {
                     d_fileno: ino.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_DIR,
-                    d_name: dotname,
-                    d_namlen: 1
+                    d_type:   libc::DT_DIR,
+                    d_name:   dotname,
+                    d_namlen: 1,
                 },
-                0
+                0,
             )),
             Ok((
                 libc::dirent {
                     d_fileno: parent.into(),
                     d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type: libc::DT_DIR,
-                    d_name: dotdotname,
-                    d_namlen: 2
+                    d_type:   libc::DT_DIR,
+                    d_name:   dotdotname,
+                    d_namlen: 2,
                 },
-                1
-            ))
+                1,
+            )),
         ];
 
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_readdir()
+        fusefs
+            .fs
+            .expect_readdir()
             .times(1)
             .with(
-                predicate::function(move |fd: &FileData|
-                                    u64::from(ino) == fd.ino()
-                ), predicate::eq(ofs),
-            ).return_once(move |_, _| Box::pin(
-                    stream::iter(contents.into_iter())
-            ));
+                predicate::function(move |fd: &FileData| {
+                    u64::from(ino) == fd.ino()
+                }),
+                predicate::eq(ofs),
+            )
+            .return_once(move |_, _| {
+                Box::pin(stream::iter(contents.into_iter()))
+            });
 
-        fusefs.files.lock().unwrap()
-          .insert(ino.into(),
-            FileData::new_for_tests(Some(1), ino.into()));
-        let mut entries = fusefs.readdir(request, ino.into(), fh, ofs)
-            .now_or_never().unwrap()    // Result<_>
-            .unwrap()                   // ReplyDirectory
-            .entries;                   // Stream
-        let first_dirent = entries.try_next()
-            .now_or_never().unwrap()
-            .unwrap().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino.into(), FileData::new_for_tests(Some(1), ino.into()));
+        let mut entries = fusefs
+            .readdir(request, ino.into(), fh, ofs)
+            .now_or_never()
+            .unwrap() // Result<_>
+            .unwrap() // ReplyDirectory
+            .entries; // Stream
+        let first_dirent =
+            entries.try_next().now_or_never().unwrap().unwrap().unwrap();
         assert_eq!(first_dirent.inode, u64::from(ino));
         assert_eq!(first_dirent.kind, FileType::Directory);
         assert_eq!(first_dirent.name, OsStr::from_bytes(b"."));
@@ -1990,17 +2453,24 @@ mod readlink {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_readlink()
+        fusefs
+            .fs
+            .expect_readlink()
             .times(1)
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Err(libc::ENOENT));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.readlink(request, ino)
-          .now_or_never().unwrap()
-          .err()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .readlink(request, ino)
+            .now_or_never()
+            .unwrap()
+            .err()
+            .unwrap();
         assert_eq!(reply, libc::ENOENT.into());
     }
 
@@ -2012,16 +2482,23 @@ mod readlink {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_readlink()
+        fusefs
+            .fs
+            .expect_readlink()
             .times(1)
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Ok(name.to_owned()));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.readlink(request, ino)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .readlink(request, ino)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply.data, Bytes::copy_from_slice(name.as_bytes()))
     }
 }
@@ -2041,7 +2518,9 @@ mod rename {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_rename()
+        fusefs
+            .fs
+            .expect_rename()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -2050,21 +2529,39 @@ mod rename {
                 predicate::function(move |fd: &FileData| fd.ino() == newparent),
                 predicate::eq(None),
                 predicate::eq(newname),
-            ).return_once(move |_, _, _, _, _, _| Ok(ino));
+            )
+            .return_once(move |_, _, _, _, _, _| Ok(ino));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        fusefs.files.lock().unwrap()
-          .insert(newparent,
-            FileData::new_for_tests(Some(1), newparent));
-        fusefs.names.lock().unwrap().insert((parent, name.to_owned()), ino);
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(Some(parent), ino));
-        let reply = fusefs.rename(request, parent, name, newparent, newname)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(newparent, FileData::new_for_tests(Some(1), newparent));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((parent, name.to_owned()), ino);
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(Some(parent), ino));
+        let reply = fusefs
+            .rename(request, parent, name, newparent, newname)
+            .now_or_never()
+            .unwrap();
         assert!(reply.is_ok());
         assert_not_cached(&fusefs, parent, name, None);
-        assert_eq!(Some(newparent), fusefs.files.lock().unwrap().get(&ino).unwrap().parent());
+        assert_eq!(
+            Some(newparent),
+            fusefs.files.lock().unwrap().get(&ino).unwrap().parent()
+        );
     }
 
     // Rename fails because the src is a directory but the dst is not.
@@ -2080,7 +2577,9 @@ mod rename {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_rename()
+        fusefs
+            .fs
+            .expect_rename()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -2089,22 +2588,43 @@ mod rename {
                 predicate::function(move |fd: &FileData| fd.ino() == newparent),
                 predicate::eq(Some(dst_ino)),
                 predicate::eq(newname),
-            ).return_const(Err(libc::ENOTDIR));
+            )
+            .return_const(Err(libc::ENOTDIR));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        fusefs.files.lock().unwrap()
-          .insert(newparent,
-            FileData::new_for_tests(None, newparent));
-        fusefs.names.lock().unwrap().insert((parent, name.to_owned()), ino);
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(Some(parent), ino));
-        fusefs.files.lock().unwrap()
-          .insert(dst_ino,
-            FileData::new_for_tests(Some(newparent), dst_ino));
-        fusefs.names.lock().unwrap().insert((newparent, newname.to_owned()), dst_ino);
-        let reply = fusefs.rename(request, parent, name, newparent, newname)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(newparent, FileData::new_for_tests(None, newparent));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((parent, name.to_owned()), ino);
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(Some(parent), ino));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(dst_ino, FileData::new_for_tests(Some(newparent), dst_ino));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((newparent, newname.to_owned()), dst_ino);
+        let reply = fusefs
+            .rename(request, parent, name, newparent, newname)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::ENOTDIR.into()));
         assert_cached(&fusefs, newparent, newname, dst_ino);
         assert_cached(&fusefs, parent, name, ino);
@@ -2121,18 +2641,32 @@ mod rename {
 
         let fusefs = make_mock_fs();
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        fusefs.files.lock().unwrap()
-          .insert(child,
-            FileData::new_for_tests(Some(parent), child));
-        fusefs.names.lock().unwrap().insert((1, name.to_owned()), parent);
-        let reply = fusefs.rename(request, 1, name, child, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(child, FileData::new_for_tests(Some(parent), child));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((1, name.to_owned()), parent);
+        let reply = fusefs
+            .rename(request, 1, name, child, name)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EINVAL.into()));
         assert_not_cached(&fusefs, child, name, None);
         assert_cached(&fusefs, 1, name, parent);
-        assert_eq!(Some(1), fusefs.files.lock().unwrap().get(&parent).unwrap().parent());
+        assert_eq!(
+            Some(1),
+            fusefs.files.lock().unwrap().get(&parent).unwrap().parent()
+        );
     }
 
     // It should not be possible to create directory loops
@@ -2147,22 +2681,43 @@ mod rename {
 
         let fusefs = make_mock_fs();
 
-        fusefs.files.lock().unwrap()
-          .insert(grandparent,
-            FileData::new_for_tests(Some(1), grandparent));
-        fusefs.files.lock().unwrap()
-          .insert(parent,
-            FileData::new_for_tests(Some(grandparent), parent));
-        fusefs.files.lock().unwrap()
-          .insert(child,
-            FileData::new_for_tests(Some(parent), child));
-        fusefs.names.lock().unwrap().insert((1, name.to_owned()), grandparent);
-        let reply = fusefs.rename(request, 1, name, child, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(grandparent, FileData::new_for_tests(Some(1), grandparent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(grandparent), parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(child, FileData::new_for_tests(Some(parent), child));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((1, name.to_owned()), grandparent);
+        let reply = fusefs
+            .rename(request, 1, name, child, name)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EINVAL.into()));
         assert_not_cached(&fusefs, child, name, None);
         assert_cached(&fusefs, 1, name, grandparent);
-        assert_eq!(Some(1), fusefs.files.lock().unwrap().get(&grandparent).unwrap().parent());
+        assert_eq!(
+            Some(1),
+            fusefs
+                .files
+                .lock()
+                .unwrap()
+                .get(&grandparent)
+                .unwrap()
+                .parent()
+        );
     }
 
     // Rename a regular file
@@ -2177,7 +2732,9 @@ mod rename {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_rename()
+        fusefs
+            .fs
+            .expect_rename()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -2186,21 +2743,39 @@ mod rename {
                 predicate::function(move |fd: &FileData| fd.ino() == newparent),
                 predicate::eq(None),
                 predicate::eq(newname),
-            ).return_const(Ok(ino));
+            )
+            .return_const(Ok(ino));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        fusefs.files.lock().unwrap()
-          .insert(newparent,
-            FileData::new_for_tests(Some(1), newparent));
-        fusefs.names.lock().unwrap().insert((parent, name.to_owned()), ino);
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.rename(request, parent, name, newparent, newname)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(newparent, FileData::new_for_tests(Some(1), newparent));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((parent, name.to_owned()), ino);
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .rename(request, parent, name, newparent, newname)
+            .now_or_never()
+            .unwrap();
         assert!(reply.is_ok());
         assert_not_cached(&fusefs, parent, name, None);
-        assert_eq!(None, fusefs.files.lock().unwrap().get(&ino).unwrap().parent());
+        assert_eq!(
+            None,
+            fusefs.files.lock().unwrap().get(&ino).unwrap().parent()
+        );
     }
 }
 
@@ -2215,17 +2790,22 @@ mod rmdir {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_rmdir()
+        fusefs
+            .fs
+            .expect_rmdir()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
-                predicate::eq(name)
-            ).returning(move |_, _| Err(libc::ENOTDIR));
+                predicate::eq(name),
+            )
+            .returning(move |_, _| Err(libc::ENOTDIR));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.rmdir(request, parent, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs.rmdir(request, parent, name).now_or_never().unwrap();
         assert_eq!(reply, Err(libc::ENOTDIR.into()));
     }
 
@@ -2237,17 +2817,22 @@ mod rmdir {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_rmdir()
+        fusefs
+            .fs
+            .expect_rmdir()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
-                predicate::eq(name)
-            ).returning(move |_, _| Ok(()));
+                predicate::eq(name),
+            )
+            .returning(move |_, _| Ok(()));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.rmdir(request, parent, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs.rmdir(request, parent, name).now_or_never().unwrap();
         assert!(reply.is_ok());
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -2264,29 +2849,37 @@ mod setattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_setattr()
+        fusefs
+            .fs
+            .expect_setattr()
             .times(1)
             .withf(move |fd, attr| {
                 fd.ino() == ino &&
-                attr.size.is_none() &&
-                attr.atime.is_none() &&
-                attr.mtime.is_none() &&
-                attr.ctime.is_none() &&
-                attr.birthtime.is_none() &&
-                attr.perm == Some(mode) &&
-                attr.uid.is_none() &&
-                attr.gid.is_none() &&
-                attr.flags.is_none()
-            }).return_const(Err(libc::EPERM));
+                    attr.size.is_none() &&
+                    attr.atime.is_none() &&
+                    attr.mtime.is_none() &&
+                    attr.ctime.is_none() &&
+                    attr.birthtime.is_none() &&
+                    attr.perm == Some(mode) &&
+                    attr.uid.is_none() &&
+                    attr.gid.is_none() &&
+                    attr.flags.is_none()
+            })
+            .return_const(Err(libc::EPERM));
 
         let attr = SetAttr {
             mode: Some(mode),
-            .. Default::default()
+            ..Default::default()
         };
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.setattr(request, ino, None, attr)
-            .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .setattr(request, ino, None, attr)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EPERM.into()));
     }
 
@@ -2302,49 +2895,59 @@ mod setattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_setattr()
+        fusefs
+            .fs
+            .expect_setattr()
             .times(1)
             .in_sequence(&mut seq)
             .withf(move |fd, attr| {
                 fd.ino() == ino &&
-                attr.size.is_none() &&
-                attr.atime.is_none() &&
-                attr.mtime.is_none() &&
-                attr.ctime.is_none() &&
-                attr.birthtime.is_none() &&
-                attr.perm == Some(mode) &&
-                attr.uid.is_none() &&
-                attr.gid.is_none() &&
-                attr.flags.is_none()
-            }).return_const(Ok(()));
-        fusefs.fs.expect_getattr()
+                    attr.size.is_none() &&
+                    attr.atime.is_none() &&
+                    attr.mtime.is_none() &&
+                    attr.ctime.is_none() &&
+                    attr.birthtime.is_none() &&
+                    attr.perm == Some(mode) &&
+                    attr.uid.is_none() &&
+                    attr.gid.is_none() &&
+                    attr.flags.is_none()
+            })
+            .return_const(Ok(()));
+        fusefs
+            .fs
+            .expect_getattr()
             .times(1)
             .in_sequence(&mut seq)
             .return_const(Ok(GetAttr {
                 ino,
                 size,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFREG),
                 nlink: 1,
                 uid,
                 gid,
                 rdev: 0,
                 blksize: 16384,
-                flags: 0
+                flags: 0,
             }));
 
         let attr = SetAttr {
             mode: Some(mode),
-            .. Default::default()
+            ..Default::default()
         };
-        fusefs.files.lock().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
             .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.setattr(request, ino, None, attr)
-            .now_or_never().unwrap()
+        let reply = fusefs
+            .setattr(request, ino, None, attr)
+            .now_or_never()
+            .unwrap()
             .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, size);
@@ -2369,19 +2972,27 @@ mod setxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_setextattr()
+        fusefs
+            .fs
+            .expect_setextattr()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ExtAttrNamespace::System),
                 predicate::eq(OsStr::from_bytes(b"md5")),
-                predicate::eq(&v[..])
-            ).return_const(Err(libc::EROFS));
+                predicate::eq(&v[..]),
+            )
+            .return_const(Err(libc::EROFS));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.setxattr(request, ino, packed_name, v, 0, 0)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .setxattr(request, ino, packed_name, v, 0, 0)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EROFS.into()));
     }
 
@@ -2394,19 +3005,27 @@ mod setxattr {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_setextattr()
+        fusefs
+            .fs
+            .expect_setextattr()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ExtAttrNamespace::System),
                 predicate::eq(OsStr::from_bytes(b"md5")),
-                predicate::eq(&v[..])
-            ).return_const(Ok(()));
+                predicate::eq(&v[..]),
+            )
+            .return_const(Ok(()));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.setxattr(request, ino, packed_name, v, 0, 0)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .setxattr(request, ino, packed_name, v, 0, 0)
+            .now_or_never()
+            .unwrap();
         assert!(reply.is_ok());
     }
 }
@@ -2421,12 +3040,13 @@ mod statfs {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_statvfs()
+        fusefs
+            .fs
+            .expect_statvfs()
             .times(1)
             .return_const(Err(libc::EIO));
 
-        let reply = fusefs.statfs(request, ino)
-          .now_or_never().unwrap();
+        let reply = fusefs.statfs(request, ino).now_or_never().unwrap();
         assert_eq!(reply, Err(libc::EIO.into()));
     }
 
@@ -2437,25 +3057,26 @@ mod statfs {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_statvfs()
+        fusefs
+            .fs
+            .expect_statvfs()
             .times(1)
             .return_const(Ok(libc::statvfs {
-                f_bavail: 300000,
-                f_bfree: 200000,
-                f_blocks: 100000,
-                f_favail: 30000,
-                f_ffree: 20000,
-                f_files: 10000,
-                f_bsize: 4096,
-                f_flag: 0,
-                f_frsize: 512,
-                f_fsid: 0,
+                f_bavail:  300000,
+                f_bfree:   200000,
+                f_blocks:  100000,
+                f_favail:  30000,
+                f_ffree:   20000,
+                f_files:   10000,
+                f_bsize:   4096,
+                f_flag:    0,
+                f_frsize:  512,
+                f_fsid:    0,
                 f_namemax: 1000,
             }));
 
-        let reply = fusefs.statfs(request, ino)
-          .now_or_never().unwrap()
-          .unwrap();
+        let reply =
+            fusefs.statfs(request, ino).now_or_never().unwrap().unwrap();
         assert_eq!(reply.blocks, 100000);
         assert_eq!(reply.bfree, 200000);
         assert_eq!(reply.bavail, 300000);
@@ -2476,10 +3097,16 @@ mod symlink {
         let mode: u16 = 0o755;
         let parent = 42;
 
-        let request = Request { uid: 12345, gid: 12345, .. Default::default() };
+        let request = Request {
+            uid: 12345,
+            gid: 12345,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_symlink()
+        fusefs
+            .fs
+            .expect_symlink()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -2488,12 +3115,18 @@ mod symlink {
                 predicate::always(),
                 predicate::always(),
                 predicate::eq(name),
-            ).returning(|_, _, _, _, _, _| Err(libc::ELOOP));
+            )
+            .returning(|_, _, _, _, _, _| Err(libc::ELOOP));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.symlink(request, parent, name, name)
-            .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .symlink(request, parent, name, name)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::ELOOP.into()));
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -2507,10 +3140,16 @@ mod symlink {
         let uid = 12345;
         let gid = 54321;
 
-        let request = Request { uid, gid, .. Default::default() };
+        let request = Request {
+            uid,
+            gid,
+            ..Default::default()
+        };
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_symlink()
+        fusefs
+            .fs
+            .expect_symlink()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
@@ -2519,32 +3158,40 @@ mod symlink {
                 predicate::always(),
                 predicate::always(),
                 predicate::eq(name),
-            ).returning(move |_, _, _, _, _, _|
+            )
+            .returning(move |_, _, _, _, _, _| {
                 Ok(FileData::new_for_tests(None, ino))
-            );
-        fusefs.fs.expect_getattr()
+            });
+        fusefs
+            .fs
+            .expect_getattr()
             .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
                 blocks: 0,
-                atime: Timespec{sec: 0, nsec: 0},
-                mtime: Timespec{sec: 0, nsec: 0},
-                ctime: Timespec{sec: 0, nsec: 0},
-                birthtime: Timespec{sec: 0, nsec: 0},
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
                 mode: Mode(mode | libc::S_IFLNK),
                 nlink: 1,
                 uid,
                 gid,
                 blksize: 4096,
                 rdev: 0,
-                flags: 0
+                flags: 0,
             }));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.symlink(request, parent, name, name)
-            .now_or_never().unwrap()
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply = fusefs
+            .symlink(request, parent, name, name)
+            .now_or_never()
+            .unwrap()
             .unwrap();
         assert_eq!(reply.attr.ino, ino);
         assert_eq!(reply.attr.size, 0);
@@ -2567,18 +3214,24 @@ mod unlink {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_unlink()
+        fusefs
+            .fs
+            .expect_unlink()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::always(),
-                predicate::eq(name)
-            ).returning(move |_, _, _| Err(libc::EISDIR));
+                predicate::eq(name),
+            )
+            .returning(move |_, _, _| Err(libc::EISDIR));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.unlink(request, parent, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply =
+            fusefs.unlink(request, parent, name).now_or_never().unwrap();
         assert_eq!(reply, Err(libc::EISDIR.into()));
     }
 
@@ -2590,18 +3243,24 @@ mod unlink {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_unlink()
+        fusefs
+            .fs
+            .expect_unlink()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == parent),
                 predicate::always(),
-                predicate::eq(name)
-            ).returning(move |_, _, _| Ok(()));
+                predicate::eq(name),
+            )
+            .returning(move |_, _, _| Ok(()));
 
-        fusefs.files.lock().unwrap()
-          .insert(parent, FileData::new_for_tests(Some(1), parent));
-        let reply = fusefs.unlink(request, parent, name)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+        let reply =
+            fusefs.unlink(request, parent, name).now_or_never().unwrap();
         assert!(reply.is_ok());
         assert_not_cached(&fusefs, parent, name, None);
     }
@@ -2620,19 +3279,27 @@ mod write {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_write()
+        fusefs
+            .fs
+            .expect_write()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(DATA),
-                predicate::always()
-            ).return_const(Err(libc::EROFS));
+                predicate::always(),
+            )
+            .return_const(Err(libc::EROFS));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.write(request, ino, fh, ofs, DATA, 0)
-          .now_or_never().unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .write(request, ino, fh, ofs, DATA, 0)
+            .now_or_never()
+            .unwrap();
         assert_eq!(reply, Err(libc::EROFS.into()));
     }
 
@@ -2647,20 +3314,28 @@ mod write {
         let request = Request::default();
 
         let mut fusefs = make_mock_fs();
-        fusefs.fs.expect_write()
+        fusefs
+            .fs
+            .expect_write()
             .times(1)
             .with(
                 predicate::function(move |fd: &FileData| fd.ino() == ino),
                 predicate::eq(ofs as u64),
                 predicate::eq(DATA),
-                predicate::always()
-            ).return_const(Ok(DATA.len() as u32));
+                predicate::always(),
+            )
+            .return_const(Ok(DATA.len() as u32));
 
-        fusefs.files.lock().unwrap()
-          .insert(ino, FileData::new_for_tests(None, ino));
-        let reply = fusefs.write(request, ino, fh, ofs, DATA, 0)
-          .now_or_never().unwrap()
-          .unwrap();
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(None, ino));
+        let reply = fusefs
+            .write(request, ino, fh, ofs, DATA, 0)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
         assert_eq!(reply.written, DATA.len() as u32);
     }
 }

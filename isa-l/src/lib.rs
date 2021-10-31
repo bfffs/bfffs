@@ -4,13 +4,13 @@ mod ffi;
 use std::{
     io::{Error, ErrorKind},
     os::raw::*,
-    result::Result
+    result::Result,
 };
 
 pub const fn version() -> u32 {
     ffi::ISAL_MAJOR_VERSION * 0x10000 +
-    ffi::ISAL_MINOR_VERSION * 0x100 +
-    ffi::ISAL_PATCH_VERSION
+        ffi::ISAL_MINOR_VERSION * 0x100 +
+        ffi::ISAL_PATCH_VERSION
 }
 
 /// Generate or decode erasure codes on blocks of data.
@@ -36,18 +36,28 @@ pub const fn version() -> u32 {
 ///
 /// Caller must ensure that the `data` and `parity` fields are of sufficient
 /// size and point to allocated memory.  `parity` need not be initialized.
-pub unsafe fn ec_encode_data(len: usize, k: u32, f: u32, gftbls: &[u8],
-                      data: &[*const u8], parity: &[*mut u8]) {
+pub unsafe fn ec_encode_data(
+    len: usize,
+    k: u32,
+    f: u32,
+    gftbls: &[u8],
+    data: &[*const u8],
+    parity: &[*mut u8],
+) {
     assert_eq!(gftbls.len(), (32 * f * k) as usize);
     assert_eq!(data.len(), k as usize);
     assert_eq!(parity.len(), f as usize);
 
     // Note: isa-l defines gftbls and data as non-const, even though the
     // implementation doesn't modify them
-    ffi::ec_encode_data(len as c_int, k as c_int, f as c_int,
-                        gftbls.as_ptr() as *mut c_uchar,
-                        data.as_ptr() as *mut *mut c_uchar,
-                        parity.as_ptr() as *mut *mut c_uchar);
+    ffi::ec_encode_data(
+        len as c_int,
+        k as c_int,
+        f as c_int,
+        gftbls.as_ptr() as *mut c_uchar,
+        data.as_ptr() as *mut *mut c_uchar,
+        parity.as_ptr() as *mut *mut c_uchar,
+    );
 }
 
 /// Generate update for encode or decode of erasure codes from single source.
@@ -76,13 +86,15 @@ pub unsafe fn ec_encode_data(len: usize, k: u32, f: u32, gftbls: &[u8],
 ///
 /// Caller must ensure that the `parity` field is of sufficient size and points
 /// to allocated memory.  It need not be initialized.
-pub unsafe fn ec_encode_data_update(len: usize,
-                             k: u32,
-                             f: u32,
-                             vec_i: u32,
-                             gftbls: &[u8],
-                             data: &[u8],
-                             parity: &[*mut u8]) {
+pub unsafe fn ec_encode_data_update(
+    len: usize,
+    k: u32,
+    f: u32,
+    vec_i: u32,
+    gftbls: &[u8],
+    data: &[u8],
+    parity: &[*mut u8],
+) {
     assert_eq!(gftbls.len(), (32 * f * k) as usize);
     assert_eq!(data.len(), len);
     assert_eq!(parity.len(), f as usize);
@@ -90,11 +102,15 @@ pub unsafe fn ec_encode_data_update(len: usize,
 
     // Note: isa-l defines gftbls and data as non-const, even though the
     // implementation doesn't modify them
-    ffi::ec_encode_data_update(len as c_int, k as c_int, f as c_int,
-                               vec_i as c_int,
-                               gftbls.as_ptr() as *mut c_uchar,
-                               data.as_ptr() as *mut c_uchar,
-                               parity.as_ptr() as *mut *mut c_uchar);
+    ffi::ec_encode_data_update(
+        len as c_int,
+        k as c_int,
+        f as c_int,
+        vec_i as c_int,
+        gftbls.as_ptr() as *mut c_uchar,
+        data.as_ptr() as *mut c_uchar,
+        parity.as_ptr() as *mut *mut c_uchar,
+    );
 }
 
 /// Initialize tables for fast Erasure Code encode and decode.
@@ -117,8 +133,12 @@ pub fn ec_init_tables(k: u32, f: u32, a: &[u8], gftbls: &mut [u8]) {
     unsafe {
         // Note: isa-l defines a as non-const, even though the implementation
         // doesn't modify it.
-        ffi::ec_init_tables(k as c_int, f as c_int, a.as_ptr() as *mut c_uchar,
-                            gftbls.as_mut_ptr() as *mut c_uchar);
+        ffi::ec_init_tables(
+            k as c_int,
+            f as c_int,
+            a.as_ptr() as *mut c_uchar,
+            gftbls.as_mut_ptr() as *mut c_uchar,
+        );
     }
 }
 
@@ -136,8 +156,11 @@ pub fn ec_init_tables(k: u32, f: u32, a: &[u8], gftbls: &mut [u8]) {
 pub fn gf_gen_cauchy1_matrix(a: &mut [u8], m: u32, k: u32) {
     assert_eq!(a.len(), (m * k) as usize);
     unsafe {
-        ffi::gf_gen_cauchy1_matrix(a.as_mut_ptr() as *mut c_uchar,
-                                   m as c_int, k as c_int);
+        ffi::gf_gen_cauchy1_matrix(
+            a.as_mut_ptr() as *mut c_uchar,
+            m as c_int,
+            k as c_int,
+        );
     }
 }
 
@@ -164,14 +187,20 @@ pub fn gf_gen_cauchy1_matrix(a: &mut [u8], m: u32, k: u32) {
 /// - `k`:  number of columns in matrix corresponding to srcs.
 pub fn gf_gen_rs_matrix(a: &mut [u8], m: u32, k: u32) {
     assert_eq!(a.len(), (m * k) as usize);
-    assert!( ( k <= 3 ) ||
-             ( k == 4 && m <= 25 ) ||
-             ( k == 5 && m <= 10 ) ||
-             ( k <= 21 && m - k == 4) ||
-             ( m - k <= 3 ), "Matrix not guaranteed to be invertible!");
+    assert!(
+        (k <= 3) ||
+            (k == 4 && m <= 25) ||
+            (k == 5 && m <= 10) ||
+            (k <= 21 && m - k == 4) ||
+            (m - k <= 3),
+        "Matrix not guaranteed to be invertible!"
+    );
     unsafe {
-        ffi::gf_gen_rs_matrix(a.as_mut_ptr() as *mut c_uchar,
-                              m as c_int, k as c_int);
+        ffi::gf_gen_rs_matrix(
+            a.as_mut_ptr() as *mut c_uchar,
+            m as c_int,
+            k as c_int,
+        );
     }
 }
 
@@ -187,14 +216,19 @@ pub fn gf_gen_rs_matrix(a: &mut [u8], m: u32, k: u32) {
 ///
 /// `()` on success, or one of these errors on failure:
 /// - `InvalidData`:   The input matrix was singular
-pub fn gf_invert_matrix(input: &[u8], output: &mut [u8],
-                        n: u32) -> Result<(), Error> {
+pub fn gf_invert_matrix(
+    input: &[u8],
+    output: &mut [u8],
+    n: u32,
+) -> Result<(), Error> {
     assert_eq!(input.len(), (n * n) as usize);
     assert_eq!(output.len(), (n * n) as usize);
     if 0 == unsafe {
-        ffi::gf_invert_matrix(input.as_ptr() as *mut c_uchar,
-                              output.as_mut_ptr() as *mut c_uchar,
-                              n as c_int)
+        ffi::gf_invert_matrix(
+            input.as_ptr() as *mut c_uchar,
+            output.as_mut_ptr() as *mut c_uchar,
+            n as c_int,
+        )
     } {
         Ok(())
     } else {
@@ -205,18 +239,17 @@ pub fn gf_invert_matrix(input: &[u8], output: &mut [u8],
 #[cfg(test)]
 mod t {
 
-use super::*;
+    use super::*;
 
-#[test]
-fn test_version() {
-    assert_eq!(0x21300, version());
-}
+    #[test]
+    fn test_version() {
+        assert_eq!(0x21300, version());
+    }
 
-#[test]
-fn test_gf_invert_matrix_singular() {
-    let input = [1, 0, 0, 0];
-    let mut output = [0, 0, 0, 0];
-    assert!(gf_invert_matrix(&input, &mut output, 2).is_err())
-}
-
+    #[test]
+    fn test_gf_invert_matrix_singular() {
+        let input = [1, 0, 0, 0];
+        let mut output = [0, 0, 0, 0];
+        assert!(gf_invert_matrix(&input, &mut output, 2).is_err())
+    }
 }

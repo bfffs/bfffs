@@ -1,40 +1,27 @@
 // vim: tw=80
 
-use bfffs_core::{
-    Error,
-    database::*,
-    device_manager::DevManager,
-    rpc,
-};
-use clap::{
-    Clap,
-    crate_version
-};
-use fuse3::{
-    raw::Session,
-    MountOptions
-};
-use futures::{Future, FutureExt};
-use nix::{
-    fcntl::{OFlag, open},
-    sys::stat::Mode,
-    unistd
-};
 use std::{
     fs::Permissions,
     io,
+    os::unix::{fs::PermissionsExt, io::RawFd},
     path::{Path, PathBuf},
     process::exit,
-    os::unix::{
-        fs::PermissionsExt,
-        io::RawFd
-    },
     sync::Arc,
 };
-use tokio_seqpacket::{UCred, UnixSeqpacketListener};
+
+use bfffs_core::{database::*, device_manager::DevManager, rpc, Error};
+use clap::{crate_version, Clap};
+use fuse3::{raw::Session, MountOptions};
+use futures::{Future, FutureExt};
+use nix::{
+    fcntl::{open, OFlag},
+    sys::stat::Mode,
+    unistd,
+};
 use tokio::signal::unix::{signal, SignalKind};
-use tracing_subscriber::EnvFilter;
+use tokio_seqpacket::{UCred, UnixSeqpacketListener};
 use tracing::warn;
+use tracing_subscriber::EnvFilter;
 
 mod fs;
 
@@ -45,25 +32,25 @@ use crate::fs::FuseFs;
 struct Cli {
     /// Mount options, comma delimited.  Apply to all BFFFS mounts
     #[clap(short = 'o', long, require_delimiter(true), value_delimiter(','))]
-    options: Vec<String>,
+    options:   Vec<String>,
     #[clap(long, default_value = "/var/run/bfffsd.sock")]
-    sock: PathBuf,
+    sock:      PathBuf,
     /// Pool name
     pool_name: String,
     #[clap(required(true))]
-    devices: Vec<String>,
+    devices:   Vec<String>,
 }
 
 /// bfffsd's communications socket
 struct Socket {
     sockpath: PathBuf,
     listener: UnixSeqpacketListener,
-    _lockfd: RawFd
+    _lockfd:  RawFd,
 }
 
 impl Drop for Socket {
     fn drop(&mut self) {
-        if ! std::thread::panicking() {
+        if !std::thread::panicking() {
             let _ignore = std::fs::remove_file(&self.sockpath);
             self.sockpath.set_extension("lock");
             let _ignore = std::fs::remove_file(&self.sockpath);
@@ -79,23 +66,28 @@ impl Socket {
         let _lockfd = open(
             &lockaddr,
             OFlag::O_EXLOCK | OFlag::O_RDWR | OFlag::O_CREAT,
-            Mode::from_bits(0o600).unwrap()
-        ).unwrap_or_else(|_| {
+            Mode::from_bits(0o600).unwrap(),
+        )
+        .unwrap_or_else(|_| {
             eprintln!("Could not obtain lockfile");
             std::process::exit(1);
         });
         let _ignore_result = std::fs::remove_file(path);
         let listener = UnixSeqpacketListener::bind(path).unwrap();
         std::fs::set_permissions(path, Permissions::from_mode(0o666)).unwrap();
-        Socket {sockpath, listener, _lockfd}
+        Socket {
+            sockpath,
+            listener,
+            _lockfd,
+        }
     }
 }
 
 struct Bfffsd {
-    db: Arc<Database>,
+    db:           Arc<Database>,
     _dev_manager: DevManager,
-    mount_opts: MountOptions,
-    sock: Socket
+    mount_opts:   MountOptions,
+    sock:         Socket,
 }
 
 impl Bfffsd {
@@ -117,19 +109,17 @@ impl Bfffsd {
         for o in cli.options.iter() {
             if let Some((name, value)) = o.split_once("=") {
                 if name == "cache_size" {
-                    let v = value.parse()
-                        .unwrap_or_else(|_| {
-                            eprintln!("cache_size must be numeric");
-                            exit(2);
-                        });
+                    let v = value.parse().unwrap_or_else(|_| {
+                        eprintln!("cache_size must be numeric");
+                        exit(2);
+                    });
                     cache_size = Some(v);
                     continue;
                 } else if name == "writeback_size" {
-                    let v = value.parse()
-                        .unwrap_or_else(|_| {
-                            eprintln!("writeback_size must be numeric");
-                            exit(2);
-                        });
+                    let v = value.parse().unwrap_or_else(|_| {
+                        eprintln!("writeback_size must be numeric");
+                        exit(2);
+                    });
                     writeback_size = Some(v);
                     continue;
                 }
@@ -152,27 +142,33 @@ impl Bfffsd {
             dev_manager.taste(dev).await.unwrap();
         }
 
-        let uuid = dev_manager.importable_pools().iter()
-            .find(|(name, _uuid)| {
-                **name == cli.pool_name
-            }).unwrap_or_else(|| {
+        let uuid = dev_manager
+            .importable_pools()
+            .iter()
+            .find(|(name, _uuid)| **name == cli.pool_name)
+            .unwrap_or_else(|| {
                 eprintln!("error: pool {} not found", cli.pool_name);
                 std::process::exit(1);
-            }).1;
+            })
+            .1;
         let db = Arc::new(dev_manager.import_by_uuid(uuid).await.unwrap());
 
-        Bfffsd {db, _dev_manager: dev_manager, mount_opts, sock}
+        Bfffsd {
+            db,
+            _dev_manager: dev_manager,
+            mount_opts,
+            sock,
+        }
     }
 
-    fn mount(&self, mountpoint: PathBuf, tree_id: TreeID)
-        -> impl Future<Output = Result<(), io::Error>> + Send
-    {
+    fn mount(
+        &self,
+        mountpoint: PathBuf,
+        tree_id: TreeID,
+    ) -> impl Future<Output = Result<(), io::Error>> + Send {
         let mo2 = self.mount_opts.clone();
         FuseFs::new(self.db.clone(), tree_id)
-        .then(move |fs|
-            Session::new(mo2)
-                .mount(fs, mountpoint)
-        )
+            .then(move |fs| Session::new(mo2).mount(fs, mountpoint))
     }
 
     async fn process(&self, req: rpc::Request, creds: UCred) -> rpc::Response {
@@ -181,11 +177,9 @@ impl Bfffsd {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::Mount(Err(Error::EPERM))
                 } else {
-                    tokio::spawn(
-                        self.mount(req.mountpoint, req.tree_id)
-                        // TODO: check that the mount succeeded.  This will
-                        // require an extension to fuse3.
-                    );
+                    // TODO: check that the mount succeeded.  This will require
+                    // an extension to fuse3.
+                    tokio::spawn(self.mount(req.mountpoint, req.tree_id));
                     rpc::Response::Mount(Ok(()))
                 }
             }
@@ -197,7 +191,7 @@ impl Bfffsd {
 
         // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term,
         // this is very handy for debugging the cleaner.
-        tokio::spawn( async move {
+        tokio::spawn(async move {
             let mut stream = signal(SignalKind::user_defined1()).unwrap();
             loop {
                 stream.recv().await;
@@ -225,7 +219,6 @@ impl Bfffsd {
                 if nwrite.is_err() || nwrite.unwrap() != encoded.len() {
                     warn!("Client disconnected before reading response");
                 }
-
             }
         }
     }
@@ -241,13 +234,13 @@ async fn main() {
 
     let bfffsd = Bfffsd::new(cli).await;
     bfffsd.run().await;
-
 }
 
 #[cfg(test)]
 mod t {
     use clap::ErrorKind::*;
     use rstest::rstest;
+
     use super::*;
 
     #[rstest]
@@ -256,14 +249,23 @@ mod t {
     #[case(vec!["bfffsd", "testpool"])]
     fn missing_arg(#[case] args: Vec<&str>) {
         let e = Cli::try_parse_from(args).unwrap_err();
-        assert!(e.kind == MissingRequiredArgument ||
-                e.kind == DisplayHelpOnMissingArgumentOrSubcommand);
+        assert!(
+            e.kind == MissingRequiredArgument ||
+                e.kind == DisplayHelpOnMissingArgumentOrSubcommand
+        );
     }
 
     #[test]
     fn options() {
-        let args = vec!["bfffsd", "-o", "allow_other,default_permissions",
-            "testpool", "--sock", "/tmp/bfffs.sock", "/dev/da0"];
+        let args = vec![
+            "bfffsd",
+            "-o",
+            "allow_other,default_permissions",
+            "testpool",
+            "--sock",
+            "/tmp/bfffs.sock",
+            "/dev/da0",
+        ];
         let cli = Cli::try_parse_from(args).unwrap();
         assert_eq!(cli.pool_name, "testpool");
         assert_eq!(cli.sock, Path::new("/tmp/bfffs.sock"));
