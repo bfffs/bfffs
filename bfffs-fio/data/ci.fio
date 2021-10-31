@@ -1,11 +1,10 @@
+# A very short test to check the functionality of bfffs-fio
 [global]
-# Comment toggle next two lines when running fio outside of the jail
 ioengine=external:target/debug/libbfffs_fio.so
-#ioengine=external:/iocage/jails/rustup2/root/localhome/somers/src/rust/bfffs/target/release/libbfffs_fio.so
 
 # Basic jobs settings
 bs=128k
-size=512m
+size=128m
 iodepth=1
 # Using threads instead of processes makes debugging easier
 thread
@@ -14,9 +13,7 @@ end_fsync=1
 # Don't precreate files and zero-fill them.
 create_on_open=1
 # Your pool info goes here:
-cache_size=1g
-writeback_size=256m
-pool=foo
-vdevs=/dev/da0
+pool=testpool
+vdevs=/tmp/bfffs.img
 
 [fio_test_file]
