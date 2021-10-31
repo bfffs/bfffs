@@ -8,7 +8,7 @@ setup: &SETUP
     # Temporary workaround for https://github.com/rust-lang/rustup/issues/2774
     RUSTUP_IO_THREADS: 1
   setup_script:
-    - pkg install -y c-blosc isa-l fusefs-libs pkgconf
+    - pkg install -y c-blosc isa-l fio fusefs-libs pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y --profile=minimal
     - $HOME/.cargo/bin/rustup toolchain install $VERSION
@@ -34,6 +34,11 @@ task:
   test_script:
     - . $HOME/.cargo/env
     - cargo +$VERSION test $CARGO_ARGS --all --all-targets
+  fio_script:
+    - . $HOME/.cargo/env
+    - truncate -s 1g /tmp/bfffs.img
+    - cargo +$VERSION run $CARGO_ARGS --bin bfffs -- pool create testpool /tmp/bfffs.img
+    - fio bfffs-fio/data/ci.fio
   fuseless_script:
     - . $HOME/.cargo/env
     - cd bfffs
