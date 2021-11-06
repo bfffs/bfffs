@@ -12,7 +12,7 @@ use std::{
     pin::Pin,
     ptr,
     slice,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use bfffs_core::{
@@ -166,17 +166,17 @@ pub extern "C" fn rust_ctor() {
 }
 
 lazy_static! {
-    // TODO: try an RwLock now that we use fuse3
-    static ref RUNTIME: Mutex<Runtime> = Mutex::new(
+    static ref RUNTIME: RwLock<Runtime> = RwLock::new(
         Builder::new_multi_thread()
-        .enable_time()
-        .enable_io()
-        .build()
-        .unwrap()
+            .enable_time()
+            .enable_io()
+            .build()
+            .unwrap()
     );
     static ref FS: RwLock<Option<Arc<Fs>>> = RwLock::default();
     static ref ROOT: RwLock<Option<FileData>> = RwLock::default();
-    static ref FILES: RwLock<HashMap<libc::c_int, FileData>> = RwLock::default();
+    static ref FILES: RwLock<HashMap<libc::c_int, FileData>> =
+        RwLock::default();
 }
 
 ///
@@ -200,7 +200,7 @@ pub unsafe extern "C" fn fio_bfffs_close(
     _td: *mut thread_data,
     f: *mut fio_file,
 ) -> libc::c_int {
-    let rt = RUNTIME.lock().unwrap();
+    let rt = RUNTIME.read().unwrap();
     let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();
     let fd = FILES.write().unwrap().remove(&(*f).fd).unwrap();
@@ -254,7 +254,7 @@ pub unsafe extern "C" fn fio_bfffs_getevents(
     _max: libc::c_uint,
     t: *const libc::timespec,
 ) -> libc::c_int {
-    let rt = RUNTIME.lock().unwrap();
+    let rt = RUNTIME.read().unwrap();
     let mut io_ops_data =
         Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData);
     assert!(t.is_null(), "timeout is unimplemented");
@@ -289,7 +289,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
 
     let mut fs = FS.write().unwrap();
     if fs.is_none() {
-        let rt = RUNTIME.lock().unwrap();
+        let rt = RUNTIME.read().unwrap();
         let opts = (*td).eo as *mut BfffsOptions;
         if opts as isize != -1 {
             let (pool, vdevs) = {
@@ -361,7 +361,7 @@ pub unsafe extern "C" fn fio_bfffs_open(
     _td: *mut thread_data,
     f: *mut fio_file,
 ) -> libc::c_int {
-    let rt = RUNTIME.lock().unwrap();
+    let rt = RUNTIME.read().unwrap();
     let file_name =
         OsStr::from_bytes(CStr::from_ptr((*f).file_name).to_bytes());
     let fs_opt = FS.read().unwrap();
@@ -400,9 +400,7 @@ pub unsafe extern "C" fn fio_bfffs_queue(
     td: *mut thread_data,
     io_u: *mut io_u,
 ) -> fio_q_status {
-    // TODO: don't wrap RUNTIME with a Mutex.  Use RwLock to allow concurrent
-    // access.
-    let rt = RUNTIME.lock().unwrap();
+    let rt = RUNTIME.read().unwrap();
     let fs = FS.read().unwrap().clone().unwrap();
     let files = FILES.read().unwrap();
     assert!(!((*td).io_ops_data.is_null()));
