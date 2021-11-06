@@ -18,10 +18,6 @@
 // of e.g. "Idml" as opposed to "IDML".
 #![allow(clippy::upper_case_acronyms)]
 
-// In some circumstances, I consider if-then-panic to be more readable than
-// assert
-#![allow(clippy::if_then_panic)]
-
 // error: reached the type-length limit while instantiating std::pin::Pin...
 #![type_length_limit="3790758"]
 // error: trait bounds overflowed in Database::sync_transaction_priv
