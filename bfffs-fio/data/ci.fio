@@ -5,7 +5,7 @@ ioengine=external:target/debug/libbfffs_fio.so
 # Basic jobs settings
 bs=128k
 size=128m
-iodepth=1
+iodepth=4
 # Using threads instead of processes makes debugging easier
 thread
 # Must use end_fsync to flush write caches at the end of the write stage
@@ -15,5 +15,6 @@ create_on_open=1
 # Your pool info goes here:
 pool=testpool
 vdevs=/tmp/bfffs.img
+rw=readwrite
 
 [fio_test_file]

@@ -16,6 +16,7 @@ pub type __uint64_t = libc::c_ulong;
 pub type __intptr_t = __int64_t;
 pub type __size_t = __uint64_t;
 pub type __time_t = __int64_t;
+pub type __lwpid_t = __int32_t;
 pub type __off_t = __int64_t;
 pub type __pid_t = __int32_t;
 pub type __suseconds_t = libc::c_long;
@@ -30,6 +31,11 @@ pub type pid_t = __pid_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct pthread {
+    _unused: [u8; 0],
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct pthread_attr {
     _unused: [u8; 0],
 }
 #[repr(C)]
@@ -53,6 +59,7 @@ pub struct timeval {
     pub tv_sec:  time_t,
     pub tv_usec: suseconds_t,
 }
+pub type off_t = __off_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct rusage {
@@ -131,7 +138,36 @@ pub struct __sFILE {
     pub _flags2:      libc::c_int,
 }
 pub type FILE = __sFILE;
-pub type bool_ = libc::c_int;
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union sigval {
+    pub sival_int:  libc::c_int,
+    pub sival_ptr:  *mut libc::c_void,
+    pub sigval_int: libc::c_int,
+    pub sigval_ptr: *mut libc::c_void,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct sigevent {
+    pub sigev_notify: libc::c_int,
+    pub sigev_signo:  libc::c_int,
+    pub sigev_value:  sigval,
+    pub _sigev_un:    sigevent__bindgen_ty_1,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union sigevent__bindgen_ty_1 {
+    pub _threadid:     __lwpid_t,
+    pub _sigev_thread: sigevent__bindgen_ty_1__bindgen_ty_1,
+    pub _kevent_flags: libc::c_ushort,
+    pub __spare__:     [libc::c_long; 8usize],
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct sigevent__bindgen_ty_1__bindgen_ty_1 {
+    pub _function:  ::std::option::Option<unsafe extern "C" fn(arg1: sigval)>,
+    pub _attribute: *mut *mut pthread_attr,
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _cpuset {
@@ -205,7 +241,7 @@ pub struct zipf_state {
     pub pareto_pow:   f64,
     pub rand:         frand_state,
     pub rand_off:     u64,
-    pub disable_hash: bool_,
+    pub disable_hash: bool,
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -231,7 +267,7 @@ pub struct gauss_state {
     pub nranges:      u64,
     pub stddev:       libc::c_uint,
     pub rand_off:     libc::c_uint,
-    pub disable_hash: bool_,
+    pub disable_hash: bool,
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -338,6 +374,28 @@ extern "C" {
     ) -> libc::c_int;
 }
 pub type os_cpu_mask_t = cpuset_t;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __aiocb_private {
+    pub status:     libc::c_long,
+    pub error:      libc::c_long,
+    pub kernelinfo: *mut libc::c_void,
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct aiocb {
+    pub aio_fildes:     libc::c_int,
+    pub aio_offset:     off_t,
+    pub aio_buf:        *mut libc::c_void,
+    pub aio_nbytes:     size_t,
+    pub __spare__:      [libc::c_int; 2usize],
+    pub __spare2__:     *mut libc::c_void,
+    pub aio_lio_opcode: libc::c_int,
+    pub aio_reqprio:    libc::c_int,
+    pub _aiocb_private: __aiocb_private,
+    pub aio_sigevent:   sigevent,
+}
+pub type os_aiocb_t = aiocb;
 pub const fio_opt_type_FIO_OPT_INVALID: fio_opt_type = 0;
 pub const fio_opt_type_FIO_OPT_STR: fio_opt_type = 1;
 pub const fio_opt_type_FIO_OPT_STR_ULL: fio_opt_type = 2;
@@ -463,7 +521,7 @@ pub type workqueue_work_fn = ::std::option::Option<
     ) -> libc::c_int,
 >;
 pub type workqueue_pre_sleep_flush_fn = ::std::option::Option<
-    unsafe extern "C" fn(arg1: *mut submit_worker) -> bool_,
+    unsafe extern "C" fn(arg1: *mut submit_worker) -> bool,
 >;
 pub type workqueue_pre_sleep_fn =
     ::std::option::Option<unsafe extern "C" fn(arg1: *mut submit_worker)>;
@@ -535,7 +593,7 @@ pub struct io_u {
             td: *mut thread_data,
             arg1: *mut io_u,
             q: libc::c_int,
-            success: bool_,
+            success: bool,
         ),
     >,
     pub zbd_put_io: ::std::option::Option<
@@ -565,6 +623,8 @@ pub union io_u__bindgen_ty_2 {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union io_u__bindgen_ty_3 {
+    pub aiocb:     os_aiocb_t,
+    pub mr:        *mut ibv_mr,
     pub mmap_data: *mut libc::c_void,
 }
 pub const zbd_zoned_model_ZBD_NONE: zbd_zoned_model = 1;
@@ -795,7 +855,7 @@ pub struct io_log {
     pub filename:           *mut libc::c_char,
     pub td:                 *mut thread_data,
     pub log_type:           libc::c_uint,
-    pub disabled:           bool_,
+    pub disabled:           bool,
     pub log_offset:         libc::c_uint,
     pub log_prio:           libc::c_uint,
     pub log_gz:             libc::c_uint,
@@ -1249,7 +1309,7 @@ pub struct thread_options {
     pub percentile_precision: libc::c_uint,
     pub percentile_list: [fio_fp64_t; 20usize],
     pub read_iolog_file: *mut libc::c_char,
-    pub read_iolog_chunked: bool_,
+    pub read_iolog_chunked: bool,
     pub write_iolog_file: *mut libc::c_char,
     pub merge_blktrace_file: *mut libc::c_char,
     pub merge_blktrace_scalars: [fio_fp64_t; 20usize],
@@ -1679,6 +1739,11 @@ pub type opt_category_group = libc::c_ulong;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct fio_rwlock {
+    pub _address: u8,
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct ibv_mr {
     pub _address: u8,
 }
 #[repr(C)]

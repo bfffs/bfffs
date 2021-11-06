@@ -9,6 +9,7 @@ use std::{
     ffi::{CStr, OsStr},
     mem,
     os::unix::ffi::OsStrExt,
+    pin::Pin,
     ptr,
     slice,
     sync::{Arc, Mutex, RwLock},
@@ -18,11 +19,18 @@ use bfffs_core::{
     database::TreeID,
     device_manager::DevManager,
     fs::{FileData, Fs},
+    IoVec,
 };
-use futures::future::TryFutureExt;
+use futures::{
+    future::{Future, FutureExt, TryFutureExt},
+    stream::{futures_unordered::FuturesUnordered, StreamExt},
+};
 use lazy_static::lazy_static;
 use memoffset::offset_of;
-use tokio::runtime::{Builder, Runtime};
+use tokio::{
+    runtime::{Builder, Runtime},
+    task::JoinError,
+};
 use tracing_subscriber::EnvFilter;
 
 mod ffi;
@@ -62,6 +70,23 @@ impl flist_head {
             prev: ptr::null_mut(),
         }
     }
+}
+
+/// Like *mut io_u, but Send
+#[derive(Clone, Copy, Debug)]
+#[repr(transparent)]
+struct IoU(*mut io_u);
+
+// There's no good reason for pointers not to be Send and Sync
+unsafe impl Send for IoU {}
+unsafe impl Sync for IoU {}
+
+type BfffsIoIopResult = Result<Result<(IoU, u32), i32>, JoinError>;
+
+#[derive(Debug, Default)]
+struct BfffsIoOpsData {
+    pub futs: FuturesUnordered<Pin<Box<dyn Future<Output = BfffsIoIopResult>>>>,
+    pub ready_events: Vec<IoU>,
 }
 
 #[repr(C)]
@@ -149,9 +174,21 @@ lazy_static! {
         .build()
         .unwrap()
     );
-    static ref FS: RwLock<Option<Fs>> = RwLock::default();
+    static ref FS: RwLock<Option<Arc<Fs>>> = RwLock::default();
     static ref ROOT: RwLock<Option<FileData>> = RwLock::default();
     static ref FILES: RwLock<HashMap<libc::c_int, FileData>> = RwLock::default();
+}
+
+///
+/// # Safety
+///
+/// Caller must ensure validity of the pointer arguments
+#[no_mangle]
+pub unsafe extern "C" fn fio_bfffs_cleanup(td: *mut thread_data) {
+    if !(*td).io_ops_data.is_null() {
+        Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData);
+        (*td).io_ops_data = ptr::null_mut();
+    }
 }
 
 ///
@@ -172,27 +209,72 @@ pub unsafe extern "C" fn fio_bfffs_close(
     0
 }
 
+///
+/// # Safety
+///
+/// Caller must ensure validity of the pointer arguments
 #[no_mangle]
 pub extern "C" fn fio_bfffs_commit(_td: *mut thread_data) -> libc::c_int {
-    1
+    unimplemented!()
 }
 
+///
+/// # Safety
+///
+/// Caller must ensure validity of the pointer arguments
 #[no_mangle]
-pub extern "C" fn fio_bfffs_event(
-    _td: *mut thread_data,
-    _event: libc::c_int,
+pub unsafe extern "C" fn fio_bfffs_event(
+    td: *mut thread_data,
+    event: libc::c_int,
 ) -> *mut io_u {
-    ptr::null_mut()
+    let mut io_ops_data =
+        Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData);
+    let io_u = mem::replace(
+        &mut io_ops_data.ready_events[event as usize],
+        IoU(ptr::null_mut()),
+    );
+    assert!(!io_u.0.is_null());
+
+    Box::into_raw(io_ops_data);
+    io_u.0
 }
 
+/// Not that it's documented anywhere, but as best as I can tell fio will call
+/// .getevents() once, then call .event() n times, where n is the return value
+/// of .getevents().  .getevents should sleep until at least `min` events are
+/// ready.
+///
+/// # Safety
+///
+/// Caller must ensure validity of the pointer arguments
 #[no_mangle]
-pub extern "C" fn fio_bfffs_getevents(
-    _td: *mut thread_data,
-    _min: libc::c_uint,
+pub unsafe extern "C" fn fio_bfffs_getevents(
+    td: *mut thread_data,
+    min: libc::c_uint,
     _max: libc::c_uint,
-    _t: *const libc::timespec,
+    t: *const libc::timespec,
 ) -> libc::c_int {
-    0
+    let rt = RUNTIME.lock().unwrap();
+    let mut io_ops_data =
+        Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData);
+    assert!(t.is_null(), "timeout is unimplemented");
+    assert!(!io_ops_data.futs.is_empty());
+
+    io_ops_data.ready_events.clear();
+
+    rt.block_on(async {
+        for _ in 0..min {
+            let r = io_ops_data.futs.next().await;
+            let (io_u, retval) =
+                r.unwrap().unwrap().expect("I/O failed inside of BFFFS");
+            (*io_u.0).resid = (*io_u.0).xfer_buflen - retval as u64;
+            io_ops_data.ready_events.push(io_u);
+        }
+    });
+
+    let retval = io_ops_data.ready_events.len() as i32;
+    Box::into_raw(io_ops_data);
+    retval
 }
 
 ///
@@ -201,6 +283,10 @@ pub extern "C" fn fio_bfffs_getevents(
 /// Caller must ensure validity of the pointer arguments
 #[no_mangle]
 pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
+    let io_ops_data = BfffsIoOpsData::default();
+    let io_ops_data = Box::new(io_ops_data);
+    (*td).io_ops_data = Box::into_raw(io_ops_data) as *mut libc::c_void;
+
     let mut fs = FS.write().unwrap();
     if fs.is_none() {
         let rt = RUNTIME.lock().unwrap();
@@ -240,7 +326,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
                     let tree_id = TreeID::Fs(0);
                     let root_fs = Fs::new(adb, tree_id).await;
                     let root = root_fs.root();
-                    *fs = Some(root_fs);
+                    *fs = Some(Arc::new(root_fs));
                     *ROOT.write().unwrap() = Some(root);
                     0
                 } else {
@@ -311,13 +397,16 @@ pub unsafe extern "C" fn fio_bfffs_open(
 #[no_mangle]
 #[allow(non_upper_case_globals)]
 pub unsafe extern "C" fn fio_bfffs_queue(
-    _td: *mut thread_data,
+    td: *mut thread_data,
     io_u: *mut io_u,
 ) -> fio_q_status {
+    // TODO: don't wrap RUNTIME with a Mutex.  Use RwLock to allow concurrent
+    // access.
     let rt = RUNTIME.lock().unwrap();
-    let fs_opt = FS.read().unwrap();
-    let fs = fs_opt.as_ref().unwrap();
+    let fs = FS.read().unwrap().clone().unwrap();
     let files = FILES.read().unwrap();
+    assert!(!((*td).io_ops_data.is_null()));
+    let io_ops_data = Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData);
 
     let (ddir, fd, offset, data) = {
         let data: &[u8] = slice::from_raw_parts(
@@ -325,40 +414,52 @@ pub unsafe extern "C" fn fio_bfffs_queue(
             (*io_u).xfer_buflen as usize,
         );
         let filedesc = (*(*io_u).file).fd;
-        let fd = files.get(&filedesc).unwrap();
+        let fd = *files.get(&filedesc).unwrap();
         ((*io_u).ddir, fd, (*io_u).offset, data)
     };
 
-    rt.block_on(async {
-        match ddir {
-            fio_ddir_DDIR_READ => {
-                fs.read(fd, offset, data.len()).await.unwrap();
+    let io_u = IoU(io_u);
+    let jh = rt
+        .spawn(async move {
+            match ddir {
+                fio_ddir_DDIR_READ => {
+                    // Throw away the data
+                    fs.read(&fd, offset, data.len())
+                        .map_ok(|sglist| {
+                            (
+                                io_u,
+                                sglist.iter().map(IoVec::len).sum::<usize>()
+                                    as u32,
+                            )
+                        })
+                        .await
+                }
+                fio_ddir_DDIR_WRITE => {
+                    fs.write(&fd, offset, data, 0).map_ok(|r| (io_u, r)).await
+                }
+                fio_ddir_DDIR_SYNC => {
+                    fs.fsync(&fd).map_ok(|_| (io_u, 0u32)).await
+                }
+                _ => unimplemented!(),
             }
-            fio_ddir_DDIR_WRITE => {
-                fs.write(fd, offset, data, 0).await.unwrap();
-            }
-            fio_ddir_DDIR_SYNC => {
-                // Until we support fsync, we must sync the entire filesystem
-                fs.sync().await
-            }
-            _ => unimplemented!(),
-        }
-    });
+        })
+        .boxed();
+    io_ops_data.futs.push(jh);
 
-    // TODO: does FIO have a way to initiate but not complete commands?
-    fio_q_status_FIO_Q_COMPLETED
+    Box::into_raw(io_ops_data);
+    fio_q_status_FIO_Q_QUEUED
 }
 
 #[export_name = "ioengine"]
 pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     cancel:             None,
-    cleanup:            None,
+    cleanup:            Some(fio_bfffs_cleanup),
     close_file:         Some(fio_bfffs_close),
-    commit:             Some(fio_bfffs_commit),
+    commit:             None,
     dlhandle:           ptr::null_mut(),
     errdetails:         None,
     event:              Some(fio_bfffs_event),
-    flags:              fio_ioengine_flags_FIO_SYNCIO as i32,
+    flags:              fio_ioengine_flags_FIO_ASYNCIO_SYNC_TRIM as i32,
     get_file_size:      None,
     getevents:          Some(fio_bfffs_getevents),
     get_max_open_zones: None,
