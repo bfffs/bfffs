@@ -45,6 +45,11 @@ pub struct Cache {
 
 #[cfg_attr(test, automock)]
 impl Cache {
+    /// Get the maximum memory consumption of the cache, in bytes.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
     /// Drop all data from the cache, for testing or benchmarking purposes
     // NB: this should be called "drop", but that conflicts with
     // "std::Drop::drop"
@@ -196,7 +201,9 @@ use divbuf::{DivBuf, DivBufShared};
 // pet kcov
 #[test]
 fn debug() {
-    format!("{:?}", Cache::with_capacity(100));
+    let cache = Cache::with_capacity(100);
+    format!("{:?}", cache);
+    assert_eq!(100, cache.capacity());
     let dbs = DivBufShared::from(Vec::new());
     let entry = LruEntry{buf: Box::new(dbs), lru: None, mru: None};
     assert_eq!("LruEntry { lru: None, mru: None }", format!("{:?}", entry));

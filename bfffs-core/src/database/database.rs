@@ -261,6 +261,11 @@ pub struct Database {
 #[cfg_attr(test, allow(unused))]
 #[cfg_attr(test, automock)]
 impl Database {
+    /// Get the maximum size of bytes in the cache
+    pub fn cache_size(&self) -> usize {
+        self.inner.idml.cache_size()
+    }
+
     /// Foreground consistency check.  Prints any irregularities to stderr
     ///
     /// # Returns
@@ -727,6 +732,11 @@ impl Database {
         -> ReadWriteDataset<FSKey, FSValue<RID>>
     {
         unimplemented!()
+    }
+
+    /// Get the maximum size of the writeback cache
+    pub fn writeback_size(&self) -> usize {
+        self.inner.idml.writeback_size()
     }
 }
 

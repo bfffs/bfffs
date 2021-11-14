@@ -222,6 +222,11 @@ impl WriteBack {
         }
     }
 
+    /// How many dirty bytes will the WriteBack hold?
+    pub fn capacity(&self) -> usize {
+        (self.capacity >> 1).try_into().unwrap()
+    }
+
     /// Construct a nearly unlimited WriteBack cache.
     pub fn limitless() -> Self {
         Self::with_capacity((isize::max_value() >> 1) as usize)

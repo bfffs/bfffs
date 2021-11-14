@@ -73,6 +73,11 @@ impl<'a> IDML {
         self.writeback.borrow(size).boxed()
     }
 
+    /// Get the maximum size of bytes in the cache
+    pub fn cache_size(&self) -> usize {
+        self.cache.lock().unwrap().capacity()
+    }
+
     /// Foreground RIDT/AllocT consistency check.
     ///
     /// Checks that the RIDT and AllocT are exact inverses of each other.
@@ -422,6 +427,11 @@ impl<'a> IDML {
         labeller.serialize(&label).unwrap();
         self.ddml.write_label(labeller)
     }
+
+    /// Get the maximum size of bytes in the writeback cache
+    pub fn writeback_size(&self) -> usize {
+        self.writeback.capacity()
+    }
 }
 
 /// Private helper function for several IDML methods
@@ -606,6 +616,7 @@ struct Label {
 mock!{
     pub IDML {
         pub fn allocated(&self) -> LbaT;
+        pub fn cache_size(&self) -> usize;
         pub fn borrow_credit(&self, size: usize)
             -> Pin<Box<dyn Future<Output=Credit> + Send>>;
         pub fn check(&self) -> Pin<Box<dyn Future<Output=Result<bool, Error>>>>;
@@ -632,6 +643,7 @@ mock!{
         pub fn advance_transaction_inner(&self) -> TxgT;
         pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+        pub fn writeback_size(&self) -> usize;
     }
     impl DML for IDML {
         type Addr = RID;

@@ -811,7 +811,6 @@ root:
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
 
-
         // Create a file like this:
         // |      |======|      |======|>
         // | hole | data | hole | data |EOF
@@ -872,7 +871,6 @@ root:
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
 
-
         // Create a file like this:
         // |======|      |>
         // | data | hole |EOF
@@ -892,6 +890,33 @@ root:
 
         // SeekHole prior to the last hole in the file
         assert_eq!(Ok(4096), fs.lseek(&fd, 0, Hole).await);
+    }
+
+    /// The file ends with a data extent followed by a hole in the same record
+    #[tokio::test]
+    async fn lseek_partial_hole_at_end() {
+        use SeekWhence::Hole;
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+
+        // Create a file like this, all in one record:
+        // |======|      |>
+        // | data | hole |EOF
+        let filename = OsString::from("x");
+        let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
+        let buf = vec![42u8; 2048];
+        fs.write(&fd, 0, &buf[..], 0).await.unwrap();
+        let attr = SetAttr {
+            size: Some(4096),
+            .. Default::default()
+        };
+        fs.setattr(&fd, attr).await.unwrap();
+
+        // SeekHole in the middle of the final hole should return EOF
+        assert_eq!(Ok(4096), fs.lseek(&fd, 3072, Hole).await);
+        // SeekData in the middle of the final hole should return ENXIO
+        let r = fs.lseek(&fd, 3072, SeekWhence::Data).await;
+        assert_eq!(r, Err(libc::ENXIO));
     }
 
     #[tokio::test]
@@ -2395,6 +2420,35 @@ root:
         let sglist = fs.read(&fd, 2000, 1000).await.unwrap();
         let db = &sglist[0];
         let expected = [0u8; 1000];
+        assert_eq!(&db[..], &expected[..]);
+    }
+
+    // Like setattr_truncate, but there is a hole at the end of the file
+    #[tokio::test]
+    async fn setattr_truncate_partial_hole() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        // First create a sparse file
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut attr = SetAttr {
+            size: Some(8192),
+            .. Default::default()
+        };
+        fs.setattr(&fd, attr).await.unwrap();
+
+        // Then truncate the file partway down
+        attr.size = Some(6144);
+        fs.setattr(&fd, attr).await.unwrap();
+
+        // Now extend the file past the truncated record
+        attr.size = Some(8192);
+        fs.setattr(&fd, attr).await.unwrap();
+
+        // Finally, read the truncated record.  It should be a hole
+        let sglist = fs.read(&fd, 4096, 4096).await.unwrap();
+        let db = &sglist[0];
+        let expected = [0u8; 4096];
         assert_eq!(&db[..], &expected[..]);
     }
 

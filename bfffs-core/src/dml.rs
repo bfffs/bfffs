@@ -197,5 +197,22 @@ mod t {
         assert_eq!(zdb.len(), lsize);
         assert_eq!(compression, Compression::None);
     }
+
+    // pet grcov
+    #[test]
+    fn default() {
+        assert_eq!(Compression::None, Compression::default())
+    }
+
+    #[test]
+    fn shuffle() {
+        assert_eq!(Compression::None.shuffle(), None);
+        assert_eq!(Compression::LZ4(None).shuffle(), None);
+        assert_eq!(Compression::Zstd(None).shuffle(), None);
+        assert_eq!(Compression::LZ4(NonZeroU8::new(32)).shuffle(),
+            NonZeroU8::new(32));
+        assert_eq!(Compression::Zstd(NonZeroU8::new(35)).shuffle(),
+            NonZeroU8::new(35));
+    }
 }
 // LCOV_EXCL_STOP
