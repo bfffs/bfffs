@@ -1,4 +1,4 @@
-#! /bin/sh
+#! /bin/sh -e
 #
 # Generate a BFFFS code coverage report
 #
