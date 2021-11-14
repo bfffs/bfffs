@@ -3,7 +3,6 @@
 use futures::{
     Future,
     FutureExt,
-    TryFutureExt,
     channel::oneshot,
     task::{Context, Poll}
 };
@@ -610,32 +609,6 @@ impl VdevBlock {
         }
     }
 
-    /// Open an existing `VdevBlock`
-    ///
-    /// Returns both a new `VdevBlock` object, and a `LabelReader` that may be
-    /// used to construct other vdevs stacked on top of this one.
-    ///
-    /// * `path`    Pathname for the backing file.  It may be a device node.
-    #[cfg(test)]
-    pub async fn open<P: AsRef<Path> + 'static>(path: P)
-        -> Result<(Self, LabelReader), Error>
-    {
-        VdevLeaf::open(path)
-        .map_ok(|(leaf, label_reader)| {
-            (VdevBlock::new(leaf), label_reader)
-        }).await
-    }
-
-    #[cfg(not(test))]
-    pub async fn open<P: AsRef<Path>>(path: P)
-        -> Result<(Self, LabelReader), Error>
-    {
-        VdevLeaf::open(path)
-        .map_ok(|(leaf, label_reader)| {
-            (VdevBlock::new(leaf), label_reader)
-        }).await
-    }
-
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
@@ -775,7 +748,6 @@ mock! {
         pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn new(leaf: VdevLeaf) -> Self;
-        pub fn open<P: AsRef<Path> + 'static>(path: P) -> BoxVdevFut;
         pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;

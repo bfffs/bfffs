@@ -111,11 +111,6 @@ pub struct LabelWriter {
 }
 
 impl LabelWriter {
-    /// Which label are we writing?
-    pub fn idx(&self) -> u32 {
-        self.label
-    }
-
     /// Return the LBA at which to write this label
     pub fn lba(&self) -> LbaT {
         LbaT::from(self.label) * LABEL_LBAS

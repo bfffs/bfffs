@@ -15,7 +15,6 @@ use futures_locks::{RwLock, RwLockReadFut};
 #[cfg(test)] use mockall::mock;
 use serde_derive::{Deserialize, Serialize};
 use std::{
-    io,
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -222,12 +221,6 @@ impl<'a> IDML {
         // TODO: apply configurable writeback size
         let writeback = WriteBack::limitless();
         IDML{cache, ddml, next_rid, transaction, alloct, ridt, writeback}
-    }
-
-    pub async fn dump_trees(&self, f: &mut dyn io::Write) -> Result<(), Error>
-    {
-        self.ridt.dump(f).await?;
-        self.alloct.dump(f).await
     }
 
     /// Flush the IDML's data to disk
@@ -623,8 +616,6 @@ mock!{
         pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
         pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self;
-        pub fn dump_trees(&self, f: &mut (dyn io::Write + 'static))
-            -> Result<(), Error>;
         pub fn flush(&self, idx: Option<u32>, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
         pub fn list_closed_zones(&self)

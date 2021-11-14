@@ -29,7 +29,6 @@ pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
 /// Value type for the RIDT table.  Should not be used outside of this module
 /// except by the fanout calculator.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-#[cfg_attr(test, derive(Default))]
 pub struct RidtEntry {
     drp: DRP,
     refcount: u64
