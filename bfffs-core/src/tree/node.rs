@@ -683,7 +683,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
                         NodeData::Leaf(_) => txg
                     };
                     guard
-                };  // LCOV_EXCL_LINE   kcov false negative
+                };
                 Ok((self, child_guard, credit))
             }.boxed()
         }
@@ -795,7 +795,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
             let f2 = f.clone();
             lock_fut.and_then(move |guard| {
                 f2(guard, &dml2)
-            })  // LCOV_EXCL_LINE kcov false negative
+            })
         }).collect::<FuturesOrdered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(move |r| (self, r))
@@ -1327,7 +1327,7 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
         let v = bincode::serialize(&g.deref()).unwrap();
         let dbs = DivBufShared::from(v);
         dbs.try_const().unwrap()
-    }   // LCOV_EXCL_LINE kcov false negative
+    }
 
     fn into_owned(self) -> Box<dyn Cacheable> {
         Box::new(self)
@@ -1597,4 +1597,3 @@ fn serialize_leaf() {
 
 }
 // LCOV_EXCL_STOP
-

@@ -340,6 +340,7 @@ pub type SGListMut = Vec<IoVecMut>;
 /// be independently erased.
 pub type ZoneT = u32;
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
 use pretty_assertions::assert_eq;

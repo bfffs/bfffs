@@ -369,7 +369,7 @@ impl HTItem for Dirent {
             Some(x) => HTValue::Other(x),
             None => HTValue::None
         }
-    }   // LCOV_EXCL_LINE kcov false negative
+    }
 
     fn into_bucket(selves: Vec<Self>) -> FSValue<RID> {
         FSValue::DirEntries(selves)
@@ -383,7 +383,7 @@ impl HTItem for Dirent {
         // We generally don't know the desired ino when calling this method, so
         // just check the name
         self.name == name.as_ref()
-    }   // LCOV_EXCL_LINE kcov false negative
+    }
 }
 
 impl TryFrom<FSValue<RID>> for Dirent {
@@ -539,7 +539,7 @@ impl HTItem for ExtAttr<RID> {
             Some(x) => HTValue::Other(x),
             None => HTValue::None
         }
-    }   // LCOV_EXCL_LINE kcov false negative
+    }
 
     fn into_bucket(selves: Vec<Self>) -> FSValue<RID> {
         FSValue::ExtAttrs(selves)
@@ -602,7 +602,7 @@ impl FileType {
             FileType::Link(_) => libc::DT_LNK,
             FileType::Socket => libc::DT_SOCK,
         }
-    }   // LCOV_EXCL_LINE kcov false negative
+    }
 
     /// The file type part of the mode, as returned by stat(2)
     pub fn mode(&self) -> u16 {
@@ -615,7 +615,7 @@ impl FileType {
             FileType::Link(_) => libc::S_IFLNK,
             FileType::Socket => libc::S_IFSOCK,
         }
-    }   // LCOV_EXCL_LINE kcov false negative
+    }
 }
 
 /// BFFFS's timestamp data type.  Very close to FUSE's.
@@ -893,7 +893,7 @@ impl<A: Addr> FSValue<A> {
             None
         }
     }
-// LCOV_EXCL_END
+// LCOV_EXCL_STOP
 
     pub fn as_extent(&self) -> Option<Extent<A>> {
         if let FSValue::InlineExtent(extent) = self {

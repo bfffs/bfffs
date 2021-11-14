@@ -69,7 +69,7 @@ impl Cmd {
             Cmd::WriteSpacemap(_, _, _) => 9,
             Cmd::SyncAll => 10,
         }
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 }
 
 impl Eq for Cmd {
@@ -389,9 +389,9 @@ impl Inner {
                     let next_op = self.after_sync.pop_front().unwrap();
                     self.sched(next_op);
                 }
-            }
+            }   // LCOV_EXCL_LINE   grcov false negative
             Some(op)
-        } else {    // LCOV_EXCL_LINE   kcov false negative
+        } else {
             // Ran out of operations everywhere.  Prepare to idle
             None
         }
@@ -559,7 +559,7 @@ impl VdevBlock {
             block_op: Some(block_op),
             inner: self.inner.clone(),
             receiver
-        }   // LCOV_EXCL_LINE   kcov false negative
+        }
     }
 
     /// Asynchronously open a zone on a block device
@@ -601,7 +601,7 @@ impl VdevBlock {
             ahead: BinaryHeap::new(),
             behind: BinaryHeap::new(),
             weakself: Weak::new()
-        }));    // LCOV_EXCL_LINE   kcov false negative
+        }));
         inner.write().unwrap().weakself = Arc::downgrade(&inner);
         VdevBlock {
             inner,
@@ -730,7 +730,7 @@ impl VdevBlock {
 impl Vdev for VdevBlock {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         self.inner.read().unwrap().leaf.lba2zone(lba)
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 
     /// Returns the "best" number of operations to queue to this `VdevBlock`.  A
     /// smaller number may result in inefficient use of resources, or even
@@ -754,15 +754,15 @@ impl Vdev for VdevBlock {
 
     fn uuid(&self) -> Uuid {
         self.inner.read().unwrap().leaf.uuid()
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         self.inner.read().unwrap().leaf.zone_limits(zone)
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 
     fn zones(&self) -> ZoneT {
         self.inner.read().unwrap().leaf.zones()
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 }
 
 // LCOV_EXCL_START

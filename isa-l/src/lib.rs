@@ -236,6 +236,7 @@ pub fn gf_invert_matrix(
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
 
@@ -253,3 +254,4 @@ mod t {
         assert!(gf_invert_matrix(&input, &mut output, 2).is_err())
     }
 }
+// LCOV_EXCL_STOP

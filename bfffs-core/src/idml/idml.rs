@@ -202,7 +202,7 @@ impl<'a> IDML {
         }).map_ok(move |_| {
             #[cfg(debug_assertions)]
             ddml3.assert_clean_zone(pba.cluster, zid, txg)
-        })  // LCOV_EXCL_LINE   kcov false negative
+        })
     }
 
     pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self {
@@ -372,7 +372,7 @@ impl<'a> IDML {
                     future::try_join(ridt_fut, alloct_fut)
                     .map_ok(move |_| drp)
                 })
-            })  // LCOV_EXCL_LINE   kcov false negative
+            })
     }
 
     /// Return approximately the usable storage space in LBAs.
@@ -428,7 +428,7 @@ impl<'a> IDML {
 fn unwrap_or_enoent(r: Option<RidtEntry>)
     -> impl Future<Output=Result<RidtEntry, Error>>
 {
-    match r {   // LCOV_EXCL_LINE   kcov false negative
+    match r {
         None => future::err(Error::ENOENT),
         Some(entry) => future::ok(entry)
     }
