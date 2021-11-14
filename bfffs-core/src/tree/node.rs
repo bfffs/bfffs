@@ -99,7 +99,7 @@ impl Key for RID {
 #[cfg(test)]
 impl Key for u32 {}
 
-pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send +
+pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     Serialize + TypicalSize + 'static
 {
     /// How much allocated space does this object own, excluding the object

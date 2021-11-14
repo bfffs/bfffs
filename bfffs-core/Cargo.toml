@@ -23,7 +23,7 @@ downcast = "0.10.0"
 enum-primitive-derive = "0.2.0"
 fixedbitset = "0.1.8"
 futures = "0.3.0"
-futures-locks = { git = "http://github.com/asomers/futures-locks.git", rev = "ebf2aab" }
+futures-locks = "0.7.0"
 itertools = "0.7"
 isa-l = { path = "../isa-l" }
 lazy_static = "1.0"

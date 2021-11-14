@@ -416,10 +416,12 @@ checksum = "522de2a0fe3e380f1bc577ba0474108faf3f6b18321dbf60b3b9c39a75073377"
 
 [[package]]
 name = "futures-locks"
-version = "0.6.1-pre"
-source = "git+http://github.com/asomers/futures-locks.git?rev=ebf2aab#ebf2aabf3a775c91c5dbbdb99e12c4d8854fcac7"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3eb42d4fb72227be5778429f9ef5240a38a358925a49f05b5cf702ce7c7e558a"
 dependencies = [
- "futures",
+ "futures-channel",
+ "futures-task",
  "tokio",
 ]
 
