@@ -213,6 +213,7 @@ impl VdevFile {
     /// # Parameters
     ///
     /// -`lba`: The first LBA of the zone to erase
+    // TODO: implement erase_zone for plain files by using fspacectl()
     pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut {
         let r = if self.candelete {
             // There isn't (yet) a way to asynchronously trim, so use a
