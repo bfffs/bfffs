@@ -679,12 +679,12 @@ impl Cluster {
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {
         self.fsm.read().unwrap().allocated()
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 
     /// Assert that the given zone was clean as of the given transaction
     pub fn assert_clean_zone(&self, zone: ZoneT, txg: TxgT) {
         self.fsm.read().unwrap().assert_clean_zone(zone, txg)
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 
     /// Finish any zones that are too full for new allocations.
     ///
@@ -898,7 +898,7 @@ impl Cluster {
                     Err(_) => None,
                     Ok(None) => panic!("Tried a 0-length write?"),
                 }
-            })  // LCOV_EXCL_LINE   kcov false negative
+            })
         }).map(|(zone_id, lba, oz_fut)| {
             let wfut = vdev3.write_at(buf, zone_id, lba);
             let owfut = oz_fut.and_then(move |_| {

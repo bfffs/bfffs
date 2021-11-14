@@ -302,7 +302,7 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
         let first = {
             let mut i = self.inner.borrow_mut();
             i.data.pop_front()
-        };  // LCOV_EXCL_LINE   kcov false negative
+        };
         first.map(|x| Poll::Ready(Some(Ok(x))))
             .unwrap_or_else(|| {
                 let i = self.inner.borrow();
@@ -836,7 +836,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             };
             (parent, before, after, credit)
         })
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 
     /// Flush all in-memory Nodes to disk.
     pub async fn flush(self: Arc<Self>, txg: TxgT) -> Result<(), Error>
@@ -1097,7 +1097,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                      Tree::get_range_r(dml2, g, None, range)
                  })
         }).in_current_span()
-    }   // LCOV_EXCL_LINE kcov false negative
+    }
 
     /// Range lookup beginning in the node `guard`.  `next_guard`, if present,
     /// must be the node immediately to the right (and possibly up one or more
@@ -1184,7 +1184,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 };
                 let child_fut = child_elem.rlock(&dml2);
                 (child_fut, next_fut)
-            } // LCOV_EXCL_LINE kcov false negative
+            }
         };
         future::try_join(child_fut, next_fut)
         .and_then(move |(child_guard, next_guard)| {
@@ -1298,7 +1298,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         elem.txgs = txg..txg + 1;
         dml.repay(excess);
         future::ok(old_v)
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 
     /// Has the Tree been modified since the last time it was flushed to disk?
     pub fn is_dirty(&self) -> bool {
@@ -1984,7 +1984,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                         dml.repay(credit);
                         future::ok(()).boxed()
                     },
-                    TreePtr::None => unreachable!()
+                    TreePtr::None => unreachable!()// LCOV_EXCL_LINE unreachable
                 }
             }).collect::<FuturesUnordered<_>>()
             .try_collect::<Vec<_>>()
@@ -2323,7 +2323,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                 };
                 v.push_back(nid);
                 v
-            } else {   // LCOV_EXCL_LINE   kcov false negative
+            } else {
                 VecDeque::new()
             };
             Ok((dirty, None))
@@ -2446,7 +2446,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                     {
                         if let Ok(guard) = arc.0.try_read() {
                             assert!(node.key <= *guard.key());
-                        }
+                        }   // LCOV_EXCL_LINE   grcov false negative
                     }
                     dml2.put(*arc, Compression::None, txg)
                 }).map_ok(move |addr| {

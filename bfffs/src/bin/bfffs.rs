@@ -209,7 +209,7 @@ mod pool {
                                 }
                                 Some("raid") => builder.create_raid(&devs[..]),
                                 None => assert!(devs.is_empty()),
-                                _ => unreachable!(),
+                                _ => unreachable!(), // LCOV_EXCL_LINE
                             }
                         }
                         break;

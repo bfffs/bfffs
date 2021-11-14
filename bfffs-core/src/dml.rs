@@ -39,7 +39,7 @@ impl Compression {
                 .shuffle(blosc::ShuffleMode::Byte);
             let ctx = match self {
                 Compression::None  => {
-                    unreachable!()
+                    unreachable!()  // LCOV_EXCL_LINE
                 },
                 Compression::LZ4(typesize) => {
                     ctx0.typesize(typesize.map(usize_from_typesize))
@@ -128,6 +128,7 @@ pub trait DML: Send + Sync {
         -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
     use rand::{RngCore, SeedableRng};
@@ -197,3 +198,4 @@ mod t {
         assert_eq!(compression, Compression::None);
     }
 }
+// LCOV_EXCL_STOP

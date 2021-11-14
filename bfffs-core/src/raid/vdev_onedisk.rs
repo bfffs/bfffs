@@ -175,6 +175,7 @@ impl VdevRaidApi for VdevOneDisk {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
 
@@ -190,3 +191,4 @@ fn debug() {
 }
 
 }
+// LCOV_EXCL_STOP

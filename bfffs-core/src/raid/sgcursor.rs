@@ -41,11 +41,11 @@ impl SGCursor<'_> {
             self.iovec_idx = 0;
             self.sglist_idx += 1;
             iovec
-        } else {    // LCOV_EXCL_LINE   kcov false negative
+        } else {
             let r = Some(self.sglist[self.sglist_idx].clone());
             self.sglist_idx += 1;
             r
-        }   // LCOV_EXCL_LINE   kcov false negative
+        }
     }
 
     /// Return the length of the next contiguous segment.

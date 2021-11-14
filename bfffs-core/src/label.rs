@@ -137,7 +137,7 @@ impl LabelWriter {
             let dbs = DivBufShared::from(v);
             self.buffers.push(dbs.try_const().unwrap());
         })
-    }   // LCOV_EXCL_LINE   kcov false negative
+    }
 
     /// Consume the `LabelWriter` and return an `SGList` suitable for writing to
     /// the first sector of a disk.

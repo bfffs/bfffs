@@ -254,6 +254,7 @@ impl WriteBack {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
 use super::*;
@@ -474,3 +475,4 @@ fn strict_ordering() {
 }
 
 }
+// LCOV_EXCL_STOP

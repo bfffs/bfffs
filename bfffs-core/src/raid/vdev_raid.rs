@@ -330,7 +330,7 @@ impl VdevRaid {
         VdevRaid { chunksize, codec, locator, blockdevs, layout_algorithm,
                    optimum_queue_depth,
                    stripe_buffers: RwLock::new(BTreeMap::new()),
-                   uuid}   // LCOV_EXCL_LINE   kcov false negative
+                   uuid}
     }
 
     /// Open an existing `VdevRaid` from its component devices
@@ -437,12 +437,12 @@ impl VdevRaid {
                 let col = buf.split_to(chunk0size);
                 let disk_lba = loc.offset * self.chunksize + lbas_into_chunk;
                 (col, disk_lba)
-            } else {    // LCOV_EXCL_LINE   kcov false negative
+            } else {
                 let chunklen = cmp::min(buf.len(), col_len);
                 let col = buf.split_to(chunklen);
                 let disk_lba = loc.offset * self.chunksize;
                 (col, disk_lba)
-            };  // LCOV_EXCL_LINE   kcov false negative
+            };
             let disk = loc.disk as usize;
             if start_lbas[disk as usize] == SENTINEL {
                 // First chunk assigned to this disk
@@ -464,7 +464,7 @@ impl VdevRaid {
 
         futs.extend(multizip((self.blockdevs.iter(),
                               sglists.into_iter(),
-                              start_lbas.into_iter()))  // LCOV_EXCL_LINE   kcov false neg
+                              start_lbas.into_iter()))
             .filter(|&(_, _, lba)| lba != SENTINEL)
             .map(|(blockdev, sglist, lba)|
                 Box::pin(blockdev.readv_at(sglist, lba)) as BoxVdevFut
@@ -1014,7 +1014,7 @@ impl VdevRaidApi for VdevRaid {
                     futs.push(self.writev_at_one(&sglist, stripe_lba));
                 }
                 buf2
-            } else {  // LCOV_EXCL_LINE kcov false negative
+            } else {
                 buf
             };
             if !buf3.is_empty() {
