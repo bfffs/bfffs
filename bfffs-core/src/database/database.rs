@@ -552,6 +552,7 @@ impl Database {
     }
 
     /// See comments for `fswrite_inner`.
+    // LCOV_EXCL_START
     #[cfg(test)]
     #[doc(hidden)]
     pub fn fsread_inner(&self, tree_id: TreeID)
@@ -559,6 +560,8 @@ impl Database {
     {
         unimplemented!()
     }
+    // LCOV_EXCL_STOP
+
     fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>) -> Self
     {
         let cleaner = Cleaner::new(idml.clone(), None);
@@ -738,6 +741,7 @@ impl Database {
     /// requires that the closures's output type be named, which isn't feasible
     /// in this case.  Instead we'll let mockall mock this helper method, and
     /// manually write `MockDatabase::fswrite`.
+    // LCOV_EXCL_START
     #[cfg(test)]
     #[doc(hidden)]
     pub fn fswrite_inner(&self, tree_id: TreeID)
@@ -745,6 +749,7 @@ impl Database {
     {
         unimplemented!()
     }
+    // LCOV_EXCL_STOP
 
     /// Get the maximum size of the writeback cache
     pub fn writeback_size(&self) -> usize {
@@ -752,6 +757,7 @@ impl Database {
     }
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 impl MockDatabase {
     pub fn fsread<F, B, R>(&self, tree_id: TreeID, f: F)
@@ -780,7 +786,6 @@ impl MockDatabase {
     }
 }
 
-// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
 mod prop_cache_key {
@@ -939,6 +944,44 @@ mod database {
             db.check().await
         }).unwrap();
         assert!(!r);
+    }
+
+    #[test]
+    fn flush() {
+        const TXG: TxgT = TxgT(42);
+
+        let rt = basic_runtime();
+
+        let mut idml = IDML::default();
+        idml.expect_txg()
+            .once()
+            .returning(|| Box::pin(future::ready::<&'static TxgT>(&TXG)));
+        idml.expect_flush()
+            .once()
+            .with(eq(None), eq(TxgT::from(42)))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+
+        let forest = Tree::default();
+
+        rt.block_on(async {
+            let db = Database::new(Arc::new(idml), forest);
+            Database::flush(&db.inner).await
+        }).unwrap();
+    }
+
+    /// Flushing should be a no-op when there is no dirty data.
+    #[test]
+    fn flush_empty() {
+        let idml = IDML::default();
+        let forest = Tree::default();
+
+        let rt = basic_runtime();
+
+        rt.block_on(async {
+            let db = Database::new(Arc::new(idml), forest);
+            db.inner.dirty.store(false, Ordering::Relaxed);
+            Database::flush(&db.inner).await
+        }).unwrap();
     }
 
     #[test]

@@ -275,4 +275,8 @@ mod t {
             db.shutdown().await
         });
     }
+
+    // TODO: add a test that Database::flush gets called periodically.  Verify
+    // by writing some data, then checking the size of the writeback cache until
+    // it goes to zero.
 }
