@@ -24,6 +24,7 @@ cfg_if! {
         mod tree_mock;
         pub use self::tree::MockRangeQuery as RangeQuery;
         pub use self::tree_mock::MockTree as Tree;
+        pub use self::tree_mock::OPEN_MTX;
     } else {
         pub use self::tree::RangeQuery;
         pub use self::tree::Tree;

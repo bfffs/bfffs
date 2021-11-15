@@ -176,6 +176,21 @@ impl Inner {
         Inner{dirty, fs_trees, idml, forest: Arc::new(forest), propcache}
     }
 
+    fn new_filesystem(
+        inner: &Arc<Inner>,
+        tree_id: TreeID,
+        tod: TreeOnDisk<RID>)
+    -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue<RID>>>, Error>> + Send
+    {
+        let idml2 = inner.idml.clone();
+        let tree = ITree::<FSKey, FSValue<RID>>::open(idml2, false, tod);
+        let atree = Arc::new(tree);
+        let atree2 = atree.clone();
+        inner.fs_trees.with_write(move |mut wguard| {
+            future::ready(wguard.insert(tree_id, atree2))
+        }).map(|_| Ok(atree))
+    }
+
     // Must be called from within a Tokio executor context
     fn open_filesystem(inner: &Arc<Inner>, tree_id: TreeID)
         -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue<RID>>>, Error>> + Send
@@ -187,15 +202,12 @@ impl Inner {
                 Some(fs) => Ok(fs.clone()),
                 None => {
                     drop(rguard);
-                    let tod = inner2.forest.get(tree_id).await?;
-                    let idml2 = inner2.idml.clone();
-                    let tree = ITree::open(idml2, false, tod.unwrap());
-                    let atree = Arc::new(tree);
-                    let atree2 = atree.clone();
-                    inner2.fs_trees.with_write(move |mut wguard| {
-                        future::ready(wguard.insert(tree_id, atree2))
-                    }).await;
-                    Ok(atree)
+                    match inner2.forest.get(tree_id).await? {
+                        Some(tod) => {
+                            Inner::new_filesystem(&inner2, tree_id, tod).await
+                        },
+                        None => Err(Error::ENOENT)
+                    }
                 }
             }
         }
@@ -300,8 +312,8 @@ impl Database {
     fn check_forest(&self) -> impl Future<Output=Result<bool, Error>> {
         let inner2 = self.inner.clone();
         self.inner.forest.range(..)
-        .try_fold(true, move |passed, (tree_id, _)| {
-            Inner::open_filesystem(&inner2, tree_id)
+        .try_fold(true, move |passed, (tree_id, tod)| {
+            Inner::new_filesystem(&inner2, tree_id, tod)
             .and_then(move |tree| tree.check())
             .map_ok(move |r| r && passed)
         })
@@ -785,15 +797,148 @@ mod prop_cache_key {
 
 mod database {
     use super::super::*;
-    use crate::util::basic_runtime;
-    use futures::future;
+    use crate::{
+        tree::{OPEN_MTX, RangeQuery},
+        util::basic_runtime
+    };
+    use futures::{
+        task::Poll,
+        future
+    };
     use mockall::{Sequence, predicate::*};
+    use std::ops::RangeFull;
 
     // pet kcov
     #[test]
     fn debug() {
         let label = Label{forest: TreeOnDisk::default()};
         format!("{:?}", label);
+    }
+
+    #[test]
+    fn check_ok() {
+        let _guard = OPEN_MTX.lock().unwrap();
+
+        let rt = basic_runtime();
+        let tree_id = TreeID::Fs(42);
+        let mut seq = Sequence::new();
+
+        let mut fs_tree = Tree::default();
+        fs_tree.expect_check()
+            .returning(|| Ok(true));
+        let ctx = ITree::<FSKey, FSValue<RID>>::open_context();
+        ctx.expect()
+            .once()
+            .return_once(|_, _, _| fs_tree);
+        let mut idml = IDML::default();
+        idml.expect_check()
+            .once()
+            .returning(|| Box::pin(future::ok::<bool, Error>(true)));
+
+        let tod = TreeOnDisk::default();
+        let mut rq = RangeQuery::default();
+        rq.expect_poll_next()
+            .once()
+            .in_sequence(&mut seq)
+            .return_const(Some(Ok((tree_id, tod))));
+        rq.expect_poll_next()
+            .once()
+            .in_sequence(&mut seq)
+            .return_const(Poll::Ready(None));
+        let mut forest = Tree::default();
+        forest.expect_range()
+            .once()
+            .return_once(|_: RangeFull| rq);
+
+        let r = rt.block_on(async {
+            let db = Database::new(Arc::new(idml), forest);
+            db.check().await
+        }).unwrap();
+        assert!(r);
+    }
+
+    #[test]
+    fn check_idml_fails() {
+        let _guard = OPEN_MTX.lock().unwrap();
+
+        let rt = basic_runtime();
+        let tree_id = TreeID::Fs(42);
+        let mut seq = Sequence::new();
+
+        let mut fs_tree = Tree::default();
+        fs_tree.expect_check()
+            .returning(|| Ok(true));
+        let ctx = ITree::<FSKey, FSValue<RID>>::open_context();
+        ctx.expect()
+            .once()
+            .return_once(|_, _, _| fs_tree);
+        let mut idml = IDML::default();
+        idml.expect_check()
+            .once()
+            .returning(|| Box::pin(future::ok::<bool, Error>(false)));
+
+        let tod = TreeOnDisk::default();
+        let mut rq = RangeQuery::default();
+        rq.expect_poll_next()
+            .once()
+            .in_sequence(&mut seq)
+            .return_const(Some(Ok((tree_id, tod))));
+        rq.expect_poll_next()
+            .once()
+            .in_sequence(&mut seq)
+            .return_const(Poll::Ready(None));
+        let mut forest = Tree::default();
+        forest.expect_range()
+            .once()
+            .return_once(|_: RangeFull| rq);
+
+        let r = rt.block_on(async {
+            let db = Database::new(Arc::new(idml), forest);
+            db.check().await
+        }).unwrap();
+        assert!(!r);
+    }
+
+    #[test]
+    fn check_tree_fails() {
+        let _guard = OPEN_MTX.lock().unwrap();
+
+        let rt = basic_runtime();
+        let tree_id = TreeID::Fs(42);
+        let mut seq = Sequence::new();
+
+        let mut fs_tree = Tree::default();
+        fs_tree.expect_check()
+            .returning(|| Ok(false));
+        let ctx = ITree::<FSKey, FSValue<RID>>::open_context();
+        ctx.expect()
+            .once()
+            .return_once(|_, _, _| fs_tree);
+        let mut idml = IDML::default();
+        idml.expect_check()
+            .once()
+            .returning(|| Box::pin(future::ok::<bool, Error>(true)));
+
+        let tod = TreeOnDisk::default();
+        let mut rq = RangeQuery::default();
+        rq.expect_poll_next()
+            .once()
+            .in_sequence(&mut seq)
+            .return_const(Some(Ok((tree_id, tod))));
+        rq.expect_poll_next()
+            .once()
+            .in_sequence(&mut seq)
+            .return_const(Poll::Ready(None));
+        let mut forest = Tree::default();
+        forest.expect_range()
+            .once()
+            .return_once(|_: RangeFull| rq);
+
+        let r = rt.block_on(async {
+            let db = Database::new(Arc::new(idml), forest);
+            db.check().await
+        }).unwrap();
+        assert!(!r);
     }
 
     #[test]

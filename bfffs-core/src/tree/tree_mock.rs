@@ -11,6 +11,7 @@ use futures::{
     Future,
     Stream
 };
+use lazy_static::lazy_static;
 use mockall::mock;
 use std::{
     borrow::Borrow,
@@ -18,7 +19,7 @@ use std::{
     io,
     ops::{Range, RangeBounds},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 
@@ -37,6 +38,10 @@ mock! {
         fn poll_next<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
             -> Poll<Option<Result<(K, V), Error>>>;
     }
+}
+
+lazy_static! {
+    pub static ref OPEN_MTX: Mutex<()> = Mutex::new(());
 }
 
 mock! {
