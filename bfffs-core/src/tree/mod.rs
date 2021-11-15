@@ -90,8 +90,9 @@ mod t {
     // pet kcov
     #[test]
     fn debug() {
+        let cr = CreditRequirements{insert: 0, range_delete: 0, remove: 0};
         let tod = TreeOnDisk::<RID>::default();
-        format!("{:?}", tod);
+        format!("{:?} {:?}", cr, tod);
     }
 }
 // LCOV_EXCL_STOP

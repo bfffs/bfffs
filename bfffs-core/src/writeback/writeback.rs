@@ -265,6 +265,13 @@ mod t {
 use super::*;
 use futures_test::task::noop_context;
 
+/// pet grcov
+#[test]
+fn debug() {
+    let wb = WriteBack::with_capacity(1000);
+    format!("{:?}", wb);
+}
+
 /// A borrow must sleep, but abandon his loan application (drops his future)
 /// before being awakened.  This might happen in production if we ever support
 /// I/O cancellation.
