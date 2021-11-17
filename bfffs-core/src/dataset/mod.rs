@@ -39,7 +39,6 @@ pub type ITree<K, V> = Tree<RID, IDML, K, V>;
 
 /// A Dataset that can be read from
 pub trait ReadDataset<K: Key, V: Value> {
-    fn credit_requirements(&self) -> CreditRequirements;
     fn get(&self, k: K)
         -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
 

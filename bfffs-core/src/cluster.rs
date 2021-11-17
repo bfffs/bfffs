@@ -534,7 +534,7 @@ impl Display for FreeSpaceMap {
                     cmp::max(z.txgs.start, z.txgs.end)
                 }.into()
             }).max()
-            .unwrap());
+            .unwrap_or(0));
 
         // First print the header
         writeln!(f, "FreeSpaceMap: {} Zones: {} Closed, {} Empty, {} Open",

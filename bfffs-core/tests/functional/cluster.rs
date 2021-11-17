@@ -64,6 +64,20 @@ mod persistence {
         (rt, cluster, tempdir, fname)
     }
 
+    // No need to test dumping non-empty Clusters here.  That's handled by
+    // Cluster's unit tests.
+    #[rstest]
+    fn dump_empty(objects: (Runtime, Cluster, TempDir, String)) {
+        let (_rt, cluster, _tempdir, _path) = objects;
+        let dumped = cluster.dump_fsm();
+        assert_eq!(dumped,
+"FreeSpaceMap: 2 Zones: 0 Closed, 2 Empty, 0 Open
+ Zone | TXG |                              Space                               |
+------|-----|------------------------------------------------------------------|
+    0 |  -  |                                                                  |
+");
+    }
+
     // Test Cluster::open
     #[rstest]
     fn open(objects: (Runtime, Cluster, TempDir, String)) {

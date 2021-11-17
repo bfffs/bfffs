@@ -4,6 +4,8 @@
 /// mounting
 mod device_manager {
     use bfffs_core::{
+        Error,
+        Uuid,
         database::*,
         device_manager::*,
         cache::*,
@@ -23,7 +25,9 @@ mod device_manager {
 
     type Harness = (Runtime, DevManager, Vec<String>, TempDir);
 
-    fn harness(n: i16, k: i16, f: i16) -> Harness {
+    fn harness(n: i16, k: i16, f: i16, cs: Option<usize>, wb: Option<usize>)
+        -> Harness
+    {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_io()
             .enable_time()
@@ -49,14 +53,20 @@ mod device_manager {
             let db = Database::create(idml);
             db.sync_transaction().await
         }).unwrap();
-        let dev_manager = DevManager::default();
+        let mut dev_manager = DevManager::default();
+        if let Some(cs) = cs {
+            dev_manager.cache_size(cs);
+        }
+        if let Some(wb) = wb {
+            dev_manager.writeback_size(wb);
+        }
         (rt, dev_manager, pathsclone, tempdir)
     }
 
     #[template]
     #[rstest(h,
-             case(harness(1, 1, 0)),     // Single-disk configuration
-             case(harness(3, 3, 1)),     // RAID configuration
+             case(harness(1, 1, 0, None, None)),    // Single-disk configuration
+             case(harness(3, 3, 1, None, None)),    // RAID configuration
      )]
     fn all_configs(h: Harness) {}
 
@@ -64,6 +74,16 @@ mod device_manager {
     #[apply(all_configs)]
     fn empty(h: Harness) {
         assert!(h.1.importable_pools().is_empty());
+    }
+
+    #[rstest(h, case(harness(1, 1, 0, Some(100_000_000), None)))]
+    fn cache_size(h: Harness) {
+        let (rt, dm, paths, _tempdir) = h;
+        let db = rt.block_on(async move {
+            dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
+            dm.import_by_name("test_device_manager").await
+        }).unwrap();
+        assert_eq!(db.cache_size(), 100_000_000);
     }
 
     /// Import a single pool by its name.  Try both single-disk and raid pools
@@ -78,6 +98,18 @@ mod device_manager {
         })
     }
 
+    /// Fail to import a nonexistent pool by name
+    #[rstest(h, case(harness(1, 1, 0, None, None)))]
+    fn import_by_name_enoent(h: Harness) {
+        let (rt, dm, paths, _tempdir) = h;
+        let e = rt.block_on(async move {
+            dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
+            dm.import_by_name("does_not_exist").await
+        }).err().unwrap();
+        assert_eq!(e, Error::ENOENT);
+    }
+
+
     /// Import a single pool by its UUID
     #[apply(all_configs)]
     fn import_by_uuid(h: Harness) {
@@ -90,6 +122,17 @@ mod device_manager {
             assert_eq!(name, "test_device_manager");
             dm.import_by_uuid(uuid).await.unwrap();
         });
+    }
+
+    /// Fail to import a nonexistent pool by UUID
+    #[rstest(h, case(harness(1, 1, 0, None, None)))]
+    fn import_by_uuid_enoent(h: Harness) {
+        let (rt, dm, paths, _tempdir) = h;
+        let e = rt.block_on(async move {
+            dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
+            dm.import_by_uuid(Uuid::new_v4()).await
+        }).err().unwrap();
+        assert_eq!(e, Error::ENOENT);
     }
 
     /// DeviceManager::import_clusters on a single pool
@@ -106,4 +149,26 @@ mod device_manager {
         }).unwrap();
         assert_eq!(clusters.len(), 1);
     }
+
+    /// DeviceManager::import_clusters for a nonexistent pool
+    #[rstest(h, case(harness(1, 1, 0, None, None)))]
+    fn import_clusters_enoent(h: Harness) {
+        let (rt, dm, paths, _tempdir) = h;
+        let e = rt.block_on(async move {
+            dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
+            dm.import_clusters(Uuid::new_v4()).await
+        }).err().unwrap();
+        assert_eq!(e, Error::ENOENT);
+    }
+
+    #[rstest(h, case(harness(1, 1, 0, None, Some(100_000_000))))]
+    fn writeback_size(h: Harness) {
+        let (rt, dm, paths, _tempdir) = h;
+        let db = rt.block_on(async move {
+            dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
+            dm.import_by_name("test_device_manager").await
+        }).unwrap();
+        assert_eq!(db.writeback_size(), 100_000_000);
+    }
+
 }

@@ -222,6 +222,11 @@ impl WriteBack {
         }
     }
 
+    /// How many dirty bytes will the WriteBack hold?
+    pub fn capacity(&self) -> usize {
+        (self.capacity >> 1).try_into().unwrap()
+    }
+
     /// Construct a nearly unlimited WriteBack cache.
     pub fn limitless() -> Self {
         Self::with_capacity((isize::max_value() >> 1) as usize)
@@ -259,6 +264,13 @@ impl WriteBack {
 mod t {
 use super::*;
 use futures_test::task::noop_context;
+
+/// pet grcov
+#[test]
+fn debug() {
+    let wb = WriteBack::with_capacity(1000);
+    format!("{:?}", wb);
+}
 
 /// A borrow must sleep, but abandon his loan application (drops his future)
 /// before being awakened.  This might happen in production if we ever support

@@ -2,9 +2,8 @@
 // LCOV_EXCL_START
 
 use crate::{
-    dml::Compression,
     idml::IDML,
-    tree::{CreditRequirements, Key, Value},
+    tree::{Key, Value},
     types::*,
     writeback::Credit
 };
@@ -30,7 +29,6 @@ mock! {
         pub fn size(&self) -> LbaT;
     }
     impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
-        fn credit_requirements(&self) -> CreditRequirements;
         fn get(&self, k: K)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
         fn get_blob(&self, rid: RID)
@@ -47,7 +45,6 @@ mock! {
         where K: Key,
               V: Value
     {
-        pub fn allocated(&self) -> LbaT;
         pub fn borrow_credit(&self, _size: usize)
             -> impl Future<Output=Credit> + Send;
         pub fn delete_blob(&self, rid: RID)
@@ -58,8 +55,6 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>;
         pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>, txg: TxgT,
             credit: Credit) -> ReadWriteDataset<K, V>;
-        pub fn put_blob(&self, dbs: DivBufShared, compression: Compression)
-            -> Pin<Box<dyn Future<Output=Result<RID, Error>> + Send>>;
         pub fn range_delete<R, T>(&self, range: R)
             -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
             where K: Borrow<T>,
@@ -75,7 +70,6 @@ mock! {
         pub fn size(&self) -> LbaT;
     }
     impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDataset<K, V> {
-        fn credit_requirements(&self) -> CreditRequirements;
         fn get(&self, k: K)
             -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
         fn get_blob(&self, rid: RID)

@@ -18,7 +18,7 @@ use nix::libc::{c_int, off_t};
 use num_traits::FromPrimitive;
 use serde_derive::{Deserialize, Serialize};
 use std::{
-    borrow::{Borrow, BorrowMut},
+    borrow::Borrow,
     fs::OpenOptions,
     io,
     mem::{self, MaybeUninit},
@@ -102,29 +102,6 @@ pub struct VdevFile {
     uuid:           Uuid,
     /// Does the underlying file or device support delete-like operations?
     candelete:      bool
-}
-
-/// Tokio-File requires boxed `DivBufs`, but the upper layers of BFFFS don't.
-/// Take care of the mismatch here, by wrapping `DivBuf` in a new struct
-struct IoVecContainer(IoVec);
-impl Borrow<[u8]> for IoVecContainer {
-    fn borrow(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
-
-/// Tokio-File requires boxed `DivBufMuts`, but the upper layers of BFFFS don't.
-/// Take care of the mismatch here, by wrapping `DivBufMut` in a new struct
-struct IoVecMutContainer(IoVecMut);
-impl Borrow<[u8]> for IoVecMutContainer {
-    fn borrow(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
-impl BorrowMut<[u8]> for IoVecMutContainer {
-    fn borrow_mut(&mut self) -> &mut [u8] {
-        self.0.as_mut()
-    }
 }
 
 impl Vdev for VdevFile {
@@ -236,6 +213,7 @@ impl VdevFile {
     /// # Parameters
     ///
     /// -`lba`: The first LBA of the zone to erase
+    // TODO: implement erase_zone for plain files by using fspacectl()
     pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut {
         let r = if self.candelete {
             // There isn't (yet) a way to asynchronously trim, so use a

@@ -91,7 +91,7 @@ impl TryFrom<&str> for Property {
                             65_536 => Ok(Property::RecordSize(16)),
                             131_072 => Ok(Property::RecordSize(17)),
                             262_144 => Ok(Property::RecordSize(18)),
-                            524_388 => Ok(Property::RecordSize(19)),
+                            524_288 => Ok(Property::RecordSize(19)),
                             1_048_776 => Ok(Property::RecordSize(20)),
                             _ => Err(Error::EINVAL)
                         }
@@ -141,6 +141,7 @@ pub enum PropertySource {
     Local = 2,
 }
 
+// LCOV_EXCL_START
 #[cfg(test)]
 mod t {
 
@@ -159,10 +160,25 @@ fn property_try_from() {
     assert_eq!(Ok(Property::RecordSize(12)),
                Property::try_from("record_size=4096"));
     assert_eq!(Ok(Property::RecordSize(13)),
-               Property::try_from("record_size=8192"));
+        Property::try_from("record_size=8192"));
+    assert_eq!(Ok(Property::RecordSize(14)),
+        Property::try_from("record_size=16384"));
+    assert_eq!(Ok(Property::RecordSize(15)),
+        Property::try_from("record_size=32768"));
+    assert_eq!(Ok(Property::RecordSize(16)),
+        Property::try_from("record_size=65536"));
+    assert_eq!(Ok(Property::RecordSize(17)),
+        Property::try_from("record_size=131072"));
+    assert_eq!(Ok(Property::RecordSize(18)),
+        Property::try_from("record_size=262144"));
+    assert_eq!(Ok(Property::RecordSize(19)),
+        Property::try_from("record_size=524288"));
+    assert_eq!(Ok(Property::RecordSize(20)),
+        Property::try_from("record_size=1048776"));
     assert_eq!(Err(Error::EINVAL), Property::try_from("record_size=12"));
     assert_eq!(Err(Error::EINVAL), Property::try_from("record_size=true"));
     assert_eq!(Err(Error::EINVAL), Property::try_from("record_size"));
 }
 
 }
+// LCOV_EXCL_STOP

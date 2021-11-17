@@ -1,7 +1,7 @@
 // vim: tw=80
 
 use crate::{
-    dml::{Compression, DML},
+    dml::DML,
     idml::IDML,
     tree::{CreditRequirements, Key, Value},
     types::*,
@@ -27,10 +27,6 @@ struct Dataset<K: Key, V: Value>  {
 impl<K: Key, V: Value> Dataset<K, V> {
     fn allocated(&self) -> LbaT {
         self.idml.allocated()
-    }
-
-    fn credit_requirements(&self) -> CreditRequirements {
-        self.tree.credit_requirements()
     }
 
     fn delete_blob(&self, rid: RID, txg: TxgT)
@@ -64,13 +60,6 @@ impl<K: Key, V: Value> Dataset<K, V> {
 
     fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>) -> Self {
         Dataset{idml, tree}
-    }
-
-    /// Write directly to the IDML, bypassing the Tree
-    fn put_blob(&self, dbs: DivBufShared, compression: Compression, txg: TxgT)
-        -> impl Future<Output=Result<RID, Error>> + Send
-    {
-        self.idml.put(dbs, compression, txg)
     }
 
     #[cfg(not(test))]
@@ -143,10 +132,6 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
 }
 
 impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
-    fn credit_requirements(&self) -> CreditRequirements {
-        self.dataset.credit_requirements()
-    }
-
     fn get(&self, k: K)
         -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
     {
@@ -178,10 +163,6 @@ pub struct ReadWriteDataset<K: Key, V: Value>  {
 }
 
 impl<K: Key, V: Value> ReadWriteDataset<K, V> {
-    pub fn allocated(&self) -> LbaT {
-        self.dataset.allocated()
-    }
-
     pub fn delete_blob(&self, rid: RID)
         -> impl Future<Output=Result<(), Error>> + Send
     {
@@ -211,13 +192,6 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
         }
     }
 
-    /// Write directly to the IDML, bypassing the Tree
-    pub fn put_blob(&self, dbs: DivBufShared, compression: Compression)
-        -> impl Future<Output=Result<RID, Error>> + Send
-    {
-        self.dataset.put_blob(dbs, compression, self.txg)
-    }
-
     pub fn range_delete<R, T>(&self, range: R)
         -> impl Future<Output=Result<(), Error>> + Send
         where K: Borrow<T>,
@@ -243,10 +217,6 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
 }
 
 impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDataset<K, V> {
-    fn credit_requirements(&self) -> CreditRequirements {
-        self.dataset.credit_requirements()
-    }
-
     fn get(&self, k: K)
         -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
     {

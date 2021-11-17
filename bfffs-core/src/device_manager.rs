@@ -5,9 +5,11 @@ use crate::vdev::Vdev;
 use crate::{Error, Uuid, cache, database, ddml, idml, label, pool, raid};
 use futures::{
     Future,
+    FutureExt,
     StreamExt,
     TryFutureExt,
     TryStreamExt,
+    future,
     stream::{self, FuturesOrdered},
 };
 use std::{
@@ -73,7 +75,6 @@ impl DevManager {
     }
 
     /// Import a pool by its UUID
-    // TODO: handle the ENOENT case
     pub async fn import_by_uuid(&self, uuid: Uuid)
         -> Result<database::Database, Error>
     {
@@ -83,7 +84,7 @@ impl DevManager {
     /// Import a pool that is already known to exist
     async fn import(&self, uuid: Uuid) -> Result<database::Database, Error>
     {
-        let (_pool, raids, mut leaves) = self.open_labels(uuid);
+        let (_pool, raids, mut leaves) = self.open_labels(uuid)?;
         let combined_clusters = raids.into_iter()
         .map(move |raid| {
             let leaf_paths = leaves.remove(&raid.uuid()).unwrap();
@@ -106,7 +107,10 @@ impl DevManager {
     pub fn import_clusters(&self, uuid: Uuid)
         -> impl Future<Output=Result<Vec<Cluster>, Error>>
     {
-        let (_pool, raids, mut leaves) = self.open_labels(uuid);
+        let (_pool, raids, mut leaves) = match self.open_labels(uuid) {
+            Ok((p, r, l)) => (p, r, l),
+            Err(e) => return future::err(e).boxed()
+        };
         raids.into_iter()
         .map(move |raid| {
             let leaf_paths = leaves.remove(&raid.uuid()).unwrap();
@@ -114,6 +118,7 @@ impl DevManager {
             .map_ok(|(cluster, _reader)| cluster)
         }).collect::<FuturesOrdered<_>>()
         .try_collect::<Vec<_>>()
+        .boxed()
     }
 
     /// List every pool that hasn't been imported, but can be
@@ -137,21 +142,26 @@ impl DevManager {
     }
 
     fn open_labels(&self, uuid: Uuid)
-        -> (pool::Label, Vec<raid::Label>, BTreeMap<Uuid, Vec<PathBuf>>)
+        -> Result<
+            (pool::Label, Vec<raid::Label>, BTreeMap<Uuid, Vec<PathBuf>>),
+            Error
+        >
     {
         let mut inner = self.inner.lock().unwrap();
-        let pool = inner.pools.remove(&uuid).unwrap();
-        let raids = pool.children.iter()
-            .map(|child_uuid| inner.raids.remove(child_uuid).unwrap())
-            .collect::<Vec<_>>();
-        let leaves = raids.iter().map(|raid| {
-            let leaves = raid.iter_children().map(|uuid| {
-                inner.leaves.remove(uuid).unwrap()
-            }).collect::<Vec<_>>();
-            (raid.uuid(), leaves)
-        }).collect::<BTreeMap<_, _>>();
-        // Drop the self.inner mutex
-        (pool, raids, leaves)
+        inner.pools.remove(&uuid)
+        .map(|pool| {
+            let raids = pool.children.iter()
+                .map(|child_uuid| inner.raids.remove(child_uuid).unwrap())
+                .collect::<Vec<_>>();
+            let leaves = raids.iter().map(|raid| {
+                let leaves = raid.iter_children().map(|uuid| {
+                    inner.leaves.remove(uuid).unwrap()
+                }).collect::<Vec<_>>();
+                (raid.uuid(), leaves)
+            }).collect::<BTreeMap<_, _>>();
+            // Drop the self.inner mutex
+            (pool, raids, leaves)
+        }).ok_or(Error::ENOENT)
     }
 
     fn open_vdev_blocks(leaf_paths: Vec<PathBuf>)

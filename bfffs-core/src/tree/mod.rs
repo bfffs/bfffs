@@ -24,6 +24,7 @@ cfg_if! {
         mod tree_mock;
         pub use self::tree::MockRangeQuery as RangeQuery;
         pub use self::tree_mock::MockTree as Tree;
+        pub use self::tree_mock::OPEN_MTX;
     } else {
         pub use self::tree::RangeQuery;
         pub use self::tree::Tree;
@@ -89,8 +90,9 @@ mod t {
     // pet kcov
     #[test]
     fn debug() {
+        let cr = CreditRequirements{insert: 0, range_delete: 0, remove: 0};
         let tod = TreeOnDisk::<RID>::default();
-        format!("{:?}", tod);
+        format!("{:?} {:?}", cr, tod);
     }
 }
 // LCOV_EXCL_STOP
