@@ -1342,8 +1342,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.11.0"
-source = "git+https://github.com/tokio-rs/tokio?rev=957ed3e#957ed3eac07222a2d86ccfde8f29f29599f6f563"
+version = "1.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70e992e41e0d2fb9f755b37446f20900f64446ef54874f40a60c78f021ac6144"
 dependencies = [
  "autocfg",
  "libc",
@@ -1358,8 +1359,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-file"
-version = "0.6.0"
-source = "git+http://github.com/asomers/tokio-file.git?rev=138c515#138c5153d7b586393fe32c5333c4410771c3b943"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70efcb13b662861e133d8ae584c01d645ab6e175e3fc294e6491231e086ee18b"
 dependencies = [
  "futures",
  "mio",
@@ -1370,8 +1372,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "1.3.0"
-source = "git+https://github.com/tokio-rs/tokio?rev=957ed3e#957ed3eac07222a2d86ccfde8f29f29599f6f563"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9efc1aba077437943f7515666aa2b882dfabfbfdf89c819ea75a8d6e9eaba5e"
 dependencies = [
  "proc-macro2",
  "quote",

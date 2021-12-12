@@ -9,5 +9,4 @@ lto = true
 members = ["bfffs-core", "bfffs-fio", "bfffs", "isa-l"]
 
 [patch.crates-io]
-tokio = { git = "https://github.com/tokio-rs/tokio", rev = "957ed3e"  }
 nix = { git = "https://github.com/asomers/nix.git", rev = "2e37293877b97eae42b1ec06a09e437b96b69c07" }
