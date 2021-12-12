@@ -38,6 +38,7 @@ mock! {
             -> Result<DivBuf, i32>;
         pub async fn getextattrlen(&self, fd: &FileData, ns: ExtAttrNamespace,
             name: &OsStr) -> Result<u32, i32>;
+        pub async fn ilookup(&self, ino: u64) -> Result<FileData, i32>;
         pub async fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
             -> Result<(), i32>;
         pub async fn lookup<'a>(&self, grandparent: Option<&'a FileData>,

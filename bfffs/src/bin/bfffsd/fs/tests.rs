@@ -1182,6 +1182,67 @@ mod lookup {
         assert_eq!(lookup_count, 2);
     }
 
+    /// The NFS server will sometimes lookup "." before doing a lookup for the
+    /// directory itself.
+    #[test]
+    fn dot_uncached() {
+        let parent = 42;
+        let ino = 43;
+        //let name = OsStr::from_bytes(b"emptydir");
+        let dot = OsStr::from_bytes(b".");
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o755;
+
+        let request = Request::default();
+
+        let mut fusefs = make_mock_fs();
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
+            .times(1)
+            .return_const(Ok(GetAttr {
+                ino,
+                size: 2,
+                blocks: 0,
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
+                mode: Mode(mode | libc::S_IFDIR),
+                nlink: 2,
+                uid,
+                gid,
+                rdev: 0,
+                blksize: 0,
+                flags: 0,
+            }));
+        fusefs
+            .fs
+            .expect_ilookup()
+            .times(1)
+            .with(predicate::eq(ino))
+            .returning(move |_| Ok(FileData::new_for_tests(Some(1), ino)));
+
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(None, parent));
+
+        let reply = fusefs
+            .lookup(request, ino, dot)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.attr.ino, ino);
+        assert_eq!(reply.attr.nlink, 2);
+        let lookup_count =
+            fusefs.files.lock().unwrap().get(&ino).unwrap().lookup_count;
+        assert_eq!(lookup_count, 1);
+    }
+
     /// Looking up ".." increments the parent's lookup count
     #[test]
     fn dotdot() {
