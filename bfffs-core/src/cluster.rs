@@ -246,14 +246,13 @@ impl<'a> FreeSpaceMap {
 
     /// Find the first Empty zone
     fn find_empty(&self) -> Option<ZoneT> {
-        self.empty_zones.iter().next().cloned()
-            .or_else(|| {
-                if (self.zones.len() as ZoneT) < self.total_zones {
-                    Some(self.zones.len() as ZoneT)
-                } else {
-                    None
-                }
-            })
+        self.empty_zones.iter().next().cloned().or({
+            if (self.zones.len() as ZoneT) < self.total_zones {
+                Some(self.zones.len() as ZoneT)
+            } else {
+                None
+            }
+        })
     }
 
     /// Mark the Zone as closed.  `txg` is the current transaction group

@@ -180,8 +180,7 @@ impl Error {
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         e.raw_os_error()
-            .map(Error::from_i32)
-            .flatten()
+            .and_then(Error::from_i32)
             .unwrap_or(Error::EUNKNOWN)
     }
 }

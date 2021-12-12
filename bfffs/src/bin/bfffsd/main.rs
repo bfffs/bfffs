@@ -108,7 +108,7 @@ impl Bfffsd {
         // Unconditionally disable the kernel's buffer cache; BFFFS has its own
         mount_opts.custom_options("direct_io");
         for o in cli.options.iter() {
-            if let Some((name, value)) = o.split_once("=") {
+            if let Some((name, value)) = o.split_once('=') {
                 if name == "cache_size" {
                     let v = value.parse().unwrap_or_else(|_| {
                         eprintln!("cache_size must be numeric");
