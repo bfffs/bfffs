@@ -95,10 +95,19 @@ impl FuseFs {
                 .is_none(),
             "Create of an existing file"
         );
-        assert!(
-            self.files.lock().unwrap().insert(fd.ino(), fd).is_none(),
-            "Inode number reuse detected"
-        );
+        let mut files_guard = self.files.lock().unwrap();
+        if name == r"." || name == r".." {
+            // The file should already be cached
+            // XXX This might not be true if the parent reclaimed the vnode,
+            // such as by an unsuccessful unmount
+            files_guard.get_mut(&fd.ino()).unwrap().lookup_count +=
+                fd.lookup_count;
+        } else {
+            assert!(
+                files_guard.insert(fd.ino(), fd).is_none(),
+                "Inode number reuse detected"
+            );
+        }
     }
 
     fn cache_name(&self, parent_ino: u64, name: &OsStr, ino: u64) {
@@ -422,7 +431,10 @@ impl Filesystem for FuseFs {
             let parent_fd = *(files_guard
                 .get(&parent)
                 .expect("lookup of child before lookup of parent"));
-            let grandparent_fd = files_guard.get(&parent).cloned();
+            let grandparent_fd = parent_fd.parent()
+                .map(|gino| files_guard.get(&gino))
+                .flatten()
+                .cloned();
             let names_guard = self.names.lock().unwrap();
             let oino = names_guard.get(&(parent, name.to_owned())).cloned();
             (parent_fd, grandparent_fd, oino)
