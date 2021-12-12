@@ -1167,6 +1167,48 @@ impl Fs {
         self.getattr_priv(ino).await
     }
 
+    /// Lookup a file by its inode number
+    ///
+    /// This is needed by NFS servers, which sometimes lookup a file without
+    /// knowing its parent directory.  In the kernel, that goes through
+    /// VFS_VGET.  FUSE has no equivalent, so FreeBSD's fusefs driver translates
+    /// it into a lookup of ".".  Crucially, bfffs's fusefs layer might not have
+    /// the parent directory in the file data cache.
+    ///
+    /// In general such an interface is racy, because the file system might
+    /// delete the file in question, then recreate a different file with the
+    /// same inode number.  But BFFFS never reuses inode numbers.
+    pub async fn ilookup(&self, ino: u64) -> Result<FileData, i32>
+    {
+        let name = OsString::from(r"..");
+        let objkey = ObjKey::dir_entry(&name);
+        let key = FSKey::new(ino, objkey);
+        self.db.fsread(self.tree, move |dataset| {
+            let rfs = htable::ReadFilesystem::ReadOnly(&dataset);
+            htable::get::<Dirent>(&rfs, key, 0, name)
+            .map(move |r| {
+                match r {
+                    Ok(de) => {
+                        assert_eq!(de.dtype, libc::DT_DIR);
+                        let fd = FileData::new(Some(de.ino), ino);
+                        Ok(fd)
+                    },
+                    // If e is Error::ENOENT, the problem could be either that
+                    // the file referenced by ino does not exist, or that it is
+                    // not a directory.  We can't tell, unless we try to look up
+                    // its inode.
+                    //Err(Error::ENOENT) => {
+                        //// ino probably refers to a regular file, or may not
+                        //// even exist.
+                        //Err(Error::ENOTDIR)
+                    //},
+                    Err(e) => Err(e)
+                }
+            })
+        }).map_err(Error::into)
+        .await
+    }
+
     /// Create a hardlink from `fd` to `parent/name`.
     pub async fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
         -> Result<(), i32>

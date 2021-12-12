@@ -566,6 +566,32 @@ root:
         assert_ts_changed(&fs, &fd, false, false, false, false).await;
     }
 
+    // Lookup a file by its inode number without knowing its parent
+    #[tokio::test]
+    async fn ilookup() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let filename = OsString::from("x");
+        let fd0 = fs.mkdir(&root, &filename, 0o755, 0, 0).await.unwrap();
+        let ino = fd0.ino();
+        fs.inactive(fd0).await;
+
+        let fd1 = fs.ilookup(ino).await.unwrap();
+        assert_eq!(fd1.ino(), ino);
+        assert_eq!(fd1.lookup_count, 1);
+        assert_eq!(fd1.parent(), Some(root.ino()));
+    }
+
+    // Try and fail to lookup a file by its inode nubmer
+    #[tokio::test]
+    async fn ilookup_enoent() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let ino = 123456789;
+
+        let e = fs.ilookup(ino).await.unwrap_err();
+        assert_eq!(e, libc::ENOENT);
+    }
+
     #[tokio::test]
     async fn link() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
