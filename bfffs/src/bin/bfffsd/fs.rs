@@ -96,19 +96,17 @@ impl FuseFs {
             "Create of an existing file"
         );
         let mut files_guard = self.files.lock().unwrap();
-        if name == r"." || name == r".." {
-            // Only NFS servers should reach this pont.
-            // The file may already be cached, but also may not
-            files_guard
-                .entry(fd.ino())
-                .and_modify(|ofd| ofd.lookup_count += fd.lookup_count)
-                .or_insert(fd);
-        } else {
-            assert!(
-                files_guard.insert(fd.ino(), fd).is_none(),
-                "Inode number reuse detected"
-            );
-        }
+        // Normally the inode should not be in the files cache at this point.
+        // But it may be if:
+        // * It's a hard link of a file we've already looked up
+        // * The NFS server is performing a lookup for "." or ".."
+        // * The NFS server previously performed a lookup for ".", and now it
+        //   (or another file system client) is performing a normal lookup for
+        //   the same file.
+        files_guard
+            .entry(fd.ino())
+            .and_modify(|ofd| ofd.lookup_count += fd.lookup_count)
+            .or_insert(fd);
     }
 
     fn cache_name(&self, parent_ino: u64, name: &OsStr, ino: u64) {

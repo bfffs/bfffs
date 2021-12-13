@@ -1354,6 +1354,87 @@ mod lookup {
         assert_not_cached(&fusefs, parent, name, None);
     }
 
+    // Lookup both names of a hard-linked file
+    #[test]
+    fn hardlink() {
+        let parent = 42;
+        let ino = 43;
+        let name0 = OsStr::from_bytes(b"foo.txt");
+        let name1 = OsStr::from_bytes(b"bar.txt");
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o644;
+        let size = 1024;
+
+        let request = Request::default();
+
+        let mut fusefs = make_mock_fs();
+        fusefs
+            .fs
+            .expect_lookup()
+            .times(1)
+            .with(
+                predicate::always(),
+                predicate::function(move |fd: &FileData| fd.ino() == parent),
+                predicate::eq(name0),
+            )
+            .returning(move |_, _, _| Ok(FileData::new_for_tests(None, ino)));
+        fusefs
+            .fs
+            .expect_lookup()
+            .times(1)
+            .with(
+                predicate::always(),
+                predicate::function(move |fd: &FileData| fd.ino() == parent),
+                predicate::eq(name1),
+            )
+            .returning(move |_, _, _| Ok(FileData::new_for_tests(None, ino)));
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
+            .times(2)
+            .return_const(Ok(GetAttr {
+                ino,
+                size,
+                blocks: 0,
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
+                mode: Mode(mode | libc::S_IFREG),
+                nlink: 2,
+                uid,
+                gid,
+                rdev: 0,
+                blksize: 4096,
+                flags: 0,
+            }));
+
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+
+        let reply0 = fusefs
+            .lookup(request, parent, name0)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply0.attr.ino, ino);
+        assert_eq!(reply0.attr.nlink, 2);
+        assert_cached(&fusefs, parent, name0, ino);
+        let reply1 = fusefs
+            .lookup(request, parent, name1)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply1.attr.ino, ino);
+        assert_eq!(reply1.attr.nlink, 2);
+        assert_cached(&fusefs, parent, name1, ino);
+    }
+
     // The file's name is cached, but its FileData is not
     #[test]
     fn name_cached() {
