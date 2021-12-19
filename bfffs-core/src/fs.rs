@@ -1018,55 +1018,60 @@ impl Fs {
     }
 
     pub async fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32> {
-        self.getattr_priv(fd.ino).await
+        self.getattr_priv(fd.ino).map_err(Error::into).await
     }
 
-    async fn getattr_priv(&self, ino: u64) -> Result<GetAttr, i32> {
+    async fn getattr_priv(&self, ino: u64) -> Result<GetAttr, Error> {
         self.db.fsread(self.tree, move |dataset| {
-            let key = FSKey::new(ino, ObjKey::Inode);
-            dataset.get(key)
-            .map(move |r| {
-                match r {
-                    Ok(Some(v)) => {
-                        let inode = v.as_inode().unwrap();
-                        let rdev = match inode.file_type {
-                            FileType::Char(x) | FileType::Block(x) => x,
-                            _ => 0
-                        };
-                        // Non-regular files don't have a defined block
-                        // size, but we need to pick something.  4kB seems
-                        // as good as anything else.
-                        let blksize = inode.record_size()
-                            .unwrap_or(4096)
-                            as u32;
-                        let attr = GetAttr {
-                            ino,
-                            size: inode.size,
-                            blocks: 0,
-                            atime: inode.atime,
-                            mtime: inode.mtime,
-                            ctime: inode.ctime,
-                            birthtime: inode.birthtime,
-                            mode: Mode(inode.file_type.mode() | inode.perm),
-                            nlink: inode.nlink,
-                            uid: inode.uid,
-                            gid: inode.gid,
-                            rdev,
-                            blksize,
-                            flags: inode.flags,
-                        };
-                        Ok(attr)
-                    },
-                    Ok(None) => {
-                        Err(Error::ENOENT)
-                    },
-                    Err(e) => {
-                        Err(e)
-                    }
+            Fs::do_getattr(&dataset, ino)
+        }).await
+    }
+
+    pub fn do_getattr(dataset: &ReadOnlyFilesystem, ino: u64)
+        -> impl Future<Output=Result<GetAttr, Error>>
+    {
+        let key = FSKey::new(ino, ObjKey::Inode);
+        dataset.get(key)
+        .map(move |r| {
+            match r {
+                Ok(Some(v)) => {
+                    let inode = v.as_inode().unwrap();
+                    let rdev = match inode.file_type {
+                        FileType::Char(x) | FileType::Block(x) => x,
+                        _ => 0
+                    };
+                    // Non-regular files don't have a defined block
+                    // size, but we need to pick something.  4kB seems
+                    // as good as anything else.
+                    let blksize = inode.record_size()
+                        .unwrap_or(4096)
+                        as u32;
+                    let attr = GetAttr {
+                        ino,
+                        size: inode.size,
+                        blocks: 0,
+                        atime: inode.atime,
+                        mtime: inode.mtime,
+                        ctime: inode.ctime,
+                        birthtime: inode.birthtime,
+                        mode: Mode(inode.file_type.mode() | inode.perm),
+                        nlink: inode.nlink,
+                        uid: inode.uid,
+                        gid: inode.gid,
+                        rdev,
+                        blksize,
+                        flags: inode.flags,
+                    };
+                    Ok(attr)
+                },
+                Ok(None) => {
+                    Err(Error::ENOENT)
+                },
+                Err(e) => {
+                    Err(e)
                 }
-            })
-        }).map_err(Error::into)
-        .await
+            }
+        })
     }
 
     /// Retrieve the value of an extended attribute
@@ -1164,7 +1169,48 @@ impl Fs {
     /// instead.
     #[cfg(debug_assertions)]
     pub async fn igetattr(&self, ino: u64) -> Result<GetAttr, i32> {
-        self.getattr_priv(ino).await
+        self.getattr_priv(ino).map_err(Error::into).await
+    }
+
+    /// Lookup a file by its inode number
+    ///
+    /// This is needed by NFS servers, which sometimes lookup a file without
+    /// knowing its parent directory.  In the kernel, that goes through
+    /// VFS_VGET.  FUSE has no equivalent, so FreeBSD's fusefs driver translates
+    /// it into a lookup of ".".  Crucially, bfffs's fusefs layer might not have
+    /// the parent directory in the file data cache.
+    ///
+    /// In general such an interface is racy, because the file system might
+    /// delete the file in question, then recreate a different file with the
+    /// same inode number.  But BFFFS never reuses inode numbers.
+    pub async fn ilookup(&self, ino: u64) -> Result<FileData, i32>
+    {
+        let name = OsString::from(r"..");
+        let objkey = ObjKey::dir_entry(&name);
+        let key = FSKey::new(ino, objkey);
+        self.db.fsread(self.tree, move |dataset| {
+            let rfs = htable::ReadFilesystem::ReadOnly(&dataset);
+            let inode_fut = Fs::do_getattr(&dataset, ino);
+            let dirent_fut = htable::get::<Dirent>(&rfs, key, 0, name);
+            future::join(inode_fut, dirent_fut)
+            .map(move |r| {
+                match r {
+                    (Ok(_), Ok(de)) => {
+                        // The file is a directory
+                        let fd = FileData::new(Some(de.ino), ino);
+                        Ok(fd)
+                    },
+                    (Ok(_), Err(Error::ENOENT)) => {
+                        // It's a regular file
+                        let fd = FileData::new(None, ino);
+                        Ok(fd)
+                    },
+                    (Ok(_), Err(e)) => Err(e),
+                    (Err(e), _) => Err(e)
+                }
+            })
+        }).map_err(Error::into)
+        .await
     }
 
     /// Create a hardlink from `fd` to `parent/name`.

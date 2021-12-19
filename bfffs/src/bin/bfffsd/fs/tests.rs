@@ -1106,6 +1106,224 @@ mod lookup {
         assert_eq!(reply.attr.blksize, 32768);
     }
 
+    /// Looking up "." increments the directory's lookup count
+    #[test]
+    fn dot() {
+        let parent = 42;
+        let ino = 43;
+        let name = OsStr::from_bytes(b"emptydir");
+        let dot = OsStr::from_bytes(b".");
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o755;
+
+        let request = Request::default();
+
+        let mut fusefs = make_mock_fs();
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
+            .times(1)
+            .return_const(Ok(GetAttr {
+                ino,
+                size: 2,
+                blocks: 0,
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
+                mode: Mode(mode | libc::S_IFDIR),
+                nlink: 2,
+                uid,
+                gid,
+                rdev: 0,
+                blksize: 0,
+                flags: 0,
+            }));
+        fusefs
+            .fs
+            .expect_lookup()
+            .times(1)
+            .with(
+                predicate::always(),
+                predicate::function(move |fd: &FileData| fd.ino() == ino),
+                predicate::eq(dot),
+            )
+            .returning(move |_, _, _| {
+                Ok(FileData::new_for_tests(Some(1), ino))
+            });
+
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(None, parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(Some(1), ino));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((parent, name.to_owned()), ino);
+
+        let reply = fusefs
+            .lookup(request, ino, dot)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.attr.ino, ino);
+        assert_eq!(reply.attr.nlink, 2);
+        let lookup_count =
+            fusefs.files.lock().unwrap().get(&ino).unwrap().lookup_count;
+        assert_eq!(lookup_count, 2);
+    }
+
+    /// The NFS server will sometimes lookup "." before doing a lookup for the
+    /// directory itself.
+    #[test]
+    fn dot_uncached() {
+        let parent = 42;
+        let ino = 43;
+        //let name = OsStr::from_bytes(b"emptydir");
+        let dot = OsStr::from_bytes(b".");
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o755;
+
+        let request = Request::default();
+
+        let mut fusefs = make_mock_fs();
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
+            .times(1)
+            .return_const(Ok(GetAttr {
+                ino,
+                size: 2,
+                blocks: 0,
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
+                mode: Mode(mode | libc::S_IFDIR),
+                nlink: 2,
+                uid,
+                gid,
+                rdev: 0,
+                blksize: 0,
+                flags: 0,
+            }));
+        fusefs
+            .fs
+            .expect_ilookup()
+            .times(1)
+            .with(predicate::eq(ino))
+            .returning(move |_| Ok(FileData::new_for_tests(Some(1), ino)));
+
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(None, parent));
+
+        let reply = fusefs
+            .lookup(request, ino, dot)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.attr.ino, ino);
+        assert_eq!(reply.attr.nlink, 2);
+        let lookup_count =
+            fusefs.files.lock().unwrap().get(&ino).unwrap().lookup_count;
+        assert_eq!(lookup_count, 1);
+    }
+
+    /// Looking up ".." increments the parent's lookup count
+    #[test]
+    fn dotdot() {
+        let parent = 42;
+        let ino = 43;
+        let name = OsStr::from_bytes(b"emptydir");
+        let dotdot = OsStr::from_bytes(b"..");
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o755;
+
+        let request = Request::default();
+
+        let mut fusefs = make_mock_fs();
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == parent))
+            .times(1)
+            .return_const(Ok(GetAttr {
+                ino: parent,
+                size: 3,
+                blocks: 0,
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
+                mode: Mode(mode | libc::S_IFDIR),
+                nlink: 3,
+                uid,
+                gid,
+                rdev: 0,
+                blksize: 0,
+                flags: 0,
+            }));
+        fusefs
+            .fs
+            .expect_lookup()
+            .times(1)
+            .withf(move |gfd, fd, name| {
+                gfd.unwrap().ino() == parent &&
+                    fd.ino() == ino &&
+                    name == dotdot
+            })
+            .returning(move |_, _, _| {
+                Ok(FileData::new_for_tests(Some(1), parent))
+            });
+
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(None, parent));
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(ino, FileData::new_for_tests(Some(parent), ino));
+        fusefs
+            .names
+            .lock()
+            .unwrap()
+            .insert((parent, name.to_owned()), ino);
+
+        let reply = fusefs
+            .lookup(request, ino, dotdot)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.attr.ino, parent);
+        assert_eq!(reply.attr.nlink, 3);
+        let lookup_count = fusefs
+            .files
+            .lock()
+            .unwrap()
+            .get(&parent)
+            .unwrap()
+            .lookup_count;
+        assert_eq!(lookup_count, 2);
+    }
+
     #[test]
     fn enoent() {
         let parent = 42;
@@ -1134,6 +1352,87 @@ mod lookup {
             fusefs.lookup(request, parent, name).now_or_never().unwrap();
         assert_eq!(reply, Err(libc::ENOENT.into()));
         assert_not_cached(&fusefs, parent, name, None);
+    }
+
+    // Lookup both names of a hard-linked file
+    #[test]
+    fn hardlink() {
+        let parent = 42;
+        let ino = 43;
+        let name0 = OsStr::from_bytes(b"foo.txt");
+        let name1 = OsStr::from_bytes(b"bar.txt");
+        let uid = 12345u32;
+        let gid = 54321u32;
+        let mode = 0o644;
+        let size = 1024;
+
+        let request = Request::default();
+
+        let mut fusefs = make_mock_fs();
+        fusefs
+            .fs
+            .expect_lookup()
+            .times(1)
+            .with(
+                predicate::always(),
+                predicate::function(move |fd: &FileData| fd.ino() == parent),
+                predicate::eq(name0),
+            )
+            .returning(move |_, _, _| Ok(FileData::new_for_tests(None, ino)));
+        fusefs
+            .fs
+            .expect_lookup()
+            .times(1)
+            .with(
+                predicate::always(),
+                predicate::function(move |fd: &FileData| fd.ino() == parent),
+                predicate::eq(name1),
+            )
+            .returning(move |_, _, _| Ok(FileData::new_for_tests(None, ino)));
+        fusefs
+            .fs
+            .expect_getattr()
+            .with(predicate::function(move |fd: &FileData| fd.ino() == ino))
+            .times(2)
+            .return_const(Ok(GetAttr {
+                ino,
+                size,
+                blocks: 0,
+                atime: Timespec { sec: 0, nsec: 0 },
+                mtime: Timespec { sec: 0, nsec: 0 },
+                ctime: Timespec { sec: 0, nsec: 0 },
+                birthtime: Timespec { sec: 0, nsec: 0 },
+                mode: Mode(mode | libc::S_IFREG),
+                nlink: 2,
+                uid,
+                gid,
+                rdev: 0,
+                blksize: 4096,
+                flags: 0,
+            }));
+
+        fusefs
+            .files
+            .lock()
+            .unwrap()
+            .insert(parent, FileData::new_for_tests(Some(1), parent));
+
+        let reply0 = fusefs
+            .lookup(request, parent, name0)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply0.attr.ino, ino);
+        assert_eq!(reply0.attr.nlink, 2);
+        assert_cached(&fusefs, parent, name0, ino);
+        let reply1 = fusefs
+            .lookup(request, parent, name1)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply1.attr.ino, ino);
+        assert_eq!(reply1.attr.nlink, 2);
+        assert_cached(&fusefs, parent, name1, ino);
     }
 
     // The file's name is cached, but its FileData is not

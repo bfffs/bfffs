@@ -95,10 +95,18 @@ impl FuseFs {
                 .is_none(),
             "Create of an existing file"
         );
-        assert!(
-            self.files.lock().unwrap().insert(fd.ino(), fd).is_none(),
-            "Inode number reuse detected"
-        );
+        let mut files_guard = self.files.lock().unwrap();
+        // Normally the inode should not be in the files cache at this point.
+        // But it may be if:
+        // * It's a hard link of a file we've already looked up
+        // * The NFS server is performing a lookup for "." or ".."
+        // * The NFS server previously performed a lookup for ".", and now it
+        //   (or another file system client) is performing a normal lookup for
+        //   the same file.
+        files_guard
+            .entry(fd.ino())
+            .and_modify(|ofd| ofd.lookup_count += fd.lookup_count)
+            .or_insert(fd);
     }
 
     fn cache_name(&self, parent_ino: u64, name: &OsStr, ino: u64) {
@@ -417,18 +425,29 @@ impl Filesystem for FuseFs {
         parent: u64,
         name: &OsStr,
     ) -> fuse3::Result<ReplyEntry> {
-        let (parent_fd, grandparent_fd, oino) = {
+        let (oparent_fd, grandparent_fd, oino) = {
             let files_guard = self.files.lock().unwrap();
-            let parent_fd = *(files_guard
-                .get(&parent)
-                .expect("lookup of child before lookup of parent"));
-            let grandparent_fd = files_guard.get(&parent).cloned();
+            let oparent_fd = files_guard.get(&parent);
+            if oparent_fd.is_none() {
+                // An NFS server may call VFS_VGET, which fusefs(4) implements
+                // as a lookup for ".".  That may happen even if the parent
+                // hasn't been looked up yet.  But for any other name, the
+                // parent had better be in the ino cache.
+                assert!(
+                    name == r".",
+                    "lookup of child before lookup of parent"
+                );
+            }
+            let grandparent_fd = oparent_fd
+                .and_then(FileData::parent)
+                .and_then(|gino| files_guard.get(&gino))
+                .cloned();
             let names_guard = self.names.lock().unwrap();
             let oino = names_guard.get(&(parent, name.to_owned())).cloned();
-            (parent_fd, grandparent_fd, oino)
+            (oparent_fd.cloned(), grandparent_fd, oino)
         };
-        match oino {
-            Some(ino) => {
+        match (oparent_fd, oino) {
+            (Some(parent_fd), Some(ino)) => {
                 let ofd = self.files.lock().unwrap().get(&ino).cloned();
                 match ofd {
                     Some(fd) => {
@@ -479,12 +498,17 @@ impl Filesystem for FuseFs {
                     }
                 }
             }
-            None => {
+            (Some(parent_fd), None) => {
                 // Name is not cached
                 let r = self
                     .fs
                     .lookup(grandparent_fd.as_ref(), &parent_fd, name)
                     .await;
+                self.handle_new_entry(r, parent, name).await
+            }
+            (None, _) => {
+                // An NFS-style lookup for "."
+                let r = self.fs.ilookup(parent).await;
                 self.handle_new_entry(r, parent, name).await
             }
         }
