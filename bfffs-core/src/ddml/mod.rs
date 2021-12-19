@@ -44,6 +44,7 @@ pub struct DRP {
 impl DRP {
     /// Return a new DRP that refers to the same record as though it were
     /// uncompressed.
+    #[must_use]
     pub fn as_uncompressed(&self) -> DRP {
         DRP {
             pba: self.pba,
@@ -62,6 +63,7 @@ impl DRP {
     /// Transform this DRP into one that has the same compression function as
     /// `old_compressed`.  This is basically the opposite of
     /// [`as_uncompressed`](#method.as_uncompressed)
+    #[must_use]
     pub fn into_compressed(mut self, old_compressed: &DRP) -> DRP {
         self.compressed = old_compressed.compressed;
         self.lsize = old_compressed.lsize;

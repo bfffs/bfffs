@@ -35,6 +35,7 @@ pub struct Credit(AtomicUsize);
 impl Credit {
     /// Like [`split`], but slower since it uses atomic instructions.  Does not
     /// require mutable access.
+    #[must_use]
     pub fn atomic_split(&self, credit: usize) -> Credit {
         // Saturate the subtraction, because we don't want any credit to ever be
         // negative.
@@ -59,6 +60,7 @@ impl Credit {
     }
 
     /// Split this Credit into two nearly equal pieces
+    #[must_use]
     pub fn halve(&mut self) -> Credit {
         let old = *self.0.get_mut();
         self.split(old >> 2)
@@ -77,6 +79,7 @@ impl Credit {
         Credit(AtomicUsize::new(0))
     }
 
+    #[must_use]
     pub fn split(&mut self, credit: usize) -> Credit {
         // Saturate the subtraction, because we don't want any credit to ever be
         // negative.
@@ -89,6 +92,7 @@ impl Credit {
     /// Takes all of this `Credit`'s credit out into a new `Credit`.
     ///
     /// Analagous to `Option::take`.
+    #[must_use]
     pub fn take(&mut self) -> Credit {
         let old = *self.0.get_mut();
         self.split(old >> 1)
