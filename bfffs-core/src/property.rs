@@ -120,6 +120,7 @@ pub enum PropertyName {
 }
 
 impl PropertyName {
+    #[must_use]
     pub fn next(self) -> PropertyName {
         match self {
             PropertyName::Atime => PropertyName::RecordSize,
