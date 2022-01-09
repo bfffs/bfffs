@@ -28,6 +28,8 @@ mock! {
     pub Fs {
         pub async fn create(&self, parent: &FileData, name: &OsStr, perm: u16,
             uid: u32, gid: u32) -> Result<FileData, i32>;
+        pub async fn deallocate(&self, fd: &FileData, offset: u64, len: u64)
+            -> Result<(), i32>;
         pub async fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
             name: &OsStr) -> Result<(), i32>;
         pub async fn inactive(&self, fd: FileData);

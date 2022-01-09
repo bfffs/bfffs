@@ -189,6 +189,424 @@ mod fs {
         assert_ts_changed(&fs, &root, false, true, true, false).await;
     }
 
+    /// Deallocate a whole inline extent
+    #[tokio::test]
+    async fn deallocate_blob_extent() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(8192), r);
+        clear_timestamps(&fs, &fd).await;
+        fs.sync().await;        // Flush it to a BlobExtent
+
+        assert!(fs.deallocate(&fd, 0, 4096).await.is_ok());
+
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 4096);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the deallocated record.  It should be a hole
+        let sglist = fs.read(&fd, 0, 4096).await.unwrap();
+        let db = &sglist[0];
+        let expected = [0u8; 4096];
+        assert_eq!(&db[..], &expected[..]);
+    }
+
+    /// Deallocating a hole is a no-op
+    #[tokio::test]
+    async fn deallocate_hole() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let attr = SetAttr {
+            size: Some(8192),
+            .. Default::default()
+        };
+        fs.setattr(&fd, attr).await.unwrap();
+        clear_timestamps(&fs, &fd).await;
+
+        // Deallocate the hole
+        assert!(fs.deallocate(&fd, 0, 4096).await.is_ok());
+
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 0);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+    }
+
+    #[tokio::test]
+    async fn deallocate_inline_extent() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(8192), r);
+        clear_timestamps(&fs, &fd).await;
+
+        // Deallocate it before flushing to a BlobExtent
+        assert!(fs.deallocate(&fd, 0, 4096).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 4096);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the deallocated record.  It should be a hole
+        let sglist = fs.read(&fd, 0, 4096).await.unwrap();
+        let db = &sglist[0];
+        let expected = [0u8; 4096];
+        assert_eq!(&db[..], &expected[..]);
+
+    }
+
+    /// Deallocate multiple extents, some blob and some inline
+    #[tokio::test]
+    async fn deallocate_multiple_extents() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(8192), r);
+        fs.sync().await;        // Flush them to BlobExtents
+        // And write some inline extents, too
+        let r = fs.write(&fd, 8192, &buf[..], 0).await;
+        assert_eq!(Ok(8192), r);
+        clear_timestamps(&fs, &fd).await;
+
+        assert!(fs.deallocate(&fd, 0, 16384).await.is_ok());
+
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 0);
+        assert_eq!(attr.size, 16384);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the deallocated area.  It should be a hole.
+        let sglist = fs.read(&fd, 0, 16384).await.unwrap();
+        let db = &sglist[0];
+        let expected = [0u8; 16384];
+        assert_eq!(&db[..], &expected[..]);
+    }
+
+    /// Deallocate the left part of a blob extent
+    #[tokio::test]
+    async fn deallocate_left_blob() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(8192), r);
+        clear_timestamps(&fs, &fd).await;
+        fs.sync().await;
+
+        assert!(fs.deallocate(&fd, 0, 6144).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        // The partially deallocated extent still takes up space
+        assert_eq!(attr.bytes, 4096);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the partially deallocated record.  It should have a
+        // hole in the middle.
+        let sglist = fs.read(&fd, 0, 8192).await.unwrap();
+        let zbuf = [0u8; 4096];
+        assert_eq!(&sglist[0][..], &zbuf[..]);
+        assert_eq!(&sglist[1][..2048], &zbuf[..2048]);
+        assert_eq!(&sglist[1][2048..], &buf[6144..]);
+    }
+
+    /// Deallocate the left part of a record which is already a hole
+    #[tokio::test]
+    async fn deallocate_left_hole() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let attr = SetAttr {
+            size: Some(8192),
+            .. Default::default()
+        };
+        fs.setattr(&fd, attr).await.unwrap();
+        clear_timestamps(&fs, &fd).await;
+
+        assert!(fs.deallocate(&fd, 0, 6144).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 0);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the partially deallocated record.
+        let sglist = fs.read(&fd, 0, 8192).await.unwrap();
+        let zbuf = [0u8; 8192];
+        assert_eq!(&sglist[0][..], &zbuf[..]);
+    }
+
+    /// Deallocate the left part of a inline extent
+    #[tokio::test]
+    async fn deallocate_left_inline() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(8192), r);
+        clear_timestamps(&fs, &fd).await;
+
+        assert!(fs.deallocate(&fd, 0, 6144).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        // The partially deallocated extent still takes up space
+        assert_eq!(attr.bytes, 4096);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the partially deallocated record.  It should have a
+        // hole in the middle.
+        let sglist = fs.read(&fd, 0, 8192).await.unwrap();
+        let zbuf = [0u8; 4096];
+        assert_eq!(&sglist[0][..], &zbuf[..]);
+        assert_eq!(&sglist[1][..2048], &zbuf[..2048]);
+        assert_eq!(&sglist[1][2048..], &buf[6144..]);
+    }
+
+    /// Deallocate the middle of an blob extent
+    #[tokio::test]
+    async fn deallocate_middle_blob() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(4096), r);
+        clear_timestamps(&fs, &fd).await;
+        fs.sync().await;
+
+        assert!(fs.deallocate(&fd, 1024, 2048).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        // The partially deallocated extent still takes up space
+        assert_eq!(attr.bytes, 4096);
+        assert_eq!(attr.size, 4096);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the partially deallocated record.  It should have a
+        // hole in the middle.
+        let sglist = fs.read(&fd, 0, 4096).await.unwrap();
+        let db = &sglist[0];
+        let zbuf = [0u8; 2048];
+        assert_eq!(&db[0..1024], &buf[0..1024]);
+        assert_eq!(&db[1024..3072], &zbuf[0..2048]);
+        assert_eq!(&db[3072..4096], &buf[3072..4096]);
+    }
+
+    /// Deallocate the middle of an inline extent
+    #[tokio::test]
+    async fn deallocate_middle_inline() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 4096];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(4096), r);
+        clear_timestamps(&fs, &fd).await;
+
+        assert!(fs.deallocate(&fd, 1024, 2048).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        // The partially deallocated extent still takes up space
+        assert_eq!(attr.bytes, 4096);
+        assert_eq!(attr.size, 4096);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the partially deallocated record.  It should have a
+        // hole in the middle.
+        let sglist = fs.read(&fd, 0, 4096).await.unwrap();
+        let db = &sglist[0];
+        let zbuf = [0u8; 2048];
+        assert_eq!(&db[0..1024], &buf[0..1024]);
+        assert_eq!(&db[1024..3072], &zbuf[0..2048]);
+        assert_eq!(&db[3072..4096], &buf[3072..4096]);
+    }
+
+    /// Deallocate the right part of a blob extent
+    #[tokio::test]
+    async fn deallocate_right_blob() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(8192), r);
+        clear_timestamps(&fs, &fd).await;
+        fs.sync().await;
+
+        assert!(fs.deallocate(&fd, 2048, 6144).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 2048);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the partially deallocated record.  It should have a
+        // hole in the middle.
+        let sglist = fs.read(&fd, 0, 8192).await.unwrap();
+        let zbuf = [0u8; 6144];
+        assert_eq!(&sglist[0][..2048], &buf[..2048]);
+        assert_eq!(&sglist[1][..], &zbuf[..]);
+    }
+
+    /// Deallocate the right part of a record which happens to be a hole
+    #[tokio::test]
+    async fn deallocate_right_hole() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let attr = SetAttr {
+            size: Some(8192),
+            .. Default::default()
+        };
+        fs.setattr(&fd, attr).await.unwrap();
+        clear_timestamps(&fs, &fd).await;
+
+        assert!(fs.deallocate(&fd, 2048, 6144).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 0);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the partially deallocated record.
+        let sglist = fs.read(&fd, 0, 8192).await.unwrap();
+        let zbuf = [0u8; 8192];
+        assert_eq!(&sglist[0][..], &zbuf[..]);
+    }
+
+    /// Deallocate the right part of a inline extent
+    #[tokio::test]
+    async fn deallocate_right_inline() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(8192), r);
+        clear_timestamps(&fs, &fd).await;
+
+        assert!(fs.deallocate(&fd, 2048, 6144).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 2048);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the partially deallocated record.  It should have a
+        // hole in the middle.
+        let sglist = fs.read(&fd, 0, 8192).await.unwrap();
+        let zbuf = [0u8; 6144];
+        assert_eq!(&sglist[0][..2048], &buf[..2048]);
+        assert_eq!(&sglist[1][..], &zbuf[..]);
+    }
+
+    #[tokio::test]
+    async fn deallocate_parts_of_two_records() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let mut buf = vec![0u8; 8192];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(8192), r);
+        clear_timestamps(&fs, &fd).await;
+
+        assert!(fs.deallocate(&fd, 3072, 2048).await.is_ok());
+        let attr = fs.getattr(&fd).await.unwrap();
+        // The partially deallocated extents still takes some space on the right
+        // record, but not on the left.
+        assert_eq!(attr.bytes, 7168);
+        assert_eq!(attr.size, 8192);
+        assert_ts_changed(&fs, &fd, false, true, true, false).await;
+
+        // Finally, read the partially deallocated records.  They should have a
+        // hole in the middle.
+        let sglist = fs.read(&fd, 0, 8192).await.unwrap();
+        {
+            // These assertions are implementation-specific.  The sglist shape
+            // could change.
+            assert_eq!(3, sglist.len());
+            assert_eq!(3072, sglist[0].len());
+            assert_eq!(1024, sglist[1].len());
+            assert_eq!(4096, sglist[2].len());
+        }
+        let zbuf = [0u8; 1024];
+        assert_eq!(&sglist[0][..3072], &buf[..3072]);
+        assert_eq!(&sglist[1][..], &zbuf[..]);
+        assert_eq!(&sglist[2][..1024], &zbuf[..]);
+        assert_eq!(&sglist[2][1024..], &buf[5120..]);
+    }
+
+    /// Deallocating past EoF is a no-op
+    #[tokio::test]
+    async fn deallocate_past_eof() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        clear_timestamps(&fs, &fd).await;
+
+        // Deallocate past EoF
+        assert!(fs.deallocate(&fd, 0, 4096).await.is_ok());
+        assert_ts_changed(&fs, &fd, false, false, false, false).await;
+    }
+
     #[tokio::test]
     async fn deleteextattr() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;

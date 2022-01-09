@@ -56,6 +56,10 @@ cfg_if! {
 #[cfg(test)]
 mod tests;
 
+// TODO: move these definitions into fuse3
+pub const FUSE_FALLOC_FL_KEEP_SIZE: u32 = 0x1;
+pub const FUSE_FALLOC_FL_PUNCH_HOLE: u32 = 0x2;
+
 /// FUSE's handle to an BFFFS filesystem.  One per mountpoint.
 ///
 /// This object lives in the synchronous domain, and spawns commands into the
@@ -297,6 +301,31 @@ impl Filesystem for FuseFs {
 
     async fn destroy(&self, _req: Request) {
         self.fs.sync().await
+    }
+
+    async fn fallocate(
+        &self,
+        _req: Request,
+        ino: u64,
+        _fh: u64,
+        offs: u64,
+        len: u64,
+        mode: u32,
+    ) -> fuse3::Result<()> {
+        if mode != FUSE_FALLOC_FL_KEEP_SIZE | FUSE_FALLOC_FL_PUNCH_HOLE {
+            Err(libc::EOPNOTSUPP.into())
+        } else {
+            let fd = *self
+                .files
+                .lock()
+                .unwrap()
+                .get(&ino)
+                .expect("deallocate before lookup or after forget");
+            self.fs
+                .deallocate(&fd, offs, len)
+                .await
+                .map_err(fuse3::Errno::from)
+        }
     }
 
     async fn forget(&self, _req: Request, ino: u64, nlookup: u64) {
