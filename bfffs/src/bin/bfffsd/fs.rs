@@ -87,14 +87,17 @@ impl FuseFs {
 
     fn cache_file(&self, parent_ino: u64, name: &OsStr, fd: FileData) {
         let name_key = (parent_ino, name.to_owned());
-        assert!(
-            self.names
-                .lock()
-                .unwrap()
-                .insert(name_key, fd.ino())
-                .is_none(),
-            "Create of an existing file"
-        );
+        let old_ino = self.names.lock().unwrap().insert(name_key, fd.ino());
+        if old_ino.is_some() {
+            // XXX Can reach this panic after a FORGET when NFS looks up "."
+            panic!(
+                "Create of an existing file: {}/{:?} was {} now {}",
+                parent_ino,
+                name,
+                old_ino.unwrap(),
+                fd.ino()
+            );
+        }
         let mut files_guard = self.files.lock().unwrap();
         // Normally the inode should not be in the files cache at this point.
         // But it may be if:
@@ -697,7 +700,7 @@ impl Filesystem for FuseFs {
         _req: Request,
         ino: u64,
         _fh: u64,
-        offset: i64,
+        soffset: i64,
     ) -> fuse3::Result<ReplyDirectory<Self::DirEntryStream>> {
         let fd = *self
             .files
@@ -707,8 +710,9 @@ impl Filesystem for FuseFs {
             .expect("read before lookup or after forget");
         let stream = self
             .fs
-            .readdir(&fd, offset)
-            .map_ok(|(dirent, offset)| {
+            .readdir(&fd, soffset)
+            .map_ok(move |(dirent, offset)| {
+                assert!(offset as u64 >= soffset as u64);
                 let kind = match dirent.d_type {
                     libc::DT_FIFO => FileType::NamedPipe,
                     libc::DT_CHR => FileType::CharDevice,
