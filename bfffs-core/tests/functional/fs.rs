@@ -1504,6 +1504,21 @@ root:
         assert_eq!(u64::from(dot.d_fileno), root.ino());
     }
 
+    /// Readdir beginning at the offset of the last dirent.  The NFS server will
+    /// do this sometimes.
+    #[tokio::test]
+    async fn readdir_eof() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let entries = readdir_all(&fs, &root, 0).await;
+        // Should be two entries, "." and ".."
+        assert_eq!(2, entries.len());
+        let ofs = entries[1].1;
+        let entries2 = readdir_all(&fs, &root, ofs).await;
+        // Nothing should be returned
+        assert!(entries2.is_empty());
+    }
+
     // Readdir of a directory with a hash collision
     #[tokio::test]
     async fn readdir_collision() {
