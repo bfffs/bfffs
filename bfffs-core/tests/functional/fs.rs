@@ -122,9 +122,11 @@ mod fs {
     #[tokio::test]
     async fn create() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let uid = 12345;
+        let gid = 54321;
         let name = OsStr::from_bytes(b"x");
         let root = fs.root();
-        let fd0 = fs.create(&root, name, 0o644, 0, 0).await.unwrap();
+        let fd0 = fs.create(&root, name, 0o644, uid, gid).await.unwrap();
         let fd1 = fs.lookup(None, &root, name).await.unwrap();
         assert_eq!(fd1.ino(), fd0.ino());
 
@@ -144,6 +146,22 @@ mod fs {
         // The parent dir's link count should not have increased
         let parent_attr = fs.getattr(&root).await.unwrap();
         assert_eq!(parent_attr.nlink, 1);
+
+        // Check the new file's attributes
+        let attr = fs.getattr(&fd1).await.unwrap();
+        assert_eq!(attr.ino, fd1.ino());
+        assert_eq!(attr.size, 0);
+        assert_eq!(attr.bytes, 0);
+        assert_ne!(attr.atime.sec, 0);
+        assert_eq!(attr.atime, attr.mtime);
+        assert_eq!(attr.atime, attr.ctime);
+        assert_eq!(attr.atime, attr.birthtime);
+        assert_eq!(attr.mode.0, libc::S_IFREG | 0o644);
+        assert_eq!(attr.nlink, 1);
+        assert_eq!(attr.uid, uid);
+        assert_eq!(attr.gid, gid);
+        assert_eq!(attr.blksize, 4096);
+        assert_eq!(attr.flags, 0);
     }
 
     /// Creating a file that already exists should panic.  It is the
@@ -328,6 +346,7 @@ root:
       1-1-00000000000000:
         Inode:
           size: 0
+          bytes: 0
           nlink: 1
           flags: 0
           atime: "1970-01-01T00:00:00Z"
@@ -964,9 +983,11 @@ root:
     #[tokio::test]
     async fn mkdir() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let uid = 12345;
+        let gid = 54321;
         let name = OsStr::from_bytes(b"x");
         let root = fs.root();
-        let fd = fs.mkdir(&root, name, 0o755, 0, 0).await
+        let fd = fs.mkdir(&root, name, 0o755, uid, gid).await
         .unwrap();
         let fd1 = fs.lookup(None, &root, name).await.unwrap();
         assert_eq!(fd1.ino(), fd.ino());
@@ -1005,6 +1026,21 @@ root:
         // The parent dir's link count should've increased
         let parent_attr = fs.getattr(&root).await.unwrap();
         assert_eq!(parent_attr.nlink, 2);
+
+        // Check the new directory's attributes
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.ino, fd.ino());
+        assert_eq!(attr.size, 0);
+        assert_ne!(attr.atime.sec, 0);
+        assert_eq!(attr.atime, attr.mtime);
+        assert_eq!(attr.atime, attr.ctime);
+        assert_eq!(attr.atime, attr.birthtime);
+        assert_eq!(attr.mode.0, libc::S_IFDIR | 0o755);
+        assert_eq!(attr.nlink, 2);
+        assert_eq!(attr.uid, uid);
+        assert_eq!(attr.gid, gid);
+        assert_eq!(attr.blksize, 4096);
+        assert_eq!(attr.flags, 0);
     }
 
     /// mkdir creates two directories whose names have a hash collision
@@ -1046,6 +1082,18 @@ root:
         let attr = fs.getattr(&fd).await.unwrap();
         assert_eq!(attr.mode.0, libc::S_IFCHR | 0o644);
         assert_eq!(attr.rdev, 42);
+        assert_eq!(attr.ino, fd.ino());
+        assert_eq!(attr.size, 0);
+        assert_eq!(attr.bytes, 0);
+        assert_ne!(attr.atime.sec, 0);
+        assert_eq!(attr.atime, attr.mtime);
+        assert_eq!(attr.atime, attr.ctime);
+        assert_eq!(attr.atime, attr.birthtime);
+        assert_eq!(attr.nlink, 1);
+        assert_eq!(attr.uid, 0);
+        assert_eq!(attr.gid, 0);
+        assert_eq!(attr.blksize, 4096);
+        assert_eq!(attr.flags, 0);
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&fs, &root, 0).await;
@@ -1082,6 +1130,18 @@ root:
         let attr = fs.getattr(&fd).await.unwrap();
         assert_eq!(attr.mode.0, libc::S_IFBLK | 0o644);
         assert_eq!(attr.rdev, 42);
+        assert_eq!(attr.ino, fd.ino());
+        assert_eq!(attr.size, 0);
+        assert_eq!(attr.bytes, 0);
+        assert_ne!(attr.atime.sec, 0);
+        assert_eq!(attr.atime, attr.mtime);
+        assert_eq!(attr.atime, attr.ctime);
+        assert_eq!(attr.atime, attr.birthtime);
+        assert_eq!(attr.nlink, 1);
+        assert_eq!(attr.uid, 0);
+        assert_eq!(attr.gid, 0);
+        assert_eq!(attr.blksize, 4096);
+        assert_eq!(attr.flags, 0);
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&fs, &root, 0).await;
@@ -1112,11 +1172,25 @@ root:
     #[tokio::test]
     async fn mkfifo() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let uid = 12345;
+        let gid = 54321;
         let root = fs.root();
-        let fd = fs.mkfifo(&root, &OsString::from("x"), 0o644, 0, 0).await
+        let fd = fs.mkfifo(&root, &OsString::from("x"), 0o644, uid, gid).await
         .unwrap();
         let attr = fs.getattr(&fd).await.unwrap();
         assert_eq!(attr.mode.0, libc::S_IFIFO | 0o644);
+        assert_eq!(attr.ino, fd.ino());
+        assert_eq!(attr.size, 0);
+        assert_eq!(attr.bytes, 0);
+        assert_ne!(attr.atime.sec, 0);
+        assert_eq!(attr.atime, attr.mtime);
+        assert_eq!(attr.atime, attr.ctime);
+        assert_eq!(attr.atime, attr.birthtime);
+        assert_eq!(attr.nlink, 1);
+        assert_eq!(attr.uid, uid);
+        assert_eq!(attr.gid, gid);
+        assert_eq!(attr.blksize, 4096);
+        assert_eq!(attr.flags, 0);
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&fs, &root, 0).await;
@@ -1147,11 +1221,25 @@ root:
     #[tokio::test]
     async fn mksock() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let uid = 12345;
+        let gid = 54321;
         let root = fs.root();
-        let fd = fs.mksock(&root, &OsString::from("x"), 0o644, 0, 0).await
+        let fd = fs.mksock(&root, &OsString::from("x"), 0o644, uid, gid).await
         .unwrap();
         let attr = fs.getattr(&fd).await.unwrap();
         assert_eq!(attr.mode.0, libc::S_IFSOCK | 0o644);
+        assert_eq!(attr.ino, fd.ino());
+        assert_eq!(attr.size, 0);
+        assert_eq!(attr.bytes, 0);
+        assert_ne!(attr.atime.sec, 0);
+        assert_eq!(attr.atime, attr.mtime);
+        assert_eq!(attr.atime, attr.ctime);
+        assert_eq!(attr.atime, attr.birthtime);
+        assert_eq!(attr.nlink, 1);
+        assert_eq!(attr.uid, uid);
+        assert_eq!(attr.gid, gid);
+        assert_eq!(attr.blksize, 4096);
+        assert_eq!(attr.flags, 0);
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&fs, &root, 0).await;
@@ -2385,6 +2473,10 @@ root:
         let db = &sglist[0];
         let expected = [0u8; 4096];
         assert_eq!(&db[..], &expected[..]);
+
+        // blocks used should only include the non-truncated records
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(4096, attr.bytes);
     }
 
     // Like setattr_truncate, but with blobs
@@ -2417,6 +2509,10 @@ root:
         let db = &sglist[0];
         let expected = [0u8; 4096];
         assert_eq!(&db[..], &expected[..]);
+
+        // blocks used should only include the non-truncated records
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(4096, attr.bytes);
     }
 
     // Like setattr_truncate, but everything happens within a single record
@@ -2530,6 +2626,43 @@ root:
         assert_ts_changed(&fs, &fd, false, true, true, false).await;
     }
 
+    /// Set an blob extended attribute
+    #[tokio::test]
+    async fn setextattr_blob() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = vec![42u8; 4096];
+        let ns = ExtAttrNamespace::User;
+        let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
+        fs.setextattr(&fd, ns, &name, &value[..]).await.unwrap();
+        fs.sync().await;
+        let v = fs.getextattr(&fd, ns, &name).await.unwrap();
+        assert_eq!(&v[..], &value);
+        // extended attributes should not contribute to stat.st_blocks
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 0);
+    }
+
+    /// Set an inline extended attribute
+    #[tokio::test]
+    async fn setextattr_inline() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = [0u8, 1, 2];
+        let ns = ExtAttrNamespace::User;
+        let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
+        fs.setextattr(&fd, ns, &name, &value[..]).await.unwrap();
+        let v = fs.getextattr(&fd, ns, &name).await.unwrap();
+        assert_eq!(&v[..], &value);
+        // extended attributes should not contribute to stat.st_blocks
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 0);
+    }
+
     /// Overwrite an existing extended attribute
     #[tokio::test]
     async fn setextattr_overwrite() {
@@ -2592,7 +2725,7 @@ root:
     /// The file already has a blob extattr.  Set another extattr and flush them
     /// both.
     #[tokio::test]
-    async fn setextattr_with_blob() {
+    async fn setextattr_overwrite_blob() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
@@ -2633,9 +2766,11 @@ root:
     async fn symlink() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
+        let uid = 12345;
+        let gid = 54321;
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
-        let fd = fs.symlink(&root, &srcname, 0o642, 0, 0, &dstname).await
+        let fd = fs.symlink(&root, &srcname, 0o642, uid, gid, &dstname).await
         .unwrap();
         assert_eq!(fd.ino(),
             fs.lookup(None, &root, &srcname).await.unwrap().ino()
@@ -2657,6 +2792,18 @@ root:
 
         let attr = fs.getattr(&fd).await.unwrap();
         assert_eq!(attr.mode.0, libc::S_IFLNK | 0o642);
+        assert_eq!(attr.ino, fd.ino());
+        assert_eq!(attr.size, 0);
+        assert_eq!(attr.bytes, 0);
+        assert_ne!(attr.atime.sec, 0);
+        assert_eq!(attr.atime, attr.mtime);
+        assert_eq!(attr.atime, attr.ctime);
+        assert_eq!(attr.atime, attr.birthtime);
+        assert_eq!(attr.nlink, 1);
+        assert_eq!(attr.uid, uid);
+        assert_eq!(attr.gid, gid);
+        assert_eq!(attr.blksize, 4096);
+        assert_eq!(attr.flags, 0);
     }
 
     /// symlink should update the parent dir's timestamps
@@ -2923,9 +3070,10 @@ root:
         let r = fs.write(&fd, 0, &buf[..], 0).await;
         assert_eq!(Ok(4096), r);
 
-        // Check the file size
+        // Check the file attributes
         let attr = fs.getattr(&fd).await.unwrap();
         assert_eq!(attr.size, 4096);
+        assert_eq!(attr.bytes, 4096);
 
         let sglist = fs.read(&fd, 0, 4096).await.unwrap();
         let db = &sglist[0];
@@ -2974,10 +3122,34 @@ root:
         let r = fs.write(&fd, 1024, &buf1[..], 0).await;
         assert_eq!(Ok(1024), r);
 
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.size, 2048);
+        assert_eq!(attr.bytes, 2048);
+
         let sglist = fs.read(&fd, 0, 2048).await.unwrap();
         let db = &sglist[0];
         assert_eq!(&db[0..1024], &buf0[..]);
         assert_eq!(&db[1024..2048], &buf1[..]);
+    }
+
+    /// Write an extent and flush it to a blog
+    #[tokio::test]
+    async fn write_blob_record() {
+        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let buf = vec![42u8; 4096];
+        let r = fs.write(&fd, 0, &buf[..], 0).await;
+        assert_eq!(Ok(4096), r);
+
+        // flush to blob
+        fs.sync().await;
+
+        // Check the file attributes
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.size, 4096);
+        assert_eq!(attr.bytes, 4096);
     }
 
     // write can RMW BlobExtents
@@ -3007,6 +3179,10 @@ root:
         assert_eq!(&db[0..512], &buf0[0..512]);
         assert_eq!(&db[512..2560], &buf1[..]);
         assert_eq!(&db[2560..], &buf0[2560..]);
+
+        // There should be no change in the blocks used
+        let attr = fs.getattr(&fd).await.unwrap();
+        assert_eq!(attr.bytes, 4096);
     }
 
     // Partially fill a hole that's at neither the beginning nor the end of the

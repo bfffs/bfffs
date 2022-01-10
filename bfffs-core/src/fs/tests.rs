@@ -93,6 +93,7 @@ async fn create() {
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
+                bytes: 0,
                 nlink: 2,
                 flags: 0,
                 atime: old_ts,
@@ -171,6 +172,7 @@ async fn create_hash_collision() {
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
+                bytes: 0,
                 nlink: 2,
                 flags: 0,
                 atime: old_ts,
@@ -264,7 +266,7 @@ fn debug_getattr() {
     let attr = GetAttr {
         ino: 1,
         size: 4096,
-        blocks: 1,
+        bytes: 4096,
         atime: Timespec::new(1, 2),
         mtime: Timespec::new(3, 4),
         ctime: Timespec::new(5, 6),
@@ -278,7 +280,7 @@ fn debug_getattr() {
         flags: 0,
     };
     let s = format!("{:?}", attr);
-    assert_eq!("GetAttr { ino: 1, size: 4096, blocks: 1, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: Mode { .0: 33188, perm: 420 }, nlink: 1, uid: 1000, gid: 1000, rdev: 0, blksize: 131072, flags: 0 }", s);
+    assert_eq!("GetAttr { ino: 1, size: 4096, bytes: 4096, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: Mode { .0: 33188, perm: 420 }, nlink: 1, uid: 1000, gid: 1000, rdev: 0, blksize: 131072, flags: 0 }", s);
 }
 
 // Pet kcov
@@ -287,7 +289,7 @@ fn eq_getattr() {
     let attr = GetAttr {
         ino: 1,
         size: 4096,
-        blocks: 1,
+        bytes: 4096,
         atime: Timespec::new(1, 2),
         mtime: Timespec::new(3, 4),
         ctime: Timespec::new(5, 6),
@@ -548,6 +550,7 @@ async fn rmdir_with_blob_extattr() {
             let now = Timespec::now();
             let inode = Inode {
                 size: 0,
+                bytes: 0,
                 nlink: 2,
                 flags: 0,
                 atime: now,
@@ -631,6 +634,7 @@ async fn rmdir_with_blob_extattr() {
             let now = Timespec::now();
             let inode = Inode {
                 size: 0,
+                bytes: 0,
                 nlink: 3,
                 flags: 0,
                 atime: now,
@@ -653,6 +657,7 @@ async fn rmdir_with_blob_extattr() {
             let now = Timespec::now();
             let inode = Inode {
                 size: 0,
+                bytes: 0,
                 nlink: 2,
                 flags: 0,
                 atime: now,
@@ -861,7 +866,8 @@ async fn unlink() {
         .with(eq(FSKey::new(ino, ObjKey::Inode)))
         .returning(move |_| {
             let inode = Inode {
-                size: 4098,
+                size: 4097,
+                bytes: 4097,
                 nlink: 1,
                 flags: 0,
                 atime: old_ts,
@@ -882,6 +888,7 @@ async fn unlink() {
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
+                bytes: 0,
                 nlink: 2,
                 flags: 0,
                 atime: old_ts,
@@ -1012,7 +1019,8 @@ async fn unlink_with_blob_extattr() {
         .returning(move |_| {
             let now = Timespec::now();
             let inode = Inode {
-                size: 4098,
+                size: 4097,
+                bytes: 4097,
                 nlink: 1,
                 flags: 0,
                 atime: now,
@@ -1033,6 +1041,7 @@ async fn unlink_with_blob_extattr() {
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
+                bytes: 0,
                 nlink: 2,
                 flags: 0,
                 atime: old_ts,
@@ -1183,6 +1192,7 @@ async fn unlink_with_extattr_hash_collision() {
             let now = Timespec::now();
             let inode = Inode {
                 size: 0,
+                bytes: 0,
                 nlink: 1,
                 flags: 0,
                 atime: now,
@@ -1203,6 +1213,7 @@ async fn unlink_with_extattr_hash_collision() {
         .returning(move |_| {
             let inode = Inode {
                 size: 0,
+                bytes: 0,
                 nlink: 2,
                 flags: 0,
                 atime: old_ts,

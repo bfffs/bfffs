@@ -308,6 +308,7 @@ fn fs_leaf_inode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         let k = FSKey::new(i as u64, ObjKey::Inode);
         let inode = Inode {
             size: 0,
+            bytes: 0,
             nlink: 1,
             flags: 0,
             atime: Timespec{sec: 0, nsec: 0},
