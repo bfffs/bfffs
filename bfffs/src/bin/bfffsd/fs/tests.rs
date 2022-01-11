@@ -169,7 +169,7 @@ mod create {
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -304,7 +304,7 @@ mod forget {
             .return_const(Ok(GetAttr {
                 ino,
                 size,
-                blocks: 0,
+                bytes: size,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -447,7 +447,7 @@ mod getattr {
             .return_const(Ok(GetAttr {
                 ino,
                 size,
-                blocks: 0,
+                bytes: size,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -791,7 +791,7 @@ mod link {
             .return_const(Ok(GetAttr {
                 ino,
                 size,
-                blocks: 0,
+                bytes: size,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1061,7 +1061,7 @@ mod lookup {
             .return_const(Ok(GetAttr {
                 ino,
                 size,
-                blocks: 0,
+                bytes: size,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1128,7 +1128,7 @@ mod lookup {
             .return_const(Ok(GetAttr {
                 ino,
                 size: 2,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1205,7 +1205,7 @@ mod lookup {
             .return_const(Ok(GetAttr {
                 ino,
                 size: 2,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1265,7 +1265,7 @@ mod lookup {
             .return_const(Ok(GetAttr {
                 ino: parent,
                 size: 3,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1397,7 +1397,7 @@ mod lookup {
             .return_const(Ok(GetAttr {
                 ino,
                 size,
-                blocks: 0,
+                bytes: size,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1467,7 +1467,7 @@ mod lookup {
             .return_const(Ok(GetAttr {
                 ino,
                 size,
-                blocks: 0,
+                bytes: size,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1588,7 +1588,7 @@ mod lookup {
             .return_const(Ok(GetAttr {
                 ino,
                 size,
-                blocks: 0,
+                bytes: size,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1823,7 +1823,7 @@ mod mkdir {
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1905,7 +1905,7 @@ mod mknod {
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -1982,7 +1982,7 @@ mod mknod {
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -2098,7 +2098,7 @@ mod mknod {
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -2172,7 +2172,7 @@ mod mknod {
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -3220,7 +3220,7 @@ mod setattr {
             .return_const(Ok(GetAttr {
                 ino,
                 size,
-                blocks: 0,
+                bytes: size,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },
@@ -3468,7 +3468,7 @@ mod symlink {
             .return_const(Ok(GetAttr {
                 ino,
                 size: 0,
-                blocks: 0,
+                bytes: 0,
                 atime: Timespec { sec: 0, nsec: 0 },
                 mtime: Timespec { sec: 0, nsec: 0 },
                 ctime: Timespec { sec: 0, nsec: 0 },

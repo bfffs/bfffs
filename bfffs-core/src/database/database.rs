@@ -463,6 +463,7 @@ impl Database {
 
                 let inode = Inode {
                     size: 0,
+                    bytes: 0,
                     nlink: 1,   // for "."
                     flags: 0,
                     atime: now,

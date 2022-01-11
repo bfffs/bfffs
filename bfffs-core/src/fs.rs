@@ -394,8 +394,8 @@ pub struct GetAttr {
     pub ino:        u64,
     /// File size in bytes
     pub size:       u64,
-    /// File size in blocks
-    pub blocks:     u64,
+    /// File size in bytes
+    pub bytes:      u64,
     /// access time
     pub atime:      Timespec,
     /// modification time
@@ -566,6 +566,7 @@ impl Fs {
         let now = Timespec::now();
         let inode = Inode {
             size: 0,
+            bytes: 0,
             nlink: args.nlink,
             flags: args.flags,
             atime: now,
@@ -780,40 +781,47 @@ impl Fs {
         iv.birthtime = attr.birthtime.unwrap_or(iv.birthtime);
         iv.flags = attr.flags.unwrap_or(iv.flags);
 
-        let truncate_fut = if new_size < old_size {
+        let freed_bytes = if new_size < old_size {
             assert!(iv.file_type.dtype() == libc::DT_REG);
             let rs = iv.record_size().unwrap() as u64;
             let dsx = dataset.clone();
-            Fs::do_truncate(dsx, ino, new_size, rs).boxed()
+            Fs::do_truncate(dsx, ino, new_size, rs).await?
         } else {
-            future::ok(()).boxed()
+            0
         };
 
-        future::try_join(
-            dataset.insert(inode_key, FSValue::Inode(iv)),
-            truncate_fut
-        ).map_ok(drop).await
+        iv.bytes = iv.bytes.saturating_sub(freed_bytes);
+        dataset.insert(inode_key, FSValue::Inode(iv)).await
+        .map(drop)
     }
 
     /// Remove all of a file's data past `size`.  This routine does _not_ update
-    /// the Inode
+    /// the Inode.  Return the amount by which the file's disk consumption
+    /// decreased.
     async fn do_truncate(dataset: Arc<ReadWriteFilesystem>, ino: u64, size: u64,
                    rs: u64)
-        -> Result<(), Error>
+        -> Result<u64, Error>
     {
         let dataset2 = dataset.clone();
         let dataset3 = dataset.clone();
         let full_fut = dataset.range(FSKey::extent_range(ino, size..))
-        .try_filter_map(move |(_k, v)| {
-            if let Extent::Blob(be) = v.as_extent().unwrap()
-            {
-                future::ok(Some(be.rid))
-            } else {
-                future::ok(None)
+       .try_fold((FuturesUnordered::new(), 0u64), |(futs, mut s), (_k, v)| {
+            match v.as_extent().unwrap() {
+                Extent::Blob(be) => {
+                    s += u64::from(be.lsize);
+                    futs.push(dataset2.delete_blob(be.rid));
+                },
+                Extent::Inline(ile) => {
+                    s += ile.len() as u64;
+                }
             }
-        }).try_for_each_concurrent(None, move |rid| dataset2.delete_blob(rid))
-        .and_then(move |_| {
+            future::ok((futs, s))
+        }).and_then(move |(futs, old_len)| {
+            futs.try_collect::<Vec<_>>()
+            .map_ok(move |_| old_len)
+        }).and_then(move |old_len| {
             dataset3.range_delete(FSKey::extent_range(ino, size..))
+            .map_ok(move |_| old_len)
         }).boxed();
         let partial_fut = if size % rs > 0 {
             let ofs = size - size % rs;
@@ -826,17 +834,19 @@ impl Fs {
             match v {
                 None => {
                     // It's a hole; nothing to do
-                    future::ok(())
+                    future::ok(0)
                 }.boxed(),
                 Some(FSValue::InlineExtent(ile)) => async move {
+                    let old_len = ile.len();
                     let mut b = ile.buf.try_mut().unwrap();
                     b.try_truncate(len).unwrap();
                     let extent = InlineExtent::new(ile.buf);
                     let v = FSValue::InlineExtent(extent);
                     dataset.insert(k, v).await?;
-                    Ok(())
+                    Ok((old_len - len) as u64)
                 }.boxed(),
                 Some(FSValue::BlobExtent(be)) => async move {
+                    let old_len: u64 = be.lsize.into();
                     let dbs: Box<DivBufShared> = dataset.remove_blob(be.rid)
                         .await?;
                     dbs.try_mut()
@@ -847,15 +857,15 @@ impl Fs {
                     let extent = InlineExtent::new(adbs);
                     let v = FSValue::InlineExtent(extent);
                     dataset.insert(k, v).await?;
-                    Ok(())
+                    Ok(old_len - len as u64)
                 }.boxed(),
                 x => panic!("Unexpectec value {:?} for key {:?}", x, k)
             }
         } else {
-            future::ok(()).boxed()
+            future::ok(0).boxed()
         };
-        future::try_join(full_fut, partial_fut).await?;
-        Ok(())
+        future::try_join(full_fut, partial_fut)
+            .map_ok(|(whole, partial)| whole + partial).await
     }
 
     /// Unlink a file whose inode number is known and whose directory entry is
@@ -1049,7 +1059,7 @@ impl Fs {
                     let attr = GetAttr {
                         ino,
                         size: inode.size,
-                        blocks: 0,
+                        bytes: inode.bytes,
                         atime: inode.atime,
                         mtime: inode.mtime,
                         ctime: inode.ctime,
@@ -2270,30 +2280,37 @@ impl Fs {
                 .map(|(i, dbs)| {
                     let ds3 = dataset.clone();
                     Fs::write_record(ino, rs as u64, offset, i, dbs, ds3)
-                        .boxed()
                 }).collect::<FuturesUnordered<_>>();
+            let delta_len: i64 = data_futs.try_collect::<Vec<_>>().await?
+                .into_iter()
+                .sum();
             let new_size = cmp::max(filesize, offset + datalen as u64);
             {
                 let inode = value.as_mut_inode().unwrap();
                 inode.size = new_size;
+                // It's a bug if inode.bytes would drop below zero, but it's
+                // not worth panicking over.
+                // TODO: use saturating_add_unsigned when it stabilizes.
+                // https://github.com/rust-lang/rust/issues/87840
+                inode.bytes = (inode.bytes as i64).saturating_add(delta_len)
+                    as u64;
                 let now = Timespec::now();
                 inode.mtime = now;
                 inode.ctime = now;
             }
-            let ino_fut = dataset.insert(inode_key, value).boxed();
-            data_futs.push(ino_fut);
-            data_futs.try_collect::<Vec<_>>().await?;
+            dataset.insert(inode_key, value).await?;
             Ok(datalen as u32)
         }).map_err(Error::into)
         .await
     }
 
-    /// Subroutine of write
+    /// Subroutine of write.  Returns the amount by which the file's on-disk
+    /// space changed.
     #[inline]
     async fn write_record(ino: u64, rs: u64, offset: u64, i: usize,
                     data: Arc<DivBufShared>,
                     dataset: Arc<ReadWriteFilesystem>)
-        -> Result<Option<FSValue<RID>>, Error>
+        -> Result<i64, Error>
     {
         let baseoffset = offset - (offset % rs);
         let offs = baseoffset + i as u64 * rs;
@@ -2307,7 +2324,7 @@ impl Fs {
         if (writelen as u64) < rs {
             // We must read-modify-write
             let r = dataset.remove(k).await?;
-            let dbs: Arc<DivBufShared> = match r {
+            let (dbs, old_len) = match r {
                 None => {
                     // Either a hole, or beyond EOF
                     let hsize = writelen + offset_into_rec;
@@ -2318,16 +2335,19 @@ impl Fs {
                             *x = 0;
                         }
                     }
-                    r
+                    (r, 0)
                 },
                 Some(FSValue::InlineExtent(ile)) => {
-                    ile.buf
+                    let old_len = ile.len() as i64;
+                    (ile.buf, old_len)
                 },
                 Some(FSValue::BlobExtent(be)) => {
-                    Arc::from(dataset.remove_blob(be.rid).await?)
+                    (
+                        Arc::from(dataset.remove_blob(be.rid).await?),
+                        be.lsize.into()
+                    )
                 },
-                x => panic!("Unexpected value {:?} for key {:?}",
-                            x, k)
+                x => panic!("Unexpected value {:?} for key {:?}", x, k)
             };
             let mut base = dbs.try_mut().unwrap();
             let overlay = data.try_const().unwrap();
@@ -2341,11 +2361,15 @@ impl Fs {
             // Overwrite with new data
             base[r].copy_from_slice(&overlay[..]);
             let extent = InlineExtent::new(dbs);
+            let new_len = extent.len() as i64;
             let new_v = FSValue::InlineExtent(extent);
             dataset.insert(k, new_v).await
+            .map(|_| new_len - old_len)
         } else {
+            let new_len = data.len() as i64;
             let v = FSValue::InlineExtent(InlineExtent::new(data));
             dataset.insert(k, v).await
+            .map(|ov| new_len - ov.map_or(0, |fsv| fsv.stat_space()))
         }
     }
 }

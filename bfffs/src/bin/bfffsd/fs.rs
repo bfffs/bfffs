@@ -146,7 +146,7 @@ impl FuseFs {
                 let reply_attr = FileAttr {
                     ino: attr.ino,
                     size: attr.size,
-                    blocks: attr.blocks,
+                    blocks: attr.bytes << 9,
                     atime: Timestamp::new(attr.atime.sec, attr.atime.nsec),
                     mtime: Timestamp::new(attr.mtime.sec, attr.mtime.nsec),
                     ctime: Timestamp::new(attr.ctime.sec, attr.ctime.nsec),

@@ -677,8 +677,28 @@ impl Serialize for Timespec {
 /// In-memory representation of an Inode
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Inode {
-    /// File size in bytes
+    /// File size in bytes.
     pub size:       u64,
+    /// File's space consumption in bytes
+    ///
+    /// Includes the size of all extents, both Blob and Inline.  Excludes
+    /// extended attributes and the Inode itself.  Ignores the effects of
+    /// compression.
+    // Compression cannot be considered because both types of extent can be
+    // recompressed in contexts where the Inode is not available.  For example,
+    // Inodes are compressed when flushing the Tree, and Blobs can be
+    // recompressed when cleaning a zone.
+    //
+    // * Note that ZFS considers compression here, but BtrFS does not.  POSIX is
+    //   silent on the issue.
+    //
+    // * Also note that ZFS includes the inode, but UFS does not.  Again, POSIX
+    //   is silent.
+    //
+    // * ZFS does not include extended attributes.  UFS does. I'm not sure about
+    //   other file systems.  BFFFS does not included extended
+    //   attributes so that Fs::setextattr won't need to modify the inode.
+    pub bytes:      u64,
     /// Link count
     pub nlink:      u64,
     /// File flags
@@ -742,6 +762,7 @@ pub struct InlineExtent {
     pub buf: Arc<DivBufShared>
 }
 
+#[allow(clippy::len_without_is_empty)]  // It isn't needed
 impl InlineExtent {
     const FUDGE: usize = 64;    // Experimentally determined
 
@@ -774,7 +795,7 @@ impl InlineExtent {
         }
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.buf.len()
     }
 
@@ -925,6 +946,16 @@ impl<A: Addr> FSValue<A> {
     /// in the worst case?
     pub fn extent_space(rs: usize, nrecs: usize) -> usize {
         nrecs * (rs + InlineExtent::FUDGE)
+    }
+
+    /// How much space should this FSValue contribute to stat.st_blocks, in
+    /// bytes?
+    pub fn stat_space(&self) -> i64 {
+        match self {
+            FSValue::InlineExtent(ie) => ie.len() as i64,
+            FSValue::BlobExtent(be) => be.lsize.into(),
+            _ => 0
+        }
     }
 }
 
