@@ -6,7 +6,7 @@ use divbuf::DivBufShared;
 use lazy_static::lazy_static;
 use std::{
     hash::Hasher,
-    ops::{Add, Div, Sub},
+    ops::{Add, Bound, Div, RangeBounds, Sub},
 };
 
 
@@ -79,6 +79,26 @@ pub fn zero_sglist(len: usize) -> SGList {
     sglist
 }
 
+// Sure would be nice if this were in std
+pub trait RangeBoundsExt<T>: RangeBounds<T>
+    where T: PartialOrd<T>
+{
+    fn is_empty(&self) -> bool {
+        match (self.start_bound(), self.end_bound()) {
+            (Bound::Included(s), Bound::Included(e)) => s > e,
+            (Bound::Included(s), Bound::Excluded(e)) => s >= e,
+            (Bound::Excluded(s), Bound::Included(e)) => s >= e,
+            (Bound::Excluded(s), Bound::Excluded(e)) => s > e,
+            _ => false
+        }
+    }
+}
+
+impl<R, T> RangeBoundsExt<T> for R
+    where R: RangeBounds<T>,
+          T: PartialOrd<T>
+{}
+
 // LCOV_EXCL_START
 #[cfg(test)]
 /// Helper to generate the runtime used by most unit tests
@@ -145,6 +165,35 @@ fn test_zero_sglist() {
     assert_eq!(&sg1[0][..], &[0u8; ZERO_REGION_LEN][..]);
     assert_eq!(&sg1[1][..], &[0u8; 100][..]);
     assert_eq!(sg1.len(), 2);
+}
+
+#[allow(clippy::reversed_empty_ranges)]
+#[test]
+fn range_bounds_is_empty() {
+    use std::ops::RangeFull;
+
+    // Range
+    assert!((0..0).is_empty());
+    assert!((1..0).is_empty());
+    assert!(!(0..1).is_empty());
+
+    // RangeFrom
+    assert!(!(0..).is_empty());
+
+    // RangeFull
+    assert!(!<RangeFull as RangeBoundsExt<i32>>::is_empty(&(..)));
+
+    // RangeInclusive
+    assert!((1..=0).is_empty());
+    assert!((2..=0).is_empty());
+    assert!(!(0..=0).is_empty());
+    assert!(!(0..=1).is_empty());
+
+    // RangeTo
+    assert!(!(..0).is_empty());
+
+    // RangeToInclusive
+    assert!(!(..=0).is_empty());
 }
 
 }

@@ -1429,14 +1429,11 @@ impl<A, D, K, V> Tree<A, D, K, V>
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
     {
-        // Sanity check the arguments
-        match (range.start_bound(), range.end_bound()) {
-            (Bound::Included(s), Bound::Included(e)) => debug_assert!(s <= e),
-            (Bound::Included(s), Bound::Excluded(e)) => debug_assert!(s < e),
-            (Bound::Excluded(s), Bound::Included(e)) => debug_assert!(s < e),
-            (Bound::Excluded(s), Bound::Excluded(e)) => debug_assert!(s < e),
-            _ => ()
-        };
+        if range.is_empty() {
+            self.dml.repay(credit);
+            return Ok(());
+        }
+
         // Outline:
         // 1) Traverse the tree removing all requested KV-pairs, leaving damaged
         //    nodes, deleting empty nodes, and recording which nodes are
