@@ -2012,6 +2012,21 @@ root:
 "#);
 }
 
+// range_delete of an empty range does nothing bad
+#[test]
+fn range_delete_empty() {
+    let mock = mock_dml();
+    let dml = Arc::new(mock);
+    let limits = Limits::new(2, 5, 2, 5);
+    let tree = Arc::new(
+        Tree::<u32, MockDML, u32, f32>::new(dml, limits, false, None)
+    );
+    let r = tree
+        .range_delete(5..5, TxgT::from(42), Credit::null())
+        .now_or_never().unwrap();
+    assert!(r.is_ok());
+}
+
 // Delete a range that's exclusive on the left and right
 #[test]
 fn range_delete_exc_exc() {

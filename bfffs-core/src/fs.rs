@@ -520,6 +520,42 @@ pub enum SeekWhence {
 }
 
 impl Fs {
+    /// Deallocate space.  The deallocated region may no longer take up space
+    /// on disk, and will return zeros if read.
+    pub async fn deallocate(&self, fd: &FileData, mut offset: u64, mut len: u64)
+            -> Result<(), i32>
+    {
+        let ino = fd.ino;
+        let inode_key = FSKey::new(ino, ObjKey::Inode);
+        self.db.fswrite(self.tree, 3, 0, 2, 1,
+        move |dataset| async move {
+            let ds = Arc::new(dataset);
+            // TODO: use an into_inode method instead of as_mut_inode.clone()
+            let mut inode = ds.get(inode_key).await?
+                .unwrap()
+                .as_mut_inode()
+                .unwrap()
+                .clone();
+            let rs = inode.record_size().unwrap() as u64;
+            let filesize = inode.size;
+            offset = filesize.min(offset);
+            len = (filesize.saturating_sub(offset)).min(len);
+            if len > 0 {
+                let freed = Fs::do_deallocate(ds.clone(), ino, offset,
+                    Some(len), rs).await?;
+                let now = Timespec::now();
+                inode.bytes = inode.bytes.saturating_sub(freed);
+                inode.mtime = now;
+                inode.ctime = now;
+                ds.insert(inode_key, FSValue::Inode(inode)).await
+                .map(drop)
+            } else {
+                Ok(())
+            }
+        }).map_err(Error::into)
+        .await
+    }
+
     /// Delete an extended attribute
     pub async fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                          name: &OsStr)
@@ -785,7 +821,7 @@ impl Fs {
             assert!(iv.file_type.dtype() == libc::DT_REG);
             let rs = iv.record_size().unwrap() as u64;
             let dsx = dataset.clone();
-            Fs::do_truncate(dsx, ino, new_size, rs).await?
+            Fs::do_deallocate(dsx, ino, new_size, None, rs).await?
         } else {
             0
         };
@@ -795,16 +831,93 @@ impl Fs {
         .map(drop)
     }
 
-    /// Remove all of a file's data past `size`.  This routine does _not_ update
-    /// the Inode.  Return the amount by which the file's disk consumption
-    /// decreased.
-    async fn do_truncate(dataset: Arc<ReadWriteFilesystem>, ino: u64, size: u64,
-                   rs: u64)
+    /// Deallocate a range of byte offsets from a file, but do not update its
+    /// Inode.  Return the number of bytes deallocated.
+    async fn do_deallocate(
+        dataset: Arc<ReadWriteFilesystem>,
+        ino: u64,
+        offset: u64,
+        len: Option<u64>,
+        rs: u64)
         -> Result<u64, Error>
     {
+        let full_range = match len {
+            Some(l) => FSKey::extent_range(
+                ino, offset..((offset + l) - (offset + l) % rs).max(offset)
+            ),
+            None => FSKey::extent_range(ino, offset..)
+        };
+        let full_range2 = full_range.clone();
         let dataset2 = dataset.clone();
         let dataset3 = dataset.clone();
-        let full_fut = dataset.range(FSKey::extent_range(ino, size..))
+        let dataset4 = dataset.clone();
+
+        // Deallocate any partial record on the left side of the range
+        let left_fut = if offset % rs > 0 {
+            // Offset within the record where deallocation starts
+            let recofs = offset % rs;
+            // Length of the deallocated portion of this record
+            let len = (rs - recofs).min(len.unwrap_or(u64::MAX)) as usize;
+            let k = FSKey::new(ino, ObjKey::Extent(offset - recofs));
+            // NB: removing a Value and reinserting is inefficient. Better to
+            // use a Tree::with_mut method to mutate it in place.
+            // https://github.com/bfffs/bfffs/issues/74
+            let v = dataset.remove(k).await?;
+            match v {
+                None => {
+                    // It's a hole; nothing to do
+                    future::ok(0)
+                }.boxed(),
+                Some(FSValue::InlineExtent(ile)) => async move {
+                    let mut b = ile.buf.try_mut().unwrap();
+                    let r = if len >= b.len() - recofs as usize {
+                        // truncate the record, making it sparse
+                        let old_len = b.len();
+                        b.try_truncate(recofs as usize).unwrap();
+                        old_len as u64 - recofs
+                    } else {
+                        // zero the deallocated portion of the record
+                        for i in 0..len {
+                            b[recofs as usize + i] = 0;
+                        }
+                        0
+                    };
+                    let extent = InlineExtent::new(ile.buf);
+                    let v = FSValue::InlineExtent(extent);
+                    dataset.insert(k, v).await?;
+                    Ok(r)
+                }.boxed(),
+                Some(FSValue::BlobExtent(be)) => async move {
+                    let dbs: Box<DivBufShared> = dataset.remove_blob(be.rid)
+                        .await?;
+                    let mut b = dbs.try_mut()
+                        .expect("DivBufShared wasn't uniquely owned");
+                    let r = if len >= b.len() - recofs as usize {
+                        // truncate the record, making it sparse
+                        let old_len = b.len();
+                        b.try_truncate(recofs as usize).unwrap();
+                        old_len as u64 - recofs
+                    } else {
+                        // zero the deallocated portion of the record
+                        for i in 0..len {
+                            b[recofs as usize + i] = 0;
+                        }
+                        0
+                    };
+                    let adbs = Arc::from(dbs);
+                    let extent = InlineExtent::new(adbs);
+                    let v = FSValue::InlineExtent(extent);
+                    dataset.insert(k, v).await?;
+                    Ok(r)
+                }.boxed(),
+                x => panic!("Unexpected value {:?} for key {:?}", x, k)
+            }
+        } else {
+            future::ok(0).boxed()
+        };
+
+        // Deallocate all whole records in the range
+        let full_fut = dataset2.range(full_range)
        .try_fold((FuturesUnordered::new(), 0u64), |(futs, mut s), (_k, v)| {
             match v.as_extent().unwrap() {
                 Extent::Blob(be) => {
@@ -820,52 +933,56 @@ impl Fs {
             futs.try_collect::<Vec<_>>()
             .map_ok(move |_| old_len)
         }).and_then(move |old_len| {
-            dataset3.range_delete(FSKey::extent_range(ino, size..))
+            dataset3.range_delete(full_range2)
             .map_ok(move |_| old_len)
         }).boxed();
-        let partial_fut = if size % rs > 0 {
-            let ofs = size - size % rs;
-            let len = (size - ofs) as usize;
-            let k = FSKey::new(ino, ObjKey::Extent(ofs));
-            // NB: removing a Value and reinserting is inefficient. Better to
-            // use a Tree::with_mut method to mutate it in place.
-            // https://github.com/bfffs/bfffs/issues/74
-            let v = dataset.remove(k).await?;
-            match v {
-                None => {
-                    // It's a hole; nothing to do
-                    future::ok(0)
-                }.boxed(),
-                Some(FSValue::InlineExtent(ile)) => async move {
-                    let old_len = ile.len();
-                    let mut b = ile.buf.try_mut().unwrap();
-                    b.try_truncate(len).unwrap();
-                    let extent = InlineExtent::new(ile.buf);
-                    let v = FSValue::InlineExtent(extent);
-                    dataset.insert(k, v).await?;
-                    Ok((old_len - len) as u64)
-                }.boxed(),
-                Some(FSValue::BlobExtent(be)) => async move {
-                    let old_len: u64 = be.lsize.into();
-                    let dbs: Box<DivBufShared> = dataset.remove_blob(be.rid)
-                        .await?;
-                    dbs.try_mut()
-                        .expect("DivBufShared wasn't uniquely owned")
-                        .try_truncate(len)
-                        .unwrap();
-                    let adbs = Arc::from(dbs);
-                    let extent = InlineExtent::new(adbs);
-                    let v = FSValue::InlineExtent(extent);
-                    dataset.insert(k, v).await?;
-                    Ok(old_len - len as u64)
-                }.boxed(),
-                x => panic!("Unexpectec value {:?} for key {:?}", x, k)
-            }
-        } else {
-            future::ok(0).boxed()
+
+        // Deallocate any partial record on the right side of the range, if the
+        // range ends in a different record than it started.
+        let right_fut = match len {
+            Some(l) if ((offset + l) / rs > offset / rs) &&
+                       (offset + l) % rs != 0 =>
+            {
+                let len = (offset + l) % rs;
+                let k = FSKey::new(ino, ObjKey::Extent(offset + l - len));
+                let v = dataset4.remove(k).await?;
+                match v {
+                    None => {
+                        // It's a hole; nothing to do
+                        future::ok(0).boxed()
+                    },
+                    Some(FSValue::InlineExtent(ile)) => async move {
+                        let mut b = ile.buf.try_mut().unwrap();
+                        for i in 0..len {
+                            b[i as usize] = 0;
+                        }
+                        let extent = InlineExtent::new(ile.buf);
+                        let v = FSValue::InlineExtent(extent);
+                        dataset4.insert(k, v).await?;
+                        Ok(0)
+                    }.boxed(),
+                    Some(FSValue::BlobExtent(be)) => async move {
+                        let dbs = dataset4.remove_blob(be.rid)
+                            .await?;
+                        let mut dbm = dbs.try_mut()
+                            .expect("DivBufShared wasn't uniquely owned");
+                        for i in 0..len {
+                            dbm[i as usize] = 0;
+                        }
+                        let adbs = Arc::from(dbs);
+                        let extent = InlineExtent::new(adbs);
+                        let v = FSValue::InlineExtent(extent);
+                        dataset4.insert(k, v).await?;
+                        Ok(0)
+                    }.boxed(),
+                    x => panic!("Unexpected value {:?} for key {:?}", x, k)
+                }
+            },
+            _ => future::ok(0).boxed()
         };
-        future::try_join(full_fut, partial_fut)
-            .map_ok(|(whole, partial)| whole + partial).await
+
+        future::try_join3(full_fut, left_fut, right_fut)
+            .map_ok(|(left, whole, right)| left + whole + right).await
     }
 
     /// Unlink a file whose inode number is known and whose directory entry is
