@@ -608,21 +608,19 @@ mod fs {
 
     // Dumps a nearly empty FS tree.  All of the real work is done in
     // Tree::dump, so the bulk of testing is in the tree tests.
-    #[test]
-    fn dump() {
+    #[tokio::test]
+    async fn dump() {
+        let (fs, _cache, _db, _tree_id) = harness(vec![]).await;
         let mut buf = Vec::with_capacity(1024);
-        let rt = crate::basic_runtime();
-        rt.block_on(async {
-            let (fs, _cache, _db, _tree_id) = harness(vec![]).await;
-            let root = fs.root();
-            // Sync before clearing timestamps to improve determinism; the timed
-            // flusher may or may not have already flushed the tree.
-            fs.sync().await;
-            // Clear timestamps to make the dump output deterministic
-            clear_timestamps(&fs, &root).await;
-            fs.sync().await;
-            fs.dump(&mut buf).await.unwrap();
-        });
+        let root = fs.root();
+        // Sync before clearing timestamps to improve determinism; the timed
+        // flusher may or may not have already flushed the tree.
+        fs.sync().await;
+        // Clear timestamps to make the dump output deterministic
+        clear_timestamps(&fs, &root).await;
+        fs.sync().await;
+        fs.dump(&mut buf).await.unwrap();
+
         let fs_tree = String::from_utf8(buf).unwrap();
         let expected = r#"---
 limits:
