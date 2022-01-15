@@ -1385,10 +1385,9 @@ root:
         assert_eq!(&db[..], &expected[..]);
     }
 
-    // Read a record within a sparse file that is partially occupied by an
-    // inline extent
+    // Read a hole in between two adjacent records.
     #[tokio::test]
-    async fn read_partial_hole() {
+    async fn read_partial_hole_between_recs() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -1406,8 +1405,13 @@ root:
         // The file should now have a hole from offset 2048 to 4096
         let sglist = fs.read(&fd, 3072, 1024).await.unwrap();
         let db = &sglist[0];
-        let expected = [0u8; 1024];
-        assert_eq!(&db[..], &expected[..]);
+        let zbuf = [0u8; 2048];
+        assert_eq!(&db[..], &zbuf[..1024]);
+
+        // It should also be possible to read data and hole in one operation
+        let sglist = fs.read(&fd, 0, 4096).await.unwrap();
+        assert_eq!(&sglist[0][..], &buf[..]);
+        assert_eq!(&sglist[1][..], &zbuf[..]);
     }
 
     // Read a chunk of a file that includes a partial hole at the beginning and
