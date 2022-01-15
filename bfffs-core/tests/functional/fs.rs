@@ -189,9 +189,12 @@ mod fs {
         assert_ts_changed(&fs, &root, false, true, true, false).await;
     }
 
-    /// Deallocate a whole inline extent
+    /// Deallocate a whole extent
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn deallocate_blob_extent() {
+    async fn deallocate_whole_extent(#[case] blobs: bool) {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -204,7 +207,9 @@ mod fs {
         let r = fs.write(&fd, 0, &buf[..], 0).await;
         assert_eq!(Ok(8192), r);
         clear_timestamps(&fs, &fd).await;
-        fs.sync().await;        // Flush it to a BlobExtent
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
 
         assert!(fs.deallocate(&fd, 0, 4096).await.is_ok());
 
@@ -243,36 +248,6 @@ mod fs {
         assert_ts_changed(&fs, &fd, false, true, true, false).await;
     }
 
-    #[tokio::test]
-    async fn deallocate_inline_extent() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
-        let root = fs.root();
-        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
-        .unwrap();
-        let mut buf = vec![0u8; 8192];
-        let mut rng = thread_rng();
-        for x in &mut buf {
-            *x = rng.gen();
-        }
-        let r = fs.write(&fd, 0, &buf[..], 0).await;
-        assert_eq!(Ok(8192), r);
-        clear_timestamps(&fs, &fd).await;
-
-        // Deallocate it before flushing to a BlobExtent
-        assert!(fs.deallocate(&fd, 0, 4096).await.is_ok());
-        let attr = fs.getattr(&fd).await.unwrap();
-        assert_eq!(attr.bytes, 4096);
-        assert_eq!(attr.size, 8192);
-        assert_ts_changed(&fs, &fd, false, true, true, false).await;
-
-        // Finally, read the deallocated record.  It should be a hole
-        let sglist = fs.read(&fd, 0, 4096).await.unwrap();
-        let db = &sglist[0];
-        let expected = [0u8; 4096];
-        assert_eq!(&db[..], &expected[..]);
-
-    }
-
     /// Deallocate multiple extents, some blob and some inline
     #[tokio::test]
     async fn deallocate_multiple_extents() {
@@ -307,9 +282,12 @@ mod fs {
         assert_eq!(&db[..], &expected[..]);
     }
 
-    /// Deallocate the left part of a blob extent
+    /// Deallocate the left part of an extent
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn deallocate_left_blob() {
+    async fn deallocate_left_half_of_extent(#[case] blobs: bool) {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -322,7 +300,9 @@ mod fs {
         let r = fs.write(&fd, 0, &buf[..], 0).await;
         assert_eq!(Ok(8192), r);
         clear_timestamps(&fs, &fd).await;
-        fs.sync().await;
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
 
         assert!(fs.deallocate(&fd, 0, 6144).await.is_ok());
         let attr = fs.getattr(&fd).await.unwrap();
@@ -342,7 +322,7 @@ mod fs {
 
     /// Deallocate the left part of a record which is already a hole
     #[tokio::test]
-    async fn deallocate_left_hole() {
+    async fn deallocate_left_half_of_hole() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -366,41 +346,12 @@ mod fs {
         assert_eq!(&sglist[0][..], &zbuf[..]);
     }
 
-    /// Deallocate the left part of a inline extent
+    /// Deallocate the middle of an extent
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn deallocate_left_inline() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
-        let root = fs.root();
-        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
-        .unwrap();
-        let mut buf = vec![0u8; 8192];
-        let mut rng = thread_rng();
-        for x in &mut buf {
-            *x = rng.gen();
-        }
-        let r = fs.write(&fd, 0, &buf[..], 0).await;
-        assert_eq!(Ok(8192), r);
-        clear_timestamps(&fs, &fd).await;
-
-        assert!(fs.deallocate(&fd, 0, 6144).await.is_ok());
-        let attr = fs.getattr(&fd).await.unwrap();
-        // The partially deallocated extent still takes up space
-        assert_eq!(attr.bytes, 4096);
-        assert_eq!(attr.size, 8192);
-        assert_ts_changed(&fs, &fd, false, true, true, false).await;
-
-        // Finally, read the partially deallocated record.  It should have a
-        // hole in the middle.
-        let sglist = fs.read(&fd, 0, 8192).await.unwrap();
-        let zbuf = [0u8; 4096];
-        assert_eq!(&sglist[0][..], &zbuf[..]);
-        assert_eq!(&sglist[1][..2048], &zbuf[..2048]);
-        assert_eq!(&sglist[1][2048..], &buf[6144..]);
-    }
-
-    /// Deallocate the middle of an blob extent
-    #[tokio::test]
-    async fn deallocate_middle_blob() {
+    async fn deallocate_middle_of_extent(#[case] blobs: bool) {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -413,7 +364,9 @@ mod fs {
         let r = fs.write(&fd, 0, &buf[..], 0).await;
         assert_eq!(Ok(4096), r);
         clear_timestamps(&fs, &fd).await;
-        fs.sync().await;
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
 
         assert!(fs.deallocate(&fd, 1024, 2048).await.is_ok());
         let attr = fs.getattr(&fd).await.unwrap();
@@ -432,42 +385,12 @@ mod fs {
         assert_eq!(&db[3072..4096], &buf[3072..4096]);
     }
 
-    /// Deallocate the middle of an inline extent
+    /// Deallocate the right part of an extent
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn deallocate_middle_inline() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
-        let root = fs.root();
-        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
-        .unwrap();
-        let mut buf = vec![0u8; 4096];
-        let mut rng = thread_rng();
-        for x in &mut buf {
-            *x = rng.gen();
-        }
-        let r = fs.write(&fd, 0, &buf[..], 0).await;
-        assert_eq!(Ok(4096), r);
-        clear_timestamps(&fs, &fd).await;
-
-        assert!(fs.deallocate(&fd, 1024, 2048).await.is_ok());
-        let attr = fs.getattr(&fd).await.unwrap();
-        // The partially deallocated extent still takes up space
-        assert_eq!(attr.bytes, 4096);
-        assert_eq!(attr.size, 4096);
-        assert_ts_changed(&fs, &fd, false, true, true, false).await;
-
-        // Finally, read the partially deallocated record.  It should have a
-        // hole in the middle.
-        let sglist = fs.read(&fd, 0, 4096).await.unwrap();
-        let db = &sglist[0];
-        let zbuf = [0u8; 2048];
-        assert_eq!(&db[0..1024], &buf[0..1024]);
-        assert_eq!(&db[1024..3072], &zbuf[0..2048]);
-        assert_eq!(&db[3072..4096], &buf[3072..4096]);
-    }
-
-    /// Deallocate the right part of a blob extent
-    #[tokio::test]
-    async fn deallocate_right_blob() {
+    async fn deallocate_right_half_of_extent(#[case] blobs: bool) {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -480,7 +403,9 @@ mod fs {
         let r = fs.write(&fd, 0, &buf[..], 0).await;
         assert_eq!(Ok(8192), r);
         clear_timestamps(&fs, &fd).await;
-        fs.sync().await;
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
 
         assert!(fs.deallocate(&fd, 2048, 6144).await.is_ok());
         let attr = fs.getattr(&fd).await.unwrap();
@@ -520,36 +445,6 @@ mod fs {
         let sglist = fs.read(&fd, 0, 8192).await.unwrap();
         let zbuf = [0u8; 8192];
         assert_eq!(&sglist[0][..], &zbuf[..]);
-    }
-
-    /// Deallocate the right part of a inline extent
-    #[tokio::test]
-    async fn deallocate_right_inline() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
-        let root = fs.root();
-        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
-        .unwrap();
-        let mut buf = vec![0u8; 8192];
-        let mut rng = thread_rng();
-        for x in &mut buf {
-            *x = rng.gen();
-        }
-        let r = fs.write(&fd, 0, &buf[..], 0).await;
-        assert_eq!(Ok(8192), r);
-        clear_timestamps(&fs, &fd).await;
-
-        assert!(fs.deallocate(&fd, 2048, 6144).await.is_ok());
-        let attr = fs.getattr(&fd).await.unwrap();
-        assert_eq!(attr.bytes, 2048);
-        assert_eq!(attr.size, 8192);
-        assert_ts_changed(&fs, &fd, false, true, true, false).await;
-
-        // Finally, read the partially deallocated record.  It should have a
-        // hole in the middle.
-        let sglist = fs.read(&fd, 0, 8192).await.unwrap();
-        let zbuf = [0u8; 6144];
-        assert_eq!(&sglist[0][..2048], &buf[..2048]);
-        assert_eq!(&sglist[1][..], &zbuf[..]);
     }
 
     #[tokio::test]
@@ -820,9 +715,14 @@ root:
         assert_eq!(attr.blksize, 8192);
     }
 
+    // Get an extended attribute.  Very short extended attributes will remain
+    // inline forever.
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn getextattr() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+    async fn getextattr(#[case] on_disk: bool) {
+        let (fs, cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -830,6 +730,15 @@ root:
         let namespace = ExtAttrNamespace::User;
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
         fs.setextattr(&fd, namespace, &name, &value[..]).await.unwrap();
+
+        if on_disk {
+            // Sync the filesystem to store the InlineExtent on disk
+            fs.sync().await;
+
+            // Drop cache
+            cache.lock().unwrap().drop_cache();
+        }
+
         assert_eq!(fs.getextattrlen(&fd, namespace, &name).await.unwrap(),
                    3);
         let v = fs.getextattr(&fd, namespace, &name).await.unwrap();
@@ -959,31 +868,6 @@ root:
                    Err(libc::ENOATTR));
         assert_eq!(fs.getextattr(&fd, namespace, &name).await,
                    Err(libc::ENOATTR));
-    }
-
-    /// Read an InlineExtAttr from disk
-    #[tokio::test]
-    async fn getextattr_inline() {
-        let (fs, cache, _db, _tree_id) = harness4k().await;
-        let root = fs.root();
-        let filename = OsString::from("x");
-        let name = OsString::from("foo");
-        let value = vec![0, 1, 2, 3, 4];
-        let namespace = ExtAttrNamespace::User;
-        let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
-        fs.setextattr(&fd, namespace, &name, &value[..]).await.unwrap();
-
-        // Sync the filesystem to store the InlineExtent on disk
-        fs.sync().await;
-
-        // Drop cache
-        cache.lock().unwrap().drop_cache();
-
-        // Read the extattr from disk
-        assert_eq!(fs.getextattrlen(&fd, namespace, &name).await.unwrap(),
-                   5);
-        let v = fs.getextattr(&fd, namespace, &name).await.unwrap();
-        assert_eq!(&v[..], &value[..]);
     }
 
     /// getextattr(2) should not modify any timestamps
@@ -2868,8 +2752,11 @@ root:
     }
 
     // truncating a file should delete data past the truncation point
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn setattr_truncate() {
+    async fn setattr_truncate(#[case] blobs: bool) {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         // First write two records
@@ -2886,41 +2773,9 @@ root:
         };
         fs.setattr(&fd, attr).await.unwrap();
 
-        // Now extend the file past the truncated record
-        attr.size = Some(8192);
-        fs.setattr(&fd, attr).await.unwrap();
-
-        // Finally, read the truncated record.  It should be a hole
-        let sglist = fs.read(&fd, 4096, 4096).await.unwrap();
-        let db = &sglist[0];
-        let expected = [0u8; 4096];
-        assert_eq!(&db[..], &expected[..]);
-
-        // blocks used should only include the non-truncated records
-        let attr = fs.getattr(&fd).await.unwrap();
-        assert_eq!(4096, attr.bytes);
-    }
-
-    // Like setattr_truncate, but with blobs
-    #[tokio::test]
-    async fn setattr_truncate_blobs() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
-        let root = fs.root();
-        // First write two records
-        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
-        .unwrap();
-        let buf = vec![42u8; 8192];
-        let r = fs.write(&fd, 0, &buf[..], 0).await;
-        assert_eq!(Ok(8192), r);
-        fs.sync().await; // Create blob records
-
-        // Then truncate one of them.
-        let mut attr = SetAttr {
-            size: Some(4096),
-            .. Default::default()
-        };
-        fs.setattr(&fd, attr).await.unwrap();
-        fs.sync().await; // Create blob records
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
 
         // Now extend the file past the truncated record
         attr.size = Some(8192);
@@ -2938,8 +2793,11 @@ root:
     }
 
     // Like setattr_truncate, but everything happens within a single record
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn setattr_truncate_partial_records() {
+    async fn setattr_truncate_partial_record(#[case] blobs: bool) {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         // First write one record
@@ -2956,36 +2814,9 @@ root:
         };
         fs.setattr(&fd, attr).await.unwrap();
 
-        // Now extend the file past the truncated record
-        attr.size = Some(4000);
-        fs.setattr(&fd, attr).await.unwrap();
-
-        // Finally, read from the truncated area.  It should be a hole
-        let sglist = fs.read(&fd, 2000, 1000).await.unwrap();
-        let db = &sglist[0];
-        let expected = [0u8; 1000];
-        assert_eq!(&db[..], &expected[..]);
-    }
-
-    // Like setattr_truncate_partial_record, but the record is a Blob
-    #[tokio::test]
-    async fn setattr_truncate_partial_blob_record() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
-        let root = fs.root();
-        // First write one record
-        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
-        .unwrap();
-        let buf = vec![42u8; 4096];
-        let r = fs.write(&fd, 0, &buf[..], 0).await;
-        assert_eq!(Ok(4096), r);
-        fs.sync().await; // Create a blob record
-
-        // Then truncate it.
-        let mut attr = SetAttr {
-            size: Some(1000),
-            .. Default::default()
-        };
-        fs.setattr(&fd, attr).await.unwrap();
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
 
         // Now extend the file past the truncated record
         attr.size = Some(4000);
@@ -3067,7 +2898,8 @@ root:
         assert_eq!(attr.bytes, 0);
     }
 
-    /// Set an inline extended attribute
+    /// Set an inline extended attribute.  Short attributes will never be
+    /// flushed to blobs.
     #[tokio::test]
     async fn setextattr_inline() {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
@@ -3482,8 +3314,11 @@ root:
     }
 
     // A very simple single record write to an empty file
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn write() {
+    async fn write(#[case] blobs: bool) {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -3491,6 +3326,9 @@ root:
         let buf = vec![42u8; 4096];
         let r = fs.write(&fd, 0, &buf[..], 0).await;
         assert_eq!(Ok(4096), r);
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
 
         // Check the file attributes
         let attr = fs.getattr(&fd).await.unwrap();
@@ -3554,59 +3392,6 @@ root:
         assert_eq!(&db[1024..2048], &buf1[..]);
     }
 
-    /// Write an extent and flush it to a blog
-    #[tokio::test]
-    async fn write_blob_record() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
-        let root = fs.root();
-        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
-        .unwrap();
-        let buf = vec![42u8; 4096];
-        let r = fs.write(&fd, 0, &buf[..], 0).await;
-        assert_eq!(Ok(4096), r);
-
-        // flush to blob
-        fs.sync().await;
-
-        // Check the file attributes
-        let attr = fs.getattr(&fd).await.unwrap();
-        assert_eq!(attr.size, 4096);
-        assert_eq!(attr.bytes, 4096);
-    }
-
-    // write can RMW BlobExtents
-    #[tokio::test]
-    async fn write_partial_blob_record() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
-        let root = fs.root();
-        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
-        .unwrap();
-        let mut buf0 = vec![0u8; 4096];
-        let mut rng = thread_rng();
-        for x in &mut buf0 {
-            *x = rng.gen();
-        }
-        let r = fs.write(&fd, 0, &buf0[..], 0).await;
-        assert_eq!(Ok(4096), r);
-
-        // Sync the fs to flush the InlineExtent to a BlobExtent
-        fs.sync().await;
-
-        let buf1 = vec![0u8; 2048];
-        let r = fs.write(&fd, 512, &buf1[..], 0).await;
-        assert_eq!(Ok(2048), r);
-
-        let sglist = fs.read(&fd, 0, 4096).await.unwrap();
-        let db = &sglist[0];
-        assert_eq!(&db[0..512], &buf0[0..512]);
-        assert_eq!(&db[512..2560], &buf1[..]);
-        assert_eq!(&db[2560..], &buf0[2560..]);
-
-        // There should be no change in the blocks used
-        let attr = fs.getattr(&fd).await.unwrap();
-        assert_eq!(attr.bytes, 4096);
-    }
-
     // Partially fill a hole that's at neither the beginning nor the end of the
     // file
     #[tokio::test]
@@ -3635,8 +3420,11 @@ root:
     }
 
     // A partial single record write that needs RMW on both ends
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
     #[tokio::test]
-    async fn write_partial_record() {
+    async fn write_partial_record(#[case] blobs: bool) {
         let (fs, _cache, _db, _tree_id) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -3648,6 +3436,11 @@ root:
         }
         let r = fs.write(&fd, 0, &buf0[..], 0).await;
         assert_eq!(Ok(4096), r);
+
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
+
         let buf1 = vec![0u8; 2048];
         let r = fs.write(&fd, 512, &buf1[..], 0).await;
         assert_eq!(Ok(2048), r);
