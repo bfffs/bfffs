@@ -41,6 +41,18 @@ mod basic {
         format!("{:?}", harness.0);
     }
 
+    #[test]
+    fn create_enoent() {
+        let dir = t!(
+            Builder::new().prefix("test_read_at").tempdir()
+        );
+        let path = dir.path().join("vdev");
+        let e = VdevFile::create(path, None)
+            .err()
+            .unwrap();
+        assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
+    }
+
     /// erase_zone should succeed and do nothing if the underlying file does not
     /// support it.
     #[rstest]

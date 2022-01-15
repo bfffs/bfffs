@@ -180,12 +180,11 @@ impl VdevFile {
         where P: AsRef<Path> + 'static
     {
         let f = OpenOptions::new()
-            .create(true)
             .read(true)
             .write(true)
             .custom_flags(libc::O_DIRECT)
             .open(path)
-            .map(File::new).unwrap();
+            .map(File::new)?;
         let lpz = match lbas_per_zone {
             None => VdevFile::DEFAULT_LBAS_PER_ZONE,
             Some(x) => x.get()
