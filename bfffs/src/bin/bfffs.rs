@@ -301,7 +301,7 @@ mod pool {
                 .expect("Disks per stripe must be an integer");
             let f = devs[1]
                 .parse()
-                .expect("Disks per stripe must be an integer");
+                .expect("Redundancy level must be an integer");
             self.do_create_cluster(k, f, &devs[2..])
         }
 
