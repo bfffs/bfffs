@@ -14,6 +14,7 @@ setup: &SETUP
     - $HOME/.cargo/bin/rustup toolchain install $VERSION
     # In 12.2, aio on ufs is considered unsafe
     - sysctl vfs.aio.enable_unsafe=1
+    - kldload fusefs
 
 task:
   matrix:
