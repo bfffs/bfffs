@@ -530,12 +530,8 @@ impl Fs {
         self.db.fswrite(self.tree, 3, 0, 2, 1,
         move |dataset| async move {
             let ds = Arc::new(dataset);
-            // TODO: use an into_inode method instead of as_mut_inode.clone()
-            let mut inode = ds.get(inode_key).await?
-                .unwrap()
-                .as_mut_inode()
-                .unwrap()
-                .clone();
+            let mut inode_value = ds.get(inode_key).await?.unwrap();
+            let mut inode = inode_value.as_mut_inode().unwrap();
             let rs = inode.record_size().unwrap() as u64;
             let filesize = inode.size;
             offset = filesize.min(offset);
@@ -547,7 +543,7 @@ impl Fs {
                 inode.bytes = inode.bytes.saturating_sub(freed);
                 inode.mtime = now;
                 inode.ctime = now;
-                ds.insert(inode_key, FSValue::Inode(inode)).await
+                ds.insert(inode_key, inode_value).await
                 .map(drop)
             } else {
                 Ok(())
