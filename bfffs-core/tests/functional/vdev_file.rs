@@ -57,9 +57,33 @@ mod basic {
     /// support it.
     #[rstest]
     fn erase_zone(harness: Harness) {
-        let (vd, _, _tempdir) = harness;
+        let (mut vd, pb, _tempdir) = harness;
         let rt = runtime::Runtime::new().unwrap();
-        rt.block_on(vd.erase_zone(0)).unwrap();
+        let mut f = fs::File::open(&pb).unwrap();
+        let mut rbuf = vec![0u8; 4096];
+
+        // First, write a record
+        {
+            let dbs = DivBufShared::from(vec![42u8; 4096]);
+            let wbuf = dbs.try_const().unwrap();
+            rt.block_on(async {
+                vd.write_at(wbuf.clone(), 10).await
+            }).unwrap();
+            f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
+            f.read_exact(&mut rbuf).unwrap();
+            assert_eq!(rbuf, wbuf.deref().deref());
+        }
+
+        rt.block_on(async {vd.erase_zone(0).await }).unwrap();
+
+        // verify that it got erased, if fspacectl is supported here
+        #[cfg(have_fspacectl)]
+        {
+            let expected = vec![0u8; 4096];
+            f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
+            f.read_exact(&mut rbuf).unwrap();
+            assert_eq!(rbuf, expected);
+        }
     }
 
     #[rstest]
@@ -286,7 +310,7 @@ mod dev {
     /// For devices that support TRIM, erase_zone should do it.
     #[rstest]
     fn erase_zone(harness: Harness) {
-        if let Some((vd, md)) = harness {
+        if let Some((mut vd, md)) = harness {
             let mut rbuf = vec![0u8; 4096];
             let mut f = t!(fs::File::open(&md.0));
             let rt = runtime::Runtime::new().unwrap();
@@ -304,7 +328,7 @@ mod dev {
             }
 
             // Actually erase the zone
-            rt.block_on(vd.erase_zone(0)).unwrap();
+            rt.block_on(async {vd.erase_zone(0).await}).unwrap();
 
             // verify that it got erased
             {

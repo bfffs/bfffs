@@ -1,6 +1,3 @@
-freebsd_instance:
-  image_family: freebsd-12-2-snap
-
 setup: &SETUP
   env:
     HOME: /tmp # cargo needs it
@@ -16,15 +13,21 @@ setup: &SETUP
 
 task:
   matrix:
+    # Use bleeding edge features: Rust nightly and FreeBSD fspacectl
     - name: cargo test (nightly)
       env:
         # Pin nightly compiler to workaround
         # https://github.com/rust-lang/rust/issues/93209
         VERSION: nightly-2022-01-20
         CARGO_ARGS: --all-features
+      freebsd_instance:
+        image_family: freebsd-14-0-snap
+    # Use stable features
     - name: cargo test (stable)
       env:
         VERSION: 1.54.0
+      freebsd_instance:
+        image: freebsd-12-3-release-amd64
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
@@ -58,6 +61,8 @@ lint_task:
     # https://github.com/rust-lang/rust/issues/93209
     VERSION: nightly-2022-01-20
     CARGO_ARGS: --all-features
+  freebsd_instance:
+    image: freebsd-12-3-release-amd64
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry

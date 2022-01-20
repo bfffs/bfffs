@@ -38,7 +38,7 @@ serde_derive = "1.0"
 serde_yaml = "0.8.16"
 time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.10.0", features = ["rt", "sync", "time"] }
-tokio-file = { git = "https://github.com/asomers/tokio-file.git", revision = "a0af4f72b8e13c541a9bc345b31e2648629a2558" }
+tokio-file = { git = "https://github.com/asomers/tokio-file.git", rev = "a0af4f72b8e13c541a9bc345b31e2648629a2558" }
 tracing = "0.1.5"
 tracing-futures = "0.2.4"
 uuid = { version = "0.8.2", features = ["serde", "v4"]}
@@ -69,6 +69,9 @@ tokio = { version = "1.10.0", features = ["macros", "rt", "rt-multi-thread", "sy
 version = "0.2.15"
 default-features = false
 features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
+
+[build-dependencies]
+nix = "0.23.0"
 
 [[test]]
 name = "cacheable_space"
