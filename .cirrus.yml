@@ -18,7 +18,9 @@ task:
   matrix:
     - name: cargo test (nightly)
       env:
-        VERSION: nightly
+        # Pin nightly compiler to workaround
+        # https://github.com/rust-lang/rust/issues/93209
+        VERSION: nightly-2022-01-20
         CARGO_ARGS: --all-features
     - name: cargo test (stable)
       env:
@@ -52,7 +54,9 @@ task:
 lint_task:
   name: lint
   env:
-    VERSION: nightly
+    # Pin nightly compiler to workaround
+    # https://github.com/rust-lang/rust/issues/93209
+    VERSION: nightly-2022-01-20
     CARGO_ARGS: --all-features
   << : *SETUP
   cargo_cache:
