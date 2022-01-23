@@ -18,10 +18,10 @@ bincode = "1.0.1"
 bfffs-core = { path = "../bfffs-core" }
 bytes = "1.0"
 cfg-if = "1.0"
-fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "3afd026", optional = true, features = ["tokio-runtime"] }
+fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "190061a", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
 libc = "0.2.44"
-nix = "0.22.0"
+nix = "0.23.0"
 time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.10.0", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-seqpacket = "0.5.4"
@@ -41,7 +41,6 @@ features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
 assert_cmd = "2.0"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
 mockall = "0.11.0"
-nix = "0.22.0"
 predicates = "2.1.0"
 rstest = "0.11.0"
 sysctl = "0.1"

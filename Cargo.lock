@@ -426,7 +426,7 @@ checksum = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
 [[package]]
 name = "fuse3"
 version = "0.2.1"
-source = "git+https://github.com/asomers/fuse3.git?rev=3afd026#3afd026e07321ec7aaf92928979c4a2ac12fd70a"
+source = "git+https://github.com/asomers/fuse3.git?rev=190061a#190061a66c830de686253c2f96de5e1c46b0e5b4"
 dependencies = [
  "async-trait",
  "bincode",
@@ -736,12 +736,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "mio"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba272f85fa0b41fc91872be579b3bbe0f56b792aa361a380eb669469f68dafb2"
+dependencies = [
+ "libc",
+ "log",
+ "miow",
+ "ntapi",
+ "winapi",
+]
+
+[[package]]
 name = "mio-aio"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a316ed8ed5bc3989660d8333ad91abe9c165f6347aa876cfdfbddb0b906fafc"
+source = "git+https://github.com/asomers/mio-aio#43bf66403a3880dbba451fe692f84588528098f1"
 dependencies = [
- "mio",
+ "mio 0.8.0",
  "nix",
 ]
 
@@ -822,8 +834,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.22.0"
-source = "git+https://github.com/asomers/nix.git?rev=2e37293877b97eae42b1ec06a09e437b96b69c07#2e37293877b97eae42b1ec06a09e437b96b69c07"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f866317acbd3a240710c63f065ffb1e4fd466259045ccb504130b7f668f35c6"
 dependencies = [
  "bitflags",
  "cc",
@@ -1486,7 +1499,7 @@ checksum = "70e992e41e0d2fb9f755b37446f20900f64446ef54874f40a60c78f021ac6144"
 dependencies = [
  "autocfg",
  "libc",
- "mio",
+ "mio 0.7.13",
  "num_cpus",
  "once_cell",
  "pin-project-lite",
@@ -1498,11 +1511,10 @@ dependencies = [
 [[package]]
 name = "tokio-file"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70efcb13b662861e133d8ae584c01d645ab6e175e3fc294e6491231e086ee18b"
+source = "git+https://github.com/asomers/tokio-file.git#a0af4f72b8e13c541a9bc345b31e2648629a2558"
 dependencies = [
  "futures",
- "mio",
+ "mio 0.7.13",
  "mio-aio",
  "nix",
  "tokio",
